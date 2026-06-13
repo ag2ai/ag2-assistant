@@ -1,0 +1,57 @@
+"""Channel abstractions — the common surface every messaging platform implements.
+
+A channel adapter normalises an inbound platform message into an `InboundMessage`,
+decides whether the agent should respond (DMs always; groups only on @mention),
+derives a stable session id, calls the gateway, and sends the reply back in the
+platform's format.
+"""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agclaw.gateway.core import Gateway
+
+
+@dataclass
+class InboundMessage:
+    """A normalised inbound message, platform-agnostic."""
+
+    text: str
+    sender_id: str  # platform user id
+    chat_id: str  # platform chat/conversation id
+    platform: str  # "telegram", "discord", ...
+    is_direct: bool  # True for DMs, False for group/channel
+    mentioned: bool = False  # was the bot @mentioned (groups)
+    sender_name: str | None = None
+    raw: object = field(default=None, repr=False)  # original platform object
+
+    def session_id(self) -> str:
+        """Stable session id — one isolated conversation per chat."""
+        return f"{self.platform}:{self.chat_id}"
+
+
+def should_respond(msg: InboundMessage) -> bool:
+    """Mention-gating: respond to all DMs, but only to @mentions in groups."""
+    if not msg.text.strip():
+        return False
+    return msg.is_direct or msg.mentioned
+
+
+class Channel(ABC):
+    """A messaging-platform adapter driven by the gateway."""
+
+    platform: str
+
+    @abstractmethod
+    async def start(self, gateway: "Gateway") -> None:
+        """Connect to the platform and begin handling messages."""
+
+    @abstractmethod
+    async def stop(self) -> None:
+        """Disconnect and clean up."""
+
+    def format_outbound(self, text: str) -> str:
+        """Render the agent's reply for this platform. Default: unchanged."""
+        return text

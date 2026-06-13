@@ -1,0 +1,10 @@
+LOCAL_PATHS.md
+.env
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agclaw"
+version = "0.1.0"
+description = "An OpenClaw alternative built using AG2's Beta framework"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    # ddgs extra powers AG2's native DuckDuckSearchTool
+    "ag2[gemini,ddgs]>=0.13.0",
+    "typer>=0.15.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    # httpx + beautifulsoup4 power the custom web_fetch fallback (non-Anthropic providers)
+    "httpx>=0.28.0",
+    "beautifulsoup4>=4.12.0",
+    # gateway facade
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    # channels
+    "python-telegram-bot>=21.0",
+    "discord.py>=2.4",
+    "slack-bolt>=1.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
+]
+
+[project.scripts]
+agclaw = "agclaw.cli:app"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: tests that call a real LLM or network (require API keys)",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

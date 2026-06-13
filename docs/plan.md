@@ -1,0 +1,409 @@
+# AGClaw - Project Plan
+
+## Progress
+
+| Phase | Status | Summary |
+|-------|--------|---------|
+| Phase 1: Core Agent Runtime | 🟢 Mostly Done | Agent + CLI + Config + 4 custom tools working on AG2 0.13.4 / Gemini. 22 unit tests pass |
+| Phase 2: Gateway & API | 🟢 Core Done | FastAPI facade (`agclaw gateway`): REST `/api/message` + WS `/api/ws` + health. Per-session isolated multi-turn, tool use over HTTP — all verified. Distributed Hub option spiked (`examples/network_gateway_spike.py`) |
+| Phase 3: Channel Integrations | 🟢 Telegram + Discord + Slack Live | Three adapters live-verified (DM + @mention gating, memory, tools, per-channel formatting, live date/time/location). Slack adds 👀 reaction while working. WhatsApp next |
+| Phase 4: Skills & Plugins | ⬜ Not Started | |
+| Phase 5: Memory & Intelligence | 🟡 In Progress | User-profile observer memory built (SQLite, passive, platform-tagged). Works end-to-end across processes |
+| Phase 6: UI | ⬜ Not Started (deferred) | |
+| Phase 7: Advanced Features | ⬜ Not Started | AG2 0.13 network/distributed now available — reshapes this phase |
+
+### Phase 1 Detail
+
+- [x] Project scaffolding (pyproject.toml, src layout)
+- [x] AG2 Beta Agent setup with system prompt
+- [x] Tools — native AG2 built-ins (`DuckDuckSearchTool`, `SandboxShellTool`, `SandboxCodeTool`) + custom `web_fetch` fallback, selected per provider via `build_agent_tools()`
+- [x] CLI interface (`agclaw agent "message"` working)
+- [x] Basic config system (Pydantic, .env, Gemini default)
+- [x] Unit tests (config, agent, tools, memory — 22 passing)
+- [x] Integration tests (Gemini round-trip, tool use, memory learning)
+- [x] Session/profile persistence (SQLite via AG2 KnowledgeStore)
+- [ ] Multi-turn interactive conversation via CLI (single-shot works; chat loop pending)
+
+### Phase 5 Detail — Observer Memory (in progress)
+
+- [x] Persistent user-profile store (`SqliteKnowledgeStore`, `~/.agclaw/profile.db`)
+- [x] Passive learning via `WorkingMemoryAggregate` with custom 4-dimension prompt
+      (how / when / dislikes / writing style), platform-tagged
+- [x] Profile injection via `WorkingMemoryPolicy` assembly
+- [x] CLI: `agclaw profile show` / `agclaw profile clear`, `--memory/--no-memory`, `--platform`
+- [x] Unit + integration tests; verified recall across separate processes
+- [ ] Per-platform nuance once channels land (platform flows from channel adapter)
+- [ ] Tune aggregation cadence (currently fires on every interaction via `on_end=True`)
+
+### Phase 2 Detail — Gateway (core done)
+
+- [x] `Gateway` session manager — per-session isolated multi-turn via `AgentReply.ask()` chains
+- [x] FastAPI facade — `GET /api/health`, `POST /api/message`, `WS /api/ws`
+- [x] `agclaw gateway` CLI (uvicorn)
+- [x] Unit tests (fake-agent) + integration test (real multi-turn + isolation); live REST verified (multi-turn, isolation, tool use)
+- [x] Distributed Hub spike (`serve_ws`) — agent reachable cross-process over WebSocket
+- [ ] Channel-session mapping (when channels land in Phase 3)
+- [ ] Optional: put the gateway agent on a Hub for multi-agent/cross-machine
+- **Finding:** one shared agent across AG2 network conversation channels leaked history between sessions; direct `AgentReply.ask()` chains are isolated and the right primitive for the single-agent facade. Hub retained for distributed/multi-agent.
+
+### Phase 3 Detail — Channels (in progress)
+
+- [x] Channel layer (`agclaw.channels`) — `Channel` ABC, `InboundMessage`, `should_respond` gating, `get_channel` factory
+- [x] Telegram adapter — long-polling, DM + group @mention/reply gating, mention stripping, "⏳ Working on it…" placeholder edited into the final reply (typing action isn't reliably rendered for bots on Desktop/Web)
+- [x] Session mapping — one session per chat (`telegram:<chat_id>`); gateway created with `platform="telegram"` so profile observations are tagged
+- [x] `agclaw telegram` CLI
+- [x] Per-channel outbound formatting — agent stays format-neutral; `Channel.format_outbound()` hook; Telegram converts Markdown → clean plain text (`channels/formatting.py`)
+- [x] Unit tests (gating + normalization + formatting, no network)
+- [x] **Live test — DM verified end-to-end on @ag2claw_bot** (reply, memory write, tool use); plain-text formatting fix applied after raw-Markdown was observed
+- [x] Discord adapter (`discord.py`) — DM + @mention gating, native typing indicator, Markdown passthrough, 2000-char chunking; 9 unit tests. **Live-verified on a test server** (needs Message Content Intent enabled; `login()`+`connect()` lifecycle, not `start()`-in-task)
+- [x] Live environment context — agent knows current date/time (system clock) + location (`AGCLAW_LOCATION`), injected per turn via `prompt=[persona, env]` (refreshes; constructor prompts are evaluated once)
+- [x] Slack adapter (`slack-bolt`, Socket Mode) — DM + @mention gating, Markdown→Slack-mrkdwn conversion, 3500-char chunking, 👀 reaction added while working / removed on reply; 19 unit tests. **Live-verified** (needs `message.im` event + `im:history`/`reactions:write` scopes + reinstall; Messages Tab must be enabled in App Home for DMs)
+- [ ] WhatsApp
+- [ ] Combined runner (REST + channels in one process) and media/attachments
+
+### Docs
+
+- [x] `docs/research-openclaw.md`
+- [x] `docs/research-ag2-beta.md`
+- [x] `docs/plan.md` (this file)
+- [x] `docs/architecture.md`
+- [x] `docs/architecture.svg`
+- [x] `docs/usage.md`
+- [x] `docs/memory.md` (observer/profile design)
+- [x] `CLAUDE.md`
+
+## Vision
+
+AGClaw is an OpenClaw alternative built using AG2's Beta framework. It reimagines OpenClaw's core capabilities (gateway, channels, agent runtime, tools, skills) in Python using AG2 Beta's event-driven architecture instead of Pi agent + TypeScript.
+
+## AG2 Beta Availability (as of May 2026, ag2 0.12.3)
+
+**Major update:** Most of the previously feature-branch-only functionality now ships on main. AGClaw can use AG2's native capabilities for nearly everything.
+
+### Available on main (use directly)
+
+- `Agent` (with integrated `KnowledgeConfig` and `TaskConfig`) + `AgentReply`
+- `@tool` decorator + expanded built-in tools (Shell, WebSearch, WebFetch, CodeExecution, ImageGen, Memory, Skills, Subagents)
+- Middleware pipeline (logging, retry, token limiter, history limiter, telemetry, approval)
+- Event/Stream system (MemoryStream, event types, conditions)
+- Response Schema (structured outputs with validation/retry)
+- HITL hooks
+- LLM configs (OpenAI, Anthropic, Gemini, Ollama, DashScope)
+- **Assembly Policies** — conversation, working_memory, episodic_memory, sliding_window, token_budget, alert
+- **KnowledgeStore** — Memory, Disk, SQLite, Redis, Locked backends
+- **Compaction strategies** — TailWindowCompact, SummarizeCompact
+- **Aggregation strategies** — ConversationSummaryAggregate
+- **Watch system** — EventWatch, CronWatch, IntervalWatch, BatchWatch, DelayWatch, WindowWatch
+- **Built-in observers** — LoopDetector, TokenMonitor
+- **Subagents** — SubagentTool for spawning sub-conversations
+- **Skills runtime** — local_skills, runtime, skill_search
+- **Docker extension** — containerized tool execution
+- **Daytona extension** — cloud sandbox integration
+- **AG-UI integration** — UI protocol support
+- **AgentSpec** — declarative agent definitions
+- **FilesAPI** — agent file output management
+
+### Still NOT on main
+
+- **Hub / Network module** — distributed agent networking. Only referenced in docstrings. AGClaw will not depend on this.
+- **Full MCP client** — `MCPServerTool` exists as schema-only stub; full implementation still in progress on the roadmap.
+
+### Impact on AGClaw
+
+Build directly against AG2 main. We no longer need to build custom implementations of:
+- Session/knowledge persistence → use `DiskKnowledgeStore` or `SQLiteKnowledgeStore`
+- Context assembly → use `ConversationPolicy`, `WorkingMemoryPolicy`, etc.
+- Compaction → use `TailWindowCompact` / `SummarizeCompact`
+- Observers → use `LoopDetector`, `TokenMonitor`
+- Cron/scheduling → use `CronWatch` / `IntervalWatch`
+- Skills → use AG2's skills runtime
+- Subagents → use `SubagentTool`
+- Docker sandboxing → use `extensions/docker`
+
+What AGClaw still owns (not framework concerns):
+- Gateway (FastAPI + WebSocket)
+- Channel adapters (Telegram, Discord, Slack, WhatsApp)
+- CLI
+- Application-level config (Pydantic models wrapping AG2 configs)
+- Multi-session orchestration across users/channels
+
+### AG2 Beta Roadmap (as of April 2026)
+
+Source: https://docs.ag2.ai/latest/docs/beta/roadmap/
+
+| Roadmap Item | Status | Relevance to AGClaw |
+|---|---|---|
+| **History management** | 🔄 In Progress | **High** — custom session persistence (Phase 1). |
+| **Built-in Tools** | 🔄 In Progress | **High** — Shell, WebFetch, CodeExecution being finalized. |
+| **MCP** | 🔄 In Progress | **High** — MCPServerTool is currently a stub. Full implementation incoming — wait for this rather than building our own MCP client (Phase 7) |
+| **Shell Tool** | 📋 Next | **Medium** — already exists on main, being enhanced |
+| **Skills support** | 📋 Next | **High** — directly aligns with Phase 4. Design our skill format to be compatible with whatever AG2 ships |
+| **A2A** | 📋 Next | **Low for now** — Agent-to-Agent protocol, relevant if we add multi-agent in Phase 7 |
+| **Orchestration** | 📋 Next | **Medium** — could replace custom agent coordination in Phase 7 |
+| **Subagents** | 🔮 Future | **Medium** — Sub Tasks and/or Dynamic Agents |
+| **Checkpoints and snapshots** | ��� Future | **Medium** — would complement session persistence |
+| **Prometheus metrics** | 🔮 Future | **Low** — OpenTelemetry already available on main |
+| **TUI runtime** | 🔮 Future | **Low** — nice to have alternative CLI |
+
+**Key takeaway:** History management, MCP, and Skills are all in progress or next — three items we flagged as gaps. For MCP specifically, we should wait for the full implementation rather than building our own. For History and Skills, build custom now but keep interfaces compatible.
+
+**Not on the public roadmap:** Actor, Assembly Policies, KnowledgeStore, Compaction/Aggregation, Watch system, Network/Hub. These remain feature-branch-only with no announced timeline.
+
+## Component Mapping: OpenClaw -> AGClaw
+
+| OpenClaw Component | AGClaw Equivalent | AG2 Beta Status |
+|--------------------|-------------------|-----------------|
+| Pi Agent runtime | AG2 Beta `Agent` + custom session layer | ✅ Available |
+| Gateway (WebSocket) | FastAPI + websockets | Custom (not AG2) |
+| Sessions (JSONL) | Custom persistence (SQLite/file) | ⚠️ KnowledgeStore unreleased |
+| Bootstrap files (SOUL.md) | System prompts + custom context injection | ⚠️ Policies unreleased |
+| Channel plugins | Channel adapters (python libs) | Custom (not AG2) |
+| Tools (60+) | `@tool` decorator + built-in tools | ✅ Available |
+| Skills (ClawHub) | Plugin/skill loader + tool registration | ✅ Available (SkillsTool) |
+| Canvas | Web UI (FastAPI serving HTML/JS) | Custom (not AG2) |
+| Config (TypeBox/Zod) | Pydantic models | Custom + AG2 LLM configs |
+| CLI (Commander) | Typer CLI | Custom (not AG2) |
+| Cron/tasks | Custom scheduler (APScheduler) | ⚠️ CronWatch unreleased |
+| Observers/alerts | Custom on AG2 Observer protocol | ⚠️ Built-ins unreleased |
+| Memory/compaction | Custom compaction logic | ⚠️ Strategies unreleased |
+| Model failover | AG2 multi-provider config | ✅ Available |
+| Device nodes | Future: REST API | Custom (not AG2) |
+
+## Architecture
+
+**Language split:** Python for all backend. UI is separate and UI-agnostic (any client that speaks REST/WebSocket).
+
+```
+  Any UI Client                   Messaging Channels
+  (Web, Desktop,              (Telegram, Discord, Slack,
+   Mobile, CLI)                WhatsApp, ...)
+       |                              |
+       |    REST + WebSocket API      |
+       +------------+  +--------------+
+                    |  |
+          +----------------------------+
+          |      AGClaw Gateway        |
+          |    (FastAPI + WebSocket)   |
+          |                            |
+          |  - REST API (send/recv)    |
+          |  - WebSocket (streaming)   |
+          |  - Channel manager         |
+          |  - Session router          |
+          |  - Event bus               |
+          +----------------------------+
+                      |
+          +----------------------------+
+          |    Channel Adapter Layer   |
+          |  (common message protocol) |
+          |                            |
+          |  Inbound:                  |
+          |    Platform msg -> Message |
+          |  Outbound:                 |
+          |    Response -> Platform fmt|
+          +----------------------------+
+                      |
+          +----------------------------+
+          |      AG2 Beta Agent        |
+          |                            |
+          |  - System prompt (SOUL)    |
+          |  - Middleware pipeline      |
+          |  - Tools                   |
+          |  - Response schema         |
+          |  - HITL hooks              |
+          +----------------------------+
+                      |
+          +----------------------------+
+          |    Session & Memory Layer   |
+          |  (custom, KnowledgeStore-  |
+          |   compatible interface)    |
+          +----------------------------+
+```
+
+### Message Flow
+
+1. Message arrives from **any source** (Telegram, Slack, CLI, Web UI, etc.)
+2. **Channel adapter** normalizes it to a common `Message` format (text, media, metadata, origin)
+3. **Gateway** routes to the correct session (by user + channel identity)
+4. **AG2 Agent** processes via `ask()` with session history
+5. **Response** flows back through gateway -> channel adapter -> platform-specific format
+6. **UI clients** connected via WebSocket receive real-time event stream
+
+### Key Principle: UI-Agnostic API
+
+The gateway exposes a clean REST + WebSocket API. Any client can consume it:
+- Web app (React, Vue, Svelte, etc.)
+- Desktop app (Electron, Tauri)
+- Mobile app
+- CLI (`agclaw` command)
+- Another agent or service
+
+The API contract is the boundary — UI choices are deferred and independent.
+
+## Implementation Phases
+
+Legend:
+- **AG2 ✅** = Use existing AG2 Beta feature on main
+- **AG2 🔮** = Needs unreleased AG2 Beta feature (build custom now, migrate later)
+- **AGClaw** = Application-level, not suitable for an agentic framework
+
+### Phase 1: Core Agent Runtime
+
+| Item | Where | Notes |
+|------|-------|-------|
+| Project scaffolding (pyproject.toml, src layout) | **AGClaw** | Standard Python project setup, nothing framework-level |
+| Agent setup with system prompt (SOUL equivalent) | **AG2 ✅** | `Agent` class with `prompt` param covers this directly |
+| Tool registration (shell, web_fetch, code_execution) | **AG2 ✅** | Built-in ShellTool, WebFetchTool, CodeExecutionTool all on main |
+| CLI interface (`agclaw agent "message"`) | **AGClaw** | App-level CLI (Typer). Not framework concern |
+| Config system (Pydantic models for agent/channel/provider settings) | **AGClaw** | App-level config. AG2 has LLM configs (`OpenAIConfig` etc ✅) but overall app config is ours |
+| Session persistence (save/restore conversation history) | **AG2 🔮** | KnowledgeStore is unreleased. Build custom SQLite/JSONL persistence. Design interface compatible with KnowledgeStore for migration |
+
+### Phase 2: Gateway & API
+
+**Direction decision (spiked):** A distributed Hub-based gateway prototype works
+(`examples/network_gateway_spike.py`) — an AGClaw agent registered on an AG2
+`Hub`, served over WebSocket via `serve_ws`, reachable from a separate client
+process, with tools running server-side. The Hub already provides routing,
+durable per-channel WAL, audit log, auth (`ApiKeyAuth`), and governance — much of
+what we'd otherwise hand-build. **Leaning toward building the gateway on the Hub**
+rather than raw FastAPI, with a thin REST/WebSocket facade for non-AG2 UI clients.
+
+| Item | Where | Notes |
+|------|-------|-------|
+| Gateway core (routing, sessions, audit) | **AG2 Hub** 🔵 | Spiked working. Hub = message bus + WAL + audit + governance |
+| Distributed transport | **AG2 `serve_ws`/`WsLink`** ✅ | Cross-process/cross-machine, proven in spike |
+| REST/WebSocket facade for UI clients | **AGClaw** | Thin layer so non-AG2 UIs (web/desktop) can connect without speaking the Hub protocol. Likely FastAPI in front of the Hub |
+| Session management (per user+channel) | **AGClaw + Hub channels** | Map sessions to Hub channels; AGClaw owns user↔channel identity |
+| Health/status endpoints | **AGClaw** | App-level ops |
+
+### Phase 3: Channel Integrations
+
+| Item | Where | Notes |
+|------|-------|-------|
+| Channel adapter interface (protocol/ABC) | **AGClaw** | Defines how messaging platforms plug in. Not framework-level — this is OpenClaw-style app architecture |
+| Telegram channel | **AGClaw** | python-telegram-bot integration. App-level adapter |
+| Discord channel | **AGClaw** | discord.py integration. App-level adapter |
+| Slack channel | **AGClaw** | slack-bolt integration. App-level adapter |
+| WhatsApp channel | **AGClaw** | Webhook/API integration. App-level adapter |
+| Mention-gating and group message routing | **AGClaw** | App-level message filtering logic before invoking agent |
+
+### Phase 4: Skills & Plugins
+
+| Item | Where | Notes |
+|------|-------|-------|
+| Skill definition format (SKILL.md equivalent) | **AGClaw** | App-level skill packaging convention. Not framework concern |
+| Skill loader and registry | **AG2 ✅** (partial) | AG2 has SkillsTool + LocalSkillsTool on main. May need app-level registry on top for discovery/management |
+| Dynamic tool registration from skills | **AG2 ✅** | `@tool` decorator and Tool protocol support dynamic registration |
+| Bundled skills (web search, code execution, etc.) | **AG2 ✅** | WebSearchTool, CodeExecutionTool, ShellTool already built-in |
+
+### Phase 5: Memory & Intelligence
+
+| Item | Where | Notes |
+|------|-------|-------|
+| Context assembly (conversation history + working memory injection) | **AG2 🔮** | Assembly Policies (ConversationPolicy, WorkingMemoryPolicy, etc.) are unreleased. Build custom middleware that prepends context before LLM calls. Use AG2 Middleware ✅ hook points |
+| Compaction for long conversations | **AG2 🔮** | CompactStrategy (TailWindowCompact, SummarizeCompact) unreleased. Build custom: either truncate tail or LLM-summarize old events. Plug into middleware pipeline ✅ |
+| Knowledge extraction and persistence | **AG2 🔮** | AggregateStrategy unreleased. Build custom: extract key facts from conversations, persist to our session store |
+| Observers (loop detection, token monitoring) | **AG2 🔮** (partial) | Observer protocol ✅ exists on main but LoopDetector/TokenMonitor implementations are unreleased. Implement custom observers using the base protocol |
+| Migration path design | **AGClaw** | Design our custom interfaces to align with AG2's unreleased APIs. App-level architecture decision |
+
+### Phase 6: UI (deferred, language TBD)
+
+| Item | Where | Notes |
+|------|-------|-------|
+| Chat interface | **Separate project** | Not Python. Could be web (React/Vue/Svelte), desktop (Electron/Tauri), or both. Consumes gateway REST + WebSocket API |
+| Canvas workspace | **Separate project** | Rich agent output rendering. Part of whatever UI is chosen |
+| Session browser and management | **Separate project** | Admin/management UI. Same API consumer |
+
+UI is deliberately decoupled. The gateway API is the contract — UI technology is chosen independently.
+
+### Phase 7: Advanced Features
+
+| Item | Where | Notes |
+|------|-------|-------|
+| Cron/scheduled tasks | **AG2 🔮** | CronWatch/IntervalWatch unreleased. Use APScheduler or similar Python scheduler. App-level scheduling |
+| HITL approval flows | **AG2 ✅** | HumanHook, ApprovalMiddleware on main. Wire into gateway for user-facing approval UI |
+| MCP server integration | **AG2 🔄** (in progress on roadmap) | MCPServerTool is currently a stub. Full MCP implementation is on the AG2 roadmap as in-progress — wait for this rather than building our own MCP client |
+| Multi-agent networking | **AG2 🔮** | Hub/Network entirely unreleased. Build custom agent coordination if needed, or defer until Hub lands on main |
+
+## Tech Stack
+
+**Backend (Python):**
+- **Runtime:** Python 3.12+
+- **Agent Framework:** AG2 Beta (`autogen.beta`)
+- **Web Framework:** FastAPI + uvicorn
+- **WebSocket:** websockets / Starlette
+- **CLI:** Typer
+- **Config:** Pydantic v2
+- **Channels:** python-telegram-bot, discord.py, slack-bolt
+- **Storage:** SQLite (via aiosqlite)
+- **Testing:** pytest + pytest-asyncio
+
+**UI (separate, deferred):**
+- Language/framework TBD (not Python)
+- Consumes gateway REST + WebSocket API
+- Could be web, desktop, or mobile
+
+## Testing Strategy
+
+Tests are built progressively alongside each phase, not bolted on at the end.
+
+### Per-Phase Testing
+
+**Phase 1: Core Agent Runtime**
+- Unit tests: config loading/validation, session persistence CRUD, message model serialization
+- Integration tests: Agent.ask() round-trip with a real LLM (mock-free), tool execution end-to-end
+- CLI smoke tests: `agclaw agent "hello"` produces a response
+
+**Phase 2: Gateway & API**
+- Unit tests: session routing logic, event bus pub/sub, message normalization
+- Integration tests: FastAPI TestClient for REST endpoints, WebSocket connect/send/receive lifecycle
+- Multi-client test: two WebSocket clients receive the same event stream
+
+**Phase 3: Channel Integrations**
+- Unit tests: each adapter's normalize-inbound and format-outbound with fixture messages
+- Integration tests: adapter + gateway end-to-end with mock platform webhooks (httpx mock server)
+- Mention-gating tests: group messages without mention are ignored, with mention are processed
+
+**Phase 4: Skills & Plugins**
+- Unit tests: skill loader discovers and parses skill definitions, tool registration from skill
+- Integration tests: load a test skill, invoke its tool through the agent, verify result
+
+**Phase 5: Memory & Intelligence**
+- Unit tests: context assembly produces correct prompt, compaction reduces history correctly
+- Integration tests: multi-turn conversation with compaction trigger, verify agent retains key context after compaction
+- Observer tests: loop detector fires after N repeated messages, token monitor tracks cumulative usage
+
+**Phase 6: UI**
+- **Chrome DevTools MCP** for all web UI testing: navigate, screenshot, click, fill forms, verify DOM state
+- WebSocket streaming tests via Chrome DevTools: verify real-time message rendering
+- Cross-browser/viewport testing via Chrome DevTools emulation
+- Accessibility audit via Chrome DevTools Lighthouse
+
+**Phase 7: Advanced Features**
+- Integration tests: cron task fires on schedule, HITL approval blocks then resumes agent
+- MCP integration test: agent connects to an MCP server, lists tools, calls a tool
+
+### Test Infrastructure
+
+- **Framework:** pytest + pytest-asyncio
+- **API testing:** httpx (FastAPI TestClient) for REST, websockets client for WS
+- **Web UI testing:** Chrome DevTools MCP (screenshot, click, fill, evaluate_script, navigate)
+- **Fixtures:** shared AG2 Agent config, test session store, mock channel adapters
+- **CI:** tests run on every PR; integration tests that need LLM keys run with secrets in CI or are marked `@pytest.mark.integration`
+- **Coverage:** aim for high unit coverage on core (message model, session, config), integration coverage on critical paths (message flow end-to-end)
+
+### Testing Principles
+
+- **Mock-free where feasible:** Prefer real integrations (real LLM calls, real SQLite, real WebSocket) over mocks. Mocks hide bugs at boundaries.
+- **Progressive:** Each phase adds tests for its own layer. No phase is "done" without tests passing.
+- **Integration over unit for agent behavior:** Unit tests verify data structures and logic. Integration tests verify the agent actually works — processes a message, uses a tool, returns a response.
+
+## Key Design Decisions
+
+1. **Python for all backend**: Gateway, agent, channels, CLI, config — all Python. UI is separate and non-Python
+2. **UI-agnostic API**: Gateway exposes REST + WebSocket. Any UI client can connect. No tight coupling to a specific frontend
+3. **AG2 Beta Agent as core**: Use `Agent` (Actor not yet on main) with custom session/memory layer
+4. **Common message protocol**: Channel adapters normalize platform messages to/from a shared `Message` format. Agent is platform-unaware
+5. **Compatible interfaces**: Design custom context/memory/observer implementations to align with AG2's unreleased APIs for future migration
+6. **Channel adapters as plugins**: Clean interface for adding new channels
+7. **Pydantic config**: Type-safe configuration with validation
+8. **Leverage what's available**: Maximize use of AG2's tools, middleware, HITL, response schema rather than rebuilding

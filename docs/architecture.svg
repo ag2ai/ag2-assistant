@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 800" font-family="system-ui, -apple-system, Helvetica, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#666"/>
+    </marker>
+  </defs>
+
+  <style>
+    .layer { font-size: 11px; fill: #999; font-weight: 700; letter-spacing: 1px; }
+    .lbl { font-weight: 700; font-size: 14px; }
+    .det { font-size: 11px; fill: #555; }
+    .conn { stroke: #666; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .planned { stroke-dasharray: 5 3; }
+    .note { font-size: 11px; fill: #777; font-style: italic; }
+  </style>
+
+  <text x="480" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#222">AGClaw Architecture</text>
+  <text x="480" y="48" text-anchor="middle" class="note">AG2 Beta 0.13 · Python backend · solid = built, dashed = planned</text>
+
+  <!-- Clients -->
+  <text x="30" y="78" class="layer">CLIENTS</text>
+  <rect x="60" y="60" width="100" height="38" rx="8" fill="#E8F4FD" stroke="#7CB9E8"/>
+  <text x="110" y="84" text-anchor="middle" class="lbl" fill="#2B6CB0">CLI</text>
+  <rect x="175" y="60" width="100" height="38" rx="8" fill="#E8F4FD" stroke="#7CB9E8" class="planned"/>
+  <text x="225" y="84" text-anchor="middle" class="lbl" fill="#2B6CB0">Web</text>
+  <rect x="290" y="60" width="100" height="38" rx="8" fill="#E8F4FD" stroke="#7CB9E8" class="planned"/>
+  <text x="340" y="84" text-anchor="middle" class="lbl" fill="#2B6CB0">Desktop</text>
+  <rect x="405" y="60" width="100" height="38" rx="8" fill="#E8F4FD" stroke="#7CB9E8" class="planned"/>
+  <text x="455" y="84" text-anchor="middle" class="lbl" fill="#2B6CB0">Mobile</text>
+
+  <!-- Channels -->
+  <text x="640" y="78" class="layer">CHANNELS (planned)</text>
+  <rect x="640" y="60" width="95" height="38" rx="8" fill="#FEF3C7" stroke="#D97706" class="planned"/>
+  <text x="687" y="84" text-anchor="middle" class="lbl" fill="#92400E">Telegram</text>
+  <rect x="745" y="60" width="85" height="38" rx="8" fill="#FEF3C7" stroke="#D97706" class="planned"/>
+  <text x="787" y="84" text-anchor="middle" class="lbl" fill="#92400E">Discord</text>
+  <rect x="840" y="60" width="80" height="38" rx="8" fill="#FEF3C7" stroke="#D97706" class="planned"/>
+  <text x="880" y="84" text-anchor="middle" class="lbl" fill="#92400E">Slack</text>
+
+  <!-- arrows clients -> gateway -->
+  <line x1="110" y1="98" x2="110" y2="150" class="conn"/>
+  <line x1="225" y1="98" x2="225" y2="150" class="conn"/>
+  <line x1="340" y1="98" x2="340" y2="150" class="conn"/>
+  <line x1="455" y1="98" x2="455" y2="150" class="conn"/>
+  <line x1="730" y1="98" x2="730" y2="150" class="conn planned"/>
+  <line x1="830" y1="98" x2="830" y2="150" class="conn planned"/>
+
+  <!-- Channel adapter (planned) -->
+  <rect x="620" y="152" width="300" height="48" rx="8" fill="#FEF9C3" stroke="#CA8A04" class="planned"/>
+  <text x="770" y="172" text-anchor="middle" class="lbl" fill="#713F12">Channel Adapter Layer</text>
+  <text x="770" y="190" text-anchor="middle" class="det">normalise platform msgs ⇄ common Message (planned)</text>
+  <line x1="620" y1="176" x2="540" y2="176" class="conn planned"/>
+
+  <!-- Gateway -->
+  <text x="30" y="148" class="layer">GATEWAY (FastAPI)</text>
+  <rect x="55" y="152" width="485" height="92" rx="8" fill="#DCFCE7" stroke="#22C55E"/>
+  <text x="297" y="176" text-anchor="middle" class="lbl" fill="#166534">Gateway facade — agclaw.gateway</text>
+  <text x="130" y="200" text-anchor="middle" class="det">REST /api/message</text>
+  <text x="297" y="200" text-anchor="middle" class="det">WS /api/ws</text>
+  <text x="455" y="200" text-anchor="middle" class="det">GET /api/health</text>
+  <text x="297" y="224" text-anchor="middle" class="det">Session manager — one isolated AgentReply.ask() chain per session_id</text>
+
+  <line x1="297" y1="244" x2="297" y2="282" class="conn"/>
+
+  <!-- Agent -->
+  <text x="30" y="278" class="layer">AGENT (AG2 Beta)</text>
+  <rect x="55" y="284" width="430" height="104" rx="8" fill="#F3E8FF" stroke="#A855F7"/>
+  <text x="270" y="308" text-anchor="middle" class="lbl" fill="#581C87">AG2 Agent — agclaw.agent</text>
+  <text x="160" y="332" text-anchor="middle" class="det">System prompt</text>
+  <text x="380" y="332" text-anchor="middle" class="det">Middleware · HITL</text>
+  <text x="270" y="356" text-anchor="middle" class="det">Gemini · gemini-3.5-flash (multi-provider via AG2 configs)</text>
+  <text x="270" y="376" text-anchor="middle" class="det">memory=True → profile injected each turn</text>
+
+  <!-- Tools -->
+  <rect x="545" y="284" width="375" height="104" rx="8" fill="#FAE8FF" stroke="#C084FC"/>
+  <text x="732" y="308" text-anchor="middle" class="lbl" fill="#6B21A8">Tools — build_agent_tools(provider)</text>
+  <text x="732" y="332" text-anchor="middle" class="det">DuckDuckSearchTool · SandboxShellTool</text>
+  <text x="732" y="352" text-anchor="middle" class="det">SandboxCodeTool (native AG2, local)</text>
+  <text x="732" y="372" text-anchor="middle" class="det">WebFetchTool (Anthropic) / web_fetch (Gemini)</text>
+  <line x1="485" y1="336" x2="540" y2="336" class="conn"/>
+
+  <line x1="270" y1="388" x2="270" y2="426" class="conn"/>
+
+  <!-- Memory -->
+  <text x="30" y="422" class="layer">SESSION &amp; MEMORY</text>
+  <rect x="55" y="428" width="430" height="100" rx="8" fill="#FFF7ED" stroke="#F97316"/>
+  <text x="270" y="452" text-anchor="middle" class="lbl" fill="#9A3412">Session &amp; Memory — agclaw.memory</text>
+  <text x="270" y="476" text-anchor="middle" class="det">Conversation history: per-session AgentReply chains (isolated)</text>
+  <text x="270" y="498" text-anchor="middle" class="det">Profile (global, passive): WorkingMemoryAggregate →</text>
+  <text x="270" y="516" text-anchor="middle" class="det">WorkingMemoryPolicy injects 4-dimension profile each turn</text>
+
+  <line x1="270" y1="528" x2="270" y2="566" class="conn"/>
+  <rect x="160" y="568" width="220" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
+  <text x="270" y="593" text-anchor="middle" class="lbl" fill="#475569">SqliteKnowledgeStore — ~/.agclaw/profile.db</text>
+
+  <!-- Config + LLM providers (right column) -->
+  <text x="545" y="422" class="layer">CONFIG &amp; PROVIDERS</text>
+  <rect x="545" y="428" width="375" height="70" rx="8" fill="#F0FDF4" stroke="#86EFAC"/>
+  <text x="732" y="452" text-anchor="middle" class="lbl" fill="#166534">Configuration — Pydantic</text>
+  <text x="732" y="474" text-anchor="middle" class="det">LLM (provider/model/key) · Agent · Gateway · .env</text>
+  <line x1="732" y1="498" x2="732" y2="560" class="conn"/>
+  <rect x="545" y="562" width="375" height="46" rx="8" fill="#EDE9FE" stroke="#8B5CF6"/>
+  <text x="732" y="590" text-anchor="middle" class="lbl" fill="#5B21B6">LLM Providers — Gemini · OpenAI · Anthropic · Ollama</text>
+
+  <!-- agent -> providers link -->
+  <path d="M 485 360 L 515 360 L 515 585 L 543 585" class="conn"/>
+
+  <!-- Distributed note -->
+  <rect x="55" y="636" width="865" height="58" rx="8" fill="#F8FAFC" stroke="#CBD5E1"/>
+  <text x="70" y="658" class="lbl" fill="#334155">Distributed / multi-agent (validated spike)</text>
+  <text x="70" y="678" class="det">The agent can also be served over WebSocket through an AG2 Hub (serve_ws) for cross-machine / multi-agent deployments —</text>
+  <text x="70" y="690" class="det">examples/network_gateway_spike.py. The gateway facade composes on top without changing the client-facing API.</text>
+
+  <!-- Legend -->
+  <rect x="55" y="720" width="15" height="15" rx="3" fill="#E8F4FD" stroke="#7CB9E8"/>
+  <text x="77" y="732" font-size="11" fill="#666">Clients</text>
+  <rect x="140" y="720" width="15" height="15" rx="3" fill="#FEF3C7" stroke="#D97706"/>
+  <text x="162" y="732" font-size="11" fill="#666">Channels</text>
+  <rect x="235" y="720" width="15" height="15" rx="3" fill="#DCFCE7" stroke="#22C55E"/>
+  <text x="257" y="732" font-size="11" fill="#666">Gateway</text>
+  <rect x="325" y="720" width="15" height="15" rx="3" fill="#F3E8FF" stroke="#A855F7"/>
+  <text x="347" y="732" font-size="11" fill="#666">Agent</text>
+  <rect x="405" y="720" width="15" height="15" rx="3" fill="#FFF7ED" stroke="#F97316"/>
+  <text x="427" y="732" font-size="11" fill="#666">Memory</text>
+  <rect x="495" y="720" width="15" height="15" rx="3" fill="#EDE9FE" stroke="#8B5CF6"/>
+  <text x="517" y="732" font-size="11" fill="#666">Providers</text>
+  <line x1="585" y1="728" x2="615" y2="728" stroke="#666" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="622" y="732" font-size="11" fill="#666">planned</text>
+</svg>
