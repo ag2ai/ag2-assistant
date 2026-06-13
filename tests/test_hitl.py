@@ -33,6 +33,16 @@ def test_render_body_options_and_freetext():
     assert "freetext" in free  # free-text input present
 
 
+def test_render_body_onclick_is_escaped():
+    """Regression: option buttons must not put raw double-quotes in onclick="…"
+    (that collision broke the page JS so clicks never resolved)."""
+    from agclaw.hitl.desktop import _render_body
+
+    html_out = _render_body(Question("Pick", options=["Allow once"], kind="permission"))
+    assert 'onclick="answer("' not in html_out  # raw quote collision = broken
+    assert "&quot;" in html_out  # escaped JS-string quotes
+
+
 @pytest.mark.asyncio
 async def test_server_concurrent_requests_resolve_independently():
     server = HitlServer(port=8791)

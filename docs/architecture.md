@@ -7,12 +7,16 @@ AGClaw is a personal AI assistant platform built on AG2 Beta. All backend compon
 ## Implementation status (June 2026)
 
 Built and tested:
-- **Agent** on AG2 0.13.4 / Gemini, with **native AG2 tools** (`DuckDuckSearchTool`, `SandboxShellTool`, `SandboxCodeTool`) + a custom `web_fetch` fallback, selected per provider.
-- **Observer memory** — passive user-profile learning persisted in SQLite via AG2's `KnowledgeStore` + `WorkingMemoryAggregate` + `WorkingMemoryPolicy`.
+- **Agent** on AG2 0.13.4 / Gemini, with **native AG2 tools** (`DuckDuckSearchTool`, `SandboxShellTool`, `SandboxCodeTool`) + a custom `web_fetch` fallback, plus a permission-gated `read_file` (vision for PDFs/images), selected per provider.
+- **Skills** — `SkillSearchToolkit`: the agent searches/installs/runs skills from the skills.sh registry.
+- **Observer memory** — passive user-profile learning persisted in SQLite via AG2's `KnowledgeStore` + `WorkingMemoryAggregate` + `WorkingMemoryPolicy`. (Permission decisions are deliberately excluded from this memory.)
+- **Environment context** — live date/time (system clock) + location, injected per turn.
 - **Gateway facade** — FastAPI REST + WebSocket (`/api/health`, `/api/message`, `/api/ws`) over a per-session conversation manager. Verified: multi-turn recall, session isolation, tool use over HTTP.
+- **Channels** — Telegram, Discord, Slack live (DM + @mention gating, per-channel formatting, in-chat permission buttons).
+- **HITL & turn-level permissions** — pluggable `Asker` (chat buttons / styled desktop browser page), and a single per-turn `PermissionManager` gating folder access and shell/code execution.
 - **Distributed spike** — agent served over WebSocket via AG2 `Hub` + `serve_ws` (`examples/network_gateway_spike.py`).
 
-Not yet built: channel adapters (Telegram/Discord/Slack), UI, skills/plugins.
+Not yet built: web/desktop UI, `agclaw permissions` management CLI, Docker-sandboxed execution.
 
 ### Gateway design note: direct-ask vs Hub
 
@@ -75,13 +79,31 @@ Two distinct concerns:
 
 See `docs/memory.md`.
 
-### 6. Configuration Layer
+### 6. HITL & Permissions Layer  *(built)*
+
+Human-in-the-loop and Claude-Code-style permissions, routed to whatever surface made the request.
+
+**Asking (`agclaw.hitl`)** — a pluggable `Asker` seam:
+- `Asker.ask(Question)` returns the human's answer (a chosen option, or free text).
+- Per-surface implementations: chat buttons (Telegram inline-keyboard, Discord `ui.View`, Slack Block Kit) and a styled **desktop browser page** (`HitlServer` serving concurrent `/hitl/{id}` pages in the ag2.ai look).
+- Wired into the agent two ways: AG2's `hitl_hook` (for `context.input()` open questions) and the permission manager (for approvals).
+- `PendingAsks` correlates a question with its answer per chat; Telegram needs `concurrent_updates(True)` so a tap resolves while the turn is blocked.
+
+**Permissions (`agclaw.permissions`)** — one **turn-level `PermissionManager`** is the single authority for *all* access:
+- Created once per turn (per `send_message`) and injected via `dependencies`; shared by `read_file` (folder access, `check`) and shell/code (command approval, `check_command`).
+- Options: **Allow once / Always allow / Deny**. "Always allow" for a folder persists to `~/.agclaw/permissions.json` (survives turns); turn decisions reset next turn.
+- Shared turn stance: once the user denies anything, further access prompts auto-deny for that turn (no spam, no tool-escalation); denial results tell the model not to retry.
+- Closes the bypass where shell/code could read files outside the `read_file` gate (`require_command_approval` middleware on `SandboxShellTool`/`SandboxCodeTool`).
+- Permission decisions are kept **out of** the observer memory (they're operational, not preferences).
+
+### 7. Configuration Layer
 
 Pydantic-based configuration:
 - **LLM Config**: provider, model, API keys (wraps AG2's provider configs)
-- **Agent Config**: name, system prompt, tools, middleware
-- **Channel Config**: per-channel credentials and settings
-- **Gateway Config**: host, port, auth settings
+- **Agent Config**: name, system prompt, location, tools, middleware
+- **Channel Config**: per-channel credentials (`.env`)
+- **Gateway Config**: host, port
+- **Permissions**: persisted folder grants (`~/.agclaw/permissions.json`)
 
 Loaded from config file + environment variables (.env).
 

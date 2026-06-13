@@ -107,8 +107,12 @@ def _render_body(question: Question) -> str:
             lower = opt.strip().lower()
             cls = "secondary" if lower in deny_words else ("primary" if i == 0 else "")
             esc = html.escape(opt)
+            # The JS call goes inside a double-quoted onclick="…" attribute, so the
+            # whole call (incl. its JSON double-quotes) must be HTML-escaped or the
+            # quotes collide and break the page's JavaScript.
+            onclick = html.escape(f"answer({_js_str(opt)})", quote=True)
             parts.append(
-                f'<button class="{cls}" onclick="answer({_js_str(opt)})">{esc}</button>'
+                f'<button class="{cls}" onclick="{onclick}">{esc}</button>'
             )
         parts.append("</div>")
     else:
