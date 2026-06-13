@@ -55,6 +55,9 @@ and organised under exactly these four headings:
 
 Rules:
 - Only record durable preferences, not one-off facts or task details.
+- NEVER record permission or security decisions (allowing/denying access to
+  folders, files, or running commands). Those are transient operational choices,
+  not preferences — recording them would wrongly make the assistant stop trying.
 - When a preference is clearly tied to a platform, note it, e.g.
   "(on {platform})". Preferences that seem general need no tag.
 - Merge new observations with existing ones; remove anything contradicted.

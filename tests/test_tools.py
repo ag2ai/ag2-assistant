@@ -10,15 +10,16 @@ import pytest
 from agclaw.tools import build_agent_tools
 
 
-def test_build_agent_tools_has_four_capabilities():
+def test_build_agent_tools_has_core_capabilities():
     tools = build_agent_tools(provider="gemini")
     names = {t.name for t in tools}
-    # search, shell, code, fetch
+    # search, shell, code, file read, fetch
     assert "duckduckgo_search" in names
     assert "run_shell_command" in names
     assert "run_code" in names
+    assert "read_file" in names
     assert "web_fetch" in names
-    assert len(tools) == 4
+    assert len(tools) == 5
 
 
 def test_build_agent_tools_gemini_uses_fallback_fetch():

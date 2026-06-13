@@ -18,8 +18,61 @@ import discord
 
 from agclaw.channels.base import Channel, InboundMessage, should_respond
 from agclaw.channels.formatting import split_for_limit
+from agclaw.hitl.base import Asker, Question
+from agclaw.hitl.channel import PendingAsks
 
 DISCORD_LIMIT = 2000
+_ASK_TIMEOUT = 300.0
+
+
+class _AskView(discord.ui.View):
+    """Buttons for a HITL question; the first tap resolves and clears the prompt."""
+
+    def __init__(self, options, channel_id: str, pending: PendingAsks, timeout: float):
+        super().__init__(timeout=timeout)
+        for opt in options:
+            button = discord.ui.Button(label=opt[:80])
+            button.callback = self._make_callback(opt, channel_id, pending)
+            self.add_item(button)
+
+    def _make_callback(self, option: str, channel_id: str, pending: PendingAsks):
+        async def callback(interaction: discord.Interaction) -> None:
+            pending.resolve(channel_id, option)
+            with contextlib.suppress(Exception):
+                await interaction.response.defer()
+            with contextlib.suppress(Exception):
+                await interaction.message.delete()  # transient prompt
+
+        return callback
+
+
+class DiscordAsker:
+    """Asks a question in a specific Discord channel and awaits the answer."""
+
+    def __init__(self, client, channel_id: str, pending: PendingAsks) -> None:
+        self._client = client
+        self._channel_id = channel_id
+        self._pending = pending
+
+    async def ask(self, question: Question, timeout: float | None = None) -> str:
+        channel = self._client.get_channel(int(self._channel_id))
+        if channel is None:
+            channel = await self._client.fetch_channel(int(self._channel_id))
+        text = question.text
+        if question.detail:
+            text += f"\n\n{question.detail}"
+        fut = self._pending.create(self._channel_id)
+        if question.options:
+            view = _AskView(
+                question.options, self._channel_id, self._pending, timeout or _ASK_TIMEOUT
+            )
+            await channel.send(text, view=view)
+        else:
+            await channel.send(text)
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
+        finally:
+            self._pending.discard(self._channel_id)
 
 
 class DiscordChannel(Channel):
@@ -38,6 +91,10 @@ class DiscordChannel(Channel):
         self._gateway = None
         self._task: asyncio.Task | None = None
         self._bot_user_id: int | None = None
+        self._pending = PendingAsks()
+
+    def _asker_for(self, channel_id: str) -> Asker:
+        return DiscordAsker(self._client, channel_id, self._pending)
 
     async def start(self, gateway) -> None:
         self._gateway = gateway
@@ -84,6 +141,15 @@ class DiscordChannel(Channel):
         )
 
     async def on_message(self, message: "discord.Message") -> None:
+        # If a question is awaiting a typed answer in this channel, this message
+        # IS the answer — resolve it instead of starting a new turn.
+        if message.author.bot:
+            return
+        channel_id = str(message.channel.id)
+        if message.content and self._pending.is_awaiting(channel_id):
+            self._pending.resolve(channel_id, message.content)
+            return
+
         inbound = self._normalize(message)
         if inbound is None or not should_respond(inbound):
             return
@@ -91,7 +157,9 @@ class DiscordChannel(Channel):
         async with message.channel.typing():
             try:
                 reply = await self._gateway.send_message(
-                    inbound.text, session_id=inbound.session_id()
+                    inbound.text,
+                    session_id=inbound.session_id(),
+                    asker=self._asker_for(channel_id),
                 )
             except Exception as exc:  # surface failures to the user
                 reply = f"Sorry, something went wrong: {exc}"

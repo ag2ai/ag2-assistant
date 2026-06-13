@@ -37,6 +37,7 @@ class Gateway:
         self._memory = memory
         self._platform = platform
         self._agent = None
+        self._permissions = None
         # session_id -> latest AgentReply in that session's chain
         self._sessions: dict[str, AgentReply] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -44,9 +45,12 @@ class Gateway:
     async def start(self) -> None:
         """Create the shared agent. Direct `ask()` is history-isolated per call,
         so one agent safely backs all sessions (each keeps its own reply chain)."""
+        from agclaw.permissions import PermissionStore
+
         self._agent = create_agent(
             self._config, memory=self._memory, platform=self._platform
         )
+        self._permissions = PermissionStore()
 
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         lock = self._locks.get(session_id)
@@ -55,26 +59,48 @@ class Gateway:
             self._locks[session_id] = lock
         return lock
 
-    async def send_message(self, text: str, session_id: str = "default") -> str:
+    async def send_message(
+        self, text: str, session_id: str = "default", asker=None
+    ) -> str:
         """Send a user message and return the agent's reply.
 
         Each session_id keeps its own multi-turn history. Calls within a single
         session are serialised so the conversation chain stays consistent.
+
+        `asker` (optional) binds human-in-the-loop questions and permission
+        prompts to the surface that made the request (e.g. the chat it came from).
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
+
+        extra = self._ask_kwargs(asker)
 
         async with self._session_lock(session_id):
             prior = self._sessions.get(session_id)
             prompt = turn_prompt(self._config)  # refresh date/time each turn
             coro = (
-                prior.ask(text, prompt=prompt)
+                prior.ask(text, prompt=prompt, **extra)
                 if prior is not None
-                else self._agent.ask(text, prompt=prompt)
+                else self._agent.ask(text, prompt=prompt, **extra)
             )
             reply: AgentReply = await asyncio.wait_for(coro, timeout=REPLY_TIMEOUT)
             self._sessions[session_id] = reply
             return reply.body
+
+    def _ask_kwargs(self, asker) -> dict:
+        """Per-turn hitl_hook + dependencies bound to this request's asker."""
+        from agclaw.permissions import PermissionManager
+
+        # Shared grant store, per-request asker → one PermissionManager per turn.
+        deps: dict = {
+            PermissionManager: PermissionManager(self._permissions, asker)
+        }
+        out: dict = {"dependencies": deps}
+        if asker is not None:
+            from agclaw.hitl import build_hitl_hook
+
+            out["hitl_hook"] = build_hitl_hook(asker)
+        return out
 
     def status(self) -> dict:
         """Lightweight status snapshot for health endpoints."""

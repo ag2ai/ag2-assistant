@@ -20,7 +20,9 @@ def test_environment_context_includes_location_when_set():
 
 
 def test_environment_context_omits_location_when_unset():
-    ctx = environment_context(Config())
+    config = Config()
+    config.agent.location = None  # independent of any AGCLAW_LOCATION env var
+    ctx = environment_context(config)
     assert "User location" not in ctx
 
 

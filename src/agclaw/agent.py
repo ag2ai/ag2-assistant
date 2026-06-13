@@ -10,6 +10,24 @@ from agclaw.config import Config
 from agclaw.memory import build_knowledge_config, profile_assembly
 from agclaw.tools import build_agent_tools
 
+# Commands skill scripts must never run (defense-in-depth; skills can ship code).
+_SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
+
+
+def build_skills_toolkit(config: Config):
+    """A toolkit that lets the agent search, install, and run skills.
+
+    `SkillSearchToolkit` extends the local skills toolkit (list/load/read/run)
+    with registry search + install from skills.sh. Skills install into
+    `config.skills_dir`.
+    """
+    from autogen.beta.tools import SkillSearchToolkit
+    from autogen.beta.tools.skills import LocalRuntime
+
+    config.skills_dir.mkdir(parents=True, exist_ok=True)
+    runtime = LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED)
+    return SkillSearchToolkit(runtime)
+
 
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
@@ -42,6 +60,8 @@ def create_agent(
     memory: bool = True,
     platform: str = "cli",
     knowledge_store=None,
+    skills: bool = True,
+    asker=None,
 ) -> Agent:
     """Create an AGClaw agent with the given configuration.
 
@@ -53,6 +73,9 @@ def create_agent(
         knowledge_store: A shared KnowledgeStore to reuse for the profile. Pass a
             locked/shared store when multiple agents write the same profile (e.g.
             the gateway's per-session agents).
+        skills: Whether to give the agent the skill search/install/run toolkit.
+        asker: An `Asker` for human-in-the-loop questions (routes `context.input()`
+            to the requesting surface). If None, the agent has no HITL hook.
     """
     if config is None:
         config = Config()
@@ -74,13 +97,30 @@ def create_agent(
         )
         assembly = profile_assembly()
 
+    tools = build_agent_tools(config.llm.provider)
+    if skills:
+        tools.append(build_skills_toolkit(config))
+
+    from agclaw.permissions import PermissionManager
+
+    # One injected authority for all permission decisions.
+    dependencies: dict = {PermissionManager: PermissionManager(asker=asker)}
+
+    hitl_hook = None
+    if asker is not None:
+        from agclaw.hitl import build_hitl_hook
+
+        hitl_hook = build_hitl_hook(asker)
+
     agent = Agent(
         config.agent.name,
         prompt=config.agent.system_prompt,
         config=llm_config,
-        tools=build_agent_tools(config.llm.provider),
+        tools=tools,
         knowledge=knowledge,
         assembly=assembly,
+        hitl_hook=hitl_hook,
+        dependencies=dependencies,
     )
 
     return agent
@@ -91,10 +131,11 @@ async def ask(
     config: Config | None = None,
     memory: bool = True,
     platform: str = "cli",
+    asker=None,
 ) -> str:
     """Send a message to the agent and return the response."""
     if config is None:
         config = Config()
-    agent = create_agent(config, memory=memory, platform=platform)
+    agent = create_agent(config, memory=memory, platform=platform, asker=asker)
     reply = await agent.ask(message, prompt=turn_prompt(config))
     return reply.body

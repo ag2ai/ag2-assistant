@@ -28,6 +28,8 @@ from autogen.beta.tools import (
     WebFetchTool,
 )
 
+from agclaw.tools.approval import require_command_approval
+from agclaw.tools.files import read_file
 from agclaw.tools.web_fetch import web_fetch, web_fetch_tool
 
 # Providers that allow the native server-side WebFetchTool alongside function tools.
@@ -45,10 +47,13 @@ def build_agent_tools(provider: str = "gemini") -> list:
             Determines whether the native WebFetchTool is used or the custom
             portable fallback.
     """
+    # Button-based approval gate so shell/code can't bypass file permissions.
+    approval = require_command_approval()
     tools = [
         DuckDuckSearchTool(max_results=5),
-        SandboxShellTool(blocked=_SHELL_BLOCKED),
-        SandboxCodeTool(environment=LocalEnvironment()),
+        SandboxShellTool(blocked=_SHELL_BLOCKED, middleware=[approval]),
+        SandboxCodeTool(environment=LocalEnvironment(), middleware=[approval]),
+        read_file,  # permission-gated local file reading (vision for PDFs/images)
     ]
 
     if provider in _NATIVE_WEB_FETCH_PROVIDERS:
@@ -61,6 +66,7 @@ def build_agent_tools(provider: str = "gemini") -> list:
 
 __all__ = [
     "build_agent_tools",
+    "read_file",
     "web_fetch",
     "web_fetch_tool",
 ]

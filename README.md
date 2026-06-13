@@ -117,9 +117,9 @@ AGClaw is in early development. See [docs/plan.md](docs/plan.md) for the full ro
 - [x] Observer memory (passively learns your preferences, persists across sessions)
 - [x] Multi-turn conversations (per-session isolation)
 - [x] Gateway (REST + WebSocket API; distributed Hub spike)
-- [x] Telegram channel (DM + group @mention gating) — *needs a bot token to run live*
-- [ ] More channels (Discord, Slack, WhatsApp)
-- [ ] Skills & plugins
+- [x] Channels: Telegram, Discord, Slack (DM + group @mention gating)
+- [x] Skills — searches & installs from the skills.sh registry, runs them
+- [ ] More channels (WhatsApp), web UI
 - [ ] Memory & context management
 - [ ] Web UI
 

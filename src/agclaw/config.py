@@ -39,3 +39,5 @@ class Config(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw")
+    # Where installed skills live (SKILL.md packages).
+    skills_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw" / "skills")

@@ -7,13 +7,59 @@ Responds to all direct messages and to @mentions in channels. Uses Slack's
   - SLACK_APP_TOKEN  (xapp-…)  app-level token with connections:write (Socket Mode)
 """
 
+import asyncio
+import contextlib
 import os
 import re
 
 from agclaw.channels.base import Channel, InboundMessage, should_respond
 from agclaw.channels.formatting import markdown_to_slack, split_for_limit
+from agclaw.hitl.base import Asker, Question
+from agclaw.hitl.channel import PendingAsks
 
 SLACK_LIMIT = 3500
+_ASK_TIMEOUT = 300.0
+_ACTION_RE = re.compile(r"agclaw_opt_\d+")
+
+
+class SlackAsker:
+    """Asks a question in a specific Slack channel and awaits the answer."""
+
+    def __init__(self, client, channel_id: str, pending: PendingAsks) -> None:
+        self._client = client
+        self._channel_id = channel_id
+        self._pending = pending
+
+    async def ask(self, question: Question, timeout: float | None = None) -> str:
+        text = question.text
+        if question.detail:
+            text += f"\n\n{question.detail}"
+        fut = self._pending.create(self._channel_id)
+        if question.options:
+            blocks = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": opt[:75]},
+                            "value": opt,
+                            "action_id": f"agclaw_opt_{i}",
+                        }
+                        for i, opt in enumerate(question.options)
+                    ],
+                },
+            ]
+            await self._client.chat_postMessage(
+                channel=self._channel_id, text=text, blocks=blocks
+            )
+        else:
+            await self._client.chat_postMessage(channel=self._channel_id, text=text)
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
+        finally:
+            self._pending.discard(self._channel_id)
 
 
 class SlackChannel(Channel):
@@ -31,6 +77,10 @@ class SlackChannel(Channel):
         self._handler = None
         self._gateway = None
         self._bot_user_id: str | None = None
+        self._pending = PendingAsks()
+
+    def _asker_for(self, channel_id: str) -> Asker:
+        return SlackAsker(self._app.client, channel_id, self._pending)
 
     async def start(self, gateway) -> None:
         from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
@@ -40,6 +90,7 @@ class SlackChannel(Channel):
         self._app = AsyncApp(token=self._bot_token)
         self._app.event("app_mention")(self._handle_app_mention)
         self._app.event("message")(self._handle_message)
+        self._app.action(_ACTION_RE)(self._on_action)
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
 
         auth = await self._app.client.auth_test()
@@ -85,11 +136,42 @@ class SlackChannel(Channel):
             raw=event,
         )
 
+    async def _on_action(self, ack, body, action, client) -> None:
+        """A HITL button was tapped — resolve the pending question."""
+        await ack()
+        channel = body.get("channel", {}).get("id")
+        answer = action.get("value", "")
+        if channel:
+            self._pending.resolve(channel, answer)
+            ts = body.get("message", {}).get("ts")
+            if ts:
+                with contextlib.suppress(Exception):
+                    await client.chat_delete(channel=channel, ts=ts)
+
     async def _handle_app_mention(self, event, say, client) -> None:
+        if self._route_pending_answer(event):
+            return
         await self._respond(self._mention_inbound(event), say, client, event)
 
     async def _handle_message(self, event, say, client) -> None:
+        if self._route_pending_answer(event):
+            return
         await self._respond(self._dm_inbound(event), say, client, event)
+
+    def _route_pending_answer(self, event: dict) -> bool:
+        """If a question awaits a typed answer in this channel, resolve it."""
+        channel = event.get("channel")
+        text = event.get("text")
+        if (
+            channel
+            and text
+            and not event.get("bot_id")
+            and event.get("user") != self._bot_user_id
+            and self._pending.is_awaiting(channel)
+        ):
+            self._pending.resolve(channel, text)
+            return True
+        return False
 
     async def _respond(self, inbound: InboundMessage | None, say, client, event) -> None:
         if inbound is None or not should_respond(inbound):
@@ -108,7 +190,9 @@ class SlackChannel(Channel):
 
         try:
             reply = await self._gateway.send_message(
-                inbound.text, session_id=inbound.session_id()
+                inbound.text,
+                session_id=inbound.session_id(),
+                asker=self._asker_for(channel) if channel else None,
             )
         except Exception as exc:  # surface failures to the user
             reply = f"Sorry, something went wrong: {exc}"

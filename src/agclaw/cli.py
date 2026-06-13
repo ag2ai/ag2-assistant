@@ -15,11 +15,26 @@ def agent(
     message: str = typer.Argument(help="Message to send to the agent"),
     memory: bool = typer.Option(True, help="Use the persistent user-profile memory."),
     platform: str = typer.Option("cli", help="Platform this session is on."),
+    permissions: bool = typer.Option(
+        True, help="Enable desktop permission/HITL prompts (browser popup)."
+    ),
 ) -> None:
     """Send a message to the AGClaw agent."""
     config = Config()
-    response = asyncio.run(ask(message, config, memory=memory, platform=platform))
-    typer.echo(response)
+
+    async def run() -> str:
+        asker = None
+        if permissions:
+            from agclaw.hitl import DesktopAsker
+
+            asker = DesktopAsker()
+        try:
+            return await ask(message, config, memory=memory, platform=platform, asker=asker)
+        finally:
+            if asker is not None:
+                await asker.aclose()
+
+    typer.echo(asyncio.run(run()))
 
 
 profile_app = typer.Typer(help="Inspect or manage the learned user profile.")

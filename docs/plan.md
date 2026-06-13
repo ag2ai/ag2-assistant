@@ -1,5 +1,13 @@
 # AGClaw - Project Plan
 
+## Backlog / Ideas
+
+- **Onboarding — get to know the user (seeded question set).** A first-run flow that proactively asks a short set of high-value questions instead of waiting to learn them passively. Captures things the agent keeps needing: **location/timezone, working hours, name, preferred tone, channels, do-not-disturb**, etc.
+  - *Mechanism:* reuse the HITL `Asker` (buttons/free-text) so onboarding runs on whichever surface started it (desktop popup, or a chat). A `agclaw onboard` command + auto-trigger on first interaction when the profile is empty.
+  - *Storage:* answers seed the profile memory (`/memory/working.md`) and, where structured, config (e.g. write `AGCLAW_LOCATION`). The passive observer then keeps refining over time.
+  - *Why:* the location gap (agent didn't know the city) is exactly the kind of fact this fixes up-front. Ties together observer memory + HITL + config.
+  - *Keep it light:* 4–6 questions max, skippable, re-runnable; don't interrogate.
+
 ## Progress
 
 | Phase | Status | Summary |
@@ -7,10 +15,32 @@
 | Phase 1: Core Agent Runtime | 🟢 Mostly Done | Agent + CLI + Config + 4 custom tools working on AG2 0.13.4 / Gemini. 22 unit tests pass |
 | Phase 2: Gateway & API | 🟢 Core Done | FastAPI facade (`agclaw gateway`): REST `/api/message` + WS `/api/ws` + health. Per-session isolated multi-turn, tool use over HTTP — all verified. Distributed Hub option spiked (`examples/network_gateway_spike.py`) |
 | Phase 3: Channel Integrations | 🟢 Telegram + Discord + Slack Live | Three adapters live-verified (DM + @mention gating, memory, tools, per-channel formatting, live date/time/location). Slack adds 👀 reaction while working. WhatsApp next |
-| Phase 4: Skills & Plugins | ⬜ Not Started | |
+| Phase 4: Skills & Plugins | 🟢 Core Done | Agent has AG2's `SkillSearchToolkit` — searches skills.sh registry, installs, and runs skills (progressive disclosure). Live-verified registry search. Skills install to `~/.agclaw/skills` |
 | Phase 5: Memory & Intelligence | 🟡 In Progress | User-profile observer memory built (SQLite, passive, platform-tagged). Works end-to-end across processes |
 | Phase 6: UI | ⬜ Not Started (deferred) | |
 | Phase 7: Advanced Features | ⬜ Not Started | AG2 0.13 network/distributed now available — reshapes this phase |
+| HITL & Permissions | 🟡 In Progress | Pluggable `Asker` seam (via AG2 `hitl_hook`) + styled desktop `/hitl/{id}` pages (concurrent, AG2-branded). Core done; channel askers + permission store + attachments next |
+
+### HITL & Permissions Detail
+
+Goal: permission-gated resource access (Claude-Code-style) and channel-routed human questions.
+
+- [x] `Asker` protocol + `build_hitl_hook()` adapter (`agclaw/hitl/base.py`) — wires to AG2 `context.input()`/`hitl_hook`
+- [x] `DesktopAsker` + `HitlServer` — concurrent `/hitl/{id}` pages, per-request future registry, browser auto-open, styled to ag2.ai (Playfair Display + Open Sauce + coral #F95339). Verified visually + 5 unit tests
+- [x] `create_agent(asker=...)` wiring + `agclaw agent` defaults to DesktopAsker
+- [x] `PermissionStore` (persistent `~/.agclaw/permissions.json`) — per-folder grants, ancestor coverage, Once / Always / Deny via `request_access()`
+- [x] `read_file` tool — permission-gated, returns PDFs/images as `DocumentInput`/`ImageInput` for **vision** reading (works on scanned docs), text files as text. Live-verified reading a real scanned PDF end-to-end (permission gate → vision → correct summary)
+- [x] **Centralised `PermissionManager`** — single injected authority (store + asker + `check()` decision); tools call one method. `request_access` kept as a shim
+- [x] Telegram channel asker — inline-keyboard buttons, free-text routing (next message = answer), `concurrent_updates(True)` to avoid the await-the-tap deadlock, transient prompt (deleted after answer). **Live-verified**
+- [x] Discord channel asker — `discord.ui.View` buttons, free-text routing, transient prompt (events dispatched concurrently → no deadlock). **Live-verified**
+- [x] Slack channel asker — Block Kit buttons + `@app.action` handler, free-text routing, transient prompt (chat_delete). **Live-verified**
+- [x] **Closed the shell/code bypass** — `SandboxShellTool`/`SandboxCodeTool` now carry `approval_required()` middleware routed through the HITL asker, so the agent can't re-route a denied `read_file` via `cat`/code. Verified: Deny now yields `CANNOT_ACCESS` across all 3 file-access paths. (Fixed a `build_hitl_hook` forward-ref annotation bug surfaced by first real hitl_hook use.)
+- [x] **Button-based command approval** (`tools/approval.py`, `require_command_approval`) — shell/code now prompt with the same Allow once / Always allow / Deny **buttons** as folder permissions (replaces AG2's free-text `approval_required`). "Always allow" is per-conversation (`context.variables`). Verified deny→`CANNOT_ACCESS`, allow→proceeds, across the button path
+- [x] **Unified turn-level permission management** — the per-turn `PermissionManager` is now the single authority for **both** folder access (`read_file`) and command execution (shell/code via `check_command`). One shared turn-scoped decision context: persistent folder grants + turn-scoped allows/denies + a shared "user denied something this turn → stop asking" stance. Command approval no longer uses `context.variables` (removed the fragile path that caused the intermittent "Sorry, something went wrong"). Denial results tell the model not to retry. Verified: deny → `ASKED=1` → `CANNOT_ACCESS`, no escalation, no crash. Button UX consistent across folders + commands.
+- [x] **Fixed observer-memory poisoning permissions** — the profile aggregator was recording permission *denials* as a durable "dislike" ("denies access to Downloads/shell"), which `WorkingMemoryPolicy` injected every turn → the agent preemptively refused file access **without prompting** (and it survived restarts via `profile.db`). Fix: aggregation prompt now explicitly **never records permission/security decisions** (they're transient, not preferences); cleaned the bad entry from the live profile. Lesson: keep operational state (permissions) out of the durable preference memory.
+- [ ] Polish: `agclaw permissions` CLI (list/revoke grants, persistent "block"); optional Docker sandbox for stronger isolation + less prompting
+- [ ] Chat attachments — file dropped in a channel → download → `DocumentInput`
+- [ ] Mount HITL routes on the gateway (so the running gateway serves them) + request timeouts
 
 ### Phase 1 Detail
 
@@ -60,6 +90,15 @@
 - [x] Slack adapter (`slack-bolt`, Socket Mode) — DM + @mention gating, Markdown→Slack-mrkdwn conversion, 3500-char chunking, 👀 reaction added while working / removed on reply; 19 unit tests. **Live-verified** (needs `message.im` event + `im:history`/`reactions:write` scopes + reinstall; Messages Tab must be enabled in App Home for DMs)
 - [ ] WhatsApp
 - [ ] Combined runner (REST + channels in one process) and media/attachments
+
+### Phase 4 Detail — Skills (core done)
+
+- [x] `SkillSearchToolkit` wired via `build_skills_toolkit()` — search/install/remove (skills.sh registry) + list/load/read/run (local), progressive disclosure
+- [x] Skills install to `config.skills_dir` (`~/.agclaw/skills`); `LocalRuntime` with blocked-command safety list
+- [x] `create_agent(skills=True)` (on by default; flows through CLI/gateway/channels)
+- [x] Unit tests (toolkit build, tool surface, agent wiring) + live registry-search test (found real skills, e.g. `pdftk-server`)
+- [ ] Optional: `GITHUB_TOKEN` for higher registry rate limits (60/hr unauth)
+- [ ] Sandbox skill script execution (Docker) for stronger isolation; AGClaw-bundled skills
 
 ### Docs
 

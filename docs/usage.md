@@ -302,6 +302,26 @@ Customize your agent's personality by editing the system prompt in `~/.agclaw/co
 }
 ```
 
+## Skills — AGClaw can extend itself
+
+AGClaw can search a public skills registry ([skills.sh](https://skills.sh)),
+install skills, and use them — all on its own, mid-conversation. A skill is a
+`SKILL.md` instruction package (optionally with scripts/resources).
+
+Just ask:
+
+```
+"Find a skill for working with PDFs, install it, and use it to summarise report.pdf."
+"What skills do you have installed?"
+```
+
+The agent searches, installs to `~/.agclaw/skills`, and loads instructions only
+when needed (progressive disclosure, so it stays token-cheap). Optional: set
+`GITHUB_TOKEN` in `.env` for higher registry rate limits.
+
+> Skills can ship runnable scripts. AGClaw blocks obviously dangerous commands,
+> but only install skills you trust. Stronger sandboxing (Docker) is planned.
+
 ## Memory — AGClaw learns about you
 
 AGClaw passively builds a profile of how you like to work and remembers it across conversations and platforms. It tracks how you like things done, when you like them done, what you dislike, and how you write.
