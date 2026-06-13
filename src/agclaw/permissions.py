@@ -25,6 +25,7 @@ class PermissionStore:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or (Path.home() / ".agclaw" / "permissions.json")
         self._granted: set[str] = set()
+        self._blocked: set[str] = set()
         self._load()
 
     def _load(self) -> None:
@@ -32,21 +33,34 @@ class PermissionStore:
             try:
                 data = json.loads(self._path.read_text())
                 self._granted = set(data.get("folders", []))
+                self._blocked = set(data.get("blocked", []))
             except Exception:
-                self._granted = set()
+                self._granted, self._blocked = set(), set()
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps({"folders": sorted(self._granted)}, indent=2))
+        self._path.write_text(
+            json.dumps(
+                {"folders": sorted(self._granted), "blocked": sorted(self._blocked)},
+                indent=2,
+            )
+        )
 
-    def is_allowed(self, folder) -> bool:
-        """True if the folder or any ancestor has been granted."""
-        folder = _norm(folder)
-        for g in self._granted:
+    @staticmethod
+    def _covers(folders: set[str], folder: Path) -> bool:
+        for g in folders:
             gp = Path(g)
             if folder == gp or gp in folder.parents:
                 return True
         return False
+
+    def is_allowed(self, folder) -> bool:
+        """True if the folder or any ancestor has been granted."""
+        return self._covers(self._granted, _norm(folder))
+
+    def is_blocked(self, folder) -> bool:
+        """True if the folder or any ancestor is permanently blocked."""
+        return self._covers(self._blocked, _norm(folder))
 
     def grant(self, folder) -> None:
         self._granted.add(str(_norm(folder)))
@@ -60,8 +74,26 @@ class PermissionStore:
             return True
         return False
 
+    def block(self, folder) -> None:
+        """Permanently deny a folder (and remove any conflicting grant)."""
+        key = str(_norm(folder))
+        self._blocked.add(key)
+        self._granted.discard(key)
+        self._save()
+
+    def unblock(self, folder) -> bool:
+        key = str(_norm(folder))
+        if key in self._blocked:
+            self._blocked.discard(key)
+            self._save()
+            return True
+        return False
+
     def granted_folders(self) -> list[str]:
         return sorted(self._granted)
+
+    def blocked_folders(self) -> list[str]:
+        return sorted(self._blocked)
 
 
 class PermissionManager:
@@ -93,6 +125,8 @@ class PermissionManager:
         target = Path(target).expanduser()
         folder = _norm(target if target.is_dir() else target.parent)
 
+        if self.store.is_blocked(folder):
+            return False  # permanently blocked → never ask
         if self.store.is_allowed(folder):
             return True
         if str(folder) in self._denied_folders or self._any_denied:

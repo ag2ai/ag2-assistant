@@ -57,7 +57,9 @@ def _fake_update(text, chat_type="private", chat_id=42, user_id=7, reply_to_bot=
     if reply_to_bot:
         reply_to = SimpleNamespace(from_user=SimpleNamespace(id=999))
     message = SimpleNamespace(
-        text=text, chat=chat, from_user=from_user, reply_to_message=reply_to
+        text=text, caption=None, chat=chat, from_user=from_user,
+        reply_to_message=reply_to,
+        document=None, photo=None, audio=None, voice=None, video=None,
     )
     return SimpleNamespace(message=message)
 
@@ -100,8 +102,22 @@ def test_normalize_group_reply_to_bot_counts_as_mention():
 
 def test_normalize_ignores_non_text():
     ch = _telegram_channel()
-    update = SimpleNamespace(message=SimpleNamespace(text=None))
-    assert ch._normalize(update) is None
+    msg = SimpleNamespace(
+        text=None, caption=None,
+        document=None, photo=None, audio=None, voice=None, video=None,
+    )
+    assert ch._normalize(SimpleNamespace(message=msg)) is None
+
+
+def test_normalize_accepts_attachment_only_dm():
+    """A photo with no caption is still a message to handle."""
+    ch = _telegram_channel()
+    update = _fake_update(None, chat_type="private")
+    update.message.photo = [SimpleNamespace(file_id="abc")]
+    inbound = ch._normalize(update)
+    assert inbound is not None
+    assert inbound.is_direct is True
+    assert inbound.text == ""
 
 
 def test_telegram_requires_token(monkeypatch):

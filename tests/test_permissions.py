@@ -51,6 +51,36 @@ def test_revoke(tmp_path):
     assert store.is_allowed(tmp_path / "docs") is False
 
 
+def test_block_and_unblock(tmp_path):
+    store = PermissionStore(path=tmp_path / "p.json")
+    store.block(tmp_path / "secret")
+    assert store.is_blocked(tmp_path / "secret") is True
+    assert store.is_blocked(tmp_path / "secret" / "sub") is True  # ancestor covers
+    # persists
+    assert PermissionStore(path=tmp_path / "p.json").is_blocked(tmp_path / "secret")
+    assert store.unblock(tmp_path / "secret") is True
+    assert store.is_blocked(tmp_path / "secret") is False
+
+
+def test_block_removes_existing_grant(tmp_path):
+    store = PermissionStore(path=tmp_path / "p.json")
+    store.grant(tmp_path / "x")
+    store.block(tmp_path / "x")
+    assert store.is_allowed(tmp_path / "x") is False
+    assert store.is_blocked(tmp_path / "x") is True
+
+
+async def test_manager_blocked_never_asks(tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    store = PermissionStore(path=tmp_path / "p.json")
+    store.block(tmp_path)
+    asker = FakeAsker(ALWAYS_ALLOW)
+    mgr = PermissionManager(store, asker)
+    assert await mgr.check(f) is False
+    assert asker.asked == 0  # blocked → never prompts
+
+
 async def test_request_access_already_allowed_does_not_ask(tmp_path):
     store = PermissionStore(path=tmp_path / "p.json")
     store.grant(tmp_path)

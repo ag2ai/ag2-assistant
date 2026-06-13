@@ -33,11 +33,31 @@ class AgentConfig(BaseModel):
     )
 
 
+class ToolsConfig(BaseModel):
+    """Configuration for the agent's execution tools (shell/code)."""
+
+    # "local" = subprocess on the host (command-filtered + approval-gated).
+    # "docker" = isolated container with no host FS access (approval dropped).
+    sandbox: str = Field(
+        default_factory=lambda: os.environ.get("AGCLAW_SANDBOX", "local")
+    )
+    docker_image: str = Field(
+        default_factory=lambda: os.environ.get(
+            "AGCLAW_DOCKER_IMAGE", "python:3.12-slim"
+        )
+    )
+    # "bridge" allows outbound network (pip, fetches); "none" is strictest.
+    docker_network: str = Field(
+        default_factory=lambda: os.environ.get("AGCLAW_DOCKER_NETWORK", "bridge")
+    )
+
+
 class Config(BaseModel):
     """Root AGClaw configuration."""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw")
     # Where installed skills live (SKILL.md packages).
     skills_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw" / "skills")

@@ -89,6 +89,39 @@ Each `session_id` keeps its own isolated multi-turn conversation. For
 distributed/multi-agent deployments, the agent can also be served over WebSocket
 through an AG2 Hub — see `examples/network_gateway_spike.py`.
 
+### `agclaw run`
+
+Run **everything in one process** — the REST/WebSocket gateway plus every channel
+whose token is configured (Telegram/Discord/Slack), all sharing one agent and one
+learned profile.
+
+```bash
+agclaw run                      # REST/WS on :8800 + all configured channels
+agclaw run --no-rest            # channels only, no HTTP API
+agclaw run --port 9000          # REST/WS on a different port
+agclaw run --sandbox docker     # run shell/code in an isolated container
+```
+
+AGClaw starts only the channels it finds tokens for, so set whichever of
+`TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN`+`SLACK_APP_TOKEN`
+you want live. Press Ctrl+C to stop everything cleanly.
+
+### `agclaw onboard`
+
+Run the first-run interview — AGClaw asks your name, location, working hours, and
+preferred answer style (all skippable), then seeds its profile and `AGCLAW_LOCATION`
+so it starts out knowing the basics.
+
+```bash
+agclaw onboard            # ask the questions (desktop popup)
+agclaw onboard --force    # re-run even if already onboarded
+```
+
+This runs **automatically the first time** you talk to AGClaw (on the CLI or any
+channel) when there's no profile yet — answered through the same surface you're on
+(the desktop popup, or buttons/free-text in your chat). It's asked once; the marker
+lives at `~/.agclaw/onboarded`.
+
 ### `agclaw setup` (coming soon)
 
 Interactive setup wizard for first-time configuration.
@@ -120,6 +153,14 @@ agclaw status
 ## Messaging Channels
 
 AGClaw connects to your favorite messaging platforms. Your agent responds to direct messages and can be mentioned in group chats.
+
+### Attachments
+
+Drop a file into any chat (Telegram, Discord, or Slack) and AGClaw reads it:
+images and PDFs are understood visually, audio/video go to the model natively
+(provider permitting), and text/code files are inlined. Add a caption to ask
+something specific ("summarise this PDF"), or send the file on its own. Slack
+needs the `files:read` scope for this to work.
 
 ### Telegram
 
@@ -341,6 +382,54 @@ agclaw agent "..." --no-memory
 ```
 
 The profile is stored locally at `~/.agclaw/profile.db`. See [memory.md](memory.md) for the full design.
+
+## Permissions — control what AGClaw can access
+
+The first time AGClaw wants to read a folder (or run a shell/code command), it asks
+you: **Allow once / Always allow / Deny** — as buttons in chat, or a styled page
+on the desktop. "Always allow" is remembered; denials apply for that turn only.
+
+Manage grants from the CLI:
+
+```bash
+agclaw permissions list                       # show allowed + blocked folders
+agclaw permissions allow ~/Documents          # pre-grant a folder
+agclaw permissions revoke ~/Documents         # undo a grant
+agclaw permissions block ~/private            # permanently deny (never asks)
+agclaw permissions unblock ~/private          # remove the block
+```
+
+Grants/blocks persist in `~/.agclaw/permissions.json`.
+
+## Sandbox — where shell/code runs
+
+AGClaw can run shell commands and execute code. Two backends:
+
+| Backend | Isolation | Prompting |
+|---|---|---|
+| `local` (default) | Runs on your host; a blocklist filters obvious damage | Asks approval (Allow once / Always / Deny) before each command |
+| `docker` | Runs in a throwaway container with **no access to your files** | No prompt — the container is the boundary |
+
+```bash
+agclaw agent "run my tests" --sandbox docker
+agclaw run --sandbox docker
+# or set it once:
+echo "AGCLAW_SANDBOX=docker" >> .env
+```
+
+The Docker backend starts a container per session (default image
+`python:3.12-slim`), runs every shell/code call inside it, and removes it on exit —
+nothing the model runs can touch your filesystem. Tune it via `.env`:
+
+```env
+AGCLAW_SANDBOX=docker
+AGCLAW_DOCKER_IMAGE=python:3.12-slim
+AGCLAW_DOCKER_NETWORK=bridge   # "none" for the strictest (offline) isolation
+```
+
+If `--sandbox docker` is requested but Docker isn't running, AGClaw falls back to
+the local backend (with approval prompts) and warns. `read_file` always stays
+permission-gated regardless of backend, since it reads your **host** files.
 
 ## Sessions
 

@@ -38,6 +38,44 @@ async def test_send_message_returns_reply(fake_gateway):
     assert reply == "echo[1]: hello"
 
 
+async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
+    """First message with an asker triggers onboarding exactly once."""
+    import agclaw.onboarding as onboarding
+
+    calls = {"check": 0, "run": 0}
+
+    async def fake_needs(*a, **k):
+        calls["check"] += 1
+        return True
+
+    async def fake_run(asker, *a, **k):
+        calls["run"] += 1
+        return {}
+
+    monkeypatch.setattr(onboarding, "needs_onboarding", fake_needs)
+    monkeypatch.setattr(onboarding, "run_onboarding", fake_run)
+    fake_gateway._memory = True  # onboarding only runs when memory is on
+
+    class _Asker:
+        async def ask(self, q, timeout=None):
+            return "x"
+
+    asker = _Asker()
+    await fake_gateway.send_message("hi", session_id="s1", asker=asker)
+    await fake_gateway.send_message("again", session_id="s1", asker=asker)
+    assert calls["run"] == 1  # onboarded once, not on every message
+
+
+async def test_gateway_skips_onboarding_without_asker(fake_gateway, monkeypatch):
+    import agclaw.onboarding as onboarding
+
+    async def boom(*a, **k):
+        raise AssertionError("should not be called without an asker")
+
+    monkeypatch.setattr(onboarding, "needs_onboarding", boom)
+    await fake_gateway.send_message("hi", session_id="s1")  # no asker → no onboarding
+
+
 async def test_session_keeps_multi_turn_history(fake_gateway):
     await fake_gateway.send_message("first", session_id="s1")
     reply = await fake_gateway.send_message("second", session_id="s1")
@@ -82,6 +120,22 @@ def test_rest_message_endpoint(monkeypatch):
         body = resp.json()
         assert body["reply"] == "echo[1]: hi there"
         assert body["session_id"] == "u1"
+
+
+def test_create_app_shares_injected_gateway(fake_gateway):
+    """When a gateway is injected (combined `agclaw run`), the app reuses it
+    rather than creating its own, and doesn't tear it down on shutdown."""
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+
+    app = app_mod.create_app(gateway=fake_gateway)
+    with TestClient(app) as client:
+        resp = client.post("/api/message", json={"text": "hi", "session_id": "u1"})
+        assert resp.json()["reply"] == "echo[1]: hi"
+    # the same shared gateway holds the session, and survives app shutdown
+    assert fake_gateway.status()["sessions"] == 1
+    assert fake_gateway.status()["status"] == "ok"
 
 
 def test_ws_message_roundtrip(monkeypatch):

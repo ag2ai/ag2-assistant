@@ -32,10 +32,13 @@ class Gateway:
         config: Config | None = None,
         memory: bool = True,
         platform: str = "gateway",
+        onboard: bool = True,
     ) -> None:
         self._config = config or Config()
         self._memory = memory
         self._platform = platform
+        self._onboard = onboard
+        self._onboarding_done = False
         self._agent = None
         self._permissions = None
         # session_id -> latest AgentReply in that session's chain
@@ -60,7 +63,11 @@ class Gateway:
         return lock
 
     async def send_message(
-        self, text: str, session_id: str = "default", asker=None
+        self,
+        text: str,
+        session_id: str = "default",
+        asker=None,
+        attachments: list | None = None,
     ) -> str:
         """Send a user message and return the agent's reply.
 
@@ -69,23 +76,54 @@ class Gateway:
 
         `asker` (optional) binds human-in-the-loop questions and permission
         prompts to the surface that made the request (e.g. the chat it came from).
+
+        `attachments` (optional) is a list of AG2 multimodal `Input`s (built from
+        files dropped into the chat) sent alongside the text.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
 
+        await self._maybe_onboard(asker)
+
         extra = self._ask_kwargs(asker)
+        # The user turn is the text plus any attachments, as positional inputs.
+        msg = [text, *(attachments or [])]
 
         async with self._session_lock(session_id):
             prior = self._sessions.get(session_id)
             prompt = turn_prompt(self._config)  # refresh date/time each turn
             coro = (
-                prior.ask(text, prompt=prompt, **extra)
+                prior.ask(*msg, prompt=prompt, **extra)
                 if prior is not None
-                else self._agent.ask(text, prompt=prompt, **extra)
+                else self._agent.ask(*msg, prompt=prompt, **extra)
             )
             reply: AgentReply = await asyncio.wait_for(coro, timeout=REPLY_TIMEOUT)
             self._sessions[session_id] = reply
             return reply.body
+
+    async def _maybe_onboard(self, asker) -> None:
+        """Run first-run onboarding once, via the asker that made this request.
+
+        Guarded so it fires at most once per process and only when we have a way
+        to ask (an `asker`), memory is on, and there's no profile yet. Runs
+        before the session lock so the onboarding prompts aren't serialised
+        behind the message that triggered them.
+        """
+        if (
+            self._onboarding_done
+            or not self._onboard
+            or not self._memory
+            or asker is None
+        ):
+            return
+        self._onboarding_done = True  # set first: never double-prompt, even on error
+        from agclaw.onboarding import needs_onboarding, run_onboarding
+
+        try:
+            if await needs_onboarding():
+                await run_onboarding(asker)
+        except Exception:
+            pass  # onboarding is best-effort; never block the actual message
 
     def _ask_kwargs(self, asker) -> dict:
         """Per-turn hitl_hook + dependencies bound to this request's asker."""

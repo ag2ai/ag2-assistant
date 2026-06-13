@@ -23,6 +23,25 @@ from agclaw.hitl.channel import PendingAsks
 
 DISCORD_LIMIT = 2000
 _ASK_TIMEOUT = 300.0
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+
+async def _download_attachments(message: "discord.Message") -> list:
+    """Download a Discord message's attachments and build AG2 multimodal inputs."""
+    from agclaw.attachments import build_input
+
+    inputs = []
+    for att in message.attachments:
+        if att.size and att.size > _MAX_ATTACHMENT_BYTES:
+            continue
+        try:
+            data = await att.read()
+        except Exception:
+            continue  # skip what we can't fetch; the text still goes through
+        inp = build_input(data, att.filename, att.content_type)
+        if inp is not None:
+            inputs.append(inp)
+    return inputs
 
 
 class _AskView(discord.ui.View):
@@ -116,7 +135,7 @@ class DiscordChannel(Channel):
     def _normalize(self, message: "discord.Message") -> InboundMessage | None:
         if message.author.bot:  # ignore bots (and ourselves) — avoids loops
             return None
-        if not message.content:
+        if not message.content and not message.attachments:
             return None
 
         is_direct = message.guild is None
@@ -155,11 +174,16 @@ class DiscordChannel(Channel):
             return
 
         async with message.channel.typing():
+            attachments = await _download_attachments(message)
+            text = inbound.text or (
+                "Here is a file I'm sharing with you." if attachments else ""
+            )
             try:
                 reply = await self._gateway.send_message(
-                    inbound.text,
+                    text,
                     session_id=inbound.session_id(),
                     asker=self._asker_for(channel_id),
+                    attachments=attachments,
                 )
             except Exception as exc:  # surface failures to the user
                 reply = f"Sorry, something went wrong: {exc}"

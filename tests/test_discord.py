@@ -15,7 +15,10 @@ def _discord_channel():
     return ch
 
 
-def _fake_message(content, guild=True, channel_id=42, author_id=7, author_bot=False, mentions=()):
+def _fake_message(
+    content, guild=True, channel_id=42, author_id=7, author_bot=False,
+    mentions=(), attachments=(),
+):
     author = SimpleNamespace(id=author_id, bot=author_bot, display_name="Test User")
     return SimpleNamespace(
         content=content,
@@ -23,6 +26,7 @@ def _fake_message(content, guild=True, channel_id=42, author_id=7, author_bot=Fa
         channel=SimpleNamespace(id=channel_id),
         author=author,
         mentions=list(mentions),
+        attachments=list(attachments),
     )
 
 
@@ -59,6 +63,15 @@ def test_normalize_ignores_bot_authors():
 def test_normalize_ignores_empty_content():
     ch = _discord_channel()
     assert ch._normalize(_fake_message("", guild=False)) is None
+
+
+def test_normalize_accepts_attachment_only_dm():
+    """A DM with no text but an attached file is still a message to handle."""
+    ch = _discord_channel()
+    att = SimpleNamespace(filename="photo.png", content_type="image/png", size=10)
+    inbound = ch._normalize(_fake_message("", guild=False, attachments=[att]))
+    assert inbound is not None
+    assert inbound.is_direct is True
 
 
 def test_requires_token(monkeypatch):

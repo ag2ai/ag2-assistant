@@ -97,7 +97,12 @@ def create_agent(
         )
         assembly = profile_assembly()
 
-    tools = build_agent_tools(config.llm.provider)
+    tools = build_agent_tools(
+        config.llm.provider,
+        sandbox=config.tools.sandbox,
+        docker_image=config.tools.docker_image,
+        docker_network=config.tools.docker_network,
+    )
     if skills:
         tools.append(build_skills_toolkit(config))
 

@@ -83,6 +83,15 @@ async def test_agent_uses_web_search():
     assert len(response) > 0
 
 
+class _AutoAllowAsker:
+    """Approves every permission/command prompt (for code-exec integration test)."""
+
+    async def ask(self, question, timeout=None):
+        from agclaw.permissions import ALLOW_ONCE
+
+        return ALLOW_ONCE
+
+
 @pytest.mark.integration
 async def test_agent_uses_code_execution():
     """Integration test: agent computes via code execution."""
@@ -91,6 +100,7 @@ async def test_agent_uses_code_execution():
     response = await ask(
         "Use code execution to calculate the factorial of 10.",
         memory=False,
+        asker=_AutoAllowAsker(),
     )
     # Normalise digit grouping (commas/spaces) before checking the value.
     normalised = response.replace(",", "").replace(" ", "")

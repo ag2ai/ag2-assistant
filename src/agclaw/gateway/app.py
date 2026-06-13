@@ -34,18 +34,28 @@ def create_app(
     config: Config | None = None,
     memory: bool = True,
     platform: str = "gateway",
+    gateway: Gateway | None = None,
 ) -> FastAPI:
-    """Build the FastAPI app with a gateway bound to its lifespan."""
-    gateway = Gateway(config=config, memory=memory, platform=platform)
+    """Build the FastAPI app.
+
+    If `gateway` is provided (e.g. shared with channels in `agclaw run`), it's
+    used as-is and its lifecycle is owned by the caller. Otherwise the app
+    creates and manages its own gateway.
+    """
+    owns_gateway = gateway is None
+    if gateway is None:
+        gateway = Gateway(config=config, memory=memory, platform=platform)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await gateway.start()
+        if owns_gateway:
+            await gateway.start()
         app.state.gateway = gateway
         try:
             yield
         finally:
-            await gateway.close()
+            if owns_gateway:
+                await gateway.close()
 
     app = FastAPI(title="AGClaw Gateway", version="0.1.0", lifespan=lifespan)
 

@@ -1,6 +1,7 @@
 """AGClaw CLI."""
 
 import asyncio
+import os
 
 import typer
 
@@ -18,8 +19,15 @@ def agent(
     permissions: bool = typer.Option(
         True, help="Enable desktop permission/HITL prompts (browser popup)."
     ),
+    sandbox: str | None = typer.Option(
+        None,
+        help="Execution sandbox: 'local' (host, approval-gated) or 'docker' "
+        "(isolated container, no prompts). Overrides AGCLAW_SANDBOX.",
+    ),
 ) -> None:
     """Send a message to the AGClaw agent."""
+    if sandbox:
+        os.environ["AGCLAW_SANDBOX"] = sandbox
     config = Config()
 
     async def run() -> str:
@@ -29,12 +37,47 @@ def agent(
 
             asker = DesktopAsker()
         try:
+            if asker is not None and memory:
+                from agclaw.onboarding import needs_onboarding, run_onboarding
+
+                if await needs_onboarding():
+                    typer.echo("First time here — a few quick questions (all skippable):")
+                    await run_onboarding(asker)
             return await ask(message, config, memory=memory, platform=platform, asker=asker)
         finally:
             if asker is not None:
                 await asker.aclose()
 
     typer.echo(asyncio.run(run()))
+
+
+@app.command()
+def onboard(
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Re-run even if already onboarded."
+    ),
+) -> None:
+    """Run the first-run onboarding interview (name, location, hours, style)."""
+    from agclaw.hitl import DesktopAsker
+    from agclaw.onboarding import marker_path, needs_onboarding, run_onboarding
+
+    async def run() -> None:
+        if not force and not await needs_onboarding():
+            typer.echo(
+                f"Already onboarded (marker at {marker_path()}). Use --force to redo."
+            )
+            return
+        asker = DesktopAsker()
+        try:
+            answers = await run_onboarding(asker)
+        finally:
+            await asker.aclose()
+        if answers:
+            typer.echo("Thanks! Saved: " + ", ".join(sorted(answers)))
+        else:
+            typer.echo("All skipped — no problem, I'll learn as we go.")
+
+    asyncio.run(run())
 
 
 profile_app = typer.Typer(help="Inspect or manage the learned user profile.")
@@ -67,6 +110,60 @@ def profile_clear(
 
     cleared = asyncio.run(clear_profile())
     typer.echo("Profile cleared." if cleared else "No profile to clear.")
+
+
+perms_app = typer.Typer(help="Manage folder access permissions.")
+app.add_typer(perms_app, name="permissions")
+
+
+@perms_app.command("list")
+def permissions_list() -> None:
+    """List granted and blocked folders."""
+    from agclaw.permissions import PermissionStore
+
+    store = PermissionStore()
+    granted = store.granted_folders()
+    blocked = store.blocked_folders()
+    typer.echo("Allowed folders:")
+    typer.echo("\n".join(f"  ✓ {g}" for g in granted) or "  (none)")
+    typer.echo("\nBlocked folders:")
+    typer.echo("\n".join(f"  ✗ {b}" for b in blocked) or "  (none)")
+
+
+@perms_app.command("allow")
+def permissions_allow(folder: str = typer.Argument(help="Folder path to allow.")) -> None:
+    """Permanently allow access to a folder."""
+    from agclaw.permissions import PermissionStore
+
+    PermissionStore().grant(folder)
+    typer.echo(f"Allowed: {folder}")
+
+
+@perms_app.command("revoke")
+def permissions_revoke(folder: str = typer.Argument(help="Folder path to revoke.")) -> None:
+    """Revoke a previously granted folder."""
+    from agclaw.permissions import PermissionStore
+
+    ok = PermissionStore().revoke(folder)
+    typer.echo(f"Revoked: {folder}" if ok else f"Not in allow list: {folder}")
+
+
+@perms_app.command("block")
+def permissions_block(folder: str = typer.Argument(help="Folder path to block.")) -> None:
+    """Permanently block a folder (the agent will never be allowed to access it)."""
+    from agclaw.permissions import PermissionStore
+
+    PermissionStore().block(folder)
+    typer.echo(f"Blocked: {folder}")
+
+
+@perms_app.command("unblock")
+def permissions_unblock(folder: str = typer.Argument(help="Folder path to unblock.")) -> None:
+    """Remove a folder from the block list."""
+    from agclaw.permissions import PermissionStore
+
+    ok = PermissionStore().unblock(folder)
+    typer.echo(f"Unblocked: {folder}" if ok else f"Not in block list: {folder}")
 
 
 @app.command()
@@ -167,6 +264,72 @@ def slack(
 
     try:
         asyncio.run(run())
+    except KeyboardInterrupt:
+        typer.echo("\nStopped.")
+
+
+@app.command()
+def run(
+    host: str = typer.Option("127.0.0.1", help="Host for the REST/WS gateway."),
+    port: int = typer.Option(8800, help="Port for the REST/WS gateway."),
+    memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
+    rest: bool = typer.Option(True, help="Also serve the REST/WebSocket API."),
+    sandbox: str | None = typer.Option(
+        None, help="Execution sandbox: 'local' or 'docker'. Overrides AGCLAW_SANDBOX."
+    ),
+) -> None:
+    """Run everything in one process — REST/WS gateway + every channel whose
+    token is configured (Telegram/Discord/Slack), all sharing one agent."""
+    if sandbox:
+        os.environ["AGCLAW_SANDBOX"] = sandbox
+
+    import uvicorn
+
+    from agclaw.channels import get_channel
+    from agclaw.gateway.app import create_app
+    from agclaw.gateway.core import Gateway
+
+    async def main() -> None:
+        gateway = Gateway(memory=memory, platform="multi")
+        await gateway.start()
+
+        channels = []
+        if os.environ.get("TELEGRAM_BOT_TOKEN"):
+            channels.append(("telegram", get_channel("telegram")))
+        if os.environ.get("DISCORD_BOT_TOKEN"):
+            channels.append(("discord", get_channel("discord")))
+        if os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_APP_TOKEN"):
+            channels.append(("slack", get_channel("slack")))
+
+        for name, ch in channels:
+            await ch.start(gateway)
+            typer.echo(f"  channel: {name}")
+
+        server = None
+        server_task = None
+        if rest:
+            config = uvicorn.Config(
+                create_app(gateway=gateway), host=host, port=port, log_level="warning"
+            )
+            server = uvicorn.Server(config)
+            server_task = asyncio.create_task(server.serve())
+            typer.echo(f"  REST/WS: http://{host}:{port}")
+
+        typer.echo("AGClaw is running. Press Ctrl+C to stop.")
+        try:
+            if server_task is not None:
+                await server_task
+            else:
+                await asyncio.Event().wait()
+        finally:
+            for _, ch in channels:
+                await ch.stop()
+            if server is not None:
+                server.should_exit = True
+            await gateway.close()
+
+    try:
+        asyncio.run(main())
     except KeyboardInterrupt:
         typer.echo("\nStopped.")
 

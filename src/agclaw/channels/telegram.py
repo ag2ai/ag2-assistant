@@ -27,6 +27,46 @@ from agclaw.hitl.channel import PendingAsks
 WORKING_PLACEHOLDER = "⏳ Sorting that out…"
 _CB_PREFIX = "acw:"  # callback_data namespace for option buttons
 _ASK_TIMEOUT = 300.0
+_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # Telegram bot download cap is ~20 MB
+
+
+def _has_attachment(msg) -> bool:
+    return bool(msg.document or msg.photo or msg.audio or msg.voice or msg.video)
+
+
+async def _download_attachments(msg, bot) -> list:
+    """Download a Telegram message's media and build AG2 multimodal inputs."""
+    from agclaw.attachments import build_input
+
+    # (file_id, filename, mime) for each supported attachment on the message.
+    specs: list[tuple[str, str, str | None]] = []
+    if msg.document:
+        d = msg.document
+        specs.append((d.file_id, d.file_name or "document", d.mime_type))
+    if msg.photo:  # list of sizes — the last is the largest
+        specs.append((msg.photo[-1].file_id, "photo.jpg", "image/jpeg"))
+    if msg.audio:
+        a = msg.audio
+        specs.append((a.file_id, a.file_name or "audio.mp3", a.mime_type))
+    if msg.voice:
+        specs.append((msg.voice.file_id, "voice.ogg", "audio/ogg"))
+    if msg.video:
+        v = msg.video
+        specs.append((v.file_id, v.file_name or "video.mp4", v.mime_type))
+
+    inputs = []
+    for file_id, filename, mime in specs:
+        try:
+            tg_file = await bot.get_file(file_id)
+            if tg_file.file_size and tg_file.file_size > _MAX_ATTACHMENT_BYTES:
+                continue
+            data = bytes(await tg_file.download_as_bytearray())
+        except Exception:
+            continue  # skip anything we can't fetch; the text still goes through
+        inp = build_input(data, filename, mime)
+        if inp is not None:
+            inputs.append(inp)
+    return inputs
 
 
 class TelegramAsker:
@@ -82,7 +122,10 @@ class TelegramChannel(Channel):
         )
         self._app.add_handler(CallbackQueryHandler(self._on_callback))
         self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
+            MessageHandler(
+                (filters.TEXT | filters.ATTACHMENT) & ~filters.COMMAND,
+                self._on_message,
+            )
         )
 
         await self._app.initialize()
@@ -126,12 +169,15 @@ class TelegramChannel(Channel):
 
     def _normalize(self, update: Update) -> InboundMessage | None:
         msg = update.message
-        if msg is None or msg.text is None:
+        if msg is None:
+            return None
+        # Media messages carry their text in `caption`; pure attachments have none.
+        text = msg.text or msg.caption or ""
+        if not text and not _has_attachment(msg):
             return None
 
         chat = msg.chat
         is_direct = chat.type == chat.PRIVATE
-        text = msg.text
 
         mentioned = False
         if not is_direct and self._bot_username:
@@ -161,13 +207,13 @@ class TelegramChannel(Channel):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         msg = update.message
-        if msg is None or msg.text is None:
+        if msg is None:
             return
 
         # If a question is awaiting a typed answer in this chat, this message IS
         # the answer — resolve it instead of starting a new turn.
         chat_id = str(msg.chat.id)
-        if self._pending.is_awaiting(chat_id):
+        if msg.text and self._pending.is_awaiting(chat_id):
             self._pending.resolve(chat_id, msg.text)
             return
 
@@ -178,11 +224,16 @@ class TelegramChannel(Channel):
         # Immediate, always-visible feedback: a placeholder we edit into the reply.
         placeholder = await update.message.reply_text(WORKING_PLACEHOLDER)
 
+        attachments = await _download_attachments(msg, context.bot)
+        # A bare attachment with no caption still needs a prompt for the model.
+        text = inbound.text or ("Here is a file I'm sharing with you." if attachments else "")
+
         try:
             reply = await self._gateway.send_message(
-                inbound.text,
+                text,
                 session_id=inbound.session_id(),
                 asker=self._asker_for(chat_id),
+                attachments=attachments,
             )
         except Exception as exc:  # surface failures to the user
             reply = f"Sorry, something went wrong: {exc}"

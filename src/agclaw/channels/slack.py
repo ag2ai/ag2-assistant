@@ -20,6 +20,41 @@ from agclaw.hitl.channel import PendingAsks
 SLACK_LIMIT = 3500
 _ASK_TIMEOUT = 300.0
 _ACTION_RE = re.compile(r"agclaw_opt_\d+")
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+
+async def _download_attachments(event: dict, bot_token: str) -> list:
+    """Download a Slack message's files and build AG2 multimodal inputs.
+
+    Slack file URLs are private — they require an `Authorization: Bearer` header
+    with the bot token, and the `files:read` scope.
+    """
+    import aiohttp
+
+    from agclaw.attachments import build_input
+
+    files = event.get("files") or []
+    if not files:
+        return []
+
+    headers = {"Authorization": f"Bearer {bot_token}"}
+    inputs = []
+    async with aiohttp.ClientSession(headers=headers) as session:
+        for f in files:
+            url = f.get("url_private_download") or f.get("url_private")
+            if not url or (f.get("size") or 0) > _MAX_ATTACHMENT_BYTES:
+                continue
+            try:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.read()
+            except Exception:
+                continue  # skip what we can't fetch; the text still goes through
+            inp = build_input(data, f.get("name") or "file", f.get("mimetype"))
+            if inp is not None:
+                inputs.append(inp)
+    return inputs
 
 
 class SlackAsker:
@@ -107,7 +142,7 @@ class SlackChannel(Channel):
 
     def _mention_inbound(self, event: dict) -> InboundMessage | None:
         text = re.sub(rf"<@{self._bot_user_id}>", "", event.get("text", "")).strip()
-        if not text:
+        if not text and not event.get("files"):
             return None
         return InboundMessage(
             text=text,
@@ -122,7 +157,11 @@ class SlackChannel(Channel):
     def _dm_inbound(self, event: dict) -> InboundMessage | None:
         if event.get("channel_type") != "im":  # let app_mention handle channels
             return None
-        if event.get("bot_id") or event.get("subtype"):  # ignore bots/edits/joins
+        # ignore bots/edits/joins — but allow file_share, which carries uploads
+        if event.get("bot_id"):
+            return None
+        subtype = event.get("subtype")
+        if subtype and subtype != "file_share":
             return None
         if event.get("user") == self._bot_user_id:  # ignore our own messages
             return None
@@ -188,11 +227,16 @@ class SlackChannel(Channel):
             except Exception:
                 pass  # missing reactions:write or already reacted — non-fatal
 
+        attachments = await _download_attachments(event, self._bot_token)
+        text = inbound.text or (
+            "Here is a file I'm sharing with you." if attachments else ""
+        )
         try:
             reply = await self._gateway.send_message(
-                inbound.text,
+                text,
                 session_id=inbound.session_id(),
                 asker=self._asker_for(channel) if channel else None,
+                attachments=attachments,
             )
         except Exception as exc:  # surface failures to the user
             reply = f"Sorry, something went wrong: {exc}"

@@ -140,9 +140,12 @@ class _Answer(BaseModel):
 class HitlServer:
     """Local web server hosting concurrent HITL question pages."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765) -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
+        # port=0 → the OS assigns a free ephemeral port, so a lingering server
+        # from a cancelled run can never block a new one ("address already in use").
         self.host = host
         self.port = port
+        self._actual_port = port
         self._pending: dict[str, tuple[Question, asyncio.Future]] = {}
         self._server = None
         self._task: asyncio.Task | None = None
@@ -205,6 +208,11 @@ class HitlServer:
             self._task = asyncio.create_task(self._server.serve())
             while not self._server.started:
                 await asyncio.sleep(0.05)
+            # When port=0, read the port the OS actually assigned.
+            try:
+                self._actual_port = self._server.servers[0].sockets[0].getsockname()[1]
+            except Exception:
+                self._actual_port = self.port
 
     def register(self, question: Question) -> tuple[str, asyncio.Future]:
         req_id = uuid.uuid4().hex[:12]
@@ -216,7 +224,7 @@ class HitlServer:
         self._pending.pop(req_id, None)
 
     def url_for(self, req_id: str) -> str:
-        return f"http://{self.host}:{self.port}/hitl/{req_id}"
+        return f"http://{self.host}:{self._actual_port}/hitl/{req_id}"
 
     async def stop(self) -> None:
         if self._server is not None:
