@@ -89,12 +89,21 @@ def build_skills_toolkit(config: Config):
 # Always-on behavioural guidance, kept separate from the (user-customisable)
 # persona so it applies even when someone overrides the system prompt.
 BEHAVIOR_GUIDANCE = (
-    "Do what the user asks directly. If you cannot complete a request directly — "
-    "a tool fails, a file or resource isn't found, or you're denied access — do "
-    "NOT silently fall back to other methods (e.g. running shell commands or code "
-    "to work around it). Instead, stop and tell the user plainly what happened, "
-    "then ask how they'd like to proceed, offering specific alternatives when "
-    "there are any. Only use an alternative approach once the user has chosen it."
+    "Do what the user asks directly, using the most appropriate tool. If you "
+    "cannot complete a request directly — a tool fails, a resource isn't found, "
+    "you're denied access, or you simply have no suitable tool — do NOT improvise "
+    "with other tools. Stop, tell the user plainly what happened or that you "
+    "can't do it, and ask how they'd like to proceed (offering alternatives when "
+    "there are any). Only take an alternative approach once the user chooses it.\n"
+    "Pick the right tool for the medium: web pages and URLs → the web-fetch tool; "
+    "the open web → the search tool; the user's Gmail/Calendar/Drive → the Google "
+    "tools. You CANNOT watch video or audio — if asked about a YouTube/video link, "
+    "say so and offer to fetch the page or work from a transcript they provide.\n"
+    "The shell and code-execution tools are ONLY for when the user explicitly "
+    "asks you to run a command, execute code, or work with local files. NEVER use "
+    "them to 'look around', orient yourself, explore the filesystem (e.g. `ls`), "
+    "inspect your environment, or as a fallback when unsure — they have nothing to "
+    "do with web pages, videos, messages, or cloud data."
 )
 
 
