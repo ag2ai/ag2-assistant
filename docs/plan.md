@@ -44,7 +44,10 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [x] **Chat attachments** — files dropped into Telegram/Discord/Slack are downloaded and turned into AG2 multimodal `Input`s (`agclaw/attachments.py`: images→Image, PDFs/unknown→Document, audio/video→native, text→inlined) and threaded through `Gateway.send_message(attachments=...)` as positional inputs. Slack uses the bot token to fetch private file URLs (`files:read`). (8 tests; channel normalizers now accept caption-only/attachment-only messages)
 - [x] **Docker sandbox for shell/code** — custom `DockerEnvironment`/`DockerSandbox` (`agclaw/tools/docker_sandbox.py`) implementing AG2's `Sandbox` protocol (AG2 ships no Docker backend yet). Runs shell/code in a throwaway container with **no host FS mount**, so the approval gate is dropped when active (the container *is* the boundary); `read_file` stays host-permission-gated. Falls back to local+approval with a warning if Docker is unavailable. Selectable via `--sandbox docker` or `AGCLAW_SANDBOX`/`AGCLAW_DOCKER_IMAGE`/`AGCLAW_DOCKER_NETWORK`. Live-verified end-to-end (agent computed Fibonacci in-container with no prompt; containers cleaned up). (6 unit + 2 real-Docker integration tests)
 - [x] **Combined `agclaw run`** — one process serving the REST/WS gateway + every channel whose token is configured, all sharing one `Gateway`/agent/profile (`create_app(gateway=...)` reuse). `--no-rest`, `--port`, `--sandbox` flags. (3 tests)
-- [ ] Mount HITL routes on the gateway (so the running gateway serves them) + request timeouts
+- [x] **Mount HITL routes on the gateway** — the running gateway now serves the styled `/hitl/{id}` pages + `/hitl/{id}/answer` (shared `HitlServer` registry via `add_hitl_routes`), plus `GET /api/hitl/pending`. `GatewayAsker` registers questions there; REST clients poll+answer, WS clients get a pushed `question` frame and answer over the same socket (`_drive_turn` reads answer frames concurrently while the turn is blocked). Request timeout → safe deny (default 5 min). (`agclaw/hitl/gateway.py`, `hitl/desktop.py` refactor; 4 tests incl. full WS Q&A flow)
+- [x] **Sandbox skill-script execution (Docker)** — `DockerMountSandbox` + `build_docker_skill_runtime` (`agclaw/tools/docker_sandbox.py`): when `--sandbox docker`, each skill script runs in a one-shot `docker run --rm` container that bind-mounts **only that skill's `scripts/` dir** (so untrusted skill code can't reach the user's files); storage/discovery stay local. Wired into `build_skills_toolkit`. (2 unit + 2 real-Docker integration tests)
+- [x] **Tuned aggregation cadence** — profile distillation now batches `every_n_turns` (default 4, `AGCLAW_AGGREGATE_EVERY_N`) instead of firing `on_end` every message; single-shot `agclaw agent` still aggregates `on_end` so its one turn is captured (`create_agent(single_shot=...)`). (3 tests)
+- [x] **Interactive `agclaw chat`** — multi-turn terminal REPL over a single `Gateway` session (memory, permissions popup, onboarding all apply); non-blocking input via `asyncio.to_thread`. Live-verified cross-turn recall.
 
 ### Phase 1 Detail
 
@@ -56,7 +59,7 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [x] Unit tests (config, agent, tools, memory — 22 passing)
 - [x] Integration tests (Gemini round-trip, tool use, memory learning)
 - [x] Session/profile persistence (SQLite via AG2 KnowledgeStore)
-- [ ] Multi-turn interactive conversation via CLI (single-shot works; chat loop pending)
+- [x] Multi-turn interactive conversation via CLI (`agclaw chat`)
 
 ### Phase 5 Detail — Observer Memory (in progress)
 
@@ -67,7 +70,7 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [x] CLI: `agclaw profile show` / `agclaw profile clear`, `--memory/--no-memory`, `--platform`
 - [x] Unit + integration tests; verified recall across separate processes
 - [ ] Per-platform nuance once channels land (platform flows from channel adapter)
-- [ ] Tune aggregation cadence (currently fires on every interaction via `on_end=True`)
+- [x] Tune aggregation cadence — batches `every_n_turns` (default 4) for sessions; `on_end` only for single-shot CLI
 
 ### Phase 2 Detail — Gateway (core done)
 
@@ -102,7 +105,8 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [x] `create_agent(skills=True)` (on by default; flows through CLI/gateway/channels)
 - [x] Unit tests (toolkit build, tool surface, agent wiring) + live registry-search test (found real skills, e.g. `pdftk-server`)
 - [ ] Optional: `GITHUB_TOKEN` for higher registry rate limits (60/hr unauth)
-- [ ] Sandbox skill script execution (Docker) for stronger isolation; AGClaw-bundled skills
+- [x] Sandbox skill script execution (Docker) — one-shot container per script, mounts only the skill's own dir
+- [ ] AGClaw-bundled skills (first-party skill packages)
 
 ### Docs
 

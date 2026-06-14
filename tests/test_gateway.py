@@ -158,6 +158,86 @@ def test_ws_message_roundtrip(monkeypatch):
             assert second["text"] == "echo[1]: ping"
 
 
+# --- gateway-hosted HITL ---
+
+
+class _AskingGateway:
+    """A gateway whose turn asks the injected asker one permission question."""
+
+    def __init__(self):
+        from agclaw.hitl.base import Question
+
+        self._q = Question(text="Allow it?", options=["Allow once", "Deny"], kind="permission")
+
+    async def send_message(self, text, session_id="default", asker=None, attachments=None):
+        ans = await asker.ask(self._q)
+        return f"decision:{ans}"
+
+    def status(self):
+        return {"status": "ok", "sessions": 0}
+
+
+async def test_hitl_routes_served_by_gateway(fake_gateway):
+    """The gateway serves the styled /hitl page, lists pending, resolves answers."""
+    from httpx import ASGITransport, AsyncClient
+
+    import agclaw.gateway.app as app_mod
+    from agclaw.hitl.base import Question
+
+    app = app_mod.create_app(gateway=fake_gateway)
+    # register a pending question in this test's loop (the routes don't need the
+    # gateway, and app.state.hitl is wired at create_app time)
+    req_id, fut = app.state.hitl.register(Question(text="Proceed?", options=["Yes", "No"]))
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        listed = (await client.get("/api/hitl/pending")).json()["pending"]
+        assert any(item["id"] == req_id for item in listed)
+
+        page = await client.get(f"/hitl/{req_id}")
+        assert page.status_code == 200
+        assert "Proceed?" in page.text
+
+        ok = await client.post(f"/hitl/{req_id}/answer", json={"answer": "Yes"})
+        assert ok.json()["ok"] is True
+        assert fut.result() == "Yes"  # the answer resolved the pending future
+
+        # unknown id → 404
+        missing = await client.post("/hitl/nope/answer", json={"answer": "x"})
+        assert missing.status_code == 404
+
+
+def test_ws_hitl_question_answer_flow():
+    """A turn that asks a question pushes a `question` frame; the client answers
+    over the same socket and the turn completes."""
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+
+    app = app_mod.create_app(gateway=_AskingGateway())
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/ws") as ws:
+            ws.send_json({"text": "do the thing", "session_id": "w1"})
+            assert ws.receive_json()["type"] == "thinking"
+            q = ws.receive_json()
+            assert q["type"] == "question"
+            assert q["options"] == ["Allow once", "Deny"]
+            ws.send_json({"type": "answer", "id": q["id"], "answer": "Allow once"})
+            reply = ws.receive_json()
+            assert reply["type"] == "reply"
+            assert reply["text"] == "decision:Allow once"
+
+
+async def test_gateway_asker_timeout_denies():
+    from agclaw.hitl import GatewayAsker, HitlServer
+    from agclaw.hitl.base import Question
+    from agclaw.permissions import DENY
+
+    asker = GatewayAsker(HitlServer(), timeout=0.05)
+    answer = await asker.ask(Question(text="?", options=["Allow once", "Deny"]))
+    assert answer == DENY  # unanswered prompt fails safe
+
+
 @pytest.mark.integration
 async def test_gateway_real_agent_multiturn_and_isolation():
     """End-to-end with the real agent: multi-turn recall + session isolation."""

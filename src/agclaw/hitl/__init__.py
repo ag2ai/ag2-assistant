@@ -2,7 +2,8 @@
 
 from agclaw.hitl.base import Asker, Question, build_hitl_hook
 from agclaw.hitl.channel import PendingAsks
-from agclaw.hitl.desktop import DesktopAsker, HitlServer
+from agclaw.hitl.desktop import DesktopAsker, HitlServer, add_hitl_routes
+from agclaw.hitl.gateway import GatewayAsker
 
 __all__ = [
     "Asker",
@@ -10,5 +11,7 @@ __all__ = [
     "build_hitl_hook",
     "DesktopAsker",
     "HitlServer",
+    "GatewayAsker",
     "PendingAsks",
+    "add_hitl_routes",
 ]

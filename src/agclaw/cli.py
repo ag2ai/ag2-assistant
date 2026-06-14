@@ -80,6 +80,58 @@ def onboard(
     asyncio.run(run())
 
 
+@app.command()
+def chat(
+    memory: bool = typer.Option(True, help="Use the persistent user-profile memory."),
+    platform: str = typer.Option("cli", help="Platform tag for this session."),
+    permissions: bool = typer.Option(
+        True, help="Enable desktop permission/HITL prompts (browser popup)."
+    ),
+    sandbox: str | None = typer.Option(
+        None, help="Execution sandbox: 'local' or 'docker'. Overrides AGCLAW_SANDBOX."
+    ),
+) -> None:
+    """Start an interactive, multi-turn chat with AGClaw (type 'exit' to quit)."""
+    if sandbox:
+        os.environ["AGCLAW_SANDBOX"] = sandbox
+
+    from agclaw.gateway.core import Gateway
+
+    async def main() -> None:
+        asker = None
+        if permissions:
+            from agclaw.hitl import DesktopAsker
+
+            asker = DesktopAsker()
+        gateway = Gateway(memory=memory, platform=platform)
+        await gateway.start()
+        typer.echo("AGClaw chat — type 'exit' (or Ctrl-D) to quit.\n")
+        try:
+            while True:
+                try:
+                    user = await asyncio.to_thread(input, "you> ")
+                except EOFError:
+                    break
+                if user.strip().lower() in {"exit", "quit", ":q"}:
+                    break
+                if not user.strip():
+                    continue
+                reply = await gateway.send_message(
+                    user, session_id="cli-chat", asker=asker
+                )
+                typer.echo(f"agclaw> {reply}\n")
+        finally:
+            if asker is not None:
+                await asker.aclose()
+            await gateway.close()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    typer.echo("\nbye")
+
+
 profile_app = typer.Typer(help="Inspect or manage the learned user profile.")
 app.add_typer(profile_app, name="profile")
 

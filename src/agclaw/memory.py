@@ -91,6 +91,8 @@ def build_knowledge_config(
     store_path: Path | None = None,
     aggregate_config: GeminiConfig | None = None,
     store=None,
+    every_n_turns: int = 4,
+    on_end: bool = False,
 ) -> KnowledgeConfig:
     """Build a KnowledgeConfig that passively learns and persists the user profile.
 
@@ -100,6 +102,11 @@ def build_knowledge_config(
         aggregate_config: LLM config used for the (cheaper) aggregation call.
         store: An existing KnowledgeStore to reuse (e.g. a shared, locked store
             when several agents must write the same profile concurrently).
+        every_n_turns: Distil the profile every N turns. Batches the (LLM-backed)
+            aggregation so long sessions don't pay it on every message. 0 disables.
+        on_end: Also distil when a conversation ends. Use for single-shot runs
+            (CLI) so their one turn is still captured; leave off for long sessions
+            to avoid an aggregation call per turn.
 
     Returns:
         A KnowledgeConfig wiring a SQLite store + working-memory aggregation.
@@ -124,7 +131,9 @@ def build_knowledge_config(
             config=aggregate_config,
             prompt=build_profile_prompt(platform),
         ),
-        aggregate_trigger=AggregateTrigger(on_end=True),
+        aggregate_trigger=AggregateTrigger(
+            every_n_turns=every_n_turns, on_end=on_end
+        ),
     )
 
 

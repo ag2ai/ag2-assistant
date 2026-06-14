@@ -41,6 +41,39 @@ def test_build_knowledge_config_is_passive(tmp_path):
     assert cfg.aggregate_trigger is not None
 
 
+def test_build_knowledge_config_cadence(tmp_path):
+    # Default: batch every N turns, don't fire on every turn-end.
+    cfg = build_knowledge_config(store_path=tmp_path / "p.db", every_n_turns=4)
+    assert cfg.aggregate_trigger.every_n_turns == 4
+    assert cfg.aggregate_trigger.on_end is False
+    # Single-shot (CLI): capture the one turn on conversation end.
+    single = build_knowledge_config(
+        store_path=tmp_path / "p2.db", every_n_turns=4, on_end=True
+    )
+    assert single.aggregate_trigger.on_end is True
+
+
+def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
+    """The CLI single-shot path enables on_end so one turn still gets learned."""
+    captured = {}
+
+    import agclaw.agent as agent_mod
+
+    real = agent_mod.build_knowledge_config
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
+    from agclaw.config import Config
+
+    cfg = Config()
+    agent_mod.create_agent(cfg, memory=True, skills=False, single_shot=True)
+    assert captured["on_end"] is True
+    assert captured["every_n_turns"] == cfg.memory.aggregate_every_n_turns
+
+
 async def test_read_profile_empty(tmp_path):
     result = await read_profile(store_path=tmp_path / "missing.db")
     assert result == ""

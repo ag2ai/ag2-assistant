@@ -52,12 +52,23 @@ class ToolsConfig(BaseModel):
     )
 
 
+class MemoryConfig(BaseModel):
+    """Configuration for the passive user-profile memory."""
+
+    # Distil the profile every N conversation turns (an LLM call each time).
+    # Batching keeps long chat sessions cheap instead of firing every message.
+    aggregate_every_n_turns: int = Field(
+        default_factory=lambda: int(os.environ.get("AGCLAW_AGGREGATE_EVERY_N", "4"))
+    )
+
+
 class Config(BaseModel):
     """Root AGClaw configuration."""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw")
     # Where installed skills live (SKILL.md packages).
     skills_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw" / "skills")

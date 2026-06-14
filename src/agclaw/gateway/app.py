@@ -10,6 +10,8 @@ Endpoints:
   WS   /api/ws                  -> send {text, session_id?}, receive {type, ...}
 """
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -17,6 +19,7 @@ from pydantic import BaseModel
 
 from agclaw.config import Config
 from agclaw.gateway.core import Gateway
+from agclaw.hitl import GatewayAsker, HitlServer, add_hitl_routes
 
 
 class MessageRequest(BaseModel):
@@ -59,13 +62,29 @@ def create_app(
 
     app = FastAPI(title="AGClaw Gateway", version="0.1.0", lifespan=lifespan)
 
+    # Shared HITL registry: the gateway serves the styled /hitl/{id} pages and an
+    # answer endpoint, so permission/HITL prompts can be answered by any client.
+    hitl = HitlServer()
+    app.state.hitl = hitl
+    add_hitl_routes(app, hitl)
+
     @app.get("/api/health")
     async def health() -> dict:
         return app.state.gateway.status()
 
+    @app.get("/api/hitl/pending")
+    async def hitl_pending() -> dict:
+        """Open HITL questions for a UI client to render and answer."""
+        return {"pending": app.state.hitl.pending_list()}
+
     @app.post("/api/message", response_model=MessageResponse)
     async def message(req: MessageRequest) -> MessageResponse:
-        reply = await app.state.gateway.send_message(req.text, session_id=req.session_id)
+        # REST clients answer prompts by polling /api/hitl/pending and POSTing
+        # /hitl/{id}/answer; the request blocks until answered (or times out).
+        asker = GatewayAsker(app.state.hitl)
+        reply = await app.state.gateway.send_message(
+            req.text, session_id=req.session_id, asker=asker
+        )
         return MessageResponse(reply=reply, session_id=req.session_id)
 
     @app.websocket("/api/ws")
@@ -74,6 +93,11 @@ def create_app(
         try:
             while True:
                 data = await websocket.receive_json()
+                # An answer frame can arrive any time (e.g. to a prior prompt).
+                if data.get("type") == "answer" and data.get("id"):
+                    app.state.hitl.answer(data["id"], data.get("answer", ""))
+                    continue
+
                 text = data.get("text", "")
                 session_id = data.get("session_id", "default")
                 if not text:
@@ -82,10 +106,32 @@ def create_app(
                     )
                     continue
                 await websocket.send_json({"type": "thinking", "session_id": session_id})
-                try:
-                    reply = await app.state.gateway.send_message(
-                        text, session_id=session_id
+
+                async def on_question(req_id, question, path, sid=session_id):
+                    await websocket.send_json(
+                        {
+                            "type": "question",
+                            "id": req_id,
+                            "path": path,
+                            "text": question.text,
+                            "detail": question.detail,
+                            "options": question.options,
+                            "kind": question.kind,
+                            "session_id": sid,
+                        }
                     )
+
+                asker = GatewayAsker(app.state.hitl, on_question=on_question)
+                task = asyncio.create_task(
+                    app.state.gateway.send_message(
+                        text, session_id=session_id, asker=asker
+                    )
+                )
+                # While the turn runs, keep reading frames so answers get through.
+                await _drive_turn(websocket, task, app.state.hitl)
+
+                try:
+                    reply = task.result()
                     await websocket.send_json(
                         {"type": "reply", "text": reply, "session_id": session_id}
                     )
@@ -97,3 +143,29 @@ def create_app(
             return
 
     return app
+
+
+async def _drive_turn(websocket: WebSocket, task: asyncio.Task, hitl) -> None:
+    """Run a turn while concurrently accepting HITL answer frames over the socket.
+
+    Lets the client answer a `question` frame on the same WebSocket the turn is
+    streaming on (the turn is blocked awaiting that answer).
+    """
+    while not task.done():
+        recv = asyncio.create_task(websocket.receive_json())
+        done, _ = await asyncio.wait(
+            {task, recv}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if recv in done:
+            try:
+                msg = recv.result()
+            except WebSocketDisconnect:
+                task.cancel()
+                raise
+            if msg.get("type") == "answer" and msg.get("id"):
+                hitl.answer(msg["id"], msg.get("answer", ""))
+            # other frames mid-turn are ignored (one turn at a time per socket)
+        else:
+            recv.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await recv

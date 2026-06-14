@@ -20,11 +20,32 @@ def build_skills_toolkit(config: Config):
     `SkillSearchToolkit` extends the local skills toolkit (list/load/read/run)
     with registry search + install from skills.sh. Skills install into
     `config.skills_dir`.
+
+    When the Docker sandbox is selected (`config.tools.sandbox == "docker"`),
+    skill *scripts* run inside a one-shot, bind-mounted container — so untrusted
+    skill code can't reach the user's files. Storage/discovery stay local.
     """
     from autogen.beta.tools import SkillSearchToolkit
-    from autogen.beta.tools.skills import LocalRuntime
 
     config.skills_dir.mkdir(parents=True, exist_ok=True)
+
+    if config.tools.sandbox == "docker":
+        from agclaw.tools.docker_sandbox import (
+            build_docker_skill_runtime,
+            docker_available,
+        )
+
+        if docker_available():
+            runtime = build_docker_skill_runtime(
+                install_dir=config.skills_dir,
+                blocked=_SKILL_BLOCKED,
+                image=config.tools.docker_image,
+                network=config.tools.docker_network,
+            )
+            return SkillSearchToolkit(runtime)
+
+    from autogen.beta.tools.skills import LocalRuntime
+
     runtime = LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED)
     return SkillSearchToolkit(runtime)
 
@@ -62,6 +83,7 @@ def create_agent(
     knowledge_store=None,
     skills: bool = True,
     asker=None,
+    single_shot: bool = False,
 ) -> Agent:
     """Create an AGClaw agent with the given configuration.
 
@@ -76,6 +98,10 @@ def create_agent(
         skills: Whether to give the agent the skill search/install/run toolkit.
         asker: An `Asker` for human-in-the-loop questions (routes `context.input()`
             to the requesting surface). If None, the agent has no HITL hook.
+        single_shot: True for one-turn runs (CLI). Aggregates the profile on
+            conversation end so the single turn is captured; multi-turn callers
+            (gateway/channels) leave this False and rely on the every-N-turns
+            cadence to avoid an aggregation call per message.
     """
     if config is None:
         config = Config()
@@ -94,6 +120,8 @@ def create_agent(
             platform=platform,
             aggregate_config=llm_config,
             store=knowledge_store,
+            every_n_turns=config.memory.aggregate_every_n_turns,
+            on_end=single_shot,
         )
         assembly = profile_assembly()
 
@@ -138,9 +166,11 @@ async def ask(
     platform: str = "cli",
     asker=None,
 ) -> str:
-    """Send a message to the agent and return the response."""
+    """Send a message to the agent and return the response (single-shot)."""
     if config is None:
         config = Config()
-    agent = create_agent(config, memory=memory, platform=platform, asker=asker)
+    agent = create_agent(
+        config, memory=memory, platform=platform, asker=asker, single_shot=True
+    )
     reply = await agent.ask(message, prompt=turn_prompt(config))
     return reply.body

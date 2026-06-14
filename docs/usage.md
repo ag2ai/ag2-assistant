@@ -49,6 +49,20 @@ agclaw agent "Write a Python function that sorts a list"
 agclaw agent "What did I ask you about yesterday?"
 ```
 
+### `agclaw chat`
+
+Start an interactive, multi-turn conversation in your terminal (the single-shot
+`agclaw agent` is better for scripting/one-offs).
+
+```bash
+agclaw chat                     # talk back and forth; type 'exit' or Ctrl-D to quit
+agclaw chat --sandbox docker    # run shell/code in a container during the chat
+agclaw chat --no-memory         # don't learn from this session
+```
+
+It keeps one session, so AGClaw remembers earlier turns, asks permissions via the
+desktop popup, and learns your profile as you go.
+
 ### `agclaw version`
 
 Show the installed version.
@@ -71,10 +85,25 @@ Endpoints:
 
 ```
 GET  /api/health                      -> {status, model, sessions, ...}
+GET  /api/hitl/pending                -> {pending: [{id, text, options, path, ...}]}
 POST /api/message   {text, session_id} -> {reply, session_id}
+POST /hitl/{id}/answer  {answer}       -> {ok: true}   (answer a permission prompt)
+GET  /hitl/{id}                        -> styled HTML question page
 WS   /api/ws                           -> send {text, session_id};
-                                          receive {type: thinking|reply|error}
+                                          receive {type: thinking|question|reply|error};
+                                          answer a question with {type:"answer", id, answer}
 ```
+
+**Human-in-the-loop on the gateway.** When the agent needs permission (or asks a
+question) mid-turn, the gateway surfaces it instead of blocking silently:
+- **WebSocket clients** receive a `{type:"question", id, text, options, path}` frame
+  and answer over the same socket with `{type:"answer", id, answer}` — the turn
+  resumes and streams its `reply`.
+- **REST clients** can poll `GET /api/hitl/pending` and `POST /hitl/{id}/answer`,
+  or just open the styled `GET /hitl/{id}` page in a browser.
+
+Unanswered prompts time out (default 5 min) and are treated as a denial, so a turn
+never hangs forever.
 
 Example:
 
@@ -361,7 +390,9 @@ when needed (progressive disclosure, so it stays token-cheap). Optional: set
 `GITHUB_TOKEN` in `.env` for higher registry rate limits.
 
 > Skills can ship runnable scripts. AGClaw blocks obviously dangerous commands,
-> but only install skills you trust. Stronger sandboxing (Docker) is planned.
+> and with `--sandbox docker` each skill script runs inside a one-shot container
+> that can see **only that skill's own folder** — not your files. Without Docker,
+> scripts run on the host (blocklist only), so install skills you trust.
 
 ## Memory — AGClaw learns about you
 
@@ -382,6 +413,10 @@ agclaw agent "..." --no-memory
 ```
 
 The profile is stored locally at `~/.agclaw/profile.db`. See [memory.md](memory.md) for the full design.
+
+AGClaw distils the profile every few turns (an LLM call each time) rather than after
+every message, so long chats stay cheap. Single-shot `agclaw agent` runs always
+distil their one turn. Tune the cadence with `AGCLAW_AGGREGATE_EVERY_N` (default 4).
 
 ## Permissions — control what AGClaw can access
 

@@ -137,6 +137,45 @@ class _Answer(BaseModel):
     answer: str
 
 
+def _already_handled_page(req_id: str) -> str:
+    return _PAGE.format(
+        title="Done",
+        req_id=req_id,
+        body='<div class="done"><div class="tick">&#10003;</div>'
+        '<h1>Already handled</h1><p class="detail">This request has '
+        'been answered or has expired. You can close this tab.</p></div>',
+    )
+
+
+def add_hitl_routes(app, registry: "HitlServer") -> None:
+    """Mount the styled HITL page + answer routes on any FastAPI app.
+
+    Used both by the standalone `HitlServer` (desktop popup) and by the gateway,
+    so a running gateway serves the same `/hitl/{id}` pages a UI client can drive.
+    `registry` only needs `question_for(id)` and `answer(id, text)`.
+    """
+    from fastapi.responses import HTMLResponse, JSONResponse
+
+    @app.get("/hitl/{req_id}", response_class=HTMLResponse)
+    async def hitl_page(req_id: str):
+        question = registry.question_for(req_id)
+        if question is None:
+            return HTMLResponse(_already_handled_page(req_id))
+        return HTMLResponse(
+            _PAGE.format(
+                title=question.kind.title(),
+                req_id=req_id,
+                body=_render_body(question),
+            )
+        )
+
+    @app.post("/hitl/{req_id}/answer")
+    async def hitl_answer(req_id: str, payload: _Answer):
+        if registry.answer(req_id, payload.answer):
+            return JSONResponse({"ok": True})
+        return JSONResponse({"ok": False, "reason": "unknown"}, status_code=404)
+
+
 class HitlServer:
     """Local web server hosting concurrent HITL question pages."""
 
@@ -157,43 +196,43 @@ class HitlServer:
 
     def _build_app(self):
         from fastapi import FastAPI
-        from fastapi.responses import HTMLResponse, JSONResponse
 
         app = FastAPI()
-
-        @app.get("/hitl/{req_id}", response_class=HTMLResponse)
-        async def page(req_id: str):
-            entry = self._pending.get(req_id)
-            if entry is None:
-                return HTMLResponse(
-                    _PAGE.format(
-                        title="Done",
-                        req_id=req_id,
-                        body='<div class="done"><div class="tick">&#10003;</div>'
-                        "<h1>Already handled</h1><p class=\"detail\">This request has "
-                        "been answered or has expired. You can close this tab.</p></div>",
-                    )
-                )
-            question, _ = entry
-            return HTMLResponse(
-                _PAGE.format(
-                    title=question.kind.title(),
-                    req_id=req_id,
-                    body=_render_body(question),
-                )
-            )
-
-        @app.post("/hitl/{req_id}/answer")
-        async def answer(req_id: str, payload: _Answer):
-            entry = self._pending.get(req_id)
-            if entry is None:
-                return JSONResponse({"ok": False, "reason": "unknown"}, status_code=404)
-            _, fut = entry
-            if not fut.done():
-                fut.set_result(payload.answer)
-            return JSONResponse({"ok": True})
-
+        add_hitl_routes(app, self)
         return app
+
+    # --- registry surface (shared by the desktop server and the gateway) ---
+
+    def question_for(self, req_id: str) -> Question | None:
+        entry = self._pending.get(req_id)
+        return entry[0] if entry is not None else None
+
+    def answer(self, req_id: str, answer: str) -> bool:
+        """Resolve a pending question by id. False if no such open question."""
+        entry = self._pending.get(req_id)
+        if entry is None:
+            return False
+        _, fut = entry
+        if not fut.done():
+            fut.set_result(answer)
+        return True
+
+    def pending_list(self) -> list[dict]:
+        """Open questions, for a UI client to render (relative `path` per item)."""
+        return [
+            {
+                "id": req_id,
+                "text": q.text,
+                "detail": q.detail,
+                "options": q.options,
+                "kind": q.kind,
+                "path": f"/hitl/{req_id}",
+            }
+            for req_id, (q, _) in self._pending.items()
+        ]
+
+    def path_for(self, req_id: str) -> str:
+        return f"/hitl/{req_id}"
 
     async def ensure_running(self) -> None:
         async with self._lock:
