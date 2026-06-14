@@ -42,6 +42,7 @@ def create_app(
     memory: bool = True,
     platform: str = "gateway",
     gateway: Gateway | None = None,
+    persist: bool = True,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -51,7 +52,9 @@ def create_app(
     """
     owns_gateway = gateway is None
     if gateway is None:
-        gateway = Gateway(config=config, memory=memory, platform=platform)
+        gateway = Gateway(
+            config=config, memory=memory, platform=platform, persist=persist
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -88,6 +91,19 @@ def create_app(
     async def hitl_pending() -> dict:
         """Open HITL questions for a UI client to render and answer."""
         return {"pending": app.state.hitl.pending_list()}
+
+    @app.get("/api/sessions")
+    async def sessions() -> dict:
+        """List persisted, resumable conversations (newest first)."""
+        return {"sessions": await app.state.gateway.list_sessions()}
+
+    @app.get("/api/sessions/{session_id}")
+    async def session_transcript(session_id: str) -> dict:
+        """The display transcript for a session, for the UI to restore."""
+        return {
+            "session_id": session_id,
+            "messages": await app.state.gateway.transcript(session_id),
+        }
 
     @app.post("/api/message", response_model=MessageResponse)
     async def message(req: MessageRequest) -> MessageResponse:

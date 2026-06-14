@@ -83,14 +83,24 @@ agclaw gateway --port 9000 --no-memory
 
 **Built-in web UI.** Open `http://127.0.0.1:8800/` in a browser for a ready-made
 chat client (also served by `agclaw run`). It's a single self-contained page
-(vanilla JS over the WebSocket) styled to match ag2.ai: streaming replies, and
-permission/HITL prompts render inline as cards you click to answer. Use it as-is
-or as a reference for building your own front-end against the API below.
+(vanilla JS over the WebSocket) styled to match ag2.ai: streaming markdown replies,
+file attachments, a stop button, light/dark following your system, and
+permission/HITL prompts rendered inline as cards. The **History** button lists
+past conversations and lets you resume any of them. Use it as-is or as a reference
+for building your own front-end against the API below.
+
+**Resumable conversations.** Each session's full event history is persisted to
+`~/.agclaw/sessions.db` after every turn (via AG2's event log) and reloaded into a
+fresh stream on demand — so conversations survive a gateway restart with complete
+context, not just a text transcript. This applies to **every** surface (web and
+all chat channels), keyed by session id.
 
 Endpoints:
 
 ```
 GET  /api/health                      -> {status, model, sessions, ...}
+GET  /api/sessions                    -> {sessions: [{session_id, updated, preview, turns}]}
+GET  /api/sessions/{id}               -> {session_id, messages: [{role, text}]}
 GET  /api/hitl/pending                -> {pending: [{id, text, options, path, ...}]}
 POST /api/message   {text, session_id} -> {reply, session_id}
 POST /hitl/{id}/answer  {answer}       -> {ok: true}   (answer a permission prompt)

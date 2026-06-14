@@ -1,31 +1,32 @@
 """Gateway core — session management over the AGClaw agent.
 
 The Gateway exposes a simple `send_message(text, session_id)` surface that any
-facade (REST/WebSocket) can call. Each session keeps its own multi-turn
-conversation via AG2's `AgentReply.ask()` chaining, which is isolated per chain —
-session A's history never leaks into session B.
+facade (REST/WebSocket/channel) can call. Each session is a persistent AG2
+`Stream` keyed by `session_id`: its event history carries the multi-turn
+conversation, and after every turn the events are written to disk via AG2's
+`EventLogWriter`. On restart (or a new connection to an existing session) the
+events are reloaded into a fresh stream, so conversations are **resumable** — the
+agent keeps full context, not just a text transcript. A lightweight display
+transcript is stored alongside so UIs can render the history.
 
-Why direct `ask()` rather than the network Hub here: the Hub's strengths are
-*distributed transport* and *multi-agent* coordination (see
-`examples/network_gateway_spike.py`, which serves an agent over WebSocket). For a
-single-agent UI request/response facade, a per-session reply chain is simpler,
-isolated, and lower-latency than routing every turn through a network channel.
-The two compose: a future multi-agent or cross-machine deployment can put this
-gateway's agent on a Hub without changing the facade.
+One shared `Agent` backs all sessions; isolation comes from the per-session
+stream, never crossing histories.
 """
 
 import asyncio
-
-from autogen.beta import AgentReply
+import json
+from datetime import datetime
+from urllib.parse import quote
 
 from agclaw.agent import create_agent, turn_prompt
 from agclaw.config import Config, load_config
 
 REPLY_TIMEOUT = 120.0
+_TRANSCRIPT_PREFIX = "/transcript/"
 
 
 class Gateway:
-    """Manages per-session conversations with the AGClaw agent."""
+    """Manages per-session, resumable conversations with the AGClaw agent."""
 
     def __init__(
         self,
@@ -33,21 +34,25 @@ class Gateway:
         memory: bool = True,
         platform: str = "gateway",
         onboard: bool = True,
+        persist: bool = True,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
         self._platform = platform
         self._onboard = onboard
+        self._persist = persist
         self._onboarding_done = False
         self._agent = None
         self._permissions = None
-        # session_id -> latest AgentReply in that session's chain
-        self._sessions: dict[str, AgentReply] = {}
+        self._event_store = None
+        self._writer = None
+        # session_id -> live Stream; plus which sessions we've hydrated from disk
+        self._streams: dict[str, object] = {}
+        self._loaded: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def start(self) -> None:
-        """Create the shared agent. Direct `ask()` is history-isolated per call,
-        so one agent safely backs all sessions (each keeps its own reply chain)."""
+        """Create the shared agent and (optionally) the on-disk session store."""
         from agclaw.permissions import PermissionStore
 
         self._agent = create_agent(
@@ -55,12 +60,40 @@ class Gateway:
         )
         self._permissions = PermissionStore()
 
+        if self._persist:
+            from autogen.beta.knowledge import SqliteKnowledgeStore
+            from autogen.beta.knowledge.log import EventLogWriter
+
+            self._config.data_dir.mkdir(parents=True, exist_ok=True)
+            self._event_store = SqliteKnowledgeStore(
+                str(self._config.data_dir / "sessions.db")
+            )
+            self._writer = EventLogWriter(self._event_store)
+
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         lock = self._locks.get(session_id)
         if lock is None:
             lock = asyncio.Lock()
             self._locks[session_id] = lock
         return lock
+
+    async def _get_stream(self, session_id: str):
+        """Return the session's live Stream, hydrating from disk on first use."""
+        from autogen.beta.stream import MemoryStream
+
+        stream = self._streams.get(session_id)
+        if stream is None:
+            stream = MemoryStream(id=session_id)
+            self._streams[session_id] = stream
+            if self._writer is not None and session_id not in self._loaded:
+                try:
+                    events = await self._writer.load(session_id)
+                    if events:
+                        await stream.history.replace(events)
+                except Exception:
+                    pass  # a corrupt/absent log just starts a fresh stream
+                self._loaded.add(session_id)
+        return stream
 
     async def send_message(
         self,
@@ -71,14 +104,12 @@ class Gateway:
     ) -> str:
         """Send a user message and return the agent's reply.
 
-        Each session_id keeps its own multi-turn history. Calls within a single
-        session are serialised so the conversation chain stays consistent.
+        Each session_id keeps its own persistent, resumable history. Calls within
+        a session are serialised so the conversation stays consistent.
 
-        `asker` (optional) binds human-in-the-loop questions and permission
-        prompts to the surface that made the request (e.g. the chat it came from).
-
-        `attachments` (optional) is a list of AG2 multimodal `Input`s (built from
-        files dropped into the chat) sent alongside the text.
+        `asker` binds human-in-the-loop questions/permission prompts to the
+        surface that made the request. `attachments` are AG2 multimodal `Input`s
+        sent alongside the text.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -86,29 +117,86 @@ class Gateway:
         await self._maybe_onboard(asker)
 
         extra = self._ask_kwargs(asker)
-        # The user turn is the text plus any attachments, as positional inputs.
         msg = [text, *(attachments or [])]
 
         async with self._session_lock(session_id):
-            prior = self._sessions.get(session_id)
+            stream = await self._get_stream(session_id)
             prompt = turn_prompt(self._config)  # refresh date/time each turn
-            coro = (
-                prior.ask(*msg, prompt=prompt, **extra)
-                if prior is not None
-                else self._agent.ask(*msg, prompt=prompt, **extra)
+            reply = await asyncio.wait_for(
+                self._agent.ask(*msg, stream=stream, prompt=prompt, **extra),
+                timeout=REPLY_TIMEOUT,
             )
-            reply: AgentReply = await asyncio.wait_for(coro, timeout=REPLY_TIMEOUT)
-            self._sessions[session_id] = reply
+            await self._persist_turn(session_id, stream, text, reply.body)
             return reply.body
 
-    async def _maybe_onboard(self, asker) -> None:
-        """Run first-run onboarding once, via the asker that made this request.
+    async def _persist_turn(self, session_id, stream, user_text, reply_text) -> None:
+        """Write the session's events + a display transcript to disk."""
+        if self._writer is None:
+            return
+        try:
+            await self._writer.persist(
+                session_id, list(await stream.history.get_events())
+            )
+            await self._append_transcript(session_id, user_text, reply_text)
+        except Exception:
+            pass  # persistence is best-effort; never fail the user's turn
 
-        Guarded so it fires at most once per process and only when we have a way
-        to ask (an `asker`), memory is on, and there's no profile yet. Runs
-        before the session lock so the onboarding prompts aren't serialised
-        behind the message that triggered them.
-        """
+    def _transcript_path(self, session_id: str) -> str:
+        return f"{_TRANSCRIPT_PREFIX}{quote(session_id, safe='')}.json"
+
+    async def _append_transcript(self, session_id, user_text, reply_text) -> None:
+        path = self._transcript_path(session_id)
+        doc = {"session_id": session_id, "messages": [], "updated": ""}
+        if await self._event_store.exists(path):
+            try:
+                doc = json.loads(await self._event_store.read(path))
+            except Exception:
+                pass
+        doc["session_id"] = session_id
+        doc["messages"].append({"role": "user", "text": user_text})
+        doc["messages"].append({"role": "agent", "text": reply_text})
+        doc["updated"] = datetime.now().astimezone().isoformat()
+        await self._event_store.write(path, json.dumps(doc))
+
+    async def transcript(self, session_id: str) -> list[dict]:
+        """The display transcript (role/text turns) for a session."""
+        if self._event_store is None:
+            return []
+        path = self._transcript_path(session_id)
+        if not await self._event_store.exists(path):
+            return []
+        try:
+            return json.loads(await self._event_store.read(path)).get("messages", [])
+        except Exception:
+            return []
+
+    async def list_sessions(self) -> list[dict]:
+        """List persisted sessions (id, last update, preview), newest first."""
+        if self._event_store is None:
+            return []
+        out = []
+        for entry in await self._event_store.list(_TRANSCRIPT_PREFIX):
+            if not entry.endswith(".json"):
+                continue
+            try:
+                doc = json.loads(
+                    await self._event_store.read(_TRANSCRIPT_PREFIX + entry)
+                )
+            except Exception:
+                continue
+            msgs = doc.get("messages", [])
+            first_user = next((m["text"] for m in msgs if m["role"] == "user"), "")
+            out.append({
+                "session_id": doc.get("session_id", ""),
+                "updated": doc.get("updated", ""),
+                "preview": first_user[:80],
+                "turns": len(msgs) // 2,
+            })
+        out.sort(key=lambda s: s["updated"], reverse=True)
+        return out
+
+    async def _maybe_onboard(self, asker) -> None:
+        """Run first-run onboarding once, via the asker that made this request."""
         if (
             self._onboarding_done
             or not self._onboard
@@ -129,10 +217,7 @@ class Gateway:
         """Per-turn hitl_hook + dependencies bound to this request's asker."""
         from agclaw.permissions import PermissionManager
 
-        # Shared grant store, per-request asker → one PermissionManager per turn.
-        deps: dict = {
-            PermissionManager: PermissionManager(self._permissions, asker)
-        }
+        deps: dict = {PermissionManager: PermissionManager(self._permissions, asker)}
         out: dict = {"dependencies": deps}
         if asker is not None:
             from agclaw.hitl import build_hitl_hook
@@ -147,11 +232,12 @@ class Gateway:
             "model": self._config.llm.model,
             "memory": self._memory,
             "platform": self._platform,
-            "sessions": len(self._sessions),
+            "sessions": len(self._streams),
         }
 
     async def close(self) -> None:
-        """Release session state."""
-        self._sessions.clear()
+        """Release in-memory session state (persisted sessions stay on disk)."""
+        self._streams.clear()
         self._locks.clear()
+        self._loaded.clear()
         self._agent = None

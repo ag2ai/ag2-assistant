@@ -79,7 +79,8 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [x] `agclaw gateway` CLI (uvicorn)
 - [x] Unit tests (fake-agent) + integration test (real multi-turn + isolation); live REST verified (multi-turn, isolation, tool use)
 - [x] Distributed Hub spike (`serve_ws`) — agent reachable cross-process over WebSocket
-- [ ] Channel-session mapping (when channels land in Phase 3)
+- [x] Channel-session mapping — each surface maps to a `session_id` (e.g. `telegram:<chat>`); the gateway keys a persistent stream per session
+- [x] **Resumable conversation history** — each session is a persistent AG2 `Stream`; events are written to `~/.agclaw/sessions.db` after every turn via `EventLogWriter` and reloaded into a fresh stream on demand, so conversations survive a restart with full context (all surfaces). Web UI gained a History drawer + transcript restore. REST: `/api/sessions`, `/api/sessions/{id}`. Live-verified (reload restores; real cross-restart recall). (5 tests + 1 integration)
 - [ ] Optional: put the gateway agent on a Hub for multi-agent/cross-machine
 - **Finding:** one shared agent across AG2 network conversation channels leaked history between sessions; direct `AgentReply.ask()` chains are isolated and the right primitive for the single-agent facade. Hub retained for distributed/multi-agent.
 

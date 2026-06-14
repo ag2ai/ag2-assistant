@@ -10,27 +10,30 @@ import pytest
 
 
 class _FakeReply:
-    """Minimal stand-in for AgentReply that records the conversation chain."""
+    """Minimal stand-in for AgentReply."""
 
-    def __init__(self, history: list[str]):
-        self.history = history
-        self.body = f"echo[{len(history)}]: {history[-1]}"
-
-    async def ask(self, text: str, **kwargs) -> "_FakeReply":
-        return _FakeReply(self.history + [text])
+    def __init__(self, body: str):
+        self.body = body
 
 
 class _FakeAgent:
-    async def ask(self, text: str, **kwargs) -> _FakeReply:
-        return _FakeReply([text])
+    """Counts turns per stream id so echo[N] proves per-session continuity."""
+
+    def __init__(self):
+        self._counts: dict = {}
+
+    async def ask(self, *msg, stream=None, **kwargs) -> _FakeReply:
+        sid = getattr(stream, "id", "default")
+        self._counts[sid] = self._counts.get(sid, 0) + 1
+        return _FakeReply(f"echo[{self._counts[sid]}]: {msg[0]}")
 
 
 @pytest.fixture
 def fake_gateway(monkeypatch):
-    """A Gateway whose agent is a deterministic fake (no LLM)."""
+    """A Gateway whose agent is a deterministic fake (no LLM, no persistence)."""
     from agclaw.gateway.core import Gateway
 
-    gw = Gateway(memory=False)
+    gw = Gateway(memory=False, persist=False)
     gw._agent = _FakeAgent()
     return gw
 
@@ -100,6 +103,49 @@ def test_status_shape(fake_gateway):
     assert status["sessions"] == 0
 
 
+async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
+    """A new Gateway over the same data dir sees prior sessions (resumable)."""
+    import agclaw.gateway.core as core_mod
+    from agclaw.config import Config
+    from agclaw.gateway.core import Gateway
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+
+    gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await gw.start()
+    await gw.send_message("hello there", session_id="s1")
+    await gw.send_message("again", session_id="s1")
+    await gw.close()
+
+    gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await gw2.start()
+    turns = await gw2.transcript("s1")
+    assert [m["role"] for m in turns] == ["user", "agent", "user", "agent"]
+    assert turns[0]["text"] == "hello there"
+
+    listed = await gw2.list_sessions()
+    s1 = next(s for s in listed if s["session_id"] == "s1")
+    assert s1["turns"] == 2
+    assert s1["preview"] == "hello there"
+
+
+def test_sessions_rest_endpoints(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+    import agclaw.gateway.core as core_mod
+    from agclaw.config import Config
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False)
+    with TestClient(app) as client:
+        client.post("/api/message", json={"text": "first msg", "session_id": "u1"})
+        sessions = client.get("/api/sessions").json()["sessions"]
+        assert any(s["session_id"] == "u1" for s in sessions)
+        msgs = client.get("/api/sessions/u1").json()["messages"]
+        assert msgs[0]["text"] == "first msg"
+
+
 def test_rest_message_endpoint(monkeypatch):
     """The REST facade returns a reply for a posted message (fake agent)."""
     from fastapi.testclient import TestClient
@@ -110,7 +156,7 @@ def test_rest_message_endpoint(monkeypatch):
     # Patch the agent factory where the gateway core looks it up.
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
-    app = app_mod.create_app(memory=False)
+    app = app_mod.create_app(memory=False, persist=False)
     with TestClient(app) as client:
         health = client.get("/api/health").json()
         assert health["status"] == "ok"
@@ -149,7 +195,7 @@ def test_ws_message_roundtrip(monkeypatch):
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
-    app = app_mod.create_app(memory=False)
+    app = app_mod.create_app(memory=False, persist=False)
     with TestClient(app) as client:
         with client.websocket_connect("/api/ws") as ws:
             ws.send_json({"text": "ping", "session_id": "w1"})
@@ -350,3 +396,28 @@ async def test_gateway_real_agent_multiturn_and_isolation():
         assert "KIWI-7" not in other.upper()
     finally:
         await gw.close()
+
+
+@pytest.mark.integration
+async def test_conversation_resumes_across_restart(tmp_path):
+    """A brand-new Gateway over the same data dir keeps full conversation context."""
+    from agclaw.config import load_config
+    from agclaw.gateway.core import Gateway
+
+    cfg = load_config()
+    cfg.data_dir = tmp_path  # isolate the session store
+
+    gw1 = Gateway(config=cfg, memory=False)
+    await gw1.start()
+    await gw1.send_message(
+        "My lucky number is 7. Acknowledge.", session_id="resume-1"
+    )
+    await gw1.close()  # simulate shutdown
+
+    gw2 = Gateway(config=cfg, memory=False)
+    await gw2.start()
+    recall = await gw2.send_message(
+        "What is my lucky number? Reply with just the digit.", session_id="resume-1"
+    )
+    assert "7" in recall
+    await gw2.close()

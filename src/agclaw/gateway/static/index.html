@@ -60,6 +60,27 @@
   }
   header button:hover { border-color: var(--ink); }
 
+  /* history drawer */
+  #backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 9; }
+  #backdrop.open { opacity: 1; pointer-events: auto; }
+  #drawer {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 320px; max-width: 85vw; z-index: 10;
+    background: var(--bg); border-right: 1px solid var(--line); transform: translateX(-100%);
+    transition: transform .2s ease; display: flex; flex-direction: column;
+  }
+  #drawer.open { transform: none; }
+  #drawer .dhead { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  #drawer .dhead h2 { font-family: var(--serif); font-size: 18px; margin: 0; }
+  #drawer .dhead button { margin-left: auto; border: none; background: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+  #sessions { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .sess { text-align: left; border: none; background: none; color: var(--ink); font-family: var(--sans);
+          padding: 11px 12px; border-radius: 10px; cursor: pointer; }
+  .sess:hover { background: var(--panel); }
+  .sess.active { background: var(--panel); outline: 1px solid var(--line); }
+  .sess .p { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sess .m { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  #sessions .none { color: var(--muted); font-size: 13px; padding: 12px; }
+
   #log { flex: 1; overflow-y: auto; padding: 24px; }
   .wrap { max-width: 760px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
   .msg { display: flex; }
@@ -146,6 +167,7 @@
 </head>
 <body>
   <header>
+    <button id="hist" title="Past conversations">☰ History</button>
     <span class="mark">AGClaw</span>
     <span class="title">Assistant</span>
     <span class="spacer"></span>
@@ -153,6 +175,12 @@
     <button id="theme" title="Theme">🖥 System</button>
     <button id="new" title="Start a fresh conversation">New chat</button>
   </header>
+
+  <div id="backdrop"></div>
+  <aside id="drawer">
+    <div class="dhead"><h2>Conversations</h2><button id="dclose" title="Close">×</button></div>
+    <div id="sessions"></div>
+  </aside>
 
   <div id="log"><div class="wrap"><div class="empty"><h1>How can I help?</h1>Ask me anything — I can search, run code, read files, and more.</div></div></div>
 
@@ -180,6 +208,10 @@
   const dot = document.getElementById("dot");
   const statusText = document.getElementById("statusText");
   const themeBtn = document.getElementById("theme");
+  const histBtn = document.getElementById("hist");
+  const drawer = document.getElementById("drawer");
+  const backdrop = document.getElementById("backdrop");
+  const sessionsEl = document.getElementById("sessions");
   const MAX_BYTES = 20 * 1024 * 1024;
 
   if (window.marked) marked.setOptions({ breaks: true, gfm: true });
@@ -205,6 +237,59 @@
   if (!sessionId) { sessionId = "web-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("agclaw_session", sessionId); }
 
   let ws, thinkingEl = null, busy = false, pending = [];
+
+  // --- history drawer (resumable past conversations) ---
+  function openDrawer(o) {
+    drawer.classList.toggle("open", o); backdrop.classList.toggle("open", o);
+    if (o) loadSessions();
+  }
+  function relTime(iso) {
+    if (!iso) return "";
+    try {
+      const s = (Date.now() - new Date(iso).getTime()) / 1000;
+      if (s < 60) return "just now";
+      if (s < 3600) return Math.floor(s / 60) + "m ago";
+      if (s < 86400) return Math.floor(s / 3600) + "h ago";
+      return Math.floor(s / 86400) + "d ago";
+    } catch { return ""; }
+  }
+  async function loadSessions() {
+    try {
+      const data = await (await fetch("/api/sessions")).json();
+      const list = data.sessions || [];
+      sessionsEl.innerHTML = "";
+      if (!list.length) { sessionsEl.innerHTML = '<div class="none">No past conversations yet.</div>'; return; }
+      list.forEach(s => {
+        const b = document.createElement("button");
+        b.className = "sess" + (s.session_id === sessionId ? " active" : "");
+        const p = document.createElement("div"); p.className = "p"; p.textContent = s.preview || "(empty)";
+        const m = document.createElement("div"); m.className = "m";
+        m.textContent = s.turns + " turn" + (s.turns === 1 ? "" : "s") + " · " + relTime(s.updated);
+        b.appendChild(p); b.appendChild(m);
+        b.onclick = () => { switchSession(s.session_id); openDrawer(false); };
+        sessionsEl.appendChild(b);
+      });
+    } catch { /* offline — leave list as-is */ }
+  }
+  async function switchSession(id) {
+    sessionId = id; localStorage.setItem("agclaw_session", id);
+    await loadTranscript(id);
+  }
+  async function loadTranscript(id) {
+    try {
+      const data = await (await fetch("/api/sessions/" + encodeURIComponent(id))).json();
+      const msgs = data.messages || [];
+      wrap.innerHTML = "";
+      if (!msgs.length) {
+        wrap.innerHTML = '<div class="empty"><h1>How can I help?</h1>Ask me anything — I can search, run code, read files, and more.</div>';
+        return;
+      }
+      msgs.forEach(m => addMsg(m.role === "user" ? "user" : "agent", m.text));
+    } catch { /* leave current view */ }
+  }
+  histBtn.onclick = () => openDrawer(!drawer.classList.contains("open"));
+  backdrop.onclick = () => openDrawer(false);
+  document.getElementById("dclose").onclick = () => openDrawer(false);
 
   function scroll() { log.scrollTop = log.scrollHeight; }
   function clearEmpty() { const e = wrap.querySelector(".empty"); if (e) e.remove(); }
@@ -316,7 +401,7 @@
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.type === "thinking") showThinking();
       else if (m.type === "question") showQuestion(m);
-      else if (m.type === "reply") { clearThinking(); addMsg("agent", m.text); setBusy(false); }
+      else if (m.type === "reply") { clearThinking(); addMsg("agent", m.text); setBusy(false); if (drawer.classList.contains("open")) loadSessions(); }
       else if (m.type === "cancelled") { clearThinking(); addNote("⏹ Stopped."); setBusy(false); }
       else if (m.type === "error") { clearThinking(); addMsg("error", "⚠ " + (m.message || "Something went wrong.")); setBusy(false); }
     };
@@ -343,6 +428,7 @@
     wrap.innerHTML = '<div class="empty"><h1>How can I help?</h1>New conversation started.</div>';
   };
 
+  loadTranscript(sessionId);  // restore this conversation's history on load
   connect();
 })();
 </script>
