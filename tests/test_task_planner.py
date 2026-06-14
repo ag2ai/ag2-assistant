@@ -1,0 +1,134 @@
+"""Tests for task intake & planning (clarify → objective/deliverables/subtasks)."""
+
+import pytest
+
+from agclaw.tasks import TaskStatus, TaskStore
+from agclaw.tasks.planner import (
+    ClarifyQuestion,
+    PlanDeliverable,
+    PlanSubtask,
+    TaskPlan,
+    apply_plan,
+    prepare_task,
+    run_intake,
+)
+
+
+def _store(tmp_path):
+    return TaskStore(path=tmp_path / "tasks.db")
+
+
+class _FakeAsker:
+    def __init__(self, answers):
+        self._answers = list(answers)
+        self.asked = []
+
+    async def ask(self, question, timeout=None):
+        self.asked.append(question)
+        return self._answers.pop(0)
+
+
+class _FakeReply:
+    def __init__(self, plan):
+        self._plan = plan
+
+    async def content(self):
+        return self._plan
+
+
+class _FakeAgent:
+    """Returns canned plans in sequence (one per make_plan call)."""
+
+    def __init__(self, plans):
+        self._plans = list(plans)
+        self.asks = 0
+
+    async def ask(self, msg, response_schema=None, **kwargs):
+        self.asks += 1
+        return _FakeReply(self._plans.pop(0))
+
+
+async def test_apply_plan_writes_objective_deliverables_subtasks(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("IPO research")
+    plan = TaskPlan(
+        objective="Deck on Anthropic & OpenAI IPOs",
+        deliverables=[PlanDeliverable(description="slide deck", criteria="10 slides")],
+        subtasks=[PlanSubtask(title="Research Anthropic"), PlanSubtask(title="Research OpenAI")],
+    )
+    await apply_plan(store, t.id, plan)
+    got = await store.get(t.id)
+    assert got.objective == "Deck on Anthropic & OpenAI IPOs"
+    assert got.deliverables[0]["description"] == "slide deck"
+    assert got.plan == ["Research Anthropic", "Research OpenAI"]
+    kids = await store.children(t.id)
+    assert {k.title for k in kids} == {"Research Anthropic", "Research OpenAI"}
+
+
+async def test_run_intake_collects_answers(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("deck")
+    plan = TaskPlan(
+        questions=[
+            ClarifyQuestion(text="Audience?", options=["Execs", "Engineers"]),
+            ClarifyQuestion(text="How many slides?"),
+        ]
+    )
+    asker = _FakeAsker(["Execs", "12"])
+    answers = await run_intake(store, t.id, plan, asker)
+    assert answers == {"Audience?": "Execs", "How many slides?": "12"}
+    assert (await store.get(t.id)).intake == answers
+    # options were passed through on the first question
+    assert asker.asked[0].options == ["Execs", "Engineers"]
+
+
+async def test_prepare_trivial_task_skips_intake(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("any unread emails?")
+    plan = TaskPlan(trivial=True, objective="Report unread emails",
+                    deliverables=[PlanDeliverable(description="summary of unread")])
+    agent = _FakeAgent([plan])
+    asker = _FakeAsker([])
+    await prepare_task(store, t.id, agent, asker)
+    got = await store.get(t.id)
+    assert agent.asks == 1  # only the plan call, no re-plan
+    assert asker.asked == []  # no clarifying questions
+    assert got.objective == "Report unread emails"
+    assert got.status == TaskStatus.PENDING
+
+
+async def test_prepare_nontrivial_task_clarifies_then_replans(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("research the IPOs and make a deck")
+    plan1 = TaskPlan(
+        trivial=False,
+        objective="provisional",
+        questions=[ClarifyQuestion(text="Audience?", options=["Execs", "Engineers"])],
+    )
+    plan2 = TaskPlan(
+        trivial=False,
+        objective="Exec deck on the IPOs",
+        deliverables=[PlanDeliverable(description="slide deck", criteria="for execs")],
+        subtasks=[PlanSubtask(title="Research Anthropic"), PlanSubtask(title="Research OpenAI")],
+    )
+    agent = _FakeAgent([plan1, plan2])
+    asker = _FakeAsker(["Execs"])
+    await prepare_task(store, t.id, agent, asker)
+    got = await store.get(t.id)
+    assert agent.asks == 2  # planned, asked, re-planned with the answer
+    assert got.intake == {"Audience?": "Execs"}
+    assert got.objective == "Exec deck on the IPOs"
+    assert len(await store.children(t.id)) == 2
+    assert got.status == TaskStatus.PENDING
+
+
+@pytest.mark.integration
+async def test_make_plan_real_llm(tmp_path):
+    from agclaw.agent import create_agent
+    from agclaw.config import load_config
+    from agclaw.tasks.planner import make_plan
+
+    agent = create_agent(load_config(), memory=False, skills=False)
+    plan = await make_plan(agent, "Find any unread emails from today")
+    assert isinstance(plan.objective, str) and plan.objective
+    assert isinstance(plan.trivial, bool)
