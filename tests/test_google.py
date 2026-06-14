@@ -40,6 +40,29 @@ def test_logout_removes_token(google_paths):
     assert google_auth.logout() is False  # nothing left to remove
 
 
+def test_extract_drive_id_from_url_or_id():
+    from agclaw.tools.google import _extract_drive_id
+
+    assert _extract_drive_id(
+        "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0"
+    ) == "1AbC_dEf-123"
+    assert _extract_drive_id("https://drive.google.com/open?id=XYZ789") == "XYZ789"
+    assert _extract_drive_id("rawFileId") == "rawFileId"
+
+
+def test_google_guidance_in_turn_prompt_when_signed_in(monkeypatch):
+    import agclaw.integrations.google_auth as ga
+    from agclaw.agent import turn_prompt
+    from agclaw.config import Config
+
+    monkeypatch.setattr(ga, "has_token", lambda: True)
+    joined = " ".join(turn_prompt(Config()))
+    assert "drive_search" in joined and "never" in joined.lower()
+
+    monkeypatch.setattr(ga, "has_token", lambda: False)
+    assert "drive_search" not in " ".join(turn_prompt(Config()))
+
+
 def test_build_google_tools_names():
     names = [t.name for t in build_google_tools()]
     assert names == [

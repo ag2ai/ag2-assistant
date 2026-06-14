@@ -234,22 +234,40 @@ async def drive_search(
     )
 
 
+def _extract_drive_id(value: str) -> str:
+    """Accept a raw Drive file id or a Docs/Sheets/Drive URL and return the id."""
+    import re
+
+    if "http" in value or "/" in value:
+        m = re.search(r"/d/([a-zA-Z0-9_-]+)", value) or re.search(
+            r"[?&]id=([a-zA-Z0-9_-]+)", value
+        )
+        if m:
+            return m.group(1)
+    return value.strip()
+
+
 @tool
 async def drive_read(
-    file_id: Annotated[str, Field(description="The Drive file id (from drive_search).")],
+    file_id: Annotated[str, Field(description="The Drive file id (from drive_search) or a Docs/Sheets/Drive URL.")],
 ) -> str:
-    """Read a Google Drive file's text content (Docs/Sheets are exported as text)."""
+    """Read a Google Drive file's text content (Docs/Sheets are exported as text).
+
+    Accepts a file id or a full Google Docs/Sheets/Drive link.
+    """
+    fid = _extract_drive_id(file_id)
+
     def _run():
         svc = _svc("drive", "v3")
-        meta = svc.files().get(fileId=file_id, fields="name, mimeType").execute()
+        meta = svc.files().get(fileId=fid, fields="name, mimeType").execute()
         mime = meta.get("mimeType", "")
         if mime.startswith("application/vnd.google-apps"):
             export_as = "text/csv" if "spreadsheet" in mime else "text/plain"
-            data = svc.files().export(fileId=file_id, mimeType=export_as).execute()
+            data = svc.files().export(fileId=fid, mimeType=export_as).execute()
         else:
-            data = svc.files().get_media(fileId=file_id).execute()
+            data = svc.files().get_media(fileId=fid).execute()
         text = data.decode("utf-8", "replace") if isinstance(data, bytes) else str(data)
-        return meta.get("name", file_id), text[:50_000]
+        return meta.get("name", fid), text[:50_000]
     try:
         name, text = await asyncio.to_thread(_run)
     except Exception as exc:

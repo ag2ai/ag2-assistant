@@ -102,6 +102,18 @@ def behavior_guidance() -> str:
     return BEHAVIOR_GUIDANCE
 
 
+# Shown only when the user is signed in to Google — steers tool selection so the
+# agent uses the Google tools (not shell/code or local paths) for cloud content.
+GOOGLE_GUIDANCE = (
+    "The user is connected to Google. For anything in their Gmail, Google "
+    "Calendar, or Google Drive/Docs/Sheets, use the Google tools (gmail_search, "
+    "gmail_read, calendar_list_events, drive_search, drive_read, etc.) — never "
+    "shell commands, code, or local file paths, and never invent paths. To open a "
+    "Drive/Docs/Sheets item the user names, call drive_search first to get its id; "
+    "if they paste a Docs/Sheets link, pass it straight to drive_read."
+)
+
+
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
@@ -125,7 +137,16 @@ def turn_prompt(config: Config) -> list[str]:
     `ask(prompt=...)` replaces the base prompt for that turn, so we include the
     persona, the always-on behaviour guidance, and the refreshed environment.
     """
-    return [config.agent.system_prompt, BEHAVIOR_GUIDANCE, environment_context(config)]
+    parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE]
+    try:
+        from agclaw.integrations.google_auth import has_token
+
+        if has_token():
+            parts.append(GOOGLE_GUIDANCE)
+    except Exception:
+        pass
+    parts.append(environment_context(config))
+    return parts
 
 
 def create_agent(
