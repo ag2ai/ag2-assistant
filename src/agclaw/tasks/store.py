@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from agclaw.tasks.model import Task, TaskStatus
+from agclaw.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus
 
 _PREFIX = "/tasks/"
 
@@ -143,6 +143,49 @@ class TaskStore:
             task.ended_at = _now()
         await self.save(task)
         return task
+
+    # --- deliverables (what gates completion) ---
+
+    async def add_deliverable(self, task_id: str, description: str, criteria: str = "") -> dict | None:
+        task = await self.get(task_id)
+        if task is None:
+            return None
+        dlv = Deliverable.new(description, criteria)
+        task.deliverables.append(dlv)
+        await self.save(task)
+        return dlv
+
+    async def set_deliverable_status(
+        self, task_id: str, deliverable_id: str, status: str,
+        asset: dict | None = None, notes: str = "",
+    ) -> Task | None:
+        task = await self.get(task_id)
+        if task is None:
+            return None
+        for d in task.deliverables:
+            if d.get("id") == deliverable_id:
+                d["status"] = status
+                if asset is not None:
+                    d["asset"] = asset
+                if notes:
+                    d["notes"] = notes
+                break
+        await self.save(task)
+        return task
+
+    async def is_complete(self, task_id: str) -> bool:
+        """A task is complete only when all its deliverables are satisfied AND
+        every descendant subtask is itself completed. This is the objective check
+        the runner uses to decide 'done' — not just the agent stopping."""
+        task = await self.get(task_id)
+        if task is None:
+            return False
+        if not task.deliverables_satisfied():
+            return False
+        for d in await self.descendants(task_id):
+            if d.status != TaskStatus.COMPLETED:
+                return False
+        return True
 
     async def add_progress(self, task_id: str, message: str, pct: int | None = None) -> None:
         task = await self.get(task_id)

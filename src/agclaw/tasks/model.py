@@ -5,7 +5,39 @@ the states AGClaw needs for its user-facing flow (scheduled, awaiting_input,
 planning). Serialises to/from a plain dict for JSON persistence.
 """
 
+import uuid
 from dataclasses import dataclass, field
+
+
+class DeliverableStatus:
+    """Lifecycle of a single deliverable (a concrete promised output)."""
+
+    PENDING = "pending"      # not produced yet
+    PRODUCED = "produced"    # the agent produced it (asset attached) — awaiting check
+    ACCEPTED = "accepted"    # verified against criteria (auto) or signed off (user)
+    REJECTED = "rejected"    # failed criteria / user asked for rework
+
+
+@dataclass
+class Deliverable:
+    """A concrete expected output with its own acceptance criteria + state.
+
+    Stored on a Task as a plain dict (see `Task.deliverables`); this class is a
+    typed helper for creating/serialising them.
+    """
+
+    id: str
+    description: str
+    criteria: str = ""               # definition of done for THIS deliverable
+    status: str = DeliverableStatus.PENDING
+    asset: dict | None = None        # the produced artifact {name, path, kind}
+    notes: str = ""
+
+    @staticmethod
+    def new(description: str, criteria: str = "") -> dict:
+        return Deliverable(
+            id="dlv-" + uuid.uuid4().hex[:8], description=description, criteria=criteria
+        ).__dict__
 
 
 class TaskStatus:
@@ -31,9 +63,16 @@ class Task:
 
     id: str
     title: str
-    description: str = ""
+    description: str = ""          # the raw request
+    objective: str = ""           # definition of done — what success looks like
     status: str = TaskStatus.PENDING
     parent_id: str | None = None
+
+    # deliverables = concrete promised outputs that gate completion (list of
+    # Deliverable dicts). auto_accept=True → a PRODUCED deliverable counts as done
+    # once it meets criteria; False → needs explicit user acceptance (HITL).
+    deliverables: list[dict] = field(default_factory=list)
+    auto_accept: bool = True
 
     created_at: str = ""
     started_at: str | None = None
@@ -62,6 +101,20 @@ class Task:
     @property
     def is_terminal(self) -> bool:
         return self.status in TaskStatus.TERMINAL
+
+    def deliverable_done(self, d: dict) -> bool:
+        """A deliverable counts as done when accepted (or produced + auto_accept)."""
+        st = d.get("status")
+        if st == DeliverableStatus.ACCEPTED:
+            return True
+        return st == DeliverableStatus.PRODUCED and self.auto_accept
+
+    def deliverables_satisfied(self) -> bool:
+        """True if every deliverable is done (vacuously true if none defined)."""
+        return all(self.deliverable_done(d) for d in self.deliverables)
+
+    def pending_deliverables(self) -> list[dict]:
+        return [d for d in self.deliverables if not self.deliverable_done(d)]
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)

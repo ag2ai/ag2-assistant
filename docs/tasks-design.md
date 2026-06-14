@@ -38,6 +38,10 @@ A `Task` record (persisted as JSON in `~/.agclaw/tasks.db`):
 - `status`: pending | scheduled | awaiting_input | planning | running |
   completed | failed | cancelled
 - `parent_id` (None for roots) → the tree
+- `objective` — definition of done (distinct from `description`, the raw request)
+- `deliverables` — concrete promised outputs, each `{id, description, criteria,
+  status: pending|produced|accepted|rejected, asset, notes}`; `auto_accept`
+  controls whether a *produced* deliverable needs explicit user sign-off
 - `created_at`, `started_at`, `ended_at`
 - `scheduled_for` (one-shot ISO time) / `recurrence` (e.g. `daily@09:00`)
 - `progress`: list of `{at, message, pct?}`
@@ -48,6 +52,20 @@ A `Task` record (persisted as JSON in `~/.agclaw/tasks.db`):
   `intake` (clarifying Q&A)
 - `assets`: list of `{name, path, kind}`
 - `stream_id`: per-task event-log id (full history for recall/resume)
+
+## When is a task "done"?
+
+Completion is **objective-driven, not "the agent stopped"**. `TaskStore.is_complete`
+returns true only when:
+1. every **deliverable** is satisfied — `accepted`, or `produced` + `auto_accept`
+   (a produced deliverable should meet its `criteria`, checked by the runner via
+   self-verification, or by the user when `auto_accept=False`), **and**
+2. every **subtask** (descendant) is itself `completed`.
+
+The runner uses this gate before marking a task `completed`; unmet criteria →
+rework (re-open the deliverable / spawn a fix subtask) rather than a false done.
+The HITL **intake** is where objective + deliverables + criteria get pinned down
+for non-trivial tasks; they also become the **recall** template (#6/#7).
 
 ## Components (phased)
 

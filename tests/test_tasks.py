@@ -2,7 +2,7 @@
 
 import pytest
 
-from agclaw.tasks import Task, TaskStatus, TaskStore
+from agclaw.tasks import DeliverableStatus, Task, TaskStatus, TaskStore
 
 
 def _store(tmp_path):
@@ -92,3 +92,56 @@ async def test_delete(tmp_path):
     t = await store.create("x")
     await store.delete(t.id)
     assert await store.get(t.id) is None
+
+
+# --- objectives / deliverables / completion ---
+
+
+def test_deliverable_done_rules():
+    t = Task(id="t", title="x", auto_accept=True)
+    t.deliverables = [
+        {"id": "d1", "status": DeliverableStatus.PRODUCED},
+        {"id": "d2", "status": DeliverableStatus.ACCEPTED},
+    ]
+    assert t.deliverables_satisfied()  # produced counts under auto_accept
+    t.auto_accept = False
+    assert not t.deliverables_satisfied()  # now d1 (produced) needs acceptance
+    assert {d["id"] for d in t.pending_deliverables()} == {"d1"}
+
+
+def test_no_deliverables_is_vacuously_satisfied():
+    assert Task(id="t", title="x").deliverables_satisfied()
+
+
+async def test_add_and_satisfy_deliverable(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("Write report", objective="A 1-page report on X")
+    d = await store.add_deliverable(t.id, "report.md", criteria="covers X, ~1 page")
+    assert d["status"] == DeliverableStatus.PENDING
+    assert not await store.is_complete(t.id)
+    await store.set_deliverable_status(
+        t.id, d["id"], DeliverableStatus.PRODUCED,
+        asset={"name": "report.md", "path": "/tmp/report.md", "kind": "text"},
+    )
+    assert await store.is_complete(t.id)  # auto_accept → produced is enough
+    got = await store.get(t.id)
+    assert got.deliverables[0]["asset"]["name"] == "report.md"
+
+
+async def test_completion_requires_subtasks_done(tmp_path):
+    store = _store(tmp_path)
+    root = await store.create("Big job")  # no deliverables
+    sub = await store.create("Sub", parent_id=root.id)
+    assert not await store.is_complete(root.id)  # subtask not complete
+    await store.set_status(sub.id, TaskStatus.COMPLETED)
+    assert await store.is_complete(root.id)
+
+
+async def test_completion_needs_acceptance_when_not_auto(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("Deck", auto_accept=False)
+    d = await store.add_deliverable(t.id, "slides.pdf", criteria="10 slides")
+    await store.set_deliverable_status(t.id, d["id"], DeliverableStatus.PRODUCED)
+    assert not await store.is_complete(t.id)  # produced but needs sign-off
+    await store.set_deliverable_status(t.id, d["id"], DeliverableStatus.ACCEPTED)
+    assert await store.is_complete(t.id)
