@@ -2,6 +2,19 @@
 
 ## Backlog / Ideas
 
+- **Supervisor / watchdog — persistent, deterministic (no LLM).** An always-on
+  control loop, separate from the agent, that health-checks every service
+  (gateway, each channel, the scheduler, the task runner) on an interval and
+  **restarts** anything that's down or wedged. Also supports **hot-reload**: when
+  the agent's config/code changes, rebuild/swap the agent without a full restart.
+  - *Mechanism:* a process/asyncio supervisor with per-service health probes +
+    restart policy (backoff, max retries); a reload hook that re-runs
+    `create_agent` and swaps it into the live `Gateway`. Deterministic and
+    observable (status endpoint / log), never calls the LLM.
+  - *Why:* keep a long-running personal assistant up unattended; pick up agent
+    updates safely. Pairs with `agclaw run` (it would own the channel/gateway
+    lifecycles) and could also watch the task runner/scheduler.
+
 - **Onboarding — get to know the user (seeded question set).** A first-run flow that proactively asks a short set of high-value questions instead of waiting to learn them passively. Captures things the agent keeps needing: **location/timezone, working hours, name, preferred tone, channels, do-not-disturb**, etc.
   - *Mechanism:* reuse the HITL `Asker` (buttons/free-text) so onboarding runs on whichever surface started it (desktop popup, or a chat). A `agclaw onboard` command + auto-trigger on first interaction when the profile is empty.
   - *Storage:* answers seed the profile memory (`/memory/working.md`) and, where structured, config (e.g. write `AGCLAW_LOCATION`). The passive observer then keeps refining over time.
