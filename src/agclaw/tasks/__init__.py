@@ -1,5 +1,6 @@
 """AGClaw task management — persistent, trackable, nestable tasks."""
 
+from agclaw.tasks.executor import make_task_executor
 from agclaw.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus
 from agclaw.tasks.planner import TaskPlan, apply_plan, make_plan, prepare_task, run_intake
 from agclaw.tasks.runner import TaskManager
@@ -17,4 +18,5 @@ __all__ = [
     "apply_plan",
     "run_intake",
     "prepare_task",
+    "make_task_executor",
 ]

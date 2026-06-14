@@ -100,11 +100,14 @@ async def test_concurrency_cap(tmp_path):
     live = 0
     peak = 0
     release = asyncio.Event()
+    at_cap = asyncio.Event()
 
     async def executor(task_id, mgr, asker):
         nonlocal live, peak
         live += 1
         peak = max(peak, live)
+        if live >= 2:
+            at_cap.set()
         await release.wait()
         live -= 1
 
@@ -112,12 +115,14 @@ async def test_concurrency_cap(tmp_path):
     ids = [(await store.create(f"t{i}")).id for i in range(4)]
     for tid in ids:
         await mgr.submit(tid)
-    await asyncio.sleep(0.05)
-    assert peak == 2  # never more than the cap running at once
+    # exactly the cap runs concurrently: 2 reach the executor, the rest wait
+    await asyncio.wait_for(at_cap.wait(), timeout=5)
+    await asyncio.sleep(0.05)  # give any (incorrectly) extra ones a chance to slip in
+    assert peak == 2
     release.set()
     for tid in ids:
         await mgr.wait(tid)
-    assert peak == 2
+    assert peak == 2  # never exceeded the cap
 
 
 async def test_progress_callback_fires(tmp_path):

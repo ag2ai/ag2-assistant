@@ -132,3 +132,28 @@ async def test_make_plan_real_llm(tmp_path):
     plan = await make_plan(agent, "Find any unread emails from today")
     assert isinstance(plan.objective, str) and plan.objective
     assert isinstance(plan.trivial, bool)
+
+
+@pytest.mark.integration
+async def test_task_end_to_end_real(tmp_path):
+    """Plan a simple task, then run it with the real executor → completed."""
+    from agclaw.agent import create_agent
+    from agclaw.config import load_config
+    from agclaw.tasks import TaskManager, TaskStatus, make_task_executor
+    from agclaw.tasks.planner import prepare_task
+
+    cfg = load_config()
+    store = TaskStore(path=tmp_path / "tasks.db")
+    agent = create_agent(cfg, memory=False, skills=False)
+
+    t = await store.create("Tell me a one-sentence fun fact about octopuses")
+    await prepare_task(store, t.id, agent, asker=None)  # trivial → no intake
+
+    mgr = TaskManager(store, make_task_executor(cfg))
+    await mgr.submit(t.id)
+    await mgr.wait(t.id)
+
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.COMPLETED, got.error
+    assert got.deliverables and got.deliverables[0]["status"] == "produced"
+    assert got.deliverables[0]["asset"]["content"]

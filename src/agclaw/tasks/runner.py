@@ -24,6 +24,10 @@ Executor = Callable[[str, "TaskManager", object], Awaitable[None]]
 
 
 class TaskManager:
+    # How many times a leaf may run its executor while deliverables stay unmet
+    # before the task is failed (prevents infinite rework spins).
+    MAX_ATTEMPTS = 3
+
     def __init__(
         self,
         store: TaskStore,
@@ -49,26 +53,57 @@ class TaskManager:
 
     async def _run(self, task_id: str, asker) -> None:
         try:
-            async with self._sem:
+            await self.store.set_status(task_id, TaskStatus.RUNNING)
+            attempts = 0
+            while True:
                 if task_id in self._cancelled:
                     await self.store.set_status(task_id, TaskStatus.CANCELLED)
                     return
-                await self.store.set_status(task_id, TaskStatus.RUNNING)
-                await self.executor(task_id, self, asker)
 
-                if task_id in self._cancelled:
-                    await self.store.set_status(task_id, TaskStatus.CANCELLED)
-                    return
+                # 1) Run any pending subtasks first, in parallel. We do NOT hold a
+                #    worker slot here — only leaf work counts toward concurrency —
+                #    so deep trees can't deadlock. Re-evaluated each pass, so
+                #    subtasks added mid-run (amendments) are picked up.
+                children = await self.store.children(task_id)
+                pending_children = [c for c in children if not c.is_terminal]
+                if pending_children:
+                    await asyncio.gather(
+                        *[self._run_subtree(c.id, asker) for c in pending_children]
+                    )
+                    children = await self.store.children(task_id)
+                    if any(c.status == TaskStatus.FAILED for c in children):
+                        await self.store.set_status(
+                            task_id, TaskStatus.FAILED, error="a subtask failed"
+                        )
+                        return
+                    continue  # loop: new children may have appeared
+
+                # 2) No pending subtasks → do this task's own work toward its
+                #    deliverables (the leaf, or a parent's synthesis step).
+                task = await self.store.get(task_id)
+                needs_work = bool(task.pending_deliverables()) or (
+                    not task.deliverables and not children and attempts == 0
+                )
+                if needs_work and attempts < self.MAX_ATTEMPTS:
+                    attempts += 1
+                    async with self._sem:
+                        if task_id in self._cancelled:
+                            await self.store.set_status(task_id, TaskStatus.CANCELLED)
+                            return
+                        await self.executor(task_id, self, asker)
+                    continue  # re-check (may have produced deliverables / added subtasks)
+
+                # 3) Settle: complete iff deliverables satisfied + subtasks done.
                 if await self.store.is_complete(task_id):
                     await self.store.set_status(task_id, TaskStatus.COMPLETED)
                 else:
-                    task = await self.store.get(task_id)
                     pending = [d.get("description") for d in task.pending_deliverables()]
                     await self.store.set_status(
                         task_id, TaskStatus.FAILED,
-                        error=f"deliverables not met: {pending}" if pending
-                        else "incomplete (subtasks unfinished)",
+                        error=f"deliverables not met after {attempts} attempt(s): {pending}"
+                        if pending else "incomplete (subtasks unfinished)",
                     )
+                return
         except asyncio.CancelledError:
             await self.store.set_status(task_id, TaskStatus.CANCELLED)
             raise
@@ -76,6 +111,12 @@ class TaskManager:
             await self.store.set_status(task_id, TaskStatus.FAILED, error=str(exc))
         finally:
             self._running.pop(task_id, None)
+
+    async def _run_subtree(self, task_id: str, asker) -> None:
+        """Submit a subtask and await its background run to settle."""
+        task = await self.submit(task_id, asker)
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
     async def progress(self, task_id: str, message: str, pct: int | None = None) -> None:
         """Record a progress entry and notify any live subscriber (GUI/channel)."""
