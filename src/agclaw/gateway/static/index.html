@@ -7,49 +7,88 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
 <link href="https://fonts.cdnfonts.com/css/open-sauce-sans" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <style>
   :root {
     --ink: #171717; --muted: #737373; --line: #e6e6e6;
-    --accent: #f95339; --bg: #ffffff; --panel: #fafafa;
+    --accent: #f95339; --bg: #ffffff; --panel: #fafafa; --code: #f3f3f3;
+    --user-bg: #171717; --user-ink: #ffffff;
     --serif: "Playfair Display", Georgia, serif;
     --sans: "Open Sauce Sans", "Open Sauce One", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
+  /* Dark, when the OS asks for it and the user hasn't forced light. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #ededed; --muted: #9a9a9a; --line: #2b2b2b;
+      --bg: #0f0f0f; --panel: #1b1b1b; --code: #232323;
+      --user-bg: #f95339; --user-ink: #ffffff;
+    }
+  }
+  /* Explicit dark override (user toggled). */
+  :root[data-theme="dark"] {
+    --ink: #ededed; --muted: #9a9a9a; --line: #2b2b2b;
+    --bg: #0f0f0f; --panel: #1b1b1b; --code: #232323;
+    --user-bg: #f95339; --user-ink: #ffffff;
+  }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans);
     display: flex; flex-direction: column; height: 100vh;
+    transition: background .2s ease, color .2s ease;
   }
   header {
     display: flex; align-items: center; gap: 10px; padding: 14px 20px;
     border-bottom: 1px solid var(--line);
   }
   header .mark {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 700; letter-spacing: 1px;
-    background: var(--ink); color: #fff; padding: 4px 9px; border-radius: 6px; font-size: 13px;
+    font-family: var(--mono); font-weight: 700; letter-spacing: 1px;
+    background: var(--ink); color: var(--bg); padding: 4px 9px; border-radius: 6px; font-size: 13px;
   }
   header .title { font-family: var(--serif); font-weight: 600; font-size: 18px; }
-  header .status { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+  header .spacer { margin-left: auto; }
+  header .status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #c9c9c9; }
   .dot.on { background: #2ecc71; } .dot.off { background: var(--accent); }
-  header button.new {
+  header button {
     font-family: var(--sans); font-size: 13px; font-weight: 600; cursor: pointer;
-    border: 1px solid var(--line); background: #fff; color: var(--ink);
-    padding: 7px 12px; border-radius: 8px; margin-left: 14px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+    padding: 7px 12px; border-radius: 8px; margin-left: 10px;
   }
-  header button.new:hover { border-color: var(--ink); }
+  header button:hover { border-color: var(--ink); }
 
-  #log { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+  #log { flex: 1; overflow-y: auto; padding: 24px; }
   .wrap { max-width: 760px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
   .msg { display: flex; }
   .msg.user { justify-content: flex-end; }
   .bubble {
-    max-width: 78%; padding: 12px 16px; border-radius: 14px; line-height: 1.5; font-size: 15px;
-    white-space: pre-wrap; word-wrap: break-word;
+    max-width: 80%; padding: 12px 16px; border-radius: 14px; line-height: 1.55; font-size: 15px;
+    word-wrap: break-word; overflow-wrap: anywhere;
   }
-  .msg.user .bubble { background: var(--ink); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.user .bubble { background: var(--user-bg); color: var(--user-ink); border-bottom-right-radius: 4px; white-space: pre-wrap; }
   .msg.agent .bubble { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
   .msg.error .bubble { background: #fff3f1; border: 1px solid #f7c9c0; color: #b3331f; }
+  .msg.note { justify-content: center; }
+  .msg.note .bubble { background: transparent; color: var(--muted); font-size: 13px; padding: 4px; }
+
+  /* markdown inside agent bubbles */
+  .bubble > :first-child { margin-top: 0; } .bubble > :last-child { margin-bottom: 0; }
+  .bubble p { margin: 0 0 10px; } .bubble ul, .bubble ol { margin: 0 0 10px; padding-left: 22px; }
+  .bubble li { margin: 3px 0; }
+  .bubble h1, .bubble h2, .bubble h3 { font-family: var(--serif); margin: 14px 0 8px; line-height: 1.25; }
+  .bubble h1 { font-size: 22px; } .bubble h2 { font-size: 19px; } .bubble h3 { font-size: 17px; }
+  .bubble a { color: var(--accent); }
+  .bubble code { font-family: var(--mono); font-size: 13px; background: var(--code); padding: 1.5px 5px; border-radius: 5px; }
+  .bubble pre { background: var(--code); padding: 12px 14px; border-radius: 10px; overflow-x: auto; margin: 0 0 10px; }
+  .bubble pre code { background: none; padding: 0; font-size: 13px; line-height: 1.5; }
+  .bubble blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
+  .bubble table { border-collapse: collapse; margin: 0 0 10px; font-size: 14px; }
+  .bubble th, .bubble td { border: 1px solid var(--line); padding: 5px 9px; }
+  .bubble .files { display: flex; flex-direction: column; gap: 4px; }
+  .bubble .file { font-size: 13px; opacity: .9; }
 
   .thinking .bubble { color: var(--muted); display: inline-flex; gap: 5px; align-items: center; }
   .thinking .d { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite both; }
@@ -58,7 +97,7 @@
 
   .qcard {
     align-self: center; max-width: 760px; width: 100%; border: 1px solid var(--accent);
-    border-radius: 14px; padding: 18px 20px; background: #fff;
+    border-radius: 14px; padding: 18px 20px; background: var(--bg);
     box-shadow: 0 8px 28px rgba(249,83,57,.10);
   }
   .qcard .kind { color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; }
@@ -68,29 +107,40 @@
   .qcard button, .qcard .send {
     font-family: var(--sans); font-size: 14px; font-weight: 600; cursor: pointer;
     padding: 11px 16px; border-radius: 10px; border: 1px solid var(--ink);
-    background: var(--ink); color: #fff;
+    background: var(--ink); color: var(--bg);
   }
-  .qcard button.secondary { background: #fff; color: var(--ink); }
-  .qcard button.primary { background: var(--accent); border-color: var(--accent); }
+  .qcard button.secondary { background: var(--bg); color: var(--ink); }
+  .qcard button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .qcard button:hover { opacity: .9; }
   .qcard .freerow { display: flex; gap: 10px; }
-  .qcard input { flex: 1; padding: 11px 14px; font-family: var(--sans); font-size: 14px; border: 1px solid var(--line); border-radius: 10px; }
+  .qcard input { flex: 1; padding: 11px 14px; font-family: var(--sans); font-size: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
   .qcard input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 
   footer { border-top: 1px solid var(--line); padding: 14px 20px; }
-  .composer { max-width: 760px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+  .composer { max-width: 760px; margin: 0 auto; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .chip { display: flex; align-items: center; gap: 6px; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; }
+  .chip button { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1; padding: 0; }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .iconbtn {
+    flex: none; width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font-size: 18px; cursor: pointer;
+  }
+  .iconbtn:hover { border-color: var(--ink); }
+  .iconbtn:disabled { opacity: .5; cursor: not-allowed; }
   textarea {
     flex: 1; resize: none; font-family: var(--sans); font-size: 15px; line-height: 1.5;
     padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; max-height: 160px;
+    background: var(--bg); color: var(--ink);
   }
   textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
   textarea:disabled { background: var(--panel); color: var(--muted); }
-  .composer button {
-    font-family: var(--sans); font-size: 15px; font-weight: 600; cursor: pointer;
+  .sendbtn {
+    flex: none; font-family: var(--sans); font-size: 15px; font-weight: 600; cursor: pointer;
     padding: 12px 20px; border-radius: 12px; border: none; background: var(--accent); color: #fff;
   }
-  .composer button:disabled { background: #f0b6ac; cursor: not-allowed; }
-  .empty { color: var(--muted); text-align: center; margin: auto; font-size: 15px; }
+  .sendbtn.stop { background: var(--ink); color: var(--bg); }
+  .empty { color: var(--muted); text-align: center; margin: 18vh auto 0; font-size: 15px; }
   .empty h1 { font-family: var(--serif); font-weight: 600; color: var(--ink); font-size: 28px; margin: 0 0 8px; }
 </style>
 </head>
@@ -98,16 +148,23 @@
   <header>
     <span class="mark">AGClaw</span>
     <span class="title">Assistant</span>
-    <button class="new" id="new" title="Start a fresh conversation">New chat</button>
+    <span class="spacer"></span>
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></span>
+    <button id="theme" title="Theme">🖥 System</button>
+    <button id="new" title="Start a fresh conversation">New chat</button>
   </header>
 
   <div id="log"><div class="wrap"><div class="empty"><h1>How can I help?</h1>Ask me anything — I can search, run code, read files, and more.</div></div></div>
 
   <footer>
     <div class="composer">
-      <textarea id="input" rows="1" placeholder="Message AGClaw…" autofocus></textarea>
-      <button id="send">Send</button>
+      <div class="chips" id="chips"></div>
+      <div class="row">
+        <button class="iconbtn" id="attach" title="Attach files">📎</button>
+        <input type="file" id="file" multiple hidden>
+        <textarea id="input" rows="1" placeholder="Message AGClaw…" autofocus></textarea>
+        <button class="sendbtn" id="send">Send</button>
+      </div>
     </div>
   </footer>
 
@@ -117,93 +174,134 @@
   const wrap = log.querySelector(".wrap");
   const input = document.getElementById("input");
   const sendBtn = document.getElementById("send");
+  const attachBtn = document.getElementById("attach");
+  const fileInput = document.getElementById("file");
+  const chips = document.getElementById("chips");
   const dot = document.getElementById("dot");
   const statusText = document.getElementById("statusText");
+  const themeBtn = document.getElementById("theme");
+  const MAX_BYTES = 20 * 1024 * 1024;
+
+  if (window.marked) marked.setOptions({ breaks: true, gfm: true });
+
+  // --- theme: system (default) → light → dark, persisted ---
+  const THEMES = ["system", "light", "dark"];
+  const LABEL = { system: "🖥 System", light: "☀️ Light", dark: "🌙 Dark" };
+  function applyTheme(t) {
+    if (t === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    themeBtn.textContent = LABEL[t];
+  }
+  let theme = localStorage.getItem("agclaw_theme") || "system";
+  applyTheme(theme);
+  themeBtn.onclick = () => {
+    theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+    localStorage.setItem("agclaw_theme", theme);
+    applyTheme(theme);
+  };
 
   // One stable session per browser.
   let sessionId = localStorage.getItem("agclaw_session");
   if (!sessionId) { sessionId = "web-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("agclaw_session", sessionId); }
 
-  let ws, thinkingEl = null, busy = false;
+  let ws, thinkingEl = null, busy = false, pending = [];
 
   function scroll() { log.scrollTop = log.scrollHeight; }
   function clearEmpty() { const e = wrap.querySelector(".empty"); if (e) e.remove(); }
 
-  function addMsg(role, text) {
+  function renderMarkdown(el, text) {
+    if (window.marked && window.DOMPurify) {
+      el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+      el.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener"; });
+    } else { el.textContent = text || ""; }
+  }
+
+  function addMsg(role, text, files) {
     clearEmpty();
     const m = document.createElement("div");
     m.className = "msg " + role;
     const b = document.createElement("div");
     b.className = "bubble";
-    b.textContent = text;
-    m.appendChild(b);
-    wrap.appendChild(m);
-    scroll();
+    if (role === "agent") renderMarkdown(b, text);
+    else b.textContent = text || "";
+    if (files && files.length) {
+      const fl = document.createElement("div"); fl.className = "files";
+      files.forEach(f => { const d = document.createElement("div"); d.className = "file"; d.textContent = "📎 " + f.name; fl.appendChild(d); });
+      b.appendChild(fl);
+    }
+    m.appendChild(b); wrap.appendChild(m); scroll();
     return m;
   }
+
+  function addNote(text) { addMsg("note", text); }
 
   function showThinking() {
     clearEmpty();
     thinkingEl = document.createElement("div");
     thinkingEl.className = "msg agent thinking";
     thinkingEl.innerHTML = '<div class="bubble"><span class="d"></span><span class="d"></span><span class="d"></span></div>';
-    wrap.appendChild(thinkingEl);
-    scroll();
+    wrap.appendChild(thinkingEl); scroll();
   }
   function clearThinking() { if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } }
 
   function setBusy(on) {
     busy = on;
-    input.disabled = on; sendBtn.disabled = on;
+    input.disabled = on; attachBtn.disabled = on;
+    sendBtn.textContent = on ? "Stop" : "Send";
+    sendBtn.classList.toggle("stop", on);
     if (!on) input.focus();
   }
+
+  // --- attachments ---
+  function renderChips() {
+    chips.innerHTML = "";
+    pending.forEach((f, i) => {
+      const c = document.createElement("div"); c.className = "chip";
+      const n = document.createElement("span"); n.textContent = "📎 " + f.name;
+      const x = document.createElement("button"); x.textContent = "×"; x.title = "Remove";
+      x.onclick = () => { pending.splice(i, 1); renderChips(); };
+      c.appendChild(n); c.appendChild(x); chips.appendChild(c);
+    });
+  }
+  attachBtn.onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    [...fileInput.files].forEach(file => {
+      if (file.size > MAX_BYTES) { addNote("⚠ " + file.name + " is too large (max 20 MB)."); return; }
+      const r = new FileReader();
+      r.onload = () => { pending.push({ name: file.name, mime: file.type || "application/octet-stream", data: String(r.result).split(",")[1] || "" }); renderChips(); };
+      r.readAsDataURL(file);
+    });
+    fileInput.value = "";
+  };
 
   function showQuestion(q) {
     clearThinking();
     const card = document.createElement("div");
     card.className = "qcard";
-    const kind = q.kind === "permission" ? "Permission" : "Question";
-    let html = '<div class="kind">' + kind + '</div><h3></h3>';
-    card.innerHTML = html;
+    card.innerHTML = '<div class="kind">' + (q.kind === "permission" ? "Permission" : "Question") + '</div><h3></h3>';
     card.querySelector("h3").textContent = q.text || "";
     if (q.detail) { const d = document.createElement("div"); d.className = "detail"; d.textContent = q.detail; card.appendChild(d); }
-
-    function answer(value) {
-      send({ type: "answer", id: q.id, answer: value });
-      card.remove();
-      addMsg("user", value);
-      showThinking();
-    }
-
+    function answer(value) { send({ type: "answer", id: q.id, answer: value }); card.remove(); addMsg("user", value); showThinking(); }
     if (q.options && q.options.length) {
-      const opts = document.createElement("div");
-      opts.className = "opts";
+      const opts = document.createElement("div"); opts.className = "opts";
       const deny = new Set(["deny", "no", "cancel", "decline", "reject"]);
       q.options.forEach((opt, i) => {
         const btn = document.createElement("button");
         const lower = String(opt).trim().toLowerCase();
         btn.className = deny.has(lower) ? "secondary" : (i === 0 ? "primary" : "");
-        btn.textContent = opt;
-        btn.onclick = () => answer(opt);
-        opts.appendChild(btn);
+        btn.textContent = opt; btn.onclick = () => answer(opt); opts.appendChild(btn);
       });
       card.appendChild(opts);
     } else {
-      const row = document.createElement("div");
-      row.className = "freerow";
-      const tin = document.createElement("input");
-      tin.type = "text"; tin.placeholder = "Type your answer…";
-      const go = document.createElement("button");
-      go.className = "send primary"; go.textContent = "Send";
+      const row = document.createElement("div"); row.className = "freerow";
+      const tin = document.createElement("input"); tin.type = "text"; tin.placeholder = "Type your answer…";
+      const go = document.createElement("button"); go.className = "primary"; go.textContent = "Send";
       const submit = () => { const v = tin.value.trim(); if (v) answer(v); };
-      go.onclick = submit;
-      tin.onkeydown = (e) => { if (e.key === "Enter") submit(); };
-      row.appendChild(tin); row.appendChild(go);
-      card.appendChild(row);
+      go.onclick = submit; tin.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+      row.appendChild(tin); row.appendChild(go); card.appendChild(row);
       setTimeout(() => tin.focus(), 0);
     }
-    wrap.appendChild(card);
-    scroll();
+    wrap.appendChild(card); scroll();
   }
 
   function send(obj) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
@@ -216,33 +314,32 @@
     ws.onerror = () => { dot.className = "dot off"; statusText.textContent = "offline"; };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.type === "thinking") { showThinking(); }
-      else if (m.type === "question") { showQuestion(m); }
+      if (m.type === "thinking") showThinking();
+      else if (m.type === "question") showQuestion(m);
       else if (m.type === "reply") { clearThinking(); addMsg("agent", m.text); setBusy(false); }
+      else if (m.type === "cancelled") { clearThinking(); addNote("⏹ Stopped."); setBusy(false); }
       else if (m.type === "error") { clearThinking(); addMsg("error", "⚠ " + (m.message || "Something went wrong.")); setBusy(false); }
     };
   }
 
   function sendMessage() {
+    if (busy) { send({ type: "cancel", session_id: sessionId }); return; }  // Stop
     const text = input.value.trim();
-    if (!text || busy) return;
-    addMsg("user", text);
-    input.value = ""; input.style.height = "auto";
+    if (!text && !pending.length) return;
+    const files = pending.slice();
+    addMsg("user", text, files);
+    input.value = ""; input.style.height = "auto"; pending = []; renderChips();
     setBusy(true);
-    send({ text: text, session_id: sessionId });
+    send({ text: text, session_id: sessionId, attachments: files });
   }
 
   sendBtn.onclick = sendMessage;
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  });
-  input.addEventListener("input", () => {
-    input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 160) + "px";
-  });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
   document.getElementById("new").onclick = () => {
     sessionId = "web-" + Math.random().toString(36).slice(2, 10);
     localStorage.setItem("agclaw_session", sessionId);
+    pending = []; renderChips();
     wrap.innerHTML = '<div class="empty"><h1>How can I help?</h1>New conversation started.</div>';
   };
 

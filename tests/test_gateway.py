@@ -4,6 +4,8 @@ Unit tests stub the agent so they run without an LLM. Integration tests exercise
 the real agent end-to-end.
 """
 
+import asyncio
+
 import pytest
 
 
@@ -243,6 +245,76 @@ def test_ws_hitl_question_answer_flow():
             reply = ws.receive_json()
             assert reply["type"] == "reply"
             assert reply["text"] == "decision:Allow once"
+
+
+def test_decode_attachments():
+    import base64
+
+    from agclaw.gateway.app import _decode_attachments
+
+    data = base64.b64encode(b"hello").decode()
+    out = _decode_attachments([{"name": "a.png", "mime": "image/png", "data": data}])
+    assert len(out) == 1
+    assert _decode_attachments(None) == []
+    assert _decode_attachments([{"name": "x.png", "data": ""}]) == []  # empty → skipped
+
+
+class _AttachGateway:
+    def __init__(self):
+        self.last_attachments = None
+
+    async def send_message(self, text, session_id="default", asker=None, attachments=None):
+        self.last_attachments = attachments
+        return f"got {len(attachments or [])} attachment(s): {text}"
+
+    def status(self):
+        return {"status": "ok", "sessions": 0}
+
+
+def test_ws_attachment_passthrough():
+    import base64
+
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+
+    gw = _AttachGateway()
+    app = app_mod.create_app(gateway=gw)
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/ws") as ws:
+            data = base64.b64encode(b"hello").decode()
+            ws.send_json({
+                "text": "see this",
+                "session_id": "s1",
+                "attachments": [{"name": "a.txt", "mime": "text/plain", "data": data}],
+            })
+            assert ws.receive_json()["type"] == "thinking"
+            reply = ws.receive_json()
+            assert reply["type"] == "reply"
+            assert "1 attachment" in reply["text"]
+    assert gw.last_attachments and len(gw.last_attachments) == 1
+
+
+class _HangGateway:
+    async def send_message(self, text, session_id="default", asker=None, attachments=None):
+        await asyncio.Event().wait()  # never completes → must be cancellable
+
+    def status(self):
+        return {"status": "ok", "sessions": 0}
+
+
+def test_ws_cancel_stops_turn():
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+
+    app = app_mod.create_app(gateway=_HangGateway())
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/ws") as ws:
+            ws.send_json({"text": "long task", "session_id": "s1"})
+            assert ws.receive_json()["type"] == "thinking"
+            ws.send_json({"type": "cancel", "session_id": "s1"})
+            assert ws.receive_json()["type"] == "cancelled"
 
 
 async def test_gateway_asker_timeout_denies():

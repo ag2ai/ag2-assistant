@@ -112,6 +112,9 @@ def create_app(
 
                 text = data.get("text", "")
                 session_id = data.get("session_id", "default")
+                attachments = _decode_attachments(data.get("attachments"))
+                if not text and attachments:
+                    text = "Here is a file I'm sharing with you."
                 if not text:
                     await websocket.send_json(
                         {"type": "error", "message": "missing 'text'"}
@@ -136,12 +139,18 @@ def create_app(
                 asker = GatewayAsker(app.state.hitl, on_question=on_question)
                 task = asyncio.create_task(
                     app.state.gateway.send_message(
-                        text, session_id=session_id, asker=asker
+                        text, session_id=session_id, asker=asker,
+                        attachments=attachments,
                     )
                 )
-                # While the turn runs, keep reading frames so answers get through.
+                # While the turn runs, keep reading frames (answers / cancel).
                 await _drive_turn(websocket, task, app.state.hitl)
 
+                if task.cancelled():
+                    await websocket.send_json(
+                        {"type": "cancelled", "session_id": session_id}
+                    )
+                    continue
                 try:
                     reply = task.result()
                     await websocket.send_json(
@@ -157,11 +166,30 @@ def create_app(
     return app
 
 
+def _decode_attachments(items) -> list:
+    """Turn UI attachment frames ({name, mime, data:b64}) into AG2 inputs."""
+    import base64
+
+    from agclaw.attachments import build_input
+
+    out = []
+    for a in items or []:
+        try:
+            raw = base64.b64decode(a.get("data", ""))
+        except Exception:
+            continue
+        inp = build_input(raw, a.get("name", "file"), a.get("mime"))
+        if inp is not None:
+            out.append(inp)
+    return out
+
+
 async def _drive_turn(websocket: WebSocket, task: asyncio.Task, hitl) -> None:
-    """Run a turn while concurrently accepting HITL answer frames over the socket.
+    """Run a turn while concurrently accepting HITL answer / cancel frames.
 
     Lets the client answer a `question` frame on the same WebSocket the turn is
-    streaming on (the turn is blocked awaiting that answer).
+    streaming on (the turn is blocked awaiting that answer), or stop the turn
+    with a `cancel` frame.
     """
     while not task.done():
         recv = asyncio.create_task(websocket.receive_json())
@@ -176,8 +204,12 @@ async def _drive_turn(websocket: WebSocket, task: asyncio.Task, hitl) -> None:
                 raise
             if msg.get("type") == "answer" and msg.get("id"):
                 hitl.answer(msg["id"], msg.get("answer", ""))
+            elif msg.get("type") == "cancel":
+                task.cancel()
             # other frames mid-turn are ignored (one turn at a time per socket)
         else:
             recv.cancel()
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await recv
+    with contextlib.suppress(asyncio.CancelledError):
+        await task  # let cancellation settle so task.cancelled() is accurate
