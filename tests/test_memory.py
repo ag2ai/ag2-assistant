@@ -23,6 +23,13 @@ def test_profile_prompt_includes_platform():
     assert "How they write" in prompt
 
 
+def test_profile_prompt_forbids_preamble():
+    # The aggregator must write only the document, not commentary about it.
+    prompt = build_profile_prompt("cli").lower()
+    assert "only" in prompt and "commentary" in prompt
+    assert "preamble" in prompt
+
+
 def test_profile_prompt_keeps_placeholders():
     # {existing} and {events} must survive as literal placeholders for AG2.
     prompt = build_profile_prompt("cli")
@@ -72,6 +79,39 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
     agent_mod.create_agent(cfg, memory=True, skills=False, single_shot=True)
     assert captured["on_end"] is True
     assert captured["every_n_turns"] == cfg.memory.aggregate_every_n_turns
+
+
+def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
+    """On Gemini with no explicit aggregate_model, the pass uses the cheaper one."""
+    captured = {}
+    import agclaw.agent as agent_mod
+
+    real = agent_mod.build_knowledge_config
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
+    from agclaw.config import Config
+
+    agent_mod.create_agent(Config(), memory=True, skills=False)
+    assert captured["aggregate_config"].model == "gemini-2.5-flash-lite"
+
+
+def test_explicit_aggregate_model_wins(monkeypatch):
+    captured = {}
+    import agclaw.agent as agent_mod
+    from agclaw.config import Config, LLMConfig
+
+    real = agent_mod.build_knowledge_config
+    monkeypatch.setattr(
+        agent_mod, "build_knowledge_config",
+        lambda *a, **k: (captured.update(k), real(*a, **k))[1],
+    )
+    cfg = Config(llm=LLMConfig(aggregate_model="gemini-2.5-flash"))
+    agent_mod.create_agent(cfg, memory=True, skills=False)
+    assert captured["aggregate_config"].model == "gemini-2.5-flash"
 
 
 async def test_read_profile_empty(tmp_path):

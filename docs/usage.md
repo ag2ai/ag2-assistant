@@ -324,8 +324,9 @@ So you can keep a base `config.json` and override per-run with an env var.
 ```
 
 `aggregate_model` (optional) runs the passive memory-distillation pass on a
-cheaper model than your main one — handy on long sessions. Omit it to reuse the
-main model.
+cheaper model than your main one — handy on long sessions. On Gemini this
+defaults to `gemini-2.5-flash-lite`; set it explicitly to override, or set it to
+your main model to disable the saving.
 
 ### Environment variable overrides
 

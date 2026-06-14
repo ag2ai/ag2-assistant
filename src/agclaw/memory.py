@@ -64,13 +64,19 @@ Rules:
 - If the conversation reveals nothing about the user's preferences, return the
   existing profile unchanged.
 
+OUTPUT FORMAT — this is strict:
+- Output ONLY the profile itself: the four `##` headings and their bullet points.
+- Do NOT include any preamble, narration, or commentary about your analysis
+  (no "An analysis of the conversation shows…", no "The profile remains
+  unchanged."). Return the document only — nothing before the first heading.
+
 Existing profile:
 {{existing}}
 
 New conversation:
 {{events}}
 
-Return the complete updated profile."""
+Return the updated profile document only (headings and bullets, no commentary)."""
 
 
 def default_store_path() -> Path:

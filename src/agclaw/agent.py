@@ -12,6 +12,10 @@ from agclaw.tools import build_agent_tools
 # Commands skill scripts must never run (defense-in-depth; skills can ship code).
 _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
 
+# Default (cheaper) model for the passive memory-aggregation pass, per provider.
+# Used only when llm.aggregate_model isn't set. Override via AGCLAW_AGGREGATE_MODEL.
+_DEFAULT_AGGREGATE_MODEL = {"gemini": "gemini-2.5-flash-lite"}
+
 
 def model_config(config: Config, model: str | None = None):
     """Build the AG2 ModelConfig for the configured provider.
@@ -159,12 +163,13 @@ def create_agent(
     knowledge = None
     assembly: list = []
     if memory:
-        # A cheaper model for the background aggregation pass, if configured.
-        agg_config = (
-            model_config(config, config.llm.aggregate_model)
-            if config.llm.aggregate_model
-            else llm_config
+        # The background profile-aggregation pass is just summarisation, so run it
+        # on a cheaper model when one is configured (or a sensible per-provider
+        # default). Falls back to the main model if neither applies.
+        agg_model = config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(
+            config.llm.provider.lower()
         )
+        agg_config = model_config(config, agg_model) if agg_model else llm_config
         knowledge = build_knowledge_config(
             platform=platform,
             aggregate_config=agg_config,
