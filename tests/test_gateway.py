@@ -363,6 +363,31 @@ def test_ws_cancel_stops_turn():
             assert ws.receive_json()["type"] == "cancelled"
 
 
+def test_ws_timeout_sends_error_frame(monkeypatch):
+    """A turn that exceeds REPLY_TIMEOUT surfaces an error frame (not silence)."""
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+    import agclaw.gateway.core as core_mod
+
+    class _HangAgent:
+        async def ask(self, *a, stream=None, **k):
+            await asyncio.Event().wait()  # never returns → triggers wait_for timeout
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _HangAgent())
+    monkeypatch.setattr(core_mod, "REPLY_TIMEOUT", 0.2)
+
+    # app-managed gateway so lifespan starts it (with the hanging fake agent)
+    app = app_mod.create_app(memory=False, persist=False)
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/ws") as ws:
+            ws.send_json({"text": "slow", "session_id": "s1"})
+            frames = [ws.receive_json(), ws.receive_json()]
+            assert frames[0]["type"] == "thinking"
+            assert frames[1]["type"] == "error"
+            assert "timed out" in frames[1]["message"].lower()
+
+
 async def test_gateway_asker_timeout_denies():
     from agclaw.hitl import GatewayAsker, HitlServer
     from agclaw.hitl.base import Question

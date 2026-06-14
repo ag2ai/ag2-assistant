@@ -252,9 +252,17 @@ def create_app(
                     await websocket.send_json(
                         {"type": "reply", "text": reply, "session_id": session_id}
                     )
+                except TimeoutError:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "That took too long and timed out. Try again, "
+                        "or a simpler request.",
+                        "session_id": session_id,
+                    })
                 except Exception as exc:  # surface failures to the client
                     await websocket.send_json(
-                        {"type": "error", "message": str(exc), "session_id": session_id}
+                        {"type": "error", "message": str(exc) or repr(exc),
+                         "session_id": session_id}
                     )
         except WebSocketDisconnect:
             return
@@ -307,5 +315,8 @@ async def _drive_turn(websocket: WebSocket, task: asyncio.Task, hitl) -> None:
             recv.cancel()
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await recv
-    with contextlib.suppress(asyncio.CancelledError):
-        await task  # let cancellation settle so task.cancelled() is accurate
+    # Let the task settle (so task.cancelled()/result() are accurate) without
+    # re-raising here — the caller inspects task.result()/cancelled() and sends
+    # the appropriate reply/error/cancelled frame.
+    with contextlib.suppress(BaseException):
+        await task

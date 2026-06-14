@@ -21,7 +21,7 @@ from urllib.parse import quote
 from agclaw.agent import create_agent, turn_prompt
 from agclaw.config import Config, load_config
 
-REPLY_TIMEOUT = 120.0
+REPLY_TIMEOUT = 240.0
 _TRANSCRIPT_PREFIX = "/transcript/"
 
 
