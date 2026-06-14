@@ -67,6 +67,19 @@ rework (re-open the deliverable / spawn a fix subtask) rather than a false done.
 The HITL **intake** is where objective + deliverables + criteria get pinned down
 for non-trivial tasks; they also become the **recall** template (#6/#7).
 
+## Amending a task ("oh and add SpaceX to that IPO research")
+
+Tasks are mutable scope, not frozen plans:
+- `update(task_id, **fields, note=...)` patches title/objective/deliverables/etc.
+  (id/parent_id/created_at protected); `add_subtask` / `add_deliverable` /
+  `remove_deliverable` change the tree and outputs.
+- Because `is_complete` is evaluated **live** over the current deliverables +
+  descendants, adding work makes a task incomplete again automatically — the
+  runner (which loops on the current tree) picks it up mid-run, with no stale
+  plan. Adding work to a **finished** task `reopen`s it (`add_subtask` does this).
+- The agent resolves "that IPO research" → the relevant active/recent task, then
+  calls these helpers; the amendment is recorded in the progress log for history.
+
 ## Components (phased)
 
 1. **TaskStore** — CRUD, tree, children, status transitions, assets. *(this batch)*

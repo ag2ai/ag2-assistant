@@ -144,6 +144,67 @@ class TaskStore:
         await self.save(task)
         return task
 
+    # --- amendment (change a task's scope, even mid-run or after finishing) ---
+
+    async def update(self, task_id: str, note: str | None = None, **fields) -> Task | None:
+        """Patch task fields (title/objective/description/schedule/auto_accept/…).
+
+        `id`/`parent_id`/`created_at` are protected. Optionally records a `note`
+        in the progress log so the change is visible in history.
+        """
+        task = await self.get(task_id)
+        if task is None:
+            return None
+        protected = {"id", "parent_id", "created_at"}
+        for k, v in fields.items():
+            if k in protected or k not in Task.__dataclass_fields__:
+                continue
+            setattr(task, k, v)
+        if note:
+            task.progress.append({"at": _now(), "message": note})
+        await self.save(task)
+        return task
+
+    async def reopen(
+        self, task_id: str, status: str = TaskStatus.RUNNING, note: str | None = None
+    ) -> Task | None:
+        """Re-activate a finished/failed task (e.g. when new work is added)."""
+        task = await self.get(task_id)
+        if task is None:
+            return None
+        if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            task.status = status
+            task.ended_at = None
+            if note:
+                task.progress.append({"at": _now(), "message": note})
+            await self.save(task)
+        return task
+
+    async def add_subtask(
+        self, parent_id: str, title: str, description: str = "",
+        reopen_parent: bool = True, **fields,
+    ) -> Task | None:
+        """Amend a task by adding a subtask. Reopens the parent if it had finished
+        (so 'add SpaceX to that IPO research' resumes rather than stays done)."""
+        parent = await self.get(parent_id)
+        if parent is None:
+            return None
+        child = await self.create(title, description=description, parent_id=parent_id, **fields)
+        note = f"Scope amended: added subtask '{title}'"
+        if reopen_parent and parent.status in TaskStatus.TERMINAL:
+            await self.reopen(parent_id, note=note)
+        else:
+            await self.add_progress(parent_id, note)
+        return child
+
+    async def remove_deliverable(self, task_id: str, deliverable_id: str) -> Task | None:
+        task = await self.get(task_id)
+        if task is None:
+            return None
+        task.deliverables = [d for d in task.deliverables if d.get("id") != deliverable_id]
+        await self.save(task)
+        return task
+
     # --- deliverables (what gates completion) ---
 
     async def add_deliverable(self, task_id: str, description: str, criteria: str = "") -> dict | None:

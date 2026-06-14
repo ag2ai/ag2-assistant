@@ -137,6 +137,55 @@ async def test_completion_requires_subtasks_done(tmp_path):
     assert await store.is_complete(root.id)
 
 
+# --- amendment ("oh and add SpaceX to that IPO research") ---
+
+
+async def test_update_patches_fields_and_protects_id(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("x", objective="old")
+    await store.update(t.id, objective="new", note="refined objective", id="HACK")
+    got = await store.get(t.id)
+    assert got.objective == "new"
+    assert got.id == t.id  # id protected
+    assert got.progress[-1]["message"] == "refined objective"
+
+
+async def test_add_subtask_to_running_task_uncompletes_it(tmp_path):
+    store = _store(tmp_path)
+    ipo = await store.create("IPO research", objective="Anthropic & OpenAI")
+    d = await store.add_deliverable(ipo.id, "summary")
+    await store.set_deliverable_status(ipo.id, d["id"], "produced")
+    assert await store.is_complete(ipo.id)  # done so far
+
+    # "oh and add SpaceX to that IPO research"
+    spacex = await store.add_subtask(ipo.id, "Research SpaceX IPO")
+    assert spacex.parent_id == ipo.id
+    assert not await store.is_complete(ipo.id)  # new work → no longer complete
+    await store.set_status(spacex.id, TaskStatus.COMPLETED)
+    assert await store.is_complete(ipo.id)
+
+
+async def test_add_subtask_reopens_finished_task(tmp_path):
+    store = _store(tmp_path)
+    ipo = await store.create("IPO research")
+    await store.set_status(ipo.id, TaskStatus.COMPLETED)
+    assert (await store.get(ipo.id)).status == TaskStatus.COMPLETED
+
+    await store.add_subtask(ipo.id, "Research SpaceX IPO")
+    reopened = await store.get(ipo.id)
+    assert reopened.status == TaskStatus.RUNNING  # reopened to absorb new work
+    assert reopened.ended_at is None
+    assert any("SpaceX" in p["message"] for p in reopened.progress)
+
+
+async def test_remove_deliverable(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("x")
+    d = await store.add_deliverable(t.id, "thing")
+    await store.remove_deliverable(t.id, d["id"])
+    assert (await store.get(t.id)).deliverables == []
+
+
 async def test_completion_needs_acceptance_when_not_auto(tmp_path):
     store = _store(tmp_path)
     t = await store.create("Deck", auto_accept=False)
