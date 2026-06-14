@@ -108,6 +108,7 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [ ] Optional: `GITHUB_TOKEN` for higher registry rate limits (60/hr unauth)
 - [x] Sandbox skill script execution (Docker) — one-shot container per script, mounts only the skill's own dir
 - [x] AGClaw-bundled skills — first-party `web-research` / `pdf-tools` / `email-drafting` shipped in-package, discoverable on first run via `extra_paths` (no install). Live-verified the agent lists/uses them. (1 test)
+- [x] **Google integration (Gmail / Calendar / Drive)** — custom OAuth (`agclaw[google]` extra) with desktop consent flow (`agclaw google login/logout/status`), token cached + auto-refreshed at `~/.agclaw/google_token.json`. Tools auto-appear when signed in: `gmail_search/read/create_draft` (read), `gmail_send` + `calendar_create_event` (write — **HITL-gated**), `calendar_list_events`, `drive_search/read`. Mocked tests (no real OAuth/sends); live verification pending user's Google Cloud OAuth client. (6 tests)
 
 ### Docs
 

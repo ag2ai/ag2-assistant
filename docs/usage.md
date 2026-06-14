@@ -495,6 +495,52 @@ If `--sandbox docker` is requested but Docker isn't running, AGClaw falls back t
 the local backend (with approval prompts) and warns. `read_file` always stays
 permission-gated regardless of backend, since it reads your **host** files.
 
+## Google (Gmail / Calendar / Drive)
+
+AGClaw can read and search your Gmail, manage your Calendar, and read your Drive.
+**Writes are gated** — sending an email or creating an event always shows a HITL
+approval card first and is denied if there's no one to ask.
+
+### One-time setup
+
+```bash
+pip install "agclaw[google]"
+```
+
+1. In [Google Cloud Console](https://console.cloud.google.com): create a project
+   and **enable** the Gmail API, Google Calendar API, and Google Drive API.
+2. Configure the **OAuth consent screen** (External) and add yourself as a **Test user**.
+3. **Credentials → Create OAuth client ID → Desktop app**, download the JSON, and
+   save it to `~/.agclaw/google_credentials.json`.
+4. Sign in (opens a browser once):
+
+```bash
+agclaw google login      # → "Signed in to Google as you@gmail.com."
+agclaw google status     # show configured / signed-in state
+agclaw google logout     # remove the stored token
+```
+
+The token is cached at `~/.agclaw/google_token.json` and refreshed automatically.
+
+### What the agent can do
+
+Once signed in, these tools appear automatically:
+
+| Tool | Action | Gated? |
+|---|---|---|
+| `gmail_search` / `gmail_read` | search + read mail | no |
+| `gmail_create_draft` | save a draft (never sends) | no |
+| `gmail_send` | send an email | **yes — approval** |
+| `calendar_list_events` | list events | no |
+| `calendar_create_event` | create an event | **yes — approval** |
+| `drive_search` / `drive_read` | find + read Drive files | no |
+
+Just ask: *"summarise my unread emails from this week"*, *"what's on my calendar
+tomorrow?"*, *"draft a reply to Alice's last email"*, *"find the Q3 budget doc and
+summarise it"*. To actually send, the agent will ask you to approve first.
+
+Scopes requested: `gmail.modify` + `gmail.send`, `calendar`, `drive.readonly`.
+
 ## Sessions
 
 AGClaw maintains conversation history per user per channel. When you message your agent on Telegram, it remembers your previous conversations on Telegram. Discord conversations are separate sessions.

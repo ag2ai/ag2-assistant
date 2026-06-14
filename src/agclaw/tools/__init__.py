@@ -103,6 +103,14 @@ def build_agent_tools(
     else:
         tools.append(web_fetch_tool)
 
+    # Google tools (Gmail/Calendar/Drive) only when the user is signed in.
+    from agclaw.integrations.google_auth import has_token
+
+    if has_token():
+        from agclaw.tools.google import build_google_tools
+
+        tools.extend(build_google_tools())
+
     return tools
 
 

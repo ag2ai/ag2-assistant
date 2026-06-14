@@ -218,6 +218,51 @@ def permissions_unblock(folder: str = typer.Argument(help="Folder path to unbloc
     typer.echo(f"Unblocked: {folder}" if ok else f"Not in block list: {folder}")
 
 
+google_app = typer.Typer(help="Manage the Google (Gmail/Calendar/Drive) integration.")
+app.add_typer(google_app, name="google")
+
+
+@google_app.command("login")
+def google_login() -> None:
+    """Authorise AGClaw to access your Google account (opens a browser once)."""
+    from agclaw.integrations.google_auth import (
+        credentials_path,
+        is_configured,
+        login,
+    )
+
+    if not is_configured():
+        typer.echo(f"Missing OAuth client file at {credentials_path()}.")
+        typer.echo(
+            "Create a Desktop OAuth client in Google Cloud (enable Gmail/Calendar/"
+            "Drive APIs), download its JSON, and save it to that path."
+        )
+        raise typer.Exit(1)
+    try:
+        email = login()
+    except Exception as exc:
+        typer.echo(f"Login failed: {exc}")
+        raise typer.Exit(1)
+    typer.echo(f"Signed in to Google as {email}.")
+
+
+@google_app.command("logout")
+def google_logout() -> None:
+    """Remove the stored Google token."""
+    from agclaw.integrations.google_auth import logout
+
+    typer.echo("Signed out of Google." if logout() else "Not signed in.")
+
+
+@google_app.command("status")
+def google_status() -> None:
+    """Show Google integration status."""
+    from agclaw.integrations.google_auth import has_token, is_configured
+
+    typer.echo(f"OAuth client configured: {is_configured()}")
+    typer.echo(f"Signed in: {has_token()}")
+
+
 @app.command()
 def gateway(
     host: str = typer.Option("127.0.0.1", help="Host to bind."),

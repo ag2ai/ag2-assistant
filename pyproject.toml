@@ -33,6 +33,12 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
 ]
+# Google integration (Gmail / Calendar / Drive). Opt-in: `pip install agclaw[google]`.
+google = [
+    "google-api-python-client>=2.0",
+    "google-auth>=2.0",
+    "google-auth-oauthlib>=1.0",
+]
 
 [project.scripts]
 agclaw = "agclaw.cli:app"
