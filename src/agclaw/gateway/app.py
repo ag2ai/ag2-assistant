@@ -17,14 +17,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 from agclaw.config import Config
 from agclaw.gateway.core import Gateway
 from agclaw.hitl import GatewayAsker, HitlServer, add_hitl_routes
 
-_UI_FILE = Path(__file__).parent / "static" / "index.html"
+_STATIC_DIR = Path(__file__).parent / "static"
+_UI_FILE = _STATIC_DIR / "index.html"
 
 
 class MessageRequest(BaseModel):
@@ -88,6 +89,17 @@ def create_app(
             return _UI_FILE.read_text(encoding="utf-8")
         except OSError:
             return "<h1>AGClaw</h1><p>UI asset missing.</p>"
+
+    @app.get("/{name}.svg")
+    async def favicon_svg(name: str):
+        if name in ("faviconlight", "favicondark"):
+            return FileResponse(_STATIC_DIR / f"{name}.svg", media_type="image/svg+xml")
+        return Response(status_code=404)
+
+    @app.get("/favicon.ico")
+    async def favicon_ico():
+        # browsers that request /favicon.ico directly get the light AG2 mark
+        return FileResponse(_STATIC_DIR / "faviconlight.svg", media_type="image/svg+xml")
 
     @app.get("/api/health")
     async def health() -> dict:

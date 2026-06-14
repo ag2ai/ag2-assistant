@@ -242,6 +242,22 @@ async def test_ui_served_at_root(fake_gateway):
         assert "AGClaw" in page.text
 
 
+def test_favicon_served(fake_gateway):
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+
+    app = app_mod.create_app(gateway=fake_gateway)
+    with TestClient(app) as client:
+        for path in ("/faviconlight.svg", "/favicondark.svg", "/favicon.ico"):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert "svg" in r.headers["content-type"]
+            assert "<svg" in r.text
+        # the page references the favicons
+        assert "faviconlight.svg" in client.get("/").text
+
+
 async def test_hitl_routes_served_by_gateway(fake_gateway):
     """The gateway serves the styled /hitl page, lists pending, resolves answers."""
     from httpx import ASGITransport, AsyncClient
