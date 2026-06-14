@@ -39,83 +39,104 @@ _NATIVE_WEB_FETCH_PROVIDERS = {"anthropic"}
 _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
 
 
+# Capability groups → the tools they unlock. Tasks declare the capabilities they
+# need so an agent is built with EXACTLY those (privacy, focus, speed); chat
+# (capabilities=None) gets everything.
+CAPABILITIES = ("web", "code", "files", "skills", "gmail", "calendar", "drive")
+
+_GOOGLE_GROUPS = {
+    "gmail": {"gmail_search", "gmail_read", "gmail_send", "gmail_create_draft"},
+    "calendar": {"calendar_list_events", "calendar_create_event"},
+    "drive": {"drive_search", "drive_read"},
+}
+
+
+def available_capabilities() -> list[str]:
+    """Capabilities currently usable (Google ones only when signed in)."""
+    from agclaw.integrations.google_auth import has_token
+
+    caps = ["web", "code", "files", "skills"]
+    if has_token():
+        caps += ["gmail", "calendar", "drive"]
+    return caps
+
+
 def build_agent_tools(
     provider: str = "gemini",
     sandbox: str = "local",
     docker_image: str = "python:3.12-slim",
     docker_network: str = "bridge",
+    capabilities: list[str] | None = None,
 ) -> list:
-    """Build the agent's tool list, preferring native AG2 tools.
+    """Build the agent's tools.
+
+    `capabilities=None` → all tools (chat). A list → only those capability groups
+    (used by tasks so a research subtask can't reach your Drive or run code, etc.).
 
     Args:
-        provider: The LLM provider (gemini, anthropic, openai, ollama, ...).
-            Determines whether the native WebFetchTool is used or the custom
-            portable fallback.
-        sandbox: "local" (subprocess on the host — command-filtered and
-            approval-gated so shell/code can't bypass file permissions) or
-            "docker" (isolated container with no host filesystem access; the
-            container *is* the boundary, so the per-command approval prompt is
-            dropped). Falls back to "local" if Docker isn't available.
-        docker_image: Image for the Docker sandbox.
-        docker_network: Docker network mode ("bridge" allows outbound network
-            e.g. for pip; "none" for the strictest isolation).
+        provider: LLM provider (selects native vs custom web fetch).
+        sandbox: "local" (approval-gated) or "docker" (container-isolated).
+        capabilities: subset of CAPABILITIES, or None for everything.
     """
-    use_docker = False
-    if sandbox == "docker":
-        from agclaw.tools.docker_sandbox import docker_available
+    want = (lambda c: True) if capabilities is None else (lambda c: c in capabilities)
+    tools: list = []
 
-        use_docker = docker_available()
-        if not use_docker:
-            import warnings
+    if want("web"):
+        tools.append(DuckDuckSearchTool(max_results=5))
+        tools.append(WebFetchTool() if provider in _NATIVE_WEB_FETCH_PROVIDERS else web_fetch_tool)
 
-            warnings.warn(
-                "Docker sandbox requested but Docker is unavailable; "
-                "falling back to the local sandbox with approval prompts.",
-                stacklevel=2,
-            )
+    if want("code"):
+        use_docker = False
+        if sandbox == "docker":
+            from agclaw.tools.docker_sandbox import docker_available
 
-    if use_docker:
-        from agclaw.tools.docker_sandbox import DockerEnvironment
+            use_docker = docker_available()
+            if not use_docker:
+                import warnings
 
-        # One environment → both tools share a container, so files written by
-        # shell are visible to code and vice-versa within a session.
-        env = DockerEnvironment(image=docker_image, network=docker_network)
-        tools = [
-            DuckDuckSearchTool(max_results=5),
-            # No approval middleware: the container has no host FS, so there's
-            # nothing to gate. Keep the blocked list as defence in depth.
-            SandboxShellTool(environment=env, blocked=_SHELL_BLOCKED),
-            SandboxCodeTool(environment=env),
-            read_file,  # still permission-gated (it reads the *host* FS)
-        ]
-    else:
-        # Button-based approval gate so shell/code can't bypass file permissions.
-        approval = require_command_approval()
-        tools = [
-            DuckDuckSearchTool(max_results=5),
-            SandboxShellTool(blocked=_SHELL_BLOCKED, middleware=[approval]),
-            SandboxCodeTool(environment=LocalEnvironment(), middleware=[approval]),
-            read_file,  # permission-gated local file reading (vision for PDFs/images)
-        ]
+                warnings.warn(
+                    "Docker sandbox requested but Docker is unavailable; "
+                    "falling back to the local sandbox with approval prompts.",
+                    stacklevel=2,
+                )
+        if use_docker:
+            from agclaw.tools.docker_sandbox import DockerEnvironment
 
-    if provider in _NATIVE_WEB_FETCH_PROVIDERS:
-        tools.append(WebFetchTool())
-    else:
-        tools.append(web_fetch_tool)
+            env = DockerEnvironment(image=docker_image, network=docker_network)
+            tools += [
+                SandboxShellTool(environment=env, blocked=_SHELL_BLOCKED),
+                SandboxCodeTool(environment=env),
+            ]
+        else:
+            approval = require_command_approval()
+            tools += [
+                SandboxShellTool(blocked=_SHELL_BLOCKED, middleware=[approval]),
+                SandboxCodeTool(environment=LocalEnvironment(), middleware=[approval]),
+            ]
 
-    # Google tools (Gmail/Calendar/Drive) only when the user is signed in.
+    if want("files"):
+        tools.append(read_file)  # permission-gated (host FS)
+
+    # Google tools (only when signed in), per requested group.
     from agclaw.integrations.google_auth import has_token
 
     if has_token():
-        from agclaw.tools.google import build_google_tools
+        keep: set[str] = set()
+        for cap, names in _GOOGLE_GROUPS.items():
+            if want(cap):
+                keep |= names
+        if keep:
+            from agclaw.tools.google import build_google_tools
 
-        tools.extend(build_google_tools())
+            tools += [t for t in build_google_tools() if t.name in keep]
 
     return tools
 
 
 __all__ = [
     "build_agent_tools",
+    "available_capabilities",
+    "CAPABILITIES",
     "read_file",
     "web_fetch",
     "web_fetch_tool",

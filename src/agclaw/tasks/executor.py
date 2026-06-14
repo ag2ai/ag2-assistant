@@ -15,7 +15,8 @@ from pydantic import BaseModel
 from agclaw.tasks.model import DeliverableStatus
 
 _MAX_ASSET_CHARS = 20_000
-_MAX_VERIFY_CHARS = 8_000
+_MAX_VERIFY_CHARS = 12_000
+_MAX_CHILD_CONTEXT = 8_000
 
 
 class _Verdict(BaseModel):
@@ -23,31 +24,50 @@ class _Verdict(BaseModel):
     reason: str = ""
 
 
+async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdict":
+    """Strictly check produced output against a deliverable's criteria (cheap model)."""
+    from autogen.beta import Agent
+
+    from agclaw.agent import model_config
+
+    model = config.llm.aggregate_model or config.llm.model
+    verifier = Agent("deliverable-verifier", config=model_config(config, model))
+    prompt = (
+        "Judge whether produced output satisfies a requested deliverable.\n\n"
+        f"DELIVERABLE: {deliverable['description']}\n"
+        f"ACCEPTANCE CRITERIA: {deliverable.get('criteria') or '(none given)'}\n\n"
+        f"PRODUCED OUTPUT:\n{output[:_MAX_VERIFY_CHARS]}\n\n"
+        "Be strict. satisfied=false if the output only describes what COULD be done, "
+        "asks the user a question, offers options instead of doing it, or says it "
+        "couldn't complete the work. satisfied=true only if the actual deliverable "
+        "content is present and meets the criteria."
+    )
+    try:
+        reply = await verifier.ask(prompt, response_schema=_Verdict)
+        return await reply.content()
+    except Exception as exc:
+        return _Verdict(satisfied=False, reason=f"verification error: {exc}")
+
+
+async def _used_web_tools(reply) -> bool:
+    """True if the agent actually called a search / web-fetch tool this turn."""
+    from autogen.beta.events import BuiltinToolCallEvent, ToolCallEvent
+
+    try:
+        events = list(await reply.history.get_events())
+    except Exception:
+        return True  # can't introspect → don't falsely reject
+    for ev in events:
+        if isinstance(ev, (ToolCallEvent, BuiltinToolCallEvent)):
+            name = (getattr(ev, "name", "") or "").lower()
+            if "search" in name or "fetch" in name:
+                return True
+    return False
+
+
 def make_task_executor(config, skills: bool = True):
     """Build an executor coroutine for `TaskManager`, using the real agent."""
-    from agclaw.agent import create_agent, model_config, turn_prompt
-
-    async def _verify(deliverable: dict, output: str) -> _Verdict:
-        """Strictly check produced output against the deliverable's criteria."""
-        from autogen.beta import Agent
-
-        model = config.llm.aggregate_model or config.llm.model
-        verifier = Agent("deliverable-verifier", config=model_config(config, model))
-        prompt = (
-            "Judge whether produced output satisfies a requested deliverable.\n\n"
-            f"DELIVERABLE: {deliverable['description']}\n"
-            f"ACCEPTANCE CRITERIA: {deliverable.get('criteria') or '(none given)'}\n\n"
-            f"PRODUCED OUTPUT:\n{output[:_MAX_VERIFY_CHARS]}\n\n"
-            "Be strict. satisfied=false if the output only describes what COULD be "
-            "done, asks the user a question, offers options instead of doing it, or "
-            "says it couldn't complete the work. satisfied=true only if the actual "
-            "deliverable content is present and meets the criteria."
-        )
-        try:
-            reply = await verifier.ask(prompt, response_schema=_Verdict)
-            return await reply.content()
-        except Exception as exc:
-            return _Verdict(satisfied=False, reason=f"verification error: {exc}")
+    from agclaw.agent import create_agent, turn_prompt
 
     async def executor(task_id, manager, asker) -> None:
         store = manager.store
@@ -58,7 +78,12 @@ def make_task_executor(config, skills: bool = True):
         if not pending:
             return  # pure orchestrator with no own deliverables
 
-        agent = create_agent(config, memory=False, skills=True, asker=asker)
+        # Agent scoped to the task's declared capabilities → a research subtask
+        # can't reach Drive or run code; a calendar task only gets calendar.
+        caps = task.capabilities or []
+        agent = create_agent(
+            config, memory=False, skills=skills, asker=asker, capabilities=caps,
+        )
 
         wanted = "\n".join(
             f"- {d['description']}" + (f" (acceptance: {d['criteria']})" if d.get("criteria") else "")
@@ -75,7 +100,7 @@ def make_task_executor(config, skills: bool = True):
                 for d in c.deliverables:
                     a = (d.get("asset") or {}).get("content")
                     if a:
-                        parts.append(f"### {c.title}\n{a[:4000]}")
+                        parts.append(f"### {c.title}\n{a[:_MAX_CHILD_CONTEXT]}")
             if parts:
                 context = "\n\nResults from completed subtasks:\n" + "\n\n".join(parts)
 
@@ -90,9 +115,21 @@ def make_task_executor(config, skills: bool = True):
         reply = await agent.ask(prompt, prompt=turn_prompt(config))
         output = (reply.body or "").strip()
 
+        # Grounding gate: if this task is meant to research the web but the agent
+        # never actually called a web tool, its facts aren't grounded → reject.
+        web_used = await _used_web_tools(reply)
+        ungrounded = "web" in caps and not web_used
+
         produced = 0
         for d in pending:
-            verdict = await _verify(d, output)
+            if ungrounded:
+                await store.set_deliverable_status(
+                    task_id, d["id"], DeliverableStatus.REJECTED,
+                    notes="not grounded: answer was written without using the search/"
+                          "web-fetch tools — research the facts before producing this.",
+                )
+                continue
+            verdict = await _verify_deliverable(config, d, output)
             if verdict.satisfied:
                 produced += 1
                 await store.set_deliverable_status(

@@ -29,6 +29,7 @@ class PlanSubtask(BaseModel):
     description: str = ""
     deliverable: str = ""   # what this subtask must produce
     criteria: str = ""      # acceptance criteria for that output
+    capabilities: list[str] = Field(default_factory=list)  # tools this piece needs
 
 
 class TaskPlan(BaseModel):
@@ -39,6 +40,7 @@ class TaskPlan(BaseModel):
     questions: list[ClarifyQuestion] = Field(default_factory=list)
     deliverables: list[PlanDeliverable] = Field(default_factory=list)
     subtasks: list[PlanSubtask] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)  # tools the top-level work needs
 
 
 _PLAN_PROMPT = """You are planning a task for a personal assistant.
@@ -54,12 +56,23 @@ Produce a plan:
 - questions: ONLY if non-trivial — 2 to 5 clarifying questions that materially
   change the work (scope, audience, format, depth, deadline). Give options when
   the answer is naturally a choice; otherwise leave options empty for free text.
-- deliverables: the concrete outputs the OVERALL task must produce, each with
-  acceptance criteria. Prefer outputs the assistant can actually produce with its
-  tools (research, summaries, drafts, markdown, code) — not things needing an
-  external app it has no tool for.
-- subtasks: break a non-trivial job into a few independent pieces of work; give
-  each subtask its own `deliverable` (what that piece must produce) and criteria.
+- deliverables: the FINAL outputs of the overall task (e.g. the briefing, the
+  report, the itinerary), each with acceptance criteria. These belong to the task
+  itself and are produced LAST by combining the subtasks. Prefer outputs the
+  assistant can actually produce with its tools (research, summaries, drafts,
+  markdown, code) — not things needing an external app it has no tool for.
+- subtasks: break a non-trivial job into a few INDEPENDENT research/work pieces
+  that feed the final deliverables; give each its own intermediate `deliverable`
+  (e.g. "research notes on X") and criteria. Do NOT create a "compile" or
+  "synthesise" subtask — the final deliverable above is the synthesis and is
+  produced from the subtasks automatically.
+- capabilities: for the top-level work AND for each subtask, list ONLY the tool
+  groups it genuinely needs, chosen from: {capabilities}. Use the fewest that fit
+  — e.g. factual research → ["web"]; running/calculating → ["code"]; the user's
+  calendar → ["calendar"]; their Drive files → ["drive"]; reading a local file →
+  ["files"]. A pure writing/synthesis step that only combines other results needs
+  NONE ([]). Never request a capability the work doesn't need (e.g. don't add
+  "drive" to web research).
 
 Keep it tight. Trivial tasks need no questions, no subtasks, and one deliverable.
 
@@ -67,9 +80,13 @@ User request:
 {request}"""
 
 
-async def make_plan(agent, request: str) -> TaskPlan:
+async def make_plan(agent, request: str, capabilities: list[str] | None = None) -> TaskPlan:
     """Ask the agent for a structured plan (LLM call)."""
-    reply = await agent.ask(_PLAN_PROMPT.format(request=request), response_schema=TaskPlan)
+    from agclaw.tools import available_capabilities
+
+    caps = capabilities if capabilities is not None else available_capabilities()
+    prompt = _PLAN_PROMPT.format(request=request, capabilities=caps)
+    reply = await agent.ask(prompt, response_schema=TaskPlan)
     return await reply.content()
 
 
@@ -90,13 +107,27 @@ async def run_intake(store: TaskStore, task_id: str, plan: TaskPlan, asker) -> d
     return answers
 
 
+def _valid_caps(caps: list[str]) -> list[str]:
+    from agclaw.tools import CAPABILITIES
+
+    return [c for c in caps if c in CAPABILITIES]
+
+
 async def apply_plan(store: TaskStore, task_id: str, plan: TaskPlan) -> None:
-    """Write objective, deliverables, and subtasks from a plan into the store."""
-    await store.update(task_id, objective=plan.objective, plan=[s.title for s in plan.subtasks])
+    """Write objective, deliverables, subtasks, and capability scopes from a plan."""
+    await store.update(
+        task_id,
+        objective=plan.objective,
+        plan=[s.title for s in plan.subtasks],
+        capabilities=_valid_caps(plan.capabilities),
+    )
     for d in plan.deliverables:
         await store.add_deliverable(task_id, d.description, d.criteria)
     for s in plan.subtasks:
-        child = await store.add_subtask(task_id, s.title, s.description, reopen_parent=False)
+        child = await store.add_subtask(
+            task_id, s.title, s.description, reopen_parent=False,
+            capabilities=_valid_caps(s.capabilities),
+        )
         # every subtask must produce something, or it does no real work
         await store.add_deliverable(
             child.id, s.deliverable or f"Output of: {s.title}", s.criteria
@@ -110,23 +141,27 @@ def _request_with_answers(request: str, answers: dict) -> str:
     return f"{request}\n\nClarifications the user provided:\n{qa}"
 
 
-async def prepare_task(store: TaskStore, task_id: str, agent, asker=None) -> None:
+async def prepare_task(
+    store: TaskStore, task_id: str, agent, asker=None,
+    capabilities: list[str] | None = None,
+) -> None:
     """Full intake: plan → (clarify via HITL if non-trivial) → objective+deliverables+subtasks.
 
-    Leaves the task PENDING and ready for the runner to execute.
+    `capabilities` optionally restricts the tool groups the planner may assign
+    (e.g. to exclude 'gmail'). Leaves the task PENDING, ready for the runner.
     """
     task = await store.get(task_id)
     if task is None:
         return
     request = task.description or task.title
 
-    plan = await make_plan(agent, request)
+    plan = await make_plan(agent, request, capabilities)
     if not plan.trivial and plan.questions and asker is not None:
         await store.set_status(task_id, TaskStatus.AWAITING_INPUT)
         answers = await run_intake(store, task_id, plan, asker)
         if answers:
             # re-plan with the clarifications so deliverables/subtasks reflect them
-            plan = await make_plan(agent, _request_with_answers(request, answers))
+            plan = await make_plan(agent, _request_with_answers(request, answers), capabilities)
 
     await store.set_status(task_id, TaskStatus.PLANNING)
     await apply_plan(store, task_id, plan)

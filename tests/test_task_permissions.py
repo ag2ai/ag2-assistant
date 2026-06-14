@@ -49,9 +49,17 @@ async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
         return _Agent()
 
     import agclaw.agent as agent_mod
+    import agclaw.tasks.executor as exec_mod
 
     monkeypatch.setattr(agent_mod, "create_agent", fake_create_agent)
     monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
+    # keep verification deterministic (no real LLM in this unit test)
+    from agclaw.tasks.executor import _Verdict
+
+    async def _ok(config, deliverable, output):
+        return _Verdict(satisfied=True, reason="ok")
+
+    monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
 
     from agclaw.config import Config
 

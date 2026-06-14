@@ -105,3 +105,27 @@ async def test_agent_uses_code_execution():
     # Normalise digit grouping (commas/spaces) before checking the value.
     normalised = response.replace(",", "").replace(" ", "")
     assert "3628800" in normalised
+
+
+def test_capability_scoping_limits_tools():
+    """Tasks declare capabilities; the agent gets exactly those tool groups."""
+    web = {t.name for t in build_agent_tools("gemini", capabilities=["web"])}
+    assert "duckduckgo_search" in web and "web_fetch" in web
+    assert "read_file" not in web
+    assert not any("run_" in n for n in web)  # no shell/code
+
+    code = {t.name for t in build_agent_tools("gemini", capabilities=["code"])}
+    assert any("run_" in n for n in code)
+    assert "duckduckgo_search" not in code
+
+    files = {t.name for t in build_agent_tools("gemini", capabilities=["files"])}
+    assert files == {"read_file"}
+
+    assert build_agent_tools("gemini", capabilities=[]) == []  # no caps → no tools
+
+
+def test_no_capabilities_filter_is_all_tools():
+    """Chat path (capabilities=None) still gets the full default tool set."""
+    names = {t.name for t in build_agent_tools("gemini")}
+    assert {"duckduckgo_search", "web_fetch", "read_file"} <= names
+    assert any("run_" in n for n in names)

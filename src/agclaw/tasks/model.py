@@ -89,6 +89,7 @@ class Task:
     plan: list[str] = field(default_factory=list)
     intake: dict = field(default_factory=dict)          # clarifying Q&A
     capability: str | None = None                       # tag for recall
+    capabilities: list[str] = field(default_factory=list)  # tool groups this task may use
     assets: list[dict] = field(default_factory=list)    # {name, path, kind}
 
     # origin / routing

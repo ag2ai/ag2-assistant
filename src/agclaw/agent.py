@@ -35,7 +35,9 @@ def model_config(config: Config, model: str | None = None):
         return OpenAIConfig(model=model, api_key=api_key)
     from autogen.beta.config.gemini import GeminiConfig
 
-    return GeminiConfig(model=model, api_key=api_key)
+    # Generous output budget so long research notes / briefings aren't truncated
+    # mid-sentence (the default is small).
+    return GeminiConfig(model=model, api_key=api_key, max_output_tokens=8192)
 
 
 def bundled_skills_dir():
@@ -166,6 +168,7 @@ def create_agent(
     skills: bool = True,
     asker=None,
     single_shot: bool = False,
+    capabilities: list[str] | None = None,
 ) -> Agent:
     """Create an AGClaw agent with the given configuration.
 
@@ -214,8 +217,9 @@ def create_agent(
         sandbox=config.tools.sandbox,
         docker_image=config.tools.docker_image,
         docker_network=config.tools.docker_network,
+        capabilities=capabilities,
     )
-    if skills:
+    if skills and (capabilities is None or "skills" in capabilities):
         tools.append(build_skills_toolkit(config))
 
     from agclaw.permissions import PermissionManager
