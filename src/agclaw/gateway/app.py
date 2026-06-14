@@ -12,10 +12,11 @@ Endpoints:
 
 import asyncio
 import contextlib
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -35,6 +36,10 @@ class MessageRequest(BaseModel):
 class MessageResponse(BaseModel):
     reply: str
     session_id: str
+
+
+class CredentialsUpload(BaseModel):
+    content: str  # raw OAuth client JSON
 
 
 def create_app(
@@ -73,6 +78,7 @@ def create_app(
     # answer endpoint, so permission/HITL prompts can be answered by any client.
     hitl = HitlServer()
     app.state.hitl = hitl
+    app.state.google_flows = {}  # state token -> in-progress OAuth flow
     add_hitl_routes(app, hitl)
 
     @app.get("/", response_class=HTMLResponse)
@@ -91,6 +97,80 @@ def create_app(
     async def hitl_pending() -> dict:
         """Open HITL questions for a UI client to render and answer."""
         return {"pending": app.state.hitl.pending_list()}
+
+    @app.get("/api/google/status")
+    async def google_status() -> dict:
+        from agclaw.integrations import google_auth
+
+        return {
+            "configured": google_auth.is_configured(),
+            "signed_in": google_auth.has_token(),
+            "email": google_auth.account_email(),
+        }
+
+    @app.post("/api/google/credentials")
+    async def google_credentials(payload: CredentialsUpload) -> dict:
+        """Save an uploaded OAuth client JSON (so users avoid the filesystem)."""
+        from agclaw.integrations import google_auth
+
+        try:
+            google_auth.save_credentials_json(payload.content)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    @app.post("/api/google/login_url")
+    async def google_login_url(request: Request) -> dict:
+        """Build a Google consent URL whose redirect returns to this gateway.
+
+        The user opens the URL (web button or a channel link). AGCLAW_PUBLIC_URL
+        overrides the redirect base when the gateway is reachable at a public URL
+        (so the round-trip can complete from another device).
+        """
+        from agclaw.integrations import google_auth
+
+        if not google_auth.is_configured():
+            return {"ok": False, "error": "No OAuth client configured."}
+        base = os.environ.get("AGCLAW_PUBLIC_URL") or str(request.base_url)
+        redirect_uri = base.rstrip("/") + "/api/google/callback"
+        try:
+            auth_url, state, flow = await asyncio.to_thread(
+                google_auth.make_login_flow, redirect_uri
+            )
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        app.state.google_flows[state] = flow
+        return {"ok": True, "auth_url": auth_url}
+
+    @app.get("/api/google/callback", response_class=HTMLResponse)
+    async def google_callback(state: str = "", code: str = "", error: str = ""):
+        from agclaw.integrations import google_auth
+
+        def _page(title, msg):
+            return (
+                f"<!doctype html><meta charset=utf-8><title>{title}</title>"
+                "<body style='font-family:system-ui;max-width:520px;margin:14vh auto;"
+                "text-align:center;color:#171717'>"
+                f"<h1 style='color:#f95339'>{title}</h1><p>{msg}</p>"
+                "<p style='color:#737373'>You can close this tab.</p></body>"
+            )
+
+        if error:
+            return HTMLResponse(_page("Cancelled", f"Google returned: {error}"))
+        flow = app.state.google_flows.pop(state, None)
+        if flow is None or not code:
+            return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
+        try:
+            email = await asyncio.to_thread(google_auth.complete_login, flow, code)
+        except Exception as exc:
+            return HTMLResponse(_page("Sign-in failed", str(exc)))
+        return HTMLResponse(_page("Connected ✓", f"AGClaw is now connected to {email}."))
+
+    @app.post("/api/google/logout")
+    async def google_logout() -> dict:
+        from agclaw.integrations import google_auth
+
+        return {"ok": google_auth.logout()}
 
     @app.get("/api/sessions")
     async def sessions() -> dict:

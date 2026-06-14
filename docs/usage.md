@@ -516,11 +516,23 @@ pip install "agclaw[google]"
 
 ```bash
 agclaw google login      # → "Signed in to Google as you@gmail.com."
+agclaw google login --no-browser   # print the consent URL instead of opening it
 agclaw google status     # show configured / signed-in state
 agclaw google logout     # remove the stored token
 ```
 
 The token is cached at `~/.agclaw/google_token.json` and refreshed automatically.
+
+**From the web UI instead.** The gateway's web client has a **Google** button:
+it shows the connection status, lets you **upload the OAuth client JSON** (so you
+can skip the filesystem step), and a **"Open Google consent →"** button that opens
+Google's page and finishes sign-in automatically. The consent redirect returns to
+the gateway's `/api/google/callback`.
+
+> The redirect completes on the **machine running the gateway** (it returns to
+> `localhost:<port>`). Open the consent link there. To finish sign-in from another
+> device (e.g. a phone via a chat channel), expose the gateway at a public URL and
+> set `AGCLAW_PUBLIC_URL=https://your-host` so the redirect is reachable.
 
 ### What the agent can do
 

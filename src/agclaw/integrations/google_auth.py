@@ -30,6 +30,32 @@ def token_path() -> Path:
     return Path.home() / ".agclaw" / "google_token.json"
 
 
+def account_path() -> Path:
+    return Path.home() / ".agclaw" / "google_account.txt"
+
+
+def account_email() -> str | None:
+    """The signed-in account email, cached at login (no network call)."""
+    ap = account_path()
+    if ap.exists():
+        return ap.read_text().strip() or None
+    return None
+
+
+def save_credentials_json(content: str) -> None:
+    """Validate and store an uploaded OAuth client JSON to the credentials path."""
+    import json
+
+    data = json.loads(content)  # raises if not valid JSON
+    if not isinstance(data, dict) or not ({"installed", "web"} & data.keys()):
+        raise ValueError(
+            "Not an OAuth client file (expected an 'installed' or 'web' key)."
+        )
+    cp = credentials_path()
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(content)
+
+
 def is_configured() -> bool:
     """True if the user has placed an OAuth client credentials file."""
     return credentials_path().exists()
@@ -53,11 +79,13 @@ def _require_libs():
     return Credentials, Request, InstalledAppFlow
 
 
-def load_credentials(interactive: bool = False):
+def load_credentials(interactive: bool = False, open_browser: bool = True):
     """Return valid Google credentials, or None if not available.
 
-    Refreshes an expired token silently. If `interactive`, runs the browser
-    consent flow when there's no usable token (and persists the result).
+    Refreshes an expired token silently. If `interactive`, runs the consent
+    flow when there's no usable token (and persists the result). `open_browser`
+    controls whether the consent page is auto-opened (the gateway flow prints the
+    URL instead so a remote client can open it).
     """
     Credentials, Request, InstalledAppFlow = _require_libs()
 
@@ -88,7 +116,7 @@ def load_credentials(interactive: bool = False):
     flow = InstalledAppFlow.from_client_secrets_file(
         str(credentials_path()), SCOPES
     )
-    creds = flow.run_local_server(port=0)
+    creds = flow.run_local_server(port=0, open_browser=open_browser)
     _save_token(creds)
     return creds
 
@@ -99,14 +127,12 @@ def _save_token(creds) -> None:
     tp.write_text(creds.to_json())
 
 
-def login() -> str:
-    """Run the interactive consent flow; returns the authorised account email."""
-    creds = load_credentials(interactive=True)
+def _email_for(creds) -> str:
     try:
         from googleapiclient.discovery import build
 
         profile = (
-            build("gmail", "v1", credentials=creds)
+            build("gmail", "v1", credentials=creds, cache_discovery=False)
             .users()
             .getProfile(userId="me")
             .execute()
@@ -116,8 +142,59 @@ def login() -> str:
         return "(signed in)"
 
 
+def _cache_account(email: str) -> None:
+    ap = account_path()
+    ap.parent.mkdir(parents=True, exist_ok=True)
+    ap.write_text(email)
+
+
+def login(open_browser: bool = True) -> str:
+    """Run the interactive (local-browser) consent flow; returns the account email.
+
+    Used by the CLI. With `open_browser=False` the consent URL is printed instead
+    of auto-opened (still completes via the local redirect). The gateway uses the
+    URL/callback pair below for its web/channel flow.
+    """
+    creds = load_credentials(interactive=True, open_browser=open_browser)
+    email = _email_for(creds)
+    _cache_account(email)
+    return email
+
+
+def make_login_flow(redirect_uri: str):
+    """Build an OAuth flow for a redirect-based (gateway) consent.
+
+    Returns (auth_url, state, flow). The caller delivers `auth_url` to the user
+    (web button or a channel link), keeps `flow` keyed by `state`, and calls
+    `complete_login` when the redirect hits `redirect_uri` with a code.
+    """
+    Credentials, Request, InstalledAppFlow = _require_libs()
+    if not credentials_path().exists():
+        raise FileNotFoundError(
+            f"Missing OAuth client file at {credentials_path()}."
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(credentials_path()), SCOPES, redirect_uri=redirect_uri
+    )
+    auth_url, state = flow.authorization_url(
+        access_type="offline", include_granted_scopes="true", prompt="consent"
+    )
+    return auth_url, state, flow
+
+
+def complete_login(flow, code: str) -> str:
+    """Exchange an authorization `code` for a token; persist it; return the email."""
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+    _save_token(creds)
+    email = _email_for(creds)
+    _cache_account(email)
+    return email
+
+
 def logout() -> bool:
-    """Delete the cached token. Returns True if one was removed."""
+    """Delete the cached token (and account). Returns True if a token was removed."""
+    account_path().unlink(missing_ok=True)
     tp = token_path()
     if tp.exists():
         tp.unlink()

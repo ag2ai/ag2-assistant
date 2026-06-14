@@ -60,6 +60,92 @@ def test_write_tools_are_gated_reads_are_not():
     assert not tools["gmail_create_draft"]._middleware  # draft can't send → ungated
 
 
+def test_save_credentials_validates(google_paths):
+    creds, _ = google_paths
+    # valid installed-client JSON is accepted
+    google_auth.save_credentials_json('{"installed": {"client_id": "x"}}')
+    assert creds.exists()
+    # garbage is rejected
+    import pytest as _pytest
+
+    with _pytest.raises(Exception):
+        google_auth.save_credentials_json("not json")
+    with _pytest.raises(ValueError):
+        google_auth.save_credentials_json('{"nope": 1}')
+
+
+# --- gateway endpoints (mocked auth) ---
+
+
+def _client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+    import agclaw.gateway.core as core_mod
+
+    class _FakeAgent:
+        async def ask(self, *a, stream=None, **k):
+            class R: body = "ok"
+            return R()
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+    return TestClient(app_mod.create_app(memory=False, persist=False))
+
+
+def test_google_status_endpoint(monkeypatch):
+    from agclaw.integrations import google_auth as ga
+
+    monkeypatch.setattr(ga, "is_configured", lambda: True)
+    monkeypatch.setattr(ga, "has_token", lambda: True)
+    monkeypatch.setattr(ga, "account_email", lambda: "me@example.com")
+    with _client(monkeypatch) as client:
+        st = client.get("/api/google/status").json()
+        assert st == {"configured": True, "signed_in": True, "email": "me@example.com"}
+
+
+def test_google_login_url_and_callback(monkeypatch):
+    from agclaw.integrations import google_auth as ga
+
+    monkeypatch.setattr(ga, "is_configured", lambda: True)
+    sentinel_flow = object()
+    monkeypatch.setattr(
+        ga, "make_login_flow",
+        lambda redirect_uri: ("https://accounts.google.com/o/oauth2/auth?x=1", "st8", sentinel_flow),
+    )
+    completed = {}
+    monkeypatch.setattr(
+        ga, "complete_login",
+        lambda flow, code: (completed.update(flow=flow, code=code), "me@example.com")[1],
+    )
+    with _client(monkeypatch) as client:
+        r = client.post("/api/google/login_url").json()
+        assert r["ok"] is True
+        assert "accounts.google.com" in r["auth_url"]
+        # the redirect catches the code and completes the stored flow
+        page = client.get("/api/google/callback", params={"state": "st8", "code": "abc"})
+        assert page.status_code == 200
+        assert "Connected" in page.text
+        assert completed["flow"] is sentinel_flow and completed["code"] == "abc"
+        # an unknown state is rejected gracefully
+        assert "no longer valid" in client.get(
+            "/api/google/callback", params={"state": "bogus", "code": "x"}
+        ).text
+
+
+def test_google_credentials_upload_endpoint(monkeypatch, tmp_path):
+    from agclaw.integrations import google_auth as ga
+
+    monkeypatch.setattr(ga, "credentials_path", lambda: tmp_path / "creds.json")
+    with _client(monkeypatch) as client:
+        ok = client.post(
+            "/api/google/credentials", json={"content": '{"installed": {"client_id": "x"}}'}
+        ).json()
+        assert ok["ok"] is True
+        assert (tmp_path / "creds.json").exists()
+        bad = client.post("/api/google/credentials", json={"content": "nope"}).json()
+        assert bad["ok"] is False
+
+
 def test_agent_tools_include_google_only_when_signed_in(monkeypatch):
     import agclaw.integrations.google_auth as ga
     import agclaw.tools as tools_mod

@@ -223,7 +223,11 @@ app.add_typer(google_app, name="google")
 
 
 @google_app.command("login")
-def google_login() -> None:
+def google_login(
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Print the consent URL instead of opening a browser."
+    ),
+) -> None:
     """Authorise AGClaw to access your Google account (opens a browser once)."""
     from agclaw.integrations.google_auth import (
         credentials_path,
@@ -239,7 +243,7 @@ def google_login() -> None:
         )
         raise typer.Exit(1)
     try:
-        email = login()
+        email = login(open_browser=not no_browser)
     except Exception as exc:
         typer.echo(f"Login failed: {exc}")
         raise typer.Exit(1)

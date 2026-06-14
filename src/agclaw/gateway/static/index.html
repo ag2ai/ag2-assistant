@@ -81,6 +81,26 @@
   .sess .m { font-size: 12px; color: var(--muted); margin-top: 2px; }
   #sessions .none { color: var(--muted); font-size: 13px; padding: 12px; }
 
+  /* google modal */
+  #gmodal {
+    position: fixed; z-index: 11; top: 50%; left: 50%; transform: translate(-50%, -48%);
+    width: 460px; max-width: 90vw; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 16px; padding: 26px; box-shadow: 0 20px 60px rgba(0,0,0,.25);
+    opacity: 0; pointer-events: none; transition: opacity .15s ease;
+  }
+  #gmodal.open { opacity: 1; pointer-events: auto; }
+  #gmodal h2 { font-family: var(--serif); margin: 0 0 8px; font-size: 22px; }
+  #gmodal p { color: var(--muted); font-size: 14px; line-height: 1.55; margin: 0 0 10px; }
+  #gmodal .grow { display: flex; gap: 10px; margin-top: 16px; }
+  #gmodal .gbtn {
+    font-family: var(--sans); font-weight: 600; font-size: 14px; cursor: pointer;
+    padding: 11px 16px; border-radius: 10px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff;
+  }
+  #gmodal .gbtn.secondary { background: var(--bg); color: var(--ink); border-color: var(--line); }
+  #gmodal .err { color: #b3331f; }
+  #gmodal input[type=file] { font-family: var(--sans); font-size: 13px; margin: 4px 0 12px; color: var(--ink); }
+
   #log { flex: 1; overflow-y: auto; padding: 24px; }
   .wrap { max-width: 760px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
   .msg { display: flex; }
@@ -172,11 +192,13 @@
     <span class="title">Assistant</span>
     <span class="spacer"></span>
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></span>
+    <button id="gbtn" title="Connect Google">Google</button>
     <button id="theme" title="Theme">🖥 System</button>
     <button id="new" title="Start a fresh conversation">New chat</button>
   </header>
 
   <div id="backdrop"></div>
+  <div id="gmodal"><div id="gbody"></div></div>
   <aside id="drawer">
     <div class="dhead"><h2>Conversations</h2><button id="dclose" title="Close">×</button></div>
     <div id="sessions"></div>
@@ -288,8 +310,74 @@
     } catch { /* leave current view */ }
   }
   histBtn.onclick = () => openDrawer(!drawer.classList.contains("open"));
-  backdrop.onclick = () => openDrawer(false);
+  backdrop.onclick = () => { openDrawer(false); closeGoogle(); };
   document.getElementById("dclose").onclick = () => openDrawer(false);
+
+  // --- Google connect panel ---
+  const gbtn = document.getElementById("gbtn");
+  const gmodal = document.getElementById("gmodal");
+  const gbody = document.getElementById("gbody");
+  let gpoll = null;
+  function closeGoogle() {
+    gmodal.classList.remove("open"); backdrop.classList.remove("open");
+    if (gpoll) { clearInterval(gpoll); gpoll = null; }
+  }
+  async function openGoogle() {
+    gmodal.classList.add("open"); backdrop.classList.add("open");
+    await renderGoogle();
+  }
+  async function renderGoogle() {
+    let st;
+    try { st = await (await fetch("/api/google/status")).json(); }
+    catch { gbody.innerHTML = "<h2>Google</h2><p>Gateway offline.</p>"; return; }
+
+    if (st.signed_in) {
+      gbody.innerHTML = "<h2>Google connected</h2><p>Signed in as <b>" +
+        (st.email || "your account") + "</b>. AGClaw can use Gmail, Calendar and Drive " +
+        "(sending an email or creating an event will ask you to approve first).</p>";
+      const row = document.createElement("div"); row.className = "grow";
+      const dc = document.createElement("button"); dc.className = "gbtn secondary"; dc.textContent = "Disconnect";
+      dc.onclick = async () => { await fetch("/api/google/logout", { method: "POST" }); renderGoogle(); };
+      const done = document.createElement("button"); done.className = "gbtn"; done.textContent = "Done"; done.onclick = closeGoogle;
+      row.appendChild(dc); row.appendChild(done); gbody.appendChild(row);
+      return;
+    }
+
+    if (!st.configured) {
+      gbody.innerHTML = "<h2>Connect Google</h2><p>Add your Google OAuth client: in Google Cloud " +
+        "enable the Gmail, Calendar &amp; Drive APIs, create a <b>Desktop OAuth client</b>, " +
+        "and upload its JSON here.</p>";
+      const f = document.createElement("input"); f.type = "file"; f.accept = "application/json,.json";
+      f.onchange = async () => {
+        const file = f.files[0]; if (!file) return;
+        const r = await (await fetch("/api/google/credentials", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: await file.text() }),
+        })).json();
+        if (r.ok) renderGoogle();
+        else { const e = document.createElement("p"); e.className = "err"; e.textContent = "⚠ " + r.error; gbody.appendChild(e); }
+      };
+      gbody.appendChild(f);
+      return;
+    }
+
+    // configured but not signed in
+    gbody.innerHTML = "<h2>Connect Google</h2><p>Open Google's consent page and authorise AGClaw, " +
+      "then return here. (Open the link on this machine — the sign-in completes locally.)</p>";
+    const btn = document.createElement("button"); btn.className = "gbtn"; btn.textContent = "Open Google consent →";
+    btn.onclick = async () => {
+      const r = await (await fetch("/api/google/login_url", { method: "POST" })).json();
+      if (!r.ok) { gbody.insertAdjacentHTML("beforeend", '<p class="err">⚠ ' + (r.error || "Could not start sign-in") + "</p>"); return; }
+      window.open(r.auth_url, "_blank");
+      gbody.innerHTML = '<h2>Waiting for Google…</h2><p>Complete consent in the opened tab — this updates automatically.</p>' +
+        '<p style="font-size:12px">If nothing opened, <a href="' + r.auth_url + '" target="_blank">click here</a>.</p>';
+      gpoll = setInterval(async () => {
+        try { const s = await (await fetch("/api/google/status")).json(); if (s.signed_in) { clearInterval(gpoll); gpoll = null; renderGoogle(); } } catch {}
+      }, 2000);
+    };
+    gbody.appendChild(btn);
+  }
+  gbtn.onclick = () => { gmodal.classList.contains("open") ? closeGoogle() : openGoogle(); };
 
   function scroll() { log.scrollTop = log.scrollHeight; }
   function clearEmpty() { const e = wrap.querySelector(".empty"); if (e) e.remove(); }
