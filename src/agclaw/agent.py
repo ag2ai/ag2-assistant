@@ -50,6 +50,22 @@ def build_skills_toolkit(config: Config):
     return SkillSearchToolkit(runtime)
 
 
+# Always-on behavioural guidance, kept separate from the (user-customisable)
+# persona so it applies even when someone overrides the system prompt.
+BEHAVIOR_GUIDANCE = (
+    "Do what the user asks directly. If you cannot complete a request directly — "
+    "a tool fails, a file or resource isn't found, or you're denied access — do "
+    "NOT silently fall back to other methods (e.g. running shell commands or code "
+    "to work around it). Instead, stop and tell the user plainly what happened, "
+    "then ask how they'd like to proceed, offering specific alternatives when "
+    "there are any. Only use an alternative approach once the user has chosen it."
+)
+
+
+def behavior_guidance() -> str:
+    return BEHAVIOR_GUIDANCE
+
+
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
@@ -70,10 +86,10 @@ def environment_context(config: Config) -> str:
 def turn_prompt(config: Config) -> list[str]:
     """Per-turn system prompt: persona + live environment context.
 
-    `ask(prompt=...)` replaces the base prompt for that turn, so we include both
-    the persona and the refreshed environment each call.
+    `ask(prompt=...)` replaces the base prompt for that turn, so we include the
+    persona, the always-on behaviour guidance, and the refreshed environment.
     """
-    return [config.agent.system_prompt, environment_context(config)]
+    return [config.agent.system_prompt, BEHAVIOR_GUIDANCE, environment_context(config)]
 
 
 def create_agent(

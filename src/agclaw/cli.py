@@ -230,8 +230,9 @@ def gateway(
     from agclaw.gateway.app import create_app
 
     typer.echo(f"AGClaw gateway starting on http://{host}:{port}")
-    typer.echo(f"  POST http://{host}:{port}/api/message")
-    typer.echo(f"  WS   ws://{host}:{port}/api/ws")
+    typer.echo(f"  Web UI  http://{host}:{port}/")
+    typer.echo(f"  POST    http://{host}:{port}/api/message")
+    typer.echo(f"  WS      ws://{host}:{port}/api/ws")
     uvicorn.run(create_app(memory=memory), host=host, port=port)
 
 
@@ -365,7 +366,7 @@ def run(
             )
             server = uvicorn.Server(config)
             server_task = asyncio.create_task(server.serve())
-            typer.echo(f"  REST/WS: http://{host}:{port}")
+            typer.echo(f"  Web UI + REST/WS: http://{host}:{port}/")
 
         typer.echo("AGClaw is running. Press Ctrl+C to stop.")
         try:

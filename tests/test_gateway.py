@@ -177,6 +177,23 @@ class _AskingGateway:
         return {"status": "ok", "sessions": 0}
 
 
+async def test_ui_served_at_root(fake_gateway):
+    """The gateway serves the reference web client at /."""
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+
+    app = app_mod.create_app(gateway=fake_gateway)
+    with TestClient(app) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "text/html" in page.headers["content-type"]
+        # key hooks the JS relies on
+        assert "/api/ws" in page.text
+        assert 'id="input"' in page.text
+        assert "AGClaw" in page.text
+
+
 async def test_hitl_routes_served_by_gateway(fake_gateway):
     """The gateway serves the styled /hitl page, lists pending, resolves answers."""
     from httpx import ASGITransport, AsyncClient

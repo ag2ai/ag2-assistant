@@ -30,4 +30,17 @@ def test_turn_prompt_includes_persona_and_environment():
     config = Config()
     prompt = turn_prompt(config)
     assert prompt[0] == config.agent.system_prompt
-    assert "Current date and time" in prompt[1]
+    # behaviour guidance is always injected, even with a custom persona
+    assert any("ask how they" in p for p in prompt)
+    assert any("Current date and time" in p for p in prompt)
+
+
+def test_behavior_guidance_survives_custom_persona():
+    config = Config()
+    config.agent.system_prompt = "You are Jarvis."
+    prompt = turn_prompt(config)
+    assert prompt[0] == "You are Jarvis."
+    # the "don't silently work around failures — ask the user" rule is still there
+    joined = " ".join(prompt)
+    assert "do not" in joined.lower() or "don't" in joined.lower()
+    assert "ask how they" in joined

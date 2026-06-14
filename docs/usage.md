@@ -81,6 +81,12 @@ agclaw gateway                 # http://127.0.0.1:8800
 agclaw gateway --port 9000 --no-memory
 ```
 
+**Built-in web UI.** Open `http://127.0.0.1:8800/` in a browser for a ready-made
+chat client (also served by `agclaw run`). It's a single self-contained page
+(vanilla JS over the WebSocket) styled to match ag2.ai: streaming replies, and
+permission/HITL prompts render inline as cards you click to answer. Use it as-is
+or as a reference for building your own front-end against the API below.
+
 Endpoints:
 
 ```

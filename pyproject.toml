@@ -46,3 +46,6 @@ markers = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"agclaw.gateway" = ["static/*.html"]

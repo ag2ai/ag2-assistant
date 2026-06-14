@@ -17,7 +17,7 @@
 | Phase 3: Channel Integrations | 🟢 Telegram + Discord + Slack Live | Three adapters live-verified (DM + @mention gating, memory, tools, per-channel formatting, live date/time/location). Slack adds 👀 reaction while working. WhatsApp next |
 | Phase 4: Skills & Plugins | 🟢 Core Done | Agent has AG2's `SkillSearchToolkit` — searches skills.sh registry, installs, and runs skills (progressive disclosure). Live-verified registry search. Skills install to `~/.agclaw/skills` |
 | Phase 5: Memory & Intelligence | 🟡 In Progress | User-profile observer memory built (SQLite, passive, platform-tagged). Works end-to-end across processes |
-| Phase 6: UI | ⬜ Not Started (deferred) | |
+| Phase 6: UI | 🟢 Reference UI Done | Self-contained web chat client served by the gateway at `/` (vanilla JS over REST/WS), ag2.ai-styled: streaming replies + inline HITL permission cards. Live-verified end-to-end with Chrome DevTools (chat round-trip, permission card → Allow once → file read). Richer/framework UI still optional |
 | Phase 7: Advanced Features | ⬜ Not Started | AG2 0.13 network/distributed now available — reshapes this phase |
 | HITL & Permissions | 🟡 In Progress | Pluggable `Asker` seam (via AG2 `hitl_hook`) + styled desktop `/hitl/{id}` pages (concurrent, AG2-branded). Core done; channel askers + permission store + attachments next |
 
@@ -95,8 +95,8 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [x] Discord adapter (`discord.py`) — DM + @mention gating, native typing indicator, Markdown passthrough, 2000-char chunking; 9 unit tests. **Live-verified on a test server** (needs Message Content Intent enabled; `login()`+`connect()` lifecycle, not `start()`-in-task)
 - [x] Live environment context — agent knows current date/time (system clock) + location (`AGCLAW_LOCATION`), injected per turn via `prompt=[persona, env]` (refreshes; constructor prompts are evaluated once)
 - [x] Slack adapter (`slack-bolt`, Socket Mode) — DM + @mention gating, Markdown→Slack-mrkdwn conversion, 3500-char chunking, 👀 reaction added while working / removed on reply; 19 unit tests. **Live-verified** (needs `message.im` event + `im:history`/`reactions:write` scopes + reinstall; Messages Tab must be enabled in App Home for DMs)
+- [x] Combined runner (`agclaw run` — REST + all configured channels, one shared agent) and media/attachments (images/PDFs/audio/video/text → AG2 multimodal inputs; live-verified on Telegram/Slack/Discord)
 - [ ] WhatsApp
-- [ ] Combined runner (REST + channels in one process) and media/attachments
 
 ### Phase 4 Detail — Skills (core done)
 

@@ -13,13 +13,17 @@ Endpoints:
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from agclaw.config import Config
 from agclaw.gateway.core import Gateway
 from agclaw.hitl import GatewayAsker, HitlServer, add_hitl_routes
+
+_UI_FILE = Path(__file__).parent / "static" / "index.html"
 
 
 class MessageRequest(BaseModel):
@@ -67,6 +71,14 @@ def create_app(
     hitl = HitlServer()
     app.state.hitl = hitl
     add_hitl_routes(app, hitl)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def ui() -> str:
+        """The reference web chat client (vanilla JS over the REST/WS + HITL API)."""
+        try:
+            return _UI_FILE.read_text(encoding="utf-8")
+        except OSError:
+            return "<h1>AGClaw</h1><p>UI asset missing.</p>"
 
     @app.get("/api/health")
     async def health() -> dict:

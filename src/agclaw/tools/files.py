@@ -27,7 +27,11 @@ async def read_file_impl(
     for text files, or a message string for errors/denials."""
     target = Path(path).expanduser()
     if not target.exists() or not target.is_file():
-        return f"File not found: {path}"
+        return (
+            f"File not found: {path}. Do not try to locate it by running shell "
+            "commands or code. Tell the user it wasn't found and ask how they'd "
+            "like to proceed (e.g. confirm the path)."
+        )
 
     if not await permissions.check(target):
         return (
