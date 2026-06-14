@@ -106,7 +106,7 @@ Goal: permission-gated resource access (Claude-Code-style) and channel-routed hu
 - [x] Unit tests (toolkit build, tool surface, agent wiring) + live registry-search test (found real skills, e.g. `pdftk-server`)
 - [ ] Optional: `GITHUB_TOKEN` for higher registry rate limits (60/hr unauth)
 - [x] Sandbox skill script execution (Docker) — one-shot container per script, mounts only the skill's own dir
-- [ ] AGClaw-bundled skills (first-party skill packages)
+- [x] AGClaw-bundled skills — first-party `web-research` / `pdf-tools` / `email-drafting` shipped in-package, discoverable on first run via `extra_paths` (no install). Live-verified the agent lists/uses them. (1 test)
 
 ### Docs
 

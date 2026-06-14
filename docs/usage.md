@@ -391,6 +391,11 @@ AGClaw can search a public skills registry ([skills.sh](https://skills.sh)),
 install skills, and use them — all on its own, mid-conversation. A skill is a
 `SKILL.md` instruction package (optionally with scripts/resources).
 
+**Bundled skills.** AGClaw ships with a few first-party skills available from the
+first run (no install needed): `web-research` (thorough multi-source research),
+`pdf-tools` (read/extract/split/merge PDFs), and `email-drafting` (drafts in your
+voice). It uses them automatically when relevant, or you can ask for one by name.
+
 Just ask:
 
 ```

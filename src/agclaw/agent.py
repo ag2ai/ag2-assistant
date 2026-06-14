@@ -34,12 +34,20 @@ def model_config(config: Config, model: str | None = None):
     return GeminiConfig(model=model, api_key=api_key)
 
 
+def bundled_skills_dir():
+    """Directory of first-party skills shipped with AGClaw (read-only)."""
+    from pathlib import Path
+
+    return Path(__file__).parent / "skills"
+
+
 def build_skills_toolkit(config: Config):
     """A toolkit that lets the agent search, install, and run skills.
 
     `SkillSearchToolkit` extends the local skills toolkit (list/load/read/run)
     with registry search + install from skills.sh. Skills install into
-    `config.skills_dir`.
+    `config.skills_dir`; AGClaw's bundled first-party skills are always available
+    too (read-only, via `extra_paths`), so it's capable on first run.
 
     When the Docker sandbox is selected (`config.tools.sandbox == "docker"`),
     skill *scripts* run inside a one-shot, bind-mounted container — so untrusted
@@ -48,6 +56,7 @@ def build_skills_toolkit(config: Config):
     from autogen.beta.tools import SkillSearchToolkit
 
     config.skills_dir.mkdir(parents=True, exist_ok=True)
+    extra = [str(bundled_skills_dir())]
 
     if config.tools.sandbox == "docker":
         from agclaw.tools.docker_sandbox import (
@@ -61,12 +70,15 @@ def build_skills_toolkit(config: Config):
                 blocked=_SKILL_BLOCKED,
                 image=config.tools.docker_image,
                 network=config.tools.docker_network,
+                extra_paths=extra,
             )
             return SkillSearchToolkit(runtime)
 
     from autogen.beta.tools.skills import LocalRuntime
 
-    runtime = LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED)
+    runtime = LocalRuntime(
+        dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra
+    )
     return SkillSearchToolkit(runtime)
 
 

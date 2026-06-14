@@ -306,6 +306,7 @@ def build_docker_skill_runtime(
     network: str = "bridge",
     timeout: float = 60,
     max_output: int = 100_000,
+    extra_paths: list[str] | None = None,
 ):
     """A `SkillRuntime` that executes each skill script inside a one-shot,
     bind-mounted Docker container (the skill's `scripts/` dir is the only host
@@ -332,6 +333,7 @@ def build_docker_skill_runtime(
         blocked=blocked or [],
         timeout=timeout,
         max_output=max_output,
+        extra_paths=extra_paths,
     )
 
 

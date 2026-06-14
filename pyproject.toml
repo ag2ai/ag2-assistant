@@ -48,4 +48,5 @@ markers = [
 where = ["src"]
 
 [tool.setuptools.package-data]
+"agclaw" = ["skills/*/SKILL.md"]
 "agclaw.gateway" = ["static/*.html"]

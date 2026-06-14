@@ -14,6 +14,23 @@ def test_skills_toolkit_builds_and_creates_dir(tmp_path):
     assert config.skills_dir.exists()
 
 
+def test_bundled_skills_are_discoverable(tmp_path):
+    """First-party skills ship with AGClaw and are available without installing."""
+    import tempfile
+
+    from autogen.beta.tools.skills import LocalRuntime
+
+    from agclaw.agent import bundled_skills_dir
+
+    d = bundled_skills_dir()
+    assert d.exists()
+    rt = LocalRuntime(dir=tempfile.mkdtemp(), extra_paths=[str(d)])
+    discovered = rt.discover()
+    names = {m.name for m in discovered}
+    assert {"web-research", "pdf-tools", "email-drafting"} <= names
+    assert all(m.description for m in discovered)  # required for disclosure
+
+
 def test_skills_toolkit_exposes_search_and_install(tmp_path):
     config = Config()
     config.skills_dir = tmp_path / "skills"
