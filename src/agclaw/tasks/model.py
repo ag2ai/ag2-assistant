@@ -1,0 +1,73 @@
+"""The Task primitive — a tracked, nestable unit of work.
+
+Mirrors AG2's task lifecycle (created/running/completed/failed/cancelled) and adds
+the states AGClaw needs for its user-facing flow (scheduled, awaiting_input,
+planning). Serialises to/from a plain dict for JSON persistence.
+"""
+
+from dataclasses import dataclass, field
+
+
+class TaskStatus:
+    """Task lifecycle states (string constants for easy JSON/round-trip)."""
+
+    PENDING = "pending"            # created, not yet started
+    SCHEDULED = "scheduled"        # waiting for a scheduled time
+    AWAITING_INPUT = "awaiting_input"  # paused on a HITL intake/permission prompt
+    PLANNING = "planning"          # forming the plan / subtasks
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    TERMINAL = frozenset({COMPLETED, FAILED, CANCELLED})
+    ACTIVE = frozenset({PENDING, SCHEDULED, AWAITING_INPUT, PLANNING, RUNNING})
+    ALL = frozenset(ACTIVE | TERMINAL)
+
+
+@dataclass
+class Task:
+    """A unit of work. Roots have `parent_id is None`; subtasks reference a parent."""
+
+    id: str
+    title: str
+    description: str = ""
+    status: str = TaskStatus.PENDING
+    parent_id: str | None = None
+
+    created_at: str = ""
+    started_at: str | None = None
+    ended_at: str | None = None
+
+    # scheduling
+    scheduled_for: str | None = None   # one-shot ISO datetime
+    recurrence: str | None = None      # e.g. "daily@09:00" (later phase)
+
+    # execution detail
+    progress: list[dict] = field(default_factory=list)  # {at, message, pct?}
+    result: str | None = None
+    error: str | None = None
+    plan: list[str] = field(default_factory=list)
+    intake: dict = field(default_factory=dict)          # clarifying Q&A
+    capability: str | None = None                       # tag for recall
+    assets: list[dict] = field(default_factory=list)    # {name, path, kind}
+
+    # origin / routing
+    origin_channel: str | None = None
+    origin_session: str | None = None
+    hitl_channel: str | None = None      # where to ask (override; default=origin)
+
+    stream_id: str | None = None         # per-task event-log id
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in TaskStatus.TERMINAL
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Task":
+        # tolerate unknown/legacy keys so the store survives schema growth
+        known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
+        return cls(**known)
