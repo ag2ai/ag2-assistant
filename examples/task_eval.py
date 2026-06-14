@@ -125,7 +125,9 @@ async def run_one(cfg, scn: dict) -> dict:
 
         if scn.get("amend"):
             await asyncio.sleep(3)
-            child = await store.add_subtask(t.id, scn["amend"], reopen_parent=True)
+            child = await store.add_subtask(
+                t.id, scn["amend"], reopen_parent=True, capabilities=["web"]
+            )
             await store.add_deliverable(child.id, f"Output of: {scn['amend']}")
 
         if scn.get("cancel"):
@@ -135,7 +137,7 @@ async def run_one(cfg, scn: dict) -> dict:
         # Poll for terminal status with a deadline (avoids wait_for vs the
         # CancelledError-suppressing mgr.wait interaction).
         timed_out = False
-        deadline = time.time() + scn.get("timeout", 420)
+        deadline = time.time() + scn.get("timeout", 600)
         while True:
             cur = await store.get(t.id)
             if cur.is_terminal:

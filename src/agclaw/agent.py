@@ -40,6 +40,13 @@ def model_config(config: Config, model: str | None = None):
     return GeminiConfig(model=model, api_key=api_key, max_output_tokens=8192)
 
 
+def cheap_model(config: Config) -> str | None:
+    """A faster/cheaper model for bulk work (research subtasks, verification)."""
+    return config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(
+        config.llm.provider.lower()
+    )
+
+
 def bundled_skills_dir():
     """Directory of first-party skills shipped with AGClaw (read-only)."""
     from pathlib import Path
@@ -169,6 +176,7 @@ def create_agent(
     asker=None,
     single_shot: bool = False,
     capabilities: list[str] | None = None,
+    model: str | None = None,
 ) -> Agent:
     """Create an AGClaw agent with the given configuration.
 
@@ -191,7 +199,7 @@ def create_agent(
     if config is None:
         config = load_config()
 
-    llm_config = model_config(config)
+    llm_config = model_config(config, model)
 
     knowledge = None
     assembly: list = []

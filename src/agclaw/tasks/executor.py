@@ -14,9 +14,9 @@ from pydantic import BaseModel
 
 from agclaw.tasks.model import DeliverableStatus
 
-_MAX_ASSET_CHARS = 20_000
+_MAX_ASSET_CHARS = 50_000
 _MAX_VERIFY_CHARS = 12_000
-_MAX_CHILD_CONTEXT = 8_000
+_MAX_CHILD_CONTEXT = 12_000
 
 
 class _Verdict(BaseModel):
@@ -80,6 +80,8 @@ def make_task_executor(config, skills: bool = True):
 
         # Agent scoped to the task's declared capabilities → a research subtask
         # can't reach Drive or run code; a calendar task only gets calendar.
+        # (We use the main model throughout: the cheaper tier is too weak at the
+        # agentic tool use research needs — it failed grounding/verification.)
         caps = task.capabilities or []
         agent = create_agent(
             config, memory=False, skills=skills, asker=asker, capabilities=caps,
