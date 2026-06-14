@@ -7,20 +7,25 @@ AGClaw is a personal AI assistant platform built on AG2 Beta. All backend compon
 ## Implementation status (June 2026)
 
 Built and tested:
-- **Agent** on AG2 0.13.4 / Gemini, with **native AG2 tools** (`DuckDuckSearchTool`, `SandboxShellTool`, `SandboxCodeTool`) + a custom `web_fetch` fallback, plus a permission-gated `read_file` (vision for PDFs/images), selected per provider.
-- **Skills** — `SkillSearchToolkit`: the agent searches/installs/runs skills from the skills.sh registry.
-- **Observer memory** — passive user-profile learning persisted in SQLite via AG2's `KnowledgeStore` + `WorkingMemoryAggregate` + `WorkingMemoryPolicy`. (Permission decisions are deliberately excluded from this memory.)
-- **Environment context** — live date/time (system clock) + location, injected per turn.
-- **Gateway facade** — FastAPI REST + WebSocket (`/api/health`, `/api/message`, `/api/ws`) over a per-session conversation manager. Verified: multi-turn recall, session isolation, tool use over HTTP.
-- **Channels** — Telegram, Discord, Slack live (DM + @mention gating, per-channel formatting, in-chat permission buttons).
-- **HITL & turn-level permissions** — pluggable `Asker` (chat buttons / styled desktop browser page), and a single per-turn `PermissionManager` gating folder access and shell/code execution.
-- **Distributed spike** — agent served over WebSocket via AG2 `Hub` + `serve_ws` (`examples/network_gateway_spike.py`).
+- **Agent** on AG2 0.13.4, multi-provider with **real provider switching** (Gemini default; OpenAI/Anthropic via config), **native AG2 tools** (`DuckDuckSearchTool`, `SandboxShellTool`, `SandboxCodeTool`) + a custom `web_fetch` fallback, a permission-gated `read_file` (vision for PDFs/images), and always-on **behaviour guidance** (use the right tool; never shell-flail; admit when there's no tool).
+- **Execution sandbox** — `local` (host, command-filtered + approval-gated) or **`docker`** (isolated container, no host FS; approval dropped since the container is the boundary). Skill scripts run in a one-shot bind-mounted container under Docker.
+- **Skills** — `SkillSearchToolkit` (search/install/run from skills.sh) **plus bundled first-party skills** (`web-research`, `pdf-tools`, `email-drafting`) available on first run.
+- **Google integration** — Gmail/Calendar/Drive tools behind OAuth (`agclaw[google]`); reads run freely, **sends/writes are HITL-gated**. Sign in via CLI or the web UI's Google panel.
+- **Observer memory** — passive user-profile learning in SQLite (`WorkingMemoryAggregate` + `WorkingMemoryPolicy`), platform-tagged, cadence-batched (`every_n_turns`, cheaper aggregation model). Permission decisions excluded.
+- **Environment context** — live date/time + location, injected per turn.
+- **Gateway facade** — FastAPI REST + WebSocket with **resumable per-session conversations** (each session is a persistent AG2 `Stream` whose events are written via `EventLogWriter` and reloaded on demand), gateway-hosted **HITL** and **Google OAuth**, and a built-in **web UI**.
+- **Web UI** — self-contained chat client served at `/` (markdown rendering, file attachments, stop button, system light/dark, inline HITL cards, History drawer; ag2.ai-styled). Verified live with Chrome DevTools.
+- **Channels** — Telegram, Discord, Slack live (DM + @mention gating, per-channel formatting, in-chat permission buttons, **attachments**, resumable history). Combined `agclaw run` serves the gateway + all configured channels in one process.
+- **HITL & turn-level permissions** — pluggable `Asker` (chat buttons / styled desktop or gateway page), single per-turn `PermissionManager` gating folder access and shell/code.
+- **Onboarding** — first-run interview (name/location/hours/style) via the same `Asker`.
+- **Tasks (in progress)** — persistent, nestable task primitive with objectives + deliverables-based completion and live amendment (foundation built; runner/scheduler/GUI in progress). See `docs/tasks-design.md`.
+- **Distributed spike** — agent served over WebSocket via AG2 `Hub` + `serve_ws`.
 
-Not yet built: web/desktop UI, `agclaw permissions` management CLI, Docker-sandboxed execution.
+Not yet built: task runner/scheduler/GUI view (in progress), WhatsApp channel.
 
-### Gateway design note: direct-ask vs Hub
+### Gateway design note: per-session streams vs Hub
 
-The single-agent UI facade uses **direct `AgentReply.ask()` chaining per session** — each session keeps its own isolated multi-turn history. This is simpler and lower-latency than routing each turn through an AG2 network channel, and it avoids a cross-session history-leak we hit when one shared agent served multiple conversation channels. The **AG2 Hub** is retained for what it's strongest at — **distributed transport and multi-agent** coordination (validated by the spike) — and the two compose: the facade's agent can later be placed on a Hub for cross-machine/multi-agent deployments without changing the client-facing API.
+The single-agent UI facade gives each session its own **persistent AG2 `Stream`** keyed by `session_id`; the conversation lives in the stream's event history, persisted after each turn with `EventLogWriter` and reloaded into a fresh stream on demand — so conversations are **resumable** across restarts (web and all channels), and sessions never cross histories. (This replaced the earlier per-session `AgentReply.ask()` chaining, which wasn't durable.) The **AG2 Hub** is retained for **distributed transport and multi-agent** coordination, and composes: the facade's agent can later sit on a Hub without changing the client API.
 
 ## System Architecture
 
@@ -50,31 +55,33 @@ Messaging platform adapters that normalize inbound/outbound messages:
 
 ### 3. Gateway Layer  *(built)*
 
-A FastAPI facade (`agclaw.gateway`) that any UI client drives over a plain API:
-- **REST API**: `GET /api/health`, `POST /api/message` ({text, session_id} → {reply})
-- **WebSocket API**: `/api/ws` — send {text, session_id}, receive {type: thinking|reply|error}
-- **Session manager** (`Gateway`): one isolated multi-turn conversation per `session_id`, via per-session `AgentReply.ask()` chains; calls within a session are serialised by a per-session lock.
-- Launch with `agclaw gateway` (uvicorn).
+A FastAPI facade (`agclaw.gateway`) that any UI client drives over a plain API, and which also serves the built-in web UI:
+- **Web UI**: `GET /` — the self-contained chat client; favicons at `/favicon*.svg`.
+- **REST**: `GET /api/health`, `POST /api/message`, `GET /api/sessions` + `GET /api/sessions/{id}` (resumable history), `GET /api/hitl/pending` + `POST /hitl/{id}/answer`, `GET/POST /api/google/*` (status, login_url, callback, credentials, logout).
+- **WebSocket**: `/api/ws` — send `{text, session_id, attachments?}`; receive `{type: thinking|reply|question|cancelled|error}`; answer HITL with `{type:"answer", id, answer}`; stop a turn with `{type:"cancel"}`.
+- **Session manager** (`Gateway`): a persistent AG2 `Stream` per `session_id`, hydrated from disk via `EventLogWriter`, with a per-task display transcript; calls within a session are serialised by a per-session lock; turns time out cleanly with an error frame.
+- Launch with `agclaw gateway`, or `agclaw run` to also start every configured channel in one process.
 
-For distributed/multi-agent deployments, the agent can additionally be served over WebSocket through an AG2 `Hub` (`serve_ws`) — see the distributed spike.
+For distributed/multi-agent deployments, the agent can additionally be served over WebSocket through an AG2 `Hub` (`serve_ws`).
 
 ### 4. Agent Layer  *(built)*
 
 AG2 Beta `Agent` (`agclaw.agent.create_agent`):
-- **System Prompt**: the agent's personality (SOUL equivalent), from config.
-- **Tools** (`agclaw.tools.build_agent_tools`): native AG2 `DuckDuckSearchTool`, `SandboxShellTool`, `SandboxCodeTool`, plus `WebFetchTool` (Anthropic) or a custom `web_fetch` function tool (Gemini & others). Provider-aware selection.
-- **Knowledge + Assembly**: profile memory wired via `KnowledgeConfig` + `WorkingMemoryPolicy` (see below).
-- **Middleware / Response Schema / HITL**: available from AG2 when needed (not all wired yet).
+- **Prompt**: persona (from config) + always-on **behaviour guidance** + live environment + (when signed in) Google tool-usage guidance, assembled per turn in `turn_prompt`.
+- **Model**: `model_config()` builds the right provider config (Gemini/OpenAI/Anthropic) from `config.llm`; aggregation can use a cheaper model.
+- **Tools** (`agclaw.tools.build_agent_tools`): `DuckDuckSearchTool`, `SandboxShellTool` + `SandboxCodeTool` (local **or Docker** backend), `read_file` (vision, permission-gated), `web_fetch` (native on Anthropic, custom elsewhere), the skills toolkit (registry + bundled), and — when signed in — the **Google tools** (`gmail_*`, `calendar_*`, `drive_*`; sends/writes HITL-gated).
+- **Knowledge + Assembly**: profile memory via `KnowledgeConfig` + `WorkingMemoryPolicy`.
+- **Sandbox**: `config.tools.sandbox` = `local` (approval-gated) or `docker` (container-isolated; approval dropped).
 
 ### 5. Session & Memory Layer  *(built)*
 
 Two distinct concerns:
 
-**Conversation history (per session)** — handled by AG2 `AgentReply.ask()` chaining inside the gateway. Each session's chain is isolated; no cross-session leakage.
+**Conversation history (per session)** — each session is a persistent AG2 `Stream` (id = `session_id`); events are written to `~/.agclaw/sessions.db` via `EventLogWriter` after each turn and reloaded on demand, so conversations **resume** across restarts with full context (web + all channels). A lightweight per-session display transcript backs the UI History view. Sessions never cross histories.
 
 **User-profile memory (global, passive)** — `agclaw.memory`:
-- **Store**: `SqliteKnowledgeStore` at `~/.agclaw/profile.db` (a shared `LockedKnowledgeStore` when multiple agents must write it).
-- **Learning**: `WorkingMemoryAggregate` with a custom 4-dimension prompt (how / when / dislikes / writing style), platform-tagged, fired `on_end` each turn.
+- **Store**: `SqliteKnowledgeStore` at `~/.agclaw/profile.db`.
+- **Learning**: `WorkingMemoryAggregate` with a custom 4-dimension prompt (how / when / dislikes / writing style), platform-tagged, batched `every_n_turns` (cheaper aggregation model), `on_end` only for single-shot CLI. The prompt forbids commentary and never records permission decisions.
 - **Recall**: `WorkingMemoryPolicy` injects the profile into every turn.
 
 See `docs/memory.md`.
@@ -98,14 +105,29 @@ Human-in-the-loop and Claude-Code-style permissions, routed to whatever surface 
 
 ### 7. Configuration Layer
 
-Pydantic-based configuration:
-- **LLM Config**: provider, model, API keys (wraps AG2's provider configs)
-- **Agent Config**: name, system prompt, location, tools, middleware
-- **Channel Config**: per-channel credentials (`.env`)
-- **Gateway Config**: host, port
-- **Permissions**: persisted folder grants (`~/.agclaw/permissions.json`)
+Pydantic config resolved by `load_config()` with precedence **env (`AGCLAW_*`) > `~/.agclaw/config.json` > defaults**:
+- **LLM**: `provider` (gemini/openai/anthropic), `model`, `api_key_env`, optional cheaper `aggregate_model`.
+- **Agent**: name, system prompt, location.
+- **Tools**: `sandbox` (local/docker), `docker_image`, `docker_network`.
+- **Memory**: `aggregate_every_n_turns`.
+- **Channels/Google**: credentials/tokens in `.env` / `~/.agclaw/`.
 
-Loaded from config file + environment variables (.env).
+### 8. Tasks Layer  *(in progress)*
+
+Persistent, user-facing task management (`agclaw.tasks`) — see `docs/tasks-design.md`:
+- **`Task`** primitive: nestable (`parent_id` tree), with status, start/end + scheduling fields, **objective**, **deliverables** (acceptance criteria + status + linked asset), progress log, plan, intake Q&A, assets, origin/HITL-routing, per-task event stream.
+- **`TaskStore`** (`~/.agclaw/tasks.db`): CRUD, tree/descendants/cascade, **gated completion** (`is_complete` = all deliverables satisfied AND all subtasks done), and **live amendment** (`update`/`reopen`/`add_subtask` — adding work re-opens/uncompletes a task so the runner picks it up).
+- **Reuses** AG2's `Task` lifecycle/`TaskProgress`/`run_subtasks`/`EventLogWriter`; AGClaw builds the durable store+tree, the background runner with immediate cascade-cancel, HITL intake, scheduler, gateway API, and GUI view (in progress).
+
+### 9. Google Integration Layer  *(built)*
+
+`agclaw.integrations.google_auth` (OAuth, token cache + refresh) + `agclaw.tools.google`:
+- Desktop OAuth flow via CLI (`agclaw google login`) or the gateway (`/api/google/login_url` → `/api/google/callback`, drivable from the web UI's Google panel; `AGCLAW_PUBLIC_URL` for off-machine redirects).
+- Tools auto-attach when signed in: Gmail/Calendar/Drive read freely; `gmail_send` and `calendar_create_event` carry the approval middleware (HITL-gated).
+
+### Storage (`~/.agclaw/`)
+
+`profile.db` (learned profile) · `sessions.db` (resumable conversations + transcripts) · `tasks.db` (tasks) · `permissions.json` (folder grants/blocks) · `google_credentials.json` + `google_token.json` + `google_account.txt` (Google) · `onboarded` (first-run marker) · optional `config.json` · `skills/` (installed skills).
 
 ## Message Flow
 
