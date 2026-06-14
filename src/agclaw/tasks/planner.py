@@ -27,6 +27,8 @@ class PlanDeliverable(BaseModel):
 class PlanSubtask(BaseModel):
     title: str
     description: str = ""
+    deliverable: str = ""   # what this subtask must produce
+    criteria: str = ""      # acceptance criteria for that output
 
 
 class TaskPlan(BaseModel):
@@ -52,10 +54,14 @@ Produce a plan:
 - questions: ONLY if non-trivial — 2 to 5 clarifying questions that materially
   change the work (scope, audience, format, depth, deadline). Give options when
   the answer is naturally a choice; otherwise leave options empty for free text.
-- deliverables: the concrete outputs to produce, each with acceptance criteria
-- subtasks: break a non-trivial job into a few independent pieces of work
+- deliverables: the concrete outputs the OVERALL task must produce, each with
+  acceptance criteria. Prefer outputs the assistant can actually produce with its
+  tools (research, summaries, drafts, markdown, code) — not things needing an
+  external app it has no tool for.
+- subtasks: break a non-trivial job into a few independent pieces of work; give
+  each subtask its own `deliverable` (what that piece must produce) and criteria.
 
-Keep it tight. Trivial tasks need no questions and usually one deliverable.
+Keep it tight. Trivial tasks need no questions, no subtasks, and one deliverable.
 
 User request:
 {request}"""
@@ -90,7 +96,11 @@ async def apply_plan(store: TaskStore, task_id: str, plan: TaskPlan) -> None:
     for d in plan.deliverables:
         await store.add_deliverable(task_id, d.description, d.criteria)
     for s in plan.subtasks:
-        await store.add_subtask(task_id, s.title, s.description, reopen_parent=False)
+        child = await store.add_subtask(task_id, s.title, s.description, reopen_parent=False)
+        # every subtask must produce something, or it does no real work
+        await store.add_deliverable(
+            child.id, s.deliverable or f"Output of: {s.title}", s.criteria
+        )
 
 
 def _request_with_answers(request: str, answers: dict) -> str:
