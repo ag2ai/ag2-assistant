@@ -294,13 +294,15 @@ AGCLAW_LOCATION=Sydney, Australia
 
 Now it can answer "what's the time here?" and reason about your local context.
 
-### Config file
+### Config file & precedence
 
-AGClaw looks for configuration in:
+Configuration resolves in this order (later wins):
 
-1. `.env` file in the current directory
+1. Built-in defaults
 2. `~/.agclaw/config.json`
-3. Environment variables
+3. `AGCLAW_*` environment variables (from `.env` or the shell)
+
+So you can keep a base `config.json` and override per-run with an env var.
 
 ### `~/.agclaw/config.json`
 
@@ -308,50 +310,55 @@ AGClaw looks for configuration in:
 {
   "llm": {
     "provider": "gemini",
-    "model": "gemini-2.5-flash",
-    "api_key_env": "GEMINI_API_KEY"
+    "model": "gemini-3.5-flash",
+    "api_key_env": "GEMINI_API_KEY",
+    "aggregate_model": "gemini-2.5-flash"
   },
   "agent": {
     "name": "agclaw",
     "system_prompt": "You are AGClaw, a helpful personal AI assistant."
   },
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "bot_token_env": "TELEGRAM_BOT_TOKEN"
-    },
-    "discord": {
-      "enabled": false,
-      "bot_token_env": "DISCORD_BOT_TOKEN"
-    }
-  },
-  "gateway": {
-    "host": "127.0.0.1",
-    "port": 8789
-  }
+  "tools": { "sandbox": "local" },
+  "memory": { "aggregate_every_n_turns": 4 }
 }
 ```
+
+`aggregate_model` (optional) runs the passive memory-distillation pass on a
+cheaper model than your main one — handy on long sessions. Omit it to reuse the
+main model.
+
+### Environment variable overrides
+
+Every key above also has an env override (these win over `config.json`):
+
+| Env var | Overrides |
+|---|---|
+| `AGCLAW_LLM_PROVIDER` | `llm.provider` (`gemini` / `anthropic` / `openai`) |
+| `AGCLAW_MODEL` | `llm.model` |
+| `AGCLAW_API_KEY_ENV` | `llm.api_key_env` |
+| `AGCLAW_AGGREGATE_MODEL` | `llm.aggregate_model` |
+| `AGCLAW_LOCATION` | `agent.location` |
+| `AGCLAW_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
+| `AGCLAW_DOCKER_IMAGE` / `AGCLAW_DOCKER_NETWORK` | Docker sandbox |
+| `AGCLAW_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
 
 ### Switching LLM providers
 
-```json
-{
-  "llm": {
-    "provider": "openai",
-    "model": "gpt-4o",
-    "api_key_env": "OPENAI_API_KEY"
-  }
-}
-```
+Set the provider + model + the env var holding its key, and install that
+provider's extra (`pip install "ag2[anthropic]"` / `ag2[openai]`):
 
 ```json
-{
-  "llm": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-20250514",
-    "api_key_env": "ANTHROPIC_API_KEY"
-  }
-}
+{ "llm": { "provider": "openai", "model": "gpt-4o", "api_key_env": "OPENAI_API_KEY" } }
+```
+```json
+{ "llm": { "provider": "anthropic", "model": "claude-sonnet-4-6", "api_key_env": "ANTHROPIC_API_KEY" } }
+```
+
+Or quickly, without a file:
+
+```bash
+AGCLAW_LLM_PROVIDER=anthropic AGCLAW_MODEL=claude-sonnet-4-6 \
+  AGCLAW_API_KEY_ENV=ANTHROPIC_API_KEY agclaw chat
 ```
 
 ## Personalizing Your Agent

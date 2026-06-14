@@ -4,14 +4,34 @@ import os
 from datetime import datetime
 
 from autogen.beta import Agent
-from autogen.beta.config.gemini import GeminiConfig
 
-from agclaw.config import Config
+from agclaw.config import Config, load_config
 from agclaw.memory import build_knowledge_config, profile_assembly
 from agclaw.tools import build_agent_tools
 
 # Commands skill scripts must never run (defense-in-depth; skills can ship code).
 _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
+
+
+def model_config(config: Config, model: str | None = None):
+    """Build the AG2 ModelConfig for the configured provider.
+
+    `model` overrides `config.llm.model` (used for the cheaper aggregation pass).
+    """
+    api_key = os.environ.get(config.llm.api_key_env, "")
+    model = model or config.llm.model
+    provider = config.llm.provider.lower()
+    if provider == "anthropic":
+        from autogen.beta.config import AnthropicConfig
+
+        return AnthropicConfig(model=model, api_key=api_key)
+    if provider in ("openai", "oai"):
+        from autogen.beta.config import OpenAIConfig
+
+        return OpenAIConfig(model=model, api_key=api_key)
+    from autogen.beta.config.gemini import GeminiConfig
+
+    return GeminiConfig(model=model, api_key=api_key)
 
 
 def build_skills_toolkit(config: Config):
@@ -120,21 +140,22 @@ def create_agent(
             cadence to avoid an aggregation call per message.
     """
     if config is None:
-        config = Config()
+        config = load_config()
 
-    api_key = os.environ.get(config.llm.api_key_env, "")
-
-    llm_config = GeminiConfig(
-        model=config.llm.model,
-        api_key=api_key,
-    )
+    llm_config = model_config(config)
 
     knowledge = None
     assembly: list = []
     if memory:
+        # A cheaper model for the background aggregation pass, if configured.
+        agg_config = (
+            model_config(config, config.llm.aggregate_model)
+            if config.llm.aggregate_model
+            else llm_config
+        )
         knowledge = build_knowledge_config(
             platform=platform,
-            aggregate_config=llm_config,
+            aggregate_config=agg_config,
             store=knowledge_store,
             every_n_turns=config.memory.aggregate_every_n_turns,
             on_end=single_shot,
@@ -184,7 +205,7 @@ async def ask(
 ) -> str:
     """Send a message to the agent and return the response (single-shot)."""
     if config is None:
-        config = Config()
+        config = load_config()
     agent = create_agent(
         config, memory=memory, platform=platform, asker=asker, single_shot=True
     )

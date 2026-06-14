@@ -6,7 +6,7 @@ import os
 import typer
 
 from agclaw.agent import ask
-from agclaw.config import Config
+from agclaw.config import load_config
 
 app = typer.Typer(name="agclaw", help="AGClaw - Personal AI Assistant")
 
@@ -28,7 +28,7 @@ def agent(
     """Send a message to the AGClaw agent."""
     if sandbox:
         os.environ["AGCLAW_SANDBOX"] = sandbox
-    config = Config()
+    config = load_config()
 
     async def run() -> str:
         asker = None

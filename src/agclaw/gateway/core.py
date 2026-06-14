@@ -19,7 +19,7 @@ import asyncio
 from autogen.beta import AgentReply
 
 from agclaw.agent import create_agent, turn_prompt
-from agclaw.config import Config
+from agclaw.config import Config, load_config
 
 REPLY_TIMEOUT = 120.0
 
@@ -34,7 +34,7 @@ class Gateway:
         platform: str = "gateway",
         onboard: bool = True,
     ) -> None:
-        self._config = config or Config()
+        self._config = config or load_config()
         self._memory = memory
         self._platform = platform
         self._onboard = onboard
