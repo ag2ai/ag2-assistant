@@ -187,6 +187,55 @@
   .sendbtn.stop { background: var(--ink); color: var(--bg); }
   .empty { color: var(--muted); text-align: center; margin: 18vh auto 0; font-size: 15px; }
   .empty h1 { font-family: var(--serif); font-weight: 600; color: var(--ink); font-size: 28px; margin: 0 0 8px; }
+
+  /* tasks drawer (right) */
+  #tdrawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 400px; max-width: 90vw; z-index: 10;
+    background: var(--bg); border-left: 1px solid var(--line); transform: translateX(100%);
+    transition: transform .2s ease; display: flex; flex-direction: column;
+  }
+  #tdrawer.open { transform: none; }
+  #tdrawer .dhead { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  #tdrawer .dhead h2 { font-family: var(--serif); font-size: 18px; margin: 0; }
+  #tdrawer .dhead button { margin-left: auto; border: none; background: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+  #tnew { display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  #tnew input { flex: 1; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; }
+  #tnew input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  #tnew button { border: none; background: var(--accent); color: #fff; border-radius: 10px; padding: 0 16px; font-weight: 600; font-family: var(--sans); cursor: pointer; }
+  #tbody { overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .tnone { color: var(--muted); font-size: 13px; padding: 16px; text-align: center; }
+  .needs { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); padding: 4px 4px 0; }
+  .inq { border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; background: var(--bg); box-shadow: 0 6px 20px rgba(249,83,57,.08); }
+  .inq .it { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+  .inq .idet { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .inq .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .inq .freerow { display: flex; gap: 8px; }
+  .inq button { font-family: var(--sans); font-size: 13px; font-weight: 600; cursor: pointer; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--ink); background: var(--ink); color: var(--bg); }
+  .inq button.secondary { background: var(--bg); color: var(--ink); }
+  .inq input { flex: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13px; }
+  .tcard { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .tcard .th { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .tcard .tt { font-weight: 600; font-size: 14px; flex: 1; word-break: break-word; }
+  .badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 3px 8px; border-radius: 999px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+  .badge.running, .badge.planning { color: #fff; background: var(--accent); border-color: var(--accent); }
+  .badge.completed { color: #fff; background: #2ecc71; border-color: #2ecc71; }
+  .badge.failed, .badge.cancelled { color: #fff; background: #b3331f; border-color: #b3331f; }
+  .badge.awaiting_input, .badge.scheduled { color: #fff; background: #e08e0b; border-color: #e08e0b; }
+  .tcard .meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .tcard .detail { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; font-size: 13px; }
+  .tcard .obj { margin-bottom: 8px; }
+  .deliv { font-size: 13px; margin: 4px 0; }
+  .deliv .ds { font-size: 11px; color: var(--muted); }
+  .deliv.produced .ds, .deliv.accepted .ds { color: #2ecc71; }
+  .deliv.rejected .ds { color: #b3331f; }
+  .asset { white-space: pre-wrap; background: var(--code); border-radius: 8px; padding: 8px 10px; margin: 4px 0 6px; font-size: 12px; max-height: 220px; overflow: auto; }
+  .child { margin-left: 10px; border-left: 2px solid var(--line); padding-left: 10px; margin-top: 8px; }
+  .child .chead { display: flex; gap: 8px; align-items: center; }
+  .child .chead .ct { font-weight: 600; font-size: 13px; flex: 1; }
+  .prog { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .prog.err { color: #b3331f; }
+  .cancelbtn { margin-top: 10px; font-size: 12px; color: var(--accent); background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-family: var(--sans); }
+  .cancelbtn:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -196,6 +245,7 @@
     <span class="title">Assistant</span>
     <span class="spacer"></span>
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></span>
+    <button id="tasksbtn" title="Tasks">✓ Tasks</button>
     <button id="gbtn" title="Connect Google">Google</button>
     <button id="theme" title="Theme">🖥 System</button>
     <button id="new" title="Start a fresh conversation">New chat</button>
@@ -208,6 +258,12 @@
     <div id="sessions"></div>
   </aside>
 
+  <aside id="tdrawer">
+    <div class="dhead"><h2>Tasks</h2><button id="tclose" title="Close">×</button></div>
+    <div id="tnew"><input id="tinput" placeholder="Start a task…"><button id="tgo">Run</button></div>
+    <div id="tbody"></div>
+  </aside>
+
   <div id="log"><div class="wrap"><div class="empty"><h1>How can I help?</h1>Ask me anything — I can search, run code, read files, and more.</div></div></div>
 
   <footer>
@@ -217,6 +273,7 @@
         <button class="iconbtn" id="attach" title="Attach files">📎</button>
         <input type="file" id="file" multiple hidden>
         <textarea id="input" rows="1" placeholder="Message AGClaw…" autofocus></textarea>
+        <button class="iconbtn" id="astask" title="Run this as a task">✓</button>
         <button class="sendbtn" id="send">Send</button>
       </div>
     </div>
@@ -314,8 +371,157 @@
     } catch { /* leave current view */ }
   }
   histBtn.onclick = () => openDrawer(!drawer.classList.contains("open"));
-  backdrop.onclick = () => { openDrawer(false); closeGoogle(); };
+  backdrop.onclick = () => { openDrawer(false); closeGoogle(); openTasks(false); };
   document.getElementById("dclose").onclick = () => openDrawer(false);
+
+  // --- tasks drawer (right): list, detail, cancel, durable HITL inquiries ---
+  const tasksBtn = document.getElementById("tasksbtn");
+  const tdrawer = document.getElementById("tdrawer");
+  const tbody = document.getElementById("tbody");
+  const tinput = document.getElementById("tinput");
+  let tpoll = null;
+  const expanded = new Set();
+
+  function openTasks(o) {
+    tdrawer.classList.toggle("open", o); backdrop.classList.toggle("open", o);
+    if (o) { loadTasks(); tpoll = setInterval(loadTasks, 3000); }
+    else if (tpoll) { clearInterval(tpoll); tpoll = null; }
+  }
+  tasksBtn.onclick = () => openTasks(!tdrawer.classList.contains("open"));
+  document.getElementById("tclose").onclick = () => openTasks(false);
+
+  function badge(status) {
+    const b = document.createElement("span");
+    b.className = "badge " + status; b.textContent = (status || "").replace(/_/g, " ");
+    return b;
+  }
+  async function loadTasks() {
+    let tasks = [], pend = [];
+    try { tasks = (await (await fetch("/api/tasks")).json()).tasks || []; } catch { return; }
+    try { pend = (await (await fetch("/api/inquiries/pending")).json()).pending || []; } catch {}
+    renderTasks(tasks, pend);
+  }
+  let lastSig = "";
+  function renderTasks(tasks, pend) {
+    // preserve focus in an inquiry text field across the refresh
+    const active = document.activeElement;
+    if (active && active.tagName === "INPUT" && active.closest(".inq")) return;
+    // only rebuild the DOM when something actually changed — otherwise the 3s
+    // poll would churn the list and steal clicks on inquiry option buttons.
+    const sig = JSON.stringify([
+      pend.map(p => p.id),
+      tasks.map(t => [t.id, t.status, t.deliverables_done, t.deliverables, t.children, t.last_progress]),
+      [...expanded],
+    ]);
+    if (sig === lastSig) return;
+    lastSig = sig;
+    tbody.innerHTML = "";
+    if (pend.length) {
+      const h = document.createElement("div"); h.className = "needs"; h.textContent = "Needs your input";
+      tbody.appendChild(h);
+      pend.forEach(p => tbody.appendChild(inquiryCard(p)));
+    }
+    if (!tasks.length) {
+      if (!pend.length) tbody.innerHTML = '<div class="tnone">No tasks yet. Start one above.</div>';
+      return;
+    }
+    tasks.forEach(t => tbody.appendChild(taskCard(t)));
+  }
+  function inquiryCard(p) {
+    const c = document.createElement("div"); c.className = "inq";
+    const it = document.createElement("div"); it.className = "it";
+    it.textContent = (p.kind === "permission" ? "🔒 " : "❓ ") + (p.text || ""); c.appendChild(it);
+    if (p.detail) { const d = document.createElement("div"); d.className = "idet"; d.textContent = p.detail; c.appendChild(d); }
+    async function answer(v) {
+      await fetch("/api/inquiries/" + p.id + "/answer", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: v }),
+      });
+      loadTasks();
+    }
+    if (p.options && p.options.length) {
+      const o = document.createElement("div"); o.className = "opts";
+      const deny = new Set(["deny", "no", "cancel", "decline", "reject"]);
+      p.options.forEach(opt => {
+        const b = document.createElement("button");
+        b.className = deny.has(String(opt).trim().toLowerCase()) ? "secondary" : "";
+        b.textContent = opt; b.onclick = () => answer(opt); o.appendChild(b);
+      });
+      c.appendChild(o);
+    } else {
+      const row = document.createElement("div"); row.className = "freerow";
+      const i = document.createElement("input"); i.placeholder = "Your answer…";
+      const b = document.createElement("button"); b.textContent = "Send";
+      const go = () => { const v = i.value.trim(); if (v) answer(v); };
+      b.onclick = go; i.onkeydown = (e) => { if (e.key === "Enter") go(); };
+      row.appendChild(i); row.appendChild(b); c.appendChild(row);
+    }
+    return c;
+  }
+  function taskCard(t) {
+    const c = document.createElement("div"); c.className = "tcard";
+    const th = document.createElement("div"); th.className = "th";
+    const tt = document.createElement("div"); tt.className = "tt"; tt.textContent = t.title;
+    th.appendChild(tt); th.appendChild(badge(t.status)); c.appendChild(th);
+    const meta = document.createElement("div"); meta.className = "meta";
+    let m = t.deliverables_done + "/" + t.deliverables + " deliverables";
+    if (t.children) m += " · " + t.children + " subtask" + (t.children === 1 ? "" : "s");
+    if (t.last_progress) m += " · " + t.last_progress;
+    meta.textContent = m; c.appendChild(meta);
+    th.onclick = () => { expanded.has(t.id) ? expanded.delete(t.id) : expanded.add(t.id); renderDetail(c, t); };
+    if (expanded.has(t.id)) renderDetail(c, t);
+    return c;
+  }
+  async function renderDetail(card, t) {
+    let d = card.querySelector(".detail"); if (d) d.remove();
+    if (!expanded.has(t.id)) return;
+    d = document.createElement("div"); d.className = "detail"; d.textContent = "Loading…"; card.appendChild(d);
+    let full; try { full = (await (await fetch("/api/tasks/" + t.id)).json()).task; } catch { d.textContent = "(unavailable)"; return; }
+    if (!full) { d.textContent = "(unavailable)"; return; }
+    d.innerHTML = "";
+    if (full.objective) { const o = document.createElement("div"); o.className = "obj"; o.textContent = full.objective; d.appendChild(o); }
+    d.appendChild(nodeView(full));
+    if (["pending", "scheduled", "awaiting_input", "planning", "running"].includes(full.status)) {
+      const cb = document.createElement("button"); cb.className = "cancelbtn"; cb.textContent = "Cancel task";
+      cb.onclick = async () => { await fetch("/api/tasks/" + t.id + "/cancel", { method: "POST" }); loadTasks(); };
+      d.appendChild(cb);
+    }
+  }
+  function nodeView(n) {
+    const w = document.createElement("div");
+    (n.deliverables || []).forEach(dl => {
+      const r = document.createElement("div"); r.className = "deliv " + (dl.status || "");
+      r.textContent = "• " + dl.description;
+      const s = document.createElement("span"); s.className = "ds"; s.textContent = " [" + dl.status + "]"; r.appendChild(s);
+      w.appendChild(r);
+      if (dl.asset) { const a = document.createElement("div"); a.className = "asset"; a.textContent = dl.asset; w.appendChild(a); }
+      else if (dl.notes && dl.status === "rejected") { const nn = document.createElement("div"); nn.className = "prog err"; nn.textContent = "↻ " + dl.notes; w.appendChild(nn); }
+    });
+    const prog = n.progress || [];
+    if (prog.length) { const p = document.createElement("div"); p.className = "prog"; p.textContent = "› " + prog[prog.length - 1].message; w.appendChild(p); }
+    if (n.error) { const e = document.createElement("div"); e.className = "prog err"; e.textContent = "⚠ " + n.error; w.appendChild(e); }
+    (n.children || []).forEach(ch => {
+      const c = document.createElement("div"); c.className = "child";
+      const h = document.createElement("div"); h.className = "chead";
+      const ct = document.createElement("span"); ct.className = "ct"; ct.textContent = ch.title;
+      h.appendChild(ct); h.appendChild(badge(ch.status)); c.appendChild(h);
+      c.appendChild(nodeView(ch)); w.appendChild(c);
+    });
+    return w;
+  }
+  async function startTask(text) {
+    const v = (text || tinput.value).trim(); if (!v) return;
+    tinput.value = "";
+    await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: v }) });
+    loadTasks();
+  }
+  document.getElementById("tgo").onclick = () => startTask();
+  tinput.onkeydown = (e) => { if (e.key === "Enter") startTask(); };
+  // chat → task: send the composer text as a task instead of a message
+  document.getElementById("astask").onclick = () => {
+    const v = input.value.trim(); if (!v) { openTasks(true); return; }
+    input.value = ""; input.style.height = "auto";
+    startTask(v); openTasks(true);
+  };
 
   // --- Google connect panel ---
   const gbtn = document.getElementById("gbtn");
