@@ -135,6 +135,35 @@
   .bubble .files { display: flex; flex-direction: column; gap: 4px; }
   .bubble .file { font-size: 13px; opacity: .9; }
 
+  /* shared markdown rendering (deliverable assets + viewer) */
+  .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+  .md p { margin: 0 0 10px; } .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+  .md li { margin: 3px 0; }
+  .md h1, .md h2, .md h3 { font-family: var(--serif); margin: 14px 0 8px; line-height: 1.25; }
+  .md h1 { font-size: 20px; } .md h2 { font-size: 17px; } .md h3 { font-size: 15px; }
+  .md a { color: var(--accent); }
+  .md code { font-family: var(--mono); font-size: 12px; background: var(--code); padding: 1.5px 5px; border-radius: 5px; }
+  .md pre { background: var(--code); padding: 12px 14px; border-radius: 10px; overflow-x: auto; margin: 0 0 10px; }
+  .md pre code { background: none; padding: 0; }
+  .md blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
+  .md table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; }
+  .md th, .md td { border: 1px solid var(--line); padding: 5px 9px; }
+
+  /* deliverable full-view modal */
+  #viewer {
+    position: fixed; z-index: 12; top: 50%; left: 50%; transform: translate(-50%, -48%);
+    width: 780px; max-width: 92vw; max-height: 84vh; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+    display: flex; flex-direction: column; opacity: 0; pointer-events: none; transition: opacity .15s ease;
+  }
+  #viewer.open { opacity: 1; pointer-events: auto; }
+  #viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+  #viewer .vhead h2 { font-family: var(--serif); font-size: 18px; margin: 0; flex: 1; }
+  #viewer .vhead button { border: none; background: none; font-size: 22px; cursor: pointer; color: var(--muted); }
+  #vbody { padding: 20px 26px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+  .viewbtn { margin: 2px 0 8px; font-size: 12px; color: var(--accent); background: none; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-family: var(--sans); }
+  .viewbtn:hover { border-color: var(--accent); }
+
   .thinking .bubble { color: var(--muted); display: inline-flex; gap: 5px; align-items: center; }
   .thinking .d { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite both; }
   .thinking .d:nth-child(2) { animation-delay: .2s; } .thinking .d:nth-child(3) { animation-delay: .4s; }
@@ -214,6 +243,9 @@
   .inq button.secondary { background: var(--bg); color: var(--ink); }
   .inq input { flex: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13px; }
   .tcard { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .tcard.needsinput { border-color: var(--accent); box-shadow: 0 6px 20px rgba(249,83,57,.08); }
+  .tcard .needs { padding: 10px 0 2px; }
+  .tcard .inq { margin-top: 8px; }
   .tcard .th { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   .tcard .tt { font-weight: 600; font-size: 14px; flex: 1; word-break: break-word; }
   .badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 3px 8px; border-radius: 999px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
@@ -228,7 +260,7 @@
   .deliv .ds { font-size: 11px; color: var(--muted); }
   .deliv.produced .ds, .deliv.accepted .ds { color: #2ecc71; }
   .deliv.rejected .ds { color: #b3331f; }
-  .asset { white-space: pre-wrap; background: var(--code); border-radius: 8px; padding: 8px 10px; margin: 4px 0 6px; font-size: 12px; max-height: 220px; overflow: auto; }
+  .asset { background: var(--code); border-radius: 8px; padding: 10px 12px; margin: 4px 0; font-size: 12.5px; max-height: 260px; overflow: auto; }
   .child { margin-left: 10px; border-left: 2px solid var(--line); padding-left: 10px; margin-top: 8px; }
   .child .chead { display: flex; gap: 8px; align-items: center; }
   .child .chead .ct { font-weight: 600; font-size: 13px; flex: 1; }
@@ -253,6 +285,10 @@
 
   <div id="backdrop"></div>
   <div id="gmodal"><div id="gbody"></div></div>
+  <div id="viewer">
+    <div class="vhead"><h2 id="vtitle"></h2><button id="vclose" title="Close">×</button></div>
+    <div id="vbody" class="md"></div>
+  </div>
   <aside id="drawer">
     <div class="dhead"><h2>Conversations</h2><button id="dclose" title="Close">×</button></div>
     <div id="sessions"></div>
@@ -371,8 +407,21 @@
     } catch { /* leave current view */ }
   }
   histBtn.onclick = () => openDrawer(!drawer.classList.contains("open"));
-  backdrop.onclick = () => { openDrawer(false); closeGoogle(); openTasks(false); };
+  backdrop.onclick = () => {
+    if (viewer.classList.contains("open")) { closeViewer(); return; }  // dismiss viewer first
+    openDrawer(false); closeGoogle(); openTasks(false);
+  };
   document.getElementById("dclose").onclick = () => openDrawer(false);
+
+  // --- deliverable viewer (roomy, rendered markdown) ---
+  const viewer = document.getElementById("viewer");
+  function openViewer(title, text) {
+    document.getElementById("vtitle").textContent = title || "Deliverable";
+    renderMarkdown(document.getElementById("vbody"), text || "");
+    viewer.classList.add("open"); backdrop.classList.add("open");
+  }
+  function closeViewer() { viewer.classList.remove("open"); }
+  document.getElementById("vclose").onclick = closeViewer;
 
   // --- tasks drawer (right): list, detail, cancel, durable HITL inquiries ---
   const tasksBtn = document.getElementById("tasksbtn");
@@ -396,35 +445,25 @@
     return b;
   }
   async function loadTasks() {
-    let tasks = [], pend = [];
+    let tasks = [];
     try { tasks = (await (await fetch("/api/tasks")).json()).tasks || []; } catch { return; }
-    try { pend = (await (await fetch("/api/inquiries/pending")).json()).pending || []; } catch {}
-    renderTasks(tasks, pend);
+    renderTasks(tasks);
   }
   let lastSig = "";
-  function renderTasks(tasks, pend) {
+  function renderTasks(tasks) {
     // preserve focus in an inquiry text field across the refresh
     const active = document.activeElement;
     if (active && active.tagName === "INPUT" && active.closest(".inq")) return;
     // only rebuild the DOM when something actually changed — otherwise the 3s
     // poll would churn the list and steal clicks on inquiry option buttons.
-    const sig = JSON.stringify([
-      pend.map(p => p.id),
-      tasks.map(t => [t.id, t.status, t.deliverables_done, t.deliverables, t.children, t.last_progress]),
-      [...expanded],
-    ]);
+    const sig = JSON.stringify(tasks.map(t => [
+      t.id, t.status, t.deliverables_done, t.deliverables, t.children,
+      t.last_progress, (t.inquiries || []).map(q => q.id), expanded.has(t.id),
+    ]));
     if (sig === lastSig) return;
     lastSig = sig;
     tbody.innerHTML = "";
-    if (pend.length) {
-      const h = document.createElement("div"); h.className = "needs"; h.textContent = "Needs your input";
-      tbody.appendChild(h);
-      pend.forEach(p => tbody.appendChild(inquiryCard(p)));
-    }
-    if (!tasks.length) {
-      if (!pend.length) tbody.innerHTML = '<div class="tnone">No tasks yet. Start one above.</div>';
-      return;
-    }
+    if (!tasks.length) { tbody.innerHTML = '<div class="tnone">No tasks yet. Start one above.</div>'; return; }
     tasks.forEach(t => tbody.appendChild(taskCard(t)));
   }
   function inquiryCard(p) {
@@ -458,7 +497,8 @@
     return c;
   }
   function taskCard(t) {
-    const c = document.createElement("div"); c.className = "tcard";
+    const inqs = t.inquiries || [];
+    const c = document.createElement("div"); c.className = "tcard" + (inqs.length ? " needsinput" : "");
     const th = document.createElement("div"); th.className = "th";
     const tt = document.createElement("div"); tt.className = "tt"; tt.textContent = t.title;
     th.appendChild(tt); th.appendChild(badge(t.status)); c.appendChild(th);
@@ -467,6 +507,12 @@
     if (t.children) m += " · " + t.children + " subtask" + (t.children === 1 ? "" : "s");
     if (t.last_progress) m += " · " + t.last_progress;
     meta.textContent = m; c.appendChild(meta);
+    // any inquiries for this task (or its subtasks) are answered right here
+    if (inqs.length) {
+      const h = document.createElement("div"); h.className = "needs"; h.textContent = "Needs your input";
+      c.appendChild(h);
+      inqs.forEach(p => c.appendChild(inquiryCard(p)));
+    }
     th.onclick = () => { expanded.has(t.id) ? expanded.delete(t.id) : expanded.add(t.id); renderDetail(c, t); };
     if (expanded.has(t.id)) renderDetail(c, t);
     return c;
@@ -493,7 +539,11 @@
       r.textContent = "• " + dl.description;
       const s = document.createElement("span"); s.className = "ds"; s.textContent = " [" + dl.status + "]"; r.appendChild(s);
       w.appendChild(r);
-      if (dl.asset) { const a = document.createElement("div"); a.className = "asset"; a.textContent = dl.asset; w.appendChild(a); }
+      if (dl.asset) {
+        const a = document.createElement("div"); a.className = "asset md"; renderMarkdown(a, dl.asset); w.appendChild(a);
+        const open = document.createElement("button"); open.className = "viewbtn"; open.textContent = "⤢ Open full";
+        open.onclick = () => openViewer(dl.description, dl.asset); w.appendChild(open);
+      }
       else if (dl.notes && dl.status === "rejected") { const nn = document.createElement("div"); nn.className = "prog err"; nn.textContent = "↻ " + dl.notes; w.appendChild(nn); }
     });
     const prog = n.progress || [];

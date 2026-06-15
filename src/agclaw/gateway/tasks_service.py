@@ -111,10 +111,24 @@ class TaskService:
         return task.id
 
     async def list_tasks(self) -> list[dict]:
-        """Top-level tasks, newest first, as lightweight summaries."""
+        """Top-level tasks as summaries, each carrying any pending inquiries in its
+        subtree. Tasks that need input float to the top, then newest first."""
         roots = await self._store.roots()
-        out = [await self._summary(t) for t in roots]
+        by_task: dict[str, list] = {}
+        for inq in await self._inquiries.list_pending():
+            by_task.setdefault(inq.task_id, []).append(inq)
+
+        out = []
+        for t in roots:
+            s = await self._summary(t)
+            ids = {t.id} | {d.id for d in await self._store.descendants(t.id)}
+            s["inquiries"] = [
+                self._inquiry_view(i) for tid in ids for i in by_task.get(tid, [])
+            ]
+            out.append(s)
+
         out.sort(key=lambda s: s["created_at"], reverse=True)
+        out.sort(key=lambda s: 0 if s["inquiries"] else 1)  # needs-input first (stable)
         return out
 
     async def get_task(self, task_id: str) -> dict | None:

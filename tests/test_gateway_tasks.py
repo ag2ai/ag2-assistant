@@ -43,6 +43,25 @@ async def test_list_and_get_task(tmp_path):
     assert await svc.get_task("nope") is None
 
 
+async def test_list_groups_inquiries_and_floats_needs_input_first(tmp_path):
+    """Each task summary carries its subtree's pending inquiries, and tasks needing
+    input sort to the top (newest-first otherwise)."""
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    older = await svc.store.create("older task")
+    newer = await svc.store.create("newer task")
+    # an inquiry against a SUBTASK should still surface on its root
+    child = await svc.store.add_subtask(older.id, "leg", reopen_parent=False)
+    inq = await svc.inquiries.create("Pick one?", task_id=child.id, options=["A", "B"])
+
+    listed = await svc.list_tasks()
+    assert listed[0]["id"] == older.id  # floated to top: it needs input
+    assert listed[0]["inquiries"] and listed[0]["inquiries"][0]["id"] == inq.id
+    assert listed[1]["id"] == newer.id and listed[1]["inquiries"] == []
+
+
 async def test_get_task_includes_subtree_and_assets(tmp_path):
     async def executor(task_id, mgr, asker):
         pass
@@ -185,3 +204,19 @@ def test_task_rest_endpoints(monkeypatch, tmp_path):
         assert client.post("/api/inquiries/missing/answer", json={"answer": "x"}).status_code == 404
 
         assert client.post(f"/api/tasks/{task_id}/cancel").json()["ok"] is True
+
+
+def test_ui_has_tasks_hooks(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+    import agclaw.gateway.core as core_mod
+    from agclaw.config import Config
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
+    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    with TestClient(app) as client:
+        page = client.get("/").text
+        assert 'id="tdrawer"' in page          # the Tasks drawer
+        assert "/api/tasks" in page            # it drives the task API
+        assert "/api/inquiries/" in page       # and answers durable inquiries
