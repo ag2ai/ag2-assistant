@@ -73,15 +73,16 @@ def create_app(
     used as-is and its lifecycle is owned by the caller. Otherwise the app
     creates and manages its own gateway.
     """
-    owns_gateway = gateway is None
-    if gateway is None:
-        gateway = Gateway(
-            config=config, memory=memory, platform=platform, persist=persist
-        )
-
     from agclaw.gateway.tasks_service import TaskService
 
     tasks = TaskService(config=config)
+
+    owns_gateway = gateway is None
+    if gateway is None:
+        gateway = Gateway(
+            config=config, memory=memory, platform=platform, persist=persist,
+            task_starter=tasks.submit_request,  # let the chat agent spawn tasks
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -327,6 +328,12 @@ def create_app(
                     )
 
                 asker = GatewayAsker(app.state.hitl, on_question=on_question)
+                # capture any tasks the agent spawns this turn (start_task tool) so
+                # we can show a task card; the contextvar is copied into the task.
+                import agclaw.agent as agent_mod
+
+                spawned: list = []
+                agent_mod.started_tasks_var.set(spawned)
                 task = asyncio.create_task(
                     app.state.gateway.send_message(
                         text, session_id=session_id, asker=asker,
@@ -346,6 +353,11 @@ def create_app(
                     await websocket.send_json(
                         {"type": "reply", "text": reply, "session_id": session_id}
                     )
+                    for st in spawned:  # one card per task the agent started
+                        await websocket.send_json({
+                            "type": "task_card", "id": st["id"],
+                            "title": st["title"], "session_id": session_id,
+                        })
                 except TimeoutError:
                     await websocket.send_json({
                         "type": "error",

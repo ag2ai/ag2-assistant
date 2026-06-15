@@ -68,14 +68,20 @@
   #backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 9; }
   #backdrop.open { opacity: 1; pointer-events: auto; }
   #drawer {
-    position: fixed; top: 0; left: 0; bottom: 0; width: 320px; max-width: 85vw; z-index: 10;
+    position: fixed; top: 0; left: 0; bottom: 0; width: 380px; max-width: 88vw; z-index: 10;
     background: var(--bg); border-right: 1px solid var(--line); transform: translateX(-100%);
     transition: transform .2s ease; display: flex; flex-direction: column;
   }
   #drawer.open { transform: none; }
-  #drawer .dhead { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-  #drawer .dhead h2 { font-family: var(--serif); font-size: 18px; margin: 0; }
-  #drawer .dhead button { margin-left: auto; border: none; background: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+  #drawer .dhead { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  #drawer .dhead button#dclose { margin-left: auto; border: none; background: none; font-size: 20px; cursor: pointer; color: var(--muted); }
+  .tabs { display: flex; gap: 4px; }
+  .tab { font-family: var(--serif); font-size: 16px; font-weight: 600; cursor: pointer; border: none; background: none; color: var(--muted); padding: 6px 10px; border-radius: 8px; }
+  .tab.on { color: var(--ink); background: var(--panel); }
+  .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .pane[hidden] { display: none; }
+  .newbtn { margin: 10px 10px 4px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-family: var(--sans); font-weight: 600; font-size: 14px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
+  .newbtn:hover { border-color: var(--ink); }
   #sessions { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
   .sess { text-align: left; border: none; background: none; color: var(--ink); font-family: var(--sans);
           padding: 11px 12px; border-radius: 10px; cursor: pointer; }
@@ -227,6 +233,12 @@
   .tvtree .obj { color: var(--muted); margin-bottom: 8px; }
   .tvhint { color: var(--muted); font-size: 13px; text-align: center; padding: 4px; }
   .tvchat { display: flex; flex-direction: column; gap: 14px; }
+  /* chat card for an agent-spawned task */
+  .taskcard { align-self: flex-start; max-width: 80%; border: 1px solid var(--accent); border-radius: 14px; padding: 14px 16px; background: var(--bg); box-shadow: 0 6px 20px rgba(249,83,57,.08); }
+  .taskcard .tck { color: var(--accent); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .taskcard .tci { font-weight: 600; font-size: 15px; margin: 6px 0 12px; }
+  .taskcard .tcb { font-family: var(--sans); font-weight: 600; font-size: 14px; cursor: pointer; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+  .taskcard .tcb:hover { opacity: .9; }
   .tvhead .arch { border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 8px; padding: 7px 12px; font-family: var(--sans); font-weight: 600; font-size: 13px; cursor: pointer; }
   .tvhead .arch:hover { border-color: var(--ink); color: var(--ink); }
 
@@ -299,15 +311,13 @@
 </head>
 <body>
   <header>
-    <button id="hist" title="Past conversations">☰ History</button>
+    <button id="menu" title="Chats & Tasks">☰</button>
     <span class="mark">AGClaw</span>
     <span class="title">Assistant</span>
     <span class="spacer"></span>
     <span class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></span>
-    <button id="tasksbtn" title="Tasks">✓ Tasks</button>
     <button id="gbtn" title="Connect Google">Google</button>
     <button id="theme" title="Theme">🖥 System</button>
-    <button id="new" title="Start a fresh conversation">New chat</button>
   </header>
 
   <div id="backdrop"></div>
@@ -317,15 +327,19 @@
     <div id="vbody" class="md"></div>
   </div>
   <aside id="drawer">
-    <div class="dhead"><h2>Conversations</h2><button id="dclose" title="Close">×</button></div>
-    <div id="sessions"></div>
-  </aside>
-
-  <aside id="tdrawer">
-    <div class="dhead"><h2>Tasks</h2><button id="tclose" title="Close">×</button></div>
-    <div id="tnew"><input id="tinput" placeholder="Start a task…"><button id="tgo">Run</button></div>
-    <div id="tbody"></div>
-    <div class="viewall"><button id="tallbtn">View all tasks →</button></div>
+    <div class="dhead">
+      <div class="tabs"><button id="tabChats" class="tab on">Chats</button><button id="tabTasks" class="tab">Tasks</button></div>
+      <button id="dclose" title="Close">×</button>
+    </div>
+    <div id="paneChats" class="pane">
+      <button id="newChat" class="newbtn">+ New chat</button>
+      <div id="sessions"></div>
+    </div>
+    <div id="paneTasks" class="pane" hidden>
+      <div id="tnew"><input id="tinput" placeholder="Start a task…"><button id="tgo">Run</button></div>
+      <div id="tbody"></div>
+      <div class="viewall"><button id="tallbtn">View all tasks →</button></div>
+    </div>
   </aside>
 
   <div id="log"><div class="wrap"><div class="empty"><h1>How can I help?</h1>Ask me anything — I can search, run code, read files, and more.</div></div></div>
@@ -355,7 +369,7 @@
   const dot = document.getElementById("dot");
   const statusText = document.getElementById("statusText");
   const themeBtn = document.getElementById("theme");
-  const histBtn = document.getElementById("hist");
+  const menuBtn = document.getElementById("menu");
   const drawer = document.getElementById("drawer");
   const backdrop = document.getElementById("backdrop");
   const sessionsEl = document.getElementById("sessions");
@@ -385,10 +399,24 @@
 
   let ws, thinkingEl = null, busy = false, pending = [];
 
-  // --- history drawer (resumable past conversations) ---
-  function openDrawer(o) {
+  // --- left drawer: Chats | Tasks tabs ---
+  const tabChats = document.getElementById("tabChats"), tabTasks = document.getElementById("tabTasks");
+  const paneChats = document.getElementById("paneChats"), paneTasks = document.getElementById("paneTasks");
+  let drawerTab = "chats", tpoll = null;
+  function stopTaskPoll() { if (tpoll) { clearInterval(tpoll); tpoll = null; } }
+  function openDrawer(o, tab) {
+    if (tab) drawerTab = tab;
     drawer.classList.toggle("open", o); backdrop.classList.toggle("open", o);
-    if (o) loadSessions();
+    if (o) refreshTab(); else stopTaskPoll();
+  }
+  function setTab(tab) { drawerTab = tab; refreshTab(); }
+  function refreshTab() {
+    stopTaskPoll();
+    const chats = drawerTab === "chats";
+    tabChats.classList.toggle("on", chats); tabTasks.classList.toggle("on", !chats);
+    paneChats.hidden = !chats; paneTasks.hidden = chats;
+    if (chats) loadSessions();
+    else { loadTasks(); tpoll = setInterval(loadTasks, 3000); }
   }
   function relTime(iso) {
     if (!iso) return "";
@@ -435,12 +463,15 @@
       msgs.forEach(m => addMsg(m.role === "user" ? "user" : "agent", m.text));
     } catch { /* leave current view */ }
   }
-  histBtn.onclick = () => openDrawer(!drawer.classList.contains("open"));
+  menuBtn.onclick = () => openDrawer(!drawer.classList.contains("open"));
   backdrop.onclick = () => {
     if (viewer.classList.contains("open")) { closeViewer(); return; }  // dismiss viewer first
-    openDrawer(false); closeGoogle(); openTasks(false);
+    openDrawer(false); closeGoogle();
   };
   document.getElementById("dclose").onclick = () => openDrawer(false);
+  tabChats.onclick = () => setTab("chats");
+  tabTasks.onclick = () => setTab("tasks");
+  document.getElementById("newChat").onclick = doNewChat;
 
   // --- deliverable viewer (roomy, rendered markdown) ---
   const viewer = document.getElementById("viewer");
@@ -451,26 +482,15 @@
   }
   function closeViewer() {
     viewer.classList.remove("open");
-    // drop the dim backdrop unless a drawer / modal still needs it
-    if (!drawer.classList.contains("open") && !tdrawer.classList.contains("open")
-        && !gmodal.classList.contains("open")) backdrop.classList.remove("open");
+    // drop the dim backdrop unless the drawer / google modal still needs it
+    if (!drawer.classList.contains("open") && !gmodal.classList.contains("open"))
+      backdrop.classList.remove("open");
   }
   document.getElementById("vclose").onclick = closeViewer;
 
-  // --- tasks drawer (right): list, detail, cancel, durable HITL inquiries ---
-  const tasksBtn = document.getElementById("tasksbtn");
-  const tdrawer = document.getElementById("tdrawer");
+  // --- tasks pane (lives in the left drawer's Tasks tab) ---
   const tbody = document.getElementById("tbody");
   const tinput = document.getElementById("tinput");
-  let tpoll = null;
-
-  function openTasks(o) {
-    tdrawer.classList.toggle("open", o); backdrop.classList.toggle("open", o);
-    if (o) { loadTasks(); tpoll = setInterval(loadTasks, 3000); }
-    else if (tpoll) { clearInterval(tpoll); tpoll = null; }
-  }
-  tasksBtn.onclick = () => openTasks(!tdrawer.classList.contains("open"));
-  document.getElementById("tclose").onclick = () => openTasks(false);
 
   function badge(status) {
     const b = document.createElement("span");
@@ -562,7 +582,7 @@
 
   // --- full task listing page (history + filters) ---
   async function openTaskList(filter) {
-    leaveTaskMode(); openTasks(false); openDrawer(false); closeViewer();
+    leaveTaskMode(); openDrawer(false); closeViewer();
     listMode = true; const f = filter || "all";
     wrap.innerHTML = "";
     const view = document.createElement("div"); view.className = "tlist";
@@ -594,7 +614,7 @@
   document.getElementById("tallbtn").onclick = () => openTaskList("all");
 
   async function openTaskView(id) {
-    openTasks(false); openDrawer(false); closeViewer();
+    openDrawer(false); closeViewer();
     taskMode = id; lastTreeSig = "";
     wrap.innerHTML = "";
     const view = document.createElement("div"); view.className = "taskview";
@@ -698,9 +718,9 @@
   tinput.onkeydown = (e) => { if (e.key === "Enter") startTask(); };
   // chat → task: send the composer text as a task instead of a message
   document.getElementById("astask").onclick = () => {
-    const v = input.value.trim(); if (!v) { openTasks(true); return; }
+    const v = input.value.trim(); if (!v) { openDrawer(true, "tasks"); return; }
     input.value = ""; input.style.height = "auto";
-    startTask(v); openTasks(true);
+    startTask(v); openDrawer(true, "tasks");
   };
 
   // --- Google connect panel ---
@@ -798,6 +818,17 @@
 
   function addNote(text) { addMsg("note", text); }
 
+  function addTaskCard(m) {  // a chat card for a task the agent spawned
+    clearEmpty();
+    const card = document.createElement("div"); card.className = "taskcard";
+    const t = document.createElement("div"); t.className = "tck"; t.textContent = "✓ Task started";
+    const ti = document.createElement("div"); ti.className = "tci"; ti.textContent = m.title || "Task";
+    const b = document.createElement("button"); b.className = "tcb"; b.textContent = "Open task →";
+    b.onclick = () => openTaskView(m.id);
+    card.appendChild(t); card.appendChild(ti); card.appendChild(b);
+    wrap.appendChild(card); scroll();
+  }
+
   function showThinking() {
     clearEmpty();
     thinkingEl = document.createElement("div");
@@ -879,7 +910,8 @@
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.type === "thinking") showThinking();
       else if (m.type === "question") showQuestion(m);
-      else if (m.type === "reply") { clearThinking(); addMsg("agent", m.text); setBusy(false); if (drawer.classList.contains("open")) loadSessions(); }
+      else if (m.type === "reply") { clearThinking(); addMsg("agent", m.text); setBusy(false); if (drawer.classList.contains("open")) refreshTab(); }
+      else if (m.type === "task_card") { addTaskCard(m); }
       else if (m.type === "cancelled") { clearThinking(); addNote("⏹ Stopped."); setBusy(false); }
       else if (m.type === "error") { clearThinking(); addMsg("error", "⚠ " + (m.message || "Something went wrong.")); setBusy(false); }
     };
@@ -904,13 +936,13 @@
   sendBtn.onclick = sendMessage;
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
   input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
-  document.getElementById("new").onclick = () => {
-    leaveTaskMode();
+  function doNewChat() {
+    leaveTaskMode(); openDrawer(false);
     sessionId = "web-" + Math.random().toString(36).slice(2, 10);
     localStorage.setItem("agclaw_session", sessionId);
     pending = []; renderChips();
     wrap.innerHTML = '<div class="empty"><h1>How can I help?</h1>New conversation started.</div>';
-  };
+  }
 
   loadTranscript(sessionId);  // restore this conversation's history on load
   connect();

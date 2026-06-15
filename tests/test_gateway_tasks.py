@@ -324,6 +324,43 @@ def test_task_chat_endpoint(monkeypatch, tmp_path):
         assert client.post("/api/tasks/nope/chat", json={"text": "x"}).status_code == 404
 
 
+def test_build_start_task_tool_named():
+    from agclaw.agent import _build_start_task_tool
+
+    t = _build_start_task_tool(lambda r: None)
+    assert t.name == "start_task"
+
+
+def test_ws_emits_task_card_when_agent_spawns(monkeypatch):
+    """When the agent starts a background task this turn, the WS pushes a task_card
+    after the reply so the chat can link to the task view."""
+    from fastapi.testclient import TestClient
+
+    import agclaw.agent as agent_mod
+    import agclaw.gateway.app as app_mod
+
+    class _SpawnGateway:
+        async def send_message(self, text, session_id="default", asker=None, attachments=None):
+            lst = agent_mod.started_tasks_var.get()  # the start_task tool would do this
+            if lst is not None:
+                lst.append({"id": "task-xyz", "title": text})
+            return "Starting that in the background."
+
+        def status(self):
+            return {"status": "ok", "sessions": 0}
+
+    app = app_mod.create_app(gateway=_SpawnGateway())
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/ws") as ws:
+            ws.send_json({"text": "research X and write a report", "session_id": "s1"})
+            assert ws.receive_json()["type"] == "thinking"
+            assert ws.receive_json()["type"] == "reply"
+            card = ws.receive_json()
+            assert card["type"] == "task_card"
+            assert card["id"] == "task-xyz"
+            assert card["title"] == "research X and write a report"
+
+
 def test_ui_has_tasks_hooks(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
@@ -335,6 +372,7 @@ def test_ui_has_tasks_hooks(monkeypatch, tmp_path):
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
     with TestClient(app) as client:
         page = client.get("/").text
-        assert 'id="tdrawer"' in page          # the Tasks drawer
+        assert 'id="tabTasks"' in page         # the Tasks tab in the unified drawer
+        assert 'id="paneTasks"' in page
         assert "/api/tasks" in page            # it drives the task API
         assert "/api/inquiries/" in page       # and answers durable inquiries

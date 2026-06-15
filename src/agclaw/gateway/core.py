@@ -35,12 +35,14 @@ class Gateway:
         platform: str = "gateway",
         onboard: bool = True,
         persist: bool = True,
+        task_starter=None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
         self._platform = platform
         self._onboard = onboard
         self._persist = persist
+        self._task_starter = task_starter  # lets the chat agent spawn background tasks
         self._onboarding_done = False
         self._agent = None
         self._permissions = None
@@ -56,7 +58,8 @@ class Gateway:
         from agclaw.permissions import PermissionStore
 
         self._agent = create_agent(
-            self._config, memory=self._memory, platform=self._platform
+            self._config, memory=self._memory, platform=self._platform,
+            task_starter=self._task_starter,
         )
         self._permissions = PermissionStore()
 

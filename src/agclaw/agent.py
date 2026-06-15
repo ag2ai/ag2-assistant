@@ -1,6 +1,7 @@
 """AGClaw agent built on AG2 Beta."""
 
 import os
+from contextvars import ContextVar
 from datetime import datetime
 
 from autogen.beta import Agent
@@ -8,6 +9,10 @@ from autogen.beta import Agent
 from agclaw.config import Config, load_config
 from agclaw.memory import build_knowledge_config, profile_assembly
 from agclaw.tools import build_agent_tools
+
+# Set (to a list) by a caller that wants to learn which tasks the agent spawned
+# this turn via the `start_task` tool — e.g. the gateway, to push a chat task-card.
+started_tasks_var: ContextVar = ContextVar("agclaw_started_tasks", default=None)
 
 # Commands skill scripts must never run (defense-in-depth; skills can ship code).
 _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
@@ -167,6 +172,36 @@ def turn_prompt(config: Config) -> list[str]:
     return parts
 
 
+def _build_start_task_tool(task_starter):
+    """A `start_task` tool that spawns a background task and records it for the UI."""
+    from typing import Annotated
+
+    from autogen.beta import tool
+    from pydantic import Field
+
+    @tool
+    async def start_task(
+        request: Annotated[
+            str, Field(description="The full job to carry out in the background.")
+        ],
+    ) -> str:
+        """Spin up a background TASK for substantial, multi-step work the user wants
+        done over time — research + a written report, multi-part jobs, anything
+        long-running or that should keep going after this reply. Do NOT use this for
+        quick questions or things you can answer directly now — just answer those.
+        The task asks its own clarifying questions and runs on its own."""
+        task_id = await task_starter(request)
+        lst = started_tasks_var.get()
+        if lst is not None:
+            lst.append({"id": task_id, "title": request})
+        return (
+            f"Started a background task ({task_id}). It will ask any clarifying "
+            "questions and run on its own; the user can open it in the Tasks view."
+        )
+
+    return start_task
+
+
 def create_agent(
     config: Config | None = None,
     memory: bool = True,
@@ -177,6 +212,7 @@ def create_agent(
     single_shot: bool = False,
     capabilities: list[str] | None = None,
     model: str | None = None,
+    task_starter=None,
 ) -> Agent:
     """Create an AGClaw agent with the given configuration.
 
@@ -229,6 +265,12 @@ def create_agent(
     )
     if skills and (capabilities is None or "skills" in capabilities):
         tools.append(build_skills_toolkit(config))
+
+    # When a task_starter is wired (the gateway), give the agent the ability to
+    # spin up a background task for big jobs — and record it so the surface can
+    # show a task card.
+    if task_starter is not None:
+        tools.append(_build_start_task_tool(task_starter))
 
     from agclaw.permissions import PermissionManager
 
