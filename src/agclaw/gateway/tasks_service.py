@@ -15,6 +15,15 @@ import asyncio
 
 from agclaw.config import Config, load_config
 
+_CONTROL_PROMPT = (
+    "You manage ONE task for the user. When they ask for a change — add or cancel "
+    "a subtask, change the objective, add a deliverable, or cancel the task — use "
+    "your tools to do it immediately (it's their task; don't ask permission), then "
+    "confirm in one short sentence what you changed. For questions about progress "
+    "or status, read the task and answer concisely. You do NOT do the research or "
+    "work yourself — the task runner does that; you only steer this task."
+)
+
 
 class _ParkingAsker:
     """A transport asker with no live channel: blocks until the matching inquiry
@@ -39,6 +48,7 @@ class TaskService:
         self._executor = executor
         self._max_concurrent = max_concurrent
         self._bg: set[asyncio.Task] = set()
+        self._control_agents: dict = {}  # task_id -> (agent, stream) for task chat
 
     async def start(self) -> None:
         """Build the durable stores + runner (cheap; no LLM agent yet)."""
@@ -144,6 +154,38 @@ class TaskService:
             return False
         await self._manager.cancel(task_id, reason=reason)
         return True
+
+    def _control(self, task_id: str):
+        """A cached, task-scoped controller agent (+ its conversation stream)."""
+        entry = self._control_agents.get(task_id)
+        if entry is None:
+            from autogen.beta import Agent
+            from autogen.beta.stream import MemoryStream
+
+            from agclaw.agent import model_config
+            from agclaw.tasks.control import build_task_tools
+
+            agent = Agent(
+                "task-controller",
+                prompt=_CONTROL_PROMPT,
+                config=model_config(self._config),
+                tools=build_task_tools(self._store, self._manager, task_id),
+            )
+            entry = (agent, MemoryStream(id=f"taskctl:{task_id}"))
+            self._control_agents[task_id] = entry
+        return entry
+
+    async def chat(self, task_id: str, text: str) -> str | None:
+        """Converse about a task — the controller agent edits it via its tools."""
+        from agclaw.tasks.control import render_task
+
+        if await self._store.get(task_id) is None:
+            return None
+        agent, stream = self._control(task_id)
+        snapshot = await render_task(self._store, task_id)
+        prompt = [_CONTROL_PROMPT, f"Current state of the task you manage:\n{snapshot}"]
+        reply = await agent.ask(text, stream=stream, prompt=prompt)
+        return reply.body
 
     async def pending_inquiries(self, task_id: str | None = None) -> list[dict]:
         items = await self._inquiries.list_pending(task_id)

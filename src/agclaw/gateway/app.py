@@ -52,6 +52,10 @@ class AnswerRequest(BaseModel):
     answer: str
 
 
+class TaskChatRequest(BaseModel):
+    text: str
+
+
 def create_app(
     config: Config | None = None,
     memory: bool = True,
@@ -238,6 +242,14 @@ def create_app(
     async def cancel_task(task_id: str) -> dict:
         ok = await app.state.tasks.cancel(task_id)
         return {"ok": ok}
+
+    @app.post("/api/tasks/{task_id}/chat")
+    async def task_chat(task_id: str, req: TaskChatRequest):
+        """Converse about a task — the agent edits it (add/cancel subtasks, etc.)."""
+        reply = await app.state.tasks.chat(task_id, req.text)
+        if reply is None:
+            return Response(status_code=404)
+        return {"reply": reply}
 
     @app.get("/api/inquiries/pending")
     async def inquiries_pending(task_id: str | None = None) -> dict:

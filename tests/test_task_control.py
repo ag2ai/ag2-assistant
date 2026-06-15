@@ -1,0 +1,85 @@
+"""Task-control tools — modify one task from a conversation (add/cancel/edit)."""
+
+import asyncio
+
+from agclaw.tasks import TaskManager, TaskStatus, TaskStore
+from agclaw.tasks.control import (
+    build_task_tools,
+    do_add_deliverable,
+    do_add_subtask,
+    do_cancel,
+    do_set_objective,
+    render_task,
+)
+
+
+def _store(tmp_path):
+    return TaskStore(path=tmp_path / "tasks.db")
+
+
+async def _noop_executor(task_id, mgr, asker):
+    pass
+
+
+async def test_render_task_snapshot(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("Trip", objective="plan a trip")
+    await store.add_deliverable(t.id, "itinerary")
+    await store.add_subtask(t.id, "book flights", reopen_parent=False)
+    text = await render_task(store, t.id)
+    assert "Trip" in text and "plan a trip" in text
+    assert "itinerary" in text and "book flights" in text
+
+
+async def test_add_subtask_creates_child_with_deliverable(tmp_path):
+    store = _store(tmp_path)
+    mgr = TaskManager(store, _noop_executor)
+    t = await store.create("Research IPOs", objective="briefing")
+    msg = await do_add_subtask(store, mgr, t.id, "Research xAI", "look at xAI", "web")
+    assert "Research xAI" in msg
+    kids = await store.children(t.id)
+    assert [c.title for c in kids] == ["Research xAI"]
+    assert kids[0].capabilities == ["web"]
+    assert kids[0].deliverables  # got its own deliverable
+
+
+async def test_add_subtask_reopens_completed_task(tmp_path):
+    store = _store(tmp_path)
+    mgr = TaskManager(store, _noop_executor)
+    t = await store.create("done task", status=TaskStatus.COMPLETED)
+    await do_add_subtask(store, mgr, t.id, "more work")
+    assert (await store.get(t.id)).status != TaskStatus.COMPLETED  # re-opened to run
+
+
+async def test_set_objective_and_add_deliverable(tmp_path):
+    store = _store(tmp_path)
+    mgr = TaskManager(store, _noop_executor)
+    t = await store.create("x")
+    await do_set_objective(store, t.id, "the new objective")
+    assert (await store.get(t.id)).objective == "the new objective"
+    await do_add_deliverable(store, mgr, t.id, "a chart", "must be a PNG")
+    assert any(d["description"] == "a chart" for d in (await store.get(t.id)).deliverables)
+
+
+async def test_cancel_whole_task_and_subtask(tmp_path):
+    store = _store(tmp_path)
+    mgr = TaskManager(store, _noop_executor)
+    t = await store.create("parent")
+    child = await store.add_subtask(t.id, "leg one", reopen_parent=False)
+
+    msg = await do_cancel(store, mgr, t.id, subtask="leg")
+    assert "leg one" in msg
+    assert (await store.get(child.id)).status == TaskStatus.CANCELLED
+
+    assert "No subtask" in await do_cancel(store, mgr, t.id, subtask="nope")
+
+    await do_cancel(store, mgr, t.id)
+    assert (await store.get(t.id)).status == TaskStatus.CANCELLED
+
+
+async def test_build_task_tools_exposes_the_set(tmp_path):
+    store = _store(tmp_path)
+    mgr = TaskManager(store, _noop_executor)
+    t = await store.create("x")
+    names = {tool.name for tool in build_task_tools(store, mgr, t.id)}
+    assert names == {"task_status", "add_subtask", "set_objective", "add_deliverable", "cancel"}

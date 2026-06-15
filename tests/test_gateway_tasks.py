@@ -206,6 +206,66 @@ def test_task_rest_endpoints(monkeypatch, tmp_path):
         assert client.post(f"/api/tasks/{task_id}/cancel").json()["ok"] is True
 
 
+async def test_chat_routes_to_control_agent(tmp_path):
+    """TaskService.chat builds a task-scoped agent and returns its reply; an unknown
+    task returns None (→ 404 at the REST layer)."""
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    t = await svc.store.create("research", objective="obj")
+
+    captured = {}
+
+    class _Reply:
+        body = "Added the subtask."
+
+    class _Agent:
+        async def ask(self, text, stream=None, prompt=None, **k):
+            captured["text"] = text
+            captured["prompt"] = prompt
+            return _Reply()
+
+    # inject a fake controller so no LLM is needed
+    svc._control_agents[t.id] = (_Agent(), object())
+
+    reply = await svc.chat(t.id, "also research xAI")
+    assert reply == "Added the subtask."
+    assert captured["text"] == "also research xAI"
+    assert any("Current state of the task" in p for p in captured["prompt"])  # snapshot injected
+    assert await svc.chat("missing", "hi") is None
+
+
+def test_task_chat_endpoint(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+    import agclaw.gateway.core as core_mod
+    from agclaw.config import Config
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
+    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    with TestClient(app) as client:
+        svc = app.state.tasks
+
+        class _Reply:
+            body = "done"
+
+        class _Agent:
+            async def ask(self, text, stream=None, prompt=None, **k):
+                return _Reply()
+
+        async def _seed():
+            t = await svc.store.create("seeded")
+            svc._control_agents[t.id] = (_Agent(), object())
+            return t.id
+
+        task_id = asyncio.get_event_loop().run_until_complete(_seed())
+        r = client.post(f"/api/tasks/{task_id}/chat", json={"text": "status?"})
+        assert r.json()["reply"] == "done"
+        assert client.post("/api/tasks/nope/chat", json={"text": "x"}).status_code == 404
+
+
 def test_ui_has_tasks_hooks(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
