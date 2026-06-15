@@ -22,6 +22,7 @@ from agclaw.tasks.model import DeliverableStatus
 _MAX_ASSET_CHARS = 50_000
 _MAX_VERIFY_CHARS = 12_000
 _MAX_CHILD_CONTEXT = 12_000
+_MAX_EVIDENCE_CHARS = 12_000
 
 
 class _Verdict(BaseModel):
@@ -29,8 +30,15 @@ class _Verdict(BaseModel):
     reason: str = ""
 
 
-async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdict":
-    """Strictly check produced output against a deliverable's criteria (cheap model)."""
+async def _verify_deliverable(
+    config, deliverable: dict, output: str, evidence: str | None = None
+) -> "_Verdict":
+    """Strictly check produced output against a deliverable's criteria (cheap model).
+
+    When `evidence` (what the search/fetch tools actually returned) is supplied,
+    the check also requires the output to be GROUNDED in it — catching research
+    that called a tool but then fabricated figures/dates the sources don't show.
+    """
     from autogen.beta import Agent
 
     from agclaw.agent import model_config
@@ -42,6 +50,8 @@ async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdi
         f"DELIVERABLE: {deliverable['description']}\n"
         f"ACCEPTANCE CRITERIA: {deliverable.get('criteria') or '(none given)'}\n\n"
         f"PRODUCED OUTPUT:\n{output[:_MAX_VERIFY_CHARS]}\n\n"
+    )
+    rules = (
         "Be strict, but judge only whether the finished deliverable content is "
         "present and meets the criteria. satisfied=false if the output merely "
         "describes what COULD be done, hands back a plan or a menu of options "
@@ -49,11 +59,65 @@ async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdi
         "satisfied=true if the actual deliverable content is present and meets the "
         "criteria — even if it also notes caveats or open questions alongside it."
     )
+    if evidence:
+        prompt += (
+            "RETRIEVED SOURCES (what the tools actually returned this turn):\n"
+            f"{evidence[:_MAX_EVIDENCE_CHARS]}\n\n"
+        )
+        rules += (
+            " This is a research deliverable, so it must be GROUNDED: specific "
+            "facts — figures, valuations, dates, named events, quotes — must be "
+            "supported by the RETRIEVED SOURCES above. satisfied=false if the "
+            "output asserts specifics that are absent from or contradicted by the "
+            "sources (e.g. invented numbers, or 'events' dated in the future). "
+            "Reasonable summary and synthesis of what the sources DO say is fine."
+        )
     try:
-        reply = await verifier.ask(prompt, response_schema=_Verdict)
+        reply = await verifier.ask(prompt + rules, response_schema=_Verdict)
         return await reply.content()
     except Exception as exc:
         return _Verdict(satisfied=False, reason=f"verification error: {exc}")
+
+
+def _result_text(res) -> str:
+    """Best-effort plain text from a tool result (a ToolResult, string, etc.)."""
+    if res is None:
+        return ""
+    if isinstance(res, str):
+        return res
+    parts = getattr(res, "parts", None)
+    if parts:
+        out = []
+        for p in parts:
+            if p is None:
+                continue
+            txt = getattr(p, "content", None) or getattr(p, "text", None)
+            out.append(txt if isinstance(txt, str) else str(p))
+        return "\n".join(out)
+    return str(res)
+
+
+async def _retrieved_evidence(reply) -> str:
+    """Collect what the search / web-fetch tools actually returned this turn.
+
+    This is the ground truth a research deliverable must be faithful to. Returns
+    "" if the history can't be introspected (then no faithfulness check is made,
+    so we never false-reject for lack of visibility)."""
+    from autogen.beta.events import BuiltinToolResultEvent, ToolResultEvent
+
+    try:
+        events = list(await reply.history.get_events())
+    except Exception:
+        return ""
+    chunks = []
+    for ev in events:
+        if isinstance(ev, (ToolResultEvent, BuiltinToolResultEvent)):
+            name = (getattr(ev, "name", "") or "").lower()
+            if "search" in name or "fetch" in name:
+                text = _result_text(getattr(ev, "result", None)).strip()
+                if text:
+                    chunks.append(f"[{name}]\n{text}")
+    return "\n\n".join(chunks)[:_MAX_EVIDENCE_CHARS]
 
 
 async def _used_web_tools(reply) -> bool:
@@ -174,6 +238,9 @@ def make_task_executor(config, skills: bool = True):
         # never actually called a web tool, its facts aren't grounded → reject.
         web_used = await _used_web_tools(reply)
         ungrounded = "web" in caps and not web_used
+        # For research that DID search, capture what the tools returned so the
+        # verifier can check the output is faithful to it (not fabricated).
+        evidence = await _retrieved_evidence(reply) if ("web" in caps and web_used) else ""
 
         produced = 0
         for d in pending:
@@ -184,7 +251,7 @@ def make_task_executor(config, skills: bool = True):
                           "web-fetch tools — research the facts before producing this.",
                 )
                 continue
-            verdict = await _verify_deliverable(config, d, output)
+            verdict = await _verify_deliverable(config, d, output, evidence=evidence or None)
             if verdict.satisfied:
                 produced += 1
                 await store.set_deliverable_status(
