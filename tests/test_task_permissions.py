@@ -79,7 +79,7 @@ async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
     # keep verification deterministic (no real LLM in this unit test)
     from agclaw.tasks.executor import _Verdict
 
-    async def _ok(config, deliverable, output, evidence=None):
+    async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
@@ -123,7 +123,7 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
     from agclaw.tasks.executor import _Verdict
 
-    async def _ok(config, deliverable, output, evidence=None):
+    async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
@@ -170,7 +170,7 @@ async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
     from agclaw.tasks.executor import _Verdict
 
-    async def _ok(config, deliverable, output, evidence=None):
+    async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
