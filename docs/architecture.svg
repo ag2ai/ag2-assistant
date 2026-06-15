@@ -51,7 +51,7 @@
   <rect x="55" y="168" width="870" height="92" rx="8" fill="#DCFCE7" stroke="#22C55E"/>
   <text x="490" y="190" text-anchor="middle" class="lbl" fill="#166534">Gateway — FastAPI facade (agclaw.gateway) · serves the Web UI · agclaw run = gateway + all channels</text>
   <text x="490" y="212" text-anchor="middle" class="det">GET / (web UI) · POST /api/message · WS /api/ws (thinking·reply·question·cancelled·error)</text>
-  <text x="490" y="230" text-anchor="middle" class="det">/api/sessions · /api/hitl · /api/google · /api/health</text>
+  <text x="490" y="230" text-anchor="middle" class="det">/api/sessions · /api/tasks · /api/inquiries · /api/hitl · /api/google · /api/health</text>
   <text x="490" y="250" text-anchor="middle" class="det">Resumable per-session AG2 Streams (EventLogWriter → sessions.db) · per-session lock · turn timeout</text>
 
   <line x1="270" y1="260" x2="270" y2="296" class="conn"/>
@@ -94,7 +94,7 @@
   <text x="282" y="540" text-anchor="middle" class="det">nestable tree · iterative HITL intake · capability-scoped agents</text>
   <text x="282" y="557" text-anchor="middle" class="det">deliverable verify + grounding gate · resilient parents · live amend</text>
   <text x="282" y="574" text-anchor="middle" class="det">concurrent cascade-cancel runner · cheap model for leaf subtasks</text>
-  <text x="282" y="589" text-anchor="middle" class="det" fill="#6366F1">tasks.db · scheduler / gateway API / GUI view: in progress</text>
+  <text x="282" y="589" text-anchor="middle" class="det" fill="#6366F1">tasks.db · gateway API + Tasks GUI built · scheduler: in progress</text>
 
   <!-- Session & Memory -->
   <text x="535" y="496" class="layer">SESSION &amp; MEMORY</text>

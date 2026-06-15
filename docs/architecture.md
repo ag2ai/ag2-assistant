@@ -14,14 +14,14 @@ Built and tested:
 - **Observer memory** — passive user-profile learning in SQLite (`WorkingMemoryAggregate` + `WorkingMemoryPolicy`), platform-tagged, cadence-batched (`every_n_turns`, cheaper aggregation model). Permission decisions excluded.
 - **Environment context** — live date/time + location, injected per turn.
 - **Gateway facade** — FastAPI REST + WebSocket with **resumable per-session conversations** (each session is a persistent AG2 `Stream` whose events are written via `EventLogWriter` and reloaded on demand), gateway-hosted **HITL** and **Google OAuth**, and a built-in **web UI**.
-- **Web UI** — self-contained chat client served at `/` (markdown rendering, file attachments, stop button, system light/dark, inline HITL cards, History drawer; ag2.ai-styled). Verified live with Chrome DevTools.
+- **Web UI** — self-contained chat client served at `/` (markdown rendering, file attachments, stop button, system light/dark, inline HITL cards, History drawer, **Tasks drawer** — list/detail/cancel + answer durable HITL inquiries, chat→task; ag2.ai-styled). Verified live with Chrome DevTools.
 - **Channels** — Telegram, Discord, Slack live (DM + @mention gating, per-channel formatting, in-chat permission buttons, **attachments**, resumable history). Combined `agclaw run` serves the gateway + all configured channels in one process.
 - **HITL & turn-level permissions** — pluggable `Asker` (chat buttons / styled desktop or gateway page), single per-turn `PermissionManager` gating folder access and shell/code. Within tasks, prompts are **durable `Inquiry` primitives** (persisted, task-associated, answerable from any channel) — see below.
 - **Onboarding** — first-run interview (name/location/hours/style) via the same `Asker`.
-- **Tasks** — persistent, nestable task primitive with **iterative HITL intake**, capability-scoped agents, **deliverable verification** + a grounding gate, **resilient parents** (a failed subtask doesn't abort the whole task), subtask context inheritance, live amendment, and a concurrent, cascade-cancellable background runner. Leaf research subtasks run on a cheaper/faster model (`gemini-3.1-flash-lite`); root synthesis stays on the main model. Scheduler + gateway API/GUI still in progress. See `docs/tasks-design.md`.
+- **Tasks** — persistent, nestable task primitive with **iterative HITL intake**, capability-scoped agents, **deliverable verification** + a grounding gate, **resilient parents** (a failed subtask doesn't abort the whole task), subtask context inheritance, live amendment, and a concurrent, cascade-cancellable background runner. Leaf research subtasks run on a cheaper/faster model (`gemini-3.1-flash-lite`); root synthesis stays on the main model. Exposed via the gateway (`TaskService` + REST) and the Web UI's Tasks drawer (durable HITL answerable from any channel). The scheduler is the remaining Phase-1 piece. See `docs/tasks-design.md`.
 - **Distributed spike** — agent served over WebSocket via AG2 `Hub` + `serve_ws`.
 
-Not yet built: task scheduler + gateway task API/GUI view (in progress), WhatsApp channel.
+Not yet built: task scheduler (one-shot + recurring), WhatsApp channel.
 
 ### Gateway design note: per-session streams vs Hub
 
@@ -118,7 +118,7 @@ Pydantic config resolved by `load_config()` with precedence **env (`AGCLAW_*`) >
 - **Memory**: `aggregate_every_n_turns`.
 - **Channels/Google**: credentials/tokens in `.env` / `~/.agclaw/`.
 
-### 8. Tasks Layer  *(largely built; scheduler + gateway API/GUI in progress)*
+### 8. Tasks Layer  *(built; scheduler in progress)*
 
 Persistent, user-facing task management (`agclaw.tasks`) — see `docs/tasks-design.md`:
 - **`Task`** primitive (`model.py`): nestable (`parent_id` tree), with status, start/end + scheduling fields, **objective**, **deliverables** (acceptance criteria + status + linked asset), `capabilities` scope, progress log, plan, intake Q&A, assets, origin/HITL-routing, per-task stream id.
@@ -126,7 +126,7 @@ Persistent, user-facing task management (`agclaw.tasks`) — see `docs/tasks-des
 - **Intake/planner** (`planner.py`): an LLM `TaskPlan` (trivial?, objective, clarifying questions, deliverables, subtasks, per-piece capabilities). Intake is **iterative** — keep asking and re-planning with accumulated answers until the plan converges, the user abandons it (→ CANCELLED), or a round cap. Each subtask gets its own deliverable + minimal capabilities; the final deliverable belongs to the root and is synthesised from the children.
 - **Executor** (`executor.py`): builds a **capability-scoped** agent bound to the task's (durable) asker — so a research subtask can't reach Drive and a calendar task only gets calendar. Subtasks **inherit the parent's objective + the user's clarifications** (no working blind). A **grounding gate** rejects a `web` task that never called a search/fetch tool; a **verifier** (cheap model) checks each deliverable's content against its criteria before it's marked PRODUCED — never a false "done". Failed subtasks are fed to the parent's synthesis as gaps to work around honestly. Leaf subtasks run on `cheap_model` (`gemini-3.1-flash-lite`); root synthesis on the main model.
 - **Runner** (`runner.py`): `TaskManager` runs the tree in the background, concurrency-capped, with **immediate cascading cancel**, attempt-limited rework, and an optional `inquiry_store` that makes a task's HITL durable + cross-channel-answerable. **Resilient**: a failed subtask doesn't abort the parent — the parent still does its own work and its deliverable verification is the arbiter.
-- **Reuses** AG2's `Task` lifecycle/`TaskProgress`/`run_subtasks`/`EventLogWriter` as design reference; AGClaw builds the durable store+tree, runner, iterative HITL intake. Scheduler, gateway task API, and GUI view are in progress.
+- **Reuses** AG2's `Task` lifecycle/`TaskProgress`/`run_subtasks`/`EventLogWriter` as design reference; AGClaw builds the durable store+tree, runner, iterative HITL intake, the gateway `TaskService` + REST API, and the Web UI Tasks drawer. The scheduler (one-shot + recurring) is the remaining Phase-1 piece.
 
 ### 9. Google Integration Layer  *(built)*
 
