@@ -16,12 +16,12 @@ Built and tested:
 - **Gateway facade** — FastAPI REST + WebSocket with **resumable per-session conversations** (each session is a persistent AG2 `Stream` whose events are written via `EventLogWriter` and reloaded on demand), gateway-hosted **HITL** and **Google OAuth**, and a built-in **web UI**.
 - **Web UI** — self-contained chat client served at `/` (markdown rendering, file attachments, stop button, system light/dark, inline HITL cards, History drawer; ag2.ai-styled). Verified live with Chrome DevTools.
 - **Channels** — Telegram, Discord, Slack live (DM + @mention gating, per-channel formatting, in-chat permission buttons, **attachments**, resumable history). Combined `agclaw run` serves the gateway + all configured channels in one process.
-- **HITL & turn-level permissions** — pluggable `Asker` (chat buttons / styled desktop or gateway page), single per-turn `PermissionManager` gating folder access and shell/code.
+- **HITL & turn-level permissions** — pluggable `Asker` (chat buttons / styled desktop or gateway page), single per-turn `PermissionManager` gating folder access and shell/code. Within tasks, prompts are **durable `Inquiry` primitives** (persisted, task-associated, answerable from any channel) — see below.
 - **Onboarding** — first-run interview (name/location/hours/style) via the same `Asker`.
-- **Tasks (in progress)** — persistent, nestable task primitive with objectives + deliverables-based completion and live amendment (foundation built; runner/scheduler/GUI in progress). See `docs/tasks-design.md`.
+- **Tasks** — persistent, nestable task primitive with **iterative HITL intake**, capability-scoped agents, **deliverable verification** + a grounding gate, **resilient parents** (a failed subtask doesn't abort the whole task), subtask context inheritance, live amendment, and a concurrent, cascade-cancellable background runner. Leaf research subtasks run on a cheaper/faster model (`gemini-3.1-flash-lite`); root synthesis stays on the main model. Scheduler + gateway API/GUI still in progress. See `docs/tasks-design.md`.
 - **Distributed spike** — agent served over WebSocket via AG2 `Hub` + `serve_ws`.
 
-Not yet built: task runner/scheduler/GUI view (in progress), WhatsApp channel.
+Not yet built: task scheduler + gateway task API/GUI view (in progress), WhatsApp channel.
 
 ### Gateway design note: per-session streams vs Hub
 
@@ -68,7 +68,7 @@ For distributed/multi-agent deployments, the agent can additionally be served ov
 
 AG2 Beta `Agent` (`agclaw.agent.create_agent`):
 - **Prompt**: persona (from config) + always-on **behaviour guidance** + live environment + (when signed in) Google tool-usage guidance, assembled per turn in `turn_prompt`.
-- **Model**: `model_config()` builds the right provider config (Gemini/OpenAI/Anthropic) from `config.llm`; aggregation can use a cheaper model.
+- **Model**: `model_config()` builds the right provider config (Gemini/OpenAI/Anthropic) from `config.llm`; `cheap_model()` picks a faster/cheaper tier (default `gemini-3.1-flash-lite`) for bulk work — memory aggregation, deliverable verification, and leaf research subtasks.
 - **Tools** (`agclaw.tools.build_agent_tools`): `DuckDuckSearchTool`, `SandboxShellTool` + `SandboxCodeTool` (local **or Docker** backend), `read_file` (vision, permission-gated), `web_fetch` (native on Anthropic, custom elsewhere), the skills toolkit (registry + bundled), and — when signed in — the **Google tools** (`gmail_*`, `calendar_*`, `drive_*`; sends/writes HITL-gated).
 - **Knowledge + Assembly**: profile memory via `KnowledgeConfig` + `WorkingMemoryPolicy`.
 - **Sandbox**: `config.tools.sandbox` = `local` (approval-gated) or `docker` (container-isolated; approval dropped).
@@ -96,6 +96,12 @@ Human-in-the-loop and Claude-Code-style permissions, routed to whatever surface 
 - Wired into the agent two ways: AG2's `hitl_hook` (for `context.input()` open questions) and the permission manager (for approvals).
 - `PendingAsks` correlates a question with its answer per chat; Telegram needs `concurrent_updates(True)` so a tap resolves while the turn is blocked.
 
+**Durable inquiries (`agclaw.hitl.inquiry`)** — HITL questions/permissions as first-class, persisted primitives so they're never lost in the agentic flow:
+- An **`Inquiry`** (id, `task_id`, `kind` = question/permission/confirmation, text, options, status = pending/answered/expired/cancelled, answer, channel, timestamps) is written to **`InquiryStore`** (`~/.agclaw/inquiries.db`) the moment it's raised, and resolved in place.
+- **`DurableAsker`** wraps any transport `Asker`: it **races live delivery against an out-of-band answer** to the stored inquiry, so the user can answer on the channel the question arrived on *or* from any other channel / the GUI / a REST call; the answer is recorded either way. `rebind(task_id)` tags each subtask's prompts while sharing the transport (so sub-agent HITL still bubbles to the same surface).
+- Because it persists **every** `Question`, **permissions become durable inquiries for free** — one coherent model for all human-in-the-loop interaction. The `TaskManager` binds the asker per (sub)task and releases a task's pending inquiries on cancel.
+- Approach: durable-but-still-block (the live turn awaits resolution); the persisted record survives a restart so an `AWAITING_INPUT` task can be re-driven. (Full mid-turn suspend/resume is future work.)
+
 **Permissions (`agclaw.permissions`)** — one **turn-level `PermissionManager`** is the single authority for *all* access:
 - Created once per turn (per `send_message`) and injected via `dependencies`; shared by `read_file` (folder access, `check`) and shell/code (command approval, `check_command`).
 - Options: **Allow once / Always allow / Deny**. "Always allow" for a folder persists to `~/.agclaw/permissions.json` (survives turns); turn decisions reset next turn.
@@ -112,12 +118,15 @@ Pydantic config resolved by `load_config()` with precedence **env (`AGCLAW_*`) >
 - **Memory**: `aggregate_every_n_turns`.
 - **Channels/Google**: credentials/tokens in `.env` / `~/.agclaw/`.
 
-### 8. Tasks Layer  *(in progress)*
+### 8. Tasks Layer  *(largely built; scheduler + gateway API/GUI in progress)*
 
 Persistent, user-facing task management (`agclaw.tasks`) — see `docs/tasks-design.md`:
-- **`Task`** primitive: nestable (`parent_id` tree), with status, start/end + scheduling fields, **objective**, **deliverables** (acceptance criteria + status + linked asset), progress log, plan, intake Q&A, assets, origin/HITL-routing, per-task event stream.
-- **`TaskStore`** (`~/.agclaw/tasks.db`): CRUD, tree/descendants/cascade, **gated completion** (`is_complete` = all deliverables satisfied AND all subtasks done), and **live amendment** (`update`/`reopen`/`add_subtask` — adding work re-opens/uncompletes a task so the runner picks it up).
-- **Reuses** AG2's `Task` lifecycle/`TaskProgress`/`run_subtasks`/`EventLogWriter`; AGClaw builds the durable store+tree, the background runner with immediate cascade-cancel, HITL intake, scheduler, gateway API, and GUI view (in progress).
+- **`Task`** primitive (`model.py`): nestable (`parent_id` tree), with status, start/end + scheduling fields, **objective**, **deliverables** (acceptance criteria + status + linked asset), `capabilities` scope, progress log, plan, intake Q&A, assets, origin/HITL-routing, per-task stream id.
+- **`TaskStore`** (`store.py`, `~/.agclaw/tasks.db`): CRUD, tree/descendants/cascade, **gated completion**, and **live amendment** (`update`/`reopen`/`add_subtask` — adding work re-opens a task so the runner picks it up). `is_complete` = the task's own deliverables satisfied **AND every descendant terminal** (a failed subtask is terminal and accounted for); a pure orchestrator with no deliverables of its own succeeds only if its subtasks did.
+- **Intake/planner** (`planner.py`): an LLM `TaskPlan` (trivial?, objective, clarifying questions, deliverables, subtasks, per-piece capabilities). Intake is **iterative** — keep asking and re-planning with accumulated answers until the plan converges, the user abandons it (→ CANCELLED), or a round cap. Each subtask gets its own deliverable + minimal capabilities; the final deliverable belongs to the root and is synthesised from the children.
+- **Executor** (`executor.py`): builds a **capability-scoped** agent bound to the task's (durable) asker — so a research subtask can't reach Drive and a calendar task only gets calendar. Subtasks **inherit the parent's objective + the user's clarifications** (no working blind). A **grounding gate** rejects a `web` task that never called a search/fetch tool; a **verifier** (cheap model) checks each deliverable's content against its criteria before it's marked PRODUCED — never a false "done". Failed subtasks are fed to the parent's synthesis as gaps to work around honestly. Leaf subtasks run on `cheap_model` (`gemini-3.1-flash-lite`); root synthesis on the main model.
+- **Runner** (`runner.py`): `TaskManager` runs the tree in the background, concurrency-capped, with **immediate cascading cancel**, attempt-limited rework, and an optional `inquiry_store` that makes a task's HITL durable + cross-channel-answerable. **Resilient**: a failed subtask doesn't abort the parent — the parent still does its own work and its deliverable verification is the arbiter.
+- **Reuses** AG2's `Task` lifecycle/`TaskProgress`/`run_subtasks`/`EventLogWriter` as design reference; AGClaw builds the durable store+tree, runner, iterative HITL intake. Scheduler, gateway task API, and GUI view are in progress.
 
 ### 9. Google Integration Layer  *(built)*
 
@@ -127,7 +136,7 @@ Persistent, user-facing task management (`agclaw.tasks`) — see `docs/tasks-des
 
 ### Storage (`~/.agclaw/`)
 
-`profile.db` (learned profile) · `sessions.db` (resumable conversations + transcripts) · `tasks.db` (tasks) · `permissions.json` (folder grants/blocks) · `google_credentials.json` + `google_token.json` + `google_account.txt` (Google) · `onboarded` (first-run marker) · optional `config.json` · `skills/` (installed skills).
+`profile.db` (learned profile) · `sessions.db` (resumable conversations + transcripts) · `tasks.db` (tasks) · `inquiries.db` (durable HITL inquiries) · `permissions.json` (folder grants/blocks) · `google_credentials.json` + `google_token.json` + `google_account.txt` (Google) · `onboarded` (first-run marker) · optional `config.json` · `skills/` (installed skills). Shared persistence helpers (`SerialStore`, id/timestamp) live in `agclaw.storage`.
 
 ## Message Flow
 

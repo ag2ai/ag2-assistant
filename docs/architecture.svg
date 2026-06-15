@@ -75,9 +75,10 @@
   <text x="730" y="320" text-anchor="middle" class="lbl" fill="#b3361f">HITL &amp; Permissions</text>
   <text x="730" y="342" text-anchor="middle" class="det">PermissionManager — one per turn, shared by all</text>
   <text x="730" y="358" text-anchor="middle" class="det">access tools (folders + shell/code; sends/writes)</text>
-  <text x="730" y="380" text-anchor="middle" class="det">Allow once / Always allow / Deny</text>
-  <text x="730" y="398" text-anchor="middle" class="det">Asker → chat buttons · desktop &amp; gateway /hitl page</text>
-  <text x="730" y="420" text-anchor="middle" class="det">turn-sticky · denials never enter memory</text>
+  <text x="730" y="378" text-anchor="middle" class="det">Allow once / Always allow / Deny · turn-sticky</text>
+  <text x="730" y="396" text-anchor="middle" class="det">Asker → chat buttons · desktop &amp; gateway /hitl page</text>
+  <text x="730" y="414" text-anchor="middle" class="det">Durable Inquiries — persisted, task-tied (inquiries.db),</text>
+  <text x="730" y="430" text-anchor="middle" class="det">answerable from any channel · denials never enter memory</text>
 
   <line x1="510" y1="360" x2="533" y2="360" class="conn"/>
   <path d="M 730 444 L 730 462 L 282 462 L 282 446" class="hitl"/>
@@ -86,13 +87,14 @@
   <line x1="160" y1="444" x2="160" y2="500" class="conn"/>
   <line x1="400" y1="444" x2="400" y2="500" class="conn"/>
 
-  <!-- Tasks (in progress) -->
+  <!-- Tasks -->
   <text x="55" y="496" class="layer">TASKS</text>
-  <rect x="55" y="502" width="455" height="92" rx="8" fill="#E0E7FF" stroke="#6366F1" class="planned"/>
-  <text x="282" y="524" text-anchor="middle" class="lbl" fill="#3730A3">Tasks — agclaw.tasks  (foundation built, runner WIP)</text>
-  <text x="282" y="546" text-anchor="middle" class="det">Nestable tree · objective + deliverables (gated completion)</text>
-  <text x="282" y="564" text-anchor="middle" class="det">live amend · cascade-cancel · progress · schedule</text>
-  <text x="282" y="582" text-anchor="middle" class="det">store: tasks.db · runner / scheduler / GUI view: in progress</text>
+  <rect x="55" y="502" width="455" height="92" rx="8" fill="#E0E7FF" stroke="#6366F1"/>
+  <text x="282" y="522" text-anchor="middle" class="lbl" fill="#3730A3">Tasks — agclaw.tasks</text>
+  <text x="282" y="540" text-anchor="middle" class="det">nestable tree · iterative HITL intake · capability-scoped agents</text>
+  <text x="282" y="557" text-anchor="middle" class="det">deliverable verify + grounding gate · resilient parents · live amend</text>
+  <text x="282" y="574" text-anchor="middle" class="det">concurrent cascade-cancel runner · cheap model for leaf subtasks</text>
+  <text x="282" y="589" text-anchor="middle" class="det" fill="#6366F1">tasks.db · scheduler / gateway API / GUI view: in progress</text>
 
   <!-- Session & Memory -->
   <text x="535" y="496" class="layer">SESSION &amp; MEMORY</text>
@@ -118,21 +120,24 @@
 
   <!-- Storage -->
   <text x="55" y="726" class="layer">STORAGE (~/.agclaw)</text>
-  <rect x="55" y="732" width="150" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="130" y="751" text-anchor="middle" class="lbl" fill="#475569">profile.db</text>
-  <text x="130" y="766" text-anchor="middle" class="det">learned profile</text>
-  <rect x="213" y="732" width="160" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="293" y="751" text-anchor="middle" class="lbl" fill="#475569">sessions.db</text>
-  <text x="293" y="766" text-anchor="middle" class="det">resumable chats</text>
-  <rect x="381" y="732" width="130" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="446" y="751" text-anchor="middle" class="lbl" fill="#475569">tasks.db</text>
-  <text x="446" y="766" text-anchor="middle" class="det">tasks</text>
-  <rect x="519" y="732" width="180" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="609" y="751" text-anchor="middle" class="lbl" fill="#475569">permissions.json</text>
-  <text x="609" y="766" text-anchor="middle" class="det">folder grants / blocks</text>
-  <rect x="707" y="732" width="218" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="816" y="751" text-anchor="middle" class="lbl" fill="#475569">google_token.json</text>
-  <text x="816" y="766" text-anchor="middle" class="det">OAuth token (+ credentials)</text>
+  <rect x="55" y="732" width="132" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
+  <text x="121" y="751" text-anchor="middle" class="lbl" fill="#475569">profile.db</text>
+  <text x="121" y="766" text-anchor="middle" class="det">learned profile</text>
+  <rect x="195" y="732" width="132" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
+  <text x="261" y="751" text-anchor="middle" class="lbl" fill="#475569">sessions.db</text>
+  <text x="261" y="766" text-anchor="middle" class="det">resumable chats</text>
+  <rect x="335" y="732" width="110" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
+  <text x="390" y="751" text-anchor="middle" class="lbl" fill="#475569">tasks.db</text>
+  <text x="390" y="766" text-anchor="middle" class="det">tasks</text>
+  <rect x="453" y="732" width="132" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
+  <text x="519" y="751" text-anchor="middle" class="lbl" fill="#475569">inquiries.db</text>
+  <text x="519" y="766" text-anchor="middle" class="det">durable HITL</text>
+  <rect x="593" y="732" width="150" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
+  <text x="668" y="751" text-anchor="middle" class="lbl" fill="#475569">permissions.json</text>
+  <text x="668" y="766" text-anchor="middle" class="det">folder grants</text>
+  <rect x="751" y="732" width="174" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
+  <text x="838" y="751" text-anchor="middle" class="lbl" fill="#475569">google_token.json</text>
+  <text x="838" y="766" text-anchor="middle" class="det">OAuth (+ credentials)</text>
 
   <!-- Distributed note -->
   <rect x="55" y="788" width="870" height="40" rx="8" fill="#F8FAFC" stroke="#CBD5E1"/>
