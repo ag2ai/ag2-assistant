@@ -43,6 +43,15 @@ class CredentialsUpload(BaseModel):
     content: str  # raw OAuth client JSON
 
 
+class TaskRequest(BaseModel):
+    text: str
+    channel: str = "web"
+
+
+class AnswerRequest(BaseModel):
+    answer: str
+
+
 def create_app(
     config: Config | None = None,
     memory: bool = True,
@@ -62,14 +71,21 @@ def create_app(
             config=config, memory=memory, platform=platform, persist=persist
         )
 
+    from agclaw.gateway.tasks_service import TaskService
+
+    tasks = TaskService(config=config)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if owns_gateway:
             await gateway.start()
+        await tasks.start()
         app.state.gateway = gateway
+        app.state.tasks = tasks
         try:
             yield
         finally:
+            await tasks.close()
             if owns_gateway:
                 await gateway.close()
 
@@ -196,6 +212,44 @@ def create_app(
             "session_id": session_id,
             "messages": await app.state.gateway.transcript(session_id),
         }
+
+    # --- Tasks + durable HITL inquiries ---
+
+    @app.get("/api/tasks")
+    async def list_tasks() -> dict:
+        """Top-level tasks (newest first) for the Tasks view."""
+        return {"tasks": await app.state.tasks.list_tasks()}
+
+    @app.post("/api/tasks")
+    async def create_task(req: TaskRequest) -> dict:
+        """Kick off a task — intake (clarifying questions) runs in the background
+        and surfaces as inquiries to answer."""
+        task_id = await app.state.tasks.submit_request(req.text, channel=req.channel)
+        return {"id": task_id}
+
+    @app.get("/api/tasks/{task_id}")
+    async def get_task(task_id: str):
+        task = await app.state.tasks.get_task(task_id)
+        if task is None:
+            return Response(status_code=404)
+        return {"task": task}
+
+    @app.post("/api/tasks/{task_id}/cancel")
+    async def cancel_task(task_id: str) -> dict:
+        ok = await app.state.tasks.cancel(task_id)
+        return {"ok": ok}
+
+    @app.get("/api/inquiries/pending")
+    async def inquiries_pending(task_id: str | None = None) -> dict:
+        """Open HITL inquiries (clarifications / approvals) awaiting an answer."""
+        return {"pending": await app.state.tasks.pending_inquiries(task_id)}
+
+    @app.post("/api/inquiries/{inquiry_id}/answer")
+    async def answer_inquiry(inquiry_id: str, req: AnswerRequest):
+        ok = await app.state.tasks.answer_inquiry(inquiry_id, req.answer)
+        if not ok:
+            return Response(status_code=404)
+        return {"ok": True}
 
     @app.post("/api/message", response_model=MessageResponse)
     async def message(req: MessageRequest) -> MessageResponse:

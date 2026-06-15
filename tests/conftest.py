@@ -12,7 +12,12 @@ def _isolate_agclaw_home(monkeypatch, tmp_path):
     empty tmp dir so `is_configured()`/`has_token()` are naturally False; tests
     that need a token write to their own (separately-monkeypatched) paths, which
     run after this fixture and therefore override it.
+
+    We also redirect HOME to a tmp dir so anything resolving `~/.agclaw`
+    (PermissionStore, the gateway's task/inquiry stores) writes to disposable
+    space instead of the developer's real state.
     """
+    monkeypatch.setenv("HOME", str(tmp_path))
     try:
         import agclaw.integrations.google_auth as ga
 
