@@ -56,6 +56,10 @@ class TaskChatRequest(BaseModel):
     text: str
 
 
+class ArchiveRequest(BaseModel):
+    archived: bool = True
+
+
 def create_app(
     config: Config | None = None,
     memory: bool = True,
@@ -231,6 +235,12 @@ def create_app(
         task_id = await app.state.tasks.submit_request(req.text, channel=req.channel)
         return {"id": task_id}
 
+    @app.get("/api/tasks/all")
+    async def list_all_tasks(status: str | None = None) -> dict:
+        """Full task history for the listing page (newest first). Optional status
+        filter: active / completed / stopped / archived."""
+        return {"tasks": await app.state.tasks.list_all(status)}
+
     @app.get("/api/tasks/{task_id}")
     async def get_task(task_id: str):
         task = await app.state.tasks.get_task(task_id)
@@ -242,6 +252,12 @@ def create_app(
     async def cancel_task(task_id: str) -> dict:
         ok = await app.state.tasks.cancel(task_id)
         return {"ok": ok}
+
+    @app.post("/api/tasks/{task_id}/archive")
+    async def archive_task(task_id: str, req: ArchiveRequest | None = None) -> dict:
+        archived = True if req is None else req.archived
+        ok = await app.state.tasks.set_archived(task_id, archived)
+        return {"ok": ok, "archived": archived}
 
     @app.post("/api/tasks/{task_id}/chat")
     async def task_chat(task_id: str, req: TaskChatRequest):

@@ -227,6 +227,22 @@
   .tvtree .obj { color: var(--muted); margin-bottom: 8px; }
   .tvhint { color: var(--muted); font-size: 13px; text-align: center; padding: 4px; }
   .tvchat { display: flex; flex-direction: column; gap: 14px; }
+  .tvhead .arch { border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 8px; padding: 7px 12px; font-family: var(--sans); font-weight: 600; font-size: 13px; cursor: pointer; }
+  .tvhead .arch:hover { border-color: var(--ink); color: var(--ink); }
+
+  /* full task listing page */
+  .tlist { max-width: 760px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  .tlist .lhead { display: flex; align-items: center; gap: 10px; }
+  .tlist .lhead .tvtitle { font-family: var(--serif); font-size: 20px; flex: 1; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; }
+  .fchip { font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); cursor: pointer; font-family: var(--sans); }
+  .fchip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .trow { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
+  .trow:hover { border-color: var(--ink); }
+  .trow .tt { flex: 1; font-weight: 600; font-size: 14px; }
+  .trow .when { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .viewall { padding: 8px 10px 12px; text-align: center; border-top: 1px solid var(--line); }
+  .viewall button { border: none; background: none; color: var(--accent); font-family: var(--sans); font-weight: 600; font-size: 13px; cursor: pointer; }
 
   /* tasks drawer (right) */
   #tdrawer {
@@ -309,6 +325,7 @@
     <div class="dhead"><h2>Tasks</h2><button id="tclose" title="Close">×</button></div>
     <div id="tnew"><input id="tinput" placeholder="Start a task…"><button id="tgo">Run</button></div>
     <div id="tbody"></div>
+    <div class="viewall"><button id="tallbtn">View all tasks →</button></div>
   </aside>
 
   <div id="log"><div class="wrap"><div class="empty"><h1>How can I help?</h1>Ask me anything — I can search, run code, read files, and more.</div></div></div>
@@ -535,12 +552,46 @@
   // --- task view (takes over the main pane): tree + a task-scoped chat ---
   let taskMode = null, taskPoll = null, taskTreeEl = null, taskChatEl = null, taskTitleEl = null, lastTreeSig = "";
 
+  let listMode = false;
   function leaveTaskMode() {
-    taskMode = null; taskTreeEl = taskChatEl = taskTitleEl = null;
+    taskMode = null; taskTreeEl = taskChatEl = taskTitleEl = null; listMode = false;
     if (taskPoll) { clearInterval(taskPoll); taskPoll = null; }
     input.placeholder = "Message AGClaw…"; input.disabled = false; sendBtn.disabled = false;
   }
   function exitTaskView() { leaveTaskMode(); loadTranscript(sessionId); }
+
+  // --- full task listing page (history + filters) ---
+  async function openTaskList(filter) {
+    leaveTaskMode(); openTasks(false); openDrawer(false); closeViewer();
+    listMode = true; const f = filter || "all";
+    wrap.innerHTML = "";
+    const view = document.createElement("div"); view.className = "tlist";
+    const head = document.createElement("div"); head.className = "lhead";
+    const back = document.createElement("button"); back.className = "back"; back.textContent = "← Chat"; back.onclick = exitTaskView;
+    const title = document.createElement("span"); title.className = "tvtitle"; title.textContent = "All tasks";
+    head.appendChild(back); head.appendChild(title); view.appendChild(head);
+    const filters = document.createElement("div"); filters.className = "filters";
+    [["all", "All"], ["active", "Active"], ["completed", "Completed"], ["stopped", "Stopped"], ["archived", "Archived"]].forEach(([k, label]) => {
+      const c = document.createElement("button"); c.className = "fchip" + (k === f ? " on" : ""); c.textContent = label;
+      c.onclick = () => openTaskList(k); filters.appendChild(c);
+    });
+    view.appendChild(filters);
+    const rows = document.createElement("div"); rows.textContent = "Loading…"; view.appendChild(rows);
+    wrap.appendChild(view);
+    let tasks = [];
+    try { tasks = (await (await fetch("/api/tasks/all" + (f === "all" ? "" : "?status=" + f))).json()).tasks || []; } catch {}
+    rows.innerHTML = "";
+    if (!tasks.length) { rows.innerHTML = '<div class="tnone">No tasks here.</div>'; return; }
+    tasks.forEach(t => {
+      const r = document.createElement("div"); r.className = "trow";
+      const tt = document.createElement("span"); tt.className = "tt"; tt.textContent = t.title;
+      const when = document.createElement("span"); when.className = "when"; when.textContent = relTime(t.created_at);
+      r.appendChild(tt); r.appendChild(badge(t.status)); r.appendChild(when);
+      r.onclick = () => openTaskView(t.id);
+      rows.appendChild(r);
+    });
+  }
+  document.getElementById("tallbtn").onclick = () => openTaskList("all");
 
   async function openTaskView(id) {
     openTasks(false); openDrawer(false); closeViewer();
@@ -550,7 +601,8 @@
     const head = document.createElement("div"); head.className = "tvhead";
     const back = document.createElement("button"); back.className = "back"; back.textContent = "← Chat"; back.onclick = exitTaskView;
     taskTitleEl = document.createElement("span"); taskTitleEl.className = "tvtitle"; taskTitleEl.textContent = "Task";
-    head.appendChild(back); head.appendChild(taskTitleEl); view.appendChild(head);
+    const arch = document.createElement("button"); arch.className = "arch"; arch.id = "tvarch"; arch.textContent = "Archive";
+    head.appendChild(back); head.appendChild(taskTitleEl); head.appendChild(arch); view.appendChild(head);
     taskTreeEl = document.createElement("div"); taskTreeEl.className = "tvtree"; taskTreeEl.textContent = "Loading…"; view.appendChild(taskTreeEl);
     const hint = document.createElement("div"); hint.className = "tvhint";
     hint.textContent = "Ask below to change this task — add or cancel subtasks, tweak the objective, or cancel it.";
@@ -571,6 +623,17 @@
     if (sig === lastTreeSig) return;
     lastTreeSig = sig;
     if (taskTitleEl) { taskTitleEl.textContent = full.title + " "; taskTitleEl.appendChild(badge(full.status)); }
+    const arch = document.getElementById("tvarch");
+    if (arch) {
+      arch.textContent = full.archived ? "Unarchive" : "Archive";
+      arch.onclick = async () => {
+        await fetch("/api/tasks/" + taskMode + "/archive", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived: !full.archived }),
+        });
+        exitTaskView();
+      };
+    }
     taskTreeEl.innerHTML = "";
     if (full.objective) { const o = document.createElement("div"); o.className = "obj"; o.textContent = full.objective; taskTreeEl.appendChild(o); }
     taskTreeEl.appendChild(nodeView(full));
@@ -827,6 +890,7 @@
       const t = input.value.trim(); if (!t) return;
       input.value = ""; input.style.height = "auto"; taskChat(t); return;
     }
+    if (listMode) { listMode = false; wrap.innerHTML = ""; }  // a chat message leaves the listing
     if (busy) { send({ type: "cancel", session_id: sessionId }); return; }  // Stop
     const text = input.value.trim();
     if (!text && !pending.length) return;

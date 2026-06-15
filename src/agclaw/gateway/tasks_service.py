@@ -120,10 +120,15 @@ class TaskService:
         bg.add_done_callback(self._bg.discard)
         return task.id
 
+    # status groupings used by the listing filters
+    _ACTIVE = {"pending", "scheduled", "awaiting_input", "planning", "running"}
+    _STOPPED = {"failed", "cancelled"}
+
     async def list_tasks(self) -> list[dict]:
-        """Top-level tasks as summaries, each carrying any pending inquiries in its
-        subtree. Tasks that need input float to the top, then newest first."""
-        roots = await self._store.roots()
+        """Active/recent top-level tasks for the drawer (archived excluded), each
+        carrying any pending inquiries in its subtree. Needs-input first, then
+        newest."""
+        roots = [t for t in await self._store.roots() if not getattr(t, "archived", False)]
         by_task: dict[str, list] = {}
         for inq in await self._inquiries.list_pending():
             by_task.setdefault(inq.task_id, []).append(inq)
@@ -140,6 +145,36 @@ class TaskService:
         out.sort(key=lambda s: s["created_at"], reverse=True)
         out.sort(key=lambda s: 0 if s["inquiries"] else 1)  # needs-input first (stable)
         return out
+
+    async def list_all(self, status: str | None = None) -> list[dict]:
+        """The full task history for the listing page, newest first. `status` filters:
+        active / completed / stopped / archived; None or 'all' = everything not archived."""
+        roots = await self._store.roots()
+        out = []
+        for t in roots:
+            archived = bool(getattr(t, "archived", False))
+            if status == "archived":
+                if not archived:
+                    continue
+            elif archived:
+                continue  # archived hidden from every other view
+            elif status == "active" and t.status not in self._ACTIVE:
+                continue
+            elif status == "completed" and t.status != "completed":
+                continue
+            elif status == "stopped" and t.status not in self._STOPPED:
+                continue
+            s = await self._summary(t)
+            s["archived"] = archived
+            out.append(s)
+        out.sort(key=lambda s: s["created_at"], reverse=True)
+        return out
+
+    async def set_archived(self, task_id: str, archived: bool = True) -> bool:
+        if await self._store.get(task_id) is None:
+            return False
+        await self._store.update(task_id, archived=archived)
+        return True
 
     async def get_task(self, task_id: str) -> dict | None:
         """Full task detail with its subtree, deliverables (incl. assets), progress."""
@@ -235,6 +270,7 @@ class TaskService:
             "id": t.id, "title": t.title, "status": t.status,
             "objective": t.objective or "", "description": t.description or "",
             "created_at": t.created_at, "capabilities": t.capabilities or [],
+            "archived": bool(getattr(t, "archived", False)),
             "intake": t.intake or {},
             "progress": t.progress or [],
             "error": t.error or "",

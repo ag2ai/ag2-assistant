@@ -98,6 +98,7 @@ class Task:
     hitl_channel: str | None = None      # where to ask (override; default=origin)
 
     stream_id: str | None = None         # per-task event-log id
+    archived: bool = False               # hidden from the default Tasks view
 
     @property
     def is_terminal(self) -> bool:

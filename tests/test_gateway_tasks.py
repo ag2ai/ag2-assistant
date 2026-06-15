@@ -206,6 +206,64 @@ def test_task_rest_endpoints(monkeypatch, tmp_path):
         assert client.post(f"/api/tasks/{task_id}/cancel").json()["ok"] is True
 
 
+async def test_archive_hides_from_drawer_and_filters_listing(tmp_path):
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    a = await svc.store.create("active one")  # pending
+    done = await svc.store.create("done one", status=TaskStatus.COMPLETED)
+    old = await svc.store.create("to archive", status=TaskStatus.COMPLETED)
+
+    # archive one task
+    assert await svc.set_archived(old.id) is True
+    assert await svc.set_archived("missing") is False
+
+    drawer_ids = {t["id"] for t in await svc.list_tasks()}
+    assert old.id not in drawer_ids  # archived hidden from the drawer
+    assert {a.id, done.id} <= drawer_ids
+
+    all_ids = {t["id"] for t in await svc.list_all()}
+    assert all_ids == {a.id, done.id}  # 'all' excludes archived too
+
+    archived = await svc.list_all(status="archived")
+    assert [t["id"] for t in archived] == [old.id] and archived[0]["archived"] is True
+
+    active = await svc.list_all(status="active")
+    assert {t["id"] for t in active} == {a.id}
+    completed = await svc.list_all(status="completed")
+    assert {t["id"] for t in completed} == {done.id}
+
+
+def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+    import agclaw.gateway.core as core_mod
+    from agclaw.config import Config
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
+    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    with TestClient(app) as client:
+        svc = app.state.tasks
+
+        async def _seed():
+            return (await svc.store.create("t1")).id
+
+        tid = asyncio.get_event_loop().run_until_complete(_seed())
+
+        # /api/tasks/all must not be captured as a task id
+        assert client.get("/api/tasks/all").status_code == 200
+        assert any(t["id"] == tid for t in client.get("/api/tasks/all").json()["tasks"])
+
+        assert client.post(f"/api/tasks/{tid}/archive").json() == {"ok": True, "archived": True}
+        assert all(t["id"] != tid for t in client.get("/api/tasks").json()["tasks"])  # gone from drawer
+        assert any(t["id"] == tid for t in client.get("/api/tasks/all?status=archived").json()["tasks"])
+        # unarchive
+        assert client.post(f"/api/tasks/{tid}/archive", json={"archived": False}).json()["archived"] is False
+        assert any(t["id"] == tid for t in client.get("/api/tasks").json()["tasks"])
+
+
 async def test_chat_routes_to_control_agent(tmp_path):
     """TaskService.chat builds a task-scoped agent and returns its reply; an unknown
     task returns None (→ 404 at the REST layer)."""
