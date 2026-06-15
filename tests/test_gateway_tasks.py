@@ -331,6 +331,58 @@ async def test_scheduled_runs_skip_clarification(tmp_path, monkeypatch):
     assert captured["asker"] is None
 
 
+async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
+    """Scheduling clarifies + plans NOW; firing a recurring template clones the
+    baked plan into a fresh run and EXECUTES it (no re-planning at run time)."""
+    from datetime import datetime, timedelta
+
+    from agclaw.tasks.planner import PlanDeliverable, TaskPlan
+
+    async def executor(task_id, mgr, asker):
+        pass
+
+    class _Reply:
+        def __init__(self, plan):
+            self._plan = plan
+
+        async def content(self):
+            return self._plan
+
+    class _Planner:  # returns a runnable plan with no clarifying questions
+        async def ask(self, msg, response_schema=None, **k):
+            return _Reply(TaskPlan(trivial=True, objective="Daily AI digest",
+                                   deliverables=[PlanDeliverable(description="the digest")]))
+
+    svc = _service(tmp_path, executor, planner=_Planner())
+    past = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
+    tid = await svc.schedule_task("daily ai digest", when=past, recurrence="daily")
+
+    for _ in range(400):  # wait for schedule-time planning to bake the deliverable
+        t = await svc.store.get(tid)
+        if t.deliverables:
+            break
+        await asyncio.sleep(0.01)
+    assert t.status == TaskStatus.SCHEDULED          # armed
+    assert t.objective == "Daily AI digest" and t.deliverables  # planned up front
+
+    submitted = []
+    orig = svc._manager.submit
+
+    async def spy(task_id, asker=None):
+        submitted.append(task_id)
+        return await orig(task_id, asker=asker)
+
+    svc._manager.submit = spy
+    await svc._fire(tid)
+
+    assert submitted and submitted[0] != tid          # a cloned run was executed
+    run = await svc.store.get(submitted[0])
+    assert run.objective == "Daily AI digest" and run.deliverables  # plan cloned in
+    tmpl = await svc.store.get(tid)
+    assert tmpl.status == TaskStatus.SCHEDULED        # template re-armed
+    assert datetime.fromisoformat(tmpl.scheduled_for) > datetime.now().astimezone()
+
+
 def test_schedule_rest_endpoint(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 

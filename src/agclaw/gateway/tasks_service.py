@@ -141,18 +141,76 @@ class TaskService:
     async def schedule_task(
         self, text: str, when: str, recurrence: str | None = None, channel: str = "web",
     ) -> str:
-        """Create a task that fires at `when` (ISO datetime), optionally recurring.
-        The deterministic Scheduler runs it when due."""
+        """Schedule a task for `when` (ISO datetime), optionally recurring.
+
+        Clarification + planning happen NOW (while the user is here), so the plan
+        is baked into the task; the deterministic Scheduler then just *executes*
+        that plan at each occurrence — no run-time questions."""
         from agclaw.tasks import TaskStatus
 
         task = await self._store.create(
             text, origin_channel=channel, hitl_channel=channel,
             status=TaskStatus.SCHEDULED, scheduled_for=when, recurrence=recurrence or None,
         )
+        bg = asyncio.create_task(self._plan_for_schedule(task.id, channel, when))
+        self._bg.add(bg)
+        bg.add_done_callback(self._bg.discard)
         return task.id
 
+    async def _plan_for_schedule(self, task_id: str, channel: str, when: str) -> None:
+        """Run intake (clarify + plan) up front, then re-arm the task as SCHEDULED."""
+        from agclaw.hitl import DurableAsker
+        from agclaw.tasks import TaskStatus
+        from agclaw.tasks.planner import prepare_task
+        from agclaw.tools import available_capabilities
+
+        try:
+            asker = DurableAsker(
+                _ParkingAsker(), self._inquiries, task_id=task_id, channel=channel,
+            )
+            await prepare_task(
+                self._store, task_id, self._planner_agent(),
+                asker=asker, capabilities=available_capabilities(),
+            )
+            # prepare_task leaves it PENDING (or CANCELLED if abandoned); arm it.
+            cur = await self._store.get(task_id)
+            if cur is not None and cur.status == TaskStatus.PENDING:
+                await self._store.update(
+                    task_id, status=TaskStatus.SCHEDULED, scheduled_for=when,
+                )
+        except Exception:
+            pass  # planning is best-effort; the run can still plan on fire as a fallback
+
+    async def _clone_subtree(self, src, new_parent_id: str) -> None:
+        child = await self._store.add_subtask(
+            new_parent_id, src.title, src.description, reopen_parent=False,
+            capabilities=src.capabilities, objective=src.objective,
+        )
+        for d in src.deliverables or []:
+            await self._store.add_deliverable(child.id, d.get("description", ""), d.get("criteria", ""))
+        for gc in await self._store.children(src.id):
+            await self._clone_subtree(gc, child.id)
+
+    async def _clone_for_run(self, template):
+        """A fresh, unplanned-status copy of a planned task tree (deliverables reset,
+        no assets) — one occurrence's run, with the template's baked-in plan."""
+        run = await self._store.create(
+            template.title, description=template.description,
+            objective=template.objective, capabilities=template.capabilities,
+            origin_channel=template.origin_channel, hitl_channel=template.hitl_channel,
+        )
+        for d in template.deliverables or []:
+            await self._store.add_deliverable(run.id, d.get("description", ""), d.get("criteria", ""))
+        for child in await self._store.children(template.id):
+            await self._clone_subtree(child, run.id)
+        return run
+
+    @staticmethod
+    def _is_planned(task) -> bool:
+        return bool(task.deliverables) or bool(task.plan)
+
     async def _fire(self, task_id: str) -> None:
-        """Scheduler callback: run a due task; re-arm recurring ones."""
+        """Scheduler callback: execute a due task's prepared plan; re-arm recurring."""
         from datetime import datetime
 
         from agclaw.tasks import TaskStatus
@@ -164,20 +222,22 @@ class TaskService:
         now = datetime.now().astimezone()
         channel = t.origin_channel or "web"
         if t.recurrence:
-            # spawn a fresh run for this occurrence; keep the template scheduled
-            run = await self._store.create(
-                t.title, description=t.description,
-                origin_channel=t.origin_channel, hitl_channel=t.hitl_channel,
-            )
-            self._run_in_bg(run.id, channel, clarify=False)  # unattended
+            run = await self._clone_for_run(t)
+            if self._is_planned(t):
+                await self._manager.submit(run.id, asker=_ParkingAsker())  # execute the plan
+            else:  # never planned (e.g. abandoned intake) → best-effort, no questions
+                self._run_in_bg(run.id, channel, clarify=False)
             nxt = next_occurrence(t.recurrence, t.scheduled_for, now)
             if nxt is not None:
                 await self._store.update(task_id, scheduled_for=nxt.isoformat())
-            else:  # unparseable recurrence → treat as one-shot, don't re-fire
+            else:  # unparseable recurrence → fire once
                 await self._store.set_status(task_id, TaskStatus.COMPLETED)
         else:
             await self._store.set_status(task_id, TaskStatus.PENDING)  # leave SCHEDULED
-            self._run_in_bg(task_id, channel, clarify=False)  # unattended
+            if self._is_planned(t):
+                await self._manager.submit(task_id, asker=_ParkingAsker())
+            else:
+                self._run_in_bg(task_id, channel, clarify=False)
 
     # status groupings used by the listing filters
     _ACTIVE = {"pending", "scheduled", "awaiting_input", "planning", "running"}
