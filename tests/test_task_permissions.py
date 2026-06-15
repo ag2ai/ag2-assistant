@@ -32,6 +32,29 @@ async def test_runner_passes_asker_to_executor(tmp_path):
     assert seen["asker"] is sentinel
 
 
+async def test_subtask_hitl_bubbles_to_task_asker(tmp_path):
+    """A subtask's executor receives the SAME asker as the root, so a sub-agent's
+    clarification/confirmation bubbles up to the channel that triggered the task
+    (#12) — nothing is swallowed at the sub-agent level."""
+    store = _store(tmp_path)
+    parent = await store.create("parent")
+    child = await store.add_subtask(parent.id, "child", reopen_parent=False)
+    await store.add_deliverable(child.id, "child output")
+    seen: list[tuple[str, object]] = []
+
+    async def executor(task_id, mgr, asker):
+        seen.append((task_id, asker))
+
+    mgr = TaskManager(store, executor)
+    sentinel = object()
+    await mgr.submit(parent.id, asker=sentinel)
+    await mgr.wait(parent.id)
+
+    child_askers = [a for (tid, a) in seen if tid == child.id]
+    assert child_askers, "the subtask's executor never ran"
+    assert all(a is sentinel for a in child_askers)  # same asker → bubbles to user
+
+
 async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
     """The real executor builds its agent with the task's asker, so the agent's
     PermissionManager/HITL are bound to the triggering surface (no extra access)."""
@@ -75,6 +98,56 @@ async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
 
     assert captured["asker"] is asker  # agent built with the task's asker
     assert (await store.get(t.id)).status == TaskStatus.COMPLETED
+
+
+async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
+    """A subtask's prompt carries the parent's objective + the user's clarifications,
+    so a leaf doesn't work blind (e.g. it knows the trip is to Lisbon)."""
+    prompts: list[str] = []
+
+    class _Reply:
+        body = "done"
+
+    class _Agent:
+        async def ask(self, built_prompt, *a, **k):
+            prompts.append(built_prompt)
+            return _Reply()
+
+    def fake_create_agent(config, **k):
+        return _Agent()
+
+    import agclaw.agent as agent_mod
+    import agclaw.tasks.executor as exec_mod
+
+    monkeypatch.setattr(agent_mod, "create_agent", fake_create_agent)
+    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
+    from agclaw.tasks.executor import _Verdict
+
+    async def _ok(config, deliverable, output):
+        return _Verdict(satisfied=True, reason="ok")
+
+    monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
+
+    from agclaw.config import Config
+
+    store = _store(tmp_path)
+    parent = await store.create("trip prep")
+    await store.update(
+        parent.id, objective="Prepare a Lisbon travel guide",
+        intake={"Where are you going?": "Lisbon"},
+    )
+    child = await store.add_subtask(parent.id, "Research the weather", reopen_parent=False)
+    await store.add_deliverable(child.id, "packing checklist")
+
+    mgr = TaskManager(store, make_task_executor(Config()))
+    await mgr.submit(parent.id, asker=object())
+    await mgr.wait(parent.id)
+
+    child_prompts = [p for p in prompts if "Research the weather" in p or "packing checklist" in p]
+    assert child_prompts, "subtask executor never produced a prompt"
+    blob = "\n".join(child_prompts)
+    assert "Lisbon" in blob  # parent objective + clarification reached the subtask
+    assert "Where are you going?" in blob
 
 
 async def test_no_asker_means_no_extra_access():

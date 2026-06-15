@@ -141,11 +141,23 @@ def _request_with_answers(request: str, answers: dict) -> str:
     return f"{request}\n\nClarifications the user provided:\n{qa}"
 
 
+# Cap on clarification rounds: a hopelessly vague request can't loop forever.
+# After this many rounds we proceed with whatever was gathered (best effort).
+_MAX_INTAKE_ROUNDS = 4
+
+
 async def prepare_task(
     store: TaskStore, task_id: str, agent, asker=None,
     capabilities: list[str] | None = None,
 ) -> None:
-    """Full intake: plan → (clarify via HITL if non-trivial) → objective+deliverables+subtasks.
+    """Full intake: plan → (iteratively clarify via HITL) → objective+deliverables+subtasks.
+
+    Clarification is a LOOP, not a single pass: while the agent's plan still has
+    open questions, we keep asking the user and re-planning with the *accumulated*
+    answers — so a vague request ("help me get ready for my trip") drives several
+    rounds of back-and-forth before any work starts. The loop ends when the plan
+    converges (no more questions / trivial), the user abandons it (stops
+    answering → task CANCELLED), or we hit `_MAX_INTAKE_ROUNDS`.
 
     `capabilities` optionally restricts the tool groups the planner may assign
     (e.g. to exclude 'gmail'). Leaves the task PENDING, ready for the runner.
@@ -156,12 +168,32 @@ async def prepare_task(
     request = task.description or task.title
 
     plan = await make_plan(agent, request, capabilities)
-    if not plan.trivial and plan.questions and asker is not None:
+
+    answers: dict = {}
+    rounds = 0
+    while (
+        asker is not None
+        and not plan.trivial
+        and plan.questions
+        and rounds < _MAX_INTAKE_ROUNDS
+    ):
         await store.set_status(task_id, TaskStatus.AWAITING_INPUT)
-        answers = await run_intake(store, task_id, plan, asker)
-        if answers:
-            # re-plan with the clarifications so deliverables/subtasks reflect them
-            plan = await make_plan(agent, _request_with_answers(request, answers), capabilities)
+        new = await run_intake(store, task_id, plan, asker)
+        rounds += 1
+        if not new:
+            # the user gave no answers this whole round → treat as abandonment
+            await store.set_status(
+                task_id, TaskStatus.CANCELLED,
+                error="abandoned during clarification (no answers given)",
+            )
+            return
+        answers.update(new)
+        await store.update(task_id, intake=dict(answers))
+        # re-plan with everything gathered so far; this may surface FEWER
+        # questions (converging) or new ones if the answers opened up scope.
+        plan = await make_plan(
+            agent, _request_with_answers(request, answers), capabilities
+        )
 
     await store.set_status(task_id, TaskStatus.PLANNING)
     await apply_plan(store, task_id, plan)

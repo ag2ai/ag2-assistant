@@ -3,11 +3,16 @@
 For each pending deliverable the executor runs the agent to produce it, then a
 **verifier** (a cheaper model) checks the output against the deliverable's
 acceptance criteria. Only verified output is marked PRODUCED; output that merely
-describes what could be done, asks the user a question, or admits it couldn't is
-REJECTED (with a reason) so the runner reworks or fails — never a false "done".
+describes what could be done, hands back a plan/menu instead of the finished
+work, or admits it couldn't is REJECTED (with a reason) so the runner reworks or
+fails — never a false "done". (Asking the user for clarification is encouraged,
+not penalised: it happens mid-turn via HITL, so the final output is still the
+real deliverable.)
 
 The agent is bound to the task's asker, so tools, permissions, and HITL behave
-exactly as in a normal turn (no extra access).
+exactly as in a normal turn — and because every subtask in the tree gets that
+SAME asker, a sub-agent's clarification/confirmation bubbles all the way up to
+the channel that triggered the task (no extra access, nothing swallowed).
 """
 
 from pydantic import BaseModel
@@ -37,10 +42,12 @@ async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdi
         f"DELIVERABLE: {deliverable['description']}\n"
         f"ACCEPTANCE CRITERIA: {deliverable.get('criteria') or '(none given)'}\n\n"
         f"PRODUCED OUTPUT:\n{output[:_MAX_VERIFY_CHARS]}\n\n"
-        "Be strict. satisfied=false if the output only describes what COULD be done, "
-        "asks the user a question, offers options instead of doing it, or says it "
-        "couldn't complete the work. satisfied=true only if the actual deliverable "
-        "content is present and meets the criteria."
+        "Be strict, but judge only whether the finished deliverable content is "
+        "present and meets the criteria. satisfied=false if the output merely "
+        "describes what COULD be done, hands back a plan or a menu of options "
+        "instead of the finished work, or says it couldn't complete it. "
+        "satisfied=true if the actual deliverable content is present and meets the "
+        "criteria — even if it also notes caveats or open questions alongside it."
     )
     try:
         reply = await verifier.ask(prompt, response_schema=_Verdict)
@@ -95,6 +102,27 @@ def make_task_executor(config, skills: bool = True):
             for d in pending
         )
         objective = task.objective or task.title
+
+        # A subtask inherits its parent's framing — the overall objective and the
+        # user's clarifications — so it doesn't work blind. Without this a leaf
+        # like "research the weather" has no idea the trip is to Lisbon and
+        # defaults to the user's home location.
+        parent_context = ""
+        if task.parent_id:
+            parent = await store.get(task.parent_id)
+            if parent is not None:
+                bits = []
+                if parent.objective:
+                    bits.append(f"Overall objective: {parent.objective}")
+                if parent.intake:
+                    qa = "\n".join(f"- {q} → {a}" for q, a in parent.intake.items())
+                    bits.append(f"What the user clarified:\n{qa}")
+                if bits:
+                    parent_context = (
+                        "\n\nThis is one subtask of a larger task — use this shared "
+                        "context (don't ignore it):\n" + "\n".join(bits)
+                    )
+
         done_kids = [c for c in await store.children(task_id) if c.status == "completed"]
         context = ""
         if done_kids:
@@ -109,9 +137,15 @@ def make_task_executor(config, skills: bool = True):
                 context = "\n\nResults from completed subtasks:\n" + "\n\n".join(parts)
 
         prompt = (
-            f"You are completing a task. Actually DO the work with your tools and "
-            f"produce the deliverable content itself (do not just describe a plan or "
-            f"ask which option to take).\n\nObjective: {objective}{context}\n\n"
+            f"You are completing a task. Produce the actual deliverable content "
+            f"with your tools — the finished output itself, not just a description "
+            f"of how you would do it.\n"
+            f"Involve the user as much as you need for clarity. Whenever you need "
+            f"information only they have, or confirmation before a risky, "
+            f"irreversible, or access-gated action, ASK them and then continue with "
+            f"their answer — asking for clarification or confirmation is always "
+            f"welcome and better than guessing.\n\n"
+            f"Objective: {objective}{parent_context}{context}\n\n"
             f"Deliverable(s) to produce now:\n{wanted}"
         )
 

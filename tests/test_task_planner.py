@@ -122,6 +122,67 @@ async def test_prepare_nontrivial_task_clarifies_then_replans(tmp_path):
     assert got.status == TaskStatus.PENDING
 
 
+async def test_prepare_iterates_clarification_until_plan_converges(tmp_path):
+    """A vague request drives MULTIPLE rounds of HITL — keep asking and re-planning
+    until the plan has no more open questions (involve the user as much as needed)."""
+    store = _store(tmp_path)
+    t = await store.create("Help me get ready for my trip.")
+    plan1 = TaskPlan(trivial=False, objective="provisional",
+                     questions=[ClarifyQuestion(text="Where are you going?")])
+    plan2 = TaskPlan(trivial=False, objective="provisional",
+                     questions=[ClarifyQuestion(text="When, and for how long?")])
+    plan3 = TaskPlan(  # converged — no more questions
+        trivial=False, objective="Trip-prep checklist for Lisbon",
+        deliverables=[PlanDeliverable(description="packing + prep checklist")],
+        subtasks=[PlanSubtask(title="Lisbon weather + essentials")],
+    )
+    agent = _FakeAgent([plan1, plan2, plan3])
+    asker = _FakeAsker(["Lisbon", "Next week, 5 days"])
+    await prepare_task(store, t.id, agent, asker)
+    got = await store.get(t.id)
+    assert agent.asks == 3  # plan, replan, replan — three rounds
+    assert len(asker.asked) == 2  # asked across two clarification rounds
+    assert got.intake == {"Where are you going?": "Lisbon",
+                          "When, and for how long?": "Next week, 5 days"}
+    assert got.status == TaskStatus.PENDING
+    assert got.objective == "Trip-prep checklist for Lisbon"
+
+
+async def test_prepare_abandons_when_user_stops_answering(tmp_path):
+    """If the user gives no answers to a clarification round, the task is abandoned
+    (CANCELLED) rather than proceeding on guesses."""
+    store = _store(tmp_path)
+    t = await store.create("Help me get ready for my trip.")
+    plan = TaskPlan(trivial=False, objective="provisional",
+                    questions=[ClarifyQuestion(text="Where are you going?")])
+    agent = _FakeAgent([plan])
+    asker = _FakeAsker([""])  # user declines to answer
+    await prepare_task(store, t.id, agent, asker)
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.CANCELLED
+    assert agent.asks == 1  # no re-plan after abandonment
+
+
+async def test_prepare_caps_clarification_rounds(tmp_path):
+    """A request that never stops generating questions still terminates: after the
+    round cap we proceed with what we have rather than looping forever."""
+    from agclaw.tasks.planner import _MAX_INTAKE_ROUNDS
+
+    store = _store(tmp_path)
+    t = await store.create("vague forever")
+    plans = [  # every plan returns a fresh question
+        TaskPlan(trivial=False, objective="p",
+                 questions=[ClarifyQuestion(text=f"q{i}?")])
+        for i in range(_MAX_INTAKE_ROUNDS + 2)
+    ]
+    agent = _FakeAgent(plans)
+    asker = _FakeAsker([f"a{i}" for i in range(_MAX_INTAKE_ROUNDS + 2)])
+    await prepare_task(store, t.id, agent, asker)
+    got = await store.get(t.id)
+    assert len(asker.asked) == _MAX_INTAKE_ROUNDS  # asked exactly the cap, then stopped
+    assert got.status == TaskStatus.PENDING
+
+
 @pytest.mark.integration
 async def test_make_plan_real_llm(tmp_path):
     from agclaw.agent import create_agent
