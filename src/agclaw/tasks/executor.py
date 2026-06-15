@@ -123,18 +123,30 @@ def make_task_executor(config, skills: bool = True):
                         "context (don't ignore it):\n" + "\n".join(bits)
                     )
 
-        done_kids = [c for c in await store.children(task_id) if c.status == "completed"]
+        kids = await store.children(task_id)
+        done_kids = [c for c in kids if c.status == "completed"]
+        failed_kids = [c for c in kids if c.is_terminal and c.status != "completed"]
         context = ""
-        if done_kids:
-            # let a parent synthesise from its finished subtasks' outputs
-            parts = []
-            for c in done_kids:
-                for d in c.deliverables:
-                    a = (d.get("asset") or {}).get("content")
-                    if a:
-                        parts.append(f"### {c.title}\n{a[:_MAX_CHILD_CONTEXT]}")
-            if parts:
-                context = "\n\nResults from completed subtasks:\n" + "\n\n".join(parts)
+        # let a parent synthesise from its finished subtasks' outputs
+        parts = []
+        for c in done_kids:
+            for d in c.deliverables:
+                a = (d.get("asset") or {}).get("content")
+                if a:
+                    parts.append(f"### {c.title}\n{a[:_MAX_CHILD_CONTEXT]}")
+        if parts:
+            context = "\n\nResults from completed subtasks:\n" + "\n\n".join(parts)
+        if failed_kids:
+            # resilience: tell the parent which legs couldn't be done so it works
+            # around the gap and reports it honestly instead of inventing data.
+            gaps = "\n".join(
+                f"- {c.title}: {c.error or 'could not be completed'}" for c in failed_kids
+            )
+            context += (
+                "\n\nSome subtasks could NOT be completed. Work around these gaps "
+                "and state them honestly in your output — do not fabricate the "
+                "missing information:\n" + gaps
+            )
 
         prompt = (
             f"You are completing a task. Produce the actual deliverable content "

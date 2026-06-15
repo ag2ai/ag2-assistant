@@ -222,9 +222,12 @@ async def test_cancel_subtask_fails_parent(tmp_path):
 # --- failure modes ---
 
 
-async def test_failed_subtask_fails_parent(tmp_path):
+async def test_failed_subtask_fails_orchestrator_parent(tmp_path):
+    """A pure orchestrator (root with no deliverable of its own) fails when its
+    only subtask fails — it has nothing else to be judged by. (A parent WITH its
+    own deliverable stays resilient; see test_task_runner.)"""
     store = _store(tmp_path)
-    root = await store.create("root")
+    root = await store.create("root")  # no own deliverable
     a = await store.create("a", parent_id=root.id)
 
     async def boom(task_id, mgr, asker):
@@ -235,7 +238,7 @@ async def test_failed_subtask_fails_parent(tmp_path):
     await mgr.wait(root.id)
     assert (await store.get(a.id)).status == TaskStatus.FAILED
     assert (await store.get(root.id)).status == TaskStatus.FAILED
-    assert "subtask failed" in (await store.get(root.id)).error
+    assert "incomplete" in (await store.get(root.id)).error
 
 
 async def test_unmet_deliverable_fails_after_attempt_limit(tmp_path):

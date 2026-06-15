@@ -67,16 +67,17 @@ class TaskManager:
                 children = await self.store.children(task_id)
                 pending_children = [c for c in children if not c.is_terminal]
                 if pending_children:
+                    # Run subtasks in parallel. A subtask that FAILS does NOT
+                    # abort the parent: its failure is fed to the parent as
+                    # context (see executor) and the parent's own deliverable
+                    # verification decides the outcome — so a useful result that
+                    # works around the gap still completes. (A pure orchestrator
+                    # with no deliverables of its own still fails if a subtask
+                    # did — see TaskStore.is_complete.)
                     await asyncio.gather(
                         *[self._run_subtree(c.id, asker) for c in pending_children]
                     )
-                    children = await self.store.children(task_id)
-                    if any(c.status == TaskStatus.FAILED for c in children):
-                        await self.store.set_status(
-                            task_id, TaskStatus.FAILED, error="a subtask failed"
-                        )
-                        return
-                    continue  # loop: new children may have appeared
+                    continue  # re-evaluate: new children may have appeared (amendments)
 
                 # 2) No pending subtasks → do this task's own work toward its
                 #    deliverables (the leaf, or a parent's synthesis step).

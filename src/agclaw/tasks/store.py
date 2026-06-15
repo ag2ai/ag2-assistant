@@ -268,17 +268,27 @@ class TaskStore:
         return task
 
     async def is_complete(self, task_id: str) -> bool:
-        """A task is complete only when all its deliverables are satisfied AND
-        every descendant subtask is itself completed. This is the objective check
-        the runner uses to decide 'done' — not just the agent stopping."""
+        """A task is complete when its own deliverables are satisfied AND no
+        descendant is still in flight (every subtask has reached a terminal
+        state). A subtask that FAILED is terminal and accounted for — the parent
+        stays resilient: its own deliverable verification, fed the gap as
+        context, is the arbiter of whether the overall task succeeded.
+
+        Exception: a task with NO deliverables of its own (a pure orchestrator)
+        has nothing else to be judged by, so it succeeds only if every subtask
+        did. This is the objective 'done' check the runner uses — not just the
+        agent stopping."""
         task = await self.get(task_id)
         if task is None:
             return False
         if not task.deliverables_satisfied():
             return False
+        has_own = bool(task.deliverables)
         for d in await self.descendants(task_id):
-            if d.status != TaskStatus.COMPLETED:
-                return False
+            if not d.is_terminal:
+                return False  # still running → not done
+            if not has_own and d.status != TaskStatus.COMPLETED:
+                return False  # orchestrator with nothing of its own → needs subtasks to pass
         return True
 
     async def add_progress(self, task_id: str, message: str, pct: int | None = None) -> None:
