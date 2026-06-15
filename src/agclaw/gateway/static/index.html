@@ -217,6 +217,17 @@
   .empty { color: var(--muted); text-align: center; margin: 18vh auto 0; font-size: 15px; }
   .empty h1 { font-family: var(--serif); font-weight: 600; color: var(--ink); font-size: 28px; margin: 0 0 8px; }
 
+  /* task view (takes over the main pane) */
+  .taskview { max-width: 760px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  .tvhead { display: flex; align-items: center; gap: 10px; }
+  .tvhead .back { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 7px 12px; font-family: var(--sans); font-weight: 600; font-size: 13px; cursor: pointer; }
+  .tvhead .back:hover { border-color: var(--ink); }
+  .tvhead .tvtitle { font-family: var(--serif); font-size: 20px; flex: 1; }
+  .tvtree { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 13px; background: var(--panel); }
+  .tvtree .obj { color: var(--muted); margin-bottom: 8px; }
+  .tvhint { color: var(--muted); font-size: 13px; text-align: center; padding: 4px; }
+  .tvchat { display: flex; flex-direction: column; gap: 14px; }
+
   /* tasks drawer (right) */
   #tdrawer {
     position: fixed; top: 0; right: 0; bottom: 0; width: 400px; max-width: 90vw; z-index: 10;
@@ -391,6 +402,7 @@
     } catch { /* offline — leave list as-is */ }
   }
   async function switchSession(id) {
+    leaveTaskMode();
     sessionId = id; localStorage.setItem("agclaw_session", id);
     await loadTranscript(id);
   }
@@ -429,7 +441,6 @@
   const tbody = document.getElementById("tbody");
   const tinput = document.getElementById("tinput");
   let tpoll = null;
-  const expanded = new Set();
 
   function openTasks(o) {
     tdrawer.classList.toggle("open", o); backdrop.classList.toggle("open", o);
@@ -458,7 +469,7 @@
     // poll would churn the list and steal clicks on inquiry option buttons.
     const sig = JSON.stringify(tasks.map(t => [
       t.id, t.status, t.deliverables_done, t.deliverables, t.children,
-      t.last_progress, (t.inquiries || []).map(q => q.id), expanded.has(t.id),
+      t.last_progress, (t.inquiries || []).map(q => q.id),
     ]));
     if (sig === lastSig) return;
     lastSig = sig;
@@ -513,24 +524,70 @@
       c.appendChild(h);
       inqs.forEach(p => c.appendChild(inquiryCard(p)));
     }
-    th.onclick = () => { expanded.has(t.id) ? expanded.delete(t.id) : expanded.add(t.id); renderDetail(c, t); };
-    if (expanded.has(t.id)) renderDetail(c, t);
+    th.onclick = () => openTaskView(t.id);  // clicking a task opens its full view
     return c;
   }
-  async function renderDetail(card, t) {
-    let d = card.querySelector(".detail"); if (d) d.remove();
-    if (!expanded.has(t.id)) return;
-    d = document.createElement("div"); d.className = "detail"; d.textContent = "Loading…"; card.appendChild(d);
-    let full; try { full = (await (await fetch("/api/tasks/" + t.id)).json()).task; } catch { d.textContent = "(unavailable)"; return; }
-    if (!full) { d.textContent = "(unavailable)"; return; }
-    d.innerHTML = "";
-    if (full.objective) { const o = document.createElement("div"); o.className = "obj"; o.textContent = full.objective; d.appendChild(o); }
-    d.appendChild(nodeView(full));
+  // --- task view (takes over the main pane): tree + a task-scoped chat ---
+  let taskMode = null, taskPoll = null, taskTreeEl = null, taskChatEl = null, taskTitleEl = null;
+
+  function leaveTaskMode() {
+    taskMode = null; taskTreeEl = taskChatEl = taskTitleEl = null;
+    if (taskPoll) { clearInterval(taskPoll); taskPoll = null; }
+    input.placeholder = "Message AGClaw…"; input.disabled = false; sendBtn.disabled = false;
+  }
+  function exitTaskView() { leaveTaskMode(); loadTranscript(sessionId); }
+
+  async function openTaskView(id) {
+    openTasks(false); openDrawer(false); closeViewer();
+    taskMode = id;
+    wrap.innerHTML = "";
+    const view = document.createElement("div"); view.className = "taskview";
+    const head = document.createElement("div"); head.className = "tvhead";
+    const back = document.createElement("button"); back.className = "back"; back.textContent = "← Chat"; back.onclick = exitTaskView;
+    taskTitleEl = document.createElement("span"); taskTitleEl.className = "tvtitle"; taskTitleEl.textContent = "Task";
+    head.appendChild(back); head.appendChild(taskTitleEl); view.appendChild(head);
+    taskTreeEl = document.createElement("div"); taskTreeEl.className = "tvtree"; taskTreeEl.textContent = "Loading…"; view.appendChild(taskTreeEl);
+    const hint = document.createElement("div"); hint.className = "tvhint";
+    hint.textContent = "Ask below to change this task — add or cancel subtasks, tweak the objective, or cancel it.";
+    view.appendChild(hint);
+    taskChatEl = document.createElement("div"); taskChatEl.className = "tvchat"; view.appendChild(taskChatEl);
+    wrap.appendChild(view);
+    input.placeholder = "Tell the agent to change this task…"; input.focus();
+    await refreshTaskTree();
+    taskPoll = setInterval(refreshTaskTree, 3000);
+  }
+  async function refreshTaskTree() {
+    if (!taskMode || !taskTreeEl) return;
+    let full; try { full = (await (await fetch("/api/tasks/" + taskMode)).json()).task; } catch { return; }
+    if (!full) { taskTreeEl.textContent = "(task unavailable)"; return; }
+    if (taskTitleEl) { taskTitleEl.textContent = full.title + " "; taskTitleEl.appendChild(badge(full.status)); }
+    taskTreeEl.innerHTML = "";
+    if (full.objective) { const o = document.createElement("div"); o.className = "obj"; o.textContent = full.objective; taskTreeEl.appendChild(o); }
+    taskTreeEl.appendChild(nodeView(full));
     if (["pending", "scheduled", "awaiting_input", "planning", "running"].includes(full.status)) {
       const cb = document.createElement("button"); cb.className = "cancelbtn"; cb.textContent = "Cancel task";
-      cb.onclick = async () => { await fetch("/api/tasks/" + t.id + "/cancel", { method: "POST" }); loadTasks(); };
-      d.appendChild(cb);
+      cb.onclick = async () => { await fetch("/api/tasks/" + taskMode + "/cancel", { method: "POST" }); refreshTaskTree(); };
+      taskTreeEl.appendChild(cb);
     }
+  }
+  function addTaskMsg(role, text) {
+    if (!taskChatEl) return;
+    const m = document.createElement("div"); m.className = "msg " + role;
+    const b = document.createElement("div"); b.className = "bubble";
+    if (role === "user") b.textContent = text || ""; else renderMarkdown(b, text);
+    m.appendChild(b); taskChatEl.appendChild(m); scroll();
+  }
+  async function taskChat(text) {
+    addTaskMsg("user", text);
+    input.disabled = true; sendBtn.disabled = true;
+    try {
+      const r = await (await fetch("/api/tasks/" + taskMode + "/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+      })).json();
+      addTaskMsg("agent", r.reply || "(no reply)");
+    } catch { addTaskMsg("error", "⚠ Couldn't reach the task."); }
+    input.disabled = false; sendBtn.disabled = false; input.focus();
+    refreshTaskTree();
   }
   function nodeView(n) {
     const w = document.createElement("div");
@@ -756,6 +813,10 @@
   }
 
   function sendMessage() {
+    if (taskMode) {  // in the task view, the composer talks to the task controller
+      const t = input.value.trim(); if (!t) return;
+      input.value = ""; input.style.height = "auto"; taskChat(t); return;
+    }
     if (busy) { send({ type: "cancel", session_id: sessionId }); return; }  // Stop
     const text = input.value.trim();
     if (!text && !pending.length) return;
@@ -770,6 +831,7 @@
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
   input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
   document.getElementById("new").onclick = () => {
+    leaveTaskMode();
     sessionId = "web-" + Math.random().toString(36).slice(2, 10);
     localStorage.setItem("agclaw_session", sessionId);
     pending = []; renderChips();
