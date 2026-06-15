@@ -217,7 +217,11 @@ class Gateway:
         """Per-turn hitl_hook + dependencies bound to this request's asker."""
         from agclaw.permissions import PermissionManager
 
-        deps: dict = {PermissionManager: PermissionManager(self._permissions, asker)}
+        deps: dict = {
+            PermissionManager: PermissionManager(
+                self._permissions, asker, sandbox=self._config.tools.sandbox
+            )
+        }
         out: dict = {"dependencies": deps}
         if asker is not None:
             from agclaw.hitl import build_hitl_hook

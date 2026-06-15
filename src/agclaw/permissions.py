@@ -12,6 +12,7 @@ from agclaw.hitl.base import Asker, Question
 
 ALLOW_ONCE = "Allow once"
 ALWAYS_ALLOW = "Always allow this folder"
+ALWAYS_ALLOW_CMD = "Always allow this command"  # shell/code aren't folder-scoped
 DENY = "Deny"
 
 
@@ -111,10 +112,12 @@ class PermissionManager:
     """
 
     def __init__(
-        self, store: PermissionStore | None = None, asker: Asker | None = None
+        self, store: PermissionStore | None = None, asker: Asker | None = None,
+        sandbox: str = "local",
     ) -> None:
         self.store = store or PermissionStore()
         self.asker = asker
+        self.sandbox = sandbox  # "local" (host) or "docker" (isolated) — shown in prompts
         self._denied_folders: set[str] = set()
         self._cmd_allowed: set[str] = set()
         self._cmd_denied: set[str] = set()
@@ -169,16 +172,20 @@ class PermissionManager:
         detail = str(arguments)
         if len(detail) > 800:
             detail = detail[:800] + " …"
+        if self.sandbox == "docker":
+            where = "in an isolated Docker sandbox (no access to your files)"
+        else:
+            where = "on your computer — NOT sandboxed (it can touch your files)"
         answer = await self.asker.ask(
             Question(
-                text=f"Allow AGClaw to run {tool_name}?",
+                text=f"Allow AGClaw to run {tool_name} {where}?",
                 detail=detail,
-                options=[ALLOW_ONCE, ALWAYS_ALLOW, DENY],
+                options=[ALLOW_ONCE, ALWAYS_ALLOW_CMD, DENY],
                 kind="permission",
             )
         )
 
-        if answer == ALWAYS_ALLOW:
+        if answer == ALWAYS_ALLOW_CMD:
             self._cmd_allowed.add(tool_name)
             return True
         if answer == ALLOW_ONCE:

@@ -232,8 +232,11 @@ def create_agent(
 
     from agclaw.permissions import PermissionManager
 
-    # One injected authority for all permission decisions.
-    dependencies: dict = {PermissionManager: PermissionManager(asker=asker)}
+    # One injected authority for all permission decisions (knows the sandbox mode
+    # so prompts can say where a command actually runs — host vs container).
+    dependencies: dict = {
+        PermissionManager: PermissionManager(asker=asker, sandbox=config.tools.sandbox)
+    }
 
     hitl_hook = None
     if asker is not None:

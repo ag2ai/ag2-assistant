@@ -3,6 +3,7 @@
 from agclaw.permissions import (
     ALLOW_ONCE,
     ALWAYS_ALLOW,
+    ALWAYS_ALLOW_CMD,
     DENY,
     PermissionManager,
     PermissionStore,
@@ -164,11 +165,48 @@ async def test_command_approval_allow_and_deny(tmp_path):
 
 
 async def test_command_always_allow_is_turn_sticky(tmp_path):
-    asker = FakeAsker(ALWAYS_ALLOW)
+    asker = FakeAsker(ALWAYS_ALLOW_CMD)
     mgr = PermissionManager(PermissionStore(path=tmp_path / "p.json"), asker)
     assert await mgr.check_command("run_code", "print(1)") is True
     assert await mgr.check_command("run_code", "print(2)") is True
     assert asker.asked == 1  # always-allow remembered for the turn
+
+
+async def test_command_prompt_offers_command_label_not_folder(tmp_path):
+    """The shell/code prompt offers 'this command', not the folder option (#bug)."""
+    from agclaw.hitl.base import Question
+
+    seen = {}
+
+    class _CapturingAsker:
+        async def ask(self, q: Question, timeout=None):
+            seen["options"] = q.options
+            return ALLOW_ONCE
+
+    mgr = PermissionManager(PermissionStore(path=tmp_path / "p.json"), _CapturingAsker())
+    await mgr.check_command("run_code", "print(1)")
+    assert ALWAYS_ALLOW_CMD in seen["options"]
+    assert ALWAYS_ALLOW not in seen["options"]  # no folder wording for code/shell
+
+
+async def test_command_prompt_states_where_it_runs(tmp_path):
+    """The prompt tells the user whether a command runs on the host or sandboxed."""
+    from agclaw.hitl.base import Question
+
+    seen = {}
+
+    class _Cap:
+        async def ask(self, q: Question, timeout=None):
+            seen["text"] = q.text
+            return DENY
+
+    local = PermissionManager(PermissionStore(path=tmp_path / "a.json"), _Cap(), sandbox="local")
+    await local.check_command("run_code", "pip install yfinance")
+    assert "computer" in seen["text"].lower()  # clearly the host machine
+
+    docker = PermissionManager(PermissionStore(path=tmp_path / "b.json"), _Cap(), sandbox="docker")
+    await docker.check_command("run_code", "pip install yfinance")
+    assert "sandbox" in seen["text"].lower()  # clearly isolated
 
 
 async def test_turn_deny_stops_asking_across_tools(tmp_path):
