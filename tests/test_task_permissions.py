@@ -150,6 +150,47 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
     assert "Where are you going?" in blob
 
 
+async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
+    """Content supplied IN the request (e.g. 'summarise THIS text: …') survives to
+    the executor prompt — the objective is only a paraphrase and would lose it."""
+    prompts: list[str] = []
+
+    class _Reply:
+        body = "done"
+
+    class _Agent:
+        async def ask(self, built_prompt, *a, **k):
+            prompts.append(built_prompt)
+            return _Reply()
+
+    import agclaw.agent as agent_mod
+    import agclaw.tasks.executor as exec_mod
+
+    monkeypatch.setattr(agent_mod, "create_agent", lambda config, **k: _Agent())
+    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
+    from agclaw.tasks.executor import _Verdict
+
+    async def _ok(config, deliverable, output):
+        return _Verdict(satisfied=True, reason="ok")
+
+    monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
+
+    from agclaw.config import Config
+
+    store = _store(tmp_path)
+    secret = "The mitochondrion is the powerhouse of the cell."
+    t = await store.create(f"Summarise this in two sentences: '{secret}'")
+    # objective deliberately paraphrases away the actual text
+    await store.update(t.id, objective="A two-sentence summary of the provided text.")
+    await store.add_deliverable(t.id, "the summary")
+
+    mgr = TaskManager(store, make_task_executor(Config()))
+    await mgr.submit(t.id, asker=object())
+    await mgr.wait(t.id)
+
+    assert prompts and secret in prompts[0]  # the text to summarise reached the agent
+
+
 async def test_no_asker_means_no_extra_access():
     """A task with no asker (e.g. unattended/scheduled) can't get permission for
     gated resources — the PermissionManager denies when there's no one to ask."""

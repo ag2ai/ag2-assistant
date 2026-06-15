@@ -102,6 +102,10 @@ def make_task_executor(config, skills: bool = True):
             for d in pending
         )
         objective = task.objective or task.title
+        # The original request — the objective is a paraphrase, so any content the
+        # user supplied IN the request ("summarise THIS text: …", "analyse THIS
+        # data: …") only survives here. Always carry it through verbatim.
+        request = (task.description or task.title or "").strip()
 
         # A subtask inherits its parent's framing — the overall objective and the
         # user's clarifications — so it doesn't work blind. Without this a leaf
@@ -157,6 +161,7 @@ def make_task_executor(config, skills: bool = True):
             f"irreversible, or access-gated action, ASK them and then continue with "
             f"their answer — asking for clarification or confirmation is always "
             f"welcome and better than guessing.\n\n"
+            f"Original request: {request}\n\n"
             f"Objective: {objective}{parent_context}{context}\n\n"
             f"Deliverable(s) to produce now:\n{wanted}"
         )
