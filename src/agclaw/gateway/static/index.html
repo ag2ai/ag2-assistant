@@ -432,7 +432,12 @@
     renderMarkdown(document.getElementById("vbody"), text || "");
     viewer.classList.add("open"); backdrop.classList.add("open");
   }
-  function closeViewer() { viewer.classList.remove("open"); }
+  function closeViewer() {
+    viewer.classList.remove("open");
+    // drop the dim backdrop unless a drawer / modal still needs it
+    if (!drawer.classList.contains("open") && !tdrawer.classList.contains("open")
+        && !gmodal.classList.contains("open")) backdrop.classList.remove("open");
+  }
   document.getElementById("vclose").onclick = closeViewer;
 
   // --- tasks drawer (right): list, detail, cancel, durable HITL inquiries ---
@@ -528,7 +533,7 @@
     return c;
   }
   // --- task view (takes over the main pane): tree + a task-scoped chat ---
-  let taskMode = null, taskPoll = null, taskTreeEl = null, taskChatEl = null, taskTitleEl = null;
+  let taskMode = null, taskPoll = null, taskTreeEl = null, taskChatEl = null, taskTitleEl = null, lastTreeSig = "";
 
   function leaveTaskMode() {
     taskMode = null; taskTreeEl = taskChatEl = taskTitleEl = null;
@@ -539,7 +544,7 @@
 
   async function openTaskView(id) {
     openTasks(false); openDrawer(false); closeViewer();
-    taskMode = id;
+    taskMode = id; lastTreeSig = "";
     wrap.innerHTML = "";
     const view = document.createElement("div"); view.className = "taskview";
     const head = document.createElement("div"); head.className = "tvhead";
@@ -560,6 +565,11 @@
     if (!taskMode || !taskTreeEl) return;
     let full; try { full = (await (await fetch("/api/tasks/" + taskMode)).json()).task; } catch { return; }
     if (!full) { taskTreeEl.textContent = "(task unavailable)"; return; }
+    // only rebuild when the task actually changed, so the poll doesn't churn the
+    // tree and steal clicks on 'Open full' / cancel buttons.
+    const sig = JSON.stringify(full);
+    if (sig === lastTreeSig) return;
+    lastTreeSig = sig;
     if (taskTitleEl) { taskTitleEl.textContent = full.title + " "; taskTitleEl.appendChild(badge(full.status)); }
     taskTreeEl.innerHTML = "";
     if (full.objective) { const o = document.createElement("div"); o.className = "obj"; o.textContent = full.objective; taskTreeEl.appendChild(o); }
