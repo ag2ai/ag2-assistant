@@ -281,7 +281,7 @@ async def test_fire_one_shot_runs_the_task(tmp_path):
 
     svc = _service(tmp_path, executor)
     ran = []
-    svc._run_in_bg = lambda tid, ch: ran.append(tid)  # don't invoke the LLM planner
+    svc._run_in_bg = lambda tid, ch, clarify=True: ran.append(tid)  # don't invoke the LLM planner
     tid = await svc.schedule_task("one off", when="2020-01-01T09:00:00")
     await svc._fire(tid)
     assert ran == [tid]
@@ -296,7 +296,7 @@ async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
 
     svc = _service(tmp_path, executor)
     ran = []
-    svc._run_in_bg = lambda tid, ch: ran.append(tid)
+    svc._run_in_bg = lambda tid, ch, clarify=True: ran.append(tid)
     tid = await svc.schedule_task("daily digest", when="2020-01-01T09:00:00", recurrence="daily")
     await svc._fire(tid)
 
@@ -304,6 +304,31 @@ async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
     tmpl = await svc.store.get(tid)
     assert tmpl.status == TaskStatus.SCHEDULED  # template re-armed, still scheduled
     assert datetime.fromisoformat(tmpl.scheduled_for) > datetime.now().astimezone()
+
+
+async def test_scheduled_runs_skip_clarification(tmp_path, monkeypatch):
+    """An unattended scheduled run plans WITHOUT asking clarifying questions (no
+    one to answer), so it never gets abandoned — intake is called with asker=None."""
+    import agclaw.tasks.planner as planner_mod
+
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    captured = {}
+
+    async def fake_prepare(store, task_id, agent, asker=None, capabilities=None):
+        captured["asker"] = asker
+
+    monkeypatch.setattr(planner_mod, "prepare_task", fake_prepare)
+
+    # interactive path → a durable asker is used
+    await svc._prepare_and_run("t-i", "web", clarify=True)
+    assert captured["asker"] is not None
+
+    # scheduled/unattended path → no asker (no clarifying questions)
+    await svc._prepare_and_run("t-s", "web", clarify=False)
+    assert captured["asker"] is None
 
 
 def test_schedule_rest_endpoint(monkeypatch, tmp_path):

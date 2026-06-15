@@ -96,20 +96,27 @@ class TaskService:
             self._planner = create_agent(self._config, memory=False, skills=False)
         return self._planner
 
-    async def _prepare_and_run(self, task_id: str, channel: str) -> None:
-        """Intake (durable HITL) then hand the task to the runner."""
+    async def _prepare_and_run(self, task_id: str, channel: str, clarify: bool = True) -> None:
+        """Intake then hand the task to the runner.
+
+        `clarify=True` (interactive) asks clarifying questions via durable HITL.
+        Scheduled/unattended runs pass `clarify=False` — there's no one to answer
+        at run time, so we plan best-effort rather than abandoning the run; the
+        task still gets durable HITL for any execution-time permission prompt.
+        """
         from agclaw.hitl import DurableAsker
         from agclaw.tasks import TaskStatus
         from agclaw.tasks.planner import prepare_task
         from agclaw.tools import available_capabilities
 
         try:
-            asker = DurableAsker(
-                _ParkingAsker(), self._inquiries, task_id=task_id, channel=channel,
+            intake_asker = (
+                DurableAsker(_ParkingAsker(), self._inquiries, task_id=task_id, channel=channel)
+                if clarify else None
             )
             await prepare_task(
                 self._store, task_id, self._planner_agent(),
-                asker=asker, capabilities=available_capabilities(),
+                asker=intake_asker, capabilities=available_capabilities(),
             )
             cur = await self._store.get(task_id)
             if cur is not None and not cur.is_terminal:
@@ -120,8 +127,8 @@ class TaskService:
                 task_id, TaskStatus.FAILED, error=f"intake/submit error: {exc}"
             )
 
-    def _run_in_bg(self, task_id: str, channel: str) -> None:
-        bg = asyncio.create_task(self._prepare_and_run(task_id, channel))
+    def _run_in_bg(self, task_id: str, channel: str, clarify: bool = True) -> None:
+        bg = asyncio.create_task(self._prepare_and_run(task_id, channel, clarify))
         self._bg.add(bg)
         bg.add_done_callback(self._bg.discard)
 
@@ -162,7 +169,7 @@ class TaskService:
                 t.title, description=t.description,
                 origin_channel=t.origin_channel, hitl_channel=t.hitl_channel,
             )
-            self._run_in_bg(run.id, channel)
+            self._run_in_bg(run.id, channel, clarify=False)  # unattended
             nxt = next_occurrence(t.recurrence, t.scheduled_for, now)
             if nxt is not None:
                 await self._store.update(task_id, scheduled_for=nxt.isoformat())
@@ -170,7 +177,7 @@ class TaskService:
                 await self._store.set_status(task_id, TaskStatus.COMPLETED)
         else:
             await self._store.set_status(task_id, TaskStatus.PENDING)  # leave SCHEDULED
-            self._run_in_bg(task_id, channel)
+            self._run_in_bg(task_id, channel, clarify=False)  # unattended
 
     # status groupings used by the listing filters
     _ACTIVE = {"pending", "scheduled", "awaiting_input", "planning", "running"}
