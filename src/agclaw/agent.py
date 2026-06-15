@@ -14,7 +14,7 @@ _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
 
 # Default (cheaper) model for the passive memory-aggregation pass, per provider.
 # Used only when llm.aggregate_model isn't set. Override via AGCLAW_AGGREGATE_MODEL.
-_DEFAULT_AGGREGATE_MODEL = {"gemini": "gemini-2.5-flash-lite"}
+_DEFAULT_AGGREGATE_MODEL = {"gemini": "gemini-3.1-flash-lite"}
 
 
 def model_config(config: Config, model: str | None = None):

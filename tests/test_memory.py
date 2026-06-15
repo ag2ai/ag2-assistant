@@ -96,7 +96,10 @@ def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
     from agclaw.config import Config
 
     agent_mod.create_agent(Config(), memory=True, skills=False)
-    assert captured["aggregate_config"].model == "gemini-2.5-flash-lite"
+    assert (
+        captured["aggregate_config"].model
+        == agent_mod._DEFAULT_AGGREGATE_MODEL["gemini"]
+    )
 
 
 def test_explicit_aggregate_model_wins(monkeypatch):

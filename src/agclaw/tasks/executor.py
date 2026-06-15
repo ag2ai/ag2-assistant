@@ -67,7 +67,7 @@ async def _used_web_tools(reply) -> bool:
 
 def make_task_executor(config, skills: bool = True):
     """Build an executor coroutine for `TaskManager`, using the real agent."""
-    from agclaw.agent import create_agent, turn_prompt
+    from agclaw.agent import cheap_model, create_agent, turn_prompt
 
     async def executor(task_id, manager, asker) -> None:
         store = manager.store
@@ -80,11 +80,13 @@ def make_task_executor(config, skills: bool = True):
 
         # Agent scoped to the task's declared capabilities → a research subtask
         # can't reach Drive or run code; a calendar task only gets calendar.
-        # (We use the main model throughout: the cheaper tier is too weak at the
-        # agentic tool use research needs — it failed grounding/verification.)
+        # Leaf subtasks (research/work pieces) run on the cheaper, faster model;
+        # the root synthesis stays on the main model where quality matters most.
         caps = task.capabilities or []
+        sub_model = cheap_model(config) if task.parent_id else None
         agent = create_agent(
             config, memory=False, skills=skills, asker=asker, capabilities=caps,
+            model=sub_model,
         )
 
         wanted = "\n".join(
