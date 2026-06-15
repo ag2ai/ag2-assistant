@@ -4,55 +4,22 @@ Each task is one JSON doc at `/tasks/{id}.json`; the tree is reconstructed from
 `parent_id`. Mirrors how sessions are persisted, so it's durable across restarts.
 """
 
-import asyncio
 import json
-import uuid
-from datetime import datetime
 from pathlib import Path
 
+from agclaw.storage import SerialStore as _SerialStore
+from agclaw.storage import new_id, now_iso
 from agclaw.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus
 
 _PREFIX = "/tasks/"
 
 
-class _SerialStore:
-    """Serialises all ops on an inner KnowledgeStore with one in-process lock.
-
-    SQLite isn't safe for concurrent multi-coroutine access, and tasks run
-    concurrently against one DB — so we funnel every read/write through a lock.
-    """
-
-    def __init__(self, inner) -> None:
-        self._inner = inner
-        self._lock = asyncio.Lock()
-
-    async def write(self, path, data):
-        async with self._lock:
-            return await self._inner.write(path, data)
-
-    async def read(self, path):
-        async with self._lock:
-            return await self._inner.read(path)
-
-    async def list(self, prefix):
-        async with self._lock:
-            return await self._inner.list(prefix)
-
-    async def exists(self, path):
-        async with self._lock:
-            return await self._inner.exists(path)
-
-    async def delete(self, path):
-        async with self._lock:
-            return await self._inner.delete(path)
-
-
 def _now() -> str:
-    return datetime.now().astimezone().isoformat()
+    return now_iso()
 
 
 def _new_id() -> str:
-    return "task-" + uuid.uuid4().hex[:12]
+    return new_id("task")
 
 
 class TaskStore:

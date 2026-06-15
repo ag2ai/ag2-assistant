@@ -34,6 +34,7 @@ class TaskManager:
         executor: Executor,
         max_concurrent: int = 3,
         on_progress: Callable | None = None,
+        inquiry_store=None,
     ) -> None:
         self.store = store
         self.executor = executor
@@ -41,6 +42,27 @@ class TaskManager:
         self._running: dict[str, asyncio.Task] = {}
         self._cancelled: set[str] = set()
         self._on_progress = on_progress
+        # When set, HITL prompts during a task are persisted as durable Inquiries
+        # tied to the (sub)task, so they survive restarts and can be answered from
+        # any channel. None → transient asking, exactly as before.
+        self._inquiry_store = inquiry_store
+
+    def _bind_asker(self, asker, task_id: str):
+        """Bind the asker to this (sub)task so its prompts are tagged with the id.
+
+        A `DurableAsker` is rebound (sharing its transport, so a sub-agent's
+        question still bubbles to the same surface); a plain transport asker is
+        wrapped when an inquiry store is configured; otherwise it's passed through
+        unchanged (preserving the no-durability path)."""
+        if asker is None:
+            return None
+        if hasattr(asker, "rebind"):
+            return asker.rebind(task_id)
+        if self._inquiry_store is not None:
+            from agclaw.hitl.inquiry import DurableAsker
+
+            return DurableAsker(asker, self._inquiry_store, task_id=task_id)
+        return asker
 
     async def submit(self, task_id: str, asker=None) -> asyncio.Task:
         """Start (or return the already-running) background run for a task."""
@@ -91,7 +113,7 @@ class TaskManager:
                         if task_id in self._cancelled:
                             await self.store.set_status(task_id, TaskStatus.CANCELLED)
                             return
-                        await self.executor(task_id, self, asker)
+                        await self.executor(task_id, self, self._bind_asker(asker, task_id))
                     continue  # re-check (may have produced deliverables / added subtasks)
 
                 # 3) Settle: complete iff deliverables satisfied + subtasks done.
@@ -141,6 +163,10 @@ class TaskManager:
             task = await self.store.get(tid)
             if task is not None and not task.is_terminal:
                 await self.store.set_status(tid, TaskStatus.CANCELLED, error=reason)
+            # release any HITL prompt still blocking on this task (it would
+            # otherwise hang until timeout); answering it is now moot.
+            if self._inquiry_store is not None:
+                await self._inquiry_store.cancel_for_task(tid)
 
     async def wait(self, task_id: str) -> None:
         """Await a task's background run to settle (for tests / orchestration)."""
