@@ -94,7 +94,7 @@
   <text x="282" y="540" text-anchor="middle" class="det">nestable tree · iterative HITL intake · capability-scoped agents</text>
   <text x="282" y="557" text-anchor="middle" class="det">deliverable verify + grounding gate · resilient parents · live amend</text>
   <text x="282" y="574" text-anchor="middle" class="det">concurrent cascade-cancel runner · cheap model for leaf subtasks</text>
-  <text x="282" y="589" text-anchor="middle" class="det" fill="#6366F1">tasks.db · gateway API + Tasks GUI built · scheduler: in progress</text>
+  <text x="282" y="589" text-anchor="middle" class="det" fill="#6366F1">tasks.db · gateway API + Tasks GUI + scheduler (one-shot/recurring)</text>
 
   <!-- Session & Memory -->
   <text x="535" y="496" class="layer">SESSION &amp; MEMORY</text>
