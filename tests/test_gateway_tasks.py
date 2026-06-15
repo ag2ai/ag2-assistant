@@ -264,6 +264,75 @@ def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
         assert any(t["id"] == tid for t in client.get("/api/tasks").json()["tasks"])
 
 
+async def test_schedule_task_creates_scheduled(tmp_path):
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    tid = await svc.schedule_task("nightly digest", when="2030-01-01T09:00:00", recurrence="daily")
+    t = await svc.store.get(tid)
+    assert t.status == TaskStatus.SCHEDULED
+    assert t.scheduled_for == "2030-01-01T09:00:00" and t.recurrence == "daily"
+
+
+async def test_fire_one_shot_runs_the_task(tmp_path):
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    ran = []
+    svc._run_in_bg = lambda tid, ch: ran.append(tid)  # don't invoke the LLM planner
+    tid = await svc.schedule_task("one off", when="2020-01-01T09:00:00")
+    await svc._fire(tid)
+    assert ran == [tid]
+    assert (await svc.store.get(tid)).status == TaskStatus.PENDING  # left SCHEDULED
+
+
+async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
+    from datetime import datetime
+
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    ran = []
+    svc._run_in_bg = lambda tid, ch: ran.append(tid)
+    tid = await svc.schedule_task("daily digest", when="2020-01-01T09:00:00", recurrence="daily")
+    await svc._fire(tid)
+
+    assert ran and ran[0] != tid           # a fresh run was spawned, not the template
+    tmpl = await svc.store.get(tid)
+    assert tmpl.status == TaskStatus.SCHEDULED  # template re-armed, still scheduled
+    assert datetime.fromisoformat(tmpl.scheduled_for) > datetime.now().astimezone()
+
+
+def test_schedule_rest_endpoint(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import agclaw.gateway.app as app_mod
+    import agclaw.gateway.core as core_mod
+    from agclaw.config import Config
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
+    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    with TestClient(app) as client:
+        r = client.post("/api/tasks/schedule", json={
+            "text": "weekly report", "when": "2030-06-01T09:00:00", "recurrence": "weekly",
+        })
+        tid = r.json()["id"]
+        detail = client.get(f"/api/tasks/{tid}").json()["task"]
+        assert detail["status"] == "scheduled"
+        assert detail["scheduled_for"] == "2030-06-01T09:00:00"
+        assert detail["recurrence"] == "weekly"
+
+
+def test_build_schedule_task_tool_named():
+    from agclaw.agent import _build_schedule_task_tool
+
+    t = _build_schedule_task_tool(lambda r, w, rec: None)
+    assert t.name == "schedule_task"
+
+
 async def test_chat_routes_to_control_agent(tmp_path):
     """TaskService.chat builds a task-scoped agent and returns its reply; an unknown
     task returns None (→ 404 at the REST layer)."""

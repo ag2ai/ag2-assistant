@@ -39,6 +39,7 @@ class TaskService:
     def __init__(
         self, config: Config | None = None, store=None, inquiry_store=None,
         manager=None, planner_agent=None, executor=None, max_concurrent: int = 3,
+        scheduler_interval: float = 30.0,
     ) -> None:
         self._config = config or load_config()
         self._store = store
@@ -47,6 +48,8 @@ class TaskService:
         self._planner = planner_agent
         self._executor = executor
         self._max_concurrent = max_concurrent
+        self._scheduler_interval = scheduler_interval
+        self._scheduler = None
         self._bg: set[asyncio.Task] = set()
         self._control_agents: dict = {}  # task_id -> (agent, stream) for task chat
 
@@ -68,6 +71,13 @@ class TaskService:
                 self._store, self._executor,
                 max_concurrent=self._max_concurrent, inquiry_store=self._inquiries,
             )
+        if self._scheduler is None:
+            from agclaw.tasks.scheduling import Scheduler
+
+            self._scheduler = Scheduler(
+                self._store, self._fire, interval=self._scheduler_interval
+            )
+            await self._scheduler.start()
 
     @property
     def store(self):
@@ -86,39 +96,81 @@ class TaskService:
             self._planner = create_agent(self._config, memory=False, skills=False)
         return self._planner
 
-    async def submit_request(self, text: str, channel: str = "web") -> str:
-        """Create a task and drive intake + run in the background; return its id."""
+    async def _prepare_and_run(self, task_id: str, channel: str) -> None:
+        """Intake (durable HITL) then hand the task to the runner."""
         from agclaw.hitl import DurableAsker
+        from agclaw.tasks import TaskStatus
         from agclaw.tasks.planner import prepare_task
         from agclaw.tools import available_capabilities
 
-        task = await self._store.create(text, origin_channel=channel, hitl_channel=channel)
+        try:
+            asker = DurableAsker(
+                _ParkingAsker(), self._inquiries, task_id=task_id, channel=channel,
+            )
+            await prepare_task(
+                self._store, task_id, self._planner_agent(),
+                asker=asker, capabilities=available_capabilities(),
+            )
+            cur = await self._store.get(task_id)
+            if cur is not None and not cur.is_terminal:
+                # the runner re-binds the parking asker per (sub)task.
+                await self._manager.submit(task_id, asker=_ParkingAsker())
+        except Exception as exc:
+            await self._store.set_status(
+                task_id, TaskStatus.FAILED, error=f"intake/submit error: {exc}"
+            )
 
-        async def _drive() -> None:
-            try:
-                asker = DurableAsker(
-                    _ParkingAsker(), self._inquiries, task_id=task.id, channel=channel,
-                )
-                await prepare_task(
-                    self._store, task.id, self._planner_agent(),
-                    asker=asker, capabilities=available_capabilities(),
-                )
-                cur = await self._store.get(task.id)
-                if cur is not None and not cur.is_terminal:
-                    # the runner re-binds the parking asker into a DurableAsker
-                    # per (sub)task, so each subtask's prompts are tagged.
-                    await self._manager.submit(task.id, asker=_ParkingAsker())
-            except Exception as exc:
-                from agclaw.tasks import TaskStatus
-
-                await self._store.set_status(
-                    task.id, TaskStatus.FAILED, error=f"intake/submit error: {exc}"
-                )
-
-        bg = asyncio.create_task(_drive())
+    def _run_in_bg(self, task_id: str, channel: str) -> None:
+        bg = asyncio.create_task(self._prepare_and_run(task_id, channel))
         self._bg.add(bg)
         bg.add_done_callback(self._bg.discard)
+
+    async def submit_request(self, text: str, channel: str = "web") -> str:
+        """Create a task and drive intake + run in the background; return its id."""
+        task = await self._store.create(text, origin_channel=channel, hitl_channel=channel)
+        self._run_in_bg(task.id, channel)
         return task.id
+
+    async def schedule_task(
+        self, text: str, when: str, recurrence: str | None = None, channel: str = "web",
+    ) -> str:
+        """Create a task that fires at `when` (ISO datetime), optionally recurring.
+        The deterministic Scheduler runs it when due."""
+        from agclaw.tasks import TaskStatus
+
+        task = await self._store.create(
+            text, origin_channel=channel, hitl_channel=channel,
+            status=TaskStatus.SCHEDULED, scheduled_for=when, recurrence=recurrence or None,
+        )
+        return task.id
+
+    async def _fire(self, task_id: str) -> None:
+        """Scheduler callback: run a due task; re-arm recurring ones."""
+        from datetime import datetime
+
+        from agclaw.tasks import TaskStatus
+        from agclaw.tasks.scheduling import next_occurrence
+
+        t = await self._store.get(task_id)
+        if t is None or t.status != TaskStatus.SCHEDULED:
+            return
+        now = datetime.now().astimezone()
+        channel = t.origin_channel or "web"
+        if t.recurrence:
+            # spawn a fresh run for this occurrence; keep the template scheduled
+            run = await self._store.create(
+                t.title, description=t.description,
+                origin_channel=t.origin_channel, hitl_channel=t.hitl_channel,
+            )
+            self._run_in_bg(run.id, channel)
+            nxt = next_occurrence(t.recurrence, t.scheduled_for, now)
+            if nxt is not None:
+                await self._store.update(task_id, scheduled_for=nxt.isoformat())
+            else:  # unparseable recurrence → treat as one-shot, don't re-fire
+                await self._store.set_status(task_id, TaskStatus.COMPLETED)
+        else:
+            await self._store.set_status(task_id, TaskStatus.PENDING)  # leave SCHEDULED
+            self._run_in_bg(task_id, channel)
 
     # status groupings used by the listing filters
     _ACTIVE = {"pending", "scheduled", "awaiting_input", "planning", "running"}
@@ -262,6 +314,7 @@ class TaskService:
             "children": len(kids),
             "deliverables": len(delivs), "deliverables_done": done,
             "last_progress": progress[-1]["message"] if progress else None,
+            "scheduled_for": t.scheduled_for, "recurrence": t.recurrence,
         }
 
     async def _node(self, t, include_assets: bool = False) -> dict:
@@ -271,6 +324,7 @@ class TaskService:
             "objective": t.objective or "", "description": t.description or "",
             "created_at": t.created_at, "capabilities": t.capabilities or [],
             "archived": bool(getattr(t, "archived", False)),
+            "scheduled_for": t.scheduled_for, "recurrence": t.recurrence,
             "intake": t.intake or {},
             "progress": t.progress or [],
             "error": t.error or "",
@@ -281,6 +335,8 @@ class TaskService:
         }
 
     async def close(self) -> None:
+        if self._scheduler is not None:
+            await self._scheduler.stop()
         for bg in list(self._bg):
             bg.cancel()
         self._bg.clear()

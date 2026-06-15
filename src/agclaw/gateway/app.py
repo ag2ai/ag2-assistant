@@ -56,6 +56,12 @@ class TaskChatRequest(BaseModel):
     text: str
 
 
+class ScheduleRequest(BaseModel):
+    text: str
+    when: str            # ISO 8601 datetime
+    recurrence: str | None = None
+
+
 class ArchiveRequest(BaseModel):
     archived: bool = True
 
@@ -82,6 +88,7 @@ def create_app(
         gateway = Gateway(
             config=config, memory=memory, platform=platform, persist=persist,
             task_starter=tasks.submit_request,  # let the chat agent spawn tasks
+            schedule_starter=tasks.schedule_task,  # ...and schedule them
         )
 
     @asynccontextmanager
@@ -241,6 +248,12 @@ def create_app(
         """Full task history for the listing page (newest first). Optional status
         filter: active / completed / stopped / archived."""
         return {"tasks": await app.state.tasks.list_all(status)}
+
+    @app.post("/api/tasks/schedule")
+    async def schedule_task(req: ScheduleRequest) -> dict:
+        """Schedule a task for a future time (optionally recurring)."""
+        task_id = await app.state.tasks.schedule_task(req.text, req.when, req.recurrence)
+        return {"id": task_id}
 
     @app.get("/api/tasks/{task_id}")
     async def get_task(task_id: str):

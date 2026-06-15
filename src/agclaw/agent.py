@@ -202,6 +202,39 @@ def _build_start_task_tool(task_starter):
     return start_task
 
 
+def _build_schedule_task_tool(schedule_starter):
+    """A `schedule_task` tool: run a task at a future time, optionally recurring."""
+    from typing import Annotated
+
+    from autogen.beta import tool
+    from pydantic import Field
+
+    @tool
+    async def schedule_task(
+        request: Annotated[str, Field(description="The job to run when it's due.")],
+        when: Annotated[
+            str, Field(description="When to first run it, as an ISO 8601 datetime "
+                       "(e.g. 2026-06-16T09:00:00). Compute this from the current "
+                       "date/time given in your environment context.")
+        ],
+        recurrence: Annotated[
+            str, Field(description="Optional repeat: 'daily', 'hourly', 'weekly', or "
+                       "'every N minutes/hours/days/weeks'. Empty for a one-off.")
+        ] = "",
+    ) -> str:
+        """Schedule a task to run later (and optionally repeat) — e.g. 'every morning
+        at 8, summarise my unread email', or 'next Monday, research X'. Use the
+        user's timezone from your environment context to build the ISO `when`."""
+        task_id = await schedule_starter(request, when, recurrence or None)
+        lst = started_tasks_var.get()
+        if lst is not None:
+            lst.append({"id": task_id, "title": request})
+        rep = f" (repeats {recurrence})" if recurrence else ""
+        return f"Scheduled '{request}' for {when}{rep} (task {task_id})."
+
+    return schedule_task
+
+
 def create_agent(
     config: Config | None = None,
     memory: bool = True,
@@ -213,6 +246,7 @@ def create_agent(
     capabilities: list[str] | None = None,
     model: str | None = None,
     task_starter=None,
+    schedule_starter=None,
 ) -> Agent:
     """Create an AGClaw agent with the given configuration.
 
@@ -271,6 +305,8 @@ def create_agent(
     # show a task card.
     if task_starter is not None:
         tools.append(_build_start_task_tool(task_starter))
+    if schedule_starter is not None:
+        tools.append(_build_schedule_task_tool(schedule_starter))
 
     from agclaw.permissions import PermissionManager
 

@@ -36,6 +36,7 @@ class Gateway:
         onboard: bool = True,
         persist: bool = True,
         task_starter=None,
+        schedule_starter=None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -43,6 +44,7 @@ class Gateway:
         self._onboard = onboard
         self._persist = persist
         self._task_starter = task_starter  # lets the chat agent spawn background tasks
+        self._schedule_starter = schedule_starter  # ...and schedule them for later
         self._onboarding_done = False
         self._agent = None
         self._permissions = None
@@ -59,7 +61,7 @@ class Gateway:
 
         self._agent = create_agent(
             self._config, memory=self._memory, platform=self._platform,
-            task_starter=self._task_starter,
+            task_starter=self._task_starter, schedule_starter=self._schedule_starter,
         )
         self._permissions = PermissionStore()
 
