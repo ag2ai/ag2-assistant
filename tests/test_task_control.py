@@ -8,6 +8,7 @@ from agclaw.tasks.control import (
     do_add_deliverable,
     do_add_subtask,
     do_cancel,
+    do_reschedule,
     do_set_objective,
     render_task,
 )
@@ -77,9 +78,36 @@ async def test_cancel_whole_task_and_subtask(tmp_path):
     assert (await store.get(t.id)).status == TaskStatus.CANCELLED
 
 
+async def test_reschedule_changes_time_and_repeat(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("digest", status=TaskStatus.SCHEDULED,
+                           scheduled_for="2026-01-01T09:00:00", recurrence="daily")
+    # change the repeat
+    msg = await do_reschedule(store, t.id, recurrence="weekly")
+    got = await store.get(t.id)
+    assert got.recurrence == "weekly" and got.status == TaskStatus.SCHEDULED
+    assert "weekly" in msg
+    # change the time, keeping the repeat
+    await do_reschedule(store, t.id, when="2026-02-02T08:00:00")
+    got = await store.get(t.id)
+    assert got.scheduled_for == "2026-02-02T08:00:00" and got.recurrence == "weekly"
+    # turn off repeating → one-off
+    await do_reschedule(store, t.id, recurrence="off")
+    assert (await store.get(t.id)).recurrence is None
+    # bad recurrence is rejected, unchanged
+    assert "don't understand" in await do_reschedule(store, t.id, recurrence="fortnightly-ish")
+
+
+async def test_reschedule_needs_a_time(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("no time yet")  # no scheduled_for
+    assert "give me a time" in (await do_reschedule(store, t.id, recurrence="daily")).lower()
+
+
 async def test_build_task_tools_exposes_the_set(tmp_path):
     store = _store(tmp_path)
     mgr = TaskManager(store, _noop_executor)
     t = await store.create("x")
     names = {tool.name for tool in build_task_tools(store, mgr, t.id)}
-    assert names == {"task_status", "add_subtask", "set_objective", "add_deliverable", "cancel"}
+    assert names == {"task_status", "add_subtask", "set_objective", "add_deliverable",
+                     "reschedule", "cancel"}

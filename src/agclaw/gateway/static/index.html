@@ -640,7 +640,7 @@
     head.appendChild(back); head.appendChild(taskTitleEl); head.appendChild(arch); view.appendChild(head);
     taskTreeEl = document.createElement("div"); taskTreeEl.className = "tvtree"; taskTreeEl.textContent = "Loading…"; view.appendChild(taskTreeEl);
     const hint = document.createElement("div"); hint.className = "tvhint";
-    hint.textContent = "Ask below to change this task — add or cancel subtasks, tweak the objective, or cancel it.";
+    hint.textContent = "Ask below to change this task — add/cancel subtasks, tweak the objective, reschedule it, or cancel it.";
     view.appendChild(hint);
     taskChatEl = document.createElement("div"); taskChatEl.className = "tvchat"; view.appendChild(taskChatEl);
     wrap.appendChild(view);

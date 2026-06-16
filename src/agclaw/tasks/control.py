@@ -80,6 +80,36 @@ async def do_add_deliverable(store, manager, task_id, description, criteria="") 
     return f"Added deliverable: {description}."
 
 
+async def do_reschedule(store, task_id, when="", recurrence="") -> str:
+    """Change a task's run time and/or repeat; (re-)arms it as SCHEDULED."""
+    from agclaw.tasks.model import TaskStatus
+    from agclaw.tasks.scheduling import parse_recurrence
+
+    t = await store.get(task_id)
+    if t is None:
+        return "Task not found."
+    fields: dict = {}
+    if when:
+        fields["scheduled_for"] = when
+    rec = (recurrence or "").strip().lower()
+    if rec in ("off", "none", "stop", "no", "once", "one-off"):
+        fields["recurrence"] = None
+    elif rec:
+        if parse_recurrence(rec) is None:
+            return (f"I don't understand the repeat '{recurrence}'. Try daily, weekly, "
+                    "hourly, or 'every 2 days'.")
+        fields["recurrence"] = rec
+    if not fields:
+        return "Tell me the new time and/or how it should repeat."
+    if not (when or t.scheduled_for):
+        return "Give me a time to run it (there's no current scheduled time)."
+    fields["status"] = TaskStatus.SCHEDULED
+    await store.update(task_id, **fields)
+    cur = await store.get(task_id)
+    rep = f"repeats {cur.recurrence}" if cur.recurrence else "one-off"
+    return f"Rescheduled: next run {cur.scheduled_for} · {rep}."
+
+
 async def do_cancel(store, manager, task_id, subtask="") -> str:
     if subtask:
         kids = await store.children(task_id)
@@ -128,6 +158,21 @@ def build_task_tools(store, manager, task_id: str) -> list:
         return await do_add_deliverable(store, manager, task_id, description, criteria)
 
     @tool
+    async def reschedule(
+        when: Annotated[
+            str, Field(description="New next-run time as an ISO 8601 datetime (compute "
+                       "from your environment's current date/time). Empty = keep current time.")
+        ] = "",
+        recurrence: Annotated[
+            str, Field(description="New repeat: daily / hourly / weekly / 'every N "
+                       "minutes/hours/days/weeks', or 'off' to stop repeating. Empty = keep current.")
+        ] = "",
+    ) -> str:
+        """Change WHEN this task runs and/or how it repeats — e.g. 'make it weekly',
+        'move it to 8am tomorrow', 'stop repeating'."""
+        return await do_reschedule(store, task_id, when, recurrence)
+
+    @tool
     async def cancel(
         subtask: Annotated[
             str, Field(description="Partial title of a subtask to cancel; empty = the whole task.")
@@ -136,4 +181,4 @@ def build_task_tools(store, manager, task_id: str) -> list:
         """Cancel this task, or one subtask by (partial) title. Cancels immediately."""
         return await do_cancel(store, manager, task_id, subtask)
 
-    return [task_status, add_subtask, set_objective, add_deliverable, cancel]
+    return [task_status, add_subtask, set_objective, add_deliverable, reschedule, cancel]
