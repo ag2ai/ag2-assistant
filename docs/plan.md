@@ -403,6 +403,7 @@ UI is deliberately decoupled. The gateway API is the contract — UI technology 
 | HITL approval flows | **AG2 ✅** | HumanHook, ApprovalMiddleware on main. Wire into gateway for user-facing approval UI |
 | MCP server integration | **AG2 🔄** (in progress on roadmap) | MCPServerTool is currently a stub. Full MCP implementation is on the AG2 roadmap as in-progress — wait for this rather than building our own MCP client |
 | Multi-agent networking | **AG2 🔮** | Hub/Network entirely unreleased. Build custom agent coordination if needed, or defer until Hub lands on main |
+| Realtime voice | **AG2 ✅ (shipped in AGClaw)** | LiveAgent + Gemini Live. Browser mic→16 kHz PCM over `/api/voice` WS → `RecordedAudioEvent`; `SynthesizedAudioEvent`→24 kHz playback; transcripts as bubbles. Voice agent has a basic tool subset + `ask_assistant` that delegates heavy work to the universal agent. Follow-ups: HITL/permission prompts spoken over voice; barge-in tuning; persist voice transcripts to the session |
 
 ## Tech Stack
 

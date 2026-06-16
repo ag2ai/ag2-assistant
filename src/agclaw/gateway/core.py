@@ -193,6 +193,27 @@ class Gateway:
         finally:
             stream.unsubscribe(sub_id)
 
+    def build_voice_agent(self, session_id: str = "default", voice: str = "Puck"):
+        """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
+        delegates to this same universal agent on a per-voice-session stream, so
+        the spoken conversation shares the app's tools, memory, and continuity."""
+        if self._tasks is None:
+            raise RuntimeError("Voice needs the task service")
+        from agclaw.voice import build_voice_agent
+
+        async def delegate(request: str) -> str:
+            return await self.send_message(
+                request,
+                session_id=f"voice:{session_id}",
+                surface=(
+                    "The user is talking to you by voice; the voice assistant has "
+                    "asked you to handle this. Answer plainly and briefly so it can "
+                    "be spoken aloud."
+                ),
+            )
+
+        return build_voice_agent(self._config, self._tasks, delegate, voice=voice)
+
     async def _persist_turn(self, session_id, stream, user_text, reply_text) -> None:
         """Write the session's events + a display transcript to disk."""
         if self._writer is None:

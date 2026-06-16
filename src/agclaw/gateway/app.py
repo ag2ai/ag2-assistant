@@ -425,6 +425,76 @@ def create_app(
         except WebSocketDisconnect:
             return
 
+    @app.websocket("/api/voice")
+    async def voice_ws(websocket: WebSocket) -> None:
+        """Full-duplex voice. The browser streams 16 kHz mono PCM mic frames as
+        binary; we feed them to a Gemini Live session and stream back 24 kHz PCM
+        speech (binary) plus user/agent transcripts (JSON) for on-screen bubbles."""
+        await websocket.accept()
+        import uuid
+
+        from autogen.beta.events import ModelMessageChunk
+        from autogen.beta.events.voice import (
+            RecordedAudioEvent,
+            SynthesizedAudioEvent,
+            TranscriptionChunkEvent,
+            TranscriptionCompletedEvent,
+        )
+
+        sid = uuid.uuid4().hex[:8]
+        try:
+            agent = app.state.gateway.build_voice_agent(session_id=sid)
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await websocket.send_json({"type": "error", "message": str(exc)})
+                await websocket.close()
+            return
+
+        async def pump_audio(context):
+            with context.stream.where(SynthesizedAudioEvent).join() as evs:
+                async for e in evs:
+                    await websocket.send_bytes(e.content)
+
+        async def pump_text(context):
+            sel = TranscriptionChunkEvent | TranscriptionCompletedEvent | ModelMessageChunk
+            with context.stream.where(sel).join() as evs:
+                async for e in evs:
+                    if isinstance(e, ModelMessageChunk):
+                        frame = {"type": "transcript", "role": "agent", "text": e.content}
+                    elif isinstance(e, TranscriptionCompletedEvent):
+                        frame = {"type": "transcript", "role": "user", "text": e.content, "final": True}
+                    else:
+                        frame = {"type": "transcript", "role": "user", "text": e.content}
+                    await websocket.send_json(frame)
+
+        async def recv_loop(context):
+            while True:
+                msg = await websocket.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    break
+                data = msg.get("bytes")
+                if data:
+                    await context.send(RecordedAudioEvent(data))
+
+        try:
+            async with agent.run() as context:
+                await websocket.send_json({"type": "ready"})
+                jobs = [
+                    asyncio.create_task(pump_audio(context)),
+                    asyncio.create_task(pump_text(context)),
+                    asyncio.create_task(recv_loop(context)),
+                ]
+                try:
+                    await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for j in jobs:
+                        j.cancel()
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await websocket.send_json({"type": "error", "message": str(exc)})
+
     return app
 
 

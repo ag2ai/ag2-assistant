@@ -213,6 +213,12 @@
   }
   .iconbtn:hover { border-color: var(--ink); }
   .iconbtn:disabled { opacity: .5; cursor: not-allowed; }
+  #mic.live { background: var(--accent); border-color: var(--accent); color: #fff; animation: micpulse 1.4s infinite; }
+  @keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(249,83,57,.5); } 50% { box-shadow: 0 0 0 6px rgba(249,83,57,0); } }
+  .voicebar { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--muted); display: none; align-items: center; gap: 8px; }
+  .voicebar.on { display: flex; }
+  .msg.voice .bubble { font-style: italic; }
+  .msg.voice .bubble::before { content: "🎙 "; font-style: normal; }
   textarea {
     flex: 1; resize: none; font-family: var(--sans); font-size: 15px; line-height: 1.5;
     padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; max-height: 160px;
@@ -364,8 +370,10 @@
         <input type="file" id="file" multiple hidden>
         <textarea id="input" rows="1" placeholder="Message AGClaw…" autofocus></textarea>
         <button class="iconbtn" id="astask" title="Run this as a task">✓</button>
+        <button class="iconbtn" id="mic" title="Talk to AGClaw">🎙</button>
         <button class="sendbtn" id="send">Send</button>
       </div>
+      <div class="voicebar" id="voicebar"><span id="voicestate">●</span><span id="voicetext">Voice off</span></div>
     </div>
   </footer>
 
@@ -698,11 +706,12 @@
     }
   }
   function addTaskMsg(role, text) {
-    if (!taskChatEl) return;
+    if (!taskChatEl) return null;
     const m = document.createElement("div"); m.className = "msg " + role;
     const b = document.createElement("div"); b.className = "bubble";
-    if (role === "user") b.textContent = text || ""; else renderMarkdown(b, text);
+    if (role.split(" ")[0] === "user") b.textContent = text || ""; else renderMarkdown(b, text);
     m.appendChild(b); taskChatEl.appendChild(m); scroll();
+    return m;
   }
   async function taskChat(text) {
     addTaskMsg("user", text);
@@ -1076,6 +1085,107 @@
   }
   pollInquiries();
   setInterval(pollInquiries, 4000);
+
+  // ---- Voice: full-duplex talk with AGClaw (Gemini Live over /api/voice) ----
+  // Browser captures mic at 16 kHz mono PCM (Gemini Live's required input),
+  // streams it as binary; receives 24 kHz PCM speech (binary) it plays back, plus
+  // user/agent transcripts (JSON) shown as bubbles. Transcripts stream in chunks,
+  // so we append to the current bubble per role until the other side speaks.
+  const micBtn = document.getElementById("mic");
+  const voicebar = document.getElementById("voicebar");
+  const voicetext = document.getElementById("voicetext");
+  let voiceWS = null, micCtx = null, micNode = null, micStream = null;
+  let playCtx = null, playHead = 0;
+  let vbubble = null, vrole = null;  // current streaming transcript bubble + its role
+
+  function voiceStatus(on, text) {
+    voicebar.classList.toggle("on", on);
+    if (text) voicetext.textContent = text;
+  }
+  function isTaskView() { return !!taskMode; }
+  function voiceBubble(role, text) {
+    const cls = (role === "user" ? "user" : "agent") + " voice";
+    // route to whichever surface is showing (task view or chat)
+    const adder = isTaskView() ? addTaskMsg : addMsg;
+    if (vbubble && vrole === role) {
+      const b = vbubble.querySelector(".bubble");
+      if (b) { b.textContent = (b.textContent || "") + text; scroll(); return; }
+    }
+    vbubble = adder(cls, text); vrole = role;
+  }
+
+  async function startVoice() {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    } catch { voiceStatus(true, "Mic permission denied"); setTimeout(() => voiceStatus(false), 2500); return; }
+    voiceStatus(true, "Connecting…"); micBtn.classList.add("live");
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    voiceWS = new WebSocket(proto + "://" + location.host + "/api/voice");
+    voiceWS.binaryType = "arraybuffer";
+
+    voiceWS.onmessage = (ev) => {
+      if (typeof ev.data === "string") {
+        let m; try { m = JSON.parse(ev.data); } catch { return; }
+        if (m.type === "ready") voiceStatus(true, "Listening…");
+        else if (m.type === "transcript") voiceBubble(m.role, m.text);
+        else if (m.type === "error") { voiceStatus(true, "Voice error: " + (m.message || "")); }
+        return;
+      }
+      playPCM(new Int16Array(ev.data));  // 24 kHz mono PCM from Gemini
+    };
+    voiceWS.onclose = () => stopVoice(false);
+    voiceWS.onerror = () => voiceStatus(true, "Voice connection error");
+
+    // 16 kHz capture context + an inline AudioWorklet that ships Int16 frames.
+    micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const workletSrc = `
+      class PCM16 extends AudioWorkletProcessor {
+        process(inputs) {
+          const ch = inputs[0][0];
+          if (ch) {
+            const pcm = new Int16Array(ch.length);
+            for (let i = 0; i < ch.length; i++) { let s = Math.max(-1, Math.min(1, ch[i])); pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff; }
+            this.port.postMessage(pcm.buffer, [pcm.buffer]);
+          }
+          return true;
+        }
+      }
+      registerProcessor('pcm16', PCM16);`;
+    await micCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" })));
+    const src = micCtx.createMediaStreamSource(micStream);
+    micNode = new AudioWorkletNode(micCtx, "pcm16");
+    micNode.port.onmessage = (e) => { if (voiceWS && voiceWS.readyState === WebSocket.OPEN) voiceWS.send(e.data); };
+    src.connect(micNode);  // worklet has no output; pulls input only
+
+    // 24 kHz playback context (Gemini output rate).
+    playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    playHead = 0;
+  }
+
+  function playPCM(int16) {
+    if (!playCtx) return;
+    const f32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 0x8000;
+    const buf = playCtx.createBuffer(1, f32.length, 24000);
+    buf.getChannelData(0).set(f32);
+    const node = playCtx.createBufferSource(); node.buffer = buf; node.connect(playCtx.destination);
+    const now = playCtx.currentTime;
+    if (playHead < now) playHead = now;
+    node.start(playHead); playHead += buf.duration;  // queue back-to-back
+  }
+
+  function stopVoice(closeWS = true) {
+    micBtn.classList.remove("live"); voiceStatus(false);
+    vbubble = null; vrole = null;
+    if (micNode) { try { micNode.port.onmessage = null; micNode.disconnect(); } catch {} micNode = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    if (micCtx) { micCtx.close().catch(() => {}); micCtx = null; }
+    if (playCtx) { playCtx.close().catch(() => {}); playCtx = null; }
+    if (closeWS && voiceWS) { try { voiceWS.close(); } catch {} }
+    voiceWS = null;
+  }
+
+  micBtn.onclick = () => { voiceWS ? stopVoice() : startVoice(); };
 
   loadTranscript(sessionId);  // restore this conversation's history on load
   connect();
