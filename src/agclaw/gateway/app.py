@@ -27,6 +27,16 @@ from agclaw.hitl import GatewayAsker, HitlServer, add_hitl_routes
 _STATIC_DIR = Path(__file__).parent / "static"
 _UI_FILE = _STATIC_DIR / "index.html"
 
+# Surface context the client can request by token (kept server-side, not in the UI).
+_SURFACES = {
+    "new_task": (
+        "The user is starting a NEW TASK. If their request is clear enough, create "
+        "it now with create_task (or schedule_task if they gave a time / cadence); "
+        "only ask a brief clarifying question if something essential is missing. "
+        "Confirm what you created."
+    ),
+}
+
 
 class MessageRequest(BaseModel):
     text: str
@@ -338,6 +348,7 @@ def create_app(
 
                 text = data.get("text", "")
                 session_id = data.get("session_id", "default")
+                surface = _SURFACES.get(data.get("surface", ""), "")
                 attachments = _decode_attachments(data.get("attachments"))
                 if not text and attachments:
                     text = "Here is a file I'm sharing with you."
@@ -372,7 +383,7 @@ def create_app(
                 task = asyncio.create_task(
                     app.state.gateway.send_message(
                         text, session_id=session_id, asker=asker,
-                        attachments=attachments,
+                        attachments=attachments, surface=surface,
                     )
                 )
                 # While the turn runs, keep reading frames (answers / cancel).
