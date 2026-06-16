@@ -161,6 +161,11 @@ class Gateway:
         """
         from autogen.beta.events import ToolCallEvent, ToolCallsEvent
 
+        # Each call is emitted twice — once as a ToolCallsEvent batch and once as a
+        # provider ToolCallEvent (e.g. GeminiToolCallEvent), both sharing the same
+        # tool-call id. Dedupe by that id so a single call reports once.
+        seen: set[str] = set()
+
         async def report(event):  # event injected positionally by the stream
             if isinstance(event, ToolCallsEvent):
                 calls = event.calls
@@ -170,11 +175,17 @@ class Gateway:
                 return
             for c in calls:
                 name = getattr(c, "name", "") or ""
-                if name:
-                    try:
-                        await on_tool(name)
-                    except Exception:
-                        pass
+                if not name:
+                    continue
+                cid = getattr(c, "id", "") or ""
+                if cid and cid in seen:
+                    continue
+                if cid:
+                    seen.add(cid)
+                try:
+                    await on_tool(name)
+                except Exception:
+                    pass
 
         sub_id = stream.subscribe(report)
         try:

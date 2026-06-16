@@ -64,17 +64,18 @@ async def test_on_tool_reports_each_tool_name(fake_gateway):
         names.append(name)
 
     async def ask_coro():
-        await captured["fn"](ToolCallEvent(name="web_search"))
-        await captured["fn"](
-            ToolCallsEvent(calls=[ToolCallEvent(name="get_task"),
-                                  ToolCallEvent(name="list_tasks")])
-        )
+        # Each call arrives twice (batch + provider event) with the SAME id, the
+        # way AG2 really emits them — must still report once per id.
+        await captured["fn"](ToolCallsEvent(calls=[ToolCallEvent(id="a", name="web_search")]))
+        await captured["fn"](ToolCallEvent(id="a", name="web_search"))
+        await captured["fn"](ToolCallsEvent(calls=[ToolCallEvent(id="b", name="get_task")]))
+        await captured["fn"](ToolCallEvent(id="b", name="get_task"))
         return _FakeReply("done")
 
     reply = await fake_gateway._ask_watching_tools(_Stream(), ask_coro(), on_tool)
 
     assert reply.body == "done"
-    assert names == ["web_search", "get_task", "list_tasks"]
+    assert names == ["web_search", "get_task"]  # deduped by id, not ×2
     assert captured["unsub"] == "sub-1"  # always unsubscribed
 
 
