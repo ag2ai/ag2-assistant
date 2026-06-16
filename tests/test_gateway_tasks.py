@@ -215,9 +215,11 @@ async def test_archive_hides_from_drawer_and_filters_listing(tmp_path):
     done = await svc.store.create("done one", status=TaskStatus.COMPLETED)
     old = await svc.store.create("to archive", status=TaskStatus.COMPLETED)
 
-    # archive one task
-    assert await svc.set_archived(old.id) is True
-    assert await svc.set_archived("missing") is False
+    # archive one (completed → terminal → allowed); missing → not ok
+    ok, _ = await svc.set_archived(old.id)
+    assert ok
+    ok, _ = await svc.set_archived("missing")
+    assert not ok
 
     drawer_ids = {t["id"] for t in await svc.list_tasks()}
     assert old.id not in drawer_ids  # archived hidden from the drawer
@@ -234,6 +236,11 @@ async def test_archive_hides_from_drawer_and_filters_listing(tmp_path):
     completed = await svc.list_all(status="completed")
     assert {t["id"] for t in completed} == {done.id}
 
+    # an active (pending) task can't be archived — cancel it instead
+    ok, reason = await svc.set_archived(a.id)
+    assert not ok and reason == "active"
+    assert a.id in {t["id"] for t in await svc.list_tasks()}  # still visible
+
 
 def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
@@ -248,20 +255,27 @@ def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
         svc = app.state.tasks
 
         async def _seed():
-            return (await svc.store.create("t1")).id
+            done = await svc.store.create("t1", status=TaskStatus.COMPLETED)  # terminal
+            active = await svc.store.create("t2")  # pending
+            return done.id, active.id
 
-        tid = asyncio.get_event_loop().run_until_complete(_seed())
+        tid, active_id = asyncio.get_event_loop().run_until_complete(_seed())
 
         # /api/tasks/all must not be captured as a task id
         assert client.get("/api/tasks/all").status_code == 200
         assert any(t["id"] == tid for t in client.get("/api/tasks/all").json()["tasks"])
 
+        # a finished task archives fine
         assert client.post(f"/api/tasks/{tid}/archive").json() == {"ok": True, "archived": True}
         assert all(t["id"] != tid for t in client.get("/api/tasks").json()["tasks"])  # gone from drawer
         assert any(t["id"] == tid for t in client.get("/api/tasks/all?status=archived").json()["tasks"])
         # unarchive
         assert client.post(f"/api/tasks/{tid}/archive", json={"archived": False}).json()["archived"] is False
         assert any(t["id"] == tid for t in client.get("/api/tasks").json()["tasks"])
+
+        # an active task is rejected (409), stays visible
+        assert client.post(f"/api/tasks/{active_id}/archive").status_code == 409
+        assert any(t["id"] == active_id for t in client.get("/api/tasks").json()["tasks"])
 
 
 async def test_schedule_task_creates_scheduled(tmp_path):

@@ -268,10 +268,19 @@ def create_app(
         return {"ok": ok}
 
     @app.post("/api/tasks/{task_id}/archive")
-    async def archive_task(task_id: str, req: ArchiveRequest | None = None) -> dict:
+    async def archive_task(task_id: str, req: ArchiveRequest | None = None):
         archived = True if req is None else req.archived
-        ok = await app.state.tasks.set_archived(task_id, archived)
-        return {"ok": ok, "archived": archived}
+        ok, reason = await app.state.tasks.set_archived(task_id, archived)
+        if ok:
+            return {"ok": True, "archived": archived}
+        if reason == "notfound":
+            return Response(status_code=404)
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            {"ok": False, "error": "Only finished tasks can be archived — cancel it first to stop it."},
+            status_code=409,
+        )
 
     @app.post("/api/tasks/{task_id}/chat")
     async def task_chat(task_id: str, req: TaskChatRequest):

@@ -291,11 +291,16 @@ class TaskService:
         out.sort(key=lambda s: s["created_at"], reverse=True)
         return out
 
-    async def set_archived(self, task_id: str, archived: bool = True) -> bool:
-        if await self._store.get(task_id) is None:
-            return False
+    async def set_archived(self, task_id: str, archived: bool = True) -> tuple[bool, str]:
+        """Archive a finished task (or unarchive any). Returns (ok, reason). Active
+        tasks can't be archived — cancel them instead. reason: '' | 'notfound' | 'active'."""
+        t = await self._store.get(task_id)
+        if t is None:
+            return False, "notfound"
+        if archived and not t.is_terminal:
+            return False, "active"  # only finished tasks can be archived
         await self._store.update(task_id, archived=archived)
-        return True
+        return True, ""
 
     async def get_task(self, task_id: str) -> dict | None:
         """Full task detail with its subtree, deliverables (incl. assets), progress."""

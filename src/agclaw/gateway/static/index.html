@@ -660,6 +660,9 @@
     if (taskTitleEl) { taskTitleEl.textContent = full.title + " "; taskTitleEl.appendChild(badge(full.status)); }
     const arch = document.getElementById("tvarch");
     if (arch) {
+      const terminal = ["completed", "failed", "cancelled"].includes(full.status);
+      // archive is only for finished tasks; active ones are Cancelled, not archived
+      arch.style.display = (full.archived || terminal) ? "" : "none";
       arch.textContent = full.archived ? "Unarchive" : "Archive";
       arch.onclick = async () => {
         await fetch("/api/tasks/" + taskMode + "/archive", {
