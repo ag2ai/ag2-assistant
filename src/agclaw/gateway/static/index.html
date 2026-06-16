@@ -497,6 +497,15 @@
     b.className = "badge " + status; b.textContent = (status || "").replace(/_/g, " ");
     return b;
   }
+  function formatWhen(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
+    catch { return iso; }
+  }
+  function schedLabel(t) {  // "⏰ Jun 17, 05:00 · repeats daily" / "· one-off"
+    if (!t.scheduled_for) return "";
+    return "⏰ " + formatWhen(t.scheduled_for) + " · " + (t.recurrence ? "repeats " + t.recurrence : "one-off");
+  }
   async function loadTasks() {
     let tasks = [];
     try { tasks = (await (await fetch("/api/tasks")).json()).tasks || []; } catch { return; }
@@ -556,10 +565,15 @@
     const tt = document.createElement("div"); tt.className = "tt"; tt.textContent = t.title;
     th.appendChild(tt); th.appendChild(badge(t.status)); c.appendChild(th);
     const meta = document.createElement("div"); meta.className = "meta";
-    let m = t.deliverables_done + "/" + t.deliverables + " deliverables";
-    if (t.children) m += " · " + t.children + " subtask" + (t.children === 1 ? "" : "s");
-    if (t.last_progress) m += " · " + t.last_progress;
-    meta.textContent = m; c.appendChild(meta);
+    if (t.status === "scheduled") {
+      meta.textContent = schedLabel(t);  // ⏰ next run · repeats …
+    } else {
+      let m = t.deliverables_done + "/" + t.deliverables + " deliverables";
+      if (t.children) m += " · " + t.children + " subtask" + (t.children === 1 ? "" : "s");
+      if (t.last_progress) m += " · " + t.last_progress;
+      meta.textContent = m;
+    }
+    c.appendChild(meta);
     // any inquiries for this task (or its subtasks) are answered right here
     if (inqs.length) {
       const h = document.createElement("div"); h.className = "needs"; h.textContent = "Needs your input";
@@ -605,7 +619,8 @@
     tasks.forEach(t => {
       const r = document.createElement("div"); r.className = "trow";
       const tt = document.createElement("span"); tt.className = "tt"; tt.textContent = t.title;
-      const when = document.createElement("span"); when.className = "when"; when.textContent = relTime(t.created_at);
+      const when = document.createElement("span"); when.className = "when";
+      when.textContent = (t.status === "scheduled" && t.scheduled_for) ? schedLabel(t) : relTime(t.created_at);
       r.appendChild(tt); r.appendChild(badge(t.status)); r.appendChild(when);
       r.onclick = () => openTaskView(t.id);
       rows.appendChild(r);
@@ -655,6 +670,7 @@
       };
     }
     taskTreeEl.innerHTML = "";
+    if (full.scheduled_for) { const sc = document.createElement("div"); sc.className = "obj"; sc.textContent = schedLabel(full); taskTreeEl.appendChild(sc); }
     if (full.objective) { const o = document.createElement("div"); o.className = "obj"; o.textContent = full.objective; taskTreeEl.appendChild(o); }
     taskTreeEl.appendChild(nodeView(full));
     if (["pending", "scheduled", "awaiting_input", "planning", "running"].includes(full.status)) {
