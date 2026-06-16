@@ -442,8 +442,11 @@ def create_app(
         )
 
         sid = uuid.uuid4().hex[:8]
+        task_id = websocket.query_params.get("task") or None
         try:
-            agent = app.state.gateway.build_voice_agent(session_id=sid)
+            agent = await app.state.gateway.build_voice_agent(
+                session_id=sid, task_id=task_id
+            )
         except Exception as exc:
             with contextlib.suppress(Exception):
                 await websocket.send_json({"type": "error", "message": str(exc)})

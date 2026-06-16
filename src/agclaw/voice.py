@@ -68,11 +68,14 @@ def voice_realtime_config(config: Config, voice: str = "Puck"):
     )
 
 
-def build_voice_agent(config: Config, tasks, delegate, voice: str = "Puck"):
+def build_voice_agent(config: Config, tasks, delegate, voice: str = "Puck",
+                      task_context: str = ""):
     """A LiveAgent with a basic tool subset + an ask_assistant delegate tool.
 
     `tasks` is the TaskService (for the basic read tools); `delegate` is an async
     `(request: str) -> str` that runs the universal agent and returns its reply.
+    `task_context`, when the session is opened from a task page, names the task so
+    "this task" resolves and is appended to the spoken-agent prompt.
     """
     from autogen.beta import tool
     from autogen.beta.live import LiveAgent
@@ -80,6 +83,7 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str = "Puck"):
     from agclaw.system_tools import build_system_tools
 
     basic = [t for t in build_system_tools(tasks) if t.name in _BASIC_VOICE_TOOLS]
+    prompt = VOICE_PROMPT + (("\n\n" + task_context) if task_context else "")
 
     @tool
     async def ask_assistant(request: str) -> str:
@@ -95,7 +99,7 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str = "Puck"):
 
     return LiveAgent(
         name="voice",
-        prompt=VOICE_PROMPT,
+        prompt=prompt,
         config=voice_realtime_config(config, voice=voice),
         tools=[*basic, ask_assistant],
     )

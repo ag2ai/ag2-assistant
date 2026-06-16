@@ -193,15 +193,42 @@ class Gateway:
         finally:
             stream.unsubscribe(sub_id)
 
-    def build_voice_agent(self, session_id: str = "default", voice: str = "Puck"):
+    async def build_voice_agent(self, session_id: str = "default",
+                                voice: str = "Puck", task_id: str | None = None):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
-        delegates to this same universal agent on a per-voice-session stream, so
-        the spoken conversation shares the app's tools, memory, and continuity."""
+        delegates to this same universal agent so the spoken conversation shares
+        the app's tools, memory, and continuity. When opened from a task page,
+        `task_id` binds that task: the voice agent knows "this task", and the
+        delegate runs on that task's session with a fresh task snapshot — so it's
+        the same entity, by voice, as the task's text chat."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
+        from agclaw.system_tools import format_task
         from agclaw.voice import build_voice_agent
 
+        task_context = ""
+        if task_id:
+            node = await self._tasks.get_task(task_id)
+            if node:
+                task_context = (
+                    "You are currently on a task's page. When the user says "
+                    f"\"this task\" they mean task {task_id}. Current state:\n"
+                    f"{format_task(node)}"
+                )
+
         async def delegate(request: str) -> str:
+            if task_id:
+                node = await self._tasks.get_task(task_id)  # fresh each call
+                snap = format_task(node) if node else f"(task {task_id})"
+                return await self.send_message(
+                    request,
+                    session_id=f"task:{task_id}",  # share the task's universal stream
+                    surface=(
+                        "The user is talking to you by voice while viewing this "
+                        f"task; act on THIS task (id {task_id}) when they refer to "
+                        f"it. Answer plainly and briefly so it can be spoken.\n\n{snap}"
+                    ),
+                )
             return await self.send_message(
                 request,
                 session_id=f"voice:{session_id}",
@@ -212,7 +239,8 @@ class Gateway:
                 ),
             )
 
-        return build_voice_agent(self._config, self._tasks, delegate, voice=voice)
+        return build_voice_agent(self._config, self._tasks, delegate,
+                                 voice=voice, task_context=task_context)
 
     async def _persist_turn(self, session_id, stream, user_text, reply_text) -> None:
         """Write the session's events + a display transcript to disk."""

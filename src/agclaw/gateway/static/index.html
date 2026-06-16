@@ -1120,7 +1120,8 @@
     } catch { voiceStatus(true, "Mic permission denied"); setTimeout(() => voiceStatus(false), 2500); return; }
     voiceStatus(true, "Connecting…"); micBtn.classList.add("live");
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    voiceWS = new WebSocket(proto + "://" + location.host + "/api/voice");
+    const q = isTaskView() ? "?task=" + encodeURIComponent(taskMode) : "";  // bind voice to this task
+    voiceWS = new WebSocket(proto + "://" + location.host + "/api/voice" + q);
     voiceWS.binaryType = "arraybuffer";
 
     voiceWS.onmessage = (ev) => {
