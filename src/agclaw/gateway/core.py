@@ -118,6 +118,7 @@ class Gateway:
         asker=None,
         attachments: list | None = None,
         surface: str = "",
+        on_tool=None,
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -128,6 +129,8 @@ class Gateway:
 
         `asker` binds human-in-the-loop questions/permission prompts to the
         surface that made the request. `attachments` are AG2 multimodal `Input`s.
+        `on_tool` is an optional async callback ``(name) -> None`` invoked with each
+        tool the agent calls during the turn, so a UI can show progress.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -140,12 +143,44 @@ class Gateway:
         async with self._session_lock(session_id):
             stream = await self._get_stream(session_id)
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
-            reply = await asyncio.wait_for(
-                self._agent.ask(*msg, stream=stream, prompt=prompt, **extra),
-                timeout=REPLY_TIMEOUT,
-            )
+            ask_coro = self._agent.ask(*msg, stream=stream, prompt=prompt, **extra)
+            if on_tool is None:
+                reply = await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
+            else:
+                reply = await self._ask_watching_tools(stream, ask_coro, on_tool)
             await self._persist_turn(session_id, stream, text, reply.body)
             return reply.body
+
+    async def _ask_watching_tools(self, stream, ask_coro, on_tool):
+        """Run a turn while reporting each tool the agent invokes.
+
+        Uses AG2's stream subscription — the same event mechanism observers are
+        built on, but scoped to *this session's* stream so it can't cross-talk
+        with other sessions sharing the one universal agent. The subscriber fires
+        live as tool-call events are emitted; we unsubscribe when the turn ends.
+        """
+        from autogen.beta.events import ToolCallEvent, ToolCallsEvent
+
+        async def report(event):  # event injected positionally by the stream
+            if isinstance(event, ToolCallsEvent):
+                calls = event.calls
+            elif isinstance(event, ToolCallEvent):
+                calls = [event]
+            else:
+                return
+            for c in calls:
+                name = getattr(c, "name", "") or ""
+                if name:
+                    try:
+                        await on_tool(name)
+                    except Exception:
+                        pass
+
+        sub_id = stream.subscribe(report)
+        try:
+            return await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
+        finally:
+            stream.unsubscribe(sub_id)
 
     async def _persist_turn(self, session_id, stream, user_text, reply_text) -> None:
         """Write the session's events + a display transcript to disk."""

@@ -505,7 +505,7 @@ def test_ws_emits_task_card_when_agent_spawns(monkeypatch):
     import agclaw.gateway.app as app_mod
 
     class _SpawnGateway:
-        async def send_message(self, text, session_id="default", asker=None, attachments=None, surface=""):
+        async def send_message(self, text, session_id="default", asker=None, attachments=None, surface="", on_tool=None):
             lst = agent_mod.started_tasks_var.get()  # the start_task tool would do this
             if lst is not None:
                 lst.append({"id": "task-xyz", "title": text})

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGClaw — Agents Architecture</title>
+<style>
+  :root {
+    --ink:#171717; --muted:#5f5f5f; --line:#e6e6e6; --accent:#f95339;
+    --bg:#ffffff; --panel:#fafafa; --code:#f3f3f3;
+    --serif:"Playfair Display",Georgia,serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Helvetica,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#ededed; --muted:#9a9a9a; --line:#2b2b2b; --bg:#0f0f0f; --panel:#1b1b1b; --code:#232323; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+         line-height:1.6; font-size:15px; }
+  .wrap { max-width:980px; margin:0 auto; padding:40px 24px 80px; }
+  header.h { border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:28px; }
+  .mark { font-family:var(--mono); font-weight:700; letter-spacing:1px; background:var(--ink);
+          color:var(--bg); padding:4px 9px; border-radius:6px; font-size:13px; }
+  h1 { font-family:var(--serif); font-weight:600; font-size:30px; margin:14px 0 4px; }
+  h2 { font-family:var(--serif); font-weight:600; font-size:22px; margin:38px 0 12px;
+       padding-top:14px; border-top:1px solid var(--line); }
+  h3 { font-family:var(--serif); font-weight:600; font-size:17px; margin:22px 0 6px; }
+  .sub { color:var(--muted); font-size:14px; }
+  p { margin:0 0 12px; }
+  a { color:var(--accent); }
+  code { font-family:var(--mono); font-size:12.5px; background:var(--code); padding:1.5px 6px; border-radius:5px; }
+  table { border-collapse:collapse; width:100%; margin:16px 0; font-size:13.5px; }
+  th,td { border:1px solid var(--line); padding:9px 11px; text-align:left; vertical-align:top; }
+  th { background:var(--panel); font-weight:700; }
+  td .n { display:inline-block; min-width:20px; height:20px; line-height:20px; text-align:center;
+          background:var(--accent); color:#fff; border-radius:50%; font-size:12px; font-weight:700; }
+  .pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px;
+          background:var(--panel); border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+  .pill.main { color:#fff; background:var(--accent); border-color:var(--accent); }
+  .pill.cheap { color:#fff; background:#2ecc71; border-color:#2ecc71; }
+  ul,ol { margin:0 0 12px; padding-left:22px; } li { margin:4px 0; }
+  .card { border:1px solid var(--line); border-radius:12px; padding:14px 18px; margin:12px 0; background:var(--panel); }
+  .card h3 { margin-top:0; }
+  .flow { font-family:var(--mono); font-size:13px; background:var(--code); border-radius:10px;
+          padding:14px 16px; overflow-x:auto; white-space:pre; margin:10px 0 4px; }
+  .warn { border-left:3px solid var(--accent); padding:6px 0 6px 14px; margin:10px 0; }
+  .warn b { color:var(--accent); }
+  .key { color:var(--muted); font-size:12px; }
+  footer { margin-top:48px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="h">
+  <span class="mark">AGClaw</span>
+  <h1>Agents Architecture</h1>
+  <p class="sub">The LLM agents in AGClaw — who they are, their tools, their prompts, and where the design is currently disconnected. A working note for review (June 2026).</p>
+</header>
+
+<p>AGClaw runs <b>five distinct LLM agents</b> (plus two non-conversational passes), each created in a
+different module with its own model, tools, and prompt. Work flows between them as a relay — and because
+each is a fresh agent with a partial view, capabilities like <i>scheduling</i> are known to some and
+invisible to others. That fragmentation is the source of the rough edges.</p>
+
+<div class="flow">chat agent ──(start_task / schedule_task)──▶ TASK
+                                              │
+                                  prepare_task │ intake + plan
+                                              ▼
+                                          planner ──▶ TaskPlan (objective, deliverables, subtasks)
+                                              │
+                                     runner    │ executes the plan
+                                              ▼
+                              executor(s) ──▶ deliverable ──▶ verifier (accept / reject)
+                                              │
+                          task chat (edit) ──▶ controller ──(add/cancel/reschedule)──▶ TASK</div>
+<p class="key">player flow: the chat agent spawns a task; a planner turns the request into a plan; the runner drives executor agents per subtask; a verifier gates each deliverable; the controller edits the task from its chat.</p>
+
+<h2>The five agents</h2>
+<table>
+  <thead><tr><th>#</th><th>Agent</th><th>Created in</th><th>Model</th><th>Tools</th><th>Prompt (per turn)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="n">1</span></td>
+      <td><b>Chat agent</b><br><span class="key">the conversational assistant</span></td>
+      <td><code>agent.create_agent</code> (gateway / channels)</td>
+      <td><span class="pill main">main</span></td>
+      <td>web search, web_fetch, read_file 🔒, shell 🔒, code 🔒, skills, Google (when signed in) <b>+ start_task + schedule_task</b></td>
+      <td><code>turn_prompt</code>: <b>persona + BEHAVIOR_GUIDANCE + GOOGLE_GUIDANCE</b> (if signed in) <b>+ live env</b></td>
+    </tr>
+    <tr>
+      <td><span class="n">2</span></td>
+      <td><b>Planner</b><br><span class="key">request → plan</span></td>
+      <td><code>TaskService._planner_agent</code> → <code>create_agent(memory=False, skills=False)</code></td>
+      <td><span class="pill main">main</span></td>
+      <td>full tool set <b>minus</b> start_task / schedule_task / skills — but <b>unused</b> (a single structured call)</td>
+      <td>base = <b>persona only</b>; message = <code>_PLAN_PROMPT</code> → returns a <code>TaskPlan</code></td>
+    </tr>
+    <tr>
+      <td><span class="n">3</span></td>
+      <td><b>Executor</b><br><span class="key">one per (sub)task</span></td>
+      <td><code>executor.make_task_executor</code> → <code>create_agent(capabilities=…, model=sub_model)</code></td>
+      <td><span class="pill cheap">cheap</span> leaf subtasks<br><span class="pill main">main</span> root / synthesis</td>
+      <td><b>capability-scoped subset only</b> (e.g. just <code>web</code>)</td>
+      <td><code>turn_prompt</code> (persona + behaviour + env) + message: "produce the deliverable… original request… objective… deliverables now"</td>
+    </tr>
+    <tr>
+      <td><span class="n">4</span></td>
+      <td><b>Deliverable-verifier</b><br><span class="key">ephemeral, per deliverable</span></td>
+      <td><code>executor._verify_deliverable</code> → <code>Agent("deliverable-verifier")</code></td>
+      <td><span class="pill cheap">cheap</span></td>
+      <td>none</td>
+      <td><b>no persona / no behaviour</b> — "judge output vs criteria (+ grounding)" → <code>_Verdict</code></td>
+    </tr>
+    <tr>
+      <td><span class="n">5</span></td>
+      <td><b>Task-controller</b><br><span class="key">the per-task chat</span></td>
+      <td><code>TaskService._control</code> → <code>Agent("task-controller", tools=build_task_tools)</code></td>
+      <td><span class="pill main">main</span></td>
+      <td>task_status, add_subtask, set_objective, add_deliverable, reschedule, cancel</td>
+      <td><code>[_CONTROL_PROMPT, live task snapshot]</code> — <b>no persona / behaviour / env</b></td>
+    </tr>
+  </tbody>
+</table>
+<p class="key">🔒 = permission-gated. Plus two non-agents: a <b>memory-aggregation</b> summarization pass (cheap model) and <b>onboarding</b> (scripted Q&amp;A via the <code>Asker</code>, no LLM).</p>
+
+<h2>Prompt summaries</h2>
+<div class="card">
+  <h3>BEHAVIOR_GUIDANCE <span class="key">— shared by agents 1 &amp; 3 only</span></h3>
+  Do what's asked with the right tool; don't shell-flail or improvise; you can't watch video/audio;
+  ask the user when you genuinely need info or confirmation.
+</div>
+<div class="card">
+  <h3>_PLAN_PROMPT <span class="key">— agent 2 (planner)</span></h3>
+  Classify trivial vs non-trivial; ask 2–5 clarifying questions about <i>scope, audience, format, depth,
+  <b>deadline</b></i>; emit objective + deliverables + subtasks + per-piece capabilities. Final deliverable
+  belongs to the root and is synthesised from subtasks.
+</div>
+<div class="card">
+  <h3>executor message <span class="key">— agent 3</span></h3>
+  Produce the actual deliverable content with your tools; here's the original request, objective, parent
+  context, completed-subtask results, and the deliverables to produce now; involve the user if you need to.
+</div>
+<div class="card">
+  <h3>verifier <span class="key">— agent 4</span></h3>
+  Strict check: is the finished deliverable content present and meeting the criteria? For web research, is
+  it grounded in the retrieved sources? (Asking clarifying questions mid-turn is fine; punting is not.)
+</div>
+<div class="card">
+  <h3>_CONTROL_PROMPT <span class="key">— agent 5 (controller)</span></h3>
+  You steer ONE task. Use your tools to add/cancel subtasks, change the objective, reschedule, or cancel —
+  immediately, then confirm. Use <code>reschedule</code> for timing changes, never a subtask. You do NOT do
+  the work yourself — the runner does.
+</div>
+
+<h2>Why it feels disconnected</h2>
+
+<div class="warn"><b>1. Scheduling isn't a shared primitive — it's tools bolted onto one agent.</b>
+Only the <b>chat agent</b> knows scheduling (<code>schedule_task</code>). The <b>planner</b> has no concept
+of it, and <code>_PLAN_PROMPT</code> literally invites "deadline" questions — so when a <i>scheduled</i>
+task runs intake, the planner asks the user how/when to schedule, re-litigating something already decided.
+The <b>controller</b> has <code>reschedule</code> but via yet another prompt. No agent treats "this task has
+a schedule" as known metadata.</div>
+
+<div class="warn"><b>2. Shared prompt fragments are applied inconsistently.</b>
+Persona + behaviour + env reach the chat &amp; executor agents (via <code>turn_prompt</code>); the
+<b>planner</b> gets persona-only; the <b>controller</b> and <b>verifier</b> get neither. Tone and rules drift
+between stages.</div>
+
+<div class="warn"><b>3. The pipeline is a relay of partial views.</b>
+chat → planner → executor → verifier → controller, each a fresh LLM that re-derives context from a
+hand-built message. None sees the task's full metadata (schedule, origin, capabilities, intake answers) in
+a uniform way — the planner never receives the schedule, the controller gets a text snapshot, the executor
+gets a different hand-assembled blob.</div>
+
+<div class="warn"><b>4. The planner is a heavyweight agent used for a single structured call</b>
+and carries unused web/shell/Google tools. Conceptually it's just "request → TaskPlan."</div>
+
+<h2>The shape of a fix</h2>
+<p class="sub">Direction only — nothing built yet.</p>
+<ul>
+  <li><b>One task-context object.</b> Build the task's metadata (schedule, origin, capabilities, intake
+      answers, objective) once, via a shared helper, and give it to <i>every</i> task-stage agent — so the
+      planner knows "this is scheduled weekdays 5am; don't ask about timing," and the executor/controller
+      see the same thing.</li>
+  <li><b>Scheduling as native task metadata, not a per-agent tool.</b> The chat/controller set it; the
+      planner is explicitly told it's out of scope; the executor/verifier ignore it.</li>
+  <li><b>One shared base prompt</b> (persona + behaviour) layered under <i>all</i> task agents
+      (planner, executor, controller, verifier), with stage-specific instructions on top — replacing the
+      three bespoke prompts.</li>
+  <li><b>Make the planner a thin "request → TaskPlan" call</b> without the unused tool surface.</li>
+</ul>
+
+<footer>
+  Generated as a working note. Source of truth is the code: <code>agclaw/agent.py</code>,
+  <code>agclaw/tasks/planner.py</code>, <code>agclaw/tasks/executor.py</code>,
+  <code>agclaw/tasks/control.py</code>, <code>agclaw/gateway/tasks_service.py</code>.
+</footer>
+
+</div>
+</body>
+</html>

@@ -132,6 +132,8 @@
   .bubble h1, .bubble h2, .bubble h3 { font-family: var(--serif); margin: 14px 0 8px; line-height: 1.25; }
   .bubble h1 { font-size: 22px; } .bubble h2 { font-size: 19px; } .bubble h3 { font-size: 17px; }
   .bubble a { color: var(--accent); }
+  a.tasklink { color: var(--accent); font-weight: 600; text-decoration: none; border-bottom: 1px dashed var(--accent); cursor: pointer; }
+  a.tasklink:hover { border-bottom-style: solid; }
   .bubble code { font-family: var(--mono); font-size: 13px; background: var(--code); padding: 1.5px 5px; border-radius: 5px; }
   .bubble pre { background: var(--code); padding: 12px 14px; border-radius: 10px; overflow-x: auto; margin: 0 0 10px; }
   .bubble pre code { background: none; padding: 0; font-size: 13px; line-height: 1.5; }
@@ -174,6 +176,8 @@
   .thinking .d { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite both; }
   .thinking .d:nth-child(2) { animation-delay: .2s; } .thinking .d:nth-child(3) { animation-delay: .4s; }
   @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .tooltrail { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .toolchip { font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-family: var(--sans); }
 
   .qcard {
     align-self: center; max-width: 760px; width: 100%; border: 1px solid var(--accent);
@@ -826,6 +830,37 @@
       el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
       el.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener"; });
     } else { el.textContent = text || ""; }
+    linkifyTasks(el);
+  }
+
+  // Turn bare task IDs in rendered text (e.g. "(Task ID: task-e37d…)") into
+  // clickable links that open the task — so a reloaded chat still links through,
+  // not just the live card. Runs after sanitize so it survives DOMPurify.
+  const TASK_ID_RE = /\btask-[0-9a-f]{6,}\b/g;
+  function linkifyTasks(el) {
+    if (!el) return;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement && n.parentElement.closest("a"))
+        ? NodeFilter.FILTER_REJECT
+        : (TASK_ID_RE.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP),
+    });
+    const targets = [];
+    while (walker.nextNode()) targets.push(walker.currentNode);
+    for (const node of targets) {
+      const frag = document.createDocumentFragment();
+      let last = 0; const s = node.nodeValue; TASK_ID_RE.lastIndex = 0; let m;
+      while ((m = TASK_ID_RE.exec(s))) {
+        if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
+        const a = document.createElement("a");
+        a.href = "#"; a.className = "tasklink"; a.textContent = m[0];
+        const id = m[0];
+        a.onclick = (ev) => { ev.preventDefault(); openTaskView(id); };
+        frag.appendChild(a);
+        last = m.index + m[0].length;
+      }
+      if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
   }
 
   function addMsg(role, text, files) {
@@ -862,10 +897,28 @@
     clearEmpty();
     thinkingEl = document.createElement("div");
     thinkingEl.className = "msg agent thinking";
-    thinkingEl.innerHTML = '<div class="bubble"><span class="d"></span><span class="d"></span><span class="d"></span></div>';
+    thinkingEl.innerHTML = '<div class="bubble"><span class="d"></span><span class="d"></span><span class="d"></span></div><div class="tooltrail"></div>';
     wrap.appendChild(thinkingEl); scroll();
   }
   function clearThinking() { if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } }
+  function addToolChip(name) {  // live "⚙ tool name" chips under the thinking dots
+    if (!thinkingEl) return;
+    const trail = thinkingEl.querySelector(".tooltrail");
+    if (!trail) return;
+    const pretty = String(name || "").replace(/_/g, " ");
+    const last = trail.lastElementChild;  // collapse repeats of the same tool
+    if (last && last.dataset.tool === pretty) {
+      const n = (parseInt(last.dataset.count || "1", 10)) + 1;
+      last.dataset.count = String(n);
+      last.textContent = "⚙ " + pretty + " ×" + n;
+      scroll(); return;
+    }
+    const chip = document.createElement("span");
+    chip.className = "toolchip";
+    chip.dataset.tool = pretty; chip.dataset.count = "1";
+    chip.textContent = "⚙ " + pretty;
+    trail.appendChild(chip); scroll();
+  }
 
   function setBusy(on) {
     busy = on;
@@ -938,6 +991,7 @@
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.type === "thinking") showThinking();
+      else if (m.type === "tool") addToolChip(m.name);
       else if (m.type === "question") showQuestion(m);
       else if (m.type === "reply") { clearThinking(); addMsg("agent", m.text); setBusy(false); if (drawer.classList.contains("open")) refreshTab(); }
       else if (m.type === "task_card") { addTaskCard(m); }

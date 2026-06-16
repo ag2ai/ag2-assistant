@@ -43,6 +43,41 @@ async def test_send_message_returns_reply(fake_gateway):
     assert reply == "echo[1]: hello"
 
 
+async def test_on_tool_reports_each_tool_name(fake_gateway):
+    """The on_tool callback receives every tool the agent calls (single + batch),
+    and the stream subscription is cleaned up when the turn ends."""
+    from autogen.beta.events import ToolCallEvent, ToolCallsEvent
+
+    captured: dict = {}
+
+    class _Stream:  # mimics MemoryStream's subscribe/unsubscribe + event delivery
+        def subscribe(self, fn):
+            captured["fn"] = fn
+            return "sub-1"
+
+        def unsubscribe(self, sid):
+            captured["unsub"] = sid
+
+    names: list = []
+
+    async def on_tool(name):
+        names.append(name)
+
+    async def ask_coro():
+        await captured["fn"](ToolCallEvent(name="web_search"))
+        await captured["fn"](
+            ToolCallsEvent(calls=[ToolCallEvent(name="get_task"),
+                                  ToolCallEvent(name="list_tasks")])
+        )
+        return _FakeReply("done")
+
+    reply = await fake_gateway._ask_watching_tools(_Stream(), ask_coro(), on_tool)
+
+    assert reply.body == "done"
+    assert names == ["web_search", "get_task", "list_tasks"]
+    assert captured["unsub"] == "sub-1"  # always unsubscribed
+
+
 async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
     """First message with an asker triggers onboarding exactly once."""
     import agclaw.onboarding as onboarding
@@ -217,7 +252,7 @@ class _AskingGateway:
 
         self._q = Question(text="Allow it?", options=["Allow once", "Deny"], kind="permission")
 
-    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface=""):
+    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface="", on_tool=None):
         ans = await asker.ask(self._q)
         return f"decision:{ans}"
 
@@ -325,7 +360,7 @@ class _AttachGateway:
     def __init__(self):
         self.last_attachments = None
 
-    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface=""):
+    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface="", on_tool=None):
         self.last_attachments = attachments
         return f"got {len(attachments or [])} attachment(s): {text}"
 
@@ -358,7 +393,7 @@ def test_ws_attachment_passthrough():
 
 
 class _HangGateway:
-    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface=""):
+    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface="", on_tool=None):
         await asyncio.Event().wait()  # never completes → must be cancellable
 
     def status(self):

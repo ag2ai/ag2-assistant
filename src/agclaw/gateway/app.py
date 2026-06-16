@@ -374,6 +374,12 @@ def create_app(
                     )
 
                 asker = GatewayAsker(app.state.hitl, on_question=on_question)
+
+                async def on_tool(name, sid=session_id):
+                    await websocket.send_json(
+                        {"type": "tool", "name": name, "session_id": sid}
+                    )
+
                 # capture any tasks the agent spawns this turn (start_task tool) so
                 # we can show a task card; the contextvar is copied into the task.
                 import agclaw.agent as agent_mod
@@ -383,7 +389,7 @@ def create_app(
                 task = asyncio.create_task(
                     app.state.gateway.send_message(
                         text, session_id=session_id, asker=asker,
-                        attachments=attachments, surface=surface,
+                        attachments=attachments, surface=surface, on_tool=on_tool,
                     )
                 )
                 # While the turn runs, keep reading frames (answers / cancel).
