@@ -34,7 +34,7 @@ def _fmt_schedule(t: dict) -> str:
     return f" · ⏰ {t['scheduled_for']} ({rep})"
 
 
-def _fmt_node(n: dict, depth: int = 0) -> str:
+def _fmt_node(n: dict, depth: int = 0, full: bool = False) -> str:
     pad = "  " * depth
     lines = [f"{pad}{n['title']} — {n['status']}{_fmt_schedule(n)}"]
     if depth == 0 and n.get("objective"):
@@ -43,21 +43,32 @@ def _fmt_node(n: dict, depth: int = 0) -> str:
         lines.append(f"{pad}  • {d['description']} [{d['status']}]")
         asset = d.get("asset")
         if asset:
-            preview = asset[:_PREVIEW].replace("\n", " ")
-            lines.append(f"{pad}    → {preview}{'…' if len(asset) > _PREVIEW else ''}")
+            if full:
+                # full inspection: emit the complete output, never truncated.
+                lines.append(f"{pad}    → {asset}")
+            elif len(asset) > _PREVIEW:
+                preview = asset[:_PREVIEW].replace("\n", " ")
+                lines.append(
+                    f"{pad}    → {preview}… [preview only — {len(asset)} chars; "
+                    f"call get_task for the full output before reporting it]"
+                )
+            else:
+                lines.append(f"{pad}    → {asset.replace(chr(10), ' ')}")
     prog = n.get("progress") or []
     if prog:
         lines.append(f"{pad}  progress: {prog[-1].get('message', '')}")
     if n.get("error"):
         lines.append(f"{pad}  error: {n['error']}")
     for c in n.get("children", []):
-        lines.append(_fmt_node(c, depth + 1))
+        lines.append(_fmt_node(c, depth + 1, full=full))
     return "\n".join(lines)
 
 
 def format_task(node: dict) -> str:
     """A concise, readable summary of a task node (id, status, schedule, deliverables
-    with output previews, subtasks, progress) — used for surface context."""
+    with output *previews*, subtasks, progress) — used for ambient surface context.
+    Long outputs are marked as previews so the agent fetches the full text via
+    get_task rather than treating the snippet as the whole deliverable."""
     return _fmt_node(node)
 
 
@@ -80,10 +91,11 @@ def build_system_tools(tasks, chats=None) -> list:
     async def get_task(
         task_id: Annotated[str, Field(description="The task id.")],
     ) -> str:
-        """Full detail of one task: objective, schedule, deliverables (with output
-        previews), subtasks, progress. Use before acting on or reporting a task."""
+        """Full detail of one task: objective, schedule, deliverables with their
+        COMPLETE output (untruncated), subtasks, progress. Use before acting on or
+        reporting a task — this is the source of truth for what the task produced."""
         node = await tasks.get_task(task_id)
-        return _fmt_node(node) if node else "Task not found."
+        return _fmt_node(node, full=True) if node else "Task not found."
 
     # ---- tasks: actions ----
     @tool

@@ -2,7 +2,7 @@
 
 from agclaw.gateway.tasks_service import TaskService
 from agclaw.hitl import InquiryStore
-from agclaw.system_tools import build_system_tools, format_task
+from agclaw.system_tools import _fmt_node, build_system_tools, format_task
 from agclaw.tasks import TaskManager, TaskStatus, TaskStore
 
 
@@ -52,6 +52,28 @@ async def test_format_task_is_concise(tmp_path):
     text = format_task(node)
     assert "Trip" in text and "scheduled" in text and "weekdays" in text
     assert "itinerary" in text and "book flights" in text
+
+
+async def test_get_task_returns_full_asset_surface_previews(tmp_path):
+    """The surface summary previews long output (clearly marked), but the get_task
+    tool returns the COMPLETE deliverable so follow-ups are faithful."""
+    svc = _service(tmp_path)
+    t = await svc.store.create("News digest")
+    d = await svc.store.add_deliverable(t.id, "headlines")
+    body = "RBA holds rates.\n" + ("DETAIL LINE\n" * 400)  # well over the preview cap
+    await svc.store.set_deliverable_status(
+        t.id, d["id"], "produced",
+        asset={"name": "headlines", "kind": "text", "content": body},
+    )
+
+    node = await svc.get_task(t.id)
+    surface = format_task(node)               # ambient surface context (what get_task tool guards)
+    assert "preview only" in surface          # ambient view is marked as partial
+    assert body not in surface                 # …and does not contain the whole thing
+
+    full = _fmt_node(node, full=True)          # what the get_task tool returns
+    assert body in full                        # complete, untruncated output
+    assert "preview only" not in full
 
 
 async def test_run_now_on_scheduled_keeps_schedule(tmp_path):
