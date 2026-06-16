@@ -2,6 +2,24 @@
 
 ## Backlog / Ideas
 
+- **Task Manager — a maintained running summary per task (non-scheduled first).**
+  A lightweight per-task "manager" that keeps a human-readable **summary** so when
+  the user returns to a task they immediately know *what it is, what's happened,
+  and its current status* — without reading the whole tree/chat. The summary is
+  refreshed **periodically**, not on every event: e.g. **when the task completes**,
+  and **~10 minutes after the last activity** (debounced). Scope it to
+  non-scheduled tasks for now (scheduled tasks spawn per-occurrence runs).
+  - *Role:* purely a summariser — outline the objective, progress so far
+    (subtasks done/failed, key produced outputs), and where it stands. No control.
+  - *Mechanism (sketch):* a cheap-model pass over the task tree + progress log +
+    task-chat history → a stored `summary` field on the task, surfaced at the top
+    of the task view and in `get_task`/`list_tasks`. Trigger on terminal status and
+    on an idle timer (reset on any task activity); coalesce so a burst of activity
+    yields one summary. Reuse the AG2 aggregate/summarise notions and the cheap
+    `cheap_model`. Deterministic scheduling of *when* to summarise; LLM only for
+    the prose. Feeds the universal agent's surface context (it can read the summary
+    instead of re-deriving state).
+
 - **Supervisor / watchdog — persistent, deterministic (no LLM).** An always-on
   control loop, separate from the agent, that health-checks every service
   (gateway, each channel, the scheduler, the task runner) on an interval and
