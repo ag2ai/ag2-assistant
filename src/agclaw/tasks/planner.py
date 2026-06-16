@@ -189,6 +189,9 @@ async def prepare_task(
             return
         answers.update(new)
         await store.update(task_id, intake=dict(answers))
+        # The moment they answer we're re-planning, not waiting — reflect that so
+        # the status doesn't look stuck on "awaiting input" during the LLM call.
+        await store.set_status(task_id, TaskStatus.PLANNING)
         # re-plan with everything gathered so far; this may surface FEWER
         # questions (converging) or new ones if the answers opened up scope.
         plan = await make_plan(

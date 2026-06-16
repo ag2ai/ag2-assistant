@@ -97,6 +97,31 @@ async def test_prepare_trivial_task_skips_intake(tmp_path):
     assert got.status == TaskStatus.PENDING
 
 
+async def test_answering_flips_status_off_awaiting_input(tmp_path):
+    """The instant the user answers, status becomes PLANNING (not stuck on
+    awaiting_input) while the answer is re-planned."""
+    store = _store(tmp_path)
+    t = await store.create("vague job")
+    seen = []
+
+    class _RecordingAgent:  # records the task's status at each plan/re-plan call
+        def __init__(self, plans):
+            self._plans = list(plans)
+            self.asks = 0
+
+        async def ask(self, msg, response_schema=None, **kwargs):
+            seen.append((await store.get(t.id)).status)
+            self.asks += 1
+            return _FakeReply(self._plans.pop(0))
+
+    plan1 = TaskPlan(trivial=False, objective="p", questions=[ClarifyQuestion(text="Which?")])
+    plan2 = TaskPlan(trivial=False, objective="done", deliverables=[PlanDeliverable(description="x")])
+    await prepare_task(store, t.id, _RecordingAgent([plan1, plan2]), _FakeAsker(["A"]))
+
+    assert seen[1] == TaskStatus.PLANNING       # re-plan after the answer, not awaiting_input
+    assert (await store.get(t.id)).status == TaskStatus.PENDING
+
+
 async def test_prepare_nontrivial_task_clarifies_then_replans(tmp_path):
     store = _store(tmp_path)
     t = await store.create("research the IPOs and make a deck")
