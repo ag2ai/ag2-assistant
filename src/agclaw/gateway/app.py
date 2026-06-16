@@ -453,10 +453,16 @@ def create_app(
             with contextlib.suppress(Exception):
                 await websocket.send_json({"type": "tool", "name": name})
 
+        async def on_task(st: dict) -> None:  # a task the voice agent just spawned → card
+            with contextlib.suppress(Exception):
+                await websocket.send_json({
+                    "type": "task_card", "id": st["id"], "title": st.get("title", "Task"),
+                })
+
         try:
             agent = await app.state.gateway.build_voice_agent(
                 session_id=sid, task_id=task_id, chat_session=chat_session,
-                on_tool=on_tool,
+                on_tool=on_tool, on_task=on_task,
             )
         except Exception as exc:
             with contextlib.suppress(Exception):

@@ -908,15 +908,17 @@
 
   function addNote(text) { addMsg("note", text); }
 
-  function addTaskCard(m) {  // a chat card for a task the agent spawned
-    clearEmpty();
+  function addTaskCard(m) {  // a card for a task the agent spawned (chat or task view)
+    const host = (typeof isTaskView === "function" && isTaskView()) ? taskChatEl : wrap;
+    if (!host) return;
+    if (host === wrap) clearEmpty();
     const card = document.createElement("div"); card.className = "taskcard";
     const t = document.createElement("div"); t.className = "tck"; t.textContent = "✓ Task started";
     const ti = document.createElement("div"); ti.className = "tci"; ti.textContent = m.title || "Task";
     const b = document.createElement("button"); b.className = "tcb"; b.textContent = "Open task →";
     b.onclick = () => openTaskView(m.id);
     card.appendChild(t); card.appendChild(ti); card.appendChild(b);
-    wrap.appendChild(card); scroll();
+    host.appendChild(card); scroll();
   }
 
   function showThinking() {
@@ -1177,6 +1179,7 @@
           else voiceBubble(m.role, m.text);
         }
         else if (m.type === "tool") addVoiceToolChip(m.name);
+        else if (m.type === "task_card") { hideVoiceThinking(); addTaskCard(m); }
         else if (m.type === "error") { voiceStatus(true, "Voice error: " + (m.message || "")); }
         return;
       }

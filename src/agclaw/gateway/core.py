@@ -195,7 +195,8 @@ class Gateway:
 
     async def build_voice_agent(self, session_id: str = "default",
                                 voice: str = "Puck", task_id: str | None = None,
-                                chat_session: str | None = None, on_tool=None):
+                                chat_session: str | None = None, on_tool=None,
+                                on_task=None):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
         delegates to this same universal agent so the spoken conversation shares
         the app's tools, memory, and continuity.
@@ -229,32 +230,48 @@ class Gateway:
                     "ask_assistant, which shares this full conversation."
                 )
 
+        async def _send_capturing(request: str, session: str, surface: str) -> str:
+            # Capture any tasks the universal agent spawns this turn (create_task /
+            # schedule_task append to started_tasks_var) and report them so the WS
+            # can show a task card live — same mechanism as the text chat.
+            import agclaw.agent as agent_mod
+
+            spawned: list = []
+            token = agent_mod.started_tasks_var.set(spawned)
+            try:
+                reply = await self.send_message(
+                    request, session_id=session, surface=surface, on_tool=on_tool,
+                )
+            finally:
+                agent_mod.started_tasks_var.reset(token)
+            if on_task:
+                for st in spawned:
+                    try:
+                        await on_task(st)
+                    except Exception:
+                        pass
+            return reply
+
         async def delegate(request: str) -> str:
             if task_id:
                 node = await self._tasks.get_task(task_id)  # fresh each call
                 snap = format_task(node) if node else f"(task {task_id})"
-                return await self.send_message(
+                return await _send_capturing(
                     request,
-                    session_id=f"task:{task_id}",  # share the task's universal stream
-                    surface=(
-                        "The user is talking to you by voice while viewing this "
-                        f"task; act on THIS task (id {task_id}) when they refer to "
-                        f"it. Answer plainly and briefly so it can be spoken.\n\n{snap}"
-                    ),
-                    on_tool=on_tool,
+                    f"task:{task_id}",  # share the task's universal stream
+                    "The user is talking to you by voice while viewing this "
+                    f"task; act on THIS task (id {task_id}) when they refer to "
+                    f"it. Answer plainly and briefly so it can be spoken.\n\n{snap}",
                 )
             # Main chat: delegate onto the SAME session so the universal agent has
             # the full text history (e.g. a task the user just created by typing).
-            return await self.send_message(
+            return await _send_capturing(
                 request,
-                session_id=chat_session or f"voice:{session_id}",
-                surface=(
-                    "The user is talking to you by voice in this chat; the voice "
-                    "assistant asked you to handle this. Use the conversation "
-                    "history for any references like 'this task'. Answer plainly "
-                    "and briefly so it can be spoken aloud."
-                ),
-                on_tool=on_tool,
+                chat_session or f"voice:{session_id}",
+                "The user is talking to you by voice in this chat; the voice "
+                "assistant asked you to handle this. Use the conversation history "
+                "for any references like 'this task'. Answer plainly and briefly "
+                "so it can be spoken aloud.",
             )
 
         return build_voice_agent(self._config, self._tasks, delegate,
