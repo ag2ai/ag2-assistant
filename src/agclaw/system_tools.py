@@ -18,6 +18,15 @@ from pydantic import Field
 _PREVIEW = 240  # chars of a produced asset to surface in a summary
 
 
+def _note_started(task_id: str, title: str) -> None:
+    """Record a just-created task so the surface (web chat) can show a task card."""
+    from agclaw.agent import started_tasks_var
+
+    lst = started_tasks_var.get()
+    if lst is not None:
+        lst.append({"id": task_id, "title": title})
+
+
 def _fmt_schedule(t: dict) -> str:
     if not t.get("scheduled_for"):
         return ""
@@ -84,6 +93,7 @@ def build_system_tools(tasks, chats=None) -> list:
         """Start a background task (it clarifies if needed, then runs). For
         substantial/multi-step work — not quick answers you can give now."""
         tid = await tasks.submit_request(request)
+        _note_started(tid, request)  # surfaces a task card in the chat
         return f"Created task {tid}. It will ask any clarifying questions, then run."
 
     @tool
@@ -94,6 +104,7 @@ def build_system_tools(tasks, chats=None) -> list:
     ) -> str:
         """Schedule a task to run later, optionally recurring."""
         tid = await tasks.schedule_task(request, when, recurrence or None)
+        _note_started(tid, request)  # surfaces a task card in the chat
         return f"Scheduled task {tid} for {when}{' (' + recurrence + ')' if recurrence else ''}."
 
     @tool

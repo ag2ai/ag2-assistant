@@ -68,9 +68,10 @@ class Gateway:
             from agclaw.system_tools import build_system_tools
 
             extra_tools = build_system_tools(self._tasks, chats=self)
+        # Note: create/schedule come from the system tools (extra_tools), so we
+        # don't also wire start_task/schedule_task here (that duplicated names).
         self._agent = create_agent(
             self._config, memory=self._memory, platform=self._platform,
-            task_starter=self._task_starter, schedule_starter=self._schedule_starter,
             extra_tools=extra_tools, compact=self._memory,
         )
         self._permissions = PermissionStore()
