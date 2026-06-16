@@ -454,33 +454,38 @@ async def test_chat_routes_to_control_agent(tmp_path):
     assert await svc.chat("missing", "hi") is None
 
 
-def test_task_chat_endpoint(monkeypatch, tmp_path):
+def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch, tmp_path):
+    """The task page talks to the SAME gateway agent, given the task as surface
+    context (id + snapshot) — not a separate controller."""
     from fastapi.testclient import TestClient
 
     import agclaw.gateway.app as app_mod
     import agclaw.gateway.core as core_mod
     from agclaw.config import Config
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
+    seen = {}
+
+    class _Reply:
+        body = "on it"
+
+    class _Agent:  # the one universal gateway agent
+        async def ask(self, *msg, stream=None, prompt=None, **k):
+            seen["prompt"] = prompt
+            seen["session"] = getattr(stream, "id", None)
+            return _Reply()
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _Agent())
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
     with TestClient(app) as client:
         svc = app.state.tasks
+        task_id = asyncio.get_event_loop().run_until_complete(
+            svc.store.create("seeded", objective="do it")
+        ).id
 
-        class _Reply:
-            body = "done"
-
-        class _Agent:
-            async def ask(self, text, stream=None, prompt=None, **k):
-                return _Reply()
-
-        async def _seed():
-            t = await svc.store.create("seeded")
-            svc._control_agents[t.id] = (_Agent(), object())
-            return t.id
-
-        task_id = asyncio.get_event_loop().run_until_complete(_seed())
-        r = client.post(f"/api/tasks/{task_id}/chat", json={"text": "status?"})
-        assert r.json()["reply"] == "done"
+        r = client.post(f"/api/tasks/{task_id}/chat", json={"text": "what's the status?"})
+        assert r.json()["reply"] == "on it"
+        assert seen["session"] == f"task:{task_id}"               # per-task stream
+        assert any(task_id in p for p in seen["prompt"])          # task surface injected
         assert client.post("/api/tasks/nope/chat", json={"text": "x"}).status_code == 404
 
 

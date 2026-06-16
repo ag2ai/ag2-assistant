@@ -99,6 +99,7 @@ def build_knowledge_config(
     store=None,
     every_n_turns: int = 4,
     on_end: bool = False,
+    compact: bool = False,
 ) -> KnowledgeConfig:
     """Build a KnowledgeConfig that passively learns and persists the user profile.
 
@@ -128,6 +129,17 @@ def build_knowledge_config(
             api_key=os.environ.get("GEMINI_API_KEY", ""),
         )
 
+    compact_kwargs: dict = {}
+    if compact:
+        # Keep a long-running conversation's context bounded by summarising the
+        # oldest events (on the cheap model) when the stream grows large.
+        from autogen.beta.compact import CompactTrigger, SummarizeCompact
+
+        compact_kwargs = {
+            "compact": SummarizeCompact(target=60, config=aggregate_config),
+            "compact_trigger": CompactTrigger(max_tokens=24_000),
+        }
+
     return KnowledgeConfig(
         store=store,
         # Passive only: don't hand the model a knowledge tool or dump event logs.
@@ -140,6 +152,7 @@ def build_knowledge_config(
         aggregate_trigger=AggregateTrigger(
             every_n_turns=every_n_turns, on_end=on_end
         ),
+        **compact_kwargs,
     )
 
 

@@ -89,6 +89,7 @@ def create_app(
             config=config, memory=memory, platform=platform, persist=persist,
             task_starter=tasks.submit_request,  # let the chat agent spawn tasks
             schedule_starter=tasks.schedule_task,  # ...and schedule them
+            task_service=tasks,  # ...and know/do everything via system tools
         )
 
     @asynccontextmanager
@@ -284,10 +285,22 @@ def create_app(
 
     @app.post("/api/tasks/{task_id}/chat")
     async def task_chat(task_id: str, req: TaskChatRequest):
-        """Converse about a task — the agent edits it (add/cancel subtasks, etc.)."""
-        reply = await app.state.tasks.chat(task_id, req.text)
-        if reply is None:
+        """Converse about a task — the SAME universal agent, given this task as its
+        surface context (it inspects/steers the task via its system tools)."""
+        from agclaw.system_tools import format_task
+
+        node = await app.state.tasks.get_task(task_id)
+        if node is None:
             return Response(status_code=404)
+        surface = (
+            f"You are on the page for task {task_id}. The user's messages here are "
+            f"usually about THIS task — inspect or steer it with your task tools "
+            f"(its id is {task_id}). Current state:\n{format_task(node)}"
+        )
+        asker = GatewayAsker(app.state.hitl)
+        reply = await app.state.gateway.send_message(
+            req.text, session_id=f"task:{task_id}", asker=asker, surface=surface,
+        )
         return {"reply": reply}
 
     @app.get("/api/inquiries/pending")

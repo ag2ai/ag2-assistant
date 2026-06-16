@@ -325,6 +325,53 @@ class TaskService:
         await self._manager.cancel(task_id, reason=reason)
         return True
 
+    # --- action wrappers (thin; the universal agent's system tools call these) ---
+
+    async def add_subtask(self, task_id, title, description="", capabilities="web") -> str:
+        from agclaw.tasks.control import do_add_subtask
+
+        return await do_add_subtask(self._store, self._manager, task_id, title, description, capabilities)
+
+    async def add_deliverable(self, task_id, description, criteria="") -> str:
+        from agclaw.tasks.control import do_add_deliverable
+
+        return await do_add_deliverable(self._store, self._manager, task_id, description, criteria)
+
+    async def set_objective(self, task_id, objective) -> str:
+        from agclaw.tasks.control import do_set_objective
+
+        return await do_set_objective(self._store, task_id, objective)
+
+    async def reschedule(self, task_id, when="", recurrence="") -> str:
+        from agclaw.tasks.control import do_reschedule
+
+        return await do_reschedule(self._store, task_id, when, recurrence)
+
+    async def cancel_target(self, task_id, subtask="") -> str:
+        """Cancel the task or a named subtask (controller-style, returns a message)."""
+        from agclaw.tasks.control import do_cancel
+
+        return await do_cancel(self._store, self._manager, task_id, subtask)
+
+    async def run_now(self, task_id: str) -> str:
+        """Run a scheduled task's occurrence immediately (keeping its schedule), or
+        (re)run any other task now."""
+        from agclaw.tasks import TaskStatus
+
+        t = await self._store.get(task_id)
+        if t is None:
+            return "Task not found."
+        if t.status == TaskStatus.SCHEDULED:
+            if self._is_planned(t):
+                run = await self._clone_for_run(t)
+                await self._manager.submit(run.id, asker=_ParkingAsker())
+            else:
+                run = await self._clone_for_run(t)
+                self._run_in_bg(run.id, t.origin_channel or "web", clarify=False)
+            return f"Running an occurrence of '{t.title}' now; its schedule is unchanged."
+        self._run_in_bg(task_id, t.origin_channel or "web", clarify=False)
+        return f"Running '{t.title}' now."
+
     def _control(self, task_id: str):
         """A cached, task-scoped controller agent (+ its conversation stream)."""
         entry = self._control_agents.get(task_id)

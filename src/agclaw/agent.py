@@ -137,6 +137,26 @@ GOOGLE_GUIDANCE = (
 )
 
 
+# Describes the whole system to the one universal agent, so it knows what it can
+# do and reaches for its system tools to find things / act — on any surface.
+CAPABILITY_GUIDANCE = (
+    "You are AGClaw — ONE assistant the user works with everywhere: a web chat, a "
+    "task's own page, and messaging channels (Telegram, etc.). It must always feel "
+    "like the same entity. You can:\n"
+    "- Chat and use your tools (web search/fetch, code, local files, and the user's "
+    "Google when connected) to answer or act directly for small things.\n"
+    "- Run background TASKS for substantial or multi-step work: create them, schedule "
+    "them (one-off or recurring — daily/weekly/weekdays/'mon,wed,fri'), inspect and "
+    "edit them (add subtasks or deliverables, change the objective), reschedule, run "
+    "now, cancel, or archive.\n"
+    "- Look things up with your system tools instead of needing them in context: list/"
+    "get tasks, list/read past conversations, and list/answer open questions.\n"
+    "When the user asks what exists or its status ('what tasks do I have?', 'how's X "
+    "going?', 'what did we discuss?'), USE a tool to check — never say you can't see "
+    "it. Prefer doing small things now; spin up a task for big or long-running jobs."
+)
+
+
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
@@ -168,6 +188,28 @@ def turn_prompt(config: Config) -> list[str]:
             parts.append(GOOGLE_GUIDANCE)
     except Exception:
         pass
+    parts.append(environment_context(config))
+    return parts
+
+
+def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
+    """Per-turn prompt for the universal agent: persona + behaviour + capability
+    map + (Google when signed in) + the SURFACE it's being addressed on + live env.
+
+    `surface` is a short paragraph the caller builds describing where the user is
+    (web chat / new-task box / a specific task + its state / a channel) so the one
+    agent has the right local context without changing identity.
+    """
+    parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE, CAPABILITY_GUIDANCE]
+    try:
+        from agclaw.integrations.google_auth import has_token
+
+        if has_token():
+            parts.append(GOOGLE_GUIDANCE)
+    except Exception:
+        pass
+    if surface:
+        parts.append(surface)
     parts.append(environment_context(config))
     return parts
 
@@ -249,6 +291,8 @@ def create_agent(
     model: str | None = None,
     task_starter=None,
     schedule_starter=None,
+    extra_tools: list | None = None,
+    compact: bool = False,
 ) -> Agent:
     """Create an AGClaw agent with the given configuration.
 
@@ -289,6 +333,7 @@ def create_agent(
             store=knowledge_store,
             every_n_turns=config.memory.aggregate_every_n_turns,
             on_end=single_shot,
+            compact=compact,
         )
         assembly = profile_assembly()
 
@@ -309,6 +354,10 @@ def create_agent(
         tools.append(_build_start_task_tool(task_starter))
     if schedule_starter is not None:
         tools.append(_build_schedule_task_tool(schedule_starter))
+    # system tools (retrieval + actions over tasks/chats/questions) — these make
+    # the agent "universal": it can know and do everything via tools.
+    if extra_tools:
+        tools.extend(extra_tools)
 
     from agclaw.permissions import PermissionManager
 

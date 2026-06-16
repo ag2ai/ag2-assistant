@@ -18,7 +18,7 @@ import json
 from datetime import datetime
 from urllib.parse import quote
 
-from agclaw.agent import create_agent, turn_prompt
+from agclaw.agent import create_agent, universal_turn_prompt
 from agclaw.config import Config, load_config
 
 REPLY_TIMEOUT = 240.0
@@ -37,6 +37,7 @@ class Gateway:
         persist: bool = True,
         task_starter=None,
         schedule_starter=None,
+        task_service=None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -45,6 +46,7 @@ class Gateway:
         self._persist = persist
         self._task_starter = task_starter  # lets the chat agent spawn background tasks
         self._schedule_starter = schedule_starter  # ...and schedule them for later
+        self._tasks = task_service  # gives the universal agent its system tools
         self._onboarding_done = False
         self._agent = None
         self._permissions = None
@@ -59,9 +61,17 @@ class Gateway:
         """Create the shared agent and (optionally) the on-disk session store."""
         from agclaw.permissions import PermissionStore
 
+        # The one universal agent: capability tools + system tools (know/do
+        # everything) + compaction to keep long conversations bounded.
+        extra_tools = None
+        if self._tasks is not None:
+            from agclaw.system_tools import build_system_tools
+
+            extra_tools = build_system_tools(self._tasks, chats=self)
         self._agent = create_agent(
             self._config, memory=self._memory, platform=self._platform,
             task_starter=self._task_starter, schedule_starter=self._schedule_starter,
+            extra_tools=extra_tools, compact=self._memory,
         )
         self._permissions = PermissionStore()
 
@@ -106,15 +116,17 @@ class Gateway:
         session_id: str = "default",
         asker=None,
         attachments: list | None = None,
+        surface: str = "",
     ) -> str:
-        """Send a user message and return the agent's reply.
+        """Send a user message to the universal agent and return its reply.
 
-        Each session_id keeps its own persistent, resumable history. Calls within
-        a session are serialised so the conversation stays consistent.
+        Each session_id keeps its own persistent, resumable history (a web chat, a
+        task's page, a channel — all the same agent, different streams). `surface`
+        is a short paragraph describing where the user is asking (and any local
+        state, e.g. a task snapshot) so the one agent has the right context.
 
         `asker` binds human-in-the-loop questions/permission prompts to the
-        surface that made the request. `attachments` are AG2 multimodal `Input`s
-        sent alongside the text.
+        surface that made the request. `attachments` are AG2 multimodal `Input`s.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -126,7 +138,7 @@ class Gateway:
 
         async with self._session_lock(session_id):
             stream = await self._get_stream(session_id)
-            prompt = turn_prompt(self._config)  # refresh date/time each turn
+            prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             reply = await asyncio.wait_for(
                 self._agent.ask(*msg, stream=stream, prompt=prompt, **extra),
                 timeout=REPLY_TIMEOUT,
