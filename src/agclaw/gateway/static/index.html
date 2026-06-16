@@ -278,6 +278,8 @@
   .hitlinner { max-width: 760px; margin: 12px auto 0; display: flex; flex-direction: column; gap: 8px;
                max-height: 40vh; overflow-y: auto; }
   .inq { border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; background: var(--bg); box-shadow: 0 6px 20px rgba(249,83,57,.08); }
+  .inq .inqsrc { border: none; background: none; color: var(--accent); font-family: var(--sans); font-weight: 600; font-size: 12px; cursor: pointer; padding: 0 0 6px; }
+  .inq .inqsrc:hover { text-decoration: underline; }
   .inq .it { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
   .inq .idet { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   .inq .opts { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -533,8 +535,15 @@
     if (!tasks.length) { tbody.innerHTML = '<div class="tnone">No tasks yet. Start one above.</div>'; return; }
     tasks.forEach(t => tbody.appendChild(taskCard(t)));
   }
-  function inquiryCard(p, onAnswered) {
+  function inquiryCard(p, onAnswered, showContext) {
     const c = document.createElement("div"); c.className = "inq";
+    if (showContext && p.task_title) {  // which task is asking — and jump to it
+      const src = document.createElement("button"); src.className = "inqsrc";
+      const ttl = p.task_title.length > 70 ? p.task_title.slice(0, 70) + "…" : p.task_title;
+      src.textContent = "↳ from task: " + ttl;
+      src.onclick = () => { if (p.root_id) openTaskView(p.root_id); };
+      c.appendChild(src);
+    }
     const it = document.createElement("div"); it.className = "it";
     it.textContent = (p.kind === "permission" ? "🔒 " : "❓ ") + (p.text || ""); c.appendChild(it);
     if (p.detail) { const d = document.createElement("div"); d.className = "idet"; d.textContent = p.detail; c.appendChild(d); }
@@ -579,12 +588,8 @@
       meta.textContent = m;
     }
     c.appendChild(meta);
-    // any inquiries for this task (or its subtasks) are answered right here
-    if (inqs.length) {
-      const h = document.createElement("div"); h.className = "needs"; h.textContent = "Needs your input";
-      c.appendChild(h);
-      inqs.forEach(p => c.appendChild(inquiryCard(p)));
-    }
+    // open questions are NOT shown here — they live in the global HITL strip
+    // (with task context), so the side panel stays a clean task list.
     th.onclick = () => openTaskView(t.id);  // clicking a task opens its full view
     return c;
   }
@@ -1003,7 +1008,7 @@
     const head = document.createElement("div"); head.className = "needs";
     head.textContent = "Needs your input (" + pend.length + ")";
     inner.appendChild(head);
-    pend.forEach(p => inner.appendChild(inquiryCard(p, afterHitlAnswer)));
+    pend.forEach(p => inner.appendChild(inquiryCard(p, afterHitlAnswer, true)));
     hitlbar.appendChild(inner);
   }
   pollInquiries();

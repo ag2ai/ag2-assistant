@@ -406,7 +406,30 @@ class TaskService:
 
     async def pending_inquiries(self, task_id: str | None = None) -> list[dict]:
         items = await self._inquiries.list_pending(task_id)
-        return [self._inquiry_view(i) for i in items]
+        out = []
+        for i in items:
+            v = self._inquiry_view(i)
+            root_id, title = await self._root_label(i.task_id)
+            v["root_id"] = root_id          # open this to see the source task
+            v["task_title"] = title         # so the user knows what they're answering
+            out.append(v)
+        return out
+
+    async def _root_label(self, task_id: str | None) -> tuple[str | None, str]:
+        """Resolve an inquiry's (sub)task to its root task's id + title."""
+        if not task_id:
+            return None, ""
+        t = await self._store.get(task_id)
+        if t is None:
+            return task_id, ""
+        seen: set[str] = set()
+        while t.parent_id and t.parent_id not in seen:
+            seen.add(t.id)
+            parent = await self._store.get(t.parent_id)
+            if parent is None:
+                break
+            t = parent
+        return t.id, t.title
 
     async def answer_inquiry(self, inquiry_id: str, answer: str) -> bool:
         inq = await self._inquiries.answer(inquiry_id, answer)
