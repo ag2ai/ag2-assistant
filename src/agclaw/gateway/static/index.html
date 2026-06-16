@@ -668,8 +668,16 @@
     taskChatEl = document.createElement("div"); taskChatEl.className = "tvchat"; view.appendChild(taskChatEl);
     wrap.appendChild(view);
     input.placeholder = "Tell the agent to change this task…"; input.focus();
+    await loadTaskChat(id);  // restore the prior conversation for this task
     await refreshTaskTree();
     taskPoll = setInterval(refreshTaskTree, 3000);
+  }
+  async function loadTaskChat(id) {
+    if (!taskChatEl) return;
+    try {
+      const data = await (await fetch("/api/sessions/" + encodeURIComponent("task:" + id))).json();
+      (data.messages || []).forEach(m => addTaskMsg(m.role === "user" ? "user" : "agent", m.text));
+    } catch { /* no prior chat is fine */ }
   }
   async function refreshTaskTree() {
     if (!taskMode || !taskTreeEl) return;
