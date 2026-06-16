@@ -194,13 +194,17 @@ class Gateway:
             stream.unsubscribe(sub_id)
 
     async def build_voice_agent(self, session_id: str = "default",
-                                voice: str = "Puck", task_id: str | None = None):
+                                voice: str = "Puck", task_id: str | None = None,
+                                chat_session: str | None = None):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
         delegates to this same universal agent so the spoken conversation shares
-        the app's tools, memory, and continuity. When opened from a task page,
-        `task_id` binds that task: the voice agent knows "this task", and the
-        delegate runs on that task's session with a fresh task snapshot — so it's
-        the same entity, by voice, as the task's text chat."""
+        the app's tools, memory, and continuity.
+
+        Crucially, voice rides the SAME conversation the user is looking at: on a
+        task page (`task_id`) it binds that task; in the main chat (`chat_session`)
+        it delegates onto that chat's session — so "this task" / "the one you just
+        made" resolve against what was actually said there. We also seed the voice
+        agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
         from agclaw.system_tools import format_task
@@ -214,6 +218,15 @@ class Gateway:
                     "You are currently on a task's page. When the user says "
                     f"\"this task\" they mean task {task_id}. Current state:\n"
                     f"{format_task(node)}"
+                )
+        elif chat_session:
+            recent = await self._recent_transcript(chat_session)
+            if recent:
+                task_context = (
+                    "You're continuing an ongoing chat (the user may have been "
+                    "typing before switching to voice). Recent conversation:\n"
+                    f"{recent}\n\nWhen they refer back to any of it, delegate to "
+                    "ask_assistant, which shares this full conversation."
                 )
 
         async def delegate(request: str) -> str:
@@ -229,18 +242,35 @@ class Gateway:
                         f"it. Answer plainly and briefly so it can be spoken.\n\n{snap}"
                     ),
                 )
+            # Main chat: delegate onto the SAME session so the universal agent has
+            # the full text history (e.g. a task the user just created by typing).
             return await self.send_message(
                 request,
-                session_id=f"voice:{session_id}",
+                session_id=chat_session or f"voice:{session_id}",
                 surface=(
-                    "The user is talking to you by voice; the voice assistant has "
-                    "asked you to handle this. Answer plainly and briefly so it can "
-                    "be spoken aloud."
+                    "The user is talking to you by voice in this chat; the voice "
+                    "assistant asked you to handle this. Use the conversation "
+                    "history for any references like 'this task'. Answer plainly "
+                    "and briefly so it can be spoken aloud."
                 ),
             )
 
         return build_voice_agent(self._config, self._tasks, delegate,
                                  voice=voice, task_context=task_context)
+
+    async def _recent_transcript(self, session_id: str, turns: int = 6) -> str:
+        """A short plain-text snippet of the last few chat turns, for voice grounding."""
+        try:
+            msgs = await self.transcript(session_id)
+        except Exception:
+            return ""
+        out = []
+        for m in msgs[-turns:]:
+            who = "User" if m.get("role") == "user" else "Assistant"
+            text = (m.get("text") or "").strip()
+            if text:
+                out.append(f"{who}: {text}")
+        return "\n".join(out)
 
     async def _persist_turn(self, session_id, stream, user_text, reply_text) -> None:
         """Write the session's events + a display transcript to disk."""

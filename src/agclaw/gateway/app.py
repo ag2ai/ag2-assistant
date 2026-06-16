@@ -443,9 +443,10 @@ def create_app(
 
         sid = uuid.uuid4().hex[:8]
         task_id = websocket.query_params.get("task") or None
+        chat_session = websocket.query_params.get("session") or None
         try:
             agent = await app.state.gateway.build_voice_agent(
-                session_id=sid, task_id=task_id
+                session_id=sid, task_id=task_id, chat_session=chat_session
             )
         except Exception as exc:
             with contextlib.suppress(Exception):
