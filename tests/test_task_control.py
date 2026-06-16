@@ -32,6 +32,18 @@ async def test_render_task_snapshot(tmp_path):
     assert "itinerary" in text and "book flights" in text
 
 
+async def test_render_task_includes_schedule(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("digest", status=TaskStatus.SCHEDULED,
+                           scheduled_for="2026-06-18T08:00:00", recurrence="daily")
+    text = await render_task(store, t.id)
+    assert "2026-06-18T08:00:00" in text and "repeats daily" in text
+    # a one-off shows it's not recurring
+    t2 = await store.create("once", status=TaskStatus.SCHEDULED,
+                            scheduled_for="2026-06-18T08:00:00")
+    assert "one-off" in await render_task(store, t2.id)
+
+
 async def test_add_subtask_creates_child_with_deliverable(tmp_path):
     store = _store(tmp_path)
     mgr = TaskManager(store, _noop_executor)

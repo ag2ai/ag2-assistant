@@ -30,6 +30,9 @@ async def render_task(store, task_id: str) -> str:
     if t is None:
         return "(task not found)"
     lines = [f"Task: {t.title}", f"Status: {t.status}"]
+    if t.scheduled_for:
+        rep = f", repeats {t.recurrence}" if t.recurrence else " (one-off)"
+        lines.append(f"Scheduled for: {t.scheduled_for}{rep}")
     if t.objective:
         lines.append(f"Objective: {t.objective}")
     delivs = t.deliverables or []
