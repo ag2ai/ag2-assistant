@@ -1097,6 +1097,7 @@
   let voiceWS = null, micCtx = null, micNode = null, micStream = null;
   let playCtx = null, playHead = 0;
   let vbubble = null, vrole = null;  // current streaming transcript bubble + its role
+  let vthinking = null;              // "…" bubble shown after you stop, until the agent replies
 
   function voiceStatus(on, text) {
     voicebar.classList.toggle("on", on);
@@ -1104,6 +1105,7 @@
   }
   function isTaskView() { return !!taskMode; }
   function voiceBubble(role, text) {
+    if (role === "agent") hideVoiceThinking();  // first agent output ends "thinking"
     const cls = (role === "user" ? "user" : "agent") + " voice";
     // route to whichever surface is showing (task view or chat)
     const adder = isTaskView() ? addTaskMsg : addMsg;
@@ -1112,6 +1114,38 @@
       if (b) { b.textContent = (b.textContent || "") + text; scroll(); return; }
     }
     vbubble = adder(cls, text); vrole = role;
+  }
+  function finalizeUser(text) {  // replace the streamed user bubble with the final transcript
+    if (vbubble && vrole === "user") {
+      const b = vbubble.querySelector(".bubble");
+      if (b && text) b.textContent = text;
+    } else if (text) {
+      voiceBubble("user", text);
+    }
+    vbubble = null; vrole = null;  // the agent's reply starts a fresh bubble
+  }
+  function showVoiceThinking() {
+    if (vthinking) return;
+    const host = isTaskView() ? taskChatEl : wrap;
+    if (!host) return;
+    vthinking = document.createElement("div"); vthinking.className = "msg agent thinking";
+    vthinking.innerHTML = '<div class="bubble"><span class="d"></span><span class="d"></span><span class="d"></span></div>';
+    host.appendChild(vthinking); scroll();
+  }
+  function hideVoiceThinking() { if (vthinking) { vthinking.remove(); vthinking = null; } }
+  function addVoiceToolChip(name) {  // same ⚙ chips as the chat, on the voice thinking bubble
+    showVoiceThinking();
+    let trail = vthinking.querySelector(".tooltrail");
+    if (!trail) { trail = document.createElement("div"); trail.className = "tooltrail"; vthinking.appendChild(trail); }
+    const pretty = String(name || "").replace(/_/g, " ");
+    const last = trail.lastElementChild;
+    if (last && last.dataset.tool === pretty) {
+      const n = (parseInt(last.dataset.count || "1", 10)) + 1;
+      last.dataset.count = String(n); last.textContent = "⚙ " + pretty + " ×" + n; scroll(); return;
+    }
+    const chip = document.createElement("span");
+    chip.className = "toolchip"; chip.dataset.tool = pretty; chip.dataset.count = "1";
+    chip.textContent = "⚙ " + pretty; trail.appendChild(chip); scroll();
   }
 
   async function startVoice() {
@@ -1130,10 +1164,15 @@
       if (typeof ev.data === "string") {
         let m; try { m = JSON.parse(ev.data); } catch { return; }
         if (m.type === "ready") voiceStatus(true, "Listening…");
-        else if (m.type === "transcript") voiceBubble(m.role, m.text);
+        else if (m.type === "transcript") {
+          if (m.role === "user" && m.final) { finalizeUser(m.text); showVoiceThinking(); voiceStatus(true, "Working…"); }
+          else voiceBubble(m.role, m.text);
+        }
+        else if (m.type === "tool") addVoiceToolChip(m.name);
         else if (m.type === "error") { voiceStatus(true, "Voice error: " + (m.message || "")); }
         return;
       }
+      hideVoiceThinking(); voiceStatus(true, "Listening…");  // audio means the agent is replying
       playPCM(new Int16Array(ev.data));  // 24 kHz mono PCM from Gemini
     };
     voiceWS.onclose = () => stopVoice(false);
@@ -1179,7 +1218,7 @@
 
   function stopVoice(closeWS = true) {
     micBtn.classList.remove("live"); voiceStatus(false);
-    vbubble = null; vrole = null;
+    vbubble = null; vrole = null; hideVoiceThinking();
     if (micNode) { try { micNode.port.onmessage = null; micNode.disconnect(); } catch {} micNode = null; }
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
     if (micCtx) { micCtx.close().catch(() => {}); micCtx = null; }

@@ -433,7 +433,11 @@ def create_app(
         await websocket.accept()
         import uuid
 
-        from autogen.beta.events import ModelMessageChunk
+        from autogen.beta.events import (
+            ModelMessageChunk,
+            ToolCallEvent,
+            ToolCallsEvent,
+        )
         from autogen.beta.events.voice import (
             RecordedAudioEvent,
             SynthesizedAudioEvent,
@@ -444,9 +448,15 @@ def create_app(
         sid = uuid.uuid4().hex[:8]
         task_id = websocket.query_params.get("task") or None
         chat_session = websocket.query_params.get("session") or None
+
+        async def on_tool(name: str) -> None:  # surface delegated (universal-agent) tools
+            with contextlib.suppress(Exception):
+                await websocket.send_json({"type": "tool", "name": name})
+
         try:
             agent = await app.state.gateway.build_voice_agent(
-                session_id=sid, task_id=task_id, chat_session=chat_session
+                session_id=sid, task_id=task_id, chat_session=chat_session,
+                on_tool=on_tool,
             )
         except Exception as exc:
             with contextlib.suppress(Exception):
@@ -471,6 +481,23 @@ def create_app(
                         frame = {"type": "transcript", "role": "user", "text": e.content}
                     await websocket.send_json(frame)
 
+        async def pump_tools(context):
+            # the voice agent's OWN basic tools (delegated tools come via on_tool).
+            seen: set[str] = set()  # ToolCallsEvent + provider ToolCallEvent share an id
+            with context.stream.where(ToolCallEvent | ToolCallsEvent).join() as evs:
+                async for e in evs:
+                    calls = e.calls if isinstance(e, ToolCallsEvent) else [e]
+                    for c in calls:
+                        name = getattr(c, "name", "") or ""
+                        cid = getattr(c, "id", "") or ""
+                        if not name or name == "ask_assistant":  # hide the plumbing tool
+                            continue
+                        if cid and cid in seen:
+                            continue
+                        if cid:
+                            seen.add(cid)
+                        await on_tool(name)
+
         async def recv_loop(context):
             while True:
                 msg = await websocket.receive()
@@ -486,6 +513,7 @@ def create_app(
                 jobs = [
                     asyncio.create_task(pump_audio(context)),
                     asyncio.create_task(pump_text(context)),
+                    asyncio.create_task(pump_tools(context)),
                     asyncio.create_task(recv_loop(context)),
                 ]
                 try:

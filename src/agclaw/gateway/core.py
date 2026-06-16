@@ -195,7 +195,7 @@ class Gateway:
 
     async def build_voice_agent(self, session_id: str = "default",
                                 voice: str = "Puck", task_id: str | None = None,
-                                chat_session: str | None = None):
+                                chat_session: str | None = None, on_tool=None):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
         delegates to this same universal agent so the spoken conversation shares
         the app's tools, memory, and continuity.
@@ -241,6 +241,7 @@ class Gateway:
                         f"task; act on THIS task (id {task_id}) when they refer to "
                         f"it. Answer plainly and briefly so it can be spoken.\n\n{snap}"
                     ),
+                    on_tool=on_tool,
                 )
             # Main chat: delegate onto the SAME session so the universal agent has
             # the full text history (e.g. a task the user just created by typing).
@@ -253,6 +254,7 @@ class Gateway:
                     "history for any references like 'this task'. Answer plainly "
                     "and briefly so it can be spoken aloud."
                 ),
+                on_tool=on_tool,
             )
 
         return build_voice_agent(self._config, self._tasks, delegate,
