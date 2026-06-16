@@ -707,14 +707,22 @@
   async function taskChat(text) {
     addTaskMsg("user", text);
     input.disabled = true; sendBtn.disabled = true;
+    const thinking = addTaskThinking();  // show "…" while the (blocking) reply is fetched
     try {
       const r = await (await fetch("/api/tasks/" + taskMode + "/chat", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
       })).json();
+      if (thinking) thinking.remove();
       addTaskMsg("agent", r.reply || "(no reply)");
-    } catch { addTaskMsg("error", "⚠ Couldn't reach the task."); }
+    } catch { if (thinking) thinking.remove(); addTaskMsg("error", "⚠ Couldn't reach the task."); }
     input.disabled = false; sendBtn.disabled = false; input.focus();
     refreshTaskTree();
+  }
+  function addTaskThinking() {
+    if (!taskChatEl) return null;
+    const m = document.createElement("div"); m.className = "msg agent thinking";
+    m.innerHTML = '<div class="bubble"><span class="d"></span><span class="d"></span><span class="d"></span></div>';
+    taskChatEl.appendChild(m); scroll(); return m;
   }
   function nodeView(n) {
     const w = document.createElement("div");
