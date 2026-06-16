@@ -84,10 +84,24 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str = "Puck",
     from autogen.beta import tool
     from autogen.beta.live import LiveAgent
 
+    from agclaw.agent import environment_context
     from agclaw.system_tools import build_system_tools
 
     basic = [t for t in build_system_tools(tasks) if t.name in _BASIC_VOICE_TOOLS]
-    prompt = VOICE_PROMPT + (("\n\n" + task_context) if task_context else "")
+    # A realtime session's prompt is fixed at connect, so the injected clock would
+    # drift on a long call — pair it with a tool the agent can call for fresh time.
+    prompt = (
+        VOICE_PROMPT
+        + "\n\n" + environment_context(config)
+        + "\nThis clock is from when the call started; call `current_time` for the "
+        "exact time now."
+        + (("\n\n" + task_context) if task_context else "")
+    )
+
+    @tool
+    def current_time() -> str:
+        """The user's current local date, time, timezone, and location right now."""
+        return environment_context(config)
 
     @tool
     async def ask_assistant(request: str) -> str:
@@ -105,5 +119,5 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str = "Puck",
         name="voice",
         prompt=prompt,
         config=voice_realtime_config(config, voice=voice),
-        tools=[*basic, ask_assistant],
+        tools=[*basic, current_time, ask_assistant],
     )
