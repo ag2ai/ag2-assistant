@@ -217,7 +217,7 @@ class _AskingGateway:
 
         self._q = Question(text="Allow it?", options=["Allow once", "Deny"], kind="permission")
 
-    async def send_message(self, text, session_id="default", asker=None, attachments=None):
+    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface=""):
         ans = await asker.ask(self._q)
         return f"decision:{ans}"
 
@@ -325,7 +325,7 @@ class _AttachGateway:
     def __init__(self):
         self.last_attachments = None
 
-    async def send_message(self, text, session_id="default", asker=None, attachments=None):
+    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface=""):
         self.last_attachments = attachments
         return f"got {len(attachments or [])} attachment(s): {text}"
 
@@ -358,7 +358,7 @@ def test_ws_attachment_passthrough():
 
 
 class _HangGateway:
-    async def send_message(self, text, session_id="default", asker=None, attachments=None):
+    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface=""):
         await asyncio.Event().wait()  # never completes → must be cancellable
 
     def status(self):
