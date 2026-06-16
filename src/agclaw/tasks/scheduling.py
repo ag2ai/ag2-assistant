@@ -31,21 +31,52 @@ _UNITS = {
     "day": timedelta(days=1), "days": timedelta(days=1),
     "week": timedelta(weeks=1), "weeks": timedelta(weeks=1),
 }
+_WEEKDAY = {  # Mon=0 … Sun=6
+    "monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1, "wednesday": 2, "wed": 2,
+    "thursday": 3, "thu": 3, "thur": 3, "thurs": 3, "friday": 4, "fri": 4,
+    "saturday": 5, "sat": 5, "sunday": 6, "sun": 6,
+}
 
 
-def parse_recurrence(spec: str | None) -> timedelta | None:
-    """Turn a recurrence spec into an interval, or None if it isn't recurring/valid."""
+def parse_recurrence(spec: str | None) -> dict | None:
+    """Normalise a recurrence spec, or None if it isn't recurring/valid.
+
+    Returns one of:
+      {"kind": "interval", "delta": timedelta}        — daily/hourly/weekly/every N units
+      {"kind": "days", "days": frozenset[int]}        — weekdays/weekends/'mon,wed,fri'
+    Day-of-week recurrences fire at the anchor's time-of-day on each matching day.
+    """
     if not spec:
         return None
     s = spec.strip().lower()
+    if s in ("weekday", "weekdays", "every weekday", "every weekdays", "weekdays only"):
+        return {"kind": "days", "days": frozenset({0, 1, 2, 3, 4})}
+    if s in ("weekend", "weekends", "every weekend"):
+        return {"kind": "days", "days": frozenset({5, 6})}
+    # explicit day list: "mon,wed,fri", "every monday and friday", "tuesdays"
+    body = s
+    for p in ("every ", "on ", "each "):
+        if body.startswith(p):
+            body = body[len(p):]
+    days, non_day = set(), False
+    for tok in re.split(r"[,/&]|\band\b|\s+", body):
+        tok = tok.strip().rstrip("s")
+        if not tok:
+            continue
+        if tok in _WEEKDAY:
+            days.add(_WEEKDAY[tok])
+        else:
+            non_day = True
+    if days and not non_day:
+        return {"kind": "days", "days": frozenset(days)}
     if s in _NAMED:
-        return _NAMED[s]
+        return {"kind": "interval", "delta": _NAMED[s]}
     m = re.fullmatch(r"every\s+(\d+)?\s*([a-z]+)", s)
     if m:
         n = int(m.group(1)) if m.group(1) else 1
         unit = _UNITS.get(m.group(2))
         if unit and n > 0:
-            return unit * n
+            return {"kind": "interval", "delta": unit * n}
     return None
 
 
@@ -65,17 +96,48 @@ def is_due(scheduled_for: str | None, now: datetime) -> bool:
     return dt is not None and dt <= now
 
 
+def _at_time_of(day: datetime, t: datetime) -> datetime:
+    return day.replace(hour=t.hour, minute=t.minute, second=t.second, microsecond=0)
+
+
 def next_occurrence(recurrence: str | None, anchor: str | None, now: datetime) -> datetime | None:
-    """The next future occurrence at/after `now`, stepping from `anchor` by the
-    interval (skips missed slots if the scheduler was down). None if not recurring."""
-    delta = parse_recurrence(recurrence)
+    """The next future occurrence after `now`. For intervals, step from `anchor`
+    (skips missed slots). For day-of-week recurrences, the next matching weekday
+    at the anchor's time-of-day. None if not recurring/valid."""
+    spec = parse_recurrence(recurrence)
     start = _parse_dt(anchor)
-    if delta is None or start is None:
+    if spec is None or start is None:
         return None
-    nxt = start + delta
-    while nxt <= now:
-        nxt += delta
-    return nxt
+    if spec["kind"] == "interval":
+        nxt = start + spec["delta"]
+        while nxt <= now:
+            nxt += spec["delta"]
+        return nxt
+    days = spec["days"]  # day-of-week set
+    for i in range(8):
+        cand = _at_time_of(now + timedelta(days=i), start)
+        if cand > now and cand.weekday() in days:
+            return cand
+    return None
+
+
+def first_occurrence(recurrence: str | None, when: str | None, now: datetime) -> datetime | None:
+    """The first run time for a freshly-scheduled task. Intervals honour `when`
+    as-is; day-of-week recurrences snap forward to the next matching weekday at
+    `when`'s time-of-day (so 'weekdays 5am' scheduled on a Saturday starts Monday)."""
+    start = _parse_dt(when)
+    if start is None:
+        return None
+    spec = parse_recurrence(recurrence)
+    if spec is None or spec["kind"] == "interval":
+        return start
+    days = spec["days"]
+    base = start if start > now else _at_time_of(now, start)
+    for i in range(8):
+        cand = base + timedelta(days=i)
+        if cand > now and cand.weekday() in days:
+            return cand
+    return start
 
 
 class Scheduler:

@@ -168,7 +168,8 @@ def build_task_tools(store, manager, task_id: str) -> list:
         ] = "",
         recurrence: Annotated[
             str, Field(description="New repeat: daily / hourly / weekly / 'every N "
-                       "minutes/hours/days/weeks', or 'off' to stop repeating. Empty = keep current.")
+                       "minutes/hours/days/weeks', or specific days like 'weekdays', "
+                       "'weekends', 'mon,wed,fri'; or 'off' to stop repeating. Empty = keep current.")
         ] = "",
     ) -> str:
         """Change WHEN this task runs and/or how it repeats — e.g. 'make it weekly',

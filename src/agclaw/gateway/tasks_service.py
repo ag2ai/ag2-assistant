@@ -148,8 +148,15 @@ class TaskService:
         Clarification + planning happen NOW (while the user is here), so the plan
         is baked into the task; the deterministic Scheduler then just *executes*
         that plan at each occurrence — no run-time questions."""
-        from agclaw.tasks import TaskStatus
+        from datetime import datetime
 
+        from agclaw.tasks import TaskStatus
+        from agclaw.tasks.scheduling import first_occurrence
+
+        # for day-of-week recurrences (e.g. weekdays), start on the next matching day
+        first = first_occurrence(recurrence, when, datetime.now().astimezone())
+        if first is not None:
+            when = first.isoformat()
         task = await self._store.create(
             text, origin_channel=channel, hitl_channel=channel,
             status=TaskStatus.SCHEDULED, scheduled_for=when, recurrence=recurrence or None,

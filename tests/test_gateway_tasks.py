@@ -286,7 +286,7 @@ async def test_schedule_task_creates_scheduled(tmp_path):
     tid = await svc.schedule_task("nightly digest", when="2030-01-01T09:00:00", recurrence="daily")
     t = await svc.store.get(tid)
     assert t.status == TaskStatus.SCHEDULED
-    assert t.scheduled_for == "2030-01-01T09:00:00" and t.recurrence == "daily"
+    assert t.scheduled_for.startswith("2030-01-01T09:00:00") and t.recurrence == "daily"
 
 
 async def test_fire_one_shot_runs_the_task(tmp_path):
@@ -413,7 +413,7 @@ def test_schedule_rest_endpoint(monkeypatch, tmp_path):
         tid = r.json()["id"]
         detail = client.get(f"/api/tasks/{tid}").json()["task"]
         assert detail["status"] == "scheduled"
-        assert detail["scheduled_for"] == "2030-06-01T09:00:00"
+        assert detail["scheduled_for"].startswith("2030-06-01T09:00:00")
         assert detail["recurrence"] == "weekly"
 
 

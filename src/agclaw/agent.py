@@ -218,8 +218,10 @@ def _build_schedule_task_tool(schedule_starter):
                        "date/time given in your environment context.")
         ],
         recurrence: Annotated[
-            str, Field(description="Optional repeat: 'daily', 'hourly', 'weekly', or "
-                       "'every N minutes/hours/days/weeks'. Empty for a one-off.")
+            str, Field(description="Optional repeat: 'daily'/'hourly'/'weekly', "
+                       "'every N minutes/hours/days/weeks', or specific days like "
+                       "'weekdays', 'weekends', or 'mon,wed,fri'. For day-of-week "
+                       "repeats set `when` to the desired time-of-day. Empty for a one-off.")
         ] = "",
     ) -> str:
         """Schedule a task to run later (and optionally repeat) — e.g. 'every morning
