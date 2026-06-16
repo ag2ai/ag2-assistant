@@ -209,6 +209,7 @@ class TaskService:
             template.title, description=template.description,
             objective=template.objective, capabilities=template.capabilities,
             origin_channel=template.origin_channel, hitl_channel=template.hitl_channel,
+            run_of=template.id,  # mark this as one occurrence of the recurring task
         )
         for d in template.deliverables or []:
             await self._store.add_deliverable(run.id, d.get("description", ""), d.get("criteria", ""))
@@ -468,6 +469,7 @@ class TaskService:
             "deliverables": len(delivs), "deliverables_done": done,
             "last_progress": progress[-1]["message"] if progress else None,
             "scheduled_for": t.scheduled_for, "recurrence": t.recurrence,
+            "run_of": getattr(t, "run_of", None),
         }
 
     async def _node(self, t, include_assets: bool = False) -> dict:
@@ -478,6 +480,7 @@ class TaskService:
             "created_at": t.created_at, "capabilities": t.capabilities or [],
             "archived": bool(getattr(t, "archived", False)),
             "scheduled_for": t.scheduled_for, "recurrence": t.recurrence,
+            "run_of": getattr(t, "run_of", None),
             "intake": t.intake or {},
             "progress": t.progress or [],
             "error": t.error or "",

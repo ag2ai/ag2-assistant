@@ -533,6 +533,17 @@ def create_app(
             with contextlib.suppress(Exception):
                 await websocket.send_json({"type": "error", "message": str(exc)})
 
+    @app.get("/{full_path:path}", response_class=HTMLResponse)
+    async def spa(full_path: str):
+        """Serve the single-page UI for client-side routes (/c/…, /t/…, /tasks…)
+        so a deep link or refresh lands on the right view. Unknown /api paths 404."""
+        if full_path.startswith("api/"):
+            return Response(status_code=404)
+        try:
+            return _UI_FILE.read_text(encoding="utf-8")
+        except OSError:
+            return "<h1>AGClaw</h1><p>UI asset missing.</p>"
+
     return app
 
 

@@ -179,6 +179,10 @@
   .msg.thinking { align-items: center; }  /* center chips against the taller dots bubble */
   .tooltrail { display: flex; flex-wrap: wrap; gap: 5px; margin-left: 8px; }
   .toolchip { font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-family: var(--sans); }
+  .runtag { font-size: 10px; margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--code); color: var(--muted); border: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+  .runtag.sched { color: var(--accent); border-color: var(--accent); }
+  .clonebanner { max-width: 760px; margin: 0 auto 8px; font-size: 13px; color: var(--muted); }
+  .clonebanner a { color: var(--accent); cursor: pointer; }
 
   .qcard {
     align-self: center; max-width: 760px; width: 100%; border: 1px solid var(--accent);
@@ -466,9 +470,21 @@
       });
     } catch { /* offline — leave list as-is */ }
   }
+  // --- URL routing: the address bar reflects the view, so refresh/back keep place
+  function setURL(path) { if (location.pathname !== path) history.pushState({}, "", path); }
+  function route() {
+    const p = location.pathname; let m;
+    if ((m = p.match(/^\/t\/(.+)$/))) openTaskView(decodeURIComponent(m[1]));
+    else if ((m = p.match(/^\/tasks(?:\/(.+))?$/))) openTaskList(m[1] ? decodeURIComponent(m[1]) : "all");
+    else if ((m = p.match(/^\/c\/(.+)$/))) switchSession(decodeURIComponent(m[1]));
+    else { history.replaceState({}, "", "/c/" + sessionId); loadTranscript(sessionId); }
+  }
+  window.addEventListener("popstate", route);
+
   async function switchSession(id) {
     leaveTaskMode();
     sessionId = id; localStorage.setItem("agclaw_session", id);
+    setURL("/c/" + id);
     await loadTranscript(id);
   }
   async function loadTranscript(id) {
@@ -615,12 +631,13 @@
     if (taskPoll) { clearInterval(taskPoll); taskPoll = null; }
     input.placeholder = "Message AGClaw…"; input.disabled = false; sendBtn.disabled = false;
   }
-  function exitTaskView() { leaveTaskMode(); loadTranscript(sessionId); }
+  function exitTaskView() { leaveTaskMode(); setURL("/c/" + sessionId); loadTranscript(sessionId); }
 
   // --- full task listing page (history + filters) ---
   async function openTaskList(filter) {
     leaveTaskMode(); openDrawer(false); closeViewer();
     listMode = true; const f = filter || "all";
+    setURL(f === "all" ? "/tasks" : "/tasks/" + f);
     wrap.innerHTML = "";
     const view = document.createElement("div"); view.className = "tlist";
     const head = document.createElement("div"); head.className = "lhead";
@@ -642,6 +659,8 @@
     tasks.forEach(t => {
       const r = document.createElement("div"); r.className = "trow";
       const tt = document.createElement("span"); tt.className = "tt"; tt.textContent = t.title;
+      if (t.run_of) { const rb = document.createElement("span"); rb.className = "runtag"; rb.textContent = "↻ scheduled run"; tt.appendChild(rb); }
+      else if (t.recurrence) { const rb = document.createElement("span"); rb.className = "runtag sched"; rb.textContent = "⏰ " + t.recurrence; tt.appendChild(rb); }
       const when = document.createElement("span"); when.className = "when";
       when.textContent = (t.status === "scheduled" && t.scheduled_for) ? schedLabel(t) : relTime(t.created_at);
       r.appendChild(tt); r.appendChild(badge(t.status)); r.appendChild(when);
@@ -654,6 +673,7 @@
   async function openTaskView(id) {
     openDrawer(false); closeViewer();
     taskMode = id; lastTreeSig = "";
+    setURL("/t/" + id);
     wrap.innerHTML = "";
     const view = document.createElement("div"); view.className = "taskview";
     const head = document.createElement("div"); head.className = "tvhead";
@@ -661,6 +681,7 @@
     taskTitleEl = document.createElement("span"); taskTitleEl.className = "tvtitle"; taskTitleEl.textContent = "Task";
     const arch = document.createElement("button"); arch.className = "arch"; arch.id = "tvarch"; arch.textContent = "Archive";
     head.appendChild(back); head.appendChild(taskTitleEl); head.appendChild(arch); view.appendChild(head);
+    const banner = document.createElement("div"); banner.className = "clonebanner"; banner.id = "tvbanner"; banner.style.display = "none"; view.appendChild(banner);
     taskTreeEl = document.createElement("div"); taskTreeEl.className = "tvtree"; taskTreeEl.textContent = "Loading…"; view.appendChild(taskTreeEl);
     const hint = document.createElement("div"); hint.className = "tvhint";
     hint.textContent = "Ask below to change this task — add/cancel subtasks, tweak the objective, reschedule it, or cancel it.";
@@ -689,6 +710,18 @@
     if (sig === lastTreeSig) return;
     lastTreeSig = sig;
     if (taskTitleEl) { taskTitleEl.textContent = full.title + " "; taskTitleEl.appendChild(badge(full.status)); }
+    const banner = document.getElementById("tvbanner");
+    if (banner) {
+      if (full.run_of) {
+        banner.style.display = "";
+        banner.innerHTML = "↻ This is one run of a recurring task. ";
+        const a = document.createElement("a"); a.textContent = "Open the schedule →";
+        a.onclick = () => openTaskView(full.run_of); banner.appendChild(a);
+      } else if (full.recurrence) {
+        banner.style.display = "";
+        banner.textContent = "⏰ Recurring task (" + full.recurrence + "). Each run appears separately in your task history.";
+      } else { banner.style.display = "none"; }
+    }
     const arch = document.getElementById("tvarch");
     if (arch) {
       const terminal = ["completed", "failed", "cancelled"].includes(full.status);
@@ -1064,6 +1097,7 @@
     leaveTaskMode(); openDrawer(false);
     sessionId = "web-" + Math.random().toString(36).slice(2, 10);
     localStorage.setItem("agclaw_session", sessionId);
+    setURL("/c/" + sessionId);
     pending = []; renderChips();
     wrap.innerHTML = '<div class="empty"><h1>How can I help?</h1>New conversation started.</div>';
   }
@@ -1240,7 +1274,7 @@
 
   micBtn.onclick = () => { voiceWS ? stopVoice() : startVoice(); };
 
-  loadTranscript(sessionId);  // restore this conversation's history on load
+  route();    // restore whatever view the URL points at (chat / task / task list)
   connect();
 })();
 </script>
