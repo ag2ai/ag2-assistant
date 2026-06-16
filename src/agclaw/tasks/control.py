@@ -46,10 +46,19 @@ async def render_task(store, task_id: str) -> str:
     return "\n".join(lines)
 
 
+def _is_scheduled(t) -> bool:
+    """A scheduled task (template) — its plan changes apply to future runs; it must
+    NOT be executed on edit, only when the scheduler fires it."""
+    from agclaw.tasks.model import TaskStatus
+
+    return t.status == TaskStatus.SCHEDULED or bool(t.scheduled_for and not t.is_terminal)
+
+
 async def resume_task(store, manager, task_id: str) -> None:
-    """Re-open a settled task and hand it back to the runner after an edit."""
+    """Re-open a settled task and hand it back to the runner after an edit —
+    EXCEPT a scheduled task, which keeps running on its schedule, not on edit."""
     t = await store.get(task_id)
-    if t is None:
+    if t is None or _is_scheduled(t):
         return
     if t.is_terminal:
         await store.reopen(task_id)
@@ -57,15 +66,18 @@ async def resume_task(store, manager, task_id: str) -> None:
 
 
 async def do_add_subtask(store, manager, task_id, title, description="", capabilities="web") -> str:
-    if await store.get(task_id) is None:
+    t = await store.get(task_id)
+    if t is None:
         return "Task not found."
+    scheduled = _is_scheduled(t)
     caps = [c.strip() for c in (capabilities or "").split(",") if c.strip()] or ["web"]
     child = await store.add_subtask(
-        task_id, title, description, reopen_parent=True, capabilities=caps,
+        task_id, title, description, reopen_parent=not scheduled, capabilities=caps,
     )
     await store.add_deliverable(child.id, description or f"Output of: {title}")
-    await resume_task(store, manager, task_id)
-    return f"Added subtask '{title}' (capabilities: {', '.join(caps)}). It will run now."
+    await resume_task(store, manager, task_id)  # no-op for scheduled tasks
+    when = " on its next scheduled run" if scheduled else " now"
+    return f"Added subtask '{title}' (capabilities: {', '.join(caps)}). It will run{when}."
 
 
 async def do_set_objective(store, task_id, objective) -> str:
@@ -79,7 +91,7 @@ async def do_add_deliverable(store, manager, task_id, description, criteria="") 
     if await store.get(task_id) is None:
         return "Task not found."
     await store.add_deliverable(task_id, description, criteria)
-    await resume_task(store, manager, task_id)
+    await resume_task(store, manager, task_id)  # no-op for scheduled tasks
     return f"Added deliverable: {description}."
 
 

@@ -90,6 +90,30 @@ async def test_cancel_whole_task_and_subtask(tmp_path):
     assert (await store.get(t.id)).status == TaskStatus.CANCELLED
 
 
+async def test_editing_a_scheduled_task_does_not_run_it(tmp_path):
+    """Adding a subtask/deliverable to a SCHEDULED task updates its plan but must
+    NOT execute it or change its status — it still runs on its schedule (#user)."""
+    store = _store(tmp_path)
+    submitted = []
+
+    async def executor(task_id, mgr, asker):
+        submitted.append(task_id)
+
+    mgr = TaskManager(store, executor)
+    t = await store.create("daily digest", status=TaskStatus.SCHEDULED,
+                           scheduled_for="2030-01-01T05:00:00", recurrence="weekdays")
+
+    await do_add_subtask(store, mgr, t.id, "Extra research")
+    await do_add_deliverable(store, mgr, t.id, "an appendix")
+    await mgr.wait(t.id)  # nothing should have been submitted
+
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.SCHEDULED          # still scheduled, not running/completed
+    assert got.scheduled_for == "2030-01-01T05:00:00"  # schedule intact
+    assert submitted == []                             # the executor never ran
+    assert [c.title for c in await store.children(t.id)] == ["Extra research"]  # edit applied
+
+
 async def test_reschedule_changes_time_and_repeat(tmp_path):
     store = _store(tmp_path)
     t = await store.create("digest", status=TaskStatus.SCHEDULED,
