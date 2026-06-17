@@ -39,6 +39,24 @@
   - *Why:* the location gap (agent didn't know the city) is exactly the kind of fact this fixes up-front. Ties together observer memory + HITL + config.
   - *Keep it light:* 4–6 questions max, skippable, re-runnable; don't interrogate.
 
+- **HITL over voice — work through outstanding inquiries by talking.** While in a
+  voice session, let the user say "what needs my input?" and have the voice agent
+  read out pending HITL questions/permissions and capture spoken answers, working
+  through them conversationally.
+  - *Architecture already supports the core:* the voice agent's basic toolset
+    already includes `list_open_questions` and `answer_question` (see
+    `voice.py::_BASIC_VOICE_TOOLS`), so it can already retrieve and answer durable
+    inquiries by voice today. Durable inquiries are AG2 `HumanInputRequest`-backed
+    primitives in `InquiryStore`, and `InquiryRaised`/`InquiryAnswered` already
+    ride task streams (Phase 2b).
+  - *Remaining work:* (1) prompt/flow so the voice agent *proactively* offers to
+    work through pending inquiries (and confirms a spoken answer before submitting,
+    especially for permissions — never auto-approve sandbox-touching commands by
+    voice); (2) optionally push `InquiryRaised` to the live voice session so a
+    question raised mid-conversation is surfaced immediately; (3) safe handling of
+    permission prompts spoken aloud (read the exact command, require an explicit
+    "yes/allow once/deny"). Folds into the existing voice + HITL-strip plumbing.
+
 ## Progress
 
 | Phase | Status | Summary |
