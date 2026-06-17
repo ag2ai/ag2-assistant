@@ -379,8 +379,11 @@ class Gateway:
                 "so it can be spoken aloud.",
             )
 
+        assistant_tools = [getattr(t, "name", "") for t in getattr(self._agent, "tools", [])]
+        assistant_tools = [n for n in assistant_tools if n]
         return build_voice_agent(self._config, self._tasks, delegate,
-                                 voice=voice, task_context=task_context, on_end=on_end)
+                                 voice=voice, task_context=task_context, on_end=on_end,
+                                 assistant_tools=assistant_tools)
 
     async def _recent_transcript(self, session_id: str, turns: int = 6) -> str:
         """A short plain-text snippet of the last few chat turns, for voice grounding."""

@@ -1,6 +1,6 @@
-"""Realtime voice via AG2's LiveAgent (Gemini Live).
+"""Realtime voice via AG2's LiveAgent (Gemini Live or OpenAI realtime).
 
-A `LiveAgent` runs a full-duplex Gemini Live session: audio streams in and out
+A `LiveAgent` runs a full-duplex realtime session: audio streams in and out
 continuously with built-in voice-activity detection and barge-in. We give the
 voice agent a *small* set of basic, low-context tools it can handle on its own
 (reading tasks, answering a pending question) and one `ask_assistant` tool that
@@ -8,20 +8,17 @@ delegates anything heavier — research, Google, creating/scheduling tasks,
 detailed work — to the **universal agent**, which owns all the tools and context.
 The voice agent then speaks back whatever the assistant returns.
 
-Audio I/O is event-based: the browser's mic frames arrive as `RecordedAudioEvent`
-and Gemini's speech leaves as `SynthesizedAudioEvent` on the same conversation
-stream. Gemini Live is fixed at 16 kHz mono PCM in / 24 kHz mono PCM out.
+The provider (Gemini or OpenAI) is selected by `AGCLAW_VOICE_PROVIDER` and lives
+behind `voice_providers` — this module never branches on it. Audio I/O is
+event-based: the browser's mic frames arrive as `RecordedAudioEvent` and the
+model's speech leaves as `SynthesizedAudioEvent` on the same conversation stream
+(16 kHz mono PCM in / 24 kHz mono PCM out).
 """
 
 import os
 
 from agclaw.config import Config
-
-# Distinct from the chat model — Gemini exposes realtime under a "live" model.
-VOICE_MODEL = "gemini-3.1-flash-live-preview"
-# Single-shot TTS model for the voice-picker preview (not the live session).
-TTS_MODEL = "gemini-2.5-flash-preview-tts"
-PREVIEW_TEXT = "Hi, I'm AGClaw. This is how I sound — happy to help you out."
+from agclaw.voice_providers import PREVIEW_TEXT
 
 # Basic tools the voice agent may run itself: quick, low-context reads/answers.
 # Everything else is delegated to the universal agent via ask_assistant.
@@ -39,11 +36,15 @@ VOICE_PROMPT = (
     "voice.\n\n"
     "You can do a few simple things yourself: check their tasks, look up a task's "
     "status, see pending questions, and relay an answer to one.\n\n"
-    "For anything beyond that — researching something, the web, their Google "
-    "calendar/drive/mail, creating or scheduling a task, or any multi-step or "
-    "detailed work — call `ask_assistant` with a clear, complete request. The "
-    "main assistant will do the heavy lifting and hand you back an answer; then "
-    "summarise it for the user in a natural, spoken way.\n\n"
+    "For anything beyond that — the weather, news, researching something, the web, "
+    "their Google calendar/drive/mail, creating or scheduling a task, or any "
+    "current/external info or multi-step work — you MUST call the `ask_assistant` "
+    "tool with a clear, complete request. The main assistant will do the heavy "
+    "lifting and hand you back an answer; then summarise it for the user in a "
+    "natural, spoken way. You do NOT have a weather tool or any other tool of your "
+    "own for these — ask_assistant is how you get them done. Never speak JSON, tool "
+    "names, or function-call syntax out loud, and never guess external facts; call "
+    "`ask_assistant` instead.\n\n"
     "If the user refers to something from earlier in the conversation — \"this "
     "task\", \"that\", \"the one you just made\" — and you don't have the detail, "
     "call `ask_assistant` (it shares the full conversation and will know what they "
@@ -58,69 +59,38 @@ VOICE_PROMPT = (
 )
 
 
-def voice_realtime_config(config: Config, voice: str | None = None):
-    """Build a Gemini Live RealtimeConfig using AGClaw's configured API key.
+def voice_realtime_config(config: Config, voice: str | None = None,
+                          provider: str | None = None):
+    """Build the realtime RealtimeConfig for the active (or given) provider.
 
-    The config builds a genai Client eagerly, so we pass one explicitly rather
-    than relying on ambient env. `transcribe=True` gives us the user's speech as
-    text so we can show it on screen. `voice` defaults to the persisted setting.
+    Delegates to the provider registry — input transcription is enabled per
+    provider so the user's speech arrives as text (TranscriptionChunk/Completed)
+    for the on-screen bubbles. `voice` defaults to that provider's persisted
+    setting. `AGCLAW_VOICE_MODEL` overrides the provider's default model.
     """
-    from google.genai import Client
-
-    from autogen.beta.live import gemini
-
+    from agclaw import voice_providers
     from agclaw.settings import get_voice
 
-    api_key = os.environ.get(config.llm.api_key_env, "")
-    client = Client(api_key=api_key)
-    return gemini.RealTimeConfig(
-        VOICE_MODEL,
-        output=gemini.AudioOutput(voice=voice or get_voice(), language_code="en-US"),
-        input=gemini.InputConfig(transcribe=True),
-        client=client,
-    )
+    p = voice_providers.get(provider)
+    model = os.environ.get("AGCLAW_VOICE_MODEL") or p.realtime_model
+    return p.build_realtime(config, voice or get_voice(p.name), model)
 
 
-def _pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
-    """Wrap raw mono 16-bit PCM in a minimal WAV header (for an <audio> preview)."""
-    import struct
+async def synthesize_preview(config: Config, voice: str, text: str = PREVIEW_TEXT,
+                             provider: str | None = None) -> bytes:
+    """Single-shot TTS of a sample sentence in `voice`; returns WAV bytes.
 
-    n = len(pcm)
-    header = b"RIFF" + struct.pack("<I", 36 + n) + b"WAVE" + b"fmt " + struct.pack(
-        "<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16
-    ) + b"data" + struct.pack("<I", n)
-    return header + pcm
+    Used by the voice-picker preview and the sample-recording script; delegates
+    to the active (or given) provider. A voice the provider's TTS doesn't offer
+    raises, and the caller falls back (live preview / skip the sample).
+    """
+    from agclaw import voice_providers
 
-
-async def synthesize_preview(config: Config, voice: str, text: str = PREVIEW_TEXT) -> bytes:
-    """Single-shot TTS of a sample sentence in `voice`; returns WAV bytes."""
-    import asyncio
-
-    from google.genai import Client, types
-
-    client = Client(api_key=os.environ.get(config.llm.api_key_env, ""))
-
-    def _call() -> bytes:
-        resp = client.models.generate_content(
-            model=TTS_MODEL,
-            contents=text,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
-                    )
-                ),
-            ),
-        )
-        return resp.candidates[0].content.parts[0].inline_data.data
-
-    pcm = await asyncio.to_thread(_call)
-    return _pcm_to_wav(pcm)
+    return await voice_providers.get(provider).synthesize(config, voice, text)
 
 
 def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
-                      task_context: str = "", on_end=None):
+                      task_context: str = "", on_end=None, assistant_tools=None):
     """A LiveAgent with a basic tool subset + an ask_assistant delegate tool.
 
     `tasks` is the TaskService (for the basic read tools); `delegate` is an async
@@ -128,7 +98,9 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
     `task_context`, when the session is opened from a task page, names the task so
     "this task" resolves and is appended to the spoken-agent prompt. `on_end`, when
     given, is a no-arg callback the `end_call` tool fires so the agent can hang up
-    the session itself once the conversation is done.
+    the session itself once the conversation is done. `assistant_tools` is the list
+    of the universal assistant's tool names — surfaced in the prompt so the voice
+    agent knows what it can delegate via ask_assistant.
     """
     from autogen.beta import tool
     from autogen.beta.live import LiveAgent
@@ -139,11 +111,18 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
     basic = [t for t in build_system_tools(tasks) if t.name in _BASIC_VOICE_TOOLS]
     # A realtime session's prompt is fixed at connect, so the injected clock would
     # drift on a long call — pair it with a tool the agent can call for fresh time.
+    capabilities = (
+        "\n\nThe main assistant you reach via `ask_assistant` currently has these "
+        "tools: " + ", ".join(assistant_tools) + ". So whenever a request needs any "
+        "of them, delegate it — never say you can't do something they can."
+        if assistant_tools else ""
+    )
     prompt = (
         VOICE_PROMPT
         + "\n\n" + environment_context(config)
         + "\nThis clock is from when the call started; call `current_time` for the "
         "exact time now."
+        + capabilities
         + (("\n\n" + task_context) if task_context else "")
     )
 

@@ -228,9 +228,9 @@ def build_system_tools(tasks, chats=None) -> list:
         from agclaw import settings
 
         cur = settings.get_voice()
-        return "Current voice: " + cur + "\n" + "\n".join(
+        return f"Voice provider: {settings.voice_provider()}\nCurrent voice: {cur}\n" + "\n".join(
             f"{n} — {s}" + (" (current)" if n == cur else "")
-            for n, s in settings.VOICES.items()
+            for n, s in settings.voices_for().items()
         )
 
     @tool

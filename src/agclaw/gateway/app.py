@@ -332,11 +332,13 @@ def create_app(
 
     @app.get("/api/voice/voices")
     async def voice_voices() -> dict:
-        from agclaw import settings
+        from agclaw import settings, voice_providers
 
         return {
-            "voices": [{"name": n, "style": s} for n, s in settings.VOICES.items()],
+            "voices": [{"name": n, "style": s} for n, s in settings.voices_for().items()],
             "current": settings.get_voice(),
+            "provider": settings.voice_provider(),
+            "input_rate": voice_providers.get().input_rate,  # mic capture rate the client should use
         }
 
     @app.post("/api/voice/select")
@@ -354,7 +356,7 @@ def create_app(
         from agclaw import settings
 
         f = _STATIC_DIR / "voices" / f"{name}.wav"
-        if name in settings.VOICES and f.is_file():
+        if name in settings.voices_for() and f.is_file():
             return FileResponse(f, media_type="audio/wav")
         return Response(status_code=404)
 
@@ -363,7 +365,7 @@ def create_app(
         from agclaw import settings
         from agclaw.voice import synthesize_preview
 
-        if req.voice not in settings.VOICES:
+        if req.voice not in settings.voices_for():
             return Response(status_code=400)
         try:
             wav = await synthesize_preview(config, req.voice)
@@ -513,9 +515,20 @@ def create_app(
                     await websocket.send_bytes(e.content)
 
         async def pump_text(context):
-            sel = TranscriptionChunkEvent | TranscriptionCompletedEvent | ModelMessageChunk
+            # ModelResponse marks the end of an agent turn for BOTH providers
+            # (Gemini turn_complete / OpenAI response.done) — the provider-agnostic
+            # turn boundary that separates one spoken reply from the next.
+            sel = (TranscriptionChunkEvent | TranscriptionCompletedEvent
+                   | ModelMessageChunk | ModelResponse)
             with context.stream.where(sel).join() as evs:
                 async for e in evs:
+                    if isinstance(e, ModelResponse):               # agent turn ended
+                        if last_role["v"] == "agent":
+                            await _flush_agent()                   # persist the spoken turn
+                        last_role["v"] = None
+                        # tell the client to close the bubble so the next reply is fresh
+                        await websocket.send_json({"type": "turn_end", "role": "agent"})
+                        continue
                     if isinstance(e, ModelMessageChunk):           # agent speaking
                         if last_role["v"] == "user":
                             await _flush_user()                    # user turn ended

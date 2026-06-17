@@ -5,11 +5,14 @@
 
   let voices = $state([])
   let current = $state('')
+  let provider = $state('')
   let playing = $state('')   // name currently previewing
   let audio = null
 
+  const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI' }
+
   async function load() {
-    try { const d = await api.voices(); voices = d.voices; current = d.current } catch {}
+    try { const d = await api.voices(); voices = d.voices; current = d.current; provider = d.provider || '' } catch {}
   }
   onMount(load)
   function _stopAudio() { if (audio) { audio.pause(); URL.revokeObjectURL(audio.src); audio = null } }
@@ -45,7 +48,7 @@
 
 <div class="modal-backdrop" onclick={close}></div>
 <div class="modal voicepick">
-  <h2>Voice</h2>
+  <h2>Voice{provider ? ' — ' + (PROVIDER_LABEL[provider] || provider) : ''}</h2>
   <p class="muted">Pick a voice — it plays a sample and is saved for your chats (applies next voice session).</p>
   <div class="vlist">
     {#each voices as v (v.name)}

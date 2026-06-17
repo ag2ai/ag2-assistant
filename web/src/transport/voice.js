@@ -18,9 +18,10 @@ class PCM16 extends AudioWorkletProcessor {
 registerProcessor('pcm16', PCM16)`
 
 export class VoiceController {
-  constructor(query, handlers = {}) {
+  constructor(query, handlers = {}, inputRate = 16000) {
     this.query = query // "?task=<id>" or "?session=<id>"
-    this.h = handlers  // {onState, onTranscript, onTool, onTaskCard, onAudio}
+    this.h = handlers  // {onState, onTranscript, onTurnEnd, onTool, onTaskCard, onAudio}
+    this.inputRate = inputRate  // mic capture rate the active provider expects (Gemini 16k / OpenAI 24k)
     this.ws = null; this.micCtx = null; this.micNode = null; this.micStream = null
     this.playCtx = null; this.playHead = 0
   }
@@ -42,8 +43,8 @@ export class VoiceController {
     this.ws.onclose = () => this.stop(false)
     this.ws.onerror = () => this.h.onState && this.h.onState('error', 'Voice connection error')
 
-    // 16 kHz capture context + inline AudioWorklet shipping Int16 frames.
-    this.micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
+    // Capture context at the provider's input rate + inline AudioWorklet shipping Int16 frames.
+    this.micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.inputRate })
     await this.micCtx.audioWorklet.addModule(
       URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }))
     )
@@ -66,6 +67,7 @@ export class VoiceController {
       try { m = JSON.parse(ev.data) } catch { return }
       if (m.type === 'ready') this.h.onState && this.h.onState('listening', 'Listening…')
       else if (m.type === 'transcript') this.h.onTranscript && this.h.onTranscript(m.role, m.text, !!m.final)
+      else if (m.type === 'turn_end') this.h.onTurnEnd && this.h.onTurnEnd(m.role)
       else if (m.type === 'tool') this.h.onTool && this.h.onTool(m.name)
       else if (m.type === 'task_card') this.h.onTaskCard && this.h.onTaskCard(m)
       else if (m.type === 'error') this.h.onState && this.h.onState('error', 'Voice error: ' + (m.message || ''))

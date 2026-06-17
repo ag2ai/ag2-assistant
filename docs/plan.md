@@ -2,6 +2,15 @@
 
 ## Backlog / Ideas
 
+- **Tasks nav — nest scheduled runs under their parent.** In the left-nav Tasks
+  list, each occurrence of a recurring scheduled task (the per-run clones from
+  `_fire`/`_clone_for_run` in `gateway/tasks_service.py`) should appear **indented
+  as a child under the parent scheduled task**, rather than as separate top-level
+  rows. The runs already carry the link (`run_of`/parent id); the work is in the
+  Tasks listing (`list_all`/`list_tasks` grouping) + the Drawer's task rendering
+  (`web/src/components/Drawer.svelte`) to group-and-indent runs beneath their
+  template. (Requested after scheduled AI-news/weather runs worked well.)
+
 - **Task Manager — a maintained running summary per task (non-scheduled first).**
   A lightweight per-task "manager" that keeps a human-readable **summary** so when
   the user returns to a task they immediately know *what it is, what's happened,

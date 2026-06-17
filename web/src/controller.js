@@ -86,6 +86,9 @@ export async function startVoice() {
   const t = get(thread)
   if (!t.id || _voiceActive) return
   const query = t.kind === 'task' ? '?task=' + encodeURIComponent(t.id) : '?session=' + encodeURIComponent(t.session)
+  // capture at the active provider's native rate (Gemini 16 kHz / OpenAI 24 kHz)
+  let inputRate = 16000
+  try { inputRate = (await api.voices()).input_rate || 16000 } catch {}
   _voiceActive = true; _suppressStream = true; _vitem = null; _vrole = null
   voice.set({ active: true, status: 'connecting' })
   voiceCtl = new VoiceController(query, {
@@ -94,10 +97,11 @@ export async function startVoice() {
       else voice.set({ active: true, status: text || s })
     },
     onTranscript: _voiceTranscript,
+    onTurnEnd: () => { _vitem = null; _vrole = null; _setBusy(false) },  // close the bubble; next reply is fresh
     onTool: (name) => { _setBusy(true); thread.update((t) => { addTool(t.items, name); return { ...t, items: t.items } }) },
     onTaskCard: (m) => { _setBusy(false); thread.update((t) => { t.items.push({ id: _vkey(), kind: 'taskcard', taskId: m.id, title: m.title }); return { ...t, items: t.items } }) },
     onAudio: () => _setBusy(false),
-  })
+  }, inputRate)
   const ok = await voiceCtl.start()
   if (!ok) { _voiceActive = false; _suppressStream = false; voice.set({ active: false, status: 'off' }) }
 }
