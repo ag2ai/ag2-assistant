@@ -34,6 +34,7 @@ class TaskManager:
         executor: Executor,
         max_concurrent: int = 3,
         on_progress: Callable | None = None,
+        on_status: Callable | None = None,
         inquiry_store=None,
     ) -> None:
         self.store = store
@@ -42,6 +43,9 @@ class TaskManager:
         self._running: dict[str, asyncio.Task] = {}
         self._cancelled: set[str] = set()
         self._on_progress = on_progress
+        # Notified on every lifecycle transition (RUNNING / terminal) so the
+        # service can emit the matching AG2 task event onto the task's stream.
+        self._on_status = on_status
         # When set, HITL prompts during a task are persisted as durable Inquiries
         # tied to the (sub)task, so they survive restarts and can be answered from
         # any channel. None → transient asking, exactly as before.
@@ -64,6 +68,20 @@ class TaskManager:
             return DurableAsker(asker, self._inquiry_store, task_id=task_id)
         return asker
 
+    async def _mark(self, task_id: str, status: str, error: str = "") -> None:
+        """Set status and notify the lifecycle hook (the single transition point)."""
+        if error:
+            await self.store.set_status(task_id, status, error=error)
+        else:
+            await self.store.set_status(task_id, status)
+        if self._on_status is not None:
+            try:
+                res = self._on_status(task_id, status, error)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
+
     async def submit(self, task_id: str, asker=None) -> asyncio.Task:
         """Start (or return the already-running) background run for a task."""
         if task_id in self._running:
@@ -75,11 +93,11 @@ class TaskManager:
 
     async def _run(self, task_id: str, asker) -> None:
         try:
-            await self.store.set_status(task_id, TaskStatus.RUNNING)
+            await self._mark(task_id, TaskStatus.RUNNING)
             attempts = 0
             while True:
                 if task_id in self._cancelled:
-                    await self.store.set_status(task_id, TaskStatus.CANCELLED)
+                    await self._mark(task_id, TaskStatus.CANCELLED)
                     return
 
                 # 1) Run any pending subtasks first, in parallel. We do NOT hold a
@@ -111,27 +129,27 @@ class TaskManager:
                     attempts += 1
                     async with self._sem:
                         if task_id in self._cancelled:
-                            await self.store.set_status(task_id, TaskStatus.CANCELLED)
+                            await self._mark(task_id, TaskStatus.CANCELLED)
                             return
                         await self.executor(task_id, self, self._bind_asker(asker, task_id))
                     continue  # re-check (may have produced deliverables / added subtasks)
 
                 # 3) Settle: complete iff deliverables satisfied + subtasks done.
                 if await self.store.is_complete(task_id):
-                    await self.store.set_status(task_id, TaskStatus.COMPLETED)
+                    await self._mark(task_id, TaskStatus.COMPLETED)
                 else:
                     pending = [d.get("description") for d in task.pending_deliverables()]
-                    await self.store.set_status(
+                    await self._mark(
                         task_id, TaskStatus.FAILED,
                         error=f"deliverables not met after {attempts} attempt(s): {pending}"
                         if pending else "incomplete (subtasks unfinished)",
                     )
                 return
         except asyncio.CancelledError:
-            await self.store.set_status(task_id, TaskStatus.CANCELLED)
+            await self._mark(task_id, TaskStatus.CANCELLED)
             raise
         except Exception as exc:  # the work blew up
-            await self.store.set_status(task_id, TaskStatus.FAILED, error=str(exc))
+            await self._mark(task_id, TaskStatus.FAILED, error=str(exc))
         finally:
             self._running.pop(task_id, None)
 
@@ -162,7 +180,7 @@ class TaskManager:
                 running.cancel()  # stop in-flight work immediately
             task = await self.store.get(tid)
             if task is not None and not task.is_terminal:
-                await self.store.set_status(tid, TaskStatus.CANCELLED, error=reason)
+                await self._mark(tid, TaskStatus.CANCELLED, error=reason)
             # release any HITL prompt still blocking on this task (it would
             # otherwise hang until timeout); answering it is now moot.
             if self._inquiry_store is not None:

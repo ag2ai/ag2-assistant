@@ -106,6 +106,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         if owns_gateway:
             await gateway.start()
+        tasks.set_emitter(getattr(gateway, "emit_event", None))  # lifecycle → AG2 stream
         await tasks.start()
         app.state.gateway = gateway
         app.state.tasks = tasks

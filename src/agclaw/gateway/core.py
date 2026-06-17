@@ -99,6 +99,25 @@ class Gateway:
         uses, so events from a turn are caught by the bridge's subscription."""
         return await self._get_stream(session_id)
 
+    async def emit_event(self, session_id: str, event) -> None:
+        """Emit an event onto a session's stream from outside an agent turn (the
+        pattern AG2's own SoundDeviceRecorder uses). It reaches any live bridge
+        subscriber and is persisted so it survives reload. Best-effort."""
+        from autogen.beta.context import ConversationContext
+
+        stream = await self.stream_for(session_id)
+        try:
+            await ConversationContext(stream=stream).send(event)
+        except Exception:
+            return
+        if self._writer is not None:
+            try:
+                await self._writer.persist(
+                    session_id, list(await stream.history.get_events())
+                )
+            except Exception:
+                pass  # persistence is best-effort; the live event still went out
+
     async def _get_stream(self, session_id: str):
         """Return the session's live Stream, hydrating from disk on first use."""
         from autogen.beta.stream import MemoryStream

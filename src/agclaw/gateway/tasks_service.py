@@ -56,6 +56,51 @@ class TaskService:
         self._scheduler = None
         self._bg: set[asyncio.Task] = set()
         self._control_agents: dict = {}  # task_id -> (agent, stream) for task chat
+        # Async (session_id, event) -> None, wired by the gateway. Lets a task's
+        # lifecycle ride the AG2 stream so the GUI renders it as events. None → off.
+        self._emit = None
+
+    def set_emitter(self, emitter) -> None:
+        """Wire an async ``(session_id, event)`` emitter (the gateway's)."""
+        self._emit = emitter
+
+    async def _emit_status(self, task_id: str, status: str, error: str = "") -> None:
+        """Translate a lifecycle transition into the matching AG2 task event and
+        emit it onto the task's stream (``task:<id>``). Reuses AG2-native events;
+        intermediate statuses (pending/planning) carry no event — the GUI reads
+        those from the task panel."""
+        if self._emit is None:
+            return
+        from autogen.beta.events import (
+            TaskCancelled,
+            TaskCompleted,
+            TaskFailed,
+            TaskStarted,
+        )
+
+        from agclaw.tasks import TaskStatus
+
+        t = await self._store.get(task_id)
+        if t is None:
+            return
+        obj, name = (t.objective or t.title or ""), "agclaw"
+        ev = None
+        if status == TaskStatus.RUNNING:
+            ev = TaskStarted(task_id=task_id, agent_name=name, objective=obj)
+        elif status == TaskStatus.COMPLETED:
+            ev = TaskCompleted(task_id=task_id, agent_name=name, objective=obj,
+                               result=(t.result or ""), task_stream=f"task:{task_id}")
+        elif status == TaskStatus.FAILED:
+            ev = TaskFailed(task_id=task_id, agent_name=name, objective=obj,
+                            error=Exception(error or t.error or "failed"))
+        elif status == TaskStatus.CANCELLED:
+            ev = TaskCancelled(task_id=task_id, agent_name=name, objective=obj,
+                               reason=error or "")
+        if ev is not None:
+            try:
+                await self._emit(f"task:{task_id}", ev)
+            except Exception:
+                pass
 
     async def start(self) -> None:
         """Build the durable stores + runner (cheap; no LLM agent yet)."""
@@ -74,6 +119,7 @@ class TaskService:
             self._manager = TaskManager(
                 self._store, self._executor,
                 max_concurrent=self._max_concurrent, inquiry_store=self._inquiries,
+                on_status=self._emit_status,  # lifecycle → AG2 task events on the stream
             )
         if self._scheduler is None:
             from agclaw.tasks.scheduling import Scheduler
@@ -163,6 +209,15 @@ class TaskService:
             text, origin_channel=channel, hitl_channel=channel,
             status=TaskStatus.SCHEDULED, scheduled_for=when, recurrence=recurrence or None,
         )
+        if self._emit is not None:
+            from agclaw.events import TaskScheduled
+
+            try:
+                await self._emit(f"task:{task.id}", TaskScheduled(
+                    task.id, scheduled_for=when, recurrence=recurrence or "",
+                ))
+            except Exception:
+                pass
         bg = asyncio.create_task(self._plan_for_schedule(task.id, channel, when))
         self._bg.add(bg)
         bg.add_done_callback(self._bg.discard)
