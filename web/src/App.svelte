@@ -1,12 +1,13 @@
 <script>
   import { route, go, newChatId } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen } from './store.js'
+  import { googleOpen, voicePickerOpen, viewer } from './store.js'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
   import Hitl from './components/Hitl.svelte'
   import Google from './components/Google.svelte'
   import VoicePicker from './components/VoicePicker.svelte'
+  import Viewer from './components/Viewer.svelte'
 
   // React to route changes: open the matching thread. $effect tracks $route only
   // (writing `last` is untracked), so this can't self-invalidate.
@@ -34,4 +35,5 @@
   </div>
   {#if $googleOpen}<Google />{/if}
   {#if $voicePickerOpen}<VoicePicker />{/if}
+  {#if $viewer}<Viewer />{/if}
 </div>

@@ -1,6 +1,7 @@
 <script>
-  import { taskPanel } from '../../store.js'
+  import { taskPanel, viewer } from '../../store.js'
   import { api } from '../../transport/api.js'
+  import Markdown from '../Markdown.svelte'
 
   const TERMINAL = ['completed', 'failed', 'cancelled']
 
@@ -24,7 +25,10 @@
     {#each ($taskPanel.deliverables || []) as d}
       <div class="deliv">
         <div class="d">{d.description} [{d.status}]</div>
-        {#if d.asset}<div>{(d.asset || '').slice(0, 280)}{(d.asset || '').length > 280 ? '…' : ''}</div>{/if}
+        {#if d.asset}
+          <div class="asset"><Markdown text={d.asset} /></div>
+          <button class="viewbtn" onclick={() => ($viewer = { title: d.description, text: d.asset })}>View full →</button>
+        {/if}
       </div>
     {/each}
 

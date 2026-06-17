@@ -67,6 +67,24 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 
 .deliv { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
 .deliv .d { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.deliv .dprev { font-size: 13px; color: var(--ink); margin: 2px 0; overflow-wrap: anywhere; }
+.asset { background: var(--code); border-radius: 8px; padding: 10px 12px; margin: 4px 0; font-size: 13px; max-height: 260px; overflow: auto; }
+.viewbtn { margin: 4px 0 2px; font-size: 12px; color: var(--accent); background: none; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-family: var(--sans); }
+.viewbtn:hover { border-color: var(--accent); }
+
+/* shared markdown rendering (deliverable assets + full-view viewer) */
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 10px; } .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md h1, .md h2, .md h3 { margin: 14px 0 8px; line-height: 1.25; }
+.md h1 { font-size: 20px; } .md h2 { font-size: 17px; } .md h3 { font-size: 15px; }
+.md a { color: var(--accent); }
+.md code { font-family: var(--mono); font-size: 12px; background: var(--code); padding: 1.5px 5px; border-radius: 5px; }
+.md pre { background: var(--code); padding: 12px 14px; border-radius: 10px; overflow-x: auto; margin: 0 0 10px; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.md table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; }
+.md th, .md td { border: 1px solid var(--line); padding: 5px 9px; }
 
 .inquiry { border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
 .inquiry.resolved { border-color: var(--line); opacity: .6; }
@@ -116,6 +134,12 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
 .modal .muted { color: var(--muted); }
 .modal-close { align-self: flex-end; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+
+.viewer { width: min(820px, 92vw); max-height: 84vh; padding: 0; gap: 0; }
+.viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+.viewer .vhead h2 { font-size: 18px; margin: 0; flex: 1; overflow-wrap: anywhere; }
+.viewer .vhead .modal-close { align-self: auto; }
+.viewer .vbody { padding: 20px 26px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 
 .voicepick .vlist { max-height: 56vh; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .vrow { display: flex; align-items: baseline; gap: 8px; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 9px; padding: 9px 11px; cursor: pointer; }
