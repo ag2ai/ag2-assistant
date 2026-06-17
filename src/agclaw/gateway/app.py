@@ -387,7 +387,11 @@ def create_app(
         import uuid
 
         from autogen.beta.events import (
+            ModelMessage,
             ModelMessageChunk,
+            ModelRequest,
+            ModelResponse,
+            TextInput,
             ToolCallEvent,
             ToolCallsEvent,
         )
@@ -401,6 +405,19 @@ def create_app(
         sid = uuid.uuid4().hex[:8]
         task_id = websocket.query_params.get("task") or None
         chat_session = websocket.query_params.get("session") or None
+        # persist spoken transcripts onto the surface's stream so they survive reload
+        # and become shared conversation history (None → bare voice session, skip).
+        persist_session = f"task:{task_id}" if task_id else chat_session
+        agent_buf: list[str] = []  # accumulates the agent's spoken text for the turn
+
+        async def _flush_agent_say():
+            text = "".join(agent_buf).strip()
+            agent_buf.clear()
+            if persist_session and text:
+                with contextlib.suppress(Exception):
+                    await app.state.gateway.emit_event(
+                        persist_session, ModelResponse(message=ModelMessage(content=text))
+                    )
 
         async def on_tool(name: str) -> None:  # surface delegated (universal-agent) tools
             with contextlib.suppress(Exception):
@@ -433,8 +450,16 @@ def create_app(
             with context.stream.where(sel).join() as evs:
                 async for e in evs:
                     if isinstance(e, ModelMessageChunk):
+                        agent_buf.append(e.content)  # accumulate spoken agent text
                         frame = {"type": "transcript", "role": "agent", "text": e.content}
                     elif isinstance(e, TranscriptionCompletedEvent):
+                        # a new user turn: flush the prior agent turn, then persist the user's words
+                        await _flush_agent_say()
+                        if persist_session and e.content.strip():
+                            with contextlib.suppress(Exception):
+                                await app.state.gateway.emit_event(
+                                    persist_session, ModelRequest(parts=[TextInput(content=e.content)])
+                                )
                         frame = {"type": "transcript", "role": "user", "text": e.content, "final": True}
                     else:
                         frame = {"type": "transcript", "role": "user", "text": e.content}
@@ -480,7 +505,10 @@ def create_app(
                 finally:
                     for j in jobs:
                         j.cancel()
+                    await _flush_agent_say()  # persist the last spoken agent turn
         except WebSocketDisconnect:
+            with contextlib.suppress(Exception):
+                await _flush_agent_say()
             return
         except Exception as exc:
             with contextlib.suppress(Exception):
