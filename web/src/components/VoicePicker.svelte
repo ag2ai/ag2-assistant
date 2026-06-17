@@ -15,17 +15,29 @@
   function _stopAudio() { if (audio) { audio.pause(); URL.revokeObjectURL(audio.src); audio = null } }
   onDestroy(_stopAudio)
 
+  function _play(src, name) {
+    return new Promise((resolve, reject) => {
+      _stopAudio()
+      audio = new Audio(src)
+      audio.onended = () => { if (playing === name) playing = '' }
+      audio.onerror = reject
+      audio.play().then(resolve, reject)
+    })
+  }
+
   async function choose(v) {
     current = v.name
     api.selectVoice(v.name).catch(() => {})   // persist (applies next voice session)
     playing = v.name
     try {
-      const blob = await api.previewVoice(v.name)
-      _stopAudio()
-      audio = new Audio(URL.createObjectURL(blob))
-      audio.onended = () => { if (playing === v.name) playing = '' }
-      await audio.play()
-    } catch { playing = '' }
+      // prefer the pre-recorded sample (instant); fall back to live TTS if absent
+      await _play('/voices/' + encodeURIComponent(v.name) + '.wav', v.name)
+    } catch {
+      try {
+        const blob = await api.previewVoice(v.name)
+        await _play(URL.createObjectURL(blob), v.name)
+      } catch { playing = '' }
+    }
   }
 
   const close = () => { _stopAudio(); $voicePickerOpen = false }

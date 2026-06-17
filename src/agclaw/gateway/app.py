@@ -347,6 +347,17 @@ def create_app(
             return Response(status_code=400)
         return {"ok": True, "voice": req.voice}
 
+    @app.get("/voices/{name}.wav")
+    async def voice_sample(name: str):
+        """Pre-recorded voice sample (from scripts/record_voice_samples.py), if present.
+        404 → the client falls back to live TTS via /api/voice/preview."""
+        from agclaw import settings
+
+        f = _STATIC_DIR / "voices" / f"{name}.wav"
+        if name in settings.VOICES and f.is_file():
+            return FileResponse(f, media_type="audio/wav")
+        return Response(status_code=404)
+
     @app.post("/api/voice/preview")
     async def voice_preview(req: VoiceRequest):
         from agclaw import settings

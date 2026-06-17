@@ -8,3 +8,6 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+
+# pre-recorded voice samples (regenerate with scripts/record_voice_samples.py)
+src/agclaw/gateway/static/voices/
