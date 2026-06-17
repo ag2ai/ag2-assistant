@@ -373,6 +373,8 @@ def create_agent(
 
         hitl_hook = build_hitl_hook(asker)
 
+    from agclaw.observability import agent_logging_middleware
+
     agent = Agent(
         config.agent.name,
         prompt=config.agent.system_prompt,
@@ -382,6 +384,7 @@ def create_agent(
         assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
+        middleware=[agent_logging_middleware()],  # per-turn LLM/tool logs → agclaw.log
     )
 
     return agent

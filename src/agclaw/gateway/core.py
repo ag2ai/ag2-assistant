@@ -130,7 +130,10 @@ class Gateway:
 
     async def start(self) -> None:
         """Create the shared agent and (optionally) the on-disk session store."""
+        from agclaw.observability import setup_logging
         from agclaw.permissions import PermissionStore
+
+        setup_logging(self._config)  # rolling log + failure capture for debugging
 
         # The one universal agent: capability tools + system tools (know/do
         # everything) + compaction to keep long conversations bounded.
@@ -240,10 +243,20 @@ class Gateway:
             stream = await self._get_stream(session_id)
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             ask_coro = self._agent.ask(*msg, stream=stream, prompt=prompt, **extra)
-            if on_tool is None:
-                reply = await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
-            else:
-                reply = await self._ask_watching_tools(stream, ask_coro, on_tool)
+            try:
+                if on_tool is None:
+                    reply = await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
+                else:
+                    reply = await self._ask_watching_tools(stream, ask_coro, on_tool)
+            except Exception as exc:
+                # snapshot the error + the exact history shape that triggered it
+                from agclaw.observability import capture_failure
+
+                await capture_failure(
+                    self._config, session_id=session_id, surface=surface,
+                    user_text=text, error=exc, stream=stream,
+                )
+                raise
             await self._persist_turn(session_id, stream, text, reply.body)
             return reply.body
 
