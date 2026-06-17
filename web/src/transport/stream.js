@@ -11,12 +11,14 @@ export class StreamClient {
     this.onError = onError || (() => {})
     this.ws = null
     this._closed = false
+    this._queue = []   // outgoing messages sent while the socket wasn't OPEN
   }
 
   connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${proto}://${location.host}/api/stream?session=${encodeURIComponent(this.sessionId)}`
     this.ws = new WebSocket(url)
+    this.ws.onopen = () => { const q = this._queue; this._queue = []; q.forEach((o) => this._raw(o)) }
     this.ws.onmessage = (e) => {
       let m
       try { m = JSON.parse(e.data) } catch { return }
@@ -29,7 +31,13 @@ export class StreamClient {
     return this
   }
 
-  _send(obj) { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj)) }
+  _raw(obj) { try { this.ws.send(JSON.stringify(obj)) } catch {} }
+  // Send now if the socket is OPEN; otherwise queue and flush on (re)connect, so
+  // a typed turn is never silently lost during the connect/reconnect window.
+  _send(obj) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this._raw(obj)
+    else this._queue.push(obj)
+  }
   send(text, attachments) { this._send({ text, attachments }) }
   answer(id, answer) { this._send({ type: 'answer', id, answer }) }
   close() { this._closed = true; try { this.ws && this.ws.close() } catch {} }
