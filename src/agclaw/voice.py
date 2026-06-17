@@ -52,8 +52,9 @@ VOICE_PROMPT = (
     "genuinely ambiguous, ask a short follow-up out loud before acting. Never "
     "guess at something you could simply ask about.\n\n"
     "When the user clearly signals they're done — they say no to \"anything else?\", "
-    "or say goodbye / that's all — give a brief, warm spoken goodbye and then call "
-    "`end_call` to hang up. Never end the call while they still have something going."
+    "or say goodbye / that's all / nothing else — wrap up in that same turn: give a "
+    "brief, warm spoken goodbye AND call `end_call` to hang up. Don't wait for a "
+    "second goodbye. Never end the call while they still have something going."
 )
 
 

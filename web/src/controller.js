@@ -110,6 +110,7 @@ export async function startVoice() {
 function _voiceEnded() {
   voiceCtl = null; _voiceActive = false; _vitem = null; _vrole = null
   voice.set({ active: false, status: 'off' })
+  thread.update((t) => ({ ...t, busy: false }))   // no lingering "thinking…" after hang-up
   setTimeout(() => { _suppressStream = false }, 2000)
 }
 

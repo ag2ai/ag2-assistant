@@ -541,7 +541,7 @@ def create_app(
                     for c in calls:
                         name = getattr(c, "name", "") or ""
                         cid = getattr(c, "id", "") or ""
-                        if not name or name == "ask_assistant":  # hide the plumbing tool
+                        if not name or name in ("ask_assistant", "end_call"):  # hide plumbing tools
                             continue
                         if cid and cid in seen:
                             continue
