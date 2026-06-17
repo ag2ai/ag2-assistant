@@ -19,7 +19,8 @@ _PREVIEW = 240  # chars of a produced asset to surface in a summary
 
 
 def _note_started(task_id: str, title: str) -> None:
-    """Record a just-created task so the surface (web chat) can show a task card."""
+    """Record a just-created task into the started-tasks contextvar so the voice
+    delegate can surface a task card (the web client uses the TaskCreated event)."""
     from agclaw.agent import started_tasks_var
 
     lst = started_tasks_var.get()
@@ -120,7 +121,7 @@ def build_system_tools(tasks, chats=None) -> list:
         """Start a background task (it clarifies if needed, then runs). For
         substantial/multi-step work — not quick answers you can give now."""
         tid = await tasks.submit_request(request)
-        _note_started(tid, request)  # legacy card path (old /api/ws client)
+        _note_started(tid, request)  # voice delegate card path (contextvar)
         await _emit_task_card(context, tid, request, "task")  # event-stream card
         return f"Created task {tid}. It will ask any clarifying questions, then run."
 
@@ -133,7 +134,7 @@ def build_system_tools(tasks, chats=None) -> list:
     ) -> str:
         """Schedule a task to run later, optionally recurring."""
         tid = await tasks.schedule_task(request, when, recurrence or None)
-        _note_started(tid, request)  # legacy card path (old /api/ws client)
+        _note_started(tid, request)  # voice delegate card path (contextvar)
         await _emit_task_card(context, tid, request, "scheduled")  # event-stream card
         return f"Scheduled task {tid} for {when}{' (' + recurrence + ')' if recurrence else ''}."
 

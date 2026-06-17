@@ -214,71 +214,6 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
     return parts
 
 
-def _build_start_task_tool(task_starter):
-    """A `start_task` tool that spawns a background task and records it for the UI."""
-    from typing import Annotated
-
-    from autogen.beta import tool
-    from pydantic import Field
-
-    @tool
-    async def start_task(
-        request: Annotated[
-            str, Field(description="The full job to carry out in the background.")
-        ],
-    ) -> str:
-        """Spin up a background TASK for substantial, multi-step work the user wants
-        done over time — research + a written report, multi-part jobs, anything
-        long-running or that should keep going after this reply. Do NOT use this for
-        quick questions or things you can answer directly now — just answer those.
-        The task asks its own clarifying questions and runs on its own."""
-        task_id = await task_starter(request)
-        lst = started_tasks_var.get()
-        if lst is not None:
-            lst.append({"id": task_id, "title": request})
-        return (
-            f"Started a background task ({task_id}). It will ask any clarifying "
-            "questions and run on its own; the user can open it in the Tasks view."
-        )
-
-    return start_task
-
-
-def _build_schedule_task_tool(schedule_starter):
-    """A `schedule_task` tool: run a task at a future time, optionally recurring."""
-    from typing import Annotated
-
-    from autogen.beta import tool
-    from pydantic import Field
-
-    @tool
-    async def schedule_task(
-        request: Annotated[str, Field(description="The job to run when it's due.")],
-        when: Annotated[
-            str, Field(description="When to first run it, as an ISO 8601 datetime "
-                       "(e.g. 2026-06-16T09:00:00). Compute this from the current "
-                       "date/time given in your environment context.")
-        ],
-        recurrence: Annotated[
-            str, Field(description="Optional repeat: 'daily'/'hourly'/'weekly', "
-                       "'every N minutes/hours/days/weeks', or specific days like "
-                       "'weekdays', 'weekends', or 'mon,wed,fri'. For day-of-week "
-                       "repeats set `when` to the desired time-of-day. Empty for a one-off.")
-        ] = "",
-    ) -> str:
-        """Schedule a task to run later (and optionally repeat) — e.g. 'every morning
-        at 8, summarise my unread email', or 'next Monday, research X'. Use the
-        user's timezone from your environment context to build the ISO `when`."""
-        task_id = await schedule_starter(request, when, recurrence or None)
-        lst = started_tasks_var.get()
-        if lst is not None:
-            lst.append({"id": task_id, "title": request})
-        rep = f" (repeats {recurrence})" if recurrence else ""
-        return f"Scheduled '{request}' for {when}{rep} (task {task_id})."
-
-    return schedule_task
-
-
 def create_agent(
     config: Config | None = None,
     memory: bool = True,
@@ -289,8 +224,6 @@ def create_agent(
     single_shot: bool = False,
     capabilities: list[str] | None = None,
     model: str | None = None,
-    task_starter=None,
-    schedule_starter=None,
     extra_tools: list | None = None,
     compact: bool = False,
 ) -> Agent:
@@ -347,15 +280,9 @@ def create_agent(
     if skills and (capabilities is None or "skills" in capabilities):
         tools.append(build_skills_toolkit(config))
 
-    # When a task_starter is wired (the gateway), give the agent the ability to
-    # spin up a background task for big jobs — and record it so the surface can
-    # show a task card.
-    if task_starter is not None:
-        tools.append(_build_start_task_tool(task_starter))
-    if schedule_starter is not None:
-        tools.append(_build_schedule_task_tool(schedule_starter))
     # system tools (retrieval + actions over tasks/chats/questions) — these make
-    # the agent "universal": it can know and do everything via tools.
+    # the agent "universal": it can know and do everything via tools (create/
+    # schedule included; the chat agent no longer needs a separate start_task tool).
     if extra_tools:
         tools.extend(extra_tools)
 

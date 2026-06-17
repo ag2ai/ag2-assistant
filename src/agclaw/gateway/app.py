@@ -25,14 +25,6 @@ from agclaw.gateway.core import Gateway
 from agclaw.hitl import GatewayAsker, HitlServer, add_hitl_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
-_UI_FILE = _STATIC_DIR / "index.html"
-
-
-def _legacy_ui() -> str:
-    try:
-        return _UI_FILE.read_text(encoding="utf-8")
-    except OSError:
-        return "<h1>AGClaw</h1><p>UI asset missing.</p>"
 
 # Surface context the client can request by token (kept server-side, not in the UI).
 _SURFACES = {
@@ -104,9 +96,7 @@ def create_app(
     if gateway is None:
         gateway = Gateway(
             config=config, memory=memory, platform=platform, persist=persist,
-            task_starter=tasks.submit_request,  # let the chat agent spawn tasks
-            schedule_starter=tasks.schedule_task,  # ...and schedule them
-            task_service=tasks,  # ...and know/do everything via system tools
+            task_service=tasks,  # the agent knows/does everything via system tools
         )
 
     @asynccontextmanager
@@ -135,18 +125,10 @@ def create_app(
 
     @app.get("/")
     async def ui():
-        """Primary UI is now the Svelte client at /app (Phase 4 cutover). The legacy
-        vanilla-JS client remains at /legacy for rollback."""
+        """The web UI is the Svelte client at /app."""
         from fastapi.responses import RedirectResponse
 
-        if (_STATIC_DIR / "app" / "index.html").exists():
-            return RedirectResponse(url="/app/", status_code=307)
-        return HTMLResponse(_legacy_ui())  # new UI not built → fall back to legacy
-
-    @app.get("/legacy", response_class=HTMLResponse)
-    async def legacy_ui() -> str:
-        """The original vanilla-JS reference client (kept for rollback)."""
-        return _legacy_ui()
+        return RedirectResponse(url="/app/", status_code=307)
 
     @app.get("/{name}.svg")
     async def favicon_svg(name: str):
@@ -350,96 +332,6 @@ def create_app(
         )
         return MessageResponse(reply=reply, session_id=req.session_id)
 
-    @app.websocket("/api/ws")
-    async def ws(websocket: WebSocket) -> None:
-        await websocket.accept()
-        try:
-            while True:
-                data = await websocket.receive_json()
-                # An answer frame can arrive any time (e.g. to a prior prompt).
-                if data.get("type") == "answer" and data.get("id"):
-                    app.state.hitl.answer(data["id"], data.get("answer", ""))
-                    continue
-
-                text = data.get("text", "")
-                session_id = data.get("session_id", "default")
-                surface = _SURFACES.get(data.get("surface", ""), "")
-                attachments = _decode_attachments(data.get("attachments"))
-                if not text and attachments:
-                    text = "Here is a file I'm sharing with you."
-                if not text:
-                    await websocket.send_json(
-                        {"type": "error", "message": "missing 'text'"}
-                    )
-                    continue
-                await websocket.send_json({"type": "thinking", "session_id": session_id})
-
-                async def on_question(req_id, question, path, sid=session_id):
-                    await websocket.send_json(
-                        {
-                            "type": "question",
-                            "id": req_id,
-                            "path": path,
-                            "text": question.text,
-                            "detail": question.detail,
-                            "options": question.options,
-                            "kind": question.kind,
-                            "session_id": sid,
-                        }
-                    )
-
-                asker = GatewayAsker(app.state.hitl, on_question=on_question)
-
-                async def on_tool(name, sid=session_id):
-                    await websocket.send_json(
-                        {"type": "tool", "name": name, "session_id": sid}
-                    )
-
-                # capture any tasks the agent spawns this turn (start_task tool) so
-                # we can show a task card; the contextvar is copied into the task.
-                import agclaw.agent as agent_mod
-
-                spawned: list = []
-                agent_mod.started_tasks_var.set(spawned)
-                task = asyncio.create_task(
-                    app.state.gateway.send_message(
-                        text, session_id=session_id, asker=asker,
-                        attachments=attachments, surface=surface, on_tool=on_tool,
-                    )
-                )
-                # While the turn runs, keep reading frames (answers / cancel).
-                await _drive_turn(websocket, task, app.state.hitl)
-
-                if task.cancelled():
-                    await websocket.send_json(
-                        {"type": "cancelled", "session_id": session_id}
-                    )
-                    continue
-                try:
-                    reply = task.result()
-                    await websocket.send_json(
-                        {"type": "reply", "text": reply, "session_id": session_id}
-                    )
-                    for st in spawned:  # one card per task the agent started
-                        await websocket.send_json({
-                            "type": "task_card", "id": st["id"],
-                            "title": st["title"], "session_id": session_id,
-                        })
-                except TimeoutError:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "That took too long and timed out. Try again, "
-                        "or a simpler request.",
-                        "session_id": session_id,
-                    })
-                except Exception as exc:  # surface failures to the client
-                    await websocket.send_json(
-                        {"type": "error", "message": str(exc) or repr(exc),
-                         "session_id": session_id}
-                    )
-        except WebSocketDisconnect:
-            return
-
     @app.websocket("/api/stream")
     async def stream_ws(websocket: WebSocket) -> None:
         """Event-stream protocol (the redesign's transport): the client receives
@@ -610,16 +502,14 @@ def create_app(
             return FileResponse(f)
         return FileResponse(index)
 
-    @app.get("/{full_path:path}", response_class=HTMLResponse)
+    @app.get("/{full_path:path}")
     async def spa(full_path: str):
-        """Serve the single-page UI for client-side routes (/c/…, /t/…, /tasks…)
-        so a deep link or refresh lands on the right view. Unknown /api paths 404."""
+        """Any other path → the Svelte app at /app (unknown /api paths 404)."""
         if full_path.startswith("api/"):
             return Response(status_code=404)
-        try:
-            return _UI_FILE.read_text(encoding="utf-8")
-        except OSError:
-            return "<h1>AGClaw</h1><p>UI asset missing.</p>"
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url="/app/", status_code=307)
 
     return app
 
@@ -640,37 +530,3 @@ def _decode_attachments(items) -> list:
         if inp is not None:
             out.append(inp)
     return out
-
-
-async def _drive_turn(websocket: WebSocket, task: asyncio.Task, hitl) -> None:
-    """Run a turn while concurrently accepting HITL answer / cancel frames.
-
-    Lets the client answer a `question` frame on the same WebSocket the turn is
-    streaming on (the turn is blocked awaiting that answer), or stop the turn
-    with a `cancel` frame.
-    """
-    while not task.done():
-        recv = asyncio.create_task(websocket.receive_json())
-        done, _ = await asyncio.wait(
-            {task, recv}, return_when=asyncio.FIRST_COMPLETED
-        )
-        if recv in done:
-            try:
-                msg = recv.result()
-            except WebSocketDisconnect:
-                task.cancel()
-                raise
-            if msg.get("type") == "answer" and msg.get("id"):
-                hitl.answer(msg["id"], msg.get("answer", ""))
-            elif msg.get("type") == "cancel":
-                task.cancel()
-            # other frames mid-turn are ignored (one turn at a time per socket)
-        else:
-            recv.cancel()
-            with contextlib.suppress(Exception, asyncio.CancelledError):
-                await recv
-    # Let the task settle (so task.cancelled()/result() are accurate) without
-    # re-raising here — the caller inspects task.result()/cancelled() and sends
-    # the appropriate reply/error/cancelled frame.
-    with contextlib.suppress(BaseException):
-        await task

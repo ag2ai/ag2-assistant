@@ -222,8 +222,8 @@ def test_create_app_shares_injected_gateway(fake_gateway):
     assert fake_gateway.status()["status"] == "ok"
 
 
-def test_ws_message_roundtrip(monkeypatch):
-    """The WebSocket facade streams thinking + reply frames."""
+def test_stream_roundtrip(monkeypatch):
+    """The /api/stream WebSocket replays history (ready) then runs a turn (turn_end)."""
     from fastapi.testclient import TestClient
 
     import agclaw.gateway.app as app_mod
@@ -233,52 +233,28 @@ def test_ws_message_roundtrip(monkeypatch):
 
     app = app_mod.create_app(memory=False, persist=False)
     with TestClient(app) as client:
-        with client.websocket_connect("/api/ws") as ws:
-            ws.send_json({"text": "ping", "session_id": "w1"})
-            first = ws.receive_json()
-            assert first["type"] == "thinking"
-            second = ws.receive_json()
-            assert second["type"] == "reply"
-            assert second["text"] == "echo[1]: ping"
+        with client.websocket_connect("/api/stream?session=w1") as ws:
+            assert ws.receive_json()["type"] == "ready"
+            ws.send_json({"text": "ping"})
+            assert ws.receive_json()["type"] == "turn_end"
 
 
 # --- gateway-hosted HITL ---
 
 
-class _AskingGateway:
-    """A gateway whose turn asks the injected asker one permission question."""
-
-    def __init__(self):
-        from agclaw.hitl.base import Question
-
-        self._q = Question(text="Allow it?", options=["Allow once", "Deny"], kind="permission")
-
-    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface="", on_tool=None):
-        ans = await asker.ask(self._q)
-        return f"decision:{ans}"
-
-    def status(self):
-        return {"status": "ok", "sessions": 0}
-
-
-async def test_ui_served_at_root(fake_gateway):
-    """The gateway serves the reference web client at /."""
+async def test_root_redirects_to_app(fake_gateway):
+    """/ and unknown paths redirect to the Svelte app at /app."""
     from fastapi.testclient import TestClient
 
     import agclaw.gateway.app as app_mod
 
     app = app_mod.create_app(gateway=fake_gateway)
     with TestClient(app) as client:
-        # post-cutover, / redirects to the Svelte app; the legacy client lives at /legacy
         root = client.get("/", follow_redirects=False)
-        assert root.status_code in (200, 307)
-        page = client.get("/legacy")
-        assert page.status_code == 200
-        assert "text/html" in page.headers["content-type"]
-        # key hooks the legacy JS relies on
-        assert "/api/ws" in page.text
-        assert 'id="input"' in page.text
-        assert "AGClaw" in page.text
+        assert root.status_code == 307 and root.headers["location"] == "/app/"
+        other = client.get("/anything", follow_redirects=False)
+        assert other.status_code == 307 and other.headers["location"] == "/app/"
+        assert client.get("/api/bogus", follow_redirects=False).status_code == 404
 
 
 def test_favicon_served(fake_gateway):
@@ -293,8 +269,6 @@ def test_favicon_served(fake_gateway):
             assert r.status_code == 200, path
             assert "svg" in r.headers["content-type"]
             assert "<svg" in r.text
-        # the legacy page references the favicons
-        assert "faviconlight.svg" in client.get("/legacy").text
 
 
 async def test_hitl_routes_served_by_gateway(fake_gateway):
@@ -327,27 +301,6 @@ async def test_hitl_routes_served_by_gateway(fake_gateway):
         assert missing.status_code == 404
 
 
-def test_ws_hitl_question_answer_flow():
-    """A turn that asks a question pushes a `question` frame; the client answers
-    over the same socket and the turn completes."""
-    from fastapi.testclient import TestClient
-
-    import agclaw.gateway.app as app_mod
-
-    app = app_mod.create_app(gateway=_AskingGateway())
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/ws") as ws:
-            ws.send_json({"text": "do the thing", "session_id": "w1"})
-            assert ws.receive_json()["type"] == "thinking"
-            q = ws.receive_json()
-            assert q["type"] == "question"
-            assert q["options"] == ["Allow once", "Deny"]
-            ws.send_json({"type": "answer", "id": q["id"], "answer": "Allow once"})
-            reply = ws.receive_json()
-            assert reply["type"] == "reply"
-            assert reply["text"] == "decision:Allow once"
-
-
 def test_decode_attachments():
     import base64
 
@@ -360,66 +313,8 @@ def test_decode_attachments():
     assert _decode_attachments([{"name": "x.png", "data": ""}]) == []  # empty → skipped
 
 
-class _AttachGateway:
-    def __init__(self):
-        self.last_attachments = None
-
-    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface="", on_tool=None):
-        self.last_attachments = attachments
-        return f"got {len(attachments or [])} attachment(s): {text}"
-
-    def status(self):
-        return {"status": "ok", "sessions": 0}
-
-
-def test_ws_attachment_passthrough():
-    import base64
-
-    from fastapi.testclient import TestClient
-
-    import agclaw.gateway.app as app_mod
-
-    gw = _AttachGateway()
-    app = app_mod.create_app(gateway=gw)
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/ws") as ws:
-            data = base64.b64encode(b"hello").decode()
-            ws.send_json({
-                "text": "see this",
-                "session_id": "s1",
-                "attachments": [{"name": "a.txt", "mime": "text/plain", "data": data}],
-            })
-            assert ws.receive_json()["type"] == "thinking"
-            reply = ws.receive_json()
-            assert reply["type"] == "reply"
-            assert "1 attachment" in reply["text"]
-    assert gw.last_attachments and len(gw.last_attachments) == 1
-
-
-class _HangGateway:
-    async def send_message(self, text, session_id="default", asker=None, attachments=None, surface="", on_tool=None):
-        await asyncio.Event().wait()  # never completes → must be cancellable
-
-    def status(self):
-        return {"status": "ok", "sessions": 0}
-
-
-def test_ws_cancel_stops_turn():
-    from fastapi.testclient import TestClient
-
-    import agclaw.gateway.app as app_mod
-
-    app = app_mod.create_app(gateway=_HangGateway())
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/ws") as ws:
-            ws.send_json({"text": "long task", "session_id": "s1"})
-            assert ws.receive_json()["type"] == "thinking"
-            ws.send_json({"type": "cancel", "session_id": "s1"})
-            assert ws.receive_json()["type"] == "cancelled"
-
-
-def test_ws_timeout_sends_error_frame(monkeypatch):
-    """A turn that exceeds REPLY_TIMEOUT surfaces an error frame (not silence)."""
+def test_stream_timeout_sends_error_frame(monkeypatch):
+    """A turn that exceeds REPLY_TIMEOUT surfaces an error frame on /api/stream."""
     from fastapi.testclient import TestClient
 
     import agclaw.gateway.app as app_mod
@@ -432,15 +327,21 @@ def test_ws_timeout_sends_error_frame(monkeypatch):
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _HangAgent())
     monkeypatch.setattr(core_mod, "REPLY_TIMEOUT", 0.2)
 
-    # app-managed gateway so lifespan starts it (with the hanging fake agent)
     app = app_mod.create_app(memory=False, persist=False)
     with TestClient(app) as client:
-        with client.websocket_connect("/api/ws") as ws:
-            ws.send_json({"text": "slow", "session_id": "s1"})
-            frames = [ws.receive_json(), ws.receive_json()]
-            assert frames[0]["type"] == "thinking"
-            assert frames[1]["type"] == "error"
-            assert "timed out" in frames[1]["message"].lower()
+        with client.websocket_connect("/api/stream?session=s1") as ws:
+            while ws.receive_json().get("type") != "ready":
+                pass
+            ws.send_json({"text": "slow"})
+            saw_error = False
+            for _ in range(5):
+                m = ws.receive_json()
+                if m.get("type") == "error":
+                    saw_error = True
+                    break
+                if m.get("type") == "turn_end":
+                    break
+            assert saw_error
 
 
 async def test_gateway_asker_timeout_denies():

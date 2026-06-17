@@ -106,8 +106,6 @@ class Gateway:
         platform: str = "gateway",
         onboard: bool = True,
         persist: bool = True,
-        task_starter=None,
-        schedule_starter=None,
         task_service=None,
     ) -> None:
         self._config = config or load_config()
@@ -115,8 +113,6 @@ class Gateway:
         self._platform = platform
         self._onboard = onboard
         self._persist = persist
-        self._task_starter = task_starter  # lets the chat agent spawn background tasks
-        self._schedule_starter = schedule_starter  # ...and schedule them for later
         self._tasks = task_service  # gives the universal agent its system tools
         self._onboarding_done = False
         self._agent = None
