@@ -2,7 +2,7 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, taskPanel } from './store.js'
+import { thread, taskPanel, sessions } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
@@ -47,6 +47,17 @@ export function send(text, attachments = []) {
   if (!client || (!text.trim() && !attachments.length)) return
   thread.update((t) => ({ ...t, busy: true }))
   client.send(text, attachments)
+  // Surface a brand-new chat in the drawer immediately — the sessions list is
+  // only persisted server-side once the first turn completes (which can take a
+  // while). The drawer poll merges this until the server reports it for real.
+  const t = get(thread)
+  if (t.kind === 'chat' && text.trim()) {
+    sessions.update((list) =>
+      list.some((s) => s.session_id === t.session)
+        ? list
+        : [{ session_id: t.session, preview: text.trim().slice(0, 80), updated: new Date().toISOString(), turns: 0 }, ...list]
+    )
+  }
 }
 
 export function answer(inquiryId, text) {

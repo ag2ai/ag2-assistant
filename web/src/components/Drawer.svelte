@@ -5,7 +5,12 @@
   import { api } from '../transport/api.js'
 
   async function refresh() {
-    try { $sessions = await api.sessions() } catch {}
+    try {
+      const server = await api.sessions()
+      const ids = new Set(server.map((s) => s.session_id))
+      // keep optimistic, not-yet-persisted chats (just sent, agent still replying)
+      $sessions = [...$sessions.filter((s) => !ids.has(s.session_id)), ...server]
+    } catch {}
     try { $tasks = await api.tasksAll('all') } catch {}
   }
   onMount(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t) })
@@ -33,7 +38,6 @@
       {#each $sessions as s (s.session_id)}
         <div class="drow" class:on={$route.name === 'chat' && $route.id === s.session_id} onclick={() => openChat(s.session_id)}>
           <div>{s.preview || s.session_id}</div>
-          <div class="sub"><span>{s.turns || 0} turns</span></div>
         </div>
       {/each}
     {:else}
