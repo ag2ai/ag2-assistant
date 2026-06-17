@@ -102,15 +102,15 @@ export async function startVoice() {
   if (!ok) { _voiceActive = false; _suppressStream = false; voice.set({ active: false, status: 'off' }) }
 }
 
-// Voice ended (user mic-off or server close). Reset mic state and reload the
-// thread so the transient live bubbles are replaced by the canonical persisted
-// conversation. _suppressStream stays TRUE until that reload (openThread clears
-// it), so the server's disconnect-flush never flashes a duplicate in between.
+// Voice ended (user mic-off or server close). Keep the live voice bubbles in
+// place (no reload, no scroll jump) — just suppress the stream a moment longer so
+// the server's disconnect-flush (the persisted copy of the turns we already
+// showed) doesn't fold in as duplicates, then resume normal folding for any
+// later typed messages. (A real page refresh still loads the canonical history.)
 function _voiceEnded() {
   voiceCtl = null; _voiceActive = false; _vitem = null; _vrole = null
   voice.set({ active: false, status: 'off' })
-  const t = get(thread)
-  if (t.id) setTimeout(() => { if (get(thread).id === t.id) openThread(t.kind, t.id) }, 900)
+  setTimeout(() => { _suppressStream = false }, 2000)
 }
 
 export function stopVoice() {

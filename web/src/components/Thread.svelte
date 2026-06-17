@@ -10,12 +10,13 @@
   const tail = $derived($thread.items[$thread.items.length - 1])
   const showThinking = $derived($thread.busy && !(tail && tail.kind === 'agent' && tail.streaming))
 
-  // Autoscroll after the DOM updates. Use $effect (not `$: tick()`) — the legacy
-  // reactive + tick() pairing self-reschedules and loops forever in Svelte 5.
+  // Autoscroll to the bottom after the DOM updates. Use $effect (not `$: tick()` —
+  // that self-reschedules and loops in Svelte 5), and scroll on the next frame so
+  // markdown that sets its height after render still lands us at the true bottom.
   $effect(() => {
     $thread.items
     showThinking
-    if (scroller) scroller.scrollTop = scroller.scrollHeight
+    requestAnimationFrame(() => { if (scroller) scroller.scrollTop = scroller.scrollHeight })
   })
 </script>
 
