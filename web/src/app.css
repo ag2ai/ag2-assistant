@@ -94,3 +94,14 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .panel { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 0 auto 14px; max-width: 760px; }
 .panel .ptitle { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
 .panel .child { border-left: 2px solid var(--line); padding-left: 10px; margin: 6px 0; }
+
+.hitl { border-bottom: 1px solid var(--line); background: var(--panel); padding: 10px 20px; max-height: 40vh; overflow-y: auto; }
+.hitlhead { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; margin-bottom: 6px; }
+.qcard { border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin: 6px 0; max-width: 760px; }
+.qcard .qk { font-size: 11px; color: var(--muted); }
+.qcard .qk a { color: var(--accent); cursor: pointer; }
+.qcard .qt { margin: 4px 0; font-size: 14px; }
+.qcard .qd { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.qcard .qopts { display: flex; flex-wrap: wrap; gap: 6px; }
+.qcard .qopts button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+.qcard input { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }

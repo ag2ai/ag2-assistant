@@ -3,6 +3,7 @@
   import { openThread, closeThread } from './controller.js'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
+  import Hitl from './components/Hitl.svelte'
 
   // React to route changes: open the matching thread. $effect tracks $route only
   // (writing `last` is untracked), so this can't self-invalidate.
@@ -21,6 +22,7 @@
 <div class="app">
   <Drawer />
   <div class="main">
+    <Hitl />
     {#if $route.name === 'home'}
       <div class="thread"><div class="empty"><h1>AGClaw</h1>Starting a conversation…</div></div>
     {:else}

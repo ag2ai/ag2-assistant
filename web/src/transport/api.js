@@ -17,4 +17,6 @@ export const api = {
   task: (id) => j('GET', '/api/tasks/' + id).then((d) => d.task),
   cancelTask: (id) => j('POST', `/api/tasks/${id}/cancel`),
   archiveTask: (id, archived = true) => j('POST', `/api/tasks/${id}/archive`, { archived }),
+  inquiries: () => j('GET', '/api/inquiries/pending').then((d) => d.pending || []),
+  answerInquiry: (id, answer) => j('POST', `/api/inquiries/${encodeURIComponent(id)}/answer`, { answer }),
 }
