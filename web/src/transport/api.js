@@ -19,4 +19,8 @@ export const api = {
   archiveTask: (id, archived = true) => j('POST', `/api/tasks/${id}/archive`, { archived }),
   inquiries: () => j('GET', '/api/inquiries/pending').then((d) => d.pending || []),
   answerInquiry: (id, answer) => j('POST', `/api/inquiries/${encodeURIComponent(id)}/answer`, { answer }),
+  googleStatus: () => j('GET', '/api/google/status'),
+  googleLoginUrl: () => j('POST', '/api/google/login_url'),
+  googleCredentials: (content) => j('POST', '/api/google/credentials', { content }),
+  googleLogout: () => j('POST', '/api/google/logout'),
 }

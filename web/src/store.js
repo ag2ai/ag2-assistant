@@ -15,3 +15,6 @@ export const taskPanel = writable(null)
 // Durable HITL: pending questions/permissions across all tasks, answerable
 // anywhere (polled). Survives restarts — backed by the InquiryStore.
 export const inquiries = writable([])
+
+// Google connect modal open/closed.
+export const googleOpen = writable(false)

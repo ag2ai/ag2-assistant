@@ -105,3 +105,14 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .qcard .qopts { display: flex; flex-wrap: wrap; gap: 6px; }
 .qcard .qopts button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
 .qcard input { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+
+.pending { max-width: 760px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.pending .chip { display: inline-flex; align-items: center; gap: 4px; }
+.pending .chip .x { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
+
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 20; }
+.modal { position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(560px, 92vw); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.modal h2 { margin: 0; }
+.modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
+.modal .muted { color: var(--muted); }
+.modal-close { align-self: flex-end; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; }

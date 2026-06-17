@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { sessions, tasks, drawerTab } from '../store.js'
+  import { sessions, tasks, drawerTab, googleOpen } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
 
@@ -18,6 +18,7 @@
 <div class="drawer">
   <div class="dhead">
     <span class="brand">AGClaw</span>
+    <button class="newbtn" title="Connect Google" onclick={() => ($googleOpen = true)}>Google</button>
     <button class="newbtn" onclick={newChat}>+ New</button>
   </div>
   <div class="tabs">

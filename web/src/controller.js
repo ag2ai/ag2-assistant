@@ -40,10 +40,10 @@ export function openThread(kind, id) {
   }
 }
 
-export function send(text) {
-  if (!client || !text.trim()) return
+export function send(text, attachments = []) {
+  if (!client || (!text.trim() && !attachments.length)) return
   thread.update((t) => ({ ...t, busy: true }))
-  client.send(text)
+  client.send(text, attachments)
 }
 
 export function answer(inquiryId, text) {

@@ -3,13 +3,14 @@
   import { send, startVoice, stopVoice, voice } from '../controller.js'
 
   let text = $state('')
-  let ta
+  let pending = $state([])  // {name, payload:{name,mime,data(b64)}}
+  let ta, fileInput
 
   function submit() {
     const t = text.trim()
-    if (!t) return
-    send(t)
-    text = ''
+    if (!t && !pending.length) return
+    send(t, pending.map((p) => p.payload))
+    text = ''; pending = []
     if (ta) ta.style.height = 'auto'
   }
   function key(e) {
@@ -17,10 +18,36 @@
   }
   function grow() { if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px' } }
   function toggleMic() { $voice.active ? stopVoice() : startVoice() }
+
+  function toB64(file) {
+    return new Promise((res, rej) => {
+      const r = new FileReader()
+      r.onload = () => res(String(r.result).split(',')[1] || '')
+      r.onerror = rej
+      r.readAsDataURL(file)
+    })
+  }
+  async function pick(e) {
+    for (const f of e.target.files) {
+      const data = await toB64(f)
+      pending = [...pending, { name: f.name, payload: { name: f.name, mime: f.type, data } }]
+    }
+    if (fileInput) fileInput.value = ''
+  }
+  const removeFile = (i) => { pending = pending.filter((_, j) => j !== i) }
 </script>
 
 <div class="composer">
+  {#if pending.length}
+    <div class="pending">
+      {#each pending as p, i}
+        <span class="chip">📎 {p.name}<button class="x" onclick={() => removeFile(i)}>×</button></span>
+      {/each}
+    </div>
+  {/if}
   <div class="crow">
+    <button class="icon" onclick={() => fileInput.click()} title="Attach files">📎</button>
+    <input type="file" multiple hidden bind:this={fileInput} onchange={pick} />
     <textarea
       bind:this={ta}
       bind:value={text}
