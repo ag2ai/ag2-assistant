@@ -1,165 +1,119 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 880" font-family="system-ui, -apple-system, Helvetica, sans-serif" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 820" font-family="system-ui, -apple-system, Helvetica, sans-serif" font-size="13">
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-      <polygon points="0 0, 10 3.5, 0 7" fill="#666"/>
+      <polygon points="0 0, 10 3.5, 0 7" fill="#888"/>
     </marker>
-    <marker id="arrowback" markerWidth="10" markerHeight="7" refX="1" refY="3.5" orient="auto">
-      <polygon points="10 0, 0 3.5, 10 7" fill="#f95339"/>
+    <marker id="arrowA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f95339"/>
     </marker>
+    <style>
+      .box{fill:#fafafa;stroke:#d9d9d9;stroke-width:1.5}
+      .accent{fill:#fff4f1;stroke:#f95339;stroke-width:2}
+      .spine{fill:#fff0ec;stroke:#f95339;stroke-width:2.5}
+      .found{fill:#f3f3f3;stroke:#cfcfcf;stroke-width:1.5}
+      .pill{fill:#fff;stroke:#cfcfcf;stroke-width:1}
+      .t{fill:#1a1a1a} .m{fill:#777;font-size:11px} .h{font-weight:700;fill:#1a1a1a}
+      .ac{fill:#f95339;font-weight:700} .lbl{fill:#888;font-size:11px}
+      .ln{stroke:#888;stroke-width:1.5;fill:none}
+      .lnA{stroke:#f95339;stroke-width:2;fill:none}
+    </style>
   </defs>
-  <style>
-    .layer { font-size: 11px; fill: #999; font-weight: 700; letter-spacing: 1px; }
-    .lbl { font-weight: 700; font-size: 14px; }
-    .det { font-size: 11px; fill: #555; }
-    .conn { stroke: #666; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
-    .hitl { stroke: #f95339; stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#arrowback); }
-    .planned { stroke-dasharray: 5 3; }
-    .note { font-size: 11px; fill: #777; font-style: italic; }
-  </style>
 
-  <text x="500" y="28" text-anchor="middle" font-size="20" font-weight="700" fill="#222">AGClaw Architecture</text>
-  <text x="500" y="46" text-anchor="middle" class="note">AG2 Beta 0.13 · Python backend · solid = built, dashed = planned / in progress</text>
+  <text x="500" y="30" text-anchor="middle" font-size="20" class="h">AGClaw — event-stream architecture</text>
+  <text x="500" y="50" text-anchor="middle" class="m">AG2 Stream is the source of truth; everything is a projection of it (wire = log = {type, data})</text>
 
   <!-- Clients -->
-  <text x="55" y="72" class="layer">CLIENTS</text>
-  <rect x="55" y="78" width="90" height="36" rx="8" fill="#E8F4FD" stroke="#7CB9E8"/>
-  <text x="100" y="101" text-anchor="middle" class="lbl" fill="#2B6CB0">CLI</text>
-  <rect x="152" y="78" width="100" height="36" rx="8" fill="#E8F4FD" stroke="#7CB9E8"/>
-  <text x="202" y="101" text-anchor="middle" class="lbl" fill="#2B6CB0">Web UI</text>
-  <rect x="259" y="78" width="95" height="36" rx="8" fill="#E8F4FD" stroke="#7CB9E8" class="planned"/>
-  <text x="306" y="101" text-anchor="middle" class="lbl" fill="#2B6CB0">Desktop</text>
+  <rect x="60"  y="72" width="250" height="58" rx="10" class="box"/>
+  <text x="185" y="98" text-anchor="middle" class="h">Web UI — Svelte SPA</text>
+  <text x="185" y="116" text-anchor="middle" class="m">/app · projects events → bubbles, chips, cards</text>
 
-  <!-- Channels -->
-  <text x="560" y="72" class="layer">CHANNELS (live)</text>
-  <rect x="560" y="78" width="92" height="36" rx="8" fill="#FEF3C7" stroke="#D97706"/>
-  <text x="606" y="101" text-anchor="middle" class="lbl" fill="#92400E">Telegram</text>
-  <rect x="659" y="78" width="82" height="36" rx="8" fill="#FEF3C7" stroke="#D97706"/>
-  <text x="700" y="101" text-anchor="middle" class="lbl" fill="#92400E">Discord</text>
-  <rect x="748" y="78" width="70" height="36" rx="8" fill="#FEF3C7" stroke="#D97706"/>
-  <text x="783" y="101" text-anchor="middle" class="lbl" fill="#92400E">Slack</text>
-  <rect x="825" y="78" width="100" height="36" rx="8" fill="#FEF3C7" stroke="#D97706" class="planned"/>
-  <text x="875" y="101" text-anchor="middle" class="lbl" fill="#92400E">WhatsApp</text>
+  <rect x="375" y="72" width="250" height="58" rx="10" class="box"/>
+  <text x="500" y="98" text-anchor="middle" class="h">Channels</text>
+  <text x="500" y="116" text-anchor="middle" class="m">Telegram · Discord · Slack</text>
 
-  <!-- arrows to gateway -->
-  <line x1="100" y1="114" x2="260" y2="168" class="conn"/>
-  <line x1="202" y1="114" x2="340" y2="168" class="conn"/>
-  <line x1="700" y1="114" x2="640" y2="168" class="conn"/>
-  <text x="120" y="134" class="det">Web UI · REST · WebSocket</text>
+  <rect x="690" y="72" width="250" height="58" rx="10" class="box"/>
+  <text x="815" y="98" text-anchor="middle" class="h">CLI / other clients</text>
+  <text x="815" y="116" text-anchor="middle" class="m">the gateway API is the only contract</text>
+
+  <path class="ln" d="M185 130 V 166" marker-end="url(#arrow)"/>
+  <path class="ln" d="M500 130 V 166" marker-end="url(#arrow)"/>
+  <path class="ln" d="M815 130 V 166" marker-end="url(#arrow)"/>
 
   <!-- Gateway -->
-  <text x="55" y="162" class="layer">GATEWAY</text>
-  <rect x="55" y="168" width="870" height="92" rx="8" fill="#DCFCE7" stroke="#22C55E"/>
-  <text x="490" y="190" text-anchor="middle" class="lbl" fill="#166534">Gateway — FastAPI facade (agclaw.gateway) · serves the Web UI · agclaw run = gateway + all channels</text>
-  <text x="490" y="212" text-anchor="middle" class="det">GET / (web UI) · POST /api/message · WS /api/ws (thinking·reply·question·cancelled·error)</text>
-  <text x="490" y="230" text-anchor="middle" class="det">/api/sessions · /api/tasks · /api/inquiries · /api/hitl · /api/google · /api/health</text>
-  <text x="490" y="250" text-anchor="middle" class="det">Resumable per-session AG2 Streams (EventLogWriter → sessions.db) · per-session lock · turn timeout</text>
+  <rect x="60" y="168" width="880" height="92" rx="10" class="box"/>
+  <text x="78" y="190" class="h">Gateway (FastAPI)</text>
+  <text x="820" y="190" class="m">StreamBridge · emit_event · per-session lock</text>
+  <rect x="78"  y="204" width="180" height="42" rx="14" class="pill"/>
+  <text x="168" y="222" text-anchor="middle" class="ac">WS /api/stream</text>
+  <text x="168" y="238" text-anchor="middle" class="m">replay + live events</text>
+  <rect x="270" y="204" width="170" height="42" rx="14" class="pill"/>
+  <text x="355" y="222" text-anchor="middle" class="ac">WS /api/voice</text>
+  <text x="355" y="238" text-anchor="middle" class="m">Gemini Live PCM</text>
+  <rect x="452" y="204" width="300" height="42" rx="14" class="pill"/>
+  <text x="602" y="222" text-anchor="middle" class="h">REST</text>
+  <text x="602" y="238" text-anchor="middle" class="m">/api/tasks · /api/inquiries · /api/sessions · /api/google</text>
+  <rect x="764" y="204" width="158" height="42" rx="14" class="pill"/>
+  <text x="843" y="229" text-anchor="middle" class="h">/app static</text>
 
-  <line x1="270" y1="260" x2="270" y2="296" class="conn"/>
+  <path class="lnA" d="M500 260 V 300" marker-end="url(#arrowA)"/>
+  <text x="512" y="284" class="lbl">subscribe · run turns · emit</text>
 
-  <!-- Agent -->
-  <text x="55" y="292" class="layer">AGENT (AG2 Beta)</text>
-  <rect x="55" y="298" width="455" height="146" rx="8" fill="#F3E8FF" stroke="#A855F7"/>
-  <text x="282" y="320" text-anchor="middle" class="lbl" fill="#581C87">AG2 Agent — agclaw.agent</text>
-  <text x="282" y="340" text-anchor="middle" class="det">Prompt: persona + behaviour guidance + live env (+ Google guidance when signed in)</text>
-  <text x="282" y="358" text-anchor="middle" class="det">Multi-provider: Gemini (default) · OpenAI · Anthropic</text>
-  <text x="170" y="384" text-anchor="middle" class="det">search · web_fetch</text>
-  <text x="170" y="402" text-anchor="middle" class="det">read_file (vision) 🔒</text>
-  <text x="170" y="420" text-anchor="middle" class="det">skills (registry + bundled)</text>
-  <text x="400" y="384" text-anchor="middle" class="det">shell 🔒 · code 🔒</text>
-  <text x="400" y="402" text-anchor="middle" class="det">(sandbox: local / docker)</text>
-  <text x="400" y="420" text-anchor="middle" class="det">gmail · calendar · drive 🔒</text>
+  <!-- Spine -->
+  <rect x="60" y="302" width="880" height="86" rx="12" class="spine"/>
+  <text x="500" y="328" text-anchor="middle" class="ac" font-size="15">Per-session AG2 event Streams</text>
+  <text x="500" y="348" text-anchor="middle" class="t">web-… · task:&lt;id&gt; · voice:&lt;id&gt;  —  one wire = log shape: { type, data }</text>
+  <text x="500" y="368" text-anchor="middle" class="m">history (replay) and live (subscribe) are the same path · persisted by EventLogWriter</text>
 
-  <!-- HITL & Permissions -->
-  <text x="535" y="292" class="layer">HITL &amp; PERMISSIONS</text>
-  <rect x="535" y="298" width="390" height="146" rx="8" fill="#FFEDE9" stroke="#f95339"/>
-  <text x="730" y="320" text-anchor="middle" class="lbl" fill="#b3361f">HITL &amp; Permissions</text>
-  <text x="730" y="342" text-anchor="middle" class="det">PermissionManager — one per turn, shared by all</text>
-  <text x="730" y="358" text-anchor="middle" class="det">access tools (folders + shell/code; sends/writes)</text>
-  <text x="730" y="378" text-anchor="middle" class="det">Allow once / Always allow / Deny · turn-sticky</text>
-  <text x="730" y="396" text-anchor="middle" class="det">Asker → chat buttons · desktop &amp; gateway /hitl page</text>
-  <text x="730" y="414" text-anchor="middle" class="det">Durable Inquiries — persisted, task-tied (inquiries.db),</text>
-  <text x="730" y="430" text-anchor="middle" class="det">answerable from any channel · denials never enter memory</text>
+  <!-- producers/consumers -->
+  <rect x="60" y="430" width="270" height="96" rx="10" class="accent"/>
+  <text x="195" y="453" text-anchor="middle" class="h">Universal Agent</text>
+  <text x="195" y="472" text-anchor="middle" class="m">one agent, all surfaces</text>
+  <text x="195" y="490" text-anchor="middle" class="m">tools · system tools · knowledge</text>
+  <text x="195" y="508" text-anchor="middle" class="m">LoggingMiddleware · cheap model</text>
 
-  <line x1="510" y1="360" x2="533" y2="360" class="conn"/>
-  <path d="M 730 444 L 730 462 L 282 462 L 282 446" class="hitl"/>
-  <text x="500" y="478" text-anchor="middle" class="note" fill="#b3361f">prompt routed back to the requesting client / channel</text>
+  <rect x="365" y="430" width="270" height="96" rx="10" class="box"/>
+  <text x="500" y="453" text-anchor="middle" class="h">Voice — LiveAgent</text>
+  <text x="500" y="472" text-anchor="middle" class="m">Gemini Live (basic tools)</text>
+  <text x="500" y="490" text-anchor="middle" class="m">ask_assistant → delegates to</text>
+  <text x="500" y="508" text-anchor="middle" class="m">the universal agent; transcripts persisted</text>
 
-  <line x1="160" y1="444" x2="160" y2="500" class="conn"/>
-  <line x1="400" y1="444" x2="400" y2="500" class="conn"/>
+  <rect x="670" y="430" width="270" height="96" rx="10" class="box"/>
+  <text x="805" y="453" text-anchor="middle" class="h">Task engine</text>
+  <text x="805" y="472" text-anchor="middle" class="m">TaskStore · runner · scheduler</text>
+  <text x="805" y="490" text-anchor="middle" class="m">durable, nestable, deliverables</text>
+  <text x="805" y="508" text-anchor="middle" class="ac">emits Task*/Deliverable events</text>
 
-  <!-- Tasks -->
-  <text x="55" y="496" class="layer">TASKS</text>
-  <rect x="55" y="502" width="455" height="92" rx="8" fill="#E0E7FF" stroke="#6366F1"/>
-  <text x="282" y="522" text-anchor="middle" class="lbl" fill="#3730A3">Tasks — agclaw.tasks</text>
-  <text x="282" y="540" text-anchor="middle" class="det">nestable tree · iterative HITL intake · capability-scoped agents</text>
-  <text x="282" y="557" text-anchor="middle" class="det">deliverable verify + grounding gate · resilient parents · live amend</text>
-  <text x="282" y="574" text-anchor="middle" class="det">concurrent cascade-cancel runner · cheap model for leaf subtasks</text>
-  <text x="282" y="589" text-anchor="middle" class="det" fill="#6366F1">tasks.db · gateway API + Tasks GUI + scheduler (one-shot/recurring)</text>
+  <path class="lnA" d="M195 430 V 390" marker-end="url(#arrowA)"/>
+  <path class="ln"  d="M215 390 V 430" marker-end="url(#arrow)"/>
+  <path class="lnA" d="M500 430 V 390" marker-end="url(#arrowA)"/>
+  <path class="lnA" d="M805 430 V 390" marker-end="url(#arrowA)"/>
 
-  <!-- Session & Memory -->
-  <text x="535" y="496" class="layer">SESSION &amp; MEMORY</text>
-  <rect x="535" y="502" width="390" height="92" rx="8" fill="#FFF7ED" stroke="#F97316"/>
-  <text x="730" y="524" text-anchor="middle" class="lbl" fill="#9A3412">Session &amp; Memory — agclaw.memory</text>
-  <text x="730" y="546" text-anchor="middle" class="det">Conversation: resumable per-session streams (sessions.db)</text>
-  <text x="730" y="564" text-anchor="middle" class="det">Profile (passive): WorkingMemoryAggregate / Policy (profile.db)</text>
-  <text x="730" y="582" text-anchor="middle" class="det">batched cadence · permission decisions excluded</text>
+  <!-- cross-cutting -->
+  <rect x="60" y="556" width="270" height="62" rx="10" class="box"/>
+  <text x="195" y="579" text-anchor="middle" class="h">Durable HITL</text>
+  <text x="195" y="598" text-anchor="middle" class="m">InquiryStore · Asker · Inquiry* events</text>
 
-  <!-- Google -->
-  <text x="55" y="624" class="layer">GOOGLE</text>
-  <rect x="55" y="630" width="455" height="72" rx="8" fill="#FFF1F2" stroke="#FB7185"/>
-  <text x="282" y="652" text-anchor="middle" class="lbl" fill="#9F1239">Google — Gmail / Calendar / Drive (agclaw.integrations)</text>
-  <text x="282" y="674" text-anchor="middle" class="det">OAuth (CLI or web panel) · token cached &amp; refreshed</text>
-  <text x="282" y="692" text-anchor="middle" class="det">reads run freely · sends / writes HITL-gated</text>
+  <rect x="365" y="556" width="270" height="62" rx="10" class="box"/>
+  <text x="500" y="579" text-anchor="middle" class="h">Permissions</text>
+  <text x="500" y="598" text-anchor="middle" class="m">turn-level PermissionManager</text>
 
-  <!-- Config -->
-  <text x="535" y="624" class="layer">CONFIG &amp; PROVIDERS</text>
-  <rect x="535" y="630" width="390" height="72" rx="8" fill="#F0FDF4" stroke="#86EFAC"/>
-  <text x="730" y="652" text-anchor="middle" class="lbl" fill="#166534">Configuration — Pydantic</text>
-  <text x="730" y="674" text-anchor="middle" class="det">env (AGCLAW_*) &gt; ~/.agclaw/config.json &gt; defaults</text>
-  <text x="730" y="692" text-anchor="middle" class="det">Gemini · OpenAI · Anthropic</text>
+  <rect x="670" y="556" width="270" height="62" rx="10" class="box"/>
+  <text x="805" y="579" text-anchor="middle" class="h">Observability</text>
+  <text x="805" y="598" text-anchor="middle" class="m">agclaw.log · failure snapshots</text>
+
+  <rect x="60" y="632" width="430" height="50" rx="10" class="box"/>
+  <text x="275" y="655" text-anchor="middle" class="h">Memory</text>
+  <text x="275" y="672" text-anchor="middle" class="m">passive user profile (WorkingMemory, cheap model)</text>
+  <rect x="510" y="632" width="430" height="50" rx="10" class="box"/>
+  <text x="725" y="655" text-anchor="middle" class="h">Google</text>
+  <text x="725" y="672" text-anchor="middle" class="m">OAuth · Gmail/Calendar/Drive (writes HITL-gated)</text>
 
   <!-- Storage -->
-  <text x="55" y="726" class="layer">STORAGE (~/.agclaw)</text>
-  <rect x="55" y="732" width="132" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="121" y="751" text-anchor="middle" class="lbl" fill="#475569">profile.db</text>
-  <text x="121" y="766" text-anchor="middle" class="det">learned profile</text>
-  <rect x="195" y="732" width="132" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="261" y="751" text-anchor="middle" class="lbl" fill="#475569">sessions.db</text>
-  <text x="261" y="766" text-anchor="middle" class="det">resumable chats</text>
-  <rect x="335" y="732" width="110" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="390" y="751" text-anchor="middle" class="lbl" fill="#475569">tasks.db</text>
-  <text x="390" y="766" text-anchor="middle" class="det">tasks</text>
-  <rect x="453" y="732" width="132" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="519" y="751" text-anchor="middle" class="lbl" fill="#475569">inquiries.db</text>
-  <text x="519" y="766" text-anchor="middle" class="det">durable HITL</text>
-  <rect x="593" y="732" width="150" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="668" y="751" text-anchor="middle" class="lbl" fill="#475569">permissions.json</text>
-  <text x="668" y="766" text-anchor="middle" class="det">folder grants</text>
-  <rect x="751" y="732" width="174" height="40" rx="8" fill="#F1F5F9" stroke="#94A3B8"/>
-  <text x="838" y="751" text-anchor="middle" class="lbl" fill="#475569">google_token.json</text>
-  <text x="838" y="766" text-anchor="middle" class="det">OAuth (+ credentials)</text>
+  <rect x="60" y="696" width="880" height="44" rx="10" class="found"/>
+  <text x="78" y="723" class="h">Storage ~/.agclaw/</text>
+  <text x="922" y="723" text-anchor="end" class="m">sessions.db · tasks.db · inquiries.db · profile.db · permissions.json · debug/ · skills/</text>
 
-  <!-- Distributed note -->
-  <rect x="55" y="788" width="870" height="40" rx="8" fill="#F8FAFC" stroke="#CBD5E1"/>
-  <text x="70" y="806" class="lbl" fill="#334155">Distributed / multi-agent (validated spike)</text>
-  <text x="70" y="822" class="det">The agent can also be served over WebSocket through an AG2 Hub (serve_ws) for cross-machine / multi-agent deployments.</text>
-
-  <!-- Legend -->
-  <rect x="55" y="846" width="14" height="14" rx="3" fill="#E8F4FD" stroke="#7CB9E8"/>
-  <text x="74" y="857" font-size="11" fill="#666">Clients</text>
-  <rect x="130" y="846" width="14" height="14" rx="3" fill="#FEF3C7" stroke="#D97706"/>
-  <text x="149" y="857" font-size="11" fill="#666">Channels</text>
-  <rect x="218" y="846" width="14" height="14" rx="3" fill="#DCFCE7" stroke="#22C55E"/>
-  <text x="237" y="857" font-size="11" fill="#666">Gateway</text>
-  <rect x="305" y="846" width="14" height="14" rx="3" fill="#F3E8FF" stroke="#A855F7"/>
-  <text x="324" y="857" font-size="11" fill="#666">Agent</text>
-  <rect x="375" y="846" width="14" height="14" rx="3" fill="#FFEDE9" stroke="#f95339"/>
-  <text x="394" y="857" font-size="11" fill="#666">HITL/Perms</text>
-  <rect x="468" y="846" width="14" height="14" rx="3" fill="#E0E7FF" stroke="#6366F1"/>
-  <text x="487" y="857" font-size="11" fill="#666">Tasks</text>
-  <rect x="535" y="846" width="14" height="14" rx="3" fill="#FFF1F2" stroke="#FB7185"/>
-  <text x="554" y="857" font-size="11" fill="#666">Google</text>
-  <text x="612" y="857" font-size="11" fill="#666">🔒 = permission-gated</text>
-  <line x1="752" y1="853" x2="782" y2="853" stroke="#666" stroke-width="1.5" stroke-dasharray="5 3"/>
-  <text x="789" y="857" font-size="11" fill="#666">planned / WIP</text>
+  <!-- AG2 foundation -->
+  <rect x="60" y="752" width="880" height="44" rx="10" class="found"/>
+  <text x="500" y="779" text-anchor="middle" class="h">AG2 Beta · Stream · event taxonomy · observers/subscribe · EventLogWriter · KnowledgeConfig · LiveAgent</text>
 </svg>
