@@ -435,8 +435,20 @@ def create_app(
         from agclaw.gateway.stream_bridge import StreamBridge
 
         session_id = websocket.query_params.get("session") or "default"
-        surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
+        default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
         bridge = StreamBridge(app.state.gateway, websocket, session_id)
+
+        async def turn_surface() -> str:
+            # task threads get a fresh task snapshot each turn so "this task" resolves
+            if session_id.startswith("task:"):
+                tid = session_id.split(":", 1)[1]
+                node = await app.state.tasks.get_task(tid)
+                if node:
+                    from agclaw.system_tools import format_task
+                    return ("The user is viewing this task; act on THIS task when "
+                            f"they refer to it.\n\n{format_task(node)}")
+            return default_surface
+
         try:
             await bridge.open()
             while True:
@@ -451,6 +463,7 @@ def create_app(
                 if not text:
                     continue
                 asker = GatewayAsker(app.state.hitl)
+                surface = await turn_surface()
                 asyncio.create_task(
                     bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
                 )
@@ -566,6 +579,22 @@ def create_app(
         except Exception as exc:
             with contextlib.suppress(Exception):
                 await websocket.send_json({"type": "error", "message": str(exc)})
+
+    _APP_DIR = _STATIC_DIR / "app"
+
+    @app.get("/app")
+    @app.get("/app/{path:path}")
+    async def spa_app(path: str = ""):
+        """Serve the Vite+Svelte client (built into static/app). Real asset files
+        are served as-is; any other /app/* path falls back to index.html so SPA
+        deep links (/app/c/<id>, /app/t/<id>) survive refresh."""
+        index = _APP_DIR / "index.html"
+        if not index.exists():
+            return HTMLResponse("<h1>AGClaw</h1><p>New UI not built. Run: cd web && npm install && npm run build</p>")
+        f = (_APP_DIR / path).resolve()
+        if path and f.is_file() and str(f).startswith(str(_APP_DIR.resolve())):
+            return FileResponse(f)
+        return FileResponse(index)
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
     async def spa(full_path: str):
