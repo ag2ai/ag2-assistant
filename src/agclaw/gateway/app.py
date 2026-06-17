@@ -492,10 +492,14 @@ def create_app(
                     "type": "task_card", "id": st["id"], "title": st.get("title", "Task"),
                 })
 
+        # The voice agent can hang up the call itself via its end_call tool, which
+        # trips this event; wait_end() (below) then ends the job race → teardown.
+        end_requested = asyncio.Event()
+
         try:
             agent = await app.state.gateway.build_voice_agent(
                 session_id=sid, task_id=task_id, chat_session=chat_session,
-                on_tool=on_tool, on_task=on_task,
+                on_tool=on_tool, on_task=on_task, on_end=end_requested.set,
             )
         except Exception as exc:
             with contextlib.suppress(Exception):
@@ -554,6 +558,12 @@ def create_app(
                 if data:
                     await context.send(RecordedAudioEvent(data))
 
+        async def wait_end():
+            # The agent called end_call. Let the spoken goodbye drain before we tear
+            # the session down (the client closes its playback context on WS close).
+            await end_requested.wait()
+            await asyncio.sleep(2.5)
+
         try:
             async with agent.run() as context:
                 await websocket.send_json({"type": "ready"})
@@ -562,6 +572,7 @@ def create_app(
                     asyncio.create_task(pump_text(context)),
                     asyncio.create_task(pump_tools(context)),
                     asyncio.create_task(recv_loop(context)),
+                    asyncio.create_task(wait_end()),
                 ]
                 try:
                     await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)

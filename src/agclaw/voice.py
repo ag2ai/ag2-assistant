@@ -50,7 +50,10 @@ VOICE_PROMPT = (
     "mean). Don't ask the user to repeat what they already said.\n\n"
     "Otherwise, involve the user as much as needed for clarity: if a request is "
     "genuinely ambiguous, ask a short follow-up out loud before acting. Never "
-    "guess at something you could simply ask about."
+    "guess at something you could simply ask about.\n\n"
+    "When the user clearly signals they're done — they say no to \"anything else?\", "
+    "or say goodbye / that's all — give a brief, warm spoken goodbye and then call "
+    "`end_call` to hang up. Never end the call while they still have something going."
 )
 
 
@@ -116,13 +119,15 @@ async def synthesize_preview(config: Config, voice: str, text: str = PREVIEW_TEX
 
 
 def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
-                      task_context: str = ""):
+                      task_context: str = "", on_end=None):
     """A LiveAgent with a basic tool subset + an ask_assistant delegate tool.
 
     `tasks` is the TaskService (for the basic read tools); `delegate` is an async
     `(request: str) -> str` that runs the universal agent and returns its reply.
     `task_context`, when the session is opened from a task page, names the task so
-    "this task" resolves and is appended to the spoken-agent prompt.
+    "this task" resolves and is appended to the spoken-agent prompt. `on_end`, when
+    given, is a no-arg callback the `end_call` tool fires so the agent can hang up
+    the session itself once the conversation is done.
     """
     from autogen.beta import tool
     from autogen.beta.live import LiveAgent
@@ -158,9 +163,22 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
         except Exception as exc:  # keep the voice session alive on a failed turn
             return f"The assistant couldn't complete that: {exc}"
 
+    tools = [*basic, current_time, ask_assistant]
+
+    if on_end is not None:
+        @tool
+        def end_call() -> str:
+            """End the voice call. Use ONLY when the user has clearly indicated they're
+            done (e.g. you asked if there's anything else and they said no, or they said
+            goodbye). Say a brief, warm goodbye out loud FIRST, then call this."""
+            on_end()
+            return "Ending the call."
+
+        tools.append(end_call)
+
     return LiveAgent(
         name="voice",
         prompt=prompt,
         config=voice_realtime_config(config, voice=voice),
-        tools=[*basic, current_time, ask_assistant],
+        tools=tools,
     )

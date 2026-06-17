@@ -301,7 +301,7 @@ class Gateway:
     async def build_voice_agent(self, session_id: str = "default",
                                 voice: str | None = None, task_id: str | None = None,
                                 chat_session: str | None = None, on_tool=None,
-                                on_task=None):
+                                on_task=None, on_end=None):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
         delegates to this same universal agent so the spoken conversation shares
         the app's tools, memory, and continuity.
@@ -380,7 +380,7 @@ class Gateway:
             )
 
         return build_voice_agent(self._config, self._tasks, delegate,
-                                 voice=voice, task_context=task_context)
+                                 voice=voice, task_context=task_context, on_end=on_end)
 
     async def _recent_transcript(self, session_id: str, turns: int = 6) -> str:
         """A short plain-text snippet of the last few chat turns, for voice grounding."""
