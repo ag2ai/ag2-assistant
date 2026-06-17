@@ -51,7 +51,7 @@ export function answer(inquiryId, text) {
 }
 
 export function closeThread() {
-  stopVoice()
+  _voiceTeardown()
   if (client) { client.close(); client = null }
   if (panelTimer) { clearInterval(panelTimer); panelTimer = null }
 }
@@ -98,10 +98,20 @@ export async function startVoice() {
   if (!ok) { _voiceActive = false; voice.set({ active: false, status: 'off' }) }
 }
 
-export function stopVoice() {
+function _voiceTeardown() {
   if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }
   _voiceActive = false; _vitem = null; _vrole = null
   voice.set({ active: false, status: 'off' })
+}
+
+export function stopVoice() {
+  if (!voiceCtl && !_voiceActive) return
+  _voiceTeardown()
+  // Reload the thread so the transient live voice bubbles are replaced by the
+  // canonical persisted conversation (alternating user/agent turns). The short
+  // delay lets the server's disconnect-flush persist the final turn first.
+  const t = get(thread)
+  if (t.id) setTimeout(() => { if (get(thread).id === t.id) openThread(t.kind, t.id) }, 900)
 }
 
 async function loadPanel(id) {

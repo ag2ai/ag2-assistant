@@ -408,9 +408,23 @@ def create_app(
         # persist spoken transcripts onto the surface's stream so they survive reload
         # and become shared conversation history (None → bare voice session, skip).
         persist_session = f"task:{task_id}" if task_id else chat_session
-        agent_buf: list[str] = []  # accumulates the agent's spoken text for the turn
+        # Persist spoken turns by ROLE ALTERNATION, not the "completed" event (Gemini
+        # doesn't fire it reliably): accumulate each side's chunks and flush a turn
+        # when the other side starts speaking → alternating ModelRequest/ModelResponse.
+        user_buf: list[str] = []
+        agent_buf: list[str] = []
+        last_role = {"v": None}  # "user" | "agent"
 
-        async def _flush_agent_say():
+        async def _flush_user():
+            text = "".join(user_buf).strip()
+            user_buf.clear()
+            if persist_session and text:
+                with contextlib.suppress(Exception):
+                    await app.state.gateway.emit_event(
+                        persist_session, ModelRequest(parts=[TextInput(content=text)])
+                    )
+
+        async def _flush_agent():
             text = "".join(agent_buf).strip()
             agent_buf.clear()
             if persist_session and text:
@@ -449,20 +463,20 @@ def create_app(
             sel = TranscriptionChunkEvent | TranscriptionCompletedEvent | ModelMessageChunk
             with context.stream.where(sel).join() as evs:
                 async for e in evs:
-                    if isinstance(e, ModelMessageChunk):
-                        agent_buf.append(e.content)  # accumulate spoken agent text
+                    if isinstance(e, ModelMessageChunk):           # agent speaking
+                        if last_role["v"] == "user":
+                            await _flush_user()                    # user turn ended
+                        last_role["v"] = "agent"
+                        agent_buf.append(e.content)
                         frame = {"type": "transcript", "role": "agent", "text": e.content}
-                    elif isinstance(e, TranscriptionCompletedEvent):
-                        # a new user turn: flush the prior agent turn, then persist the user's words
-                        await _flush_agent_say()
-                        if persist_session and e.content.strip():
-                            with contextlib.suppress(Exception):
-                                await app.state.gateway.emit_event(
-                                    persist_session, ModelRequest(parts=[TextInput(content=e.content)])
-                                )
-                        frame = {"type": "transcript", "role": "user", "text": e.content, "final": True}
-                    else:
+                    else:                                          # user (chunk or completed)
+                        if last_role["v"] == "agent":
+                            await _flush_agent()                   # agent turn ended
+                        last_role["v"] = "user"
+                        user_buf.append(e.content)
                         frame = {"type": "transcript", "role": "user", "text": e.content}
+                        if isinstance(e, TranscriptionCompletedEvent):
+                            frame["final"] = True
                     await websocket.send_json(frame)
 
         async def pump_tools(context):
@@ -505,10 +519,12 @@ def create_app(
                 finally:
                     for j in jobs:
                         j.cancel()
-                    await _flush_agent_say()  # persist the last spoken agent turn
+                    await _flush_user()   # persist whichever turn was pending
+                    await _flush_agent()
         except WebSocketDisconnect:
             with contextlib.suppress(Exception):
-                await _flush_agent_say()
+                await _flush_user()
+                await _flush_agent()
             return
         except Exception as exc:
             with contextlib.suppress(Exception):
