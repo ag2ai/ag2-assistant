@@ -75,7 +75,7 @@ class Inquiry:
 class InquiryStore:
     """CRUD over persisted inquiries, with in-process wakeups on resolution."""
 
-    def __init__(self, path: Path | None = None, store=None) -> None:
+    def __init__(self, path: Path | None = None, store=None, on_change=None) -> None:
         if store is not None:
             self._store = store
         else:
@@ -85,6 +85,18 @@ class InquiryStore:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._store = SerialStore(SqliteKnowledgeStore(str(path)))
         self._events: dict[str, asyncio.Event] = {}
+        # Async (inquiry, kind) hook — "raised" on create, the status on resolve —
+        # so the durable-HITL lifecycle can ride the AG2 stream as events.
+        self._on_change = on_change
+
+    async def _notify(self, inquiry: Inquiry, kind: str) -> None:
+        if self._on_change is not None:
+            try:
+                res = self._on_change(inquiry, kind)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
 
     def _wake(self, inquiry_id: str) -> None:
         ev = self._events.get(inquiry_id)
@@ -102,6 +114,7 @@ class InquiryStore:
             channel=channel,
         )
         await self._save(inq)
+        await self._notify(inq, "raised")
         return inq
 
     async def get(self, inquiry_id: str) -> Inquiry | None:
@@ -136,6 +149,7 @@ class InquiryStore:
         inq.answered_at = now_iso()
         await self._save(inq)
         self._wake(inquiry_id)
+        await self._notify(inq, status)
         return inq
 
     async def answer(self, inquiry_id: str, text: str) -> Inquiry | None:

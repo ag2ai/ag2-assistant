@@ -192,6 +192,10 @@ def make_task_executor(config, skills: bool = True):
                     asset={"name": d["description"][:60], "kind": "text",
                            "content": output[:_MAX_ASSET_CHARS]},
                 )
+                await manager.deliverable_produced(
+                    task_id, d["id"], d.get("description", ""),
+                    output[:240].replace("\n", " "),
+                )
             else:
                 await store.set_deliverable_status(
                     task_id, d["id"], DeliverableStatus.REJECTED, notes=verdict.reason,

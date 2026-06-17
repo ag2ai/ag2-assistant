@@ -102,6 +102,41 @@ class TaskService:
             except Exception:
                 pass
 
+    async def _emit_deliverable(self, task_id, deliverable_id, description, preview="") -> None:
+        """A produced deliverable → DeliverableProduced on the task's stream."""
+        if self._emit is None:
+            return
+        from agclaw.events import DeliverableProduced
+
+        try:
+            await self._emit(f"task:{task_id}", DeliverableProduced(
+                task_id, deliverable_id=deliverable_id, description=description, preview=preview,
+            ))
+        except Exception:
+            pass
+
+    async def _emit_inquiry(self, inquiry, kind) -> None:
+        """Durable HITL lifecycle → InquiryRaised/InquiryAnswered on the task's stream.
+        (AG2's HumanInputRequest is transient; our inquiries are durable & task-scoped.)"""
+        if self._emit is None or not inquiry.task_id:
+            return
+        from agclaw.events import InquiryAnswered, InquiryRaised
+        from agclaw.hitl.inquiry import InquiryStatus
+
+        sid = f"task:{inquiry.task_id}"
+        try:
+            if kind == "raised":
+                await self._emit(sid, InquiryRaised(
+                    inquiry.id, task_id=inquiry.task_id, question=inquiry.text,
+                    options=list(inquiry.options or []), kind=inquiry.kind,
+                ))
+            elif kind == InquiryStatus.ANSWERED:
+                await self._emit(sid, InquiryAnswered(
+                    inquiry.id, answer=getattr(inquiry, "answer", "") or "",
+                ))
+        except Exception:
+            pass
+
     async def start(self) -> None:
         """Build the durable stores + runner (cheap; no LLM agent yet)."""
         from agclaw.hitl import InquiryStore
@@ -112,14 +147,17 @@ class TaskService:
         if self._store is None:
             self._store = TaskStore(path=d / "tasks.db")
         if self._inquiries is None:
-            self._inquiries = InquiryStore(path=d / "inquiries.db")
+            self._inquiries = InquiryStore(
+                path=d / "inquiries.db", on_change=self._emit_inquiry,
+            )
         if self._executor is None:
             self._executor = make_task_executor(self._config)
         if self._manager is None:
             self._manager = TaskManager(
                 self._store, self._executor,
                 max_concurrent=self._max_concurrent, inquiry_store=self._inquiries,
-                on_status=self._emit_status,  # lifecycle → AG2 task events on the stream
+                on_status=self._emit_status,        # lifecycle → AG2 task events
+                on_deliverable=self._emit_deliverable,  # → DeliverableProduced
             )
         if self._scheduler is None:
             from agclaw.tasks.scheduling import Scheduler

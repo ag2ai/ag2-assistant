@@ -81,3 +81,44 @@ async def test_schedule_emits_task_scheduled(tmp_path):
     assert sched and sched[0].task_id == tid
     assert sched[0].recurrence == "daily"
     await svc.close()
+
+
+async def test_deliverable_produced_emits_event(tmp_path):
+    from agclaw.events import DeliverableProduced
+
+    svc, emitted = await _started(tmp_path)
+    await svc._manager.deliverable_produced("task-9", "dlv-1", "the report", "RBA held rates…")
+    dp = [e for sid, e in emitted if isinstance(e, DeliverableProduced)]
+    assert dp and dp[0].deliverable_id == "dlv-1" and dp[0].description == "the report"
+    assert ("task:task-9", dp[0]) in emitted
+    await svc.close()
+
+
+async def test_inquiry_raised_then_answered_emit(tmp_path):
+    from agclaw.events import InquiryAnswered, InquiryRaised
+
+    svc, emitted = await _started(tmp_path)
+    inq = await svc.inquiries.create("Which city?", task_id="task-7",
+                                     options=["Sydney", "Perth"], kind="question")
+    raised = [e for _, e in emitted if isinstance(e, InquiryRaised)]
+    assert raised and raised[0].inquiry_id == inq.id and raised[0].options == ["Sydney", "Perth"]
+
+    await svc.inquiries.answer(inq.id, "Sydney")
+    answered = [e for _, e in emitted if isinstance(e, InquiryAnswered)]
+    assert answered and answered[0].inquiry_id == inq.id and answered[0].answer == "Sydney"
+    await svc.close()
+
+
+async def test_emit_task_card_helper(tmp_path):
+    from agclaw.events import TaskCreated
+    from agclaw.system_tools import _emit_task_card
+
+    sent = []
+
+    class _Ctx:
+        async def send(self, event):
+            sent.append(event)
+
+    await _emit_task_card(_Ctx(), "task-3", "research ETFs", "task")
+    assert isinstance(sent[0], TaskCreated) and sent[0].task_id == "task-3" and sent[0].kind == "task"
+    await _emit_task_card(None, "task-3", "x", "task")  # no context → no-op, no error

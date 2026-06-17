@@ -12,7 +12,7 @@ string the agent reads — never a giant blob — which is the point of retrieva
 
 from typing import Annotated
 
-from autogen.beta import tool
+from autogen.beta import Context, tool
 from pydantic import Field
 
 _PREVIEW = 240  # chars of a produced asset to surface in a summary
@@ -25,6 +25,20 @@ def _note_started(task_id: str, title: str) -> None:
     lst = started_tasks_var.get()
     if lst is not None:
         lst.append({"id": task_id, "title": title})
+
+
+async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
+    """Emit a TaskCreated event onto the active chat stream so the event-stream
+    client shows a task card — the AG2-native replacement for the started_tasks_var
+    contextvar (which only the legacy client reads). Best-effort."""
+    if context is None:
+        return
+    from agclaw.events import TaskCreated
+
+    try:
+        await context.send(TaskCreated(task_id, title=title, kind=kind))
+    except Exception:
+        pass
 
 
 def _fmt_schedule(t: dict) -> str:
@@ -101,11 +115,13 @@ def build_system_tools(tasks, chats=None) -> list:
     @tool
     async def create_task(
         request: Annotated[str, Field(description="The full job to carry out as a background task.")],
+        context: Context,
     ) -> str:
         """Start a background task (it clarifies if needed, then runs). For
         substantial/multi-step work — not quick answers you can give now."""
         tid = await tasks.submit_request(request)
-        _note_started(tid, request)  # surfaces a task card in the chat
+        _note_started(tid, request)  # legacy card path (old /api/ws client)
+        await _emit_task_card(context, tid, request, "task")  # event-stream card
         return f"Created task {tid}. It will ask any clarifying questions, then run."
 
     @tool
@@ -113,10 +129,12 @@ def build_system_tools(tasks, chats=None) -> list:
         request: Annotated[str, Field(description="The job to run when due.")],
         when: Annotated[str, Field(description="First run as ISO 8601 datetime (from your env clock).")],
         recurrence: Annotated[str, Field(description="Repeat: daily/hourly/weekly, 'every N units', 'weekdays', 'weekends', 'mon,wed,fri', or empty.")] = "",
+        context: Context = None,
     ) -> str:
         """Schedule a task to run later, optionally recurring."""
         tid = await tasks.schedule_task(request, when, recurrence or None)
-        _note_started(tid, request)  # surfaces a task card in the chat
+        _note_started(tid, request)  # legacy card path (old /api/ws client)
+        await _emit_task_card(context, tid, request, "scheduled")  # event-stream card
         return f"Scheduled task {tid} for {when}{' (' + recurrence + ')' if recurrence else ''}."
 
     @tool

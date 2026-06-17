@@ -35,6 +35,7 @@ class TaskManager:
         max_concurrent: int = 3,
         on_progress: Callable | None = None,
         on_status: Callable | None = None,
+        on_deliverable: Callable | None = None,
         inquiry_store=None,
     ) -> None:
         self.store = store
@@ -46,6 +47,9 @@ class TaskManager:
         # Notified on every lifecycle transition (RUNNING / terminal) so the
         # service can emit the matching AG2 task event onto the task's stream.
         self._on_status = on_status
+        # Notified when a deliverable is produced (the executor calls
+        # deliverable_produced) → DeliverableProduced event on the task's stream.
+        self._on_deliverable = on_deliverable
         # When set, HITL prompts during a task are persisted as durable Inquiries
         # tied to the (sub)task, so they survive restarts and can be answered from
         # any channel. None → transient asking, exactly as before.
@@ -165,6 +169,17 @@ class TaskManager:
         if self._on_progress is not None:
             try:
                 res = self._on_progress(task_id, message, pct)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
+
+    async def deliverable_produced(self, task_id: str, deliverable_id: str,
+                                   description: str, preview: str = "") -> None:
+        """Called by the executor when a deliverable is produced; notifies the hook."""
+        if self._on_deliverable is not None:
+            try:
+                res = self._on_deliverable(task_id, deliverable_id, description, preview)
                 if asyncio.iscoroutine(res):
                     await res
             except Exception:
