@@ -27,6 +27,13 @@ from agclaw.hitl import GatewayAsker, HitlServer, add_hitl_routes
 _STATIC_DIR = Path(__file__).parent / "static"
 _UI_FILE = _STATIC_DIR / "index.html"
 
+
+def _legacy_ui() -> str:
+    try:
+        return _UI_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return "<h1>AGClaw</h1><p>UI asset missing.</p>"
+
 # Surface context the client can request by token (kept server-side, not in the UI).
 _SURFACES = {
     "new_task": (
@@ -126,13 +133,20 @@ def create_app(
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
     add_hitl_routes(app, hitl)
 
-    @app.get("/", response_class=HTMLResponse)
-    async def ui() -> str:
-        """The reference web chat client (vanilla JS over the REST/WS + HITL API)."""
-        try:
-            return _UI_FILE.read_text(encoding="utf-8")
-        except OSError:
-            return "<h1>AGClaw</h1><p>UI asset missing.</p>"
+    @app.get("/")
+    async def ui():
+        """Primary UI is now the Svelte client at /app (Phase 4 cutover). The legacy
+        vanilla-JS client remains at /legacy for rollback."""
+        from fastapi.responses import RedirectResponse
+
+        if (_STATIC_DIR / "app" / "index.html").exists():
+            return RedirectResponse(url="/app/", status_code=307)
+        return HTMLResponse(_legacy_ui())  # new UI not built → fall back to legacy
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    async def legacy_ui() -> str:
+        """The original vanilla-JS reference client (kept for rollback)."""
+        return _legacy_ui()
 
     @app.get("/{name}.svg")
     async def favicon_svg(name: str):

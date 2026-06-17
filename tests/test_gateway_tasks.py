@@ -536,7 +536,7 @@ def test_ui_has_tasks_hooks(monkeypatch, tmp_path):
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
     with TestClient(app) as client:
-        page = client.get("/").text
+        page = client.get("/legacy").text      # legacy client (post-cutover home is the Svelte app)
         assert 'id="tabTasks"' in page         # the Tasks tab in the unified drawer
         assert 'id="paneTasks"' in page
         assert "/api/tasks" in page            # it drives the task API

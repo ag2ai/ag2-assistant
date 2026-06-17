@@ -269,10 +269,13 @@ async def test_ui_served_at_root(fake_gateway):
 
     app = app_mod.create_app(gateway=fake_gateway)
     with TestClient(app) as client:
-        page = client.get("/")
+        # post-cutover, / redirects to the Svelte app; the legacy client lives at /legacy
+        root = client.get("/", follow_redirects=False)
+        assert root.status_code in (200, 307)
+        page = client.get("/legacy")
         assert page.status_code == 200
         assert "text/html" in page.headers["content-type"]
-        # key hooks the JS relies on
+        # key hooks the legacy JS relies on
         assert "/api/ws" in page.text
         assert 'id="input"' in page.text
         assert "AGClaw" in page.text
@@ -290,8 +293,8 @@ def test_favicon_served(fake_gateway):
             assert r.status_code == 200, path
             assert "svg" in r.headers["content-type"]
             assert "<svg" in r.text
-        # the page references the favicons
-        assert "faviconlight.svg" in client.get("/").text
+        # the legacy page references the favicons
+        assert "faviconlight.svg" in client.get("/legacy").text
 
 
 async def test_hitl_routes_served_by_gateway(fake_gateway):
