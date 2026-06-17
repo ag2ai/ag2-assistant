@@ -93,6 +93,12 @@ class Gateway:
             self._locks[session_id] = lock
         return lock
 
+    async def stream_for(self, session_id: str):
+        """The session's live, persisted, resumable event stream — the source the
+        event bridge replays and subscribes to. Same cached object send_message
+        uses, so events from a turn are caught by the bridge's subscription."""
+        return await self._get_stream(session_id)
+
     async def _get_stream(self, session_id: str):
         """Return the session's live Stream, hydrating from disk on first use."""
         from autogen.beta.stream import MemoryStream

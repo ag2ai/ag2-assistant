@@ -425,6 +425,39 @@ def create_app(
         except WebSocketDisconnect:
             return
 
+    @app.websocket("/api/stream")
+    async def stream_ws(websocket: WebSocket) -> None:
+        """Event-stream protocol (the redesign's transport): the client receives
+        the session's events as `{event:{type,data}}` — replayed on connect, then
+        live — and sends `{text}` turns. Old /api/ws stays during migration."""
+        await websocket.accept()
+        from agclaw.gateway.stream_bridge import StreamBridge
+
+        session_id = websocket.query_params.get("session") or "default"
+        surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
+        bridge = StreamBridge(app.state.gateway, websocket, session_id)
+        try:
+            await bridge.open()
+            while True:
+                data = await websocket.receive_json()
+                if data.get("type") == "answer" and data.get("id"):
+                    app.state.hitl.answer(data["id"], data.get("answer", ""))
+                    continue
+                text = data.get("text", "")
+                attachments = _decode_attachments(data.get("attachments"))
+                if not text and attachments:
+                    text = "Here is a file I'm sharing with you."
+                if not text:
+                    continue
+                asker = GatewayAsker(app.state.hitl)
+                asyncio.create_task(
+                    bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
+                )
+        except WebSocketDisconnect:
+            return
+        finally:
+            bridge.close()
+
     @app.websocket("/api/voice")
     async def voice_ws(websocket: WebSocket) -> None:
         """Full-duplex voice. The browser streams 16 kHz mono PCM mic frames as
