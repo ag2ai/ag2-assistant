@@ -75,6 +75,10 @@ class ArchiveRequest(BaseModel):
     archived: bool = True
 
 
+class VoiceRequest(BaseModel):
+    voice: str
+
+
 def create_app(
     config: Config | None = None,
     memory: bool = True,
@@ -88,8 +92,10 @@ def create_app(
     used as-is and its lifecycle is owned by the caller. Otherwise the app
     creates and manages its own gateway.
     """
+    from agclaw.config import load_config
     from agclaw.gateway.tasks_service import TaskService
 
+    config = config or load_config()   # resolve once so routes have a real Config
     tasks = TaskService(config=config)
 
     owns_gateway = gateway is None
@@ -321,6 +327,38 @@ def create_app(
         if not ok:
             return Response(status_code=404)
         return {"ok": True}
+
+    # --- Voice picker: list voices, select (persist), preview (TTS) ---
+
+    @app.get("/api/voice/voices")
+    async def voice_voices() -> dict:
+        from agclaw import settings
+
+        return {
+            "voices": [{"name": n, "style": s} for n, s in settings.VOICES.items()],
+            "current": settings.get_voice(),
+        }
+
+    @app.post("/api/voice/select")
+    async def voice_select(req: VoiceRequest) -> dict:
+        from agclaw import settings
+
+        if not settings.set_voice(req.voice):
+            return Response(status_code=400)
+        return {"ok": True, "voice": req.voice}
+
+    @app.post("/api/voice/preview")
+    async def voice_preview(req: VoiceRequest):
+        from agclaw import settings
+        from agclaw.voice import synthesize_preview
+
+        if req.voice not in settings.VOICES:
+            return Response(status_code=400)
+        try:
+            wav = await synthesize_preview(config, req.voice)
+        except Exception as exc:
+            return Response(content=str(exc)[:200], status_code=502)
+        return Response(content=wav, media_type="audio/wav")
 
     @app.post("/api/message", response_model=MessageResponse)
     async def message(req: MessageRequest) -> MessageResponse:

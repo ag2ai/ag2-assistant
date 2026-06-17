@@ -23,4 +23,13 @@ export const api = {
   googleLoginUrl: () => j('POST', '/api/google/login_url'),
   googleCredentials: (content) => j('POST', '/api/google/credentials', { content }),
   googleLogout: () => j('POST', '/api/google/logout'),
+  voices: () => j('GET', '/api/voice/voices'),
+  selectVoice: (voice) => j('POST', '/api/voice/select', { voice }),
+  previewVoice: async (voice) => {
+    const r = await fetch('/api/voice/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voice }),
+    })
+    if (!r.ok) throw new Error('preview failed (' + r.status + ')')
+    return r.blob()
+  },
 }

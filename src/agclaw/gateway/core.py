@@ -299,7 +299,7 @@ class Gateway:
             stream.unsubscribe(sub_id)
 
     async def build_voice_agent(self, session_id: str = "default",
-                                voice: str = "Puck", task_id: str | None = None,
+                                voice: str | None = None, task_id: str | None = None,
                                 chat_session: str | None = None, on_tool=None,
                                 on_task=None):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work

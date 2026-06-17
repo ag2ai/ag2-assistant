@@ -19,6 +19,9 @@ from agclaw.config import Config
 
 # Distinct from the chat model — Gemini exposes realtime under a "live" model.
 VOICE_MODEL = "gemini-3.1-flash-live-preview"
+# Single-shot TTS model for the voice-picker preview (not the live session).
+TTS_MODEL = "gemini-2.5-flash-preview-tts"
+PREVIEW_TEXT = "Hi, I'm AGClaw. This is how I sound — happy to help you out."
 
 # Basic tools the voice agent may run itself: quick, low-context reads/answers.
 # Everything else is delegated to the universal agent via ask_assistant.
@@ -51,28 +54,68 @@ VOICE_PROMPT = (
 )
 
 
-def voice_realtime_config(config: Config, voice: str = "Puck"):
+def voice_realtime_config(config: Config, voice: str | None = None):
     """Build a Gemini Live RealtimeConfig using AGClaw's configured API key.
 
     The config builds a genai Client eagerly, so we pass one explicitly rather
     than relying on ambient env. `transcribe=True` gives us the user's speech as
-    text so we can show it on screen.
+    text so we can show it on screen. `voice` defaults to the persisted setting.
     """
     from google.genai import Client
 
     from autogen.beta.live import gemini
 
+    from agclaw.settings import get_voice
+
     api_key = os.environ.get(config.llm.api_key_env, "")
     client = Client(api_key=api_key)
     return gemini.RealTimeConfig(
         VOICE_MODEL,
-        output=gemini.AudioOutput(voice=voice, language_code="en-US"),
+        output=gemini.AudioOutput(voice=voice or get_voice(), language_code="en-US"),
         input=gemini.InputConfig(transcribe=True),
         client=client,
     )
 
 
-def build_voice_agent(config: Config, tasks, delegate, voice: str = "Puck",
+def _pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
+    """Wrap raw mono 16-bit PCM in a minimal WAV header (for an <audio> preview)."""
+    import struct
+
+    n = len(pcm)
+    header = b"RIFF" + struct.pack("<I", 36 + n) + b"WAVE" + b"fmt " + struct.pack(
+        "<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16
+    ) + b"data" + struct.pack("<I", n)
+    return header + pcm
+
+
+async def synthesize_preview(config: Config, voice: str, text: str = PREVIEW_TEXT) -> bytes:
+    """Single-shot TTS of a sample sentence in `voice`; returns WAV bytes."""
+    import asyncio
+
+    from google.genai import Client, types
+
+    client = Client(api_key=os.environ.get(config.llm.api_key_env, ""))
+
+    def _call() -> bytes:
+        resp = client.models.generate_content(
+            model=TTS_MODEL,
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+                    )
+                ),
+            ),
+        )
+        return resp.candidates[0].content.parts[0].inline_data.data
+
+    pcm = await asyncio.to_thread(_call)
+    return _pcm_to_wav(pcm)
+
+
+def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
                       task_context: str = ""):
     """A LiveAgent with a basic tool subset + an ask_assistant delegate tool.
 

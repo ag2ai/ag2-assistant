@@ -18,3 +18,6 @@ export const inquiries = writable([])
 
 // Google connect modal open/closed.
 export const googleOpen = writable(false)
+
+// Voice picker modal open/closed.
+export const voicePickerOpen = writable(false)

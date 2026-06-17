@@ -221,10 +221,34 @@ def build_system_tools(tasks, chats=None) -> list:
         ok = await tasks.answer_inquiry(question_id, answer)
         return "Answered." if ok else "No such open question."
 
+    # ---- voice ----
+    @tool
+    async def list_voices() -> str:
+        """List the available realtime voices (name · style) and the current one."""
+        from agclaw import settings
+
+        cur = settings.get_voice()
+        return "Current voice: " + cur + "\n" + "\n".join(
+            f"{n} — {s}" + (" (current)" if n == cur else "")
+            for n, s in settings.VOICES.items()
+        )
+
+    @tool
+    async def set_voice(
+        voice: Annotated[str, Field(description="Voice name, e.g. Puck, Kore, Sulafat (see list_voices).")],
+    ) -> str:
+        """Change the assistant's realtime voice (persists; applies next voice session)."""
+        from agclaw import settings
+
+        if not settings.set_voice(voice):
+            return f"Unknown voice '{voice}'. Use list_voices to see options."
+        return f"Voice set to {voice}. It'll apply the next time you start a voice chat."
+
     out = [
         list_tasks, get_task, create_task, schedule_task, reschedule_task,
         add_subtask, add_deliverable, set_task_objective, cancel_task,
         archive_task, run_task_now, list_open_questions, answer_question,
+        list_voices, set_voice,
     ]
 
     # ---- chats (optional) ----

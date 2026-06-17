@@ -116,3 +116,11 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
 .modal .muted { color: var(--muted); }
 .modal-close { align-self: flex-end; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+
+.voicepick .vlist { max-height: 56vh; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.vrow { display: flex; align-items: baseline; gap: 8px; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 9px; padding: 9px 11px; cursor: pointer; }
+.vrow:hover { border-color: var(--accent); }
+.vrow.on { border-color: var(--accent); background: var(--code); }
+.vrow .vn { font-weight: 600; }
+.vrow .vs { font-size: 11px; color: var(--muted); }
+.vrow .vp { margin-left: auto; font-size: 11px; color: var(--accent); }
