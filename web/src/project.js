@@ -14,7 +14,7 @@ function joinText(parts) {
     .trim()
 }
 
-function addTool(items, name) {
+export function addTool(items, name) {
   if (!name) return
   const pretty = name.replace(/_/g, ' ')
   const last = items[items.length - 1]

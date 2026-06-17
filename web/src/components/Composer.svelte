@@ -1,6 +1,6 @@
 <script>
   import { thread } from '../store.js'
-  import { send } from '../controller.js'
+  import { send, startVoice, stopVoice, voice } from '../controller.js'
 
   let text = $state('')
   let ta
@@ -16,6 +16,7 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
   }
   function grow() { if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px' } }
+  function toggleMic() { $voice.active ? stopVoice() : startVoice() }
 </script>
 
 <div class="composer">
@@ -28,6 +29,10 @@
       oninput={grow}
       onkeydown={key}
     ></textarea>
+    <button class="icon mic" class:live={$voice.active} onclick={toggleMic} title="Talk to AGClaw">🎙</button>
     <button class="send" onclick={submit}>Send</button>
   </div>
+  {#if $voice.active}
+    <div class="voicebar"><span class="vdot"></span>{$voice.status}</div>
+  {/if}
 </div>

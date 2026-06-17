@@ -10,4 +10,4 @@
   })
 </script>
 
-<div class="msg agent"><div class="bubble" bind:this={el}></div></div>
+<div class="msg agent"><div class="bubble" class:voice={item.voice} bind:this={el}></div></div>

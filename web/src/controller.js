@@ -1,13 +1,22 @@
 // Owns the active thread's stream connection: opens /api/stream for a session,
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
+import { get, writable } from 'svelte/store'
 import { thread, taskPanel } from './store.js'
 import { StreamClient } from './transport/stream.js'
+import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
-import { foldEvent } from './project.js'
+import { addTool, foldEvent } from './project.js'
 
 let client = null
 let panelTimer = null
+
+// ---- voice ----
+export const voice = writable({ active: false, status: 'off' })
+let voiceCtl = null
+let _voiceActive = false        // while true, stream events are suppressed (voice drives the thread)
+let _vitem = null, _vrole = null, _vseq = 0
+const _vkey = () => 'v' + ++_vseq
 
 export function openThread(kind, id) {
   closeThread()
@@ -15,7 +24,7 @@ export function openThread(kind, id) {
   thread.set({ id, kind, session, items: [], busy: false })
 
   client = new StreamClient(session, {
-    onEvent: (ev) => thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items } }),
+    onEvent: (ev) => { if (_voiceActive) return; thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items } }) },
     onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
     onError: (m) => thread.update((t) => {
       t.items.push({ id: Date.now(), kind: 'note', text: '⚠ ' + (m.message || 'error') })
@@ -42,8 +51,57 @@ export function answer(inquiryId, text) {
 }
 
 export function closeThread() {
+  stopVoice()
   if (client) { client.close(); client = null }
   if (panelTimer) { clearInterval(panelTimer); panelTimer = null }
+}
+
+// ---- voice: frames render into the SAME thread (transcripts as bubbles, tool
+// chips, task cards). While active we suppress stream folding so the agent's
+// delegated work (which also lands on this session's stream) isn't double-shown. ----
+function _setBusy(b) { thread.update((t) => ({ ...t, busy: b })) }
+
+function _voiceTranscript(role, text, final) {
+  thread.update((t) => {
+    if (final && role === 'user') {
+      if (_vitem && _vrole === 'user') _vitem.text = text
+      else { _vitem = { id: _vkey(), kind: 'user', text, voice: true }; t.items.push(_vitem) }
+      _vitem = null; _vrole = null
+      return { ...t, items: t.items, busy: true }   // thinking until the agent replies
+    }
+    if (_vitem && _vrole === role) { _vitem.text += text }
+    else {
+      _vitem = { id: _vkey(), kind: role === 'user' ? 'user' : 'agent', text, voice: true }
+      t.items.push(_vitem); _vrole = role
+    }
+    return { ...t, items: t.items }
+  })
+}
+
+export async function startVoice() {
+  const t = get(thread)
+  if (!t.id || _voiceActive) return
+  const query = t.kind === 'task' ? '?task=' + encodeURIComponent(t.id) : '?session=' + encodeURIComponent(t.session)
+  _voiceActive = true; _vitem = null; _vrole = null
+  voice.set({ active: true, status: 'connecting' })
+  voiceCtl = new VoiceController(query, {
+    onState: (s, text) => {
+      voice.set({ active: s !== 'off', status: text || s })
+      if (s === 'off') _voiceActive = false
+    },
+    onTranscript: _voiceTranscript,
+    onTool: (name) => { _setBusy(true); thread.update((t) => { addTool(t.items, name); return { ...t, items: t.items } }) },
+    onTaskCard: (m) => { _setBusy(false); thread.update((t) => { t.items.push({ id: _vkey(), kind: 'taskcard', taskId: m.id, title: m.title }); return { ...t, items: t.items } }) },
+    onAudio: () => _setBusy(false),
+  })
+  const ok = await voiceCtl.start()
+  if (!ok) { _voiceActive = false; voice.set({ active: false, status: 'off' }) }
+}
+
+export function stopVoice() {
+  if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }
+  _voiceActive = false; _vitem = null; _vrole = null
+  voice.set({ active: false, status: 'off' })
 }
 
 async function loadPanel(id) {
