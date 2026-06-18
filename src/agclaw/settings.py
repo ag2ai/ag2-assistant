@@ -12,12 +12,46 @@ each provider remembers its own selection across restarts and provider switches.
 import json
 
 from agclaw import voice_providers
-from agclaw.config import load_config
+from agclaw.config import data_dir
 
 
 def voice_provider() -> str:
-    """The active realtime voice provider (from AGCLAW_VOICE_PROVIDER)."""
+    """The active realtime voice provider (persisted setting → env → default)."""
     return voice_providers.active_provider()
+
+
+def get_voice_provider() -> str | None:
+    """The raw persisted voice-provider choice (or None). Used by
+    voice_providers.active_provider(); kept here so persistence lives in one place."""
+    return _read().get("voice_provider")
+
+
+def set_voice_provider(provider: str) -> bool:
+    """Persist the realtime voice provider. Returns False for an unknown provider."""
+    if provider not in voice_providers.names():
+        return False
+    data = _read()
+    data["voice_provider"] = provider
+    _write(data)
+    return True
+
+
+def get_llm() -> dict:
+    """The UI-selected assistant {provider, model} (or {}). Layered over config."""
+    v = _read().get("llm")
+    return v if isinstance(v, dict) else {}
+
+
+def set_llm(provider: str | None = None, model: str | None = None) -> None:
+    """Persist the assistant provider and/or model (only the given fields)."""
+    data = _read()
+    llm = data.get("llm") if isinstance(data.get("llm"), dict) else {}
+    if provider:
+        llm["provider"] = provider
+    if model:
+        llm["model"] = model
+    data["llm"] = llm
+    _write(data)
 
 
 def voices_for(provider: str | None = None) -> dict[str, str]:
@@ -26,7 +60,7 @@ def voices_for(provider: str | None = None) -> dict[str, str]:
 
 
 def _path():
-    return load_config().data_dir / "settings.json"
+    return data_dir() / "settings.json"
 
 
 def _read() -> dict:

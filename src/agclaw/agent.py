@@ -26,10 +26,14 @@ def model_config(config: Config, model: str | None = None):
     """Build the AG2 ModelConfig for the configured provider.
 
     `model` overrides `config.llm.model` (used for the cheaper aggregation pass).
+    The API key is read from os.environ by the provider's conventional var (filled
+    from the secrets store at startup / on reload), not the fixed api_key_env field.
     """
-    api_key = os.environ.get(config.llm.api_key_env, "")
+    from agclaw.secrets import KEY_ENV, OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE
+
     model = model or config.llm.model
     provider = config.llm.provider.lower()
+    api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     if provider == "anthropic":
         from autogen.beta.config import AnthropicConfig
 
@@ -38,6 +42,10 @@ def model_config(config: Config, model: str | None = None):
         from autogen.beta.config import OpenAIConfig
 
         return OpenAIConfig(model=model, api_key=api_key)
+    if provider == "ollama":
+        from autogen.beta.config import OllamaConfig
+
+        return OllamaConfig(model=model, host=os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE))
     from autogen.beta.config.gemini import GeminiConfig
 
     # Generous output budget so long research notes / briefings aren't truncated

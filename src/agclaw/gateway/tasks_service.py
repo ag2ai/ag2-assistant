@@ -167,6 +167,20 @@ class TaskService:
             )
             await self._scheduler.start()
 
+    async def reload(self) -> None:
+        """Rebuild the planner + executor from fresh config/keys after a settings
+        change. The manager's executor reference is swapped so new runs use it while
+        in-flight runs (tracked in the manager) finish on the old one; the planner is
+        reset for a lazy rebuild. Stores and the scheduler are unaffected."""
+        from agclaw.config import load_config
+        from agclaw.tasks import make_task_executor
+
+        self._config = load_config()
+        self._planner = None  # rebuilt lazily by _planner_agent() with fresh config
+        self._executor = make_task_executor(self._config)
+        if self._manager is not None:
+            self._manager.executor = self._executor
+
     @property
     def store(self):
         return self._store

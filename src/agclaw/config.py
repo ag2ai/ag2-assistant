@@ -79,6 +79,37 @@ def default_config_path() -> Path:
     return Path.home() / ".agclaw" / "config.json"
 
 
+def data_dir() -> Path:
+    """Resolve the data directory WITHOUT the full config layering, so the secrets /
+    settings stores can locate their files without recursing back into load_config()
+    (which itself consults settings)."""
+    p = default_config_path()
+    if p.exists():
+        try:
+            d = json.loads(p.read_text()).get("data_dir")
+            if d:
+                return Path(d)
+        except Exception:
+            pass
+    return Path.home() / ".agclaw"
+
+
+def _apply_settings_overrides(cfg: Config) -> None:
+    """Layer the UI-selected assistant provider/model (persisted via the settings
+    store) over file/defaults. Explicit AGCLAW_* env vars still win — they're applied
+    after this. Best-effort: a missing/broken settings store changes nothing."""
+    try:
+        from agclaw import settings
+
+        llm = settings.get_llm()
+    except Exception:
+        return
+    if llm.get("provider"):
+        cfg.llm.provider = llm["provider"]
+    if llm.get("model"):
+        cfg.llm.model = llm["model"]
+
+
 def _apply_env_overrides(cfg: Config) -> None:
     """Layer AGCLAW_* environment variables on top (highest precedence)."""
     env = os.environ.get
@@ -115,5 +146,6 @@ def load_config(path: Path | None = None) -> Config:
         except Exception:
             data = {}  # a malformed config file falls back to defaults
     cfg = Config(**data)
-    _apply_env_overrides(cfg)
+    _apply_settings_overrides(cfg)   # UI-selected provider/model over file/defaults
+    _apply_env_overrides(cfg)        # explicit AGCLAW_* env still wins last
     return cfg

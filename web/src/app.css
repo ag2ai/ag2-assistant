@@ -38,6 +38,14 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .settings .setrow .sk { font-weight: 600; flex: none; }
 .settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings .setrow .sgo { color: var(--accent); font-size: 12px; flex: none; }
+.settings .setscroll { display: flex; flex-direction: column; gap: 8px; max-height: 64vh; overflow-y: auto; }
+.settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
+.settings .keyrow { display: flex; align-items: center; gap: 8px; }
+.settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
+.settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
+.settings .keyrow .open { flex: none; }
+.settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.settings .linkbtn:hover { color: #d8552f; }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }

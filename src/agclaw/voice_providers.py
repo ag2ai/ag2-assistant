@@ -56,7 +56,16 @@ def names() -> tuple[str, ...]:
 
 
 def active_provider() -> str:
-    """The provider selected by AGCLAW_VOICE_PROVIDER (default gemini)."""
+    """The active voice provider: persisted UI setting → AGCLAW_VOICE_PROVIDER → default.
+    The settings read is a lazy import to avoid a circular import at module load."""
+    try:
+        from agclaw import settings
+
+        p = (settings.get_voice_provider() or "").strip().lower()
+        if p in _REGISTRY:
+            return p
+    except Exception:
+        pass
     p = (os.environ.get("AGCLAW_VOICE_PROVIDER") or DEFAULT_PROVIDER).strip().lower()
     return p if p in _REGISTRY else DEFAULT_PROVIDER
 

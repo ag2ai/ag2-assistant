@@ -7,7 +7,11 @@ async function j(method, path, body) {
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (!r.ok) throw new Error(`${method} ${path} -> ${r.status}`)
+  if (!r.ok) {
+    let msg = `${method} ${path} -> ${r.status}`
+    try { const e = await r.json(); if (e && e.error) msg = e.error } catch {}
+    throw new Error(msg)
+  }
   return r.json()
 }
 
@@ -25,6 +29,10 @@ export const api = {
   googleCredentials: (content) => j('POST', '/api/google/credentials', { content }),
   googleLogout: () => j('POST', '/api/google/logout'),
   voices: () => j('GET', '/api/voice/voices'),
+  settings: () => j('GET', '/api/settings'),
+  setKey: (provider, value) => j('POST', '/api/settings/key', { provider, value }),
+  setLlm: (provider, model) => j('POST', '/api/settings/llm', { provider, model }),
+  setVoiceProvider: (provider) => j('POST', '/api/settings/voice_provider', { provider }),
   selectVoice: (voice) => j('POST', '/api/voice/select', { voice }),
   previewVoice: async (voice) => {
     const r = await fetch('/api/voice/preview', {

@@ -124,26 +124,31 @@ class Gateway:
         self._loaded: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = {}
 
-    async def start(self) -> None:
-        """Create the shared agent and (optionally) the on-disk session store."""
-        from agclaw.observability import setup_logging
-        from agclaw.permissions import PermissionStore
-
-        setup_logging(self._config)  # rolling log + failure capture for debugging
-
-        # The one universal agent: capability tools + system tools (know/do
-        # everything) + compaction to keep long conversations bounded.
+    def _make_agent(self):
+        """Build the one universal agent: capability + system tools (know/do
+        everything) + compaction. Used by start() and reload()."""
         extra_tools = None
         if self._tasks is not None:
             from agclaw.system_tools import build_system_tools
 
+            # create/schedule come from the system tools, so we don't also wire
+            # start_task/schedule_task here (that duplicated names).
             extra_tools = build_system_tools(self._tasks, chats=self)
-        # Note: create/schedule come from the system tools (extra_tools), so we
-        # don't also wire start_task/schedule_task here (that duplicated names).
-        self._agent = create_agent(
+        return create_agent(
             self._config, memory=self._memory, platform=self._platform,
             extra_tools=extra_tools, compact=self._memory,
         )
+
+    async def start(self) -> None:
+        """Create the shared agent and (optionally) the on-disk session store."""
+        from agclaw import secrets
+        from agclaw.observability import setup_logging
+        from agclaw.permissions import PermissionStore
+
+        secrets.load_into_env()      # provider keys into env before any agent is built
+        setup_logging(self._config)  # rolling log + failure capture for debugging
+
+        self._agent = self._make_agent()
         self._permissions = PermissionStore()
 
         if self._persist:
@@ -155,6 +160,25 @@ class Gateway:
                 str(self._config.data_dir / "sessions.db")
             )
             self._writer = EventLogWriter(self._event_store)
+
+    async def reload(self) -> None:
+        """Rebuild agents from fresh config + keys after a settings change.
+
+        Reference-swap, deliberately minimal: a turn already running captured the old
+        agent and finishes on it (incl. mid-tool-call); the next turn uses the new
+        agent and replays the same per-session Stream (history is in the Streams, not
+        the agent). The task service rebuilds its planner/executor too, so scheduled
+        work doesn't keep using stale keys. Voice needs no reload (built per session
+        from env)."""
+        from agclaw import secrets
+        from agclaw.config import load_config
+
+        secrets.load_into_env()
+        self._config = load_config()
+        if self._agent is not None:
+            self._agent = self._make_agent()
+        if self._tasks is not None and hasattr(self._tasks, "reload"):
+            await self._tasks.reload()
 
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         lock = self._locks.get(session_id)

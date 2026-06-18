@@ -79,6 +79,20 @@ class VoiceRequest(BaseModel):
     voice: str
 
 
+class KeyRequest(BaseModel):
+    provider: str
+    value: str = ""        # empty clears the key
+
+
+class LlmRequest(BaseModel):
+    provider: str
+    model: str = ""
+
+
+class VoiceProviderRequest(BaseModel):
+    provider: str
+
+
 def create_app(
     config: Config | None = None,
     memory: bool = True,
@@ -378,6 +392,77 @@ def create_app(
         except Exception as exc:
             return Response(content=str(exc)[:200], status_code=502)
         return Response(content=wav, media_type="audio/wav")
+
+    # --- Settings: API keys + assistant/voice provider selection ---
+
+    def _ollama_installed() -> bool:
+        try:
+            from autogen.beta.config import OllamaConfig
+
+            return type(OllamaConfig).__module__ != "unittest.mock"
+        except Exception:
+            return False
+
+    def _available_providers() -> dict:
+        """Which providers can actually be used right now (key set / Ollama deps)."""
+        from agclaw import secrets
+
+        st = secrets.status()
+        avail = {p: st[p]["set"] for p in ("openai", "gemini", "anthropic")}
+        avail["ollama"] = _ollama_installed()
+        return avail
+
+    @app.get("/api/settings")
+    async def get_settings() -> dict:
+        from agclaw import secrets, settings
+        from agclaw.config import load_config
+
+        cfg = load_config()
+        return {
+            "keys": secrets.status(),                  # per-provider {set, hint} — never raw
+            "available": _available_providers(),
+            "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
+            "voice_provider": settings.voice_provider(),
+        }
+
+    @app.post("/api/settings/key")
+    async def set_settings_key(req: KeyRequest) -> dict:
+        from agclaw import secrets
+
+        if not secrets.set_key(req.provider, req.value):
+            return Response(status_code=400)
+        await app.state.gateway.reload()           # new turns pick up the key; voice next session
+        return {"ok": True}
+
+    @app.post("/api/settings/llm")
+    async def set_settings_llm(req: LlmRequest) -> dict:
+        from agclaw import settings
+
+        provider = req.provider.lower()
+        if not _available_providers().get(provider):
+            from fastapi.responses import JSONResponse
+
+            hint = ("Install with `pip install ag2[ollama]`." if provider == "ollama"
+                    else "Add the provider's API key first.")
+            return JSONResponse({"ok": False, "error": f"{provider} isn't available. {hint}"},
+                                status_code=409)
+        settings.set_llm(provider=provider, model=req.model or None)
+        await app.state.gateway.reload()
+        return {"ok": True}
+
+    @app.post("/api/settings/voice_provider")
+    async def set_settings_voice_provider(req: VoiceProviderRequest) -> dict:
+        from agclaw import settings
+
+        provider = req.provider.lower()
+        if not _available_providers().get(provider):
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse({"ok": False, "error": f"Add the {provider} API key first."},
+                                status_code=409)
+        if not settings.set_voice_provider(provider):
+            return Response(status_code=400)
+        return {"ok": True}
 
     @app.post("/api/message", response_model=MessageResponse)
     async def message(req: MessageRequest) -> MessageResponse:
