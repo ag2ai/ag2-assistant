@@ -4,7 +4,14 @@
   import { api } from '../transport/api.js'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
-  const KEY_PROVIDERS = ['openai', 'gemini', 'anthropic']      // api-key providers
+  // API-key rows. github is a stored token (skills registry), NOT a model provider,
+  // so it lives here but never in the assistant/voice provider dropdowns.
+  const KEY_ROWS = [
+    { id: 'openai', label: 'OpenAI', ph: 'paste key' },
+    { id: 'gemini', label: 'Gemini', ph: 'paste key' },
+    { id: 'anthropic', label: 'Anthropic', ph: 'paste key' },
+    { id: 'github', label: 'GitHub', ph: 'optional — raises skills-registry rate limit' },
+  ]
   const VOICE_PROVIDERS = ['gemini', 'openai']
 
   let s = $state(null)            // GET /api/settings payload
@@ -50,12 +57,12 @@
   {:else}
     <div class="setscroll">
       <div class="setsec">API keys</div>
-      {#each KEY_PROVIDERS as p}
+      {#each KEY_ROWS as k}
         <div class="keyrow">
-          <span class="kp">{PROVIDER_LABEL[p]}</span>
-          <input type="password" placeholder={s.keys[p].set ? '•••• ' + s.keys[p].hint : 'paste key'} bind:value={drafts[p]} />
-          <button class="open" disabled={busy} onclick={() => saveKey(p)}>Save</button>
-          {#if s.keys[p].set}<button class="linkbtn" disabled={busy} onclick={() => clearKey(p)}>Clear</button>{/if}
+          <span class="kp">{k.label}</span>
+          <input type="password" placeholder={s.keys[k.id]?.set ? '•••• ' + s.keys[k.id].hint : k.ph} bind:value={drafts[k.id]} />
+          <button class="open" disabled={busy} onclick={() => saveKey(k.id)}>Save</button>
+          {#if s.keys[k.id]?.set}<button class="linkbtn" disabled={busy} onclick={() => clearKey(k.id)}>Clear</button>{/if}
         </div>
       {/each}
       <div class="keyrow">

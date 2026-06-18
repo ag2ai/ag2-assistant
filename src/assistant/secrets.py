@@ -14,11 +14,13 @@ import os
 
 from assistant.config import data_dir
 
-# provider → the env var its AG2 config reads
+# key id → the env var that consumes it. LLM providers + GitHub (skills registry:
+# AG2's SkillSearchToolkit reads GITHUB_TOKEN to raise the GitHub limit 60→5000/hr).
 KEY_ENV = {
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
+    "github": "GITHUB_TOKEN",
 }
 OLLAMA_BASE_ENV = "OLLAMA_BASE_URL"          # our convention; model_config reads it
 DEFAULT_OLLAMA_BASE = "http://localhost:11434"
