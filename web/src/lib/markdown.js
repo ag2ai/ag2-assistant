@@ -1,6 +1,21 @@
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
+// Open external (non-local) links in a new tab. Runs after attribute
+// sanitization, so attributes we add here aren't re-filtered out. In-app links
+// (relative hrefs, #anchors, same-origin) are left to navigate in place.
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName !== 'A' || !node.hasAttribute('href')) return
+  const href = node.getAttribute('href')
+  if (!/^https?:\/\//i.test(href)) return // relative / #anchor / mailto → in place
+  try {
+    if (new URL(href, window.location.href).host !== window.location.host) {
+      node.setAttribute('target', '_blank')
+      node.setAttribute('rel', 'noopener noreferrer')
+    }
+  } catch {}
+})
+
 export function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text || ''))
 }
