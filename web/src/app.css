@@ -43,7 +43,16 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .settings .keyrow { display: flex; align-items: center; gap: 8px; }
 .settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
 .settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
-.settings .keyrow .open { flex: none; }
+/* Settings action buttons (Save / Change voice / Close) — bordered, accent on hover */
+.settings .open, .settings .modal-close {
+  flex: none; font-family: var(--sans); font-size: 13px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  border-radius: 8px; padding: 7px 14px;
+  transition: border-color .12s ease, color .12s ease, background .12s ease;
+}
+.settings .open:hover, .settings .modal-close:hover { border-color: var(--accent); color: var(--accent); }
+.settings .open:active { background: var(--code); }
+.settings .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); }
 .settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
 .settings .linkbtn:hover { color: #d8552f; }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
