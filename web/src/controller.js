@@ -6,7 +6,7 @@ import { thread, taskPanel, sessions } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
-import { addTool, foldEvent } from './project.js'
+import { addTool, foldEvent, isBusy } from './project.js'
 
 let client = null
 let panelTimer = null
@@ -27,7 +27,7 @@ export function openThread(kind, id) {
   thread.set({ id, kind, session, items: [], busy: false })
 
   client = new StreamClient(session, {
-    onEvent: (ev) => { if (_suppressStream) return; thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items } }) },
+    onEvent: (ev) => { if (_suppressStream) return; thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } }) },
     onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
     onError: (m) => thread.update((t) => {
       t.items.push({ id: Date.now(), kind: 'note', text: '⚠ ' + (m.message || 'error') })

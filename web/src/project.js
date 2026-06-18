@@ -27,6 +27,21 @@ export function addTool(items, name) {
   }
 }
 
+// Whether a turn is still in progress, derived from the items rather than a
+// transient flag — so it's correct after reopening a chat mid-turn (where the
+// turn_end frame went to the old, closed socket). Busy if the most recent
+// decisive item is a user message (awaiting a reply) and not yet a finalized
+// agent response. A streaming agent bubble is skipped (the thinking dots are
+// already hidden once text is streaming).
+export function isBusy(items) {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it.kind === 'agent' && !it.streaming) return false
+    if (it.kind === 'user') return true
+  }
+  return false
+}
+
 const NOTE = {
   TaskStarted: '▶ Task started',
   TaskCompleted: '✓ Task completed',
