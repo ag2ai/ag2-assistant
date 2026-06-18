@@ -76,14 +76,18 @@
       </div>
 
       <div class="setsec">Voice</div>
-      <div class="keyrow">
-        <select value={s.voice_provider} onchange={(e) => saveVoiceProvider(e.target.value)}>
-          {#each VOICE_PROVIDERS as p}
-            <option value={p} disabled={!s.available[p]}>{PROVIDER_LABEL[p]}{s.available[p] ? '' : ' (no key)'}</option>
-          {/each}
-        </select>
-        <button class="open" onclick={openVoice}>Change voice →</button>
-      </div>
+      {#if VOICE_PROVIDERS.some((p) => s.available[p])}
+        <div class="keyrow">
+          <select value={s.voice_provider} onchange={(e) => saveVoiceProvider(e.target.value)}>
+            {#each VOICE_PROVIDERS as p}
+              <option value={p} disabled={!s.available[p]}>{PROVIDER_LABEL[p]}{s.available[p] ? '' : ' (no key)'}</option>
+            {/each}
+          </select>
+          <button class="open" onclick={openVoice}>Change voice →</button>
+        </div>
+      {:else}
+        <p class="muted" style="font-size:13px">Add an OpenAI or Gemini key above to enable voice.</p>
+      {/if}
 
       <div class="setsec">Google</div>
       <button class="setrow" onclick={openGoogle}>
