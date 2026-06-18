@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen } from '../store.js'
   import { api } from '../transport/api.js'
   import { chime } from '../lib/chime.js'
 
@@ -46,6 +46,7 @@
   const close = () => ($settingsOpen = false)
   const openVoice = () => { $settingsOpen = false; $voicePickerOpen = true }
   const openGoogle = () => { $settingsOpen = false; $googleOpen = true }
+  const openMemory = () => { $settingsOpen = false; $memoryOpen = true }
 </script>
 
 <div class="modal-backdrop" onclick={close}></div>
@@ -96,6 +97,13 @@
       {:else}
         <p class="muted" style="font-size:13px">Add an OpenAI or Gemini key above to enable voice.</p>
       {/if}
+
+      <div class="setsec">Memory</div>
+      <button class="setrow" onclick={openMemory}>
+        <span class="sk">🧠 Memory</span>
+        <span class="sv">what the assistant has learned about you</span>
+        <span class="sgo">View & edit →</span>
+      </button>
 
       <div class="setsec">Notifications</div>
       <label class="setcheck">

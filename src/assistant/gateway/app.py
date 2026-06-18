@@ -93,6 +93,10 @@ class VoiceProviderRequest(BaseModel):
     provider: str
 
 
+class MemoryRequest(BaseModel):
+    text: str
+
+
 def create_app(
     config: Config | None = None,
     memory: bool = True,
@@ -462,6 +466,21 @@ def create_app(
                                 status_code=409)
         if not settings.set_voice_provider(provider):
             return Response(status_code=400)
+        return {"ok": True}
+
+    # --- Memory: view + edit the learned user profile ---
+
+    @app.get("/api/memory")
+    async def get_memory() -> dict:
+        from assistant.memory import read_profile
+
+        return {"text": await read_profile()}
+
+    @app.post("/api/memory")
+    async def set_memory(req: MemoryRequest) -> dict:
+        from assistant.memory import write_profile
+
+        await write_profile(req.text)
         return {"ok": True}
 
     @app.post("/api/message", response_model=MessageResponse)

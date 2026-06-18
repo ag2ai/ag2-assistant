@@ -1,7 +1,7 @@
 <script>
   import { route, go, newChatId } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen, viewer, settingsOpen } from './store.js'
+  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen } from './store.js'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
   import Hitl from './components/Hitl.svelte'
@@ -9,6 +9,7 @@
   import VoicePicker from './components/VoicePicker.svelte'
   import Viewer from './components/Viewer.svelte'
   import Settings from './components/Settings.svelte'
+  import Memory from './components/Memory.svelte'
 
   // React to route changes: open the matching thread. $effect tracks $route only
   // (writing `last` is untracked), so this can't self-invalidate.
@@ -35,6 +36,7 @@
     {/if}
   </div>
   {#if $settingsOpen}<Settings />{/if}
+  {#if $memoryOpen}<Memory />{/if}
   {#if $googleOpen}<Google />{/if}
   {#if $voicePickerOpen}<VoicePicker />{/if}
   {#if $viewer}<Viewer />{/if}

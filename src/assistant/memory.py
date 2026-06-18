@@ -164,6 +164,13 @@ def profile_assembly() -> list:
     ]
 
 
+async def write_profile(text: str, store_path: Path | None = None) -> None:
+    """Overwrite the learned user profile (a user edit via the GUI). The passive
+    aggregator treats this as the new base it merges future conversation into."""
+    store = build_profile_store(store_path)
+    await store.write(PROFILE_PATH, text or "")
+
+
 async def read_profile(store_path: Path | None = None) -> str:
     """Read the learned user profile, or empty string if none exists yet."""
     if store_path is None:

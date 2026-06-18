@@ -28,6 +28,9 @@ export const viewer = writable(null)
 // Settings modal open/closed (launches voice picker + Google from one place).
 export const settingsOpen = writable(false)
 
+// Memory viewer/editor modal open/closed.
+export const memoryOpen = writable(false)
+
 // A localStorage-backed preference (per-device): survives reloads.
 function persisted(key, initial) {
   let v = initial
