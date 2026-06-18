@@ -26,6 +26,79 @@ from autogen.beta.policies import ConversationPolicy, WorkingMemoryPolicy
 # Path inside the knowledge store where the rolling profile lives.
 PROFILE_PATH = "/memory/working.md"
 
+# The canonical headings the profile is organised under. The passive aggregator
+# (build_profile_prompt) writes exactly these four; the `remember` tool inserts
+# explicit user requests under the matching one so the document stays consistent.
+PROFILE_HEADINGS: dict[str, str] = {
+    "how": "## How they like things done",
+    "when": "## When they like things done",
+    "dislikes": "## What they dislike",
+    "writing": "## How they write",
+}
+
+
+def _blank_profile() -> str:
+    """An empty profile scaffold with the four canonical headings."""
+    return "\n\n".join(PROFILE_HEADINGS.values()) + "\n"
+
+
+def _insert_bullet(doc: str, heading: str, bullet: str) -> str:
+    """Insert `bullet` at the end of `heading`'s section, creating the heading if
+    absent. De-dupes an identical bullet. Returns the updated document."""
+    lines = doc.splitlines()
+    if any(line.strip() == bullet for line in lines):
+        return doc  # already remembered verbatim — nothing to do
+
+    out: list[str] = []
+    inserted = False
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        out.append(line)
+        if line.strip() == heading:
+            # Walk to the end of this section (next '## ' heading or EOF), keeping
+            # its existing bullets, then drop the new bullet at the bottom.
+            j = i + 1
+            section: list[str] = []
+            while j < n and not lines[j].strip().startswith("## "):
+                section.append(lines[j])
+                j += 1
+            while section and not section[-1].strip():
+                section.pop()  # trim trailing blanks inside the section
+            out.extend(section)
+            out.append(bullet)
+            inserted = True
+            i = j
+            continue
+        i += 1
+
+    if not inserted:  # heading wasn't present — append it at the end
+        if out and out[-1].strip():
+            out.append("")
+        out.extend([heading, bullet])
+    return "\n".join(out) + "\n"
+
+
+async def remember_note(
+    note: str, category: str = "how", store_path: Path | None = None
+) -> str:
+    """Immediately save an explicit user preference/fact to the learned profile.
+
+    Unlike the passive aggregator (which distils memory only every few turns and
+    may filter out one-offs), this writes straight away — so "remember X" takes
+    effect now and survives. The aggregator later reorganises/dedupes it on its
+    normal cadence. Returns the updated profile document.
+    """
+    heading = PROFILE_HEADINGS.get(category, PROFILE_HEADINGS["how"])
+    store = build_profile_store(store_path)
+    existing = (
+        await store.read(PROFILE_PATH) if await store.exists(PROFILE_PATH) else ""
+    )
+    doc = existing if existing.strip() else _blank_profile()
+    updated = _insert_bullet(doc, heading, "- " + note.strip())
+    await store.write(PROFILE_PATH, updated)
+    return updated
+
 
 def build_profile_prompt(platform: str) -> str:
     """Build the aggregation prompt for distilling the user profile.

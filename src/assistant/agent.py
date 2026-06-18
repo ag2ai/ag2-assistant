@@ -165,6 +165,66 @@ CAPABILITY_GUIDANCE = (
 )
 
 
+# Tells the agent how its long-term memory works, so it stops claiming it "can't"
+# save anything. Included whenever memory is on (the default everywhere).
+MEMORY_GUIDANCE = (
+    "You have long-term memory of the user that persists across every conversation "
+    "and surface. You learn it automatically as you chat (it's distilled in the "
+    "background), and what you've learned so far is given to you at the start of "
+    "each conversation. When the user explicitly asks you to remember something, or "
+    "states a lasting preference, call the `remember` tool to save it right away — "
+    "never claim you have no way to remember. The user can also view and edit this "
+    "memory themselves in Settings → Memory."
+)
+
+
+def build_memory_tool():
+    """A tool the agent calls to save an explicit user preference to long-term
+    memory immediately (the passive aggregator otherwise only updates every few
+    turns, and won't reliably capture a one-off 'remember this')."""
+    from typing import Annotated, Literal
+
+    from autogen.beta import tool
+    from pydantic import Field
+
+    @tool
+    async def remember(
+        note: Annotated[
+            str,
+            Field(
+                description="The durable preference or fact about the user to save, "
+                "in your own concise words (e.g. 'Always include citations and "
+                "source links in research answers')."
+            ),
+        ],
+        category: Annotated[
+            Literal["how", "when", "dislikes", "writing"],
+            Field(
+                description="Which part of the profile this belongs under: "
+                "how=how they like things done; when=timing/cadence/scheduling; "
+                "dislikes=things to avoid or past corrections; "
+                "writing=tone/phrasing for emails & messages."
+            ),
+        ] = "how",
+    ) -> str:
+        """Save a durable preference or fact about the user to long-term memory now.
+
+        Use when the user says "remember ...", "from now on ...", or states a
+        lasting preference. NOT for one-off task details. What you save is injected
+        into every future conversation and is viewable/editable by the user in
+        Settings → Memory.
+        """
+        from assistant.memory import remember_note
+
+        try:
+            await remember_note(note, category)
+        except Exception as exc:  # surface a clear failure rather than a tool error
+            return f"Could not save to memory: {exc}"
+        return f"Saved to memory (under '{category}')."
+
+    return remember
+
+
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
@@ -188,7 +248,7 @@ def turn_prompt(config: Config) -> list[str]:
     `ask(prompt=...)` replaces the base prompt for that turn, so we include the
     persona, the always-on behaviour guidance, and the refreshed environment.
     """
-    parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE]
+    parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE, MEMORY_GUIDANCE]
     try:
         from assistant.integrations.google_auth import has_token
 
@@ -208,7 +268,12 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
     (web chat / new-task box / a specific task + its state / a channel) so the one
     agent has the right local context without changing identity.
     """
-    parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE, CAPABILITY_GUIDANCE]
+    parts = [
+        config.agent.system_prompt,
+        BEHAVIOR_GUIDANCE,
+        CAPABILITY_GUIDANCE,
+        MEMORY_GUIDANCE,
+    ]
     try:
         from assistant.integrations.google_auth import has_token
 
@@ -293,6 +358,11 @@ def create_agent(
     # schedule included; the chat agent no longer needs a separate start_task tool).
     if extra_tools:
         tools.extend(extra_tools)
+
+    # When the profile memory is on, let the agent commit an explicit "remember
+    # this" immediately (the passive aggregator alone is slow and may filter it).
+    if memory:
+        tools.append(build_memory_tool())
 
     from assistant.permissions import PermissionManager
 
