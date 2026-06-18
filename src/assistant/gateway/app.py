@@ -16,8 +16,10 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from urllib.parse import urlsplit
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from assistant.config import Config
@@ -25,6 +27,31 @@ from assistant.gateway.core import Gateway
 from assistant.hitl import GatewayAsker, HitlServer, add_hitl_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _allowed_origins() -> set[str]:
+    """Extra browser origins to accept besides same-origin. Comma-separated in
+    AGCLAW_ALLOWED_ORIGINS — an escape hatch for proxied/remote demos."""
+    raw = os.environ.get("AGCLAW_ALLOWED_ORIGINS", "")
+    return {o.strip().rstrip("/") for o in raw.split(",") if o.strip()}
+
+
+def _origin_ok(origin: str | None, host: str | None) -> bool:
+    """Whether a request may proceed, guarding against cross-origin browser
+    access to a locally-bound gateway.
+
+    Browsers always send `Origin` on cross-origin fetch/WebSocket, so:
+      - no Origin (curl, server-to-server, top-level navigations) → allowed;
+      - Origin whose host:port matches the Host header (same-origin) → allowed;
+      - Origin in the configured allowlist → allowed;
+      - anything else (a page on another site reaching the gateway) → rejected.
+    """
+    if not origin:
+        return True
+    origin = origin.rstrip("/")
+    if origin in _allowed_origins():
+        return True
+    return bool(host) and urlsplit(origin).netloc == host
 
 # Surface context the client can request by token (kept server-side, not in the UI).
 _SURFACES = {
@@ -139,6 +166,19 @@ def create_app(
                 await gateway.close()
 
     app = FastAPI(title="AGClaw Gateway", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def _origin_guard(request: Request, call_next):
+        """Reject cross-origin browser requests to the API. Same-origin and
+        non-browser (no Origin) requests pass; WebSocket routes guard separately
+        (Starlette doesn't run HTTP middleware for them)."""
+        if request.url.path.startswith("/api/") and not _origin_ok(
+            request.headers.get("origin"), request.headers.get("host")
+        ):
+            return JSONResponse(
+                {"error": "cross-origin request rejected"}, status_code=403
+            )
+        return await call_next(request)
 
     # Shared HITL registry: the gateway serves the styled /hitl/{id} pages and an
     # answer endpoint, so permission/HITL prompts can be answered by any client.
@@ -498,6 +538,9 @@ def create_app(
         """Event-stream protocol (the redesign's transport): the client receives
         the session's events as `{event:{type,data}}` — replayed on connect, then
         live — and sends `{text}` turns. Old /api/ws stays during migration."""
+        if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
+            await websocket.close(code=1008)  # policy violation
+            return
         await websocket.accept()
         from assistant.gateway.stream_bridge import StreamBridge
 
@@ -544,6 +587,9 @@ def create_app(
         """Full-duplex voice. The browser streams 16 kHz mono PCM mic frames as
         binary; we feed them to a Gemini Live session and stream back 24 kHz PCM
         speech (binary) plus user/agent transcripts (JSON) for on-screen bubbles."""
+        if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
+            await websocket.close(code=1008)  # policy violation
+            return
         await websocket.accept()
         import uuid
 

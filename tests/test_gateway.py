@@ -402,3 +402,62 @@ async def test_conversation_resumes_across_restart(tmp_path):
     )
     assert "7" in recall
     await gw2.close()
+
+
+# --- cross-origin guard (defends a localhost gateway from malicious web pages) ---
+
+
+def test_origin_ok_unit(monkeypatch):
+    """The same-origin rule: no-Origin and same host:port pass; others don't."""
+    from assistant.gateway.app import _origin_ok
+
+    monkeypatch.delenv("AGCLAW_ALLOWED_ORIGINS", raising=False)
+    assert _origin_ok(None, "127.0.0.1:8800")                  # non-browser caller
+    assert _origin_ok("http://127.0.0.1:8800", "127.0.0.1:8800")   # same-origin
+    assert _origin_ok("http://127.0.0.1:8800/", "127.0.0.1:8800")  # trailing slash
+    assert not _origin_ok("http://evil.example", "127.0.0.1:8800")  # other site
+    assert not _origin_ok("http://127.0.0.1:9999", "127.0.0.1:8800")  # other port
+
+
+def test_origin_allowlist_env(monkeypatch):
+    """AGCLAW_ALLOWED_ORIGINS adds extra accepted origins for proxied demos."""
+    from assistant.gateway.app import _origin_ok
+
+    monkeypatch.setenv("AGCLAW_ALLOWED_ORIGINS", "https://demo.example, http://foo")
+    assert _origin_ok("https://demo.example", "127.0.0.1:8800")
+    assert not _origin_ok("https://other.example", "127.0.0.1:8800")
+
+
+def test_cross_origin_requests_rejected(monkeypatch):
+    """Cross-origin REST and WebSocket attempts are refused; same-origin works."""
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+
+    monkeypatch.delenv("AGCLAW_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+
+    app = app_mod.create_app(memory=False, persist=False)
+    with TestClient(app) as client:  # TestClient's Host is "testserver"
+        assert client.get("/api/health").status_code == 200  # no Origin → ok
+        assert (
+            client.get("/api/health", headers={"origin": "http://testserver"})
+        ).status_code == 200  # same-origin → ok
+        assert (
+            client.get("/api/health", headers={"origin": "http://evil.example"})
+        ).status_code == 403  # cross-origin → rejected
+
+        # cross-origin WebSocket handshake is closed before accept()
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                "/api/stream?session=x", headers={"origin": "http://evil.example"}
+            ) as ws:
+                ws.receive_json()
+
+        # same-origin WebSocket still connects and replays history
+        with client.websocket_connect(
+            "/api/stream?session=y", headers={"origin": "http://testserver"}
+        ) as ws:
+            assert ws.receive_json()["type"] == "ready"
