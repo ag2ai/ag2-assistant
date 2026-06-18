@@ -3,8 +3,8 @@ and the shape of the history that triggered it."""
 
 import json
 
-from agclaw.config import load_config
-from agclaw.observability import capture_failure, setup_logging
+from assistant.config import load_config
+from assistant.observability import capture_failure, setup_logging
 
 
 class _Hist:
@@ -27,7 +27,7 @@ def _cfg(tmp_path):
 
 
 def test_setup_logging_creates_logfile(tmp_path):
-    import agclaw.observability as obs
+    import assistant.observability as obs
 
     obs._CONFIGURED = False  # setup is idempotent via a module global; reset for this test
     cfg = _cfg(tmp_path)

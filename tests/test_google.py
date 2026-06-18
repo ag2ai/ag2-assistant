@@ -7,8 +7,8 @@ conditional inclusion in the agent's tool list.
 
 import pytest
 
-from agclaw.integrations import google_auth
-from agclaw.tools.google import build_google_tools
+from assistant.integrations import google_auth
+from assistant.tools.google import build_google_tools
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_logout_removes_token(google_paths):
 
 
 def test_extract_drive_id_from_url_or_id():
-    from agclaw.tools.google import _extract_drive_id
+    from assistant.tools.google import _extract_drive_id
 
     assert _extract_drive_id(
         "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0"
@@ -51,9 +51,9 @@ def test_extract_drive_id_from_url_or_id():
 
 
 def test_google_guidance_in_turn_prompt_when_signed_in(monkeypatch):
-    import agclaw.integrations.google_auth as ga
-    from agclaw.agent import turn_prompt
-    from agclaw.config import Config
+    import assistant.integrations.google_auth as ga
+    from assistant.agent import turn_prompt
+    from assistant.config import Config
 
     monkeypatch.setattr(ga, "has_token", lambda: True)
     joined = " ".join(turn_prompt(Config()))
@@ -103,8 +103,8 @@ def test_save_credentials_validates(google_paths):
 def _client(monkeypatch):
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
 
     class _FakeAgent:
         async def ask(self, *a, stream=None, **k):
@@ -116,7 +116,7 @@ def _client(monkeypatch):
 
 
 def test_google_status_endpoint(monkeypatch):
-    from agclaw.integrations import google_auth as ga
+    from assistant.integrations import google_auth as ga
 
     monkeypatch.setattr(ga, "is_configured", lambda: True)
     monkeypatch.setattr(ga, "has_token", lambda: True)
@@ -127,7 +127,7 @@ def test_google_status_endpoint(monkeypatch):
 
 
 def test_google_login_url_and_callback(monkeypatch):
-    from agclaw.integrations import google_auth as ga
+    from assistant.integrations import google_auth as ga
 
     monkeypatch.setattr(ga, "is_configured", lambda: True)
     sentinel_flow = object()
@@ -156,7 +156,7 @@ def test_google_login_url_and_callback(monkeypatch):
 
 
 def test_google_credentials_upload_endpoint(monkeypatch, tmp_path):
-    from agclaw.integrations import google_auth as ga
+    from assistant.integrations import google_auth as ga
 
     monkeypatch.setattr(ga, "credentials_path", lambda: tmp_path / "creds.json")
     with _client(monkeypatch) as client:
@@ -170,8 +170,8 @@ def test_google_credentials_upload_endpoint(monkeypatch, tmp_path):
 
 
 def test_agent_tools_include_google_only_when_signed_in(monkeypatch):
-    import agclaw.integrations.google_auth as ga
-    import agclaw.tools as tools_mod
+    import assistant.integrations.google_auth as ga
+    import assistant.tools as tools_mod
 
     monkeypatch.setattr(ga, "has_token", lambda: False)
     base = [t.name for t in tools_mod.build_agent_tools(provider="gemini")]

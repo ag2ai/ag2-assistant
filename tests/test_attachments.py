@@ -4,7 +4,7 @@ gateway threading them into the agent turn."""
 from autogen.beta import ImageInput
 from autogen.beta.events import BinaryType, TextInput
 
-from agclaw.attachments import build_input
+from assistant.attachments import build_input
 
 
 def _kind(inp):
@@ -68,7 +68,7 @@ class _CapturingAgent:
 
 
 async def test_gateway_passes_attachments_as_positional_inputs():
-    from agclaw.gateway.core import Gateway
+    from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False, onboard=False)
     agent = _CapturingAgent()

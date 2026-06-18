@@ -6,10 +6,10 @@ service wiring, serialisation, and the REST surface the Tasks GUI drives.
 
 import asyncio
 
-from agclaw.gateway.tasks_service import TaskService
-from agclaw.hitl import InquiryStore
-from agclaw.hitl.base import Question
-from agclaw.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
+from assistant.gateway.tasks_service import TaskService
+from assistant.hitl import InquiryStore
+from assistant.hitl.base import Question
+from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
 
 
 def _service(tmp_path, executor, planner=None):
@@ -113,7 +113,7 @@ async def test_pending_and_answer_inquiry(tmp_path):
 async def test_submit_request_runs_intake_and_inquiries(tmp_path):
     """submit_request drives intake in the background; a clarifying question shows
     up as a pending inquiry, and answering it lets the task proceed to run."""
-    from agclaw.tasks.planner import ClarifyQuestion, PlanDeliverable, TaskPlan
+    from assistant.tasks.planner import ClarifyQuestion, PlanDeliverable, TaskPlan
 
     ran = {}
 
@@ -171,9 +171,9 @@ async def test_submit_request_runs_intake_and_inquiries(tmp_path):
 def test_task_rest_endpoints(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
-    from agclaw.config import Config
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
@@ -245,9 +245,9 @@ async def test_archive_hides_from_drawer_and_filters_listing(tmp_path):
 def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
-    from agclaw.config import Config
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
@@ -323,7 +323,7 @@ async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
 async def test_scheduled_runs_skip_clarification(tmp_path, monkeypatch):
     """An unattended scheduled run plans WITHOUT asking clarifying questions (no
     one to answer), so it never gets abandoned — intake is called with asker=None."""
-    import agclaw.tasks.planner as planner_mod
+    import assistant.tasks.planner as planner_mod
 
     async def executor(task_id, mgr, asker):
         pass
@@ -350,7 +350,7 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
     baked plan into a fresh run and EXECUTES it (no re-planning at run time)."""
     from datetime import datetime, timedelta
 
-    from agclaw.tasks.planner import PlanDeliverable, TaskPlan
+    from assistant.tasks.planner import PlanDeliverable, TaskPlan
 
     async def executor(task_id, mgr, asker):
         pass
@@ -400,9 +400,9 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
 def test_schedule_rest_endpoint(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
-    from agclaw.config import Config
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
@@ -452,9 +452,9 @@ def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch, tmp_path)
     context (id + snapshot) — not a separate controller."""
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
-    from agclaw.config import Config
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
 
     seen = {}
 

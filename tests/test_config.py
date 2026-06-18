@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from agclaw.config import AgentConfig, Config, LLMConfig, load_config
+from assistant.config import AgentConfig, Config, LLMConfig, load_config
 
 
 def test_default_config():
@@ -67,7 +67,7 @@ def test_malformed_json_falls_back_to_defaults(tmp_path):
 
 
 def test_model_config_gemini_and_aggregate_override():
-    from agclaw.agent import model_config
+    from assistant.agent import model_config
 
     cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.5-flash"))
     mc = model_config(cfg)
@@ -83,7 +83,7 @@ def test_model_config_dispatches_anthropic(monkeypatch):
     import pytest
 
     pytest.importorskip("anthropic")  # needs `pip install ag2[anthropic]`
-    from agclaw.agent import model_config
+    from assistant.agent import model_config
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     cfg = Config(llm=LLMConfig(provider="anthropic", model="claude-sonnet-4-6",

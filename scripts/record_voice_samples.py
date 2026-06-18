@@ -17,12 +17,12 @@ import asyncio
 import sys
 from pathlib import Path
 
-from agclaw.config import load_config
-from agclaw.settings import voices_for
-from agclaw.voice import synthesize_preview
-from agclaw.voice_providers import names as provider_names
+from assistant.config import load_config
+from assistant.settings import voices_for
+from assistant.voice import synthesize_preview
+from assistant.voice_providers import names as provider_names
 
-OUT = Path(__file__).resolve().parents[1] / "src/agclaw/gateway/static/voices"
+OUT = Path(__file__).resolve().parents[1] / "src/assistant/gateway/static/voices"
 
 
 async def _record(cfg, provider: str, names: list[str]) -> tuple[int, int]:

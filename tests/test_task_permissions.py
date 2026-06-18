@@ -8,7 +8,7 @@ plus a real end-to-end deny.
 
 import pytest
 
-from agclaw.tasks import TaskManager, TaskStatus, TaskStore, make_task_executor
+from assistant.tasks import TaskManager, TaskStatus, TaskStore, make_task_executor
 
 
 def _store(tmp_path):
@@ -71,20 +71,20 @@ async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
         captured["asker"] = asker
         return _Agent()
 
-    import agclaw.agent as agent_mod
-    import agclaw.tasks.executor as exec_mod
+    import assistant.agent as agent_mod
+    import assistant.tasks.executor as exec_mod
 
     monkeypatch.setattr(agent_mod, "create_agent", fake_create_agent)
     monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
     # keep verification deterministic (no real LLM in this unit test)
-    from agclaw.tasks.executor import _Verdict
+    from assistant.tasks.executor import _Verdict
 
     async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
 
-    from agclaw.config import Config
+    from assistant.config import Config
 
     store = _store(tmp_path)
     t = await store.create("do work")
@@ -116,19 +116,19 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
     def fake_create_agent(config, **k):
         return _Agent()
 
-    import agclaw.agent as agent_mod
-    import agclaw.tasks.executor as exec_mod
+    import assistant.agent as agent_mod
+    import assistant.tasks.executor as exec_mod
 
     monkeypatch.setattr(agent_mod, "create_agent", fake_create_agent)
     monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
-    from agclaw.tasks.executor import _Verdict
+    from assistant.tasks.executor import _Verdict
 
     async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
 
-    from agclaw.config import Config
+    from assistant.config import Config
 
     store = _store(tmp_path)
     parent = await store.create("trip prep")
@@ -163,19 +163,19 @@ async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
             prompts.append(built_prompt)
             return _Reply()
 
-    import agclaw.agent as agent_mod
-    import agclaw.tasks.executor as exec_mod
+    import assistant.agent as agent_mod
+    import assistant.tasks.executor as exec_mod
 
     monkeypatch.setattr(agent_mod, "create_agent", lambda config, **k: _Agent())
     monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
-    from agclaw.tasks.executor import _Verdict
+    from assistant.tasks.executor import _Verdict
 
     async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
 
-    from agclaw.config import Config
+    from assistant.config import Config
 
     store = _store(tmp_path)
     secret = "The mitochondrion is the powerhouse of the cell."
@@ -197,7 +197,7 @@ async def test_no_asker_means_no_extra_access():
     import tempfile
     from pathlib import Path
 
-    from agclaw.permissions import PermissionManager, PermissionStore
+    from assistant.permissions import PermissionManager, PermissionStore
 
     store = PermissionStore(path=Path(tempfile.mkdtemp()) / "p.json")
     mgr = PermissionManager(store, asker=None)
@@ -209,8 +209,8 @@ async def test_no_asker_means_no_extra_access():
 async def test_task_respects_permission_deny(tmp_path):
     """End-to-end: a task asked to read an ungranted file gets a permission prompt
     on its OWN asker, and a deny keeps the file contents out of the deliverable."""
-    from agclaw.config import load_config
-    from agclaw.permissions import DENY
+    from assistant.config import load_config
+    from assistant.permissions import DENY
 
     secret_dir = tmp_path / "vault"
     secret_dir.mkdir()

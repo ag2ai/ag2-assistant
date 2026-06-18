@@ -24,7 +24,7 @@ global.fetch = async () => ({ ok: true, json: async () => ({ sessions: [], tasks
 process.on('uncaughtException', (e) => { console.error('UNCAUGHT:', e && (e.stack || e)); process.exit(2) })
 process.on('unhandledRejection', (e) => { console.error('UNHANDLED:', e && (e.stack || e)); process.exit(3) })
 
-const dir = new URL('../src/agclaw/gateway/static/app/assets/', import.meta.url)
+const dir = new URL('../src/assistant/gateway/static/app/assets/', import.meta.url)
 const js = readdirSync(dir).find((f) => f.endsWith('.js'))
 console.log('loading bundle:', js)
 await import(new URL(js, dir).href)

@@ -1,6 +1,6 @@
 """Tests for Markdown -> Slack mrkdwn conversion."""
 
-from agclaw.channels.formatting import markdown_to_slack
+from assistant.channels.formatting import markdown_to_slack
 
 
 def test_bold_double_to_single_asterisk():

@@ -2,7 +2,7 @@
 
 import json
 
-from agclaw import settings, voice_providers
+from assistant import settings, voice_providers
 
 
 def test_voice_provider_env(monkeypatch):

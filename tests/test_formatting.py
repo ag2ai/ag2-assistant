@@ -1,6 +1,6 @@
 """Tests for outbound Markdown -> plain-text formatting."""
 
-from agclaw.channels.formatting import markdown_to_plain
+from assistant.channels.formatting import markdown_to_plain
 
 
 def test_strips_bold_and_italic():

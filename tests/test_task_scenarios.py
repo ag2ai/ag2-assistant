@@ -8,7 +8,7 @@ script exactly what each task does: produce its deliverables, spawn a subtask
 
 import asyncio
 
-from agclaw.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
+from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
 
 
 def _store(tmp_path):

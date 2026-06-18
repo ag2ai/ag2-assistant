@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agclaw.memory import (
+from assistant.memory import (
     PROFILE_PATH,
     build_knowledge_config,
     build_profile_prompt,
@@ -64,7 +64,7 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
     """The CLI single-shot path enables on_end so one turn still gets learned."""
     captured = {}
 
-    import agclaw.agent as agent_mod
+    import assistant.agent as agent_mod
 
     real = agent_mod.build_knowledge_config
 
@@ -73,7 +73,7 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
-    from agclaw.config import Config
+    from assistant.config import Config
 
     cfg = Config()
     agent_mod.create_agent(cfg, memory=True, skills=False, single_shot=True)
@@ -84,7 +84,7 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
 def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
     """On Gemini with no explicit aggregate_model, the pass uses the cheaper one."""
     captured = {}
-    import agclaw.agent as agent_mod
+    import assistant.agent as agent_mod
 
     real = agent_mod.build_knowledge_config
 
@@ -93,7 +93,7 @@ def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
-    from agclaw.config import Config
+    from assistant.config import Config
 
     agent_mod.create_agent(Config(), memory=True, skills=False)
     assert (
@@ -104,8 +104,8 @@ def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
 
 def test_explicit_aggregate_model_wins(monkeypatch):
     captured = {}
-    import agclaw.agent as agent_mod
-    from agclaw.config import Config, LLMConfig
+    import assistant.agent as agent_mod
+    from assistant.config import Config, LLMConfig
 
     real = agent_mod.build_knowledge_config
     monkeypatch.setattr(
@@ -143,12 +143,12 @@ async def test_read_and_clear_profile_roundtrip(tmp_path):
 @pytest.mark.integration
 async def test_profile_learned_after_conversation(tmp_path, monkeypatch):
     """End-to-end: a conversation should produce a persisted profile."""
-    import agclaw.memory as memory_mod
+    import assistant.memory as memory_mod
 
     store_path = tmp_path / "profile.db"
     monkeypatch.setattr(memory_mod, "default_store_path", lambda: store_path)
 
-    from agclaw.agent import ask
+    from assistant.agent import ask
 
     await ask(
         "Please always keep your answers very short and bulleted. "

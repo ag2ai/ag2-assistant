@@ -16,6 +16,13 @@ html, body { height: 100%; margin: 0; }
 body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 #app { height: 100vh; }
 
+/* Thin, subtle scrollbars on every scrollable area (Firefox + WebKit). */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
 .app { display: grid; grid-template-columns: 270px 1fr; height: 100vh; }
 .drawer { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 .main { display: flex; flex-direction: column; min-width: 0; }

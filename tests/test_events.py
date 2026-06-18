@@ -9,14 +9,14 @@ import pytest
 
 from autogen.beta.knowledge.log import import_event_class
 
-from agclaw.events import (
+from assistant.events import (
     DeliverableProduced,
     InquiryAnswered,
     InquiryRaised,
     TaskCreated,
     TaskScheduled,
 )
-from agclaw.gateway.wire import is_binary_event, to_wire
+from assistant.gateway.wire import is_binary_event, to_wire
 
 _SAMPLES = [
     TaskCreated("task-1", title="Weather report", kind="scheduled"),
@@ -31,7 +31,7 @@ _SAMPLES = [
 def test_custom_event_round_trips_through_wire(event):
     record = to_wire(event)
     assert set(record) == {"type", "data"}
-    assert record["type"].startswith("agclaw.events.")
+    assert record["type"].startswith("assistant.events.")
 
     cls = import_event_class(record["type"])      # the deserializer's resolution path
     assert cls is type(event)

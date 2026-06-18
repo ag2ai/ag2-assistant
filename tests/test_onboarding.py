@@ -2,8 +2,8 @@
 
 import pytest
 
-from agclaw import onboarding
-from agclaw.memory import PROFILE_PATH, build_profile_store
+from assistant import onboarding
+from assistant.memory import PROFILE_PATH, build_profile_store
 
 
 class ScriptedAsker:

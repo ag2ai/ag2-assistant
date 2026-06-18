@@ -42,7 +42,7 @@ google = [
 ]
 
 [project.scripts]
-agclaw = "agclaw.cli:app"
+agclaw = "assistant.cli:app"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -55,5 +55,5 @@ markers = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-"agclaw" = ["skills/*/SKILL.md"]
-"agclaw.gateway" = ["static/*.html", "static/*.svg"]
+"assistant" = ["skills/*/SKILL.md"]
+"assistant.gateway" = ["static/*.html", "static/*.svg"]

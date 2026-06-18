@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from agclaw.agent import environment_context, turn_prompt
-from agclaw.config import Config
+from assistant.agent import environment_context, turn_prompt
+from assistant.config import Config
 
 
 def test_environment_context_has_current_year():

@@ -9,7 +9,7 @@ import pytest
 def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))      # data_dir → tmp/.agclaw
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")    # empty = "no key" (load_dotenv won't override)
-    from agclaw import secrets
+    from assistant import secrets
 
     assert secrets.status()["anthropic"]["set"] is False
 
@@ -30,7 +30,7 @@ def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
 
 def test_ollama_base_url(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    from agclaw import secrets
+    from assistant import secrets
 
     assert secrets.set_key("ollama", "http://host:1234")
     secrets.load_into_env()
@@ -42,8 +42,8 @@ def test_settings_llm_overrides_config(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("AGCLAW_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AGCLAW_MODEL", raising=False)
-    from agclaw import settings
-    from agclaw.config import load_config
+    from assistant import settings
+    from assistant.config import load_config
 
     settings.set_llm(provider="anthropic", model="claude-x")
     cfg = load_config()
@@ -57,7 +57,7 @@ def test_settings_llm_overrides_config(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_gateway_reload_swaps_agent(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    from agclaw.gateway.core import Gateway
+    from assistant.gateway.core import Gateway
 
     g = Gateway(memory=False, persist=False)
     await g.start()
@@ -69,8 +69,8 @@ async def test_gateway_reload_swaps_agent(monkeypatch, tmp_path):
 
 def test_model_config_key_env_by_provider(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    from agclaw.agent import model_config
-    from agclaw.config import Config
+    from assistant.agent import model_config
+    from assistant.config import Config
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
     cfg = Config()

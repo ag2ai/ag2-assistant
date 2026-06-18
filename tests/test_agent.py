@@ -2,8 +2,8 @@
 
 import pytest
 
-from agclaw.agent import ask, create_agent
-from agclaw.config import Config
+from assistant.agent import ask, create_agent
+from assistant.config import Config
 
 
 def test_create_agent_default():

@@ -2,8 +2,8 @@
 
 import pytest
 
-from agclaw.agent import build_skills_toolkit, create_agent
-from agclaw.config import Config
+from assistant.agent import build_skills_toolkit, create_agent
+from assistant.config import Config
 
 
 def test_skills_toolkit_builds_and_creates_dir(tmp_path):
@@ -20,7 +20,7 @@ def test_bundled_skills_are_discoverable(tmp_path):
 
     from autogen.beta.tools.skills import LocalRuntime
 
-    from agclaw.agent import bundled_skills_dir
+    from assistant.agent import bundled_skills_dir
 
     d = bundled_skills_dir()
     assert d.exists()
@@ -56,7 +56,7 @@ def test_agent_without_skills_builds(tmp_path):
 @pytest.mark.integration
 async def test_agent_can_search_skills(tmp_path):
     """Integration: the agent searches the registry for a skill (hits skills.sh)."""
-    from agclaw.agent import ask
+    from assistant.agent import ask
 
     config = Config()
     config.skills_dir = tmp_path / "skills"

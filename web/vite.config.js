@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [svelte()],
   base: '/app/',
   build: {
-    outDir: '../src/agclaw/gateway/static/app',
+    outDir: '../src/assistant/gateway/static/app',
     emptyOutDir: true,
   },
   server: {

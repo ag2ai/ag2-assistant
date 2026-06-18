@@ -12,7 +12,7 @@ from autogen.beta.events import (
     ToolResultEvent,
 )
 
-from agclaw.gateway.core import sanitize_history
+from assistant.gateway.core import sanitize_history
 
 
 def _user(text="hi"):

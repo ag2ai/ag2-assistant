@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from agclaw.tools.docker_sandbox import (
+from assistant.tools.docker_sandbox import (
     DockerEnvironment,
     DockerMountSandbox,
     DockerSandbox,
@@ -45,8 +45,8 @@ async def test_exec_after_close_raises():
 
 
 def test_build_tools_falls_back_when_docker_unavailable(monkeypatch):
-    import agclaw.tools as tools_mod
-    import agclaw.tools.docker_sandbox as ds
+    import assistant.tools as tools_mod
+    import assistant.tools.docker_sandbox as ds
 
     monkeypatch.setattr(ds, "docker_available", lambda: False)
     calls = {"approval": 0}
@@ -65,8 +65,8 @@ def test_build_tools_falls_back_when_docker_unavailable(monkeypatch):
 
 
 def test_build_tools_uses_docker_and_drops_approval(monkeypatch):
-    import agclaw.tools as tools_mod
-    import agclaw.tools.docker_sandbox as ds
+    import assistant.tools as tools_mod
+    import assistant.tools.docker_sandbox as ds
 
     monkeypatch.setattr(ds, "docker_available", lambda: True)
     calls = {"approval": 0}

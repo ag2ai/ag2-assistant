@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from agclaw.channels.formatting import split_for_limit
+from assistant.channels.formatting import split_for_limit
 
 
 def _discord_channel():
-    from agclaw.channels.discord import DiscordChannel
+    from assistant.channels.discord import DiscordChannel
 
     ch = DiscordChannel(token="fake-token")
     ch._bot_user_id = 999
@@ -76,7 +76,7 @@ def test_normalize_accepts_attachment_only_dm():
 
 def test_requires_token(monkeypatch):
     monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
-    from agclaw.channels.discord import DiscordChannel
+    from assistant.channels.discord import DiscordChannel
 
     with pytest.raises(ValueError):
         DiscordChannel()

@@ -2,10 +2,10 @@
 
 import asyncio
 
-from agclaw.hitl.base import Question
-from agclaw.hitl.inquiry import DurableAsker, Inquiry, InquiryStatus, InquiryStore
-from agclaw.permissions import DENY
-from agclaw.tasks import (
+from assistant.hitl.base import Question
+from assistant.hitl.inquiry import DurableAsker, Inquiry, InquiryStatus, InquiryStore
+from assistant.permissions import DENY
+from assistant.tasks import (
     DeliverableStatus,
     TaskManager,
     TaskStatus,

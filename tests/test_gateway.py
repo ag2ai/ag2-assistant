@@ -31,7 +31,7 @@ class _FakeAgent:
 @pytest.fixture
 def fake_gateway(monkeypatch):
     """A Gateway whose agent is a deterministic fake (no LLM, no persistence)."""
-    from agclaw.gateway.core import Gateway
+    from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False, persist=False)
     gw._agent = _FakeAgent()
@@ -81,7 +81,7 @@ async def test_on_tool_reports_each_tool_name(fake_gateway):
 
 async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
     """First message with an asker triggers onboarding exactly once."""
-    import agclaw.onboarding as onboarding
+    import assistant.onboarding as onboarding
 
     calls = {"check": 0, "run": 0}
 
@@ -108,7 +108,7 @@ async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
 
 
 async def test_gateway_skips_onboarding_without_asker(fake_gateway, monkeypatch):
-    import agclaw.onboarding as onboarding
+    import assistant.onboarding as onboarding
 
     async def boom(*a, **k):
         raise AssertionError("should not be called without an asker")
@@ -141,9 +141,9 @@ def test_status_shape(fake_gateway):
 
 async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     """A new Gateway over the same data dir sees prior sessions (resumable)."""
-    import agclaw.gateway.core as core_mod
-    from agclaw.config import Config
-    from agclaw.gateway.core import Gateway
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
+    from assistant.gateway.core import Gateway
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
@@ -168,9 +168,9 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
 def test_sessions_rest_endpoints(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
-    from agclaw.config import Config
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False)
@@ -186,8 +186,8 @@ def test_rest_message_endpoint(monkeypatch):
     """The REST facade returns a reply for a posted message (fake agent)."""
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
 
     # Patch the agent factory where the gateway core looks it up.
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
@@ -211,7 +211,7 @@ def test_create_app_shares_injected_gateway(fake_gateway):
     rather than creating its own, and doesn't tear it down on shutdown."""
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
+    import assistant.gateway.app as app_mod
 
     app = app_mod.create_app(gateway=fake_gateway)
     with TestClient(app) as client:
@@ -226,8 +226,8 @@ def test_stream_roundtrip(monkeypatch):
     """The /api/stream WebSocket replays history (ready) then runs a turn (turn_end)."""
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
@@ -246,7 +246,7 @@ async def test_root_redirects_to_app(fake_gateway):
     """/ and unknown paths redirect to the Svelte app at /app."""
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
+    import assistant.gateway.app as app_mod
 
     app = app_mod.create_app(gateway=fake_gateway)
     with TestClient(app) as client:
@@ -260,7 +260,7 @@ async def test_root_redirects_to_app(fake_gateway):
 def test_favicon_served(fake_gateway):
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
+    import assistant.gateway.app as app_mod
 
     app = app_mod.create_app(gateway=fake_gateway)
     with TestClient(app) as client:
@@ -275,8 +275,8 @@ async def test_hitl_routes_served_by_gateway(fake_gateway):
     """The gateway serves the styled /hitl page, lists pending, resolves answers."""
     from httpx import ASGITransport, AsyncClient
 
-    import agclaw.gateway.app as app_mod
-    from agclaw.hitl.base import Question
+    import assistant.gateway.app as app_mod
+    from assistant.hitl.base import Question
 
     app = app_mod.create_app(gateway=fake_gateway)
     # register a pending question in this test's loop (the routes don't need the
@@ -304,7 +304,7 @@ async def test_hitl_routes_served_by_gateway(fake_gateway):
 def test_decode_attachments():
     import base64
 
-    from agclaw.gateway.app import _decode_attachments
+    from assistant.gateway.app import _decode_attachments
 
     data = base64.b64encode(b"hello").decode()
     out = _decode_attachments([{"name": "a.png", "mime": "image/png", "data": data}])
@@ -317,8 +317,8 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
     """A turn that exceeds REPLY_TIMEOUT surfaces an error frame on /api/stream."""
     from fastapi.testclient import TestClient
 
-    import agclaw.gateway.app as app_mod
-    import agclaw.gateway.core as core_mod
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
 
     class _HangAgent:
         async def ask(self, *a, stream=None, **k):
@@ -345,9 +345,9 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
 
 
 async def test_gateway_asker_timeout_denies():
-    from agclaw.hitl import GatewayAsker, HitlServer
-    from agclaw.hitl.base import Question
-    from agclaw.permissions import DENY
+    from assistant.hitl import GatewayAsker, HitlServer
+    from assistant.hitl.base import Question
+    from assistant.permissions import DENY
 
     asker = GatewayAsker(HitlServer(), timeout=0.05)
     answer = await asker.ask(Question(text="?", options=["Allow once", "Deny"]))
@@ -357,7 +357,7 @@ async def test_gateway_asker_timeout_denies():
 @pytest.mark.integration
 async def test_gateway_real_agent_multiturn_and_isolation():
     """End-to-end with the real agent: multi-turn recall + session isolation."""
-    from agclaw.gateway.core import Gateway
+    from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False)
     await gw.start()
@@ -382,8 +382,8 @@ async def test_gateway_real_agent_multiturn_and_isolation():
 @pytest.mark.integration
 async def test_conversation_resumes_across_restart(tmp_path):
     """A brand-new Gateway over the same data dir keeps full conversation context."""
-    from agclaw.config import load_config
-    from agclaw.gateway.core import Gateway
+    from assistant.config import load_config
+    from assistant.gateway.core import Gateway
 
     cfg = load_config()
     cfg.data_dir = tmp_path  # isolate the session store

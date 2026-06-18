@@ -2,8 +2,8 @@
 
 from datetime import datetime, timedelta
 
-from agclaw.tasks import TaskStatus, TaskStore
-from agclaw.tasks.scheduling import (
+from assistant.tasks import TaskStatus, TaskStore
+from assistant.tasks.scheduling import (
     Scheduler,
     first_occurrence,
     is_due,

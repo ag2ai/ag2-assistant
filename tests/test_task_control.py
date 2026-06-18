@@ -2,8 +2,8 @@
 
 import asyncio
 
-from agclaw.tasks import TaskManager, TaskStatus, TaskStore
-from agclaw.tasks.control import (
+from assistant.tasks import TaskManager, TaskStatus, TaskStore
+from assistant.tasks.control import (
     build_task_tools,
     do_add_deliverable,
     do_add_subtask,

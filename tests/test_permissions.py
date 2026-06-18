@@ -1,6 +1,6 @@
 """Tests for the folder-permission system and the permission-gated file reader."""
 
-from agclaw.permissions import (
+from assistant.permissions import (
     ALLOW_ONCE,
     ALWAYS_ALLOW,
     ALWAYS_ALLOW_CMD,
@@ -174,7 +174,7 @@ async def test_command_always_allow_is_turn_sticky(tmp_path):
 
 async def test_command_prompt_offers_command_label_not_folder(tmp_path):
     """The shell/code prompt offers 'this command', not the folder option (#bug)."""
-    from agclaw.hitl.base import Question
+    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -191,7 +191,7 @@ async def test_command_prompt_offers_command_label_not_folder(tmp_path):
 
 async def test_command_prompt_states_where_it_runs(tmp_path):
     """The prompt tells the user whether a command runs on the host or sandboxed."""
-    from agclaw.hitl.base import Question
+    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -222,7 +222,7 @@ async def test_turn_deny_stops_asking_across_tools(tmp_path):
 
 
 async def test_read_file_text_with_permission(tmp_path):
-    from agclaw.tools.files import read_file_impl
+    from assistant.tools.files import read_file_impl
 
     f = tmp_path / "note.txt"
     f.write_text("hello world")
@@ -231,7 +231,7 @@ async def test_read_file_text_with_permission(tmp_path):
 
 
 async def test_read_file_denied(tmp_path):
-    from agclaw.tools.files import read_file_impl
+    from assistant.tools.files import read_file_impl
 
     f = tmp_path / "note.txt"
     f.write_text("secret")
@@ -241,7 +241,7 @@ async def test_read_file_denied(tmp_path):
 
 
 async def test_read_file_missing(tmp_path):
-    from agclaw.tools.files import read_file_impl
+    from assistant.tools.files import read_file_impl
 
     result = await read_file_impl(str(tmp_path / "nope.txt"), _manager(tmp_path))
     assert "not found" in result.lower()
@@ -250,7 +250,7 @@ async def test_read_file_missing(tmp_path):
 async def test_read_file_pdf_returns_document(tmp_path):
     from autogen.beta import ToolResult
 
-    from agclaw.tools.files import read_file_impl
+    from assistant.tools.files import read_file_impl
 
     pdf = tmp_path / "doc.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")

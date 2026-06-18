@@ -7,7 +7,7 @@ web_fetch fallback that's kept for providers without native web fetch.
 
 import pytest
 
-from agclaw.tools import build_agent_tools
+from assistant.tools import build_agent_tools
 
 
 def test_build_agent_tools_has_core_capabilities():
@@ -25,14 +25,14 @@ def test_build_agent_tools_has_core_capabilities():
 def test_build_agent_tools_gemini_uses_fallback_fetch():
     # Native WebFetchTool is server-side on Gemini and won't mix with function
     # tools, so Gemini gets the custom function-tool fallback.
-    from agclaw.tools import web_fetch_tool
+    from assistant.tools import web_fetch_tool
 
     tools = build_agent_tools(provider="gemini")
     assert web_fetch_tool in tools
 
 
 def test_build_agent_tools_anthropic_uses_native_fetch():
-    from agclaw.tools import web_fetch_tool
+    from assistant.tools import web_fetch_tool
 
     tools = build_agent_tools(provider="anthropic")
     # Anthropic gets the native WebFetchTool, not our custom fallback object.
@@ -44,7 +44,7 @@ def test_build_agent_tools_anthropic_uses_native_fetch():
 
 
 def test_web_fetch_html():
-    from agclaw.tools.web_fetch import web_fetch
+    from assistant.tools.web_fetch import web_fetch
 
     # example.com is an IANA-maintained, highly stable test domain.
     result = web_fetch(url="https://example.com", max_chars=5000)
@@ -55,7 +55,7 @@ def test_web_fetch_html():
 
 
 def test_web_fetch_json():
-    from agclaw.tools.web_fetch import web_fetch
+    from assistant.tools.web_fetch import web_fetch
 
     result = web_fetch(url="https://httpbin.org/json", max_chars=5000)
     if result.startswith("Error fetching") or "Error fetching" in result[:40]:
@@ -64,7 +64,7 @@ def test_web_fetch_json():
 
 
 def test_web_fetch_invalid_url():
-    from agclaw.tools.web_fetch import web_fetch
+    from assistant.tools.web_fetch import web_fetch
 
     result = web_fetch(url="https://thisdomaindoesnotexist.invalid", max_chars=1000)
     assert "Error" in result
@@ -73,7 +73,7 @@ def test_web_fetch_invalid_url():
 @pytest.mark.integration
 async def test_agent_uses_web_search():
     """Integration test: agent answers a current-info question using search."""
-    from agclaw.agent import ask
+    from assistant.agent import ask
 
     response = await ask(
         "Search the web: what is the AG2 Python framework? One sentence.",
@@ -87,7 +87,7 @@ class _AutoAllowAsker:
     """Approves every permission/command prompt (for code-exec integration test)."""
 
     async def ask(self, question, timeout=None):
-        from agclaw.permissions import ALLOW_ONCE
+        from assistant.permissions import ALLOW_ONCE
 
         return ALLOW_ONCE
 
@@ -95,7 +95,7 @@ class _AutoAllowAsker:
 @pytest.mark.integration
 async def test_agent_uses_code_execution():
     """Integration test: agent computes via code execution."""
-    from agclaw.agent import ask
+    from assistant.agent import ask
 
     response = await ask(
         "Use code execution to calculate the factorial of 10.",

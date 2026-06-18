@@ -19,7 +19,7 @@ def _isolate_agclaw_home(monkeypatch, tmp_path):
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     try:
-        import agclaw.integrations.google_auth as ga
+        import assistant.integrations.google_auth as ga
 
         monkeypatch.setattr(ga, "token_path", lambda: tmp_path / "no_token.json")
         monkeypatch.setattr(ga, "credentials_path", lambda: tmp_path / "no_creds.json")

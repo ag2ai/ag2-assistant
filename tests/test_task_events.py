@@ -9,14 +9,14 @@ import pytest
 
 from autogen.beta.events import TaskCompleted, TaskStarted
 
-from agclaw.events import TaskScheduled
-from agclaw.gateway.tasks_service import TaskService
-from agclaw.tasks import TaskStatus
+from assistant.events import TaskScheduled
+from assistant.gateway.tasks_service import TaskService
+from assistant.tasks import TaskStatus
 
 
 def _service(tmp_path):
     cfg_dir = tmp_path / "d"
-    from agclaw.config import load_config
+    from assistant.config import load_config
 
     cfg = load_config()
     cfg.data_dir = cfg_dir
@@ -84,7 +84,7 @@ async def test_schedule_emits_task_scheduled(tmp_path):
 
 
 async def test_deliverable_produced_emits_event(tmp_path):
-    from agclaw.events import DeliverableProduced
+    from assistant.events import DeliverableProduced
 
     svc, emitted = await _started(tmp_path)
     await svc._manager.deliverable_produced("task-9", "dlv-1", "the report", "RBA held rates…")
@@ -95,7 +95,7 @@ async def test_deliverable_produced_emits_event(tmp_path):
 
 
 async def test_inquiry_raised_then_answered_emit(tmp_path):
-    from agclaw.events import InquiryAnswered, InquiryRaised
+    from assistant.events import InquiryAnswered, InquiryRaised
 
     svc, emitted = await _started(tmp_path)
     inq = await svc.inquiries.create("Which city?", task_id="task-7",
@@ -110,8 +110,8 @@ async def test_inquiry_raised_then_answered_emit(tmp_path):
 
 
 async def test_emit_task_card_helper(tmp_path):
-    from agclaw.events import TaskCreated
-    from agclaw.system_tools import _emit_task_card
+    from assistant.events import TaskCreated
+    from assistant.system_tools import _emit_task_card
 
     sent = []
 

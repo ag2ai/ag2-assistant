@@ -2,7 +2,7 @@
 
 import pytest
 
-from agclaw.tasks import DeliverableStatus, Task, TaskStatus, TaskStore
+from assistant.tasks import DeliverableStatus, Task, TaskStatus, TaskStore
 
 
 def _store(tmp_path):

@@ -1,9 +1,9 @@
 """System tools — the universal agent's retrieval + action surface."""
 
-from agclaw.gateway.tasks_service import TaskService
-from agclaw.hitl import InquiryStore
-from agclaw.system_tools import _fmt_node, build_system_tools, format_task
-from agclaw.tasks import TaskManager, TaskStatus, TaskStore
+from assistant.gateway.tasks_service import TaskService
+from assistant.hitl import InquiryStore
+from assistant.system_tools import _fmt_node, build_system_tools, format_task
+from assistant.tasks import TaskManager, TaskStatus, TaskStore
 
 
 def _service(tmp_path):

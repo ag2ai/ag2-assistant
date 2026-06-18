@@ -1,8 +1,8 @@
 """The event bridge replays history, forwards live events as {type,data}, skips
 binary audio, and runs turns through the gateway."""
 
-from agclaw.events import TaskCreated
-from agclaw.gateway.stream_bridge import StreamBridge
+from assistant.events import TaskCreated
+from assistant.gateway.stream_bridge import StreamBridge
 
 
 class _WS:
