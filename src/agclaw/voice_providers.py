@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from agclaw.config import Config
 
 DEFAULT_PROVIDER = "gemini"
-PREVIEW_TEXT = "Hi, I'm AGClaw. This is how I sound — happy to help you out."
+PREVIEW_TEXT = "Hi, I'm AG2 Assistant. This is how I sound — happy to help you out."
 
 
 def pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
