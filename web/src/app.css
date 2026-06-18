@@ -63,8 +63,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .modal .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); }
 
 /* Memory editor */
-.modal.memory { width: min(720px, 92vw); }
-.memory textarea { min-height: 52vh; max-height: 64vh; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; font-size: 13px; line-height: 1.5; background: var(--bg); color: var(--ink); resize: vertical; }
+.modal.memory { width: min(720px, 92vw); height: min(88vh, 940px); }
+.memory textarea { flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; font-size: 13px; line-height: 1.5; background: var(--bg); color: var(--ink); resize: none; }
 .memory .mfoot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .memory .okmsg { color: #3ba55d; font-size: 13px; }
 .settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
