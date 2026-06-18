@@ -141,36 +141,10 @@ def _openai_key() -> str:
     return os.environ.get("OPENAI_API_KEY", "")
 
 
-def _patch_openai_null_params() -> None:
-    """TEMP workaround for an AG2 schema bug: zero-arg tools serialise to
-    ``parameters={'type': 'null'}``, which OpenAI's realtime API rejects — and one
-    bad tool makes it drop the WHOLE tools array, so the model ends up with no
-    tools at all. Coerce null params to a valid empty-object schema. Idempotent;
-    remove once AG2 emits a valid schema for no-arg tools upstream.
-    """
-    from autogen.beta.live import openai as oai
-
-    if getattr(oai, "_agclaw_null_param_patch", False):
-        return
-    _orig = oai._tool_schema_to_session_tool
-
-    def _patched(t):
-        d = _orig(t)
-        params = d.get("parameters")
-        if isinstance(params, dict) and params.get("type") == "null":
-            d["parameters"] = {"type": "object", "properties": {}}
-        return d
-
-    oai._tool_schema_to_session_tool = _patched
-    oai._agclaw_null_param_patch = True
-
-
 def _openai_realtime(config: Config, voice: str, model: str):
     from openai import AsyncOpenAI
 
     from autogen.beta.live import openai as oai
-
-    _patch_openai_null_params()
 
     # Minimal config matching AG2's known-working tool-calling example: model + voice,
     # everything else (24 kHz audio, semantic-VAD turn detection) left at the defaults.

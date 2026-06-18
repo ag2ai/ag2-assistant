@@ -1,5 +1,9 @@
 # AG2 bug: zero-argument tools break tool calling on the OpenAI realtime `LiveAgent`
 
+> **Status: RESOLVED upstream** — fixed in ag2ai/ag2#2985 (no-arg tools now serialise to
+> `{"type": "object", "properties": {}}`). AGClaw pins `ag2 @ git main` and has removed
+> its interim workaround. Kept as a historical record of the investigation.
+
 **Component:** `autogen.beta` — `LiveAgent` + `autogen.beta.live.openai` (OpenAI realtime)
 **Severity:** High — a single no-arg tool silently disables **all** tool calling for the session.
 **Affected provider:** OpenAI realtime (`openai.RealTimeConfig`). Gemini realtime is unaffected (tolerant).
