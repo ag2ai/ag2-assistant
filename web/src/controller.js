@@ -36,6 +36,7 @@ export function openThread(kind, id) {
   }).connect()
 
   if (kind === 'task') {
+    api.markSeen(id).catch(() => {})   // opening a run clears its unread highlight in the nav
     loadPanel(id)
     panelTimer = setInterval(() => loadPanel(id), 3000)
   } else {

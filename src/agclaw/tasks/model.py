@@ -100,6 +100,7 @@ class Task:
     stream_id: str | None = None         # per-task event-log id
     archived: bool = False               # hidden from the default Tasks view
     run_of: str | None = None            # template id, set on a recurring task's per-occurrence run
+    seen_at: str | None = None           # when the user opened this task/run (drives unread highlight)
 
     @property
     def is_terminal(self) -> bool:

@@ -16,6 +16,7 @@ export const api = {
   tasksAll: (status) => j('GET', '/api/tasks/all' + (status && status !== 'all' ? '?status=' + status : '')).then((d) => d.tasks || []),
   task: (id) => j('GET', '/api/tasks/' + id).then((d) => d.task),
   cancelTask: (id) => j('POST', `/api/tasks/${id}/cancel`),
+  markSeen: (id) => j('POST', `/api/tasks/${id}/seen`),
   archiveTask: (id, archived = true) => j('POST', `/api/tasks/${id}/archive`, { archived }),
   inquiries: () => j('GET', '/api/inquiries/pending').then((d) => d.pending || []),
   answerInquiry: (id, answer) => j('POST', `/api/inquiries/${encodeURIComponent(id)}/answer`, { answer }),

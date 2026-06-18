@@ -563,7 +563,19 @@ class TaskService:
             "last_progress": progress[-1]["message"] if progress else None,
             "scheduled_for": t.scheduled_for, "recurrence": t.recurrence,
             "run_of": getattr(t, "run_of", None),
+            "seen": getattr(t, "seen_at", None) is not None,
         }
+
+    async def mark_seen(self, task_id: str) -> bool:
+        """Record that the user has opened this task/run (clears its unread highlight).
+        Idempotent — only writes the first time. Persists via the task store."""
+        t = await self._store.get(task_id)
+        if t is None:
+            return False
+        if getattr(t, "seen_at", None) is None:
+            from datetime import datetime
+            await self._store.update(task_id, seen_at=datetime.now().astimezone().isoformat())
+        return True
 
     async def _node(self, t, include_assets: bool = False) -> dict:
         kids = await self._store.children(t.id)
