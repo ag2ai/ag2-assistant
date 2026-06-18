@@ -27,3 +27,15 @@ export const viewer = writable(null)
 
 // Settings modal open/closed (launches voice picker + Google from one place).
 export const settingsOpen = writable(false)
+
+// A localStorage-backed preference (per-device): survives reloads.
+function persisted(key, initial) {
+  let v = initial
+  try { const s = localStorage.getItem(key); if (s !== null) v = JSON.parse(s) } catch {}
+  const w = writable(v)
+  w.subscribe((val) => { try { localStorage.setItem(key, JSON.stringify(val)) } catch {} })
+  return w
+}
+
+// Play a chime when the assistant needs your input (HITL). Off by default.
+export const soundOnInput = persisted('soundOnInput', false)

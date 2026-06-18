@@ -1,13 +1,23 @@
 <script>
   import { onMount } from 'svelte'
-  import { inquiries } from '../store.js'
+  import { inquiries, soundOnInput } from '../store.js'
   import { api } from '../transport/api.js'
   import { go } from '../router.js'
+  import { chime } from '../lib/chime.js'
 
   let drafts = $state({})
+  let seen = new Set()   // inquiry ids already surfaced — chime only on genuinely new ones
+  let first = true
 
   async function refresh() {
-    try { $inquiries = await api.inquiries() } catch {}
+    try {
+      const next = await api.inquiries()
+      const fresh = !first && next.some((q) => !seen.has(q.id))
+      seen = new Set(next.map((q) => q.id))
+      first = false
+      $inquiries = next
+      if (fresh && $soundOnInput) chime()
+    } catch {}
   }
   onMount(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t) })
 

@@ -1,7 +1,8 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput } from '../store.js'
   import { api } from '../transport/api.js'
+  import { chime } from '../lib/chime.js'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
   // API-key rows. github is a stored token (skills registry), NOT a model provider,
@@ -95,6 +96,12 @@
       {:else}
         <p class="muted" style="font-size:13px">Add an OpenAI or Gemini key above to enable voice.</p>
       {/if}
+
+      <div class="setsec">Notifications</div>
+      <label class="setcheck">
+        <input type="checkbox" bind:checked={$soundOnInput} onchange={(e) => e.target.checked && chime()} />
+        Play a sound when the assistant needs my input
+      </label>
 
       <div class="setsec">Google</div>
       <button class="setrow" onclick={openGoogle}>

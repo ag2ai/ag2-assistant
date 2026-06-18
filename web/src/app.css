@@ -63,6 +63,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .settings .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); }
 .settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
 .settings .linkbtn:hover { color: #d8552f; }
+.settings .setcheck { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; padding: 2px 0; }
+.settings .setcheck input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
