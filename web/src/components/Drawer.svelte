@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { sessions, tasks, drawerTab, googleOpen, voicePickerOpen } from '../store.js'
+  import { sessions, tasks, drawerTab, settingsOpen } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
 
@@ -79,13 +79,11 @@
 <div class="drawer">
   <div class="dhead">
     <span class="brand">AGClaw</span>
-    <button class="newbtn" title="Pick a voice" onclick={() => ($voicePickerOpen = true)}>🎙</button>
-    <button class="newbtn" title="Connect Google" onclick={() => ($googleOpen = true)}>Google</button>
-    <button class="newbtn" onclick={newChat}>+ New</button>
   </div>
   <div class="tabs">
     <button class="tab" class:on={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}>Chats</button>
     <button class="tab" class:on={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}>Tasks</button>
+    <button class="newbtn" onclick={newChat}>+ New</button>
   </div>
 
   <div class="dlist">
@@ -121,5 +119,9 @@
         {/if}
       {/each}
     {/if}
+  </div>
+
+  <div class="dfoot">
+    <button class="settingsbtn" onclick={() => ($settingsOpen = true)}>⚙ Settings</button>
   </div>
 </div>

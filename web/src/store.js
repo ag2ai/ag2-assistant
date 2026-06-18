@@ -24,3 +24,6 @@ export const voicePickerOpen = writable(false)
 
 // Deliverable full-view modal: { title, text } when open, null when closed.
 export const viewer = writable(null)
+
+// Settings modal open/closed (launches voice picker + Google from one place).
+export const settingsOpen = writable(false)

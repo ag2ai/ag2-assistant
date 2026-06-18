@@ -24,9 +24,20 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .brand { font-weight: 700; letter-spacing: .5px; }
 .newbtn { margin-left: auto; font-size: 13px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
 .newbtn:hover { border-color: var(--accent); color: var(--accent); }
-.tabs { display: flex; gap: 6px; padding: 8px 12px; }
+.tabs { display: flex; gap: 6px; padding: 8px 12px; align-items: center; }
+.tabs .newbtn { margin-left: auto; }
 .tab { font-size: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 999px; padding: 3px 11px; cursor: pointer; }
 .tab.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+.dfoot { border-top: 1px solid var(--line); padding: 8px 12px; }
+.settingsbtn { width: 100%; text-align: left; font-size: 13px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 9px; padding: 8px 11px; cursor: pointer; }
+.settingsbtn:hover { border-color: var(--accent); color: var(--accent); }
+
+.settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 11px 13px; cursor: pointer; }
+.settings .setrow:hover { border-color: var(--accent); }
+.settings .setrow .sk { font-weight: 600; flex: none; }
+.settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings .setrow .sgo { color: var(--accent); font-size: 12px; flex: none; }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
