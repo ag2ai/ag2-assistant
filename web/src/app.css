@@ -21,6 +21,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .main { display: flex; flex-direction: column; min-width: 0; }
 
 .dhead { padding: 14px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+.brandlogo { height: 22px; width: 22px; object-fit: contain; display: block; }
 .brand { font-weight: 700; letter-spacing: .5px; }
 .newbtn { margin-left: auto; font-size: 13px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
 .newbtn:hover { border-color: var(--accent); color: var(--accent); }

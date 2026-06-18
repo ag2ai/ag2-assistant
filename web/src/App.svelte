@@ -29,7 +29,7 @@
   <div class="main">
     <Hitl />
     {#if $route.name === 'home'}
-      <div class="thread"><div class="empty"><h1>AGClaw</h1>Starting a conversation…</div></div>
+      <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
     {:else}
       <Thread />
     {/if}

@@ -39,7 +39,7 @@
   {#if !st}
     <p class="muted">Loading…</p>
   {:else if st.signed_in}
-    <p>Connected as <b>{st.email || 'your account'}</b>. AGClaw can use Gmail, Calendar and Drive.</p>
+    <p>Connected as <b>{st.email || 'your account'}</b>. AG2 Assistant can use Gmail, Calendar and Drive.</p>
     <button class="open" onclick={logout}>Disconnect</button>
   {:else if !st.configured}
     <p>Paste your Google OAuth <b>client</b> JSON to enable Google integration.</p>

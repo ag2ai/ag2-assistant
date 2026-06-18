@@ -36,7 +36,7 @@ class AgentConfig(BaseModel):
 
     name: str = "agclaw"
     system_prompt: str = (
-        "You are AGClaw, a helpful personal AI assistant. "
+        "You are AG2 Assistant, a helpful personal AI assistant. "
         "You are direct, concise, and helpful."
     )
     # Free-text user location (e.g. "Sydney, Australia"). Used for environment

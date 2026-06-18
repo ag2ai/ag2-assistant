@@ -3,6 +3,7 @@
   import { sessions, tasks, drawerTab, settingsOpen } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
+  import logo from '../assets/ag2-logo.png'
 
   async function refresh() {
     try {
@@ -78,7 +79,8 @@
 
 <div class="drawer">
   <div class="dhead">
-    <span class="brand">AGClaw</span>
+    <img class="brandlogo" src={logo} alt="AG2" />
+    <span class="brand">Assistant</span>
   </div>
   <div class="tabs">
     <button class="tab" class:on={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}>Chats</button>

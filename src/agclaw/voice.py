@@ -30,7 +30,7 @@ _BASIC_VOICE_TOOLS = {
 }
 
 VOICE_PROMPT = (
-    "You are AGClaw's voice. You're speaking with the user out loud, so be warm, "
+    "You are the voice of AG2 Assistant. You're speaking with the user out loud, so be warm, "
     "natural, and concise — a sentence or two at a time, no markdown, no long "
     "lists read aloud. You are the same assistant they use in the app, just by "
     "voice.\n\n"
