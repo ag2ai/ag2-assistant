@@ -43,9 +43,10 @@ def test_logout_removes_token(google_paths):
 def test_extract_drive_id_from_url_or_id():
     from assistant.tools.google import _extract_drive_id
 
-    assert _extract_drive_id(
-        "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0"
-    ) == "1AbC_dEf-123"
+    assert (
+        _extract_drive_id("https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0")
+        == "1AbC_dEf-123"
+    )
     assert _extract_drive_id("https://drive.google.com/open?id=XYZ789") == "XYZ789"
     assert _extract_drive_id("rawFileId") == "rawFileId"
 
@@ -66,9 +67,14 @@ def test_google_guidance_in_turn_prompt_when_signed_in(monkeypatch):
 def test_build_google_tools_names():
     names = [t.name for t in build_google_tools()]
     assert names == [
-        "gmail_search", "gmail_read", "gmail_send", "gmail_create_draft",
-        "calendar_list_events", "calendar_create_event",
-        "drive_search", "drive_read",
+        "gmail_search",
+        "gmail_read",
+        "gmail_send",
+        "gmail_create_draft",
+        "calendar_list_events",
+        "calendar_create_event",
+        "drive_search",
+        "drive_read",
     ]
 
 
@@ -108,7 +114,9 @@ def _client(monkeypatch):
 
     class _FakeAgent:
         async def ask(self, *a, stream=None, **k):
-            class R: body = "ok"
+            class R:
+                body = "ok"
+
             return R()
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
@@ -132,12 +140,18 @@ def test_google_login_url_and_callback(monkeypatch):
     monkeypatch.setattr(ga, "is_configured", lambda: True)
     sentinel_flow = object()
     monkeypatch.setattr(
-        ga, "make_login_flow",
-        lambda redirect_uri: ("https://accounts.google.com/o/oauth2/auth?x=1", "st8", sentinel_flow),
+        ga,
+        "make_login_flow",
+        lambda redirect_uri: (
+            "https://accounts.google.com/o/oauth2/auth?x=1",
+            "st8",
+            sentinel_flow,
+        ),
     )
     completed = {}
     monkeypatch.setattr(
-        ga, "complete_login",
+        ga,
+        "complete_login",
         lambda flow, code: (completed.update(flow=flow, code=code), "me@example.com")[1],
     )
     with _client(monkeypatch) as client:
@@ -150,9 +164,10 @@ def test_google_login_url_and_callback(monkeypatch):
         assert "Connected" in page.text
         assert completed["flow"] is sentinel_flow and completed["code"] == "abc"
         # an unknown state is rejected gracefully
-        assert "no longer valid" in client.get(
-            "/api/google/callback", params={"state": "bogus", "code": "x"}
-        ).text
+        assert (
+            "no longer valid"
+            in client.get("/api/google/callback", params={"state": "bogus", "code": "x"}).text
+        )
 
 
 def test_google_credentials_upload_endpoint(monkeypatch, tmp_path):

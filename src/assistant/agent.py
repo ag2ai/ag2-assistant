@@ -29,7 +29,7 @@ def model_config(config: Config, model: str | None = None):
     The API key is read from os.environ by the provider's conventional var (filled
     from the secrets store at startup / on reload), not the fixed api_key_env field.
     """
-    from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE
+    from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 
     model = model or config.llm.model
     provider = config.llm.provider.lower()
@@ -37,15 +37,11 @@ def model_config(config: Config, model: str | None = None):
     if provider == "anthropic":
         from autogen.beta.config import AnthropicConfig
 
-        return AnthropicConfig(
-            model=model, api_key=api_key, streaming=config.llm.streaming
-        )
+        return AnthropicConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider in ("openai", "oai"):
         from autogen.beta.config import OpenAIConfig
 
-        return OpenAIConfig(
-            model=model, api_key=api_key, streaming=config.llm.streaming
-        )
+        return OpenAIConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider == "ollama":
         from autogen.beta.config import OllamaConfig
 
@@ -68,9 +64,7 @@ def model_config(config: Config, model: str | None = None):
 
 def cheap_model(config: Config) -> str | None:
     """A faster/cheaper model for bulk work (research subtasks, verification)."""
-    return config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(
-        config.llm.provider.lower()
-    )
+    return config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(config.llm.provider.lower())
 
 
 def bundled_skills_dir():
@@ -115,9 +109,7 @@ def build_skills_toolkit(config: Config):
 
     from autogen.beta.tools.skills import LocalRuntime
 
-    runtime = LocalRuntime(
-        dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra
-    )
+    runtime = LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
     return SkillSearchToolkit(runtime)
 
 
@@ -418,8 +410,6 @@ async def ask(
     """Send a message to the agent and return the response (single-shot)."""
     if config is None:
         config = load_config()
-    agent = create_agent(
-        config, memory=memory, platform=platform, asker=asker, single_shot=True
-    )
+    agent = create_agent(config, memory=memory, platform=platform, asker=asker, single_shot=True)
     reply = await agent.ask(message, prompt=turn_prompt(config))
     return reply.body

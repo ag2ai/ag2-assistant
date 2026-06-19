@@ -1,7 +1,5 @@
 """Tests for the task model and persistent store (Phase 1 foundation)."""
 
-import pytest
-
 from assistant.tasks import DeliverableStatus, Task, TaskStatus, TaskStore
 
 
@@ -52,8 +50,8 @@ async def test_descendants_are_recursive(tmp_path):
     store = _store(tmp_path)
     root = await store.create("root")
     a = await store.create("a", parent_id=root.id)
-    b = await store.create("b", parent_id=a.id)        # grandchild
-    c = await store.create("c", parent_id=b.id)        # great-grandchild
+    b = await store.create("b", parent_id=a.id)  # grandchild
+    c = await store.create("c", parent_id=b.id)  # great-grandchild
     ids = {t.id for t in await store.descendants(root.id)}
     assert ids == {a.id, b.id, c.id}
 
@@ -120,7 +118,9 @@ async def test_add_and_satisfy_deliverable(tmp_path):
     assert d["status"] == DeliverableStatus.PENDING
     assert not await store.is_complete(t.id)
     await store.set_deliverable_status(
-        t.id, d["id"], DeliverableStatus.PRODUCED,
+        t.id,
+        d["id"],
+        DeliverableStatus.PRODUCED,
         asset={"name": "report.md", "path": "/tmp/report.md", "kind": "text"},
     )
     assert await store.is_complete(t.id)  # auto_accept → produced is enough

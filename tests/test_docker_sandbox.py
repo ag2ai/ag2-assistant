@@ -4,7 +4,7 @@ The unit tests never touch Docker (construction is lazy). The integration test
 runs a real container and is skipped when Docker isn't available.
 """
 
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 import pytest
 

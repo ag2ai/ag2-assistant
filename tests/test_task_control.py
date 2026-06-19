@@ -1,7 +1,5 @@
 """Task-control tools — modify one task from a conversation (add/cancel/edit)."""
 
-import asyncio
-
 from assistant.tasks import TaskManager, TaskStatus, TaskStore
 from assistant.tasks.control import (
     build_task_tools,
@@ -34,13 +32,18 @@ async def test_render_task_snapshot(tmp_path):
 
 async def test_render_task_includes_schedule(tmp_path):
     store = _store(tmp_path)
-    t = await store.create("digest", status=TaskStatus.SCHEDULED,
-                           scheduled_for="2026-06-18T08:00:00", recurrence="daily")
+    t = await store.create(
+        "digest",
+        status=TaskStatus.SCHEDULED,
+        scheduled_for="2026-06-18T08:00:00",
+        recurrence="daily",
+    )
     text = await render_task(store, t.id)
     assert "2026-06-18T08:00:00" in text and "repeats daily" in text
     # a one-off shows it's not recurring
-    t2 = await store.create("once", status=TaskStatus.SCHEDULED,
-                            scheduled_for="2026-06-18T08:00:00")
+    t2 = await store.create(
+        "once", status=TaskStatus.SCHEDULED, scheduled_for="2026-06-18T08:00:00"
+    )
     assert "one-off" in await render_task(store, t2.id)
 
 
@@ -100,24 +103,32 @@ async def test_editing_a_scheduled_task_does_not_run_it(tmp_path):
         submitted.append(task_id)
 
     mgr = TaskManager(store, executor)
-    t = await store.create("daily digest", status=TaskStatus.SCHEDULED,
-                           scheduled_for="2030-01-01T05:00:00", recurrence="weekdays")
+    t = await store.create(
+        "daily digest",
+        status=TaskStatus.SCHEDULED,
+        scheduled_for="2030-01-01T05:00:00",
+        recurrence="weekdays",
+    )
 
     await do_add_subtask(store, mgr, t.id, "Extra research")
     await do_add_deliverable(store, mgr, t.id, "an appendix")
     await mgr.wait(t.id)  # nothing should have been submitted
 
     got = await store.get(t.id)
-    assert got.status == TaskStatus.SCHEDULED          # still scheduled, not running/completed
+    assert got.status == TaskStatus.SCHEDULED  # still scheduled, not running/completed
     assert got.scheduled_for == "2030-01-01T05:00:00"  # schedule intact
-    assert submitted == []                             # the executor never ran
+    assert submitted == []  # the executor never ran
     assert [c.title for c in await store.children(t.id)] == ["Extra research"]  # edit applied
 
 
 async def test_reschedule_changes_time_and_repeat(tmp_path):
     store = _store(tmp_path)
-    t = await store.create("digest", status=TaskStatus.SCHEDULED,
-                           scheduled_for="2026-01-01T09:00:00", recurrence="daily")
+    t = await store.create(
+        "digest",
+        status=TaskStatus.SCHEDULED,
+        scheduled_for="2026-01-01T09:00:00",
+        recurrence="daily",
+    )
     # change the repeat
     msg = await do_reschedule(store, t.id, recurrence="weekly")
     got = await store.get(t.id)
@@ -145,5 +156,11 @@ async def test_build_task_tools_exposes_the_set(tmp_path):
     mgr = TaskManager(store, _noop_executor)
     t = await store.create("x")
     names = {tool.name for tool in build_task_tools(store, mgr, t.id)}
-    assert names == {"task_status", "add_subtask", "set_objective", "add_deliverable",
-                     "reschedule", "cancel"}
+    assert names == {
+        "task_status",
+        "add_subtask",
+        "set_objective",
+        "add_deliverable",
+        "reschedule",
+        "cancel",
+    }

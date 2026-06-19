@@ -6,7 +6,6 @@ native AG2 events. If these break, history/replay break.
 """
 
 import pytest
-
 from autogen.beta.knowledge.log import import_event_class
 
 from assistant.events import (
@@ -21,8 +20,16 @@ from assistant.gateway.wire import is_binary_event, to_wire
 _SAMPLES = [
     TaskCreated("task-1", title="Weather report", kind="scheduled"),
     TaskScheduled("task-1", scheduled_for="2026-06-18T08:00:00+10:00", recurrence="daily"),
-    DeliverableProduced("task-1", deliverable_id="dlv-9", description="report", preview="RBA held rates…"),
-    InquiryRaised("inq-1", task_id="task-1", question="Which city?", options=["Sydney", "Perth"], kind="question"),
+    DeliverableProduced(
+        "task-1", deliverable_id="dlv-9", description="report", preview="RBA held rates…"
+    ),
+    InquiryRaised(
+        "inq-1",
+        task_id="task-1",
+        question="Which city?",
+        options=["Sydney", "Perth"],
+        kind="question",
+    ),
     InquiryAnswered("inq-1", answer="Sydney"),
 ]
 
@@ -33,7 +40,7 @@ def test_custom_event_round_trips_through_wire(event):
     assert set(record) == {"type", "data"}
     assert record["type"].startswith("assistant.events.")
 
-    cls = import_event_class(record["type"])      # the deserializer's resolution path
+    cls = import_event_class(record["type"])  # the deserializer's resolution path
     assert cls is type(event)
 
     back = cls.from_dict(record["data"])

@@ -30,6 +30,7 @@ import asyncio
 import os
 import sys
 
+from ag2assistant.agent import create_agent
 from autogen.beta.knowledge import MemoryKnowledgeStore
 from autogen.beta.network import (
     EV_TEXT,
@@ -40,8 +41,6 @@ from autogen.beta.network import (
     Resume,
 )
 from autogen.beta.network.transport import WsLink, serve_ws
-
-from ag2assistant.agent import create_agent
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -80,9 +79,7 @@ async def run_client(question: str) -> None:
     hub_client = HubClient(WsLink(URL))  # no hub= → remote over WebSocket
     # Unique name per process so repeated client runs don't collide on the
     # long-lived hub registry.
-    gateway = await hub_client.register_human(
-        Passport(name=f"gateway-{os.getpid()}", kind="human")
-    )
+    gateway = await hub_client.register_human(Passport(name=f"gateway-{os.getpid()}", kind="human"))
 
     # consulting = strict one-question-one-response; auto-closes after the reply.
     channel = await gateway.open(type="consulting", target=AGENT_NAME)
@@ -90,8 +87,7 @@ async def run_client(question: str) -> None:
 
     print(f"> {question}")
     reply = await gateway.next_envelope(
-        predicate=lambda e: e.event_type == EV_TEXT
-        and e.sender_id != gateway.agent_id,
+        predicate=lambda e: e.event_type == EV_TEXT and e.sender_id != gateway.agent_id,
         timeout=120.0,
     )
     print(f"\n{AGENT_NAME}: {reply.event_data['text']}")

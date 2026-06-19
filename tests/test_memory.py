@@ -1,7 +1,5 @@
 """Tests for AG2 Assistant persistent user-profile memory."""
 
-from pathlib import Path
-
 import pytest
 
 from assistant.memory import (
@@ -54,9 +52,7 @@ def test_build_knowledge_config_cadence(tmp_path):
     assert cfg.aggregate_trigger.every_n_turns == 4
     assert cfg.aggregate_trigger.on_end is False
     # Single-shot (CLI): capture the one turn on conversation end.
-    single = build_knowledge_config(
-        store_path=tmp_path / "p2.db", every_n_turns=4, on_end=True
-    )
+    single = build_knowledge_config(store_path=tmp_path / "p2.db", every_n_turns=4, on_end=True)
     assert single.aggregate_trigger.on_end is True
 
 
@@ -96,10 +92,7 @@ def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
     from assistant.config import Config
 
     agent_mod.create_agent(Config(), memory=True, skills=False)
-    assert (
-        captured["aggregate_config"].model
-        == agent_mod._DEFAULT_AGGREGATE_MODEL["gemini"]
-    )
+    assert captured["aggregate_config"].model == agent_mod._DEFAULT_AGGREGATE_MODEL["gemini"]
 
 
 def test_explicit_aggregate_model_wins(monkeypatch):
@@ -109,7 +102,8 @@ def test_explicit_aggregate_model_wins(monkeypatch):
 
     real = agent_mod.build_knowledge_config
     monkeypatch.setattr(
-        agent_mod, "build_knowledge_config",
+        agent_mod,
+        "build_knowledge_config",
         lambda *a, **k: (captured.update(k), real(*a, **k))[1],
     )
     cfg = Config(llm=LLMConfig(aggregate_model="gemini-2.5-flash"))

@@ -24,9 +24,15 @@ PREVIEW_TEXT = "Hi, I'm AG2 Assistant. This is how I sound — happy to help you
 def pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
     """Wrap raw mono 16-bit PCM in a minimal WAV header (for an <audio> preview)."""
     n = len(pcm)
-    header = b"RIFF" + struct.pack("<I", 36 + n) + b"WAVE" + b"fmt " + struct.pack(
-        "<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16
-    ) + b"data" + struct.pack("<I", n)
+    header = (
+        b"RIFF"
+        + struct.pack("<I", 36 + n)
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+        + b"data"
+        + struct.pack("<I", n)
+    )
     return header + pcm
 
 
@@ -35,12 +41,12 @@ class VoiceProvider:
     """Everything AG2 Assistant needs to talk to one realtime voice backend."""
 
     name: str
-    voices: dict[str, str]          # voice name -> short style (also the display order)
+    voices: dict[str, str]  # voice name -> short style (also the display order)
     default_voice: str
-    realtime_model: str             # default model; AG2ASSISTANT_VOICE_MODEL overrides at the call site
-    input_rate: int                 # mic capture rate the backend expects (Hz); the browser matches it
-    build_realtime: Callable[[Config, str, str], object]            # (config, voice, model) -> RealtimeConfig
-    synthesize: Callable[[Config, str, str], Awaitable[bytes]]      # (config, voice, text) -> WAV bytes
+    realtime_model: str  # default model; AG2ASSISTANT_VOICE_MODEL overrides at the call site
+    input_rate: int  # mic capture rate the backend expects (Hz); the browser matches it
+    build_realtime: Callable[[Config, str, str], object]  # (config, voice, model) -> RealtimeConfig
+    synthesize: Callable[[Config, str, str], Awaitable[bytes]]  # (config, voice, text) -> WAV bytes
 
 
 _REGISTRY: dict[str, VoiceProvider] = {}
@@ -79,30 +85,49 @@ def get(name: str | None = None) -> VoiceProvider:
 
 # https://ai.google.dev/gemini-api/docs/speech-generation#voices
 _GEMINI_VOICES = {
-    "Zephyr": "Bright", "Puck": "Upbeat", "Charon": "Informative", "Kore": "Firm",
-    "Fenrir": "Excitable", "Leda": "Youthful", "Orus": "Firm", "Aoede": "Breezy",
-    "Callirrhoe": "Easy-going", "Autonoe": "Bright", "Enceladus": "Breathy",
-    "Iapetus": "Clear", "Umbriel": "Easy-going", "Algieba": "Smooth",
-    "Despina": "Smooth", "Erinome": "Clear", "Algenib": "Gravelly",
-    "Rasalgethi": "Informative", "Laomedeia": "Upbeat", "Achernar": "Soft",
-    "Alnilam": "Firm", "Schedar": "Even", "Gacrux": "Mature",
-    "Pulcherrima": "Forward", "Achird": "Friendly", "Zubenelgenubi": "Casual",
-    "Vindemiatrix": "Gentle", "Sadachbia": "Lively", "Sadaltager": "Knowledgeable",
+    "Zephyr": "Bright",
+    "Puck": "Upbeat",
+    "Charon": "Informative",
+    "Kore": "Firm",
+    "Fenrir": "Excitable",
+    "Leda": "Youthful",
+    "Orus": "Firm",
+    "Aoede": "Breezy",
+    "Callirrhoe": "Easy-going",
+    "Autonoe": "Bright",
+    "Enceladus": "Breathy",
+    "Iapetus": "Clear",
+    "Umbriel": "Easy-going",
+    "Algieba": "Smooth",
+    "Despina": "Smooth",
+    "Erinome": "Clear",
+    "Algenib": "Gravelly",
+    "Rasalgethi": "Informative",
+    "Laomedeia": "Upbeat",
+    "Achernar": "Soft",
+    "Alnilam": "Firm",
+    "Schedar": "Even",
+    "Gacrux": "Mature",
+    "Pulcherrima": "Forward",
+    "Achird": "Friendly",
+    "Zubenelgenubi": "Casual",
+    "Vindemiatrix": "Gentle",
+    "Sadachbia": "Lively",
+    "Sadaltager": "Knowledgeable",
     "Sulafat": "Warm",
 }
 _GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 
 def _gemini_realtime(config: Config, voice: str, model: str):
-    from google.genai import Client
-
     from autogen.beta.live import gemini
+    from google.genai import Client
 
     client = Client(api_key=os.environ.get(config.llm.api_key_env, ""))
     return gemini.RealTimeConfig(
         model,
         output=gemini.AudioOutput(voice=voice, language_code="en-US"),
-        input=gemini.InputConfig(transcribe=True),   # user speech → transcription events
+        input=gemini.InputConfig(transcribe=True),  # user speech → transcription events
         client=client,
     )
 
@@ -137,9 +162,16 @@ async def _gemini_preview(config: Config, voice: str, text: str) -> bytes:
 
 # marin/cedar are OpenAI's recommended voices, so they lead and marin is default.
 _OPENAI_VOICES = {
-    "marin": "Natural (recommended)", "cedar": "Smooth (recommended)",
-    "alloy": "Neutral", "ash": "Expressive", "ballad": "Warm", "coral": "Bright",
-    "echo": "Calm", "sage": "Mellow", "shimmer": "Gentle", "verse": "Versatile",
+    "marin": "Natural (recommended)",
+    "cedar": "Smooth (recommended)",
+    "alloy": "Neutral",
+    "ash": "Expressive",
+    "ballad": "Warm",
+    "coral": "Bright",
+    "echo": "Calm",
+    "sage": "Mellow",
+    "shimmer": "Gentle",
+    "verse": "Versatile",
 }
 _OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 # OpenAI realtime is natively 24 kHz in/out — the browser captures at this rate.
@@ -151,9 +183,8 @@ def _openai_key() -> str:
 
 
 def _openai_realtime(config: Config, voice: str, model: str):
-    from openai import AsyncOpenAI
-
     from autogen.beta.live import openai as oai
+    from openai import AsyncOpenAI
 
     # Minimal config matching AG2's known-working tool-calling example: model + voice,
     # everything else (24 kHz audio, semantic-VAD turn detection) left at the defaults.
@@ -165,34 +196,36 @@ def _openai_realtime(config: Config, voice: str, model: str):
 
 
 async def _openai_preview(config: Config, voice: str, text: str) -> bytes:
+    from autogen.beta.live import OpenAITTSConfig
     from openai import AsyncOpenAI
 
-    from autogen.beta.live import OpenAITTSConfig
-
-    tts = OpenAITTSConfig(_OPENAI_TTS_MODEL, voice=voice,
-                          client=AsyncOpenAI(api_key=_openai_key()))
-    pcm = await tts.synthesize(text)   # 24 kHz mono PCM
+    tts = OpenAITTSConfig(_OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key()))
+    pcm = await tts.synthesize(text)  # 24 kHz mono PCM
     return pcm_to_wav(pcm, rate=24000)
 
 
 # --- registration -----------------------------------------------------------
 
-register(VoiceProvider(
-    name="gemini",
-    voices=_GEMINI_VOICES,
-    default_voice="Puck",
-    realtime_model="gemini-3.1-flash-live-preview",
-    input_rate=16000,   # Gemini Live is fixed at 16 kHz mono PCM input
-    build_realtime=_gemini_realtime,
-    synthesize=_gemini_preview,
-))
+register(
+    VoiceProvider(
+        name="gemini",
+        voices=_GEMINI_VOICES,
+        default_voice="Puck",
+        realtime_model="gemini-3.1-flash-live-preview",
+        input_rate=16000,  # Gemini Live is fixed at 16 kHz mono PCM input
+        build_realtime=_gemini_realtime,
+        synthesize=_gemini_preview,
+    )
+)
 
-register(VoiceProvider(
-    name="openai",
-    voices=_OPENAI_VOICES,
-    default_voice="marin",
-    realtime_model="gpt-realtime-2",   # the model AG2's docs/examples use for reliable tool calling
-    input_rate=_OPENAI_INPUT_RATE,   # 24 kHz native
-    build_realtime=_openai_realtime,
-    synthesize=_openai_preview,
-))
+register(
+    VoiceProvider(
+        name="openai",
+        voices=_OPENAI_VOICES,
+        default_voice="marin",
+        realtime_model="gpt-realtime-2",  # the model AG2's docs/examples use for reliable tool calling
+        input_rate=_OPENAI_INPUT_RATE,  # 24 kHz native
+        build_realtime=_openai_realtime,
+        synthesize=_openai_preview,
+    )
+)

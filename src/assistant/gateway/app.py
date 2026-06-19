@@ -15,7 +15,6 @@ import contextlib
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -52,6 +51,7 @@ def _origin_ok(origin: str | None, host: str | None) -> bool:
     if origin in _allowed_origins():
         return True
     return bool(host) and urlsplit(origin).netloc == host
+
 
 # Surface context the client can request by token (kept server-side, not in the UI).
 _SURFACES = {
@@ -94,7 +94,7 @@ class TaskChatRequest(BaseModel):
 
 class ScheduleRequest(BaseModel):
     text: str
-    when: str            # ISO 8601 datetime
+    when: str  # ISO 8601 datetime
     recurrence: str | None = None
 
 
@@ -108,7 +108,7 @@ class VoiceRequest(BaseModel):
 
 class KeyRequest(BaseModel):
     provider: str
-    value: str = ""        # empty clears the key
+    value: str = ""  # empty clears the key
 
 
 class LlmRequest(BaseModel):
@@ -140,13 +140,16 @@ def create_app(
     from assistant.config import load_config
     from assistant.gateway.tasks_service import TaskService
 
-    config = config or load_config()   # resolve once so routes have a real Config
+    config = config or load_config()  # resolve once so routes have a real Config
     tasks = TaskService(config=config)
 
     owns_gateway = gateway is None
     if gateway is None:
         gateway = Gateway(
-            config=config, memory=memory, platform=platform, persist=persist,
+            config=config,
+            memory=memory,
+            platform=platform,
+            persist=persist,
             task_service=tasks,  # the agent knows/does everything via system tools
         )
 
@@ -175,9 +178,7 @@ def create_app(
         if request.url.path.startswith("/api/") and not _origin_ok(
             request.headers.get("origin"), request.headers.get("host")
         ):
-            return JSONResponse(
-                {"error": "cross-origin request rejected"}, status_code=403
-            )
+            return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
         return await call_next(request)
 
     # Shared HITL registry: the gateway serves the styled /hitl/{id} pages and an
@@ -356,7 +357,10 @@ def create_app(
         from fastapi.responses import JSONResponse
 
         return JSONResponse(
-            {"ok": False, "error": "Only finished tasks can be archived — cancel it first to stop it."},
+            {
+                "ok": False,
+                "error": "Only finished tasks can be archived — cancel it first to stop it.",
+            },
             status_code=409,
         )
 
@@ -376,7 +380,10 @@ def create_app(
         )
         asker = GatewayAsker(app.state.hitl)
         reply = await app.state.gateway.send_message(
-            req.text, session_id=f"task:{task_id}", asker=asker, surface=surface,
+            req.text,
+            session_id=f"task:{task_id}",
+            asker=asker,
+            surface=surface,
         )
         return {"reply": reply}
 
@@ -463,7 +470,7 @@ def create_app(
 
         cfg = load_config()
         return {
-            "keys": secrets.status(),                  # per-provider {set, hint} — never raw
+            "keys": secrets.status(),  # per-provider {set, hint} — never raw
             "available": _available_providers(),
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
             "voice_provider": settings.voice_provider(),
@@ -475,7 +482,7 @@ def create_app(
 
         if not secrets.set_key(req.provider, req.value):
             return Response(status_code=400)
-        await app.state.gateway.reload()           # new turns pick up the key; voice next session
+        await app.state.gateway.reload()  # new turns pick up the key; voice next session
         return {"ok": True}
 
     @app.post("/api/settings/llm")
@@ -486,10 +493,14 @@ def create_app(
         if not _available_providers().get(provider):
             from fastapi.responses import JSONResponse
 
-            hint = ("Install with `pip install ag2[ollama]`." if provider == "ollama"
-                    else "Add the provider's API key first.")
-            return JSONResponse({"ok": False, "error": f"{provider} isn't available. {hint}"},
-                                status_code=409)
+            hint = (
+                "Install with `pip install ag2[ollama]`."
+                if provider == "ollama"
+                else "Add the provider's API key first."
+            )
+            return JSONResponse(
+                {"ok": False, "error": f"{provider} isn't available. {hint}"}, status_code=409
+            )
         settings.set_llm(provider=provider, model=req.model or None)
         await app.state.gateway.reload()
         return {"ok": True}
@@ -502,8 +513,9 @@ def create_app(
         if not _available_providers().get(provider):
             from fastapi.responses import JSONResponse
 
-            return JSONResponse({"ok": False, "error": f"Add the {provider} API key first."},
-                                status_code=409)
+            return JSONResponse(
+                {"ok": False, "error": f"Add the {provider} API key first."}, status_code=409
+            )
         if not settings.set_voice_provider(provider):
             return Response(status_code=400)
         return {"ok": True}
@@ -555,8 +567,11 @@ def create_app(
                 node = await app.state.tasks.get_task(tid)
                 if node:
                     from assistant.system_tools import format_task
-                    return ("The user is viewing this task; act on THIS task when "
-                            f"they refer to it.\n\n{format_task(node)}")
+
+                    return (
+                        "The user is viewing this task; act on THIS task when "
+                        f"they refer to it.\n\n{format_task(node)}"
+                    )
             return default_surface
 
         try:
@@ -646,9 +661,13 @@ def create_app(
 
         async def on_task(st: dict) -> None:  # a task the voice agent just spawned → card
             with contextlib.suppress(Exception):
-                await websocket.send_json({
-                    "type": "task_card", "id": st["id"], "title": st.get("title", "Task"),
-                })
+                await websocket.send_json(
+                    {
+                        "type": "task_card",
+                        "id": st["id"],
+                        "title": st.get("title", "Task"),
+                    }
+                )
 
         # The voice agent can hang up the call itself via its end_call tool, which
         # trips this event; wait_end() (below) then ends the job race → teardown.
@@ -656,8 +675,12 @@ def create_app(
 
         try:
             agent = await app.state.gateway.build_voice_agent(
-                session_id=sid, task_id=task_id, chat_session=chat_session,
-                on_tool=on_tool, on_task=on_task, on_end=end_requested.set,
+                session_id=sid,
+                task_id=task_id,
+                chat_session=chat_session,
+                on_tool=on_tool,
+                on_task=on_task,
+                on_end=end_requested.set,
             )
         except Exception as exc:
             with contextlib.suppress(Exception):
@@ -674,26 +697,30 @@ def create_app(
             # ModelResponse marks the end of an agent turn for BOTH providers
             # (Gemini turn_complete / OpenAI response.done) — the provider-agnostic
             # turn boundary that separates one spoken reply from the next.
-            sel = (TranscriptionChunkEvent | TranscriptionCompletedEvent
-                   | ModelMessageChunk | ModelResponse)
+            sel = (
+                TranscriptionChunkEvent
+                | TranscriptionCompletedEvent
+                | ModelMessageChunk
+                | ModelResponse
+            )
             with context.stream.where(sel).join() as evs:
                 async for e in evs:
-                    if isinstance(e, ModelResponse):               # agent turn ended
+                    if isinstance(e, ModelResponse):  # agent turn ended
                         if last_role["v"] == "agent":
-                            await _flush_agent()                   # persist the spoken turn
+                            await _flush_agent()  # persist the spoken turn
                         last_role["v"] = None
                         # tell the client to close the bubble so the next reply is fresh
                         await websocket.send_json({"type": "turn_end", "role": "agent"})
                         continue
-                    if isinstance(e, ModelMessageChunk):           # agent speaking
+                    if isinstance(e, ModelMessageChunk):  # agent speaking
                         if last_role["v"] == "user":
-                            await _flush_user()                    # user turn ended
+                            await _flush_user()  # user turn ended
                         last_role["v"] = "agent"
                         agent_buf.append(e.content)
                         frame = {"type": "transcript", "role": "agent", "text": e.content}
-                    else:                                          # user (chunk or completed)
+                    else:  # user (chunk or completed)
                         if last_role["v"] == "agent":
-                            await _flush_agent()                   # agent turn ended
+                            await _flush_agent()  # agent turn ended
                         last_role["v"] = "user"
                         user_buf.append(e.content)
                         frame = {"type": "transcript", "role": "user", "text": e.content}
@@ -748,7 +775,7 @@ def create_app(
                 finally:
                     for j in jobs:
                         j.cancel()
-                    await _flush_user()   # persist whichever turn was pending
+                    await _flush_user()  # persist whichever turn was pending
                     await _flush_agent()
         except WebSocketDisconnect:
             with contextlib.suppress(Exception):
@@ -769,7 +796,9 @@ def create_app(
         deep links (/app/c/<id>, /app/t/<id>) survive refresh."""
         index = _APP_DIR / "index.html"
         if not index.exists():
-            return HTMLResponse("<h1>AG2 Assistant</h1><p>New UI not built. Run: cd web && npm install && npm run build</p>")
+            return HTMLResponse(
+                "<h1>AG2 Assistant</h1><p>New UI not built. Run: cd web && npm install && npm run build</p>"
+            )
         f = (_APP_DIR / path).resolve()
         if path and f.is_file() and str(f).startswith(str(_APP_DIR.resolve())):
             return FileResponse(f)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from assistant.storage import SerialStore as _SerialStore
 from assistant.storage import new_id, now_iso
-from assistant.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus
+from assistant.tasks.model import Deliverable, Task, TaskStatus
 
 _PREFIX = "/tasks/"
 
@@ -181,8 +181,12 @@ class TaskStore:
         return task
 
     async def add_subtask(
-        self, parent_id: str, title: str, description: str = "",
-        reopen_parent: bool = True, **fields,
+        self,
+        parent_id: str,
+        title: str,
+        description: str = "",
+        reopen_parent: bool = True,
+        **fields,
     ) -> Task | None:
         """Amend a task by adding a subtask. Reopens the parent if it had finished
         (so 'add SpaceX to that IPO research' resumes rather than stays done)."""
@@ -207,7 +211,9 @@ class TaskStore:
 
     # --- deliverables (what gates completion) ---
 
-    async def add_deliverable(self, task_id: str, description: str, criteria: str = "") -> dict | None:
+    async def add_deliverable(
+        self, task_id: str, description: str, criteria: str = ""
+    ) -> dict | None:
         task = await self.get(task_id)
         if task is None:
             return None
@@ -217,8 +223,12 @@ class TaskStore:
         return dlv
 
     async def set_deliverable_status(
-        self, task_id: str, deliverable_id: str, status: str,
-        asset: dict | None = None, notes: str = "",
+        self,
+        task_id: str,
+        deliverable_id: str,
+        status: str,
+        asset: dict | None = None,
+        notes: str = "",
     ) -> Task | None:
         task = await self.get(task_id)
         if task is None:

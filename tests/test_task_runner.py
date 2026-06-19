@@ -61,9 +61,9 @@ async def test_parent_completes_despite_failed_subtask(tmp_path):
     still does its own work and completes if its own deliverable is met."""
     store = _store(tmp_path)
     root = await store.create("trip prep")
-    rd = await store.add_deliverable(root.id, "travel guide")
+    await store.add_deliverable(root.id, "travel guide")
     good = await store.add_subtask(root.id, "weather research", reopen_parent=False)
-    gd = await store.add_deliverable(good.id, "weather notes")
+    await store.add_deliverable(good.id, "weather notes")
     bad = await store.add_subtask(root.id, "retrieve bookings", reopen_parent=False)
     await store.add_deliverable(bad.id, "booking details")  # never produced → fails
 

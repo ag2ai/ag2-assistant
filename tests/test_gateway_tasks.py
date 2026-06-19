@@ -8,7 +8,6 @@ import asyncio
 
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
-from assistant.hitl.base import Question
 from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
 
 
@@ -17,12 +16,16 @@ def _service(tmp_path, executor, planner=None):
     inq = InquiryStore(path=tmp_path / "inq.db")
     mgr = TaskManager(store, executor, inquiry_store=inq)
     return TaskService(
-        store=store, inquiry_store=inq, manager=mgr, executor=executor,
+        store=store,
+        inquiry_store=inq,
+        manager=mgr,
+        executor=executor,
         planner_agent=planner or object(),
     )
 
 
 # ---- service: list / get / cancel ----
+
 
 async def test_list_and_get_task(tmp_path):
     async def executor(task_id, mgr, asker):
@@ -46,6 +49,7 @@ async def test_list_and_get_task(tmp_path):
 async def test_list_groups_inquiries_and_floats_needs_input_first(tmp_path):
     """Each task summary carries its subtree's pending inquiries, and tasks needing
     input sort to the top (newest-first otherwise)."""
+
     async def executor(task_id, mgr, asker):
         pass
 
@@ -71,7 +75,9 @@ async def test_get_task_includes_subtree_and_assets(tmp_path):
     child = await svc.store.add_subtask(root.id, "leg one", reopen_parent=False)
     d = await svc.store.add_deliverable(child.id, "leg output")
     await svc.store.set_deliverable_status(
-        child.id, d["id"], DeliverableStatus.PRODUCED,
+        child.id,
+        d["id"],
+        DeliverableStatus.PRODUCED,
         asset={"name": "x", "kind": "text", "content": "THE RESULT"},
     )
     detail = await svc.get_task(root.id)
@@ -95,6 +101,7 @@ async def test_cancel_task(tmp_path):
 
 
 # ---- service: durable inquiries ----
+
 
 async def test_pending_and_answer_inquiry(tmp_path):
     async def executor(task_id, mgr, asker):
@@ -139,10 +146,20 @@ async def test_submit_request_runs_intake_and_inquiries(tmp_path):
         async def ask(self, msg, response_schema=None, **k):
             self.calls += 1
             if self.calls == 1:
-                return _Reply(TaskPlan(trivial=False, objective="prov",
-                                       questions=[ClarifyQuestion(text="Which widget?")]))
-            return _Reply(TaskPlan(trivial=False, objective="Report on gizmo widgets",
-                                   deliverables=[PlanDeliverable(description="the report")]))
+                return _Reply(
+                    TaskPlan(
+                        trivial=False,
+                        objective="prov",
+                        questions=[ClarifyQuestion(text="Which widget?")],
+                    )
+                )
+            return _Reply(
+                TaskPlan(
+                    trivial=False,
+                    objective="Report on gizmo widgets",
+                    deliverables=[PlanDeliverable(description="the report")],
+                )
+            )
 
     svc = _service(tmp_path, executor, planner=_Planner())
     task_id = await svc.submit_request("research widgets")
@@ -167,6 +184,7 @@ async def test_submit_request_runs_intake_and_inquiries(tmp_path):
 
 
 # ---- REST surface ----
+
 
 def test_task_rest_endpoints(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
@@ -267,10 +285,17 @@ def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
 
         # a finished task archives fine
         assert client.post(f"/api/tasks/{tid}/archive").json() == {"ok": True, "archived": True}
-        assert all(t["id"] != tid for t in client.get("/api/tasks").json()["tasks"])  # gone from drawer
-        assert any(t["id"] == tid for t in client.get("/api/tasks/all?status=archived").json()["tasks"])
+        assert all(
+            t["id"] != tid for t in client.get("/api/tasks").json()["tasks"]
+        )  # gone from drawer
+        assert any(
+            t["id"] == tid for t in client.get("/api/tasks/all?status=archived").json()["tasks"]
+        )
         # unarchive
-        assert client.post(f"/api/tasks/{tid}/archive", json={"archived": False}).json()["archived"] is False
+        assert (
+            client.post(f"/api/tasks/{tid}/archive", json={"archived": False}).json()["archived"]
+            is False
+        )
         assert any(t["id"] == tid for t in client.get("/api/tasks").json()["tasks"])
 
         # an active task is rejected (409), stays visible
@@ -314,7 +339,7 @@ async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
     tid = await svc.schedule_task("daily digest", when="2020-01-01T09:00:00", recurrence="daily")
     await svc._fire(tid)
 
-    assert ran and ran[0] != tid           # a fresh run was spawned, not the template
+    assert ran and ran[0] != tid  # a fresh run was spawned, not the template
     tmpl = await svc.store.get(tid)
     assert tmpl.status == TaskStatus.SCHEDULED  # template re-armed, still scheduled
     assert datetime.fromisoformat(tmpl.scheduled_for) > datetime.now().astimezone()
@@ -364,8 +389,13 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
 
     class _Planner:  # returns a runnable plan with no clarifying questions
         async def ask(self, msg, response_schema=None, **k):
-            return _Reply(TaskPlan(trivial=True, objective="Daily AI digest",
-                                   deliverables=[PlanDeliverable(description="the digest")]))
+            return _Reply(
+                TaskPlan(
+                    trivial=True,
+                    objective="Daily AI digest",
+                    deliverables=[PlanDeliverable(description="the digest")],
+                )
+            )
 
     svc = _service(tmp_path, executor, planner=_Planner())
     past = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
@@ -376,7 +406,7 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
         if t.deliverables:
             break
         await asyncio.sleep(0.01)
-    assert t.status == TaskStatus.SCHEDULED          # armed
+    assert t.status == TaskStatus.SCHEDULED  # armed
     assert t.objective == "Daily AI digest" and t.deliverables  # planned up front
 
     submitted = []
@@ -389,11 +419,11 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
     svc._manager.submit = spy
     await svc._fire(tid)
 
-    assert submitted and submitted[0] != tid          # a cloned run was executed
+    assert submitted and submitted[0] != tid  # a cloned run was executed
     run = await svc.store.get(submitted[0])
     assert run.objective == "Daily AI digest" and run.deliverables  # plan cloned in
     tmpl = await svc.store.get(tid)
-    assert tmpl.status == TaskStatus.SCHEDULED        # template re-armed
+    assert tmpl.status == TaskStatus.SCHEDULED  # template re-armed
     assert datetime.fromisoformat(tmpl.scheduled_for) > datetime.now().astimezone()
 
 
@@ -407,9 +437,14 @@ def test_schedule_rest_endpoint(monkeypatch, tmp_path):
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
     with TestClient(app) as client:
-        r = client.post("/api/tasks/schedule", json={
-            "text": "weekly report", "when": "2030-06-01T09:00:00", "recurrence": "weekly",
-        })
+        r = client.post(
+            "/api/tasks/schedule",
+            json={
+                "text": "weekly report",
+                "when": "2030-06-01T09:00:00",
+                "recurrence": "weekly",
+            },
+        )
         tid = r.json()["id"]
         detail = client.get(f"/api/tasks/{tid}").json()["task"]
         assert detail["status"] == "scheduled"
@@ -420,6 +455,7 @@ def test_schedule_rest_endpoint(monkeypatch, tmp_path):
 async def test_chat_routes_to_control_agent(tmp_path):
     """TaskService.chat builds a task-scoped agent and returns its reply; an unknown
     task returns None (→ 404 at the REST layer)."""
+
     async def executor(task_id, mgr, asker):
         pass
 
@@ -471,13 +507,14 @@ def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch, tmp_path)
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
     with TestClient(app) as client:
         svc = app.state.tasks
-        task_id = asyncio.get_event_loop().run_until_complete(
-            svc.store.create("seeded", objective="do it")
-        ).id
+        task_id = (
+            asyncio.get_event_loop()
+            .run_until_complete(svc.store.create("seeded", objective="do it"))
+            .id
+        )
 
         r = client.post(f"/api/tasks/{task_id}/chat", json={"text": "what's the status?"})
         assert r.json()["reply"] == "on it"
-        assert seen["session"] == f"task:{task_id}"               # per-task stream
-        assert any(task_id in p for p in seen["prompt"])          # task surface injected
+        assert seen["session"] == f"task:{task_id}"  # per-task stream
+        assert any(task_id in p for p in seen["prompt"])  # task surface injected
         assert client.post("/api/tasks/nope/chat", json={"text": "x"}).status_code == 404
-
