@@ -2,12 +2,22 @@
   import { onMount } from 'svelte'
   import { inquiries, soundOnInput } from '../store.js'
   import { api } from '../transport/api.js'
-  import { go } from '../router.js'
+  import { go, route } from '../router.js'
   import { chime } from '../lib/chime.js'
 
   let drafts = $state({})
   let seen = new Set()   // inquiry ids already surfaced — chime only on genuinely new ones
   let first = true
+
+  // An inquiry the open task page already renders inline (its InquiryRaised rides
+  // that task's stream) is dropped from the strip — answer it in context, not
+  // twice. Everything else stays: other tasks' inquiries, subtask inquiries (on a
+  // different stream), and chat permission prompts (no task_id, never inline).
+  const visible = $derived(
+    $inquiries.filter(
+      (q) => !(q._src === 'inquiry' && $route.name === 'task' && q.task_id === $route.id),
+    ),
+  )
 
   async function refresh() {
     try {
@@ -41,10 +51,10 @@
   }
 </script>
 
-{#if $inquiries.length}
+{#if visible.length}
   <div class="hitl">
-    <div class="hitlhead">Needs your input ({$inquiries.length})</div>
-    {#each $inquiries as q (q._key)}
+    <div class="hitlhead">Needs your input ({visible.length})</div>
+    {#each visible as q (q._key)}
       <div class="qcard">
         <div class="qk">
           {q.kind === 'permission' ? 'Permission' : 'Question'}

@@ -193,6 +193,29 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
     assert traces[0].inner["data"]["agent_name"] == "researcher"
 
 
+async def test_inline_answer_falls_back_to_inquiry_store(tmp_path):
+    """Answering inline on a task page sends the InquiryStore id over the WS. The
+    HitlServer won't know it (different id space), so the gateway falls back to the
+    inquiry store — which is what actually resolves a durable task inquiry."""
+    from assistant.hitl import HitlServer
+    from assistant.hitl.inquiry import InquiryStatus
+
+    svc, _ = await _started(tmp_path)
+    inq = await svc.inquiries.create(
+        "Which city?", task_id="task-x", options=["Sydney", "Perth"], kind="question"
+    )
+    hitl = HitlServer()  # does NOT know this id
+
+    iid, ans = inq.id, "Sydney"
+    # Mirror app.py's WS answer dispatch: HitlServer first, else the inquiry store.
+    if not hitl.answer(iid, ans):
+        await svc.answer_inquiry(iid, ans)
+
+    resolved = await svc.inquiries.get(iid)
+    assert resolved.status == InquiryStatus.ANSWERED and resolved.answer == "Sydney"
+    await svc.close()
+
+
 async def test_inquiry_raised_then_answered_emit(tmp_path):
     from assistant.events import InquiryAnswered, InquiryRaised
 

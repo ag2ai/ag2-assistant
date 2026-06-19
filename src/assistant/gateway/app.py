@@ -579,7 +579,14 @@ def create_app(
             while True:
                 data = await websocket.receive_json()
                 if data.get("type") == "answer" and data.get("id"):
-                    app.state.hitl.answer(data["id"], data.get("answer", ""))
+                    iid, ans = data["id"], data.get("answer", "")
+                    # Chat permission prompts live in the HitlServer; durable task
+                    # inquiries (answered inline on a task page) live in the
+                    # InquiryStore under a different id — fall back to it so an
+                    # inline answer resolves either kind.
+                    if not app.state.hitl.answer(iid, ans):
+                        with contextlib.suppress(Exception):
+                            await app.state.tasks.answer_inquiry(iid, ans)
                     continue
                 text = data.get("text", "")
                 attachments = _decode_attachments(data.get("attachments"))
