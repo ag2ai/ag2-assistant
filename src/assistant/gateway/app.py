@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from assistant.config import Config
 from assistant.gateway.core import Gateway
@@ -116,6 +116,17 @@ class ArchiveRequest(BaseModel):
 
 class VoiceRequest(BaseModel):
     voice: str
+
+
+class MCPServerRequest(BaseModel):
+    name: str
+    command: str
+    args: list[str] | str = Field(default_factory=list)
+    env: dict[str, str] | str | None = None
+    cwd: str | None = None
+    allowed_tools: list[str] | str = Field(default_factory=list)
+    blocked_tools: list[str] | str = Field(default_factory=list)
+    enabled: bool = True
 
 
 class KeyRequest(BaseModel):
@@ -486,7 +497,64 @@ def create_app(
             "available": _available_providers(),
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
             "voice_provider": settings.voice_provider(),
+            "mcp_servers": settings.list_mcp_servers(),
         }
+
+    async def _mcp_health(server: dict) -> dict:
+        from autogen.beta.context import ConversationContext
+        from autogen.beta.stream import MemoryStream
+
+        from assistant.tools.mcp import build_mcp_tools
+
+        tools = build_mcp_tools([server])
+        if not tools:
+            return {"ok": False, "error": "MCP server is disabled"}
+        toolkit = tools[0]
+        context = ConversationContext(stream=MemoryStream())
+        schemas = await toolkit.schemas(context)
+        return {
+            "ok": True,
+            "tools": [
+                getattr(getattr(schema, "function", None), "name", "")
+                for schema in schemas
+                if getattr(getattr(schema, "function", None), "name", "")
+            ],
+        }
+
+    @app.post("/api/settings/mcp")
+    async def add_mcp_server(req: MCPServerRequest) -> dict:
+        from assistant import settings
+
+        try:
+            server = settings.upsert_mcp_server(req.model_dump())
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        await app.state.gateway.reload()
+        return {"ok": True, "server": server, "mcp_servers": settings.list_mcp_servers()}
+
+    @app.delete("/api/settings/mcp/{name}")
+    async def delete_mcp_server(name: str) -> dict:
+        from assistant import settings
+
+        if not settings.delete_mcp_server(name):
+            return Response(status_code=404)
+        await app.state.gateway.reload()
+        return {"ok": True, "mcp_servers": settings.list_mcp_servers()}
+
+    @app.post("/api/settings/mcp/{name}/health")
+    async def health_mcp_server(name: str) -> dict:
+        from assistant import settings
+
+        server = next(
+            (s for s in settings.list_mcp_servers(include_env=True) if s["name"] == name),
+            None,
+        )
+        if server is None:
+            return Response(status_code=404)
+        try:
+            return await _mcp_health(server)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[:500]}
 
     @app.post("/api/settings/key")
     async def set_settings_key(req: KeyRequest) -> dict:

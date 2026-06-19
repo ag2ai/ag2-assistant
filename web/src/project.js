@@ -16,7 +16,7 @@ function joinText(parts) {
 
 export function addTool(items, name) {
   if (!name) return
-  const pretty = name.replace(/_/g, ' ')
+  const pretty = prettyToolName(name)
   const last = items[items.length - 1]
   if (last && last.kind === 'tools') {
     const e = last.names[last.names.length - 1]
@@ -25,6 +25,13 @@ export function addTool(items, name) {
   } else {
     items.push({ id: nid(), kind: 'tools', names: [{ name: pretty, n: 1 }] })
   }
+}
+
+function prettyToolName(name) {
+  if (name.startsWith('repo_files_')) {
+    return 'repo-files · ' + name.slice('repo_files_'.length)
+  }
+  return name.replace(/_/g, ' ')
 }
 
 // Whether a turn is still in progress, derived from the items rather than a

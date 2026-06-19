@@ -204,6 +204,45 @@ def test_rest_message_endpoint(monkeypatch):
         assert body["session_id"] == "u1"
 
 
+def test_mcp_settings_endpoints(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+
+    app = app_mod.create_app(memory=False, persist=False)
+    with TestClient(app) as client:
+        assert client.get("/api/settings").json()["mcp_servers"] == []
+
+        resp = client.post(
+            "/api/settings/mcp",
+            json={
+                "name": "local",
+                "command": "__missing_mcp_server__",
+                "args": "--flag",
+                "env": "TOKEN=secret",
+            },
+        )
+        assert resp.status_code == 200
+        server = resp.json()["server"]
+        assert server["env_keys"] == ["TOKEN"]
+        assert "env" not in server
+
+        listed = client.get("/api/settings").json()["mcp_servers"]
+        assert listed[0]["name"] == "local"
+        assert "env" not in listed[0]
+
+        health = client.post("/api/settings/mcp/local/health")
+        assert health.status_code == 200
+        assert health.json()["ok"] is False
+
+        assert client.delete("/api/settings/mcp/local").json()["ok"] is True
+        assert client.get("/api/settings").json()["mcp_servers"] == []
+        assert client.delete("/api/settings/mcp/local").status_code == 404
+
+
 def test_create_app_shares_injected_gateway(fake_gateway):
     """When a gateway is injected (combined `ag2assistant run`), the app reuses it
     rather than creating its own, and doesn't tear it down on shutdown."""

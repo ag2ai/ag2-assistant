@@ -19,6 +19,8 @@
   let google = $state(null)
   let drafts = $state({})         // provider -> input value
   let model = $state('')
+  let mcp = $state({ name: '', command: '', args: '', cwd: '', allowed_tools: '', blocked_tools: '', env: '' })
+  let mcpHealth = $state({})
   let err = $state('')
   let busy = $state(false)
 
@@ -42,6 +44,17 @@
   const saveOllama = () => run(() => api.setKey('ollama', drafts.ollama || ''))
   const saveLlm = (p) => run(() => api.setLlm(p, model))
   const saveVoiceProvider = (p) => run(() => api.setVoiceProvider(p))
+  const saveMcp = () => run(() => api.addMcpServer(mcp).then(() => {
+    mcp = { name: '', command: '', args: '', cwd: '', allowed_tools: '', blocked_tools: '', env: '' }
+    mcpHealth = {}
+  }))
+  const deleteMcp = (name) => run(() => api.deleteMcpServer(name).then(() => {
+    const { [name]: _deleted, ...rest } = mcpHealth
+    mcpHealth = rest
+  }))
+  const healthMcp = (name) => run(async () => {
+    mcpHealth = { ...mcpHealth, [name]: await api.healthMcpServer(name) }
+  })
 
   const close = () => ($settingsOpen = false)
   const openVoice = () => { $settingsOpen = false; $voicePickerOpen = true }
@@ -110,6 +123,37 @@
         <input type="checkbox" bind:checked={$soundOnInput} onchange={(e) => e.target.checked && chime()} />
         Play a sound when the assistant needs my input
       </label>
+
+      <div class="setsec">MCP servers</div>
+      {#if !(s.mcp_servers || []).length}
+        <p class="muted" style="font-size:13px">No MCP servers configured.</p>
+      {/if}
+      {#each s.mcp_servers || [] as server}
+        <div class="mcprow">
+          <div class="mcpmeta">
+            <strong>{server.name}</strong>
+            <span>{server.command} {(server.args || []).join(' ')}</span>
+            {#if server.env_keys?.length}<span>env: {server.env_keys.join(', ')}</span>{/if}
+            {#if mcpHealth[server.name]}
+              <span class:mcpbad={!mcpHealth[server.name].ok}>
+                {mcpHealth[server.name].ok ? `healthy · ${(mcpHealth[server.name].tools || []).length} tools` : mcpHealth[server.name].error}
+              </span>
+            {/if}
+          </div>
+          <button class="open" disabled={busy} onclick={() => healthMcp(server.name)}>Check</button>
+          <button class="linkbtn" disabled={busy} onclick={() => deleteMcp(server.name)}>Delete</button>
+        </div>
+      {/each}
+      <div class="mcpform">
+        <input placeholder="name, e.g. github" bind:value={mcp.name} />
+        <input placeholder="command, e.g. npx" bind:value={mcp.command} />
+        <input placeholder="args, e.g. -y @modelcontextprotocol/server-github" bind:value={mcp.args} />
+        <input placeholder="cwd (optional)" bind:value={mcp.cwd} />
+        <input placeholder="allowed tools, comma-separated (optional)" bind:value={mcp.allowed_tools} />
+        <input placeholder="blocked tools, comma-separated (optional)" bind:value={mcp.blocked_tools} />
+        <textarea placeholder="env, one KEY=VALUE per line (optional)" bind:value={mcp.env}></textarea>
+        <button class="open" disabled={busy || !mcp.name || !mcp.command} onclick={saveMcp}>Add MCP server</button>
+      </div>
 
       <div class="setsec">Google</div>
       <button class="setrow" onclick={openGoogle}>

@@ -66,3 +66,37 @@ def test_legacy_flat_voice_migrates(monkeypatch):
     assert settings.set_voice("alloy", provider="openai")
     data = json.loads(p.read_text())
     assert data["voice"] == {"gemini": "Sulafat", "openai": "alloy"}
+
+
+def test_mcp_servers_hide_env_values_and_roundtrip():
+    server = settings.upsert_mcp_server(
+        {
+            "name": "github",
+            "command": "npx",
+            "args": "-y @modelcontextprotocol/server-github",
+            "env": "GITHUB_PERSONAL_ACCESS_TOKEN=secret\n# ignored\nNO_EQUALS",
+            "allowed_tools": "search,read",
+            "blocked_tools": ["write"],
+        }
+    )
+
+    assert server["name"] == "github"
+    assert server["args"] == ["-y", "@modelcontextprotocol/server-github"]
+    assert server["allowed_tools"] == ["search", "read"]
+    assert server["blocked_tools"] == ["write"]
+    assert server["env_keys"] == ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    assert "env" not in server
+
+    public = settings.list_mcp_servers()
+    assert public == [server]
+    assert "env" not in public[0]
+
+    private = settings.list_mcp_servers(include_env=True)
+    assert private[0]["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": "secret"}
+
+    settings.upsert_mcp_server({"name": "github", "command": "uvx", "args": ["mcp-server-github"]})
+    assert len(settings.list_mcp_servers()) == 1
+    assert settings.list_mcp_servers()[0]["command"] == "uvx"
+
+    assert settings.delete_mcp_server("github") is True
+    assert settings.delete_mcp_server("github") is False

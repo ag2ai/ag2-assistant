@@ -42,7 +42,7 @@ _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
 # Capability groups → the tools they unlock. Tasks declare the capabilities they
 # need so an agent is built with EXACTLY those (privacy, focus, speed); chat
 # (capabilities=None) gets everything.
-CAPABILITIES = ("web", "code", "files", "skills", "gmail", "calendar", "drive")
+CAPABILITIES = ("web", "code", "files", "skills", "mcp", "gmail", "calendar", "drive")
 
 _GOOGLE_GROUPS = {
     "gmail": {"gmail_search", "gmail_read", "gmail_send", "gmail_create_draft"},
@@ -55,7 +55,7 @@ def available_capabilities() -> list[str]:
     """Capabilities currently usable (Google ones only when signed in)."""
     from assistant.integrations.google_auth import has_token
 
-    caps = ["web", "code", "files", "skills"]
+    caps = ["web", "code", "files", "skills", "mcp"]
     if has_token():
         caps += ["gmail", "calendar", "drive"]
     return caps
@@ -133,6 +133,12 @@ def build_agent_tools(
             from assistant.tools.google import build_google_tools
 
             tools += [t for t in build_google_tools() if t.name in keep]
+
+    if want("mcp"):
+        from assistant import settings
+        from assistant.tools.mcp import build_mcp_tools
+
+        tools += build_mcp_tools(settings.list_mcp_servers(include_env=True))
 
     return tools
 

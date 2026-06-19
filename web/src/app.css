@@ -71,6 +71,15 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .settings .linkbtn:hover { color: #d8552f; }
 .settings .setcheck { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; padding: 2px 0; }
 .settings .setcheck input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.settings .mcprow { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.settings .mcpmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.settings .mcpmeta strong { color: var(--ink); font-size: 13px; }
+.settings .mcpmeta span { overflow-wrap: anywhere; }
+.settings .mcpbad { color: #d8552f; }
+.settings .mcpform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.settings .mcpform input, .settings .mcpform textarea { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
+.settings .mcpform textarea { grid-column: 1 / -1; min-height: 74px; font-family: var(--mono); font-size: 12px; }
+.settings .mcpform button { justify-self: start; }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
