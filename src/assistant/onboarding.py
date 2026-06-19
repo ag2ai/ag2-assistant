@@ -136,9 +136,7 @@ def build_profile(answers: dict[str, str]) -> str:
 
     if not sections:
         return ""
-    return (
-        "# User profile\n_Seeded from onboarding._\n\n" + "\n\n".join(sections) + "\n"
-    )
+    return "# User profile\n_Seeded from onboarding._\n\n" + "\n\n".join(sections) + "\n"
 
 
 async def run_onboarding(

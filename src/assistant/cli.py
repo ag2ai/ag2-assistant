@@ -53,9 +53,7 @@ def agent(
 
 @app.command()
 def onboard(
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Re-run even if already onboarded."
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-run even if already onboarded."),
 ) -> None:
     """Run the first-run onboarding interview (name, location, hours, style)."""
     from assistant.hitl import DesktopAsker
@@ -63,9 +61,7 @@ def onboard(
 
     async def run() -> None:
         if not force and not await needs_onboarding():
-            typer.echo(
-                f"Already onboarded (marker at {marker_path()}). Use --force to redo."
-            )
+            typer.echo(f"Already onboarded (marker at {marker_path()}). Use --force to redo.")
             return
         asker = DesktopAsker()
         try:
@@ -116,9 +112,7 @@ def chat(
                     break
                 if not user.strip():
                     continue
-                reply = await gateway.send_message(
-                    user, session_id="cli-chat", asker=asker
-                )
+                reply = await gateway.send_message(user, session_id="cli-chat", asker=asker)
                 typer.echo(f"ag2assistant> {reply}\n")
         finally:
             if asker is not None:
@@ -153,9 +147,7 @@ def profile_clear(
     from assistant.memory import clear_profile, default_store_path
 
     if not yes:
-        confirm = typer.confirm(
-            f"Delete the learned profile at {default_store_path()}?"
-        )
+        confirm = typer.confirm(f"Delete the learned profile at {default_store_path()}?")
         if not confirm:
             typer.echo("Aborted.")
             raise typer.Exit()

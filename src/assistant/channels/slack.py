@@ -86,9 +86,7 @@ class SlackAsker:
                     ],
                 },
             ]
-            await self._client.chat_postMessage(
-                channel=self._channel_id, text=text, blocks=blocks
-            )
+            await self._client.chat_postMessage(channel=self._channel_id, text=text, blocks=blocks)
         else:
             await self._client.chat_postMessage(channel=self._channel_id, text=text)
         try:
@@ -228,9 +226,7 @@ class SlackChannel(Channel):
                 pass  # missing reactions:write or already reacted — non-fatal
 
         attachments = await _download_attachments(event, self._bot_token)
-        text = inbound.text or (
-            "Here is a file I'm sharing with you." if attachments else ""
-        )
+        text = inbound.text or ("Here is a file I'm sharing with you." if attachments else "")
         try:
             reply = await self._gateway.send_message(
                 text,

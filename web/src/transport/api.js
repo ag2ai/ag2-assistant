@@ -24,6 +24,10 @@ export const api = {
   archiveTask: (id, archived = true) => j('POST', `/api/tasks/${id}/archive`, { archived }),
   inquiries: () => j('GET', '/api/inquiries/pending').then((d) => d.pending || []),
   answerInquiry: (id, answer) => j('POST', `/api/inquiries/${encodeURIComponent(id)}/answer`, { answer }),
+  // Chat-turn permission prompts (run_code/shell/file) live in the HitlServer, a
+  // separate store from durable task inquiries — surfaced in the same strip.
+  hitlPending: () => j('GET', '/api/hitl/pending').then((d) => d.pending || []),
+  answerHitl: (id, answer) => j('POST', `/hitl/${encodeURIComponent(id)}/answer`, { answer }),
   googleStatus: () => j('GET', '/api/google/status'),
   googleLoginUrl: () => j('POST', '/api/google/login_url'),
   googleCredentials: (content) => j('POST', '/api/google/credentials', { content }),

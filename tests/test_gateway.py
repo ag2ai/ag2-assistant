@@ -197,9 +197,7 @@ def test_rest_message_endpoint(monkeypatch):
         health = client.get("/api/health").json()
         assert health["status"] == "ok"
 
-        resp = client.post(
-            "/api/message", json={"text": "hi there", "session_id": "u1"}
-        )
+        resp = client.post("/api/message", json={"text": "hi there", "session_id": "u1"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["reply"] == "echo[1]: hi there"
@@ -365,9 +363,7 @@ async def test_gateway_real_agent_multiturn_and_isolation():
         await gw.send_message(
             "My codeword is KIWI-7. Acknowledge in one sentence.", session_id="s1"
         )
-        recall = await gw.send_message(
-            "What is my codeword? One word.", session_id="s1"
-        )
+        recall = await gw.send_message("What is my codeword? One word.", session_id="s1")
         assert "KIWI-7" in recall.upper()
 
         other = await gw.send_message(
@@ -390,9 +386,7 @@ async def test_conversation_resumes_across_restart(tmp_path):
 
     gw1 = Gateway(config=cfg, memory=False)
     await gw1.start()
-    await gw1.send_message(
-        "My lucky number is 7. Acknowledge.", session_id="resume-1"
-    )
+    await gw1.send_message("My lucky number is 7. Acknowledge.", session_id="resume-1")
     await gw1.close()  # simulate shutdown
 
     gw2 = Gateway(config=cfg, memory=False)
@@ -412,8 +406,8 @@ def test_origin_ok_unit(monkeypatch):
     from assistant.gateway.app import _origin_ok
 
     monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
-    assert _origin_ok(None, "127.0.0.1:8800")                  # non-browser caller
-    assert _origin_ok("http://127.0.0.1:8800", "127.0.0.1:8800")   # same-origin
+    assert _origin_ok(None, "127.0.0.1:8800")  # non-browser caller
+    assert _origin_ok("http://127.0.0.1:8800", "127.0.0.1:8800")  # same-origin
     assert _origin_ok("http://127.0.0.1:8800/", "127.0.0.1:8800")  # trailing slash
     assert not _origin_ok("http://evil.example", "127.0.0.1:8800")  # other site
     assert not _origin_ok("http://127.0.0.1:9999", "127.0.0.1:8800")  # other port

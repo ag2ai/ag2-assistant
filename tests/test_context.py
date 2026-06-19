@@ -32,7 +32,15 @@ def test_turn_prompt_includes_persona_and_environment():
     assert prompt[0] == config.agent.system_prompt
     # behaviour guidance is always injected, even with a custom persona
     assert any("ask how they" in p for p in prompt)
+    assert any("long-term memory" in p for p in prompt)
     assert any("Current date and time" in p for p in prompt)
+
+
+def test_turn_prompt_can_omit_memory_guidance():
+    prompt = turn_prompt(Config(), memory=False)
+    joined = " ".join(prompt)
+    assert "long-term memory" not in joined
+    assert "Current date and time" in joined
 
 
 def test_behavior_guidance_survives_custom_persona():

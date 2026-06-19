@@ -22,7 +22,7 @@ KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "github": "GITHUB_TOKEN",
 }
-OLLAMA_BASE_ENV = "OLLAMA_BASE_URL"          # our convention; model_config reads it
+OLLAMA_BASE_ENV = "OLLAMA_BASE_URL"  # our convention; model_config reads it
 DEFAULT_OLLAMA_BASE = "http://localhost:11434"
 
 

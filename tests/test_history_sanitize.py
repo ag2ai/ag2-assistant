@@ -20,13 +20,15 @@ def _user(text="hi"):
 
 
 def _model_call(call_id):
-    return ModelResponse(tool_calls=ToolCallsEvent(calls=[ToolCallEvent(id=call_id, name="search")]))
+    return ModelResponse(
+        tool_calls=ToolCallsEvent(calls=[ToolCallEvent(id=call_id, name="search")])
+    )
 
 
 def test_drops_orphan_result_mid_conversation():
     u = _user()
     mr = _model_call("c1")
-    good = ToolResultEvent(parent_id="c1", name="search")     # paired
+    good = ToolResultEvent(parent_id="c1", name="search")  # paired
     orphan = ToolResultEvent(parent_id="gone", name="search")  # call compacted away
     out = sanitize_history([u, mr, good, orphan])
     assert orphan not in out
@@ -51,12 +53,14 @@ def test_no_user_turn_keeps_only_summary():
     # a degenerate window (single giant turn whose user start was compacted) →
     # keep just the summary; resume will append the new user message.
     summary = CompactionSummary(summary="ctx", event_count=30)
-    out = sanitize_history([
-        summary,
-        ToolCallsEvent(calls=[ToolCallEvent(id="x", name="s")]),
-        ToolResultEvent(parent_id="x", name="s"),
-        ModelResponse(message=None),
-    ])
+    out = sanitize_history(
+        [
+            summary,
+            ToolCallsEvent(calls=[ToolCallEvent(id="x", name="s")]),
+            ToolResultEvent(parent_id="x", name="s"),
+            ModelResponse(message=None),
+        ]
+    )
     assert out == [summary]
 
 

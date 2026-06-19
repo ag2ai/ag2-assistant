@@ -41,8 +41,14 @@ class TaskService:
     """The gateway's task subsystem: stores, runner, planner, and intake driver."""
 
     def __init__(
-        self, config: Config | None = None, store=None, inquiry_store=None,
-        manager=None, planner_agent=None, executor=None, max_concurrent: int = 3,
+        self,
+        config: Config | None = None,
+        store=None,
+        inquiry_store=None,
+        manager=None,
+        planner_agent=None,
+        executor=None,
+        max_concurrent: int = 3,
         scheduler_interval: float = 30.0,
     ) -> None:
         self._config = config or load_config()
@@ -88,14 +94,22 @@ class TaskService:
         if status == TaskStatus.RUNNING:
             ev = TaskStarted(task_id=task_id, agent_name=name, objective=obj)
         elif status == TaskStatus.COMPLETED:
-            ev = TaskCompleted(task_id=task_id, agent_name=name, objective=obj,
-                               result=(t.result or ""), task_stream=f"task:{task_id}")
+            ev = TaskCompleted(
+                task_id=task_id,
+                agent_name=name,
+                objective=obj,
+                result=(t.result or ""),
+                task_stream=f"task:{task_id}",
+            )
         elif status == TaskStatus.FAILED:
-            ev = TaskFailed(task_id=task_id, agent_name=name, objective=obj,
-                            error=Exception(error or t.error or "failed"))
+            ev = TaskFailed(
+                task_id=task_id,
+                agent_name=name,
+                objective=obj,
+                error=Exception(error or t.error or "failed"),
+            )
         elif status == TaskStatus.CANCELLED:
-            ev = TaskCancelled(task_id=task_id, agent_name=name, objective=obj,
-                               reason=error or "")
+            ev = TaskCancelled(task_id=task_id, agent_name=name, objective=obj, reason=error or "")
         if ev is not None:
             try:
                 await self._emit(f"task:{task_id}", ev)
@@ -109,9 +123,24 @@ class TaskService:
         from assistant.events import DeliverableProduced
 
         try:
-            await self._emit(f"task:{task_id}", DeliverableProduced(
-                task_id, deliverable_id=deliverable_id, description=description, preview=preview,
-            ))
+            await self._emit(
+                f"task:{task_id}",
+                DeliverableProduced(
+                    task_id,
+                    deliverable_id=deliverable_id,
+                    description=description,
+                    preview=preview,
+                ),
+            )
+        except Exception:
+            pass
+
+    async def _emit_task_event(self, task_id: str, event) -> None:
+        """Forward raw AG2 Beta subagent events onto the durable task stream."""
+        if self._emit is None:
+            return
+        try:
+            await self._emit(f"task:{task_id}", event)
         except Exception:
             pass
 
@@ -126,14 +155,24 @@ class TaskService:
         sid = f"task:{inquiry.task_id}"
         try:
             if kind == "raised":
-                await self._emit(sid, InquiryRaised(
-                    inquiry.id, task_id=inquiry.task_id, question=inquiry.text,
-                    options=list(inquiry.options or []), kind=inquiry.kind,
-                ))
+                await self._emit(
+                    sid,
+                    InquiryRaised(
+                        inquiry.id,
+                        task_id=inquiry.task_id,
+                        question=inquiry.text,
+                        options=list(inquiry.options or []),
+                        kind=inquiry.kind,
+                    ),
+                )
             elif kind == InquiryStatus.ANSWERED:
-                await self._emit(sid, InquiryAnswered(
-                    inquiry.id, answer=getattr(inquiry, "answer", "") or "",
-                ))
+                await self._emit(
+                    sid,
+                    InquiryAnswered(
+                        inquiry.id,
+                        answer=getattr(inquiry, "answer", "") or "",
+                    ),
+                )
         except Exception:
             pass
 
@@ -148,23 +187,25 @@ class TaskService:
             self._store = TaskStore(path=d / "tasks.db")
         if self._inquiries is None:
             self._inquiries = InquiryStore(
-                path=d / "inquiries.db", on_change=self._emit_inquiry,
+                path=d / "inquiries.db",
+                on_change=self._emit_inquiry,
             )
         if self._executor is None:
             self._executor = make_task_executor(self._config)
         if self._manager is None:
             self._manager = TaskManager(
-                self._store, self._executor,
-                max_concurrent=self._max_concurrent, inquiry_store=self._inquiries,
-                on_status=self._emit_status,        # lifecycle → AG2 task events
+                self._store,
+                self._executor,
+                max_concurrent=self._max_concurrent,
+                inquiry_store=self._inquiries,
+                on_status=self._emit_status,  # lifecycle → AG2 task events
+                on_event=self._emit_task_event,  # nested AG2 events → task stream
                 on_deliverable=self._emit_deliverable,  # → DeliverableProduced
             )
         if self._scheduler is None:
             from assistant.tasks.scheduling import Scheduler
 
-            self._scheduler = Scheduler(
-                self._store, self._fire, interval=self._scheduler_interval
-            )
+            self._scheduler = Scheduler(self._store, self._fire, interval=self._scheduler_interval)
             await self._scheduler.start()
 
     async def reload(self) -> None:
@@ -214,11 +255,15 @@ class TaskService:
         try:
             intake_asker = (
                 DurableAsker(_ParkingAsker(), self._inquiries, task_id=task_id, channel=channel)
-                if clarify else None
+                if clarify
+                else None
             )
             await prepare_task(
-                self._store, task_id, self._planner_agent(),
-                asker=intake_asker, capabilities=available_capabilities(),
+                self._store,
+                task_id,
+                self._planner_agent(),
+                asker=intake_asker,
+                capabilities=available_capabilities(),
             )
             cur = await self._store.get(task_id)
             if cur is not None and not cur.is_terminal:
@@ -241,7 +286,11 @@ class TaskService:
         return task.id
 
     async def schedule_task(
-        self, text: str, when: str, recurrence: str | None = None, channel: str = "web",
+        self,
+        text: str,
+        when: str,
+        recurrence: str | None = None,
+        channel: str = "web",
     ) -> str:
         """Schedule a task for `when` (ISO datetime), optionally recurring.
 
@@ -258,16 +307,25 @@ class TaskService:
         if first is not None:
             when = first.isoformat()
         task = await self._store.create(
-            text, origin_channel=channel, hitl_channel=channel,
-            status=TaskStatus.SCHEDULED, scheduled_for=when, recurrence=recurrence or None,
+            text,
+            origin_channel=channel,
+            hitl_channel=channel,
+            status=TaskStatus.SCHEDULED,
+            scheduled_for=when,
+            recurrence=recurrence or None,
         )
         if self._emit is not None:
             from assistant.events import TaskScheduled
 
             try:
-                await self._emit(f"task:{task.id}", TaskScheduled(
-                    task.id, scheduled_for=when, recurrence=recurrence or "",
-                ))
+                await self._emit(
+                    f"task:{task.id}",
+                    TaskScheduled(
+                        task.id,
+                        scheduled_for=when,
+                        recurrence=recurrence or "",
+                    ),
+                )
             except Exception:
                 pass
         bg = asyncio.create_task(self._plan_for_schedule(task.id, channel, when))
@@ -284,28 +342,42 @@ class TaskService:
 
         try:
             asker = DurableAsker(
-                _ParkingAsker(), self._inquiries, task_id=task_id, channel=channel,
+                _ParkingAsker(),
+                self._inquiries,
+                task_id=task_id,
+                channel=channel,
             )
             await prepare_task(
-                self._store, task_id, self._planner_agent(),
-                asker=asker, capabilities=available_capabilities(),
+                self._store,
+                task_id,
+                self._planner_agent(),
+                asker=asker,
+                capabilities=available_capabilities(),
             )
             # prepare_task leaves it PENDING (or CANCELLED if abandoned); arm it.
             cur = await self._store.get(task_id)
             if cur is not None and cur.status == TaskStatus.PENDING:
                 await self._store.update(
-                    task_id, status=TaskStatus.SCHEDULED, scheduled_for=when,
+                    task_id,
+                    status=TaskStatus.SCHEDULED,
+                    scheduled_for=when,
                 )
         except Exception:
             pass  # planning is best-effort; the run can still plan on fire as a fallback
 
     async def _clone_subtree(self, src, new_parent_id: str) -> None:
         child = await self._store.add_subtask(
-            new_parent_id, src.title, src.description, reopen_parent=False,
-            capabilities=src.capabilities, objective=src.objective,
+            new_parent_id,
+            src.title,
+            src.description,
+            reopen_parent=False,
+            capabilities=src.capabilities,
+            objective=src.objective,
         )
         for d in src.deliverables or []:
-            await self._store.add_deliverable(child.id, d.get("description", ""), d.get("criteria", ""))
+            await self._store.add_deliverable(
+                child.id, d.get("description", ""), d.get("criteria", "")
+            )
         for gc in await self._store.children(src.id):
             await self._clone_subtree(gc, child.id)
 
@@ -313,13 +385,18 @@ class TaskService:
         """A fresh, unplanned-status copy of a planned task tree (deliverables reset,
         no assets) — one occurrence's run, with the template's baked-in plan."""
         run = await self._store.create(
-            template.title, description=template.description,
-            objective=template.objective, capabilities=template.capabilities,
-            origin_channel=template.origin_channel, hitl_channel=template.hitl_channel,
+            template.title,
+            description=template.description,
+            objective=template.objective,
+            capabilities=template.capabilities,
+            origin_channel=template.origin_channel,
+            hitl_channel=template.hitl_channel,
             run_of=template.id,  # mark this as one occurrence of the recurring task
         )
         for d in template.deliverables or []:
-            await self._store.add_deliverable(run.id, d.get("description", ""), d.get("criteria", ""))
+            await self._store.add_deliverable(
+                run.id, d.get("description", ""), d.get("criteria", "")
+            )
         for child in await self._store.children(template.id):
             await self._clone_subtree(child, run.id)
         return run
@@ -375,9 +452,7 @@ class TaskService:
         for t in roots:
             s = await self._summary(t)
             ids = {t.id} | {d.id for d in await self._store.descendants(t.id)}
-            s["inquiries"] = [
-                self._inquiry_view(i) for tid in ids for i in by_task.get(tid, [])
-            ]
+            s["inquiries"] = [self._inquiry_view(i) for tid in ids for i in by_task.get(tid, [])]
             out.append(s)
 
         out.sort(key=lambda s: s["created_at"], reverse=True)
@@ -438,7 +513,9 @@ class TaskService:
     async def add_subtask(self, task_id, title, description="", capabilities="web") -> str:
         from assistant.tasks.control import do_add_subtask
 
-        return await do_add_subtask(self._store, self._manager, task_id, title, description, capabilities)
+        return await do_add_subtask(
+            self._store, self._manager, task_id, title, description, capabilities
+        )
 
     async def add_deliverable(self, task_id, description, criteria="") -> str:
         from assistant.tasks.control import do_add_deliverable
@@ -518,8 +595,8 @@ class TaskService:
         for i in items:
             v = self._inquiry_view(i)
             root_id, title = await self._root_label(i.task_id)
-            v["root_id"] = root_id          # open this to see the source task
-            v["task_title"] = title         # so the user knows what they're answering
+            v["root_id"] = root_id  # open this to see the source task
+            v["task_title"] = title  # so the user knows what they're answering
             out.append(v)
         return out
 
@@ -560,8 +637,13 @@ class TaskService:
     @staticmethod
     def _inquiry_view(i) -> dict:
         return {
-            "id": i.id, "task_id": i.task_id, "kind": i.kind, "text": i.text,
-            "detail": i.detail, "options": i.options, "created_at": i.created_at,
+            "id": i.id,
+            "task_id": i.task_id,
+            "kind": i.kind,
+            "text": i.text,
+            "detail": i.detail,
+            "options": i.options,
+            "created_at": i.created_at,
         }
 
     async def _summary(self, t) -> dict:
@@ -570,12 +652,17 @@ class TaskService:
         done = sum(1 for d in delivs if d.get("status") in ("produced", "accepted"))
         progress = t.progress or []
         return {
-            "id": t.id, "title": t.title, "status": t.status,
-            "objective": t.objective or "", "created_at": t.created_at,
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "objective": t.objective or "",
+            "created_at": t.created_at,
             "children": len(kids),
-            "deliverables": len(delivs), "deliverables_done": done,
+            "deliverables": len(delivs),
+            "deliverables_done": done,
             "last_progress": progress[-1]["message"] if progress else None,
-            "scheduled_for": t.scheduled_for, "recurrence": t.recurrence,
+            "scheduled_for": t.scheduled_for,
+            "recurrence": t.recurrence,
             "run_of": getattr(t, "run_of", None),
             "seen": getattr(t, "seen_at", None) is not None,
         }
@@ -588,17 +675,23 @@ class TaskService:
             return False
         if getattr(t, "seen_at", None) is None:
             from datetime import datetime
+
             await self._store.update(task_id, seen_at=datetime.now().astimezone().isoformat())
         return True
 
     async def _node(self, t, include_assets: bool = False) -> dict:
         kids = await self._store.children(t.id)
         return {
-            "id": t.id, "title": t.title, "status": t.status,
-            "objective": t.objective or "", "description": t.description or "",
-            "created_at": t.created_at, "capabilities": t.capabilities or [],
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "objective": t.objective or "",
+            "description": t.description or "",
+            "created_at": t.created_at,
+            "capabilities": t.capabilities or [],
             "archived": bool(getattr(t, "archived", False)),
-            "scheduled_for": t.scheduled_for, "recurrence": t.recurrence,
+            "scheduled_for": t.scheduled_for,
+            "recurrence": t.recurrence,
             "run_of": getattr(t, "run_of", None),
             "intake": t.intake or {},
             "progress": t.progress or [],

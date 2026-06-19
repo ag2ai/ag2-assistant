@@ -35,24 +35,35 @@ async def gmail_search(
     max_results: Annotated[int, Field(description="Max messages to return.")] = _MAX,
 ) -> str:
     """Search the user's Gmail and return matching messages (id, from, subject, date, snippet)."""
+
     def _run():
         svc = _svc("gmail", "v1")
         resp = svc.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
         out = []
         for m in resp.get("messages", []):
-            full = svc.users().messages().get(
-                userId="me", id=m["id"], format="metadata",
-                metadataHeaders=["From", "Subject", "Date"],
-            ).execute()
+            full = (
+                svc.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=m["id"],
+                    format="metadata",
+                    metadataHeaders=["From", "Subject", "Date"],
+                )
+                .execute()
+            )
             hdrs = {h["name"]: h["value"] for h in full.get("payload", {}).get("headers", [])}
-            out.append({
-                "id": m["id"],
-                "from": hdrs.get("From", ""),
-                "subject": hdrs.get("Subject", ""),
-                "date": hdrs.get("Date", ""),
-                "snippet": full.get("snippet", ""),
-            })
+            out.append(
+                {
+                    "id": m["id"],
+                    "from": hdrs.get("From", ""),
+                    "subject": hdrs.get("Subject", ""),
+                    "date": hdrs.get("Date", ""),
+                    "snippet": full.get("snippet", ""),
+                }
+            )
         return out
+
     try:
         results = await asyncio.to_thread(_run)
     except Exception as exc:
@@ -71,6 +82,7 @@ async def gmail_read(
     message_id: Annotated[str, Field(description="The Gmail message id (from gmail_search).")],
 ) -> str:
     """Read a full Gmail message by id (headers + plain-text body)."""
+
     def _decode(payload):
         if payload.get("body", {}).get("data"):
             return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", "replace")
@@ -89,6 +101,7 @@ async def gmail_read(
         hdrs = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
         body = _decode(msg.get("payload", {}))
         return hdrs, body
+
     try:
         hdrs, body = await asyncio.to_thread(_run)
     except Exception as exc:
@@ -106,6 +119,7 @@ async def gmail_send(
     body: Annotated[str, Field(description="Plain-text email body.")],
 ) -> str:
     """Send an email from the user's Gmail. Requires human approval before sending."""
+
     def _run():
         svc = _svc("gmail", "v1")
         mime = MIMEText(body)
@@ -114,6 +128,7 @@ async def gmail_send(
         raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
         sent = svc.users().messages().send(userId="me", body={"raw": raw}).execute()
         return sent.get("id", "")
+
     try:
         msg_id = await asyncio.to_thread(_run)
     except Exception as exc:
@@ -128,6 +143,7 @@ async def gmail_create_draft(
     body: Annotated[str, Field(description="Plain-text email body.")],
 ) -> str:
     """Save an email as a Gmail draft (does NOT send — the user can review and send it)."""
+
     def _run():
         svc = _svc("gmail", "v1")
         mime = MIMEText(body)
@@ -136,6 +152,7 @@ async def gmail_create_draft(
         raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
         draft = svc.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
         return draft.get("id", "")
+
     try:
         draft_id = await asyncio.to_thread(_run)
     except Exception as exc:
@@ -148,7 +165,9 @@ async def gmail_create_draft(
 
 @tool
 async def calendar_list_events(
-    time_min: Annotated[str | None, Field(description="ISO start, e.g. 2026-06-14T00:00:00Z. Default now.")] = None,
+    time_min: Annotated[
+        str | None, Field(description="ISO start, e.g. 2026-06-14T00:00:00Z. Default now.")
+    ] = None,
     time_max: Annotated[str | None, Field(description="ISO end. Optional.")] = None,
     max_results: Annotated[int, Field(description="Max events.")] = _MAX,
 ) -> str:
@@ -167,6 +186,7 @@ async def calendar_list_events(
         if time_max:
             params["timeMax"] = time_max
         return svc.events().list(**params).execute().get("items", [])
+
     try:
         events = await asyncio.to_thread(_run)
     except Exception as exc:
@@ -188,6 +208,7 @@ async def calendar_create_event(
     description: Annotated[str | None, Field(description="Optional details.")] = None,
 ) -> str:
     """Create a Google Calendar event. Requires human approval first."""
+
     def _run():
         svc = _svc("calendar", "v3")
         body = {
@@ -199,6 +220,7 @@ async def calendar_create_event(
             body["description"] = description
         ev = svc.events().insert(calendarId="primary", body=body).execute()
         return ev.get("htmlLink", "")
+
     try:
         link = await asyncio.to_thread(_run)
     except Exception as exc:
@@ -215,23 +237,27 @@ async def drive_search(
     max_results: Annotated[int, Field(description="Max files.")] = _MAX,
 ) -> str:
     """Search the user's Google Drive and return matching files (id, name, type)."""
+
     def _run():
         svc = _svc("drive", "v3")
-        resp = svc.files().list(
-            q=f"fullText contains '{query}'" if query else None,
-            pageSize=max_results,
-            fields="files(id, name, mimeType, modifiedTime)",
-        ).execute()
+        resp = (
+            svc.files()
+            .list(
+                q=f"fullText contains '{query}'" if query else None,
+                pageSize=max_results,
+                fields="files(id, name, mimeType, modifiedTime)",
+            )
+            .execute()
+        )
         return resp.get("files", [])
+
     try:
         files = await asyncio.to_thread(_run)
     except Exception as exc:
         return f"Drive search failed: {exc}"
     if not files:
         return f"No files matched {query!r}."
-    return "Files:\n" + "\n".join(
-        f"- [{f['id']}] {f['name']} ({f['mimeType']})" for f in files
-    )
+    return "Files:\n" + "\n".join(f"- [{f['id']}] {f['name']} ({f['mimeType']})" for f in files)
 
 
 def _extract_drive_id(value: str) -> str:
@@ -239,9 +265,7 @@ def _extract_drive_id(value: str) -> str:
     import re
 
     if "http" in value or "/" in value:
-        m = re.search(r"/d/([a-zA-Z0-9_-]+)", value) or re.search(
-            r"[?&]id=([a-zA-Z0-9_-]+)", value
-        )
+        m = re.search(r"/d/([a-zA-Z0-9_-]+)", value) or re.search(r"[?&]id=([a-zA-Z0-9_-]+)", value)
         if m:
             return m.group(1)
     return value.strip()
@@ -249,7 +273,9 @@ def _extract_drive_id(value: str) -> str:
 
 @tool
 async def drive_read(
-    file_id: Annotated[str, Field(description="The Drive file id (from drive_search) or a Docs/Sheets/Drive URL.")],
+    file_id: Annotated[
+        str, Field(description="The Drive file id (from drive_search) or a Docs/Sheets/Drive URL.")
+    ],
 ) -> str:
     """Read a Google Drive file's text content (Docs/Sheets are exported as text).
 
@@ -268,6 +294,7 @@ async def drive_read(
             data = svc.files().get_media(fileId=fid).execute()
         text = data.decode("utf-8", "replace") if isinstance(data, bytes) else str(data)
         return meta.get("name", fid), text[:50_000]
+
     try:
         name, text = await asyncio.to_thread(_run)
     except Exception as exc:
@@ -278,9 +305,14 @@ async def drive_read(
 def build_google_tools() -> list:
     """All Google tools, for inclusion when the user is signed in."""
     return [
-        gmail_search, gmail_read, gmail_send, gmail_create_draft,
-        calendar_list_events, calendar_create_event,
-        drive_search, drive_read,
+        gmail_search,
+        gmail_read,
+        gmail_send,
+        gmail_create_draft,
+        calendar_list_events,
+        calendar_create_event,
+        drive_search,
+        drive_read,
     ]
 
 

@@ -11,9 +11,18 @@
 
   async function refresh() {
     try {
-      const next = await api.inquiries()
-      const fresh = !first && next.some((q) => !seen.has(q.id))
-      seen = new Set(next.map((q) => q.id))
+      // Two sources merged into one strip: durable task inquiries, and chat-turn
+      // permission prompts (run_code/shell/file) which live in the HitlServer.
+      const [inq, hitl] = await Promise.all([
+        api.inquiries().catch(() => []),
+        api.hitlPending().catch(() => []),
+      ])
+      const next = [
+        ...inq.map((q) => ({ ...q, _src: 'inquiry', _key: 'inq:' + q.id })),
+        ...hitl.map((q) => ({ ...q, _src: 'hitl', _key: 'hitl:' + q.id })),
+      ]
+      const fresh = !first && next.some((q) => !seen.has(q._key))
+      seen = new Set(next.map((q) => q._key))
       first = false
       $inquiries = next
       if (fresh && $soundOnInput) chime()
@@ -23,8 +32,11 @@
 
   async function answer(q, text) {
     if (!text || !text.trim()) return
-    try { await api.answerInquiry(q.id, text.trim()) } catch {}
-    drafts[q.id] = ''
+    try {
+      if (q._src === 'hitl') await api.answerHitl(q.id, text.trim())
+      else await api.answerInquiry(q.id, text.trim())
+    } catch {}
+    drafts[q._key] = ''
     refresh()
   }
 </script>
@@ -32,7 +44,7 @@
 {#if $inquiries.length}
   <div class="hitl">
     <div class="hitlhead">Needs your input ({$inquiries.length})</div>
-    {#each $inquiries as q (q.id)}
+    {#each $inquiries as q (q._key)}
       <div class="qcard">
         <div class="qk">
           {q.kind === 'permission' ? 'Permission' : 'Question'}
@@ -43,8 +55,8 @@
         {#if q.options && q.options.length}
           <div class="qopts">{#each q.options as o}<button onclick={() => answer(q, o)}>{o}</button>{/each}</div>
         {:else}
-          <input placeholder="Your answer…" bind:value={drafts[q.id]}
-                 onkeydown={(e) => e.key === 'Enter' && answer(q, drafts[q.id])} />
+          <input placeholder="Your answer…" bind:value={drafts[q._key]}
+                 onkeydown={(e) => e.key === 'Enter' && answer(q, drafts[q._key])} />
         {/if}
       </div>
     {/each}

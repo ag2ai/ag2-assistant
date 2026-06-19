@@ -12,10 +12,10 @@ from dataclasses import dataclass, field
 class DeliverableStatus:
     """Lifecycle of a single deliverable (a concrete promised output)."""
 
-    PENDING = "pending"      # not produced yet
-    PRODUCED = "produced"    # the agent produced it (asset attached) — awaiting check
-    ACCEPTED = "accepted"    # verified against criteria (auto) or signed off (user)
-    REJECTED = "rejected"    # failed criteria / user asked for rework
+    PENDING = "pending"  # not produced yet
+    PRODUCED = "produced"  # the agent produced it (asset attached) — awaiting check
+    ACCEPTED = "accepted"  # verified against criteria (auto) or signed off (user)
+    REJECTED = "rejected"  # failed criteria / user asked for rework
 
 
 @dataclass
@@ -28,9 +28,9 @@ class Deliverable:
 
     id: str
     description: str
-    criteria: str = ""               # definition of done for THIS deliverable
+    criteria: str = ""  # definition of done for THIS deliverable
     status: str = DeliverableStatus.PENDING
-    asset: dict | None = None        # the produced artifact {name, path, kind}
+    asset: dict | None = None  # the produced artifact {name, path, kind}
     notes: str = ""
 
     @staticmethod
@@ -43,10 +43,10 @@ class Deliverable:
 class TaskStatus:
     """Task lifecycle states (string constants for easy JSON/round-trip)."""
 
-    PENDING = "pending"            # created, not yet started
-    SCHEDULED = "scheduled"        # waiting for a scheduled time
+    PENDING = "pending"  # created, not yet started
+    SCHEDULED = "scheduled"  # waiting for a scheduled time
     AWAITING_INPUT = "awaiting_input"  # paused on a HITL intake/permission prompt
-    PLANNING = "planning"          # forming the plan / subtasks
+    PLANNING = "planning"  # forming the plan / subtasks
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -63,8 +63,8 @@ class Task:
 
     id: str
     title: str
-    description: str = ""          # the raw request
-    objective: str = ""           # definition of done — what success looks like
+    description: str = ""  # the raw request
+    objective: str = ""  # definition of done — what success looks like
     status: str = TaskStatus.PENDING
     parent_id: str | None = None
 
@@ -79,28 +79,28 @@ class Task:
     ended_at: str | None = None
 
     # scheduling
-    scheduled_for: str | None = None   # one-shot ISO datetime
-    recurrence: str | None = None      # e.g. "daily@09:00" (later phase)
+    scheduled_for: str | None = None  # one-shot ISO datetime
+    recurrence: str | None = None  # e.g. "daily@09:00" (later phase)
 
     # execution detail
     progress: list[dict] = field(default_factory=list)  # {at, message, pct?}
     result: str | None = None
     error: str | None = None
     plan: list[str] = field(default_factory=list)
-    intake: dict = field(default_factory=dict)          # clarifying Q&A
-    capability: str | None = None                       # tag for recall
+    intake: dict = field(default_factory=dict)  # clarifying Q&A
+    capability: str | None = None  # tag for recall
     capabilities: list[str] = field(default_factory=list)  # tool groups this task may use
-    assets: list[dict] = field(default_factory=list)    # {name, path, kind}
+    assets: list[dict] = field(default_factory=list)  # {name, path, kind}
 
     # origin / routing
     origin_channel: str | None = None
     origin_session: str | None = None
-    hitl_channel: str | None = None      # where to ask (override; default=origin)
+    hitl_channel: str | None = None  # where to ask (override; default=origin)
 
-    stream_id: str | None = None         # per-task event-log id
-    archived: bool = False               # hidden from the default Tasks view
-    run_of: str | None = None            # template id, set on a recurring task's per-occurrence run
-    seen_at: str | None = None           # when the user opened this task/run (drives unread highlight)
+    stream_id: str | None = None  # per-task event-log id
+    archived: bool = False  # hidden from the default Tasks view
+    run_of: str | None = None  # template id, set on a recurring task's per-occurrence run
+    seen_at: str | None = None  # when the user opened this task/run (drives unread highlight)
 
     @property
     def is_terminal(self) -> bool:

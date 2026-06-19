@@ -64,9 +64,13 @@ def test_dm_inbound_ignores_own_messages():
 
 def test_dm_inbound_ignores_bot_and_subtype():
     ch = _slack_channel()
-    assert ch._dm_inbound(
-        {"channel_type": "im", "text": "hi", "bot_id": "B1", "channel": "D1"}
-    ) is None
-    assert ch._dm_inbound(
-        {"channel_type": "im", "text": "edited", "subtype": "message_changed", "channel": "D1"}
-    ) is None
+    assert (
+        ch._dm_inbound({"channel_type": "im", "text": "hi", "bot_id": "B1", "channel": "D1"})
+        is None
+    )
+    assert (
+        ch._dm_inbound(
+            {"channel_type": "im", "text": "edited", "subtype": "message_changed", "channel": "D1"}
+        )
+        is None
+    )

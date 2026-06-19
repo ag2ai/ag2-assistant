@@ -36,11 +36,19 @@ def test_load_config_defaults_when_no_file(tmp_path):
 
 def test_load_config_reads_json(tmp_path):
     p = tmp_path / "config.json"
-    p.write_text(json.dumps({
-        "llm": {"provider": "anthropic", "model": "claude-sonnet-4-6",
-                "api_key_env": "ANTHROPIC_API_KEY", "aggregate_model": "claude-haiku"},
-        "memory": {"aggregate_every_n_turns": 9},
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "llm": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4-6",
+                    "api_key_env": "ANTHROPIC_API_KEY",
+                    "aggregate_model": "claude-haiku",
+                },
+                "memory": {"aggregate_every_n_turns": 9},
+            }
+        )
+    )
     cfg = load_config(p)
     assert cfg.llm.provider == "anthropic"
     assert cfg.llm.model == "claude-sonnet-4-6"
@@ -98,6 +106,9 @@ def test_model_config_dispatches_anthropic(monkeypatch):
     from assistant.agent import model_config
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
-    cfg = Config(llm=LLMConfig(provider="anthropic", model="claude-sonnet-4-6",
-                               api_key_env="ANTHROPIC_API_KEY"))
+    cfg = Config(
+        llm=LLMConfig(
+            provider="anthropic", model="claude-sonnet-4-6", api_key_env="ANTHROPIC_API_KEY"
+        )
+    )
     assert type(model_config(cfg)).__name__ == "AnthropicConfig"

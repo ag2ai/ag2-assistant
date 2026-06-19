@@ -14,15 +14,29 @@ from assistant.permissions import PermissionManager
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _TEXT_SUFFIXES = {
-    ".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".yaml", ".yml",
-    ".py", ".js", ".ts", ".html", ".css", ".xml", ".log", ".ini", ".toml", ".sh",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".json",
+    ".csv",
+    ".tsv",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".xml",
+    ".log",
+    ".ini",
+    ".toml",
+    ".sh",
 }
 _MAX_TEXT_CHARS = 50_000
 
 
-async def read_file_impl(
-    path: str, permissions: PermissionManager
-) -> "ToolResult | str":
+async def read_file_impl(path: str, permissions: PermissionManager) -> "ToolResult | str":
     """Permission-gated file read. Returns vision content for PDFs/images, text
     for text files, or a message string for errors/denials."""
     target = Path(path).expanduser()

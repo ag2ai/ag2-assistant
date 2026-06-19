@@ -65,7 +65,10 @@ def test_first_occurrence_snaps_to_matching_weekday():
     first = first_occurrence("weekdays", "2026-06-20T05:00:00+10:00", sat)
     assert first.weekday() == 0 and first.hour == 5  # Monday 05:00
     # intervals are honoured as-is
-    assert first_occurrence("daily", "2026-06-20T05:00:00+10:00", sat).isoformat() == "2026-06-20T05:00:00+10:00"
+    assert (
+        first_occurrence("daily", "2026-06-20T05:00:00+10:00", sat).isoformat()
+        == "2026-06-20T05:00:00+10:00"
+    )
 
 
 def _store(tmp_path):
@@ -75,15 +78,21 @@ def _store(tmp_path):
 async def test_scheduler_tick_fires_due_only(tmp_path):
     store = _store(tmp_path)
     now = datetime.now().astimezone()
-    due = await store.create("due", status=TaskStatus.SCHEDULED,
-                             scheduled_for=(now - timedelta(minutes=5)).isoformat())
-    await store.create("future", status=TaskStatus.SCHEDULED,
-                       scheduled_for=(now + timedelta(hours=1)).isoformat())
+    due = await store.create(
+        "due", status=TaskStatus.SCHEDULED, scheduled_for=(now - timedelta(minutes=5)).isoformat()
+    )
+    await store.create(
+        "future", status=TaskStatus.SCHEDULED, scheduled_for=(now + timedelta(hours=1)).isoformat()
+    )
     await store.create("not scheduled")  # pending, ignored
 
     # archived scheduled tasks are put away — they don't fire
-    await store.create("archived due", status=TaskStatus.SCHEDULED,
-                       scheduled_for=(now - timedelta(minutes=5)).isoformat(), archived=True)
+    await store.create(
+        "archived due",
+        status=TaskStatus.SCHEDULED,
+        scheduled_for=(now - timedelta(minutes=5)).isoformat(),
+        archived=True,
+    )
 
     fired = []
 

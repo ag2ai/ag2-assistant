@@ -12,7 +12,7 @@ def test_voice_provider_env(monkeypatch):
     assert settings.voice_provider() == "openai"
     monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "OpenAI")  # case-insensitive
     assert settings.voice_provider() == "openai"
-    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "bogus")   # unknown → gemini
+    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "bogus")  # unknown → gemini
     assert settings.voice_provider() == "gemini"
 
 
@@ -50,8 +50,8 @@ def test_set_voice_is_per_provider(monkeypatch):
 
 
 def test_set_voice_rejects_unknown():
-    assert settings.set_voice("alloy", provider="gemini") is False   # openai voice
-    assert settings.set_voice("Puck", provider="openai") is False    # gemini voice
+    assert settings.set_voice("alloy", provider="gemini") is False  # openai voice
+    assert settings.set_voice("Puck", provider="openai") is False  # gemini voice
     assert settings.set_voice("nope", provider="gemini") is False
 
 
@@ -60,8 +60,8 @@ def test_legacy_flat_voice_migrates(monkeypatch):
     p = settings._path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"voice": "Sulafat"}))
-    assert settings.get_voice("gemini") == "Sulafat"        # read as the gemini value
-    assert settings.get_voice("openai") == "marin"          # unaffected → default
+    assert settings.get_voice("gemini") == "Sulafat"  # read as the gemini value
+    assert settings.get_voice("openai") == "marin"  # unaffected → default
     # writing an openai voice upgrades the shape without losing gemini's
     assert settings.set_voice("alloy", provider="openai")
     data = json.loads(p.read_text())

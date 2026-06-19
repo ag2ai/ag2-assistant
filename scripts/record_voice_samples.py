@@ -47,7 +47,7 @@ async def main() -> None:
     if "--provider" in args:
         idx = args.index("--provider")
         provider = args[idx + 1]
-        args = args[:idx] + args[idx + 2:]
+        args = args[:idx] + args[idx + 2 :]
     providers = list(provider_names()) if provider == "all" else [provider]
 
     cfg = load_config()

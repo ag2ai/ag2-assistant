@@ -100,9 +100,7 @@ class DiscordChannel(Channel):
     def __init__(self, token: str | None = None) -> None:
         self._token = token or os.environ.get("DISCORD_BOT_TOKEN", "")
         if not self._token:
-            raise ValueError(
-                "DISCORD_BOT_TOKEN not set (env var or token= argument)."
-            )
+            raise ValueError("DISCORD_BOT_TOKEN not set (env var or token= argument).")
         intents = discord.Intents.default()
         intents.message_content = True
         self._client = discord.Client(intents=intents)
@@ -175,9 +173,7 @@ class DiscordChannel(Channel):
 
         async with message.channel.typing():
             attachments = await _download_attachments(message)
-            text = inbound.text or (
-                "Here is a file I'm sharing with you." if attachments else ""
-            )
+            text = inbound.text or ("Here is a file I'm sharing with you." if attachments else "")
             try:
                 reply = await self._gateway.send_message(
                     text,

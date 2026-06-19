@@ -24,7 +24,9 @@ async def test_build_hitl_hook_adapts_asker():
 def test_render_body_options_and_freetext():
     from assistant.hitl.desktop import _render_body
 
-    opts = _render_body(Question("Allow access?", options=["Allow once", "Deny"], kind="permission"))
+    opts = _render_body(
+        Question("Allow access?", options=["Allow once", "Deny"], kind="permission")
+    )
     assert "Allow access?" in opts
     assert "Allow once" in opts and "Deny" in opts
     assert "Permission" in opts

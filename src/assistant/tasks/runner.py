@@ -35,6 +35,7 @@ class TaskManager:
         max_concurrent: int = 3,
         on_progress: Callable | None = None,
         on_status: Callable | None = None,
+        on_event: Callable | None = None,
         on_deliverable: Callable | None = None,
         inquiry_store=None,
     ) -> None:
@@ -47,6 +48,9 @@ class TaskManager:
         # Notified on every lifecycle transition (RUNNING / terminal) so the
         # service can emit the matching AG2 task event onto the task's stream.
         self._on_status = on_status
+        # Raw AG2 Beta events emitted by nested worker/subagent runs. These ride
+        # the task stream without affecting durable task status.
+        self._on_event = on_event
         # Notified when a deliverable is produced (the executor calls
         # deliverable_produced) → DeliverableProduced event on the task's stream.
         self._on_deliverable = on_deliverable
@@ -144,9 +148,11 @@ class TaskManager:
                 else:
                     pending = [d.get("description") for d in task.pending_deliverables()]
                     await self._mark(
-                        task_id, TaskStatus.FAILED,
+                        task_id,
+                        TaskStatus.FAILED,
                         error=f"deliverables not met after {attempts} attempt(s): {pending}"
-                        if pending else "incomplete (subtasks unfinished)",
+                        if pending
+                        else "incomplete (subtasks unfinished)",
                     )
                 return
         except asyncio.CancelledError:
@@ -174,8 +180,19 @@ class TaskManager:
             except Exception:
                 pass
 
-    async def deliverable_produced(self, task_id: str, deliverable_id: str,
-                                   description: str, preview: str = "") -> None:
+    async def emit_event(self, task_id: str, event) -> None:
+        """Forward an AG2-native event onto this task's live stream."""
+        if self._on_event is not None:
+            try:
+                res = self._on_event(task_id, event)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
+
+    async def deliverable_produced(
+        self, task_id: str, deliverable_id: str, description: str, preview: str = ""
+    ) -> None:
         """Called by the executor when a deliverable is produced; notifies the hook."""
         if self._on_deliverable is not None:
             try:

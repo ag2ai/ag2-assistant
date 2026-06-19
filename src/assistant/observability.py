@@ -55,8 +55,9 @@ def agent_logging_middleware():
     return LoggingMiddleware(logger=logging.getLogger("ag2assistant.agent"))
 
 
-async def capture_failure(config, *, session_id, surface="", user_text="",
-                          error=None, stream=None) -> str | None:
+async def capture_failure(
+    config, *, session_id, surface="", user_text="", error=None, stream=None
+) -> str | None:
     """Write a compact JSON debug record for a failed turn; return its path.
 
     Captures the error + traceback and the *shape* of the history (event-type
@@ -80,7 +81,8 @@ async def capture_failure(config, *, session_id, surface="", user_text="",
             "error": str(error)[:3000],
             "traceback": (
                 "".join(traceback.format_exception(type(error), error, error.__traceback__))[-4000:]
-                if error else ""
+                if error
+                else ""
             ),
             "event_count": len(events),
             "event_types": dict(Counter(type(e).__name__ for e in events)),
@@ -91,8 +93,9 @@ async def capture_failure(config, *, session_id, surface="", user_text="",
         safe = str(session_id).replace(":", "_").replace("/", "_")
         path = debug_dir / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{safe}.json"
         path.write_text(json.dumps(record, indent=2))
-        logger.error("turn failed (%s) on %s → debug record %s",
-                     record["error_type"], session_id, path)
+        logger.error(
+            "turn failed (%s) on %s → debug record %s", record["error_type"], session_id, path
+        )
         return str(path)
     except Exception:
         logger.exception("failed to write failure record")

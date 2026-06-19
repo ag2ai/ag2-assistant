@@ -56,32 +56,29 @@ async def test_subtask_hitl_bubbles_to_task_asker(tmp_path):
 
 
 async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
-    """The real executor builds its agent with the task's asker, so the agent's
+    """The real executor runs its visible AG2 subagent with the task's asker, so
     PermissionManager/HITL are bound to the triggering surface (no extra access)."""
     captured = {}
 
-    class _Reply:
-        body = "done"
-
-    class _Agent:
-        async def ask(self, *a, **k):
-            return _Reply()
-
-    def fake_create_agent(config, memory=True, skills=True, asker=None, **k):
-        captured["asker"] = asker
-        return _Agent()
-
-    import assistant.agent as agent_mod
     import assistant.tasks.executor as exec_mod
 
-    monkeypatch.setattr(agent_mod, "create_agent", fake_create_agent)
-    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
     # keep verification deterministic (no real LLM in this unit test)
     from assistant.tasks.executor import _Verdict
+
+    class _Result:
+        completed = True
+        result = "done"
+        error = None
+        stream = None
+
+    async def fake_run(config, task, caps, prompt, skills, asker, manager):
+        captured["asker"] = asker
+        return _Result()
 
     async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
+    monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
 
     from assistant.config import Config
@@ -105,27 +102,23 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
     so a leaf doesn't work blind (e.g. it knows the trip is to Lisbon)."""
     prompts: list[str] = []
 
-    class _Reply:
-        body = "done"
-
-    class _Agent:
-        async def ask(self, built_prompt, *a, **k):
-            prompts.append(built_prompt)
-            return _Reply()
-
-    def fake_create_agent(config, **k):
-        return _Agent()
-
-    import assistant.agent as agent_mod
     import assistant.tasks.executor as exec_mod
-
-    monkeypatch.setattr(agent_mod, "create_agent", fake_create_agent)
-    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
     from assistant.tasks.executor import _Verdict
+
+    class _Result:
+        completed = True
+        result = "done"
+        error = None
+        stream = None
+
+    async def fake_run(config, task, caps, prompt, skills, asker, manager):
+        prompts.append(prompt)
+        return _Result()
 
     async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
+    monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
 
     from assistant.config import Config
@@ -133,7 +126,8 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
     store = _store(tmp_path)
     parent = await store.create("trip prep")
     await store.update(
-        parent.id, objective="Prepare a Lisbon travel guide",
+        parent.id,
+        objective="Prepare a Lisbon travel guide",
         intake={"Where are you going?": "Lisbon"},
     )
     child = await store.add_subtask(parent.id, "Research the weather", reopen_parent=False)
@@ -155,24 +149,23 @@ async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
     the executor prompt — the objective is only a paraphrase and would lose it."""
     prompts: list[str] = []
 
-    class _Reply:
-        body = "done"
-
-    class _Agent:
-        async def ask(self, built_prompt, *a, **k):
-            prompts.append(built_prompt)
-            return _Reply()
-
-    import assistant.agent as agent_mod
     import assistant.tasks.executor as exec_mod
-
-    monkeypatch.setattr(agent_mod, "create_agent", lambda config, **k: _Agent())
-    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg: ["p"])
     from assistant.tasks.executor import _Verdict
+
+    class _Result:
+        completed = True
+        result = "done"
+        error = None
+        stream = None
+
+    async def fake_run(config, task, caps, prompt, skills, asker, manager):
+        prompts.append(prompt)
+        return _Result()
 
     async def _ok(config, deliverable, output):
         return _Verdict(satisfied=True, reason="ok")
 
+    monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
 
     from assistant.config import Config

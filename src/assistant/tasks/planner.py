@@ -27,8 +27,8 @@ class PlanDeliverable(BaseModel):
 class PlanSubtask(BaseModel):
     title: str
     description: str = ""
-    deliverable: str = ""   # what this subtask must produce
-    criteria: str = ""      # acceptance criteria for that output
+    deliverable: str = ""  # what this subtask must produce
+    criteria: str = ""  # acceptance criteria for that output
     capabilities: list[str] = Field(default_factory=list)  # tools this piece needs
 
 
@@ -95,9 +95,7 @@ async def run_intake(store: TaskStore, task_id: str, plan: TaskPlan, asker) -> d
     answers: dict = {}
     for q in plan.questions:
         try:
-            ans = await asker.ask(
-                Question(text=q.text, options=q.options or None, kind="question")
-            )
+            ans = await asker.ask(Question(text=q.text, options=q.options or None, kind="question"))
         except Exception:
             ans = ""
         if ans:
@@ -125,13 +123,14 @@ async def apply_plan(store: TaskStore, task_id: str, plan: TaskPlan) -> None:
         await store.add_deliverable(task_id, d.description, d.criteria)
     for s in plan.subtasks:
         child = await store.add_subtask(
-            task_id, s.title, s.description, reopen_parent=False,
+            task_id,
+            s.title,
+            s.description,
+            reopen_parent=False,
             capabilities=_valid_caps(s.capabilities),
         )
         # every subtask must produce something, or it does no real work
-        await store.add_deliverable(
-            child.id, s.deliverable or f"Output of: {s.title}", s.criteria
-        )
+        await store.add_deliverable(child.id, s.deliverable or f"Output of: {s.title}", s.criteria)
 
 
 def _request_with_answers(request: str, answers: dict) -> str:
@@ -147,7 +146,10 @@ _MAX_INTAKE_ROUNDS = 4
 
 
 async def prepare_task(
-    store: TaskStore, task_id: str, agent, asker=None,
+    store: TaskStore,
+    task_id: str,
+    agent,
+    asker=None,
     capabilities: list[str] | None = None,
 ) -> None:
     """Full intake: plan → (iteratively clarify via HITL) → objective+deliverables+subtasks.
@@ -171,19 +173,15 @@ async def prepare_task(
 
     answers: dict = {}
     rounds = 0
-    while (
-        asker is not None
-        and not plan.trivial
-        and plan.questions
-        and rounds < _MAX_INTAKE_ROUNDS
-    ):
+    while asker is not None and not plan.trivial and plan.questions and rounds < _MAX_INTAKE_ROUNDS:
         await store.set_status(task_id, TaskStatus.AWAITING_INPUT)
         new = await run_intake(store, task_id, plan, asker)
         rounds += 1
         if not new:
             # the user gave no answers this whole round → treat as abandonment
             await store.set_status(
-                task_id, TaskStatus.CANCELLED,
+                task_id,
+                TaskStatus.CANCELLED,
                 error="abandoned during clarification (no answers given)",
             )
             return
@@ -194,9 +192,7 @@ async def prepare_task(
         await store.set_status(task_id, TaskStatus.PLANNING)
         # re-plan with everything gathered so far; this may surface FEWER
         # questions (converging) or new ones if the answers opened up scope.
-        plan = await make_plan(
-            agent, _request_with_answers(request, answers), capabilities
-        )
+        plan = await make_plan(agent, _request_with_answers(request, answers), capabilities)
 
     await store.set_status(task_id, TaskStatus.PLANNING)
     await apply_plan(store, task_id, plan)

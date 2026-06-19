@@ -45,22 +45,21 @@ VOICE_PROMPT = (
     "own for these — ask_assistant is how you get them done. Never speak JSON, tool "
     "names, or function-call syntax out loud, and never guess external facts; call "
     "`ask_assistant` instead.\n\n"
-    "If the user refers to something from earlier in the conversation — \"this "
-    "task\", \"that\", \"the one you just made\" — and you don't have the detail, "
+    'If the user refers to something from earlier in the conversation — "this '
+    'task", "that", "the one you just made" — and you don\'t have the detail, '
     "call `ask_assistant` (it shares the full conversation and will know what they "
     "mean). Don't ask the user to repeat what they already said.\n\n"
     "Otherwise, involve the user as much as needed for clarity: if a request is "
     "genuinely ambiguous, ask a short follow-up out loud before acting. Never "
     "guess at something you could simply ask about.\n\n"
-    "When the user clearly signals they're done — they say no to \"anything else?\", "
+    'When the user clearly signals they\'re done — they say no to "anything else?", '
     "or say goodbye / that's all / nothing else — wrap up in that same turn: give a "
     "brief, warm spoken goodbye AND call `end_call` to hang up. Don't wait for a "
     "second goodbye. Never end the call while they still have something going."
 )
 
 
-def voice_realtime_config(config: Config, voice: str | None = None,
-                          provider: str | None = None):
+def voice_realtime_config(config: Config, voice: str | None = None, provider: str | None = None):
     """Build the realtime RealtimeConfig for the active (or given) provider.
 
     Delegates to the provider registry — input transcription is enabled per
@@ -76,8 +75,9 @@ def voice_realtime_config(config: Config, voice: str | None = None,
     return p.build_realtime(config, voice or get_voice(p.name), model)
 
 
-async def synthesize_preview(config: Config, voice: str, text: str = PREVIEW_TEXT,
-                             provider: str | None = None) -> bytes:
+async def synthesize_preview(
+    config: Config, voice: str, text: str = PREVIEW_TEXT, provider: str | None = None
+) -> bytes:
     """Single-shot TTS of a sample sentence in `voice`; returns WAV bytes.
 
     Used by the voice-picker preview and the sample-recording script; delegates
@@ -89,8 +89,15 @@ async def synthesize_preview(config: Config, voice: str, text: str = PREVIEW_TEX
     return await voice_providers.get(provider).synthesize(config, voice, text)
 
 
-def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
-                      task_context: str = "", on_end=None, assistant_tools=None):
+def build_voice_agent(
+    config: Config,
+    tasks,
+    delegate,
+    voice: str | None = None,
+    task_context: str = "",
+    on_end=None,
+    assistant_tools=None,
+):
     """A LiveAgent with a basic tool subset + an ask_assistant delegate tool.
 
     `tasks` is the TaskService (for the basic read tools); `delegate` is an async
@@ -115,15 +122,15 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
         "\n\nThe main assistant you reach via `ask_assistant` currently has these "
         "tools: " + ", ".join(assistant_tools) + ". So whenever a request needs any "
         "of them, delegate it — never say you can't do something they can."
-        if assistant_tools else ""
+        if assistant_tools
+        else ""
     )
     prompt = (
         VOICE_PROMPT
-        + "\n\n" + environment_context(config)
+        + "\n\n"
+        + environment_context(config)
         + "\nThis clock is from when the call started; call `current_time` for the "
-        "exact time now."
-        + capabilities
-        + (("\n\n" + task_context) if task_context else "")
+        "exact time now." + capabilities + (("\n\n" + task_context) if task_context else "")
     )
 
     @tool
@@ -146,6 +153,7 @@ def build_voice_agent(config: Config, tasks, delegate, voice: str | None = None,
     tools = [*basic, current_time, ask_assistant]
 
     if on_end is not None:
+
         @tool
         def end_call() -> str:
             """End the voice call. Use ONLY when the user has clearly indicated they're

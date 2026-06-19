@@ -94,6 +94,105 @@ async def test_deliverable_produced_emits_event(tmp_path):
     await svc.close()
 
 
+async def test_raw_subagent_event_emits_on_task_stream(tmp_path):
+    svc, emitted = await _started(tmp_path)
+    event = TaskStarted(task_id="sub-1", agent_name="researcher", objective="find sources")
+
+    await svc._manager.emit_event("task-9", event)
+
+    assert ("task:task-9", event) in emitted
+    await svc.close()
+
+
+async def test_visible_subagent_emits_cancelled_when_interrupted(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    import autogen.beta.tools.subagents.run_task as run_task_mod
+    from autogen.beta.events import TaskCancelled
+
+    import assistant.agent as agent_mod
+    from assistant.config import Config
+    from assistant.tasks.executor import _run_visible_subagent
+
+    events = []
+
+    class _Agent:
+        name = "worker"
+        _hitl_hook = None
+
+    class _Manager:
+        async def emit_event(self, task_id, event):
+            events.append((task_id, event))
+
+    async def cancelled_run_task(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
+    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg, memory=True: ["prompt"])
+    monkeypatch.setattr(run_task_mod, "run_task", cancelled_run_task)
+
+    task = SimpleNamespace(id="task-1", title="do work", parent_id=None)
+    try:
+        await _run_visible_subagent(Config(), task, [], "context", True, object(), _Manager())
+    except asyncio.CancelledError:
+        pass
+
+    assert len(events) == 1
+    assert events[0][0] == "task-1"
+    assert isinstance(events[0][1], TaskCancelled)
+    assert events[0][1].task_id == "task-1:worker"
+    assert events[0][1].agent_name == "worker"
+
+
+async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
+    """The subagent's inner events ride to the parent task as SubagentTrace, so the
+    GUI can nest them under the card (and a nested lifecycle nests recursively)."""
+    from types import SimpleNamespace
+
+    import autogen.beta.tools.subagents.run_task as run_task_mod
+    from autogen.beta.events import TaskStarted
+
+    import assistant.agent as agent_mod
+    from assistant.config import Config
+    from assistant.events import SubagentTrace
+    from assistant.tasks.executor import _run_visible_subagent
+
+    events = []
+
+    class _Agent:
+        name = "worker"
+        _hitl_hook = None
+
+    class _Manager:
+        async def emit_event(self, task_id, event):
+            events.append((task_id, event))
+
+    async def fake_run_task(
+        agent, objective, *, parent_context, context="", stream=None, task_id=None, **kw
+    ):
+        # Simulate inner work: a nested subagent's lifecycle on the work stream.
+        from autogen.beta.context import ConversationContext
+
+        ev = TaskStarted(task_id="task-1:worker:deep", agent_name="researcher", objective="dig")
+        await stream.send(ev, ConversationContext(stream=stream))
+        return SimpleNamespace(completed=True, result="done", error=None, stream=stream)
+
+    monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
+    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg, memory=True: ["prompt"])
+    monkeypatch.setattr(run_task_mod, "run_task", fake_run_task)
+
+    task = SimpleNamespace(id="task-1", title="do work", parent_id=None)
+    result = await _run_visible_subagent(Config(), task, [], "ctx", True, object(), _Manager())
+
+    assert result.completed
+    traces = [e for _, e in events if isinstance(e, SubagentTrace)]
+    assert len(traces) == 1
+    assert traces[0].subagent_id == "task-1:worker"
+    assert traces[0].inner["type"].split(".")[-1] == "TaskStarted"
+    assert traces[0].inner["data"]["agent_name"] == "researcher"
+
+
 async def test_inquiry_raised_then_answered_emit(tmp_path):
     from assistant.events import InquiryAnswered, InquiryRaised
 

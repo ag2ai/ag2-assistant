@@ -64,9 +64,7 @@ async def test_needs_onboarding_false_after_marker(isolate):
 async def test_run_onboarding_seeds_profile_and_env(isolate):
     store_path, env_path, marker = isolate
     asker = ScriptedAsker(["Mark", "Sydney, Australia", "9am–6pm", "Short & direct"])
-    answers = await onboarding.run_onboarding(
-        asker, store_path=store_path, env_path=env_path
-    )
+    answers = await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
     assert answers == {
         "name": "Mark",
         "location": "Sydney, Australia",
@@ -87,9 +85,7 @@ async def test_run_onboarding_seeds_profile_and_env(isolate):
 async def test_run_onboarding_all_skipped_still_marks(isolate):
     store_path, env_path, marker = isolate
     asker = ScriptedAsker(["skip", "skip", "skip", "No preference"])
-    answers = await onboarding.run_onboarding(
-        asker, store_path=store_path, env_path=env_path
-    )
+    answers = await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
     assert answers == {}
     assert not env_path.exists()  # nothing to persist
     assert marker.exists()  # but we won't pester them again
@@ -98,9 +94,7 @@ async def test_run_onboarding_all_skipped_still_marks(isolate):
 async def test_run_onboarding_partial(isolate):
     store_path, env_path, _ = isolate
     asker = ScriptedAsker(["", "Melbourne", "skip", "Detailed & thorough"])
-    answers = await onboarding.run_onboarding(
-        asker, store_path=store_path, env_path=env_path
-    )
+    answers = await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
     assert answers == {"location": "Melbourne", "style": "Detailed & thorough"}
     assert "AG2ASSISTANT_LOCATION=Melbourne" in env_path.read_text()
 

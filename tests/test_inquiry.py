@@ -19,9 +19,16 @@ def _istore(tmp_path):
 
 # ----- model -----
 
+
 def test_inquiry_roundtrip_and_question_view():
-    inq = Inquiry(id="inq-1", text="Audience?", options=["A", "B"], kind="question",
-                  task_id="t1", detail="who for")
+    inq = Inquiry(
+        id="inq-1",
+        text="Audience?",
+        options=["A", "B"],
+        kind="question",
+        task_id="t1",
+        detail="who for",
+    )
     again = Inquiry.from_dict({**inq.to_dict(), "bogus": 1})  # tolerates unknown keys
     assert again == inq
     q = inq.to_question()
@@ -29,6 +36,7 @@ def test_inquiry_roundtrip_and_question_view():
 
 
 # ----- store -----
+
 
 async def test_store_create_answer_lifecycle(tmp_path):
     store = _istore(tmp_path)
@@ -54,6 +62,7 @@ async def test_store_cancel_for_task(tmp_path):
 
 
 # ----- durable asker -----
+
 
 class _ImmediateAsker:
     def __init__(self, answer):
@@ -118,6 +127,7 @@ async def test_durable_asker_rebind_tags_subtask(tmp_path):
 
 
 # ----- task integration -----
+
 
 async def test_taskmanager_persists_task_inquiries(tmp_path):
     tstore = TaskStore(path=tmp_path / "t.db")

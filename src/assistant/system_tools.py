@@ -94,13 +94,20 @@ def build_system_tools(tasks, chats=None) -> list:
     # ---- tasks: retrieval ----
     @tool
     async def list_tasks(
-        status: Annotated[str, Field(description="Filter: active, completed, stopped, archived, or empty for all current.")] = "",
+        status: Annotated[
+            str,
+            Field(
+                description="Filter: active, completed, stopped, archived, or empty for all current."
+            ),
+        ] = "",
     ) -> str:
         """List tasks (id · status · title · schedule). Use to find a task to act on."""
         items = await tasks.list_all(status or None)
         if not items:
             return "No tasks."
-        return "\n".join(f"{t['id']} · {t['status']} · {t['title']}{_fmt_schedule(t)}" for t in items)
+        return "\n".join(
+            f"{t['id']} · {t['status']} · {t['title']}{_fmt_schedule(t)}" for t in items
+        )
 
     @tool
     async def get_task(
@@ -115,7 +122,9 @@ def build_system_tools(tasks, chats=None) -> list:
     # ---- tasks: actions ----
     @tool
     async def create_task(
-        request: Annotated[str, Field(description="The full job to carry out as a background task.")],
+        request: Annotated[
+            str, Field(description="The full job to carry out as a background task.")
+        ],
         context: Context,
     ) -> str:
         """Start a background task (it clarifies if needed, then runs). For
@@ -128,8 +137,15 @@ def build_system_tools(tasks, chats=None) -> list:
     @tool
     async def schedule_task(
         request: Annotated[str, Field(description="The job to run when due.")],
-        when: Annotated[str, Field(description="First run as ISO 8601 datetime (from your env clock).")],
-        recurrence: Annotated[str, Field(description="Repeat: daily/hourly/weekly, 'every N units', 'weekdays', 'weekends', 'mon,wed,fri', or empty.")] = "",
+        when: Annotated[
+            str, Field(description="First run as ISO 8601 datetime (from your env clock).")
+        ],
+        recurrence: Annotated[
+            str,
+            Field(
+                description="Repeat: daily/hourly/weekly, 'every N units', 'weekdays', 'weekends', 'mon,wed,fri', or empty."
+            ),
+        ] = "",
         context: Context = None,
     ) -> str:
         """Schedule a task to run later, optionally recurring."""
@@ -142,7 +158,10 @@ def build_system_tools(tasks, chats=None) -> list:
     async def reschedule_task(
         task_id: Annotated[str, Field(description="The task id.")],
         when: Annotated[str, Field(description="New ISO datetime, or empty to keep.")] = "",
-        recurrence: Annotated[str, Field(description="New repeat (see schedule_task), 'off' to stop, or empty to keep.")] = "",
+        recurrence: Annotated[
+            str,
+            Field(description="New repeat (see schedule_task), 'off' to stop, or empty to keep."),
+        ] = "",
     ) -> str:
         """Change when a task runs and/or how it repeats."""
         return await tasks.reschedule(task_id, when, recurrence)
@@ -152,7 +171,9 @@ def build_system_tools(tasks, chats=None) -> list:
         task_id: Annotated[str, Field(description="Parent task id.")],
         title: Annotated[str, Field(description="Subtask title.")],
         description: Annotated[str, Field(description="What it should do.")] = "",
-        capabilities: Annotated[str, Field(description="Comma-separated: web, code, files, calendar, drive.")] = "web",
+        capabilities: Annotated[
+            str, Field(description="Comma-separated: web, code, files, calendar, drive.")
+        ] = "web",
     ) -> str:
         """Add a subtask. (For a scheduled task this updates the plan; it runs on schedule.)"""
         return await tasks.add_subtask(task_id, title, description, capabilities)
@@ -177,7 +198,9 @@ def build_system_tools(tasks, chats=None) -> list:
     @tool
     async def cancel_task(
         task_id: Annotated[str, Field(description="The task id.")],
-        subtask: Annotated[str, Field(description="Partial title of a subtask to cancel; empty = whole task.")] = "",
+        subtask: Annotated[
+            str, Field(description="Partial title of a subtask to cancel; empty = whole task.")
+        ] = "",
     ) -> str:
         """Cancel a task (or one subtask). Stops it; for recurring tasks it stops firing."""
         return await tasks.cancel_target(task_id, subtask)
@@ -190,7 +213,11 @@ def build_system_tools(tasks, chats=None) -> list:
         ok, reason = await tasks.set_archived(task_id, True)
         if ok:
             return "Archived."
-        return "Can't archive an active task — cancel it first." if reason == "active" else "Task not found."
+        return (
+            "Can't archive an active task — cancel it first."
+            if reason == "active"
+            else "Task not found."
+        )
 
     @tool
     async def run_task_now(
@@ -235,7 +262,9 @@ def build_system_tools(tasks, chats=None) -> list:
 
     @tool
     async def set_voice(
-        voice: Annotated[str, Field(description="Voice name, e.g. Puck, Kore, Sulafat (see list_voices).")],
+        voice: Annotated[
+            str, Field(description="Voice name, e.g. Puck, Kore, Sulafat (see list_voices).")
+        ],
     ) -> str:
         """Change the assistant's realtime voice (persists; applies next voice session)."""
         from assistant import settings
@@ -245,14 +274,26 @@ def build_system_tools(tasks, chats=None) -> list:
         return f"Voice set to {voice}. It'll apply the next time you start a voice chat."
 
     out = [
-        list_tasks, get_task, create_task, schedule_task, reschedule_task,
-        add_subtask, add_deliverable, set_task_objective, cancel_task,
-        archive_task, run_task_now, list_open_questions, answer_question,
-        list_voices, set_voice,
+        list_tasks,
+        get_task,
+        create_task,
+        schedule_task,
+        reschedule_task,
+        add_subtask,
+        add_deliverable,
+        set_task_objective,
+        cancel_task,
+        archive_task,
+        run_task_now,
+        list_open_questions,
+        answer_question,
+        list_voices,
+        set_voice,
     ]
 
     # ---- chats (optional) ----
     if chats is not None:
+
         @tool
         async def list_chats() -> str:
             """List past conversations (session id · last update · preview)."""
@@ -260,7 +301,8 @@ def build_system_tools(tasks, chats=None) -> list:
             if not sess:
                 return "No conversations."
             return "\n".join(
-                f"{s['session_id']} · {s.get('turns', 0)} turns · {s.get('preview', '')}" for s in sess
+                f"{s['session_id']} · {s.get('turns', 0)} turns · {s.get('preview', '')}"
+                for s in sess
             )
 
         @tool

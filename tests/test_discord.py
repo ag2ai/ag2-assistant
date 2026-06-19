@@ -16,8 +16,13 @@ def _discord_channel():
 
 
 def _fake_message(
-    content, guild=True, channel_id=42, author_id=7, author_bot=False,
-    mentions=(), attachments=(),
+    content,
+    guild=True,
+    channel_id=42,
+    author_id=7,
+    author_bot=False,
+    mentions=(),
+    attachments=(),
 ):
     author = SimpleNamespace(id=author_id, bot=author_bot, display_name="Test User")
     return SimpleNamespace(

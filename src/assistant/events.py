@@ -24,15 +24,15 @@ class TaskCreated(AssistantEvent):
 
     task_id: str = Field(kw_only=False)
     title: str = ""
-    kind: str = "task"          # "task" | "scheduled"
+    kind: str = "task"  # "task" | "scheduled"
 
 
 class TaskScheduled(AssistantEvent):
     """A task was scheduled (or rescheduled) to run later — renders as a schedule note."""
 
     task_id: str = Field(kw_only=False)
-    scheduled_for: str = ""     # ISO 8601
-    recurrence: str = ""        # "" for one-off
+    scheduled_for: str = ""  # ISO 8601
+    recurrence: str = ""  # "" for one-off
 
 
 class DeliverableProduced(AssistantEvent):
@@ -41,7 +41,21 @@ class DeliverableProduced(AssistantEvent):
     task_id: str = Field(kw_only=False)
     deliverable_id: str = ""
     description: str = ""
-    preview: str = ""           # short preview; full asset fetched via REST
+    preview: str = ""  # short preview; full asset fetched via REST
+
+
+class SubagentTrace(AssistantEvent):
+    """One inner event from a subagent's own run, forwarded onto the parent task
+    stream so the GUI nests it under the subagent card — live, persistent (rides
+    the task event log), and recursive: a nested subagent's events arrive as
+    further SubagentTraces and nest one level deeper.
+
+    `subagent_id` matches the subagent's TaskStarted/TaskCompleted `task_id` (the
+    card key); `inner` is the wrapped event in wire shape ``{type, data}``.
+    """
+
+    subagent_id: str = Field(kw_only=False)
+    inner: dict = Field(default_factory=dict)
 
 
 class InquiryRaised(AssistantEvent):
@@ -55,7 +69,7 @@ class InquiryRaised(AssistantEvent):
     task_id: str = ""
     question: str = ""
     options: list[str] = Field(default_factory=list)
-    kind: str = "question"      # "question" | "permission"
+    kind: str = "question"  # "question" | "permission"
 
 
 class InquiryAnswered(AssistantEvent):

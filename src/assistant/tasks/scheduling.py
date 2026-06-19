@@ -26,15 +26,35 @@ _NAMED = {
     "weekly": timedelta(weeks=1),
 }
 _UNITS = {
-    "minute": timedelta(minutes=1), "minutes": timedelta(minutes=1), "min": timedelta(minutes=1),
-    "hour": timedelta(hours=1), "hours": timedelta(hours=1), "hr": timedelta(hours=1),
-    "day": timedelta(days=1), "days": timedelta(days=1),
-    "week": timedelta(weeks=1), "weeks": timedelta(weeks=1),
+    "minute": timedelta(minutes=1),
+    "minutes": timedelta(minutes=1),
+    "min": timedelta(minutes=1),
+    "hour": timedelta(hours=1),
+    "hours": timedelta(hours=1),
+    "hr": timedelta(hours=1),
+    "day": timedelta(days=1),
+    "days": timedelta(days=1),
+    "week": timedelta(weeks=1),
+    "weeks": timedelta(weeks=1),
 }
 _WEEKDAY = {  # Mon=0 … Sun=6
-    "monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1, "wednesday": 2, "wed": 2,
-    "thursday": 3, "thu": 3, "thur": 3, "thurs": 3, "friday": 4, "fri": 4,
-    "saturday": 5, "sat": 5, "sunday": 6, "sun": 6,
+    "monday": 0,
+    "mon": 0,
+    "tuesday": 1,
+    "tue": 1,
+    "tues": 1,
+    "wednesday": 2,
+    "wed": 2,
+    "thursday": 3,
+    "thu": 3,
+    "thur": 3,
+    "thurs": 3,
+    "friday": 4,
+    "fri": 4,
+    "saturday": 5,
+    "sat": 5,
+    "sunday": 6,
+    "sun": 6,
 }
 
 
@@ -57,7 +77,7 @@ def parse_recurrence(spec: str | None) -> dict | None:
     body = s
     for p in ("every ", "on ", "each "):
         if body.startswith(p):
-            body = body[len(p):]
+            body = body[len(p) :]
     days, non_day = set(), False
     for tok in re.split(r"[,/&]|\band\b|\s+", body):
         tok = tok.strip().rstrip("s")
@@ -145,7 +165,7 @@ class Scheduler:
 
     def __init__(self, store, fire, interval: float = 30.0) -> None:
         self._store = store
-        self._fire = fire            # async (task_id) -> None
+        self._fire = fire  # async (task_id) -> None
         self._interval = interval
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
@@ -174,9 +194,11 @@ class Scheduler:
         now = now or datetime.now().astimezone()
         fired = []
         for t in await self._store.list_all():
-            if (t.status == TaskStatus.SCHEDULED
-                    and not getattr(t, "archived", False)  # archived = put away, don't fire
-                    and is_due(t.scheduled_for, now)):
+            if (
+                t.status == TaskStatus.SCHEDULED
+                and not getattr(t, "archived", False)  # archived = put away, don't fire
+                and is_due(t.scheduled_for, now)
+            ):
                 await self._fire(t.id)
                 fired.append(t.id)
         return fired

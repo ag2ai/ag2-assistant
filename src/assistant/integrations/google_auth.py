@@ -48,9 +48,7 @@ def save_credentials_json(content: str) -> None:
 
     data = json.loads(content)  # raises if not valid JSON
     if not isinstance(data, dict) or not ({"installed", "web"} & data.keys()):
-        raise ValueError(
-            "Not an OAuth client file (expected an 'installed' or 'web' key)."
-        )
+        raise ValueError("Not an OAuth client file (expected an 'installed' or 'web' key).")
     cp = credentials_path()
     cp.parent.mkdir(parents=True, exist_ok=True)
     cp.write_text(content)
@@ -113,9 +111,7 @@ def load_credentials(interactive: bool = False, open_browser: bool = True):
             f"Missing OAuth client file at {credentials_path()}. Download a "
             "Desktop OAuth client JSON from Google Cloud and save it there."
         )
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(credentials_path()), SCOPES
-    )
+    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path()), SCOPES)
     creds = flow.run_local_server(port=0, open_browser=open_browser)
     _save_token(creds)
     return creds
@@ -170,9 +166,7 @@ def make_login_flow(redirect_uri: str):
     """
     Credentials, Request, InstalledAppFlow = _require_libs()
     if not credentials_path().exists():
-        raise FileNotFoundError(
-            f"Missing OAuth client file at {credentials_path()}."
-        )
+        raise FileNotFoundError(f"Missing OAuth client file at {credentials_path()}.")
     flow = InstalledAppFlow.from_client_secrets_file(
         str(credentials_path()), SCOPES, redirect_uri=redirect_uri
     )
@@ -208,7 +202,5 @@ def build_service(api: str, version: str):
 
     creds = load_credentials(interactive=False)
     if creds is None:
-        raise RuntimeError(
-            "Not signed in to Google. Run `ag2assistant google login` first."
-        )
+        raise RuntimeError("Not signed in to Google. Run `ag2assistant google login` first.")
     return build(api, version, credentials=creds, cache_discovery=False)

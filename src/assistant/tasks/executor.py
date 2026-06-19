@@ -15,6 +15,8 @@ SAME asker, a sub-agent's clarification/confirmation bubbles all the way up to
 the channel that triggered the task (no extra access, nothing swallowed).
 """
 
+import asyncio
+
 from pydantic import BaseModel
 
 from assistant.tasks.model import DeliverableStatus
@@ -23,10 +25,141 @@ _MAX_ASSET_CHARS = 50_000
 _MAX_VERIFY_CHARS = 12_000
 _MAX_CHILD_CONTEXT = 12_000
 
+# Inner subagent events worth nesting under its card: its responses, the tools it
+# calls, any deliverables, and a nested subagent's own lifecycle (→ recursion).
+_FORWARD_INNER = frozenset(
+    {
+        "ModelResponse",
+        "ToolCallsEvent",
+        "DeliverableProduced",
+        "TaskStarted",
+        "TaskCompleted",
+        "TaskFailed",
+        "TaskCancelled",
+    }
+)
+
 
 class _Verdict(BaseModel):
     satisfied: bool
     reason: str = ""
+
+
+def _subagent_archetype(caps: list[str]) -> tuple[str, str]:
+    """Pick a visible worker archetype for this task attempt."""
+    if "web" in caps:
+        return (
+            "researcher",
+            "You are a focused research subagent. Use the available research tools, "
+            "ground factual claims in sources, and return finished notes or answers "
+            "that directly satisfy the assigned deliverables.",
+        )
+    if any(c in caps for c in ("gmail", "calendar", "drive", "google")):
+        return (
+            "operator",
+            "You are a focused workspace operator subagent. Use only the assigned "
+            "workspace tools, ask for confirmation when needed, and return the "
+            "finished result of the assigned work.",
+        )
+    if "code" in caps:
+        return (
+            "coder",
+            "You are a focused coding subagent. Use the available code tools only "
+            "for the assigned work, keep changes scoped, and return the finished "
+            "implementation or analysis.",
+        )
+    return (
+        "worker",
+        "You are a focused worker subagent. Complete the assigned deliverables "
+        "directly, ask for missing user information when needed, and return the "
+        "finished result.",
+    )
+
+
+async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, asker, manager):
+    """Run a named AG2 Beta subagent and forward its lifecycle events."""
+    from autogen.beta.context import ConversationContext
+    from autogen.beta.stream import MemoryStream
+    from autogen.beta.tools.subagents.run_task import run_task
+
+    from assistant.agent import cheap_model, create_agent, turn_prompt
+    from assistant.permissions import PermissionManager
+
+    name, archetype_prompt = _subagent_archetype(caps)
+    sub_config = config.model_copy(deep=True)
+    sub_config.agent.name = name
+    # Seed the archetype as the persona, then compose the full turn prompt around
+    # it without memory guidance because these subagents run with memory=False.
+    sub_config.agent.system_prompt = archetype_prompt
+    sub_config.agent.system_prompt = "\n\n".join(turn_prompt(sub_config, memory=False))
+    sub_model = cheap_model(config) if task.parent_id else None
+    agent = create_agent(
+        sub_config,
+        memory=False,
+        skills=skills,
+        asker=asker,
+        capabilities=caps,
+        model=sub_model,
+    )
+
+    from assistant.events import SubagentTrace
+    from assistant.gateway.wire import to_wire
+
+    subagent_task_id = f"{task.id}:{name}"
+
+    # Lifecycle (TaskStarted/Completed/Failed/Usage) rides the parent stream and
+    # drives the subagent card. The subagent's own work runs on `work_stream`; we
+    # forward each inner event wrapped as a SubagentTrace so the GUI nests it under
+    # the card (live + persistent on the task event log). A nested subagent's
+    # lifecycle arrives here too and nests one level deeper — recursion for free.
+    async def forward(event) -> None:
+        await manager.emit_event(task.id, event)
+
+    async def forward_inner(event) -> None:
+        # Allowlist only what the GUI renders + nested-subagent lifecycle. Skips the
+        # prompt echo, token chunks, HITL (durable path), and bookkeeping — so a
+        # subagent's run doesn't re-persist the task stream per token.
+        if type(event).__name__ not in _FORWARD_INNER:
+            return
+        await manager.emit_event(task.id, SubagentTrace(subagent_task_id, inner=to_wire(event)))
+
+    parent_stream = MemoryStream(id=f"{task.id}:subagents")
+    work_stream = MemoryStream(id=subagent_task_id)
+    sub_id = parent_stream.subscribe(forward)
+    work_sub = work_stream.subscribe(forward_inner)
+    try:
+        context = ConversationContext(
+            stream=parent_stream,
+            dependencies={
+                PermissionManager: PermissionManager(asker=asker, sandbox=config.tools.sandbox)
+            },
+        )
+        objective = f"Produce deliverables for: {task.title}"
+        try:
+            return await run_task(
+                agent,
+                objective,
+                parent_context=context,
+                context=prompt,
+                stream=work_stream,
+                task_id=subagent_task_id,
+            )
+        except asyncio.CancelledError:
+            from autogen.beta.events import TaskCancelled
+
+            await manager.emit_event(
+                task.id,
+                TaskCancelled(
+                    task_id=subagent_task_id,
+                    agent_name=name,
+                    objective=objective,
+                    reason="parent task cancelled",
+                ),
+            )
+            raise
+    finally:
+        work_stream.unsubscribe(work_sub)
+        parent_stream.unsubscribe(sub_id)
 
 
 async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdict":
@@ -56,12 +189,13 @@ async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdi
         return _Verdict(satisfied=False, reason=f"verification error: {exc}")
 
 
-async def _used_web_tools(reply) -> bool:
+async def _used_web_tools(source) -> bool:
     """True if the agent actually called a search / web-fetch tool this turn."""
     from autogen.beta.events import BuiltinToolCallEvent, ToolCallEvent
 
     try:
-        events = list(await reply.history.get_events())
+        history = source.history if hasattr(source, "history") else source
+        events = list(await history.get_events())
     except Exception:
         return True  # can't introspect → don't falsely reject
     for ev in events:
@@ -74,7 +208,6 @@ async def _used_web_tools(reply) -> bool:
 
 def make_task_executor(config, skills: bool = True):
     """Build an executor coroutine for `TaskManager`, using the real agent."""
-    from assistant.agent import cheap_model, create_agent, turn_prompt
 
     async def executor(task_id, manager, asker) -> None:
         store = manager.store
@@ -90,15 +223,14 @@ def make_task_executor(config, skills: bool = True):
         # Leaf subtasks (research/work pieces) run on the cheaper, faster model;
         # the root synthesis stays on the main model where quality matters most.
         caps = task.capabilities or []
-        sub_model = cheap_model(config) if task.parent_id else None
-        agent = create_agent(
-            config, memory=False, skills=skills, asker=asker, capabilities=caps,
-            model=sub_model,
-        )
-
         wanted = "\n".join(
-            f"- {d['description']}" + (f" (acceptance: {d['criteria']})" if d.get("criteria") else "")
-            + (f"\n  NOTE — a previous attempt was rejected: {d['notes']}" if d.get("notes") else "")
+            f"- {d['description']}"
+            + (f" (acceptance: {d['criteria']})" if d.get("criteria") else "")
+            + (
+                f"\n  NOTE — a previous attempt was rejected: {d['notes']}"
+                if d.get("notes")
+                else ""
+            )
             for d in pending
         )
         objective = task.objective or task.title
@@ -167,38 +299,52 @@ def make_task_executor(config, skills: bool = True):
         )
 
         await manager.progress(task_id, f"working on {len(pending)} deliverable(s)")
-        reply = await agent.ask(prompt, prompt=turn_prompt(config))
-        output = (reply.body or "").strip()
+        result = await _run_visible_subagent(config, task, caps, prompt, skills, asker, manager)
+        if not result.completed:
+            raise RuntimeError(str(result.error or "subagent failed"))
+        output = (result.result or "").strip()
 
         # Grounding gate: if this task is meant to research the web but the agent
         # never actually called a web tool, its facts aren't grounded → reject.
-        web_used = await _used_web_tools(reply)
+        web_used = await _used_web_tools(result.stream)
         ungrounded = "web" in caps and not web_used
 
         produced = 0
         for d in pending:
             if ungrounded:
                 await store.set_deliverable_status(
-                    task_id, d["id"], DeliverableStatus.REJECTED,
+                    task_id,
+                    d["id"],
+                    DeliverableStatus.REJECTED,
                     notes="not grounded: answer was written without using the search/"
-                          "web-fetch tools — research the facts before producing this.",
+                    "web-fetch tools — research the facts before producing this.",
                 )
                 continue
             verdict = await _verify_deliverable(config, d, output)
             if verdict.satisfied:
                 produced += 1
                 await store.set_deliverable_status(
-                    task_id, d["id"], DeliverableStatus.PRODUCED,
-                    asset={"name": d["description"][:60], "kind": "text",
-                           "content": output[:_MAX_ASSET_CHARS]},
+                    task_id,
+                    d["id"],
+                    DeliverableStatus.PRODUCED,
+                    asset={
+                        "name": d["description"][:60],
+                        "kind": "text",
+                        "content": output[:_MAX_ASSET_CHARS],
+                    },
                 )
                 await manager.deliverable_produced(
-                    task_id, d["id"], d.get("description", ""),
+                    task_id,
+                    d["id"],
+                    d.get("description", ""),
                     output[:240].replace("\n", " "),
                 )
             else:
                 await store.set_deliverable_status(
-                    task_id, d["id"], DeliverableStatus.REJECTED, notes=verdict.reason,
+                    task_id,
+                    d["id"],
+                    DeliverableStatus.REJECTED,
+                    notes=verdict.reason,
                 )
         await manager.progress(
             task_id, f"{produced}/{len(pending)} deliverable(s) verified & produced"

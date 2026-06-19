@@ -70,11 +70,11 @@ def sanitize_history(events: list) -> list:
     call_ids: set[str] = set()
     for e in stripped:
         tc = getattr(e, "tool_calls", None)
-        for c in (getattr(tc, "calls", None) or []):
+        for c in getattr(tc, "calls", None) or []:
             if getattr(c, "id", None):
                 call_ids.add(c.id)
         if isinstance(e, ToolCallsEvent):
-            for c in (e.calls or []):
+            for c in e.calls or []:
                 if getattr(c, "id", None):
                     call_ids.add(c.id)
         if isinstance(e, ToolCallEvent) and getattr(e, "id", None):
@@ -135,8 +135,11 @@ class Gateway:
             # start_task/schedule_task here (that duplicated names).
             extra_tools = build_system_tools(self._tasks, chats=self)
         return create_agent(
-            self._config, memory=self._memory, platform=self._platform,
-            extra_tools=extra_tools, compact=self._memory,
+            self._config,
+            memory=self._memory,
+            platform=self._platform,
+            extra_tools=extra_tools,
+            compact=self._memory,
         )
 
     async def start(self) -> None:
@@ -145,7 +148,7 @@ class Gateway:
         from assistant.observability import setup_logging
         from assistant.permissions import PermissionStore
 
-        secrets.load_into_env()      # provider keys into env before any agent is built
+        secrets.load_into_env()  # provider keys into env before any agent is built
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
         self._agent = self._make_agent()
@@ -156,9 +159,7 @@ class Gateway:
             from autogen.beta.knowledge.log import EventLogWriter
 
             self._config.data_dir.mkdir(parents=True, exist_ok=True)
-            self._event_store = SqliteKnowledgeStore(
-                str(self._config.data_dir / "sessions.db")
-            )
+            self._event_store = SqliteKnowledgeStore(str(self._config.data_dir / "sessions.db"))
             self._writer = EventLogWriter(self._event_store)
 
     async def reload(self) -> None:
@@ -206,9 +207,7 @@ class Gateway:
             return
         if self._writer is not None:
             try:
-                await self._writer.persist(
-                    session_id, list(await stream.history.get_events())
-                )
+                await self._writer.persist(session_id, list(await stream.history.get_events()))
             except Exception:
                 pass  # persistence is best-effort; the live event still went out
 
@@ -273,8 +272,12 @@ class Gateway:
                 from assistant.observability import capture_failure
 
                 await capture_failure(
-                    self._config, session_id=session_id, surface=surface,
-                    user_text=text, error=exc, stream=stream,
+                    self._config,
+                    session_id=session_id,
+                    surface=surface,
+                    user_text=text,
+                    error=exc,
+                    stream=stream,
                 )
                 raise
             await self._persist_turn(session_id, stream, text, reply.body)
@@ -322,10 +325,16 @@ class Gateway:
         finally:
             stream.unsubscribe(sub_id)
 
-    async def build_voice_agent(self, session_id: str = "default",
-                                voice: str | None = None, task_id: str | None = None,
-                                chat_session: str | None = None, on_tool=None,
-                                on_task=None, on_end=None):
+    async def build_voice_agent(
+        self,
+        session_id: str = "default",
+        voice: str | None = None,
+        task_id: str | None = None,
+        chat_session: str | None = None,
+        on_tool=None,
+        on_task=None,
+        on_end=None,
+    ):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
         delegates to this same universal agent so the spoken conversation shares
         the app's tools, memory, and continuity.
@@ -346,7 +355,7 @@ class Gateway:
             if node:
                 task_context = (
                     "You are currently on a task's page. When the user says "
-                    f"\"this task\" they mean task {task_id}. Current state:\n"
+                    f'"this task" they mean task {task_id}. Current state:\n'
                     f"{format_task(node)}"
                 )
         elif chat_session:
@@ -369,7 +378,10 @@ class Gateway:
             token = agent_mod.started_tasks_var.set(spawned)
             try:
                 reply = await self.send_message(
-                    request, session_id=session, surface=surface, on_tool=on_tool,
+                    request,
+                    session_id=session,
+                    surface=surface,
+                    on_tool=on_tool,
                 )
             finally:
                 agent_mod.started_tasks_var.reset(token)
@@ -405,9 +417,15 @@ class Gateway:
 
         assistant_tools = [getattr(t, "name", "") for t in getattr(self._agent, "tools", [])]
         assistant_tools = [n for n in assistant_tools if n]
-        return build_voice_agent(self._config, self._tasks, delegate,
-                                 voice=voice, task_context=task_context, on_end=on_end,
-                                 assistant_tools=assistant_tools)
+        return build_voice_agent(
+            self._config,
+            self._tasks,
+            delegate,
+            voice=voice,
+            task_context=task_context,
+            on_end=on_end,
+            assistant_tools=assistant_tools,
+        )
 
     async def _recent_transcript(self, session_id: str, turns: int = 6) -> str:
         """A short plain-text snippet of the last few chat turns, for voice grounding."""
@@ -428,9 +446,7 @@ class Gateway:
         if self._writer is None:
             return
         try:
-            await self._writer.persist(
-                session_id, list(await stream.history.get_events())
-            )
+            await self._writer.persist(session_id, list(await stream.history.get_events()))
             await self._append_transcript(session_id, user_text, reply_text)
         except Exception:
             pass  # persistence is best-effort; never fail the user's turn
@@ -473,30 +489,25 @@ class Gateway:
             if not entry.endswith(".json"):
                 continue
             try:
-                doc = json.loads(
-                    await self._event_store.read(_TRANSCRIPT_PREFIX + entry)
-                )
+                doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry))
             except Exception:
                 continue
             msgs = doc.get("messages", [])
             first_user = next((m["text"] for m in msgs if m["role"] == "user"), "")
-            out.append({
-                "session_id": doc.get("session_id", ""),
-                "updated": doc.get("updated", ""),
-                "preview": first_user[:80],
-                "turns": len(msgs) // 2,
-            })
+            out.append(
+                {
+                    "session_id": doc.get("session_id", ""),
+                    "updated": doc.get("updated", ""),
+                    "preview": first_user[:80],
+                    "turns": len(msgs) // 2,
+                }
+            )
         out.sort(key=lambda s: s["updated"], reverse=True)
         return out
 
     async def _maybe_onboard(self, asker) -> None:
         """Run first-run onboarding once, via the asker that made this request."""
-        if (
-            self._onboarding_done
-            or not self._onboard
-            or not self._memory
-            or asker is None
-        ):
+        if self._onboarding_done or not self._onboard or not self._memory or asker is None:
             return
         self._onboarding_done = True  # set first: never double-prompt, even on error
         from assistant.onboarding import needs_onboarding, run_onboarding

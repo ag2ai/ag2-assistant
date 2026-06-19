@@ -79,9 +79,7 @@ def _insert_bullet(doc: str, heading: str, bullet: str) -> str:
     return "\n".join(out) + "\n"
 
 
-async def remember_note(
-    note: str, category: str = "how", store_path: Path | None = None
-) -> str:
+async def remember_note(note: str, category: str = "how", store_path: Path | None = None) -> str:
     """Immediately save an explicit user preference/fact to the learned profile.
 
     Unlike the passive aggregator (which distils memory only every few turns and
@@ -91,9 +89,7 @@ async def remember_note(
     """
     heading = PROFILE_HEADINGS.get(category, PROFILE_HEADINGS["how"])
     store = build_profile_store(store_path)
-    existing = (
-        await store.read(PROFILE_PATH) if await store.exists(PROFILE_PATH) else ""
-    )
+    existing = await store.read(PROFILE_PATH) if await store.exists(PROFILE_PATH) else ""
     doc = existing if existing.strip() else _blank_profile()
     updated = _insert_bullet(doc, heading, "- " + note.strip())
     await store.write(PROFILE_PATH, updated)
@@ -222,9 +218,7 @@ def build_knowledge_config(
             config=aggregate_config,
             prompt=build_profile_prompt(platform),
         ),
-        aggregate_trigger=AggregateTrigger(
-            every_n_turns=every_n_turns, on_end=on_end
-        ),
+        aggregate_trigger=AggregateTrigger(every_n_turns=every_n_turns, on_end=on_end),
         **compact_kwargs,
     )
 

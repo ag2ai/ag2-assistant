@@ -46,7 +46,12 @@ async def test_capture_failure_writes_record_with_history_shape(tmp_path):
     stream = _Stream([ModelRequest(parts=[]), ModelResponse(message=None)])
     err = ValueError("400 INVALID_ARGUMENT boom")
     path = await capture_failure(
-        cfg, session_id="task:abc", surface="ctx", user_text="hi", error=err, stream=stream,
+        cfg,
+        session_id="task:abc",
+        surface="ctx",
+        user_text="hi",
+        error=err,
+        stream=stream,
     )
     assert path is not None
     rec = json.loads(open(path).read())

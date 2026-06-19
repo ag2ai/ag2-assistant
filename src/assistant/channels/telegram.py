@@ -103,9 +103,7 @@ class TelegramChannel(Channel):
     def __init__(self, token: str | None = None) -> None:
         self._token = token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not self._token:
-            raise ValueError(
-                "TELEGRAM_BOT_TOKEN not set (env var or token= argument)."
-            )
+            raise ValueError("TELEGRAM_BOT_TOKEN not set (env var or token= argument).")
         self._app: Application | None = None
         self._gateway = None
         self._bot_username: str | None = None
@@ -117,9 +115,7 @@ class TelegramChannel(Channel):
         # concurrent_updates lets a button-tap (callback) be handled WHILE a
         # message handler is blocked awaiting that very answer — otherwise PTB
         # processes updates one-at-a-time and HITL deadlocks.
-        self._app = (
-            Application.builder().token(self._token).concurrent_updates(True).build()
-        )
+        self._app = Application.builder().token(self._token).concurrent_updates(True).build()
         self._app.add_handler(CallbackQueryHandler(self._on_callback))
         self._app.add_handler(
             MessageHandler(
@@ -138,16 +134,14 @@ class TelegramChannel(Channel):
     def _asker_for(self, chat_id: str) -> Asker:
         return TelegramAsker(self._app.bot, chat_id, self._pending)
 
-    async def _on_callback(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if query is None or not query.data:
             return
         await query.answer()
         chat_id = str(query.message.chat.id)
         if query.data.startswith(_CB_PREFIX):
-            answer = query.data[len(_CB_PREFIX):]
+            answer = query.data[len(_CB_PREFIX) :]
             self._pending.resolve(chat_id, answer)
             # The prompt is a transient modal — remove it once answered so it
             # doesn't linger below the reply.
@@ -203,9 +197,7 @@ class TelegramChannel(Channel):
             raw=update,
         )
 
-    async def _on_message(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = update.message
         if msg is None:
             return

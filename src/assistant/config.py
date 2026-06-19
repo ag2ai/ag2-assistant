@@ -107,9 +107,7 @@ class Config(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     data_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME)
     # Where installed skills live (SKILL.md packages).
-    skills_dir: Path = Field(
-        default_factory=lambda: Path.home() / _DATA_DIR_NAME / "skills"
-    )
+    skills_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME / "skills")
 
 
 def default_config_path() -> Path:
@@ -190,6 +188,6 @@ def load_config(path: Path | None = None) -> Config:
         except Exception:
             data = {}  # a malformed config file falls back to defaults
     cfg = Config(**data)
-    _apply_settings_overrides(cfg)   # UI-selected provider/model over file/defaults
-    _apply_env_overrides(cfg)        # explicit AG2ASSISTANT_* env still wins last
+    _apply_settings_overrides(cfg)  # UI-selected provider/model over file/defaults
+    _apply_env_overrides(cfg)  # explicit AG2ASSISTANT_* env still wins last
     return cfg

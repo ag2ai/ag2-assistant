@@ -43,8 +43,11 @@ class StreamBridge:
         """Run a user turn; its events flow back out through the subscription."""
         try:
             await self._gw.send_message(
-                text, session_id=self._sid, asker=asker,
-                attachments=attachments, surface=surface,
+                text,
+                session_id=self._sid,
+                asker=asker,
+                attachments=attachments,
+                surface=surface,
             )
             with contextlib.suppress(Exception):
                 await self._ws.send_json({"type": "turn_end", "session": self._sid})

@@ -7,15 +7,15 @@ import pytest
 
 
 def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))      # data_dir → tmp/.ag2assistant
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")    # empty = "no key" (load_dotenv won't override)
+    monkeypatch.setenv("HOME", str(tmp_path))  # data_dir → tmp/.ag2assistant
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # empty = "no key" (load_dotenv won't override)
     from assistant import secrets
 
     assert secrets.status()["anthropic"]["set"] is False
 
     assert secrets.set_key("anthropic", "sk-ant-secret-9999")
     st = secrets.status()["anthropic"]
-    assert st["set"] is True and st["hint"] == "…9999"   # only the last 4, never raw
+    assert st["set"] is True and st["hint"] == "…9999"  # only the last 4, never raw
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-secret-9999"  # loaded into env
 
     # file is 0600
@@ -25,7 +25,7 @@ def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
     assert secrets.clear("anthropic")
     assert secrets.status()["anthropic"]["set"] is False
 
-    assert secrets.set_key("bogus", "x") is False        # unknown provider
+    assert secrets.set_key("bogus", "x") is False  # unknown provider
 
 
 def test_ollama_base_url(monkeypatch, tmp_path):
@@ -63,7 +63,7 @@ async def test_gateway_reload_swaps_agent(monkeypatch, tmp_path):
     await g.start()
     first = g._agent
     assert first is not None
-    await g.reload()                 # reference-swap
+    await g.reload()  # reference-swap
     assert g._agent is not None and g._agent is not first
 
 
@@ -77,4 +77,4 @@ def test_model_config_key_env_by_provider(monkeypatch, tmp_path):
     cfg.llm.provider = "openai"
     cfg.llm.model = "gpt-x"
     mc = model_config(cfg)
-    assert getattr(mc, "api_key", None) == "sk-openai-test"   # picked OPENAI_API_KEY by provider
+    assert getattr(mc, "api_key", None) == "sk-openai-test"  # picked OPENAI_API_KEY by provider

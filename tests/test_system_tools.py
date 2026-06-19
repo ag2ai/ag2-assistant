@@ -14,8 +14,9 @@ def _service(tmp_path):
         pass
 
     mgr = TaskManager(store, executor, inquiry_store=inq)
-    return TaskService(store=store, inquiry_store=inq, manager=mgr, executor=executor,
-                       planner_agent=object())
+    return TaskService(
+        store=store, inquiry_store=inq, manager=mgr, executor=executor, planner_agent=object()
+    )
 
 
 class _Chats:
@@ -29,10 +30,21 @@ class _Chats:
 def test_tool_set_covers_retrieval_and_actions(tmp_path):
     names = {t.name for t in build_system_tools(_service(tmp_path), chats=_Chats())}
     assert {
-        "list_tasks", "get_task", "create_task", "schedule_task", "reschedule_task",
-        "add_subtask", "add_deliverable", "set_task_objective", "cancel_task",
-        "archive_task", "run_task_now", "list_open_questions", "answer_question",
-        "list_chats", "read_chat",
+        "list_tasks",
+        "get_task",
+        "create_task",
+        "schedule_task",
+        "reschedule_task",
+        "add_subtask",
+        "add_deliverable",
+        "set_task_objective",
+        "cancel_task",
+        "archive_task",
+        "run_task_now",
+        "list_open_questions",
+        "answer_question",
+        "list_chats",
+        "read_chat",
     } <= names
 
 
@@ -43,9 +55,13 @@ def test_tool_set_without_chats(tmp_path):
 
 async def test_format_task_is_concise(tmp_path):
     svc = _service(tmp_path)
-    t = await svc.store.create("Trip", objective="plan a trip",
-                               status=TaskStatus.SCHEDULED,
-                               scheduled_for="2030-01-01T09:00:00", recurrence="weekdays")
+    t = await svc.store.create(
+        "Trip",
+        objective="plan a trip",
+        status=TaskStatus.SCHEDULED,
+        scheduled_for="2030-01-01T09:00:00",
+        recurrence="weekdays",
+    )
     await svc.store.add_deliverable(t.id, "itinerary")
     await svc.store.add_subtask(t.id, "book flights", reopen_parent=False)
     node = await svc.get_task(t.id)
@@ -62,17 +78,19 @@ async def test_get_task_returns_full_asset_surface_previews(tmp_path):
     d = await svc.store.add_deliverable(t.id, "headlines")
     body = "RBA holds rates.\n" + ("DETAIL LINE\n" * 400)  # well over the preview cap
     await svc.store.set_deliverable_status(
-        t.id, d["id"], "produced",
+        t.id,
+        d["id"],
+        "produced",
         asset={"name": "headlines", "kind": "text", "content": body},
     )
 
     node = await svc.get_task(t.id)
-    surface = format_task(node)               # ambient surface context (what get_task tool guards)
-    assert "preview only" in surface          # ambient view is marked as partial
-    assert body not in surface                 # …and does not contain the whole thing
+    surface = format_task(node)  # ambient surface context (what get_task tool guards)
+    assert "preview only" in surface  # ambient view is marked as partial
+    assert body not in surface  # …and does not contain the whole thing
 
-    full = _fmt_node(node, full=True)          # what the get_task tool returns
-    assert body in full                        # complete, untruncated output
+    full = _fmt_node(node, full=True)  # what the get_task tool returns
+    assert body in full  # complete, untruncated output
     assert "preview only" not in full
 
 
@@ -80,8 +98,12 @@ async def test_run_now_on_scheduled_keeps_schedule(tmp_path):
     svc = _service(tmp_path)
     ran = []
     svc._run_in_bg = lambda tid, ch, clarify=True: ran.append(tid)
-    t = await svc.store.create("digest", status=TaskStatus.SCHEDULED,
-                               scheduled_for="2030-01-01T09:00:00", recurrence="weekdays")
+    t = await svc.store.create(
+        "digest",
+        status=TaskStatus.SCHEDULED,
+        scheduled_for="2030-01-01T09:00:00",
+        recurrence="weekdays",
+    )
     msg = await svc.run_now(t.id)
     assert "now" in msg.lower()
     # a fresh occurrence (clone) was kicked off; the template stays scheduled

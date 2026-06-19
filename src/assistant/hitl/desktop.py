@@ -111,14 +111,12 @@ def _render_body(question: Question) -> str:
             # whole call (incl. its JSON double-quotes) must be HTML-escaped or the
             # quotes collide and break the page's JavaScript.
             onclick = html.escape(f"answer({_js_str(opt)})", quote=True)
-            parts.append(
-                f'<button class="{cls}" onclick="{onclick}">{esc}</button>'
-            )
+            parts.append(f'<button class="{cls}" onclick="{onclick}">{esc}</button>')
         parts.append("</div>")
     else:
         parts.append(
             '<input type="text" id="freetext" placeholder="Type your answer…" '
-            'autofocus onkeydown="if(event.key===\'Enter\')submitText()">'
+            "autofocus onkeydown=\"if(event.key==='Enter')submitText()\">"
             '<div class="options"><button class="primary" onclick="submitText()">Send</button></div>'
         )
 
@@ -143,7 +141,7 @@ def _already_handled_page(req_id: str) -> str:
         req_id=req_id,
         body='<div class="done"><div class="tick">&#10003;</div>'
         '<h1>Already handled</h1><p class="detail">This request has '
-        'been answered or has expired. You can close this tab.</p></div>',
+        "been answered or has expired. You can close this tab.</p></div>",
     )
 
 

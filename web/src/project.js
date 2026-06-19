@@ -49,6 +49,54 @@ const NOTE = {
   TaskCancelled: '⏹ Task cancelled',
 }
 
+const ROOT_AGENT_NAMES = new Set(['ag2assistant', 'agclaw'])
+
+function isRootTaskEvent(d) {
+  return !d.agent_name || ROOT_AGENT_NAMES.has(d.agent_name)
+}
+
+function subagentStatus(type) {
+  if (type === 'TaskStarted') return 'running'
+  if (type === 'TaskCompleted') return 'completed'
+  if (type === 'TaskCancelled') return 'cancelled'
+  return 'failed'
+}
+
+function errorText(error) {
+  if (!error) return ''
+  if (typeof error === 'string') return error
+  return error.message || error.content || String(error)
+}
+
+function resultPreview(result) {
+  if (!result) return ''
+  const text = typeof result === 'string' ? result : JSON.stringify(result)
+  return text.replace(/\s+/g, ' ').trim().slice(0, 240)
+}
+
+// Find the subagent card for `taskId` (creating an empty one if its inner events
+// arrive before its TaskStarted). `items` is the nested array holding the card.
+function ensureSubagent(items, taskId, agent) {
+  let item = items.find((i) => i.kind === 'subagent' && i.taskId === taskId)
+  if (!item) {
+    item = { id: nid(), kind: 'subagent', taskId, agent: agent || 'subagent', objective: '', status: 'running', items: [] }
+    items.push(item)
+  }
+  if (!item.items) item.items = []
+  return item
+}
+
+function upsertSubagent(items, type, d) {
+  const taskId = d.task_id || `${d.agent_name}:${d.objective || ''}`
+  const item = ensureSubagent(items, taskId, d.agent_name)
+  item.status = subagentStatus(type)
+  if (d.agent_name) item.agent = d.agent_name
+  if (d.objective) item.objective = d.objective
+  if (type === 'TaskCompleted') item.result = resultPreview(d.result)
+  if (type === 'TaskFailed') item.error = errorText(d.error)
+  if (type === 'TaskCancelled') item.error = d.reason || 'cancelled'
+}
+
 // Mutates and returns `items`. `wire` is {type, data}.
 export function foldEvent(items, wire) {
   const t = tail(wire.type)
@@ -97,8 +145,17 @@ export function foldEvent(items, wire) {
     case 'TaskCompleted':
     case 'TaskFailed':
     case 'TaskCancelled':
-      items.push({ id: nid(), kind: 'note', text: NOTE[t] })
+      if (isRootTaskEvent(d)) items.push({ id: nid(), kind: 'note', text: NOTE[t] })
+      else upsertSubagent(items, t, d)
       break
+    case 'SubagentTrace': {
+      // One inner event from a subagent — nest it under that subagent's card by
+      // folding it (recursively, same reducer) into the card's own items array.
+      // A nested SubagentTrace inside `inner` nests another level → recursion.
+      const card = ensureSubagent(items, d.subagent_id, tail((d.subagent_id || '').split(':').pop()))
+      if (d.inner && d.inner.type) foldEvent(card.items, d.inner)
+      break
+    }
     case 'DeliverableProduced':
       items.push({ id: nid(), kind: 'deliverable', taskId: d.task_id, deliverableId: d.deliverable_id, description: d.description, preview: d.preview })
       break

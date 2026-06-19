@@ -30,7 +30,7 @@ _DEFAULT_TIMEOUT = 300.0
 class InquiryStatus:
     PENDING = "pending"
     ANSWERED = "answered"
-    EXPIRED = "expired"      # timed out unanswered
+    EXPIRED = "expired"  # timed out unanswered
     CANCELLED = "cancelled"  # the owning task was cancelled
 
     TERMINAL = frozenset({ANSWERED, EXPIRED, CANCELLED})
@@ -42,12 +42,12 @@ class Inquiry:
 
     id: str
     text: str
-    kind: str = "question"            # "question" | "permission" | "confirmation"
+    kind: str = "question"  # "question" | "permission" | "confirmation"
     task_id: str | None = None
     options: list[str] = field(default_factory=list)
     detail: str | None = None
-    resource: str | None = None       # for permission: the folder/command at stake
-    channel: str | None = None        # the surface it was raised on
+    resource: str | None = None  # for permission: the folder/command at stake
+    channel: str | None = None  # the surface it was raised on
     status: str = InquiryStatus.PENDING
     answer: str | None = None
     created_at: str = field(default_factory=now_iso)
@@ -59,8 +59,10 @@ class Inquiry:
 
     def to_question(self) -> Question:
         return Question(
-            text=self.text, options=self.options or None,
-            detail=self.detail, kind=self.kind,
+            text=self.text,
+            options=self.options or None,
+            detail=self.detail,
+            kind=self.kind,
         )
 
     def to_dict(self) -> dict:
@@ -104,13 +106,24 @@ class InquiryStore:
             ev.set()
 
     async def create(
-        self, text: str, kind: str = "question", *, task_id: str | None = None,
-        options: list[str] | None = None, detail: str | None = None,
-        resource: str | None = None, channel: str | None = None,
+        self,
+        text: str,
+        kind: str = "question",
+        *,
+        task_id: str | None = None,
+        options: list[str] | None = None,
+        detail: str | None = None,
+        resource: str | None = None,
+        channel: str | None = None,
     ) -> Inquiry:
         inq = Inquiry(
-            id=new_id("inq"), text=text, kind=kind, task_id=task_id,
-            options=list(options or []), detail=detail, resource=resource,
+            id=new_id("inq"),
+            text=text,
+            kind=kind,
+            task_id=task_id,
+            options=list(options or []),
+            detail=detail,
+            resource=resource,
             channel=channel,
         )
         await self._save(inq)
@@ -205,8 +218,13 @@ class DurableAsker:
     """
 
     def __init__(
-        self, inner: Asker, store: InquiryStore, *, task_id: str | None = None,
-        channel: str | None = None, timeout: float = _DEFAULT_TIMEOUT,
+        self,
+        inner: Asker,
+        store: InquiryStore,
+        *,
+        task_id: str | None = None,
+        channel: str | None = None,
+        timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         self._inner = inner
         self._store = store
@@ -217,16 +235,22 @@ class DurableAsker:
     def rebind(self, task_id: str) -> "DurableAsker":
         """A copy bound to `task_id`, sharing the same transport + store."""
         return DurableAsker(
-            self._inner, self._store, task_id=task_id,
-            channel=self.channel, timeout=self._timeout,
+            self._inner,
+            self._store,
+            task_id=task_id,
+            channel=self.channel,
+            timeout=self._timeout,
         )
 
     async def ask(self, question: Question, timeout: float | None = None) -> str:
         to = timeout or self._timeout
         inq = await self._store.create(
-            text=question.text, kind=getattr(question, "kind", "question") or "question",
-            task_id=self.task_id, options=list(question.options or []),
-            detail=getattr(question, "detail", None), channel=self.channel,
+            text=question.text,
+            kind=getattr(question, "kind", "question") or "question",
+            task_id=self.task_id,
+            options=list(question.options or []),
+            detail=getattr(question, "detail", None),
+            channel=self.channel,
         )
 
         async def via_transport() -> None:
@@ -240,8 +264,9 @@ class DurableAsker:
             resolved = await self._store.get(inq.id)
             # if the transport finished without an answer (raised), give the
             # out-of-band path the rest of the window before giving up
-            if (resolved is None or resolved.status != InquiryStatus.ANSWERED) \
-                    and not wait_t.done():
+            if (
+                resolved is None or resolved.status != InquiryStatus.ANSWERED
+            ) and not wait_t.done():
                 await wait_t
                 resolved = await self._store.get(inq.id)
         finally:

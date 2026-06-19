@@ -85,8 +85,11 @@ async def test_run_intake_collects_answers(tmp_path):
 async def test_prepare_trivial_task_skips_intake(tmp_path):
     store = _store(tmp_path)
     t = await store.create("any unread emails?")
-    plan = TaskPlan(trivial=True, objective="Report unread emails",
-                    deliverables=[PlanDeliverable(description="summary of unread")])
+    plan = TaskPlan(
+        trivial=True,
+        objective="Report unread emails",
+        deliverables=[PlanDeliverable(description="summary of unread")],
+    )
     agent = _FakeAgent([plan])
     asker = _FakeAsker([])
     await prepare_task(store, t.id, agent, asker)
@@ -115,10 +118,12 @@ async def test_answering_flips_status_off_awaiting_input(tmp_path):
             return _FakeReply(self._plans.pop(0))
 
     plan1 = TaskPlan(trivial=False, objective="p", questions=[ClarifyQuestion(text="Which?")])
-    plan2 = TaskPlan(trivial=False, objective="done", deliverables=[PlanDeliverable(description="x")])
+    plan2 = TaskPlan(
+        trivial=False, objective="done", deliverables=[PlanDeliverable(description="x")]
+    )
     await prepare_task(store, t.id, _RecordingAgent([plan1, plan2]), _FakeAsker(["A"]))
 
-    assert seen[1] == TaskStatus.PLANNING       # re-plan after the answer, not awaiting_input
+    assert seen[1] == TaskStatus.PLANNING  # re-plan after the answer, not awaiting_input
     assert (await store.get(t.id)).status == TaskStatus.PENDING
 
 
@@ -152,12 +157,19 @@ async def test_prepare_iterates_clarification_until_plan_converges(tmp_path):
     until the plan has no more open questions (involve the user as much as needed)."""
     store = _store(tmp_path)
     t = await store.create("Help me get ready for my trip.")
-    plan1 = TaskPlan(trivial=False, objective="provisional",
-                     questions=[ClarifyQuestion(text="Where are you going?")])
-    plan2 = TaskPlan(trivial=False, objective="provisional",
-                     questions=[ClarifyQuestion(text="When, and for how long?")])
+    plan1 = TaskPlan(
+        trivial=False,
+        objective="provisional",
+        questions=[ClarifyQuestion(text="Where are you going?")],
+    )
+    plan2 = TaskPlan(
+        trivial=False,
+        objective="provisional",
+        questions=[ClarifyQuestion(text="When, and for how long?")],
+    )
     plan3 = TaskPlan(  # converged — no more questions
-        trivial=False, objective="Trip-prep checklist for Lisbon",
+        trivial=False,
+        objective="Trip-prep checklist for Lisbon",
         deliverables=[PlanDeliverable(description="packing + prep checklist")],
         subtasks=[PlanSubtask(title="Lisbon weather + essentials")],
     )
@@ -167,8 +179,10 @@ async def test_prepare_iterates_clarification_until_plan_converges(tmp_path):
     got = await store.get(t.id)
     assert agent.asks == 3  # plan, replan, replan — three rounds
     assert len(asker.asked) == 2  # asked across two clarification rounds
-    assert got.intake == {"Where are you going?": "Lisbon",
-                          "When, and for how long?": "Next week, 5 days"}
+    assert got.intake == {
+        "Where are you going?": "Lisbon",
+        "When, and for how long?": "Next week, 5 days",
+    }
     assert got.status == TaskStatus.PENDING
     assert got.objective == "Trip-prep checklist for Lisbon"
 
@@ -178,8 +192,11 @@ async def test_prepare_abandons_when_user_stops_answering(tmp_path):
     (CANCELLED) rather than proceeding on guesses."""
     store = _store(tmp_path)
     t = await store.create("Help me get ready for my trip.")
-    plan = TaskPlan(trivial=False, objective="provisional",
-                    questions=[ClarifyQuestion(text="Where are you going?")])
+    plan = TaskPlan(
+        trivial=False,
+        objective="provisional",
+        questions=[ClarifyQuestion(text="Where are you going?")],
+    )
     agent = _FakeAgent([plan])
     asker = _FakeAsker([""])  # user declines to answer
     await prepare_task(store, t.id, agent, asker)
@@ -196,8 +213,7 @@ async def test_prepare_caps_clarification_rounds(tmp_path):
     store = _store(tmp_path)
     t = await store.create("vague forever")
     plans = [  # every plan returns a fresh question
-        TaskPlan(trivial=False, objective="p",
-                 questions=[ClarifyQuestion(text=f"q{i}?")])
+        TaskPlan(trivial=False, objective="p", questions=[ClarifyQuestion(text=f"q{i}?")])
         for i in range(_MAX_INTAKE_ROUNDS + 2)
     ]
     agent = _FakeAgent(plans)

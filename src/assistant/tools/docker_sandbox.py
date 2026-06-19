@@ -47,12 +47,7 @@ def docker_available() -> bool:
     if not exe:
         return False
     try:
-        return (
-            subprocess.run(
-                [exe, "info"], capture_output=True, timeout=10
-            ).returncode
-            == 0
-        )
+        return subprocess.run([exe, "info"], capture_output=True, timeout=10).returncode == 0
     except Exception:
         return False
 
@@ -110,22 +105,29 @@ class DockerSandbox(SandboxBase):
             if self._started:
                 return
             argv = [
-                "docker", "run", "-d", "--rm",
-                "--name", self._name,
-                "--network", self._network,
-                "--memory", self._memory,
-                "--cpus", self._cpus,
-                "-w", str(self._workdir),
+                "docker",
+                "run",
+                "-d",
+                "--rm",
+                "--name",
+                self._name,
+                "--network",
+                self._network,
+                "--memory",
+                self._memory,
+                "--cpus",
+                self._cpus,
+                "-w",
+                str(self._workdir),
                 self._image,
-                "sleep", "infinity",
+                "sleep",
+                "infinity",
             ]
             result = await asyncio.to_thread(
                 subprocess.run, argv, capture_output=True, text=True, timeout=120
             )
             if result.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to start Docker sandbox: {result.stderr.strip()}"
-                )
+                raise RuntimeError(f"Failed to start Docker sandbox: {result.stderr.strip()}")
             self._started = True
             if not self._atexit_registered:
                 atexit.register(self._atexit_cleanup)
@@ -160,11 +162,19 @@ class DockerSandbox(SandboxBase):
         target = self._workdir / path
         await self.exec(["mkdir", "-p", str(target.parent)])
         cmd = [
-            "docker", "exec", "-i", self._name,
-            "sh", "-c", f"cat > {shlex.quote(str(target))}",
+            "docker",
+            "exec",
+            "-i",
+            self._name,
+            "sh",
+            "-c",
+            f"cat > {shlex.quote(str(target))}",
         ]
         await asyncio.to_thread(
-            subprocess.run, cmd, input=content, capture_output=True,
+            subprocess.run,
+            cmd,
+            input=content,
+            capture_output=True,
             timeout=self._default_timeout,
         )
 
@@ -191,9 +201,7 @@ class DockerSandbox(SandboxBase):
 
     def _atexit_cleanup(self) -> None:
         if self._started and not self._closed:
-            subprocess.run(
-                ["docker", "rm", "-f", self._name], capture_output=True, timeout=30
-            )
+            subprocess.run(["docker", "rm", "-f", self._name], capture_output=True, timeout=30)
 
 
 class DockerEnvironment(SingletonFactory):
@@ -272,12 +280,19 @@ class DockerMountSandbox(SandboxBase):
 
     def _build_argv(self, argv: list[str], env: dict[str, str] | None) -> list[str]:
         cmd = [
-            "docker", "run", "--rm",
-            "--network", self._network,
-            "--memory", self._memory,
-            "--cpus", self._cpus,
-            "-v", f"{self._host_dir}:{self._workdir}",
-            "-w", str(self._workdir),
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            self._network,
+            "--memory",
+            self._memory,
+            "--cpus",
+            self._cpus,
+            "-v",
+            f"{self._host_dir}:{self._workdir}",
+            "-w",
+            str(self._workdir),
         ]
         for key, value in (env or {}).items():
             cmd += ["-e", f"{key}={value}"]
@@ -324,9 +339,7 @@ def build_docker_skill_runtime(
                 timeout=timeout,
                 max_output=max_output,
             )
-            return ShellAdapter(
-                sandbox, blocked=self.blocked or None, timeout=timeout
-            )
+            return ShellAdapter(sandbox, blocked=self.blocked or None, timeout=timeout)
 
     return _DockerSkillRuntime(
         dir=str(install_dir),

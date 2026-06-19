@@ -112,7 +112,9 @@ class PermissionManager:
     """
 
     def __init__(
-        self, store: PermissionStore | None = None, asker: Asker | None = None,
+        self,
+        store: PermissionStore | None = None,
+        asker: Asker | None = None,
         sandbox: str = "local",
     ) -> None:
         self.store = store or PermissionStore()
@@ -208,8 +210,6 @@ class PermissionManager:
         return self.store.granted_folders()
 
 
-async def request_access(
-    target: Path, store: PermissionStore, asker: Asker | None
-) -> bool:
+async def request_access(target: Path, store: PermissionStore, asker: Asker | None) -> bool:
     """Backwards-compatible shim — delegates to `PermissionManager.check`."""
     return await PermissionManager(store, asker).check(target)

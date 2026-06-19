@@ -57,9 +57,16 @@ def _fake_update(text, chat_type="private", chat_id=42, user_id=7, reply_to_bot=
     if reply_to_bot:
         reply_to = SimpleNamespace(from_user=SimpleNamespace(id=999))
     message = SimpleNamespace(
-        text=text, caption=None, chat=chat, from_user=from_user,
+        text=text,
+        caption=None,
+        chat=chat,
+        from_user=from_user,
         reply_to_message=reply_to,
-        document=None, photo=None, audio=None, voice=None, video=None,
+        document=None,
+        photo=None,
+        audio=None,
+        voice=None,
+        video=None,
     )
     return SimpleNamespace(message=message)
 
@@ -76,9 +83,7 @@ def test_normalize_dm():
 
 def test_normalize_group_with_mention_strips_handle():
     ch = _telegram_channel()
-    inbound = ch._normalize(
-        _fake_update("@ag2assistantbot what is 2+2?", chat_type="supergroup")
-    )
+    inbound = ch._normalize(_fake_update("@ag2assistantbot what is 2+2?", chat_type="supergroup"))
     assert inbound.is_direct is False
     assert inbound.mentioned is True
     assert "@ag2assistantbot" not in inbound.text
@@ -94,17 +99,20 @@ def test_normalize_group_without_mention():
 
 def test_normalize_group_reply_to_bot_counts_as_mention():
     ch = _telegram_channel()
-    inbound = ch._normalize(
-        _fake_update("thanks!", chat_type="group", reply_to_bot=True)
-    )
+    inbound = ch._normalize(_fake_update("thanks!", chat_type="group", reply_to_bot=True))
     assert inbound.mentioned is True
 
 
 def test_normalize_ignores_non_text():
     ch = _telegram_channel()
     msg = SimpleNamespace(
-        text=None, caption=None,
-        document=None, photo=None, audio=None, voice=None, video=None,
+        text=None,
+        caption=None,
+        document=None,
+        photo=None,
+        audio=None,
+        voice=None,
+        video=None,
     )
     assert ch._normalize(SimpleNamespace(message=msg)) is None
 

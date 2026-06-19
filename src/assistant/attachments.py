@@ -39,8 +39,24 @@ _DOC = {
     ".pdf": "application/pdf",
 }
 _TEXT_SUFFIXES = {
-    ".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".yaml", ".yml",
-    ".py", ".js", ".ts", ".html", ".css", ".xml", ".log", ".ini", ".toml", ".sh",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".json",
+    ".csv",
+    ".tsv",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".xml",
+    ".log",
+    ".ini",
+    ".toml",
+    ".sh",
 }
 _MAX_TEXT_CHARS = 50_000
 

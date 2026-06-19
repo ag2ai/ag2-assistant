@@ -72,7 +72,11 @@ async def do_add_subtask(store, manager, task_id, title, description="", capabil
     scheduled = _is_scheduled(t)
     caps = [c.strip() for c in (capabilities or "").split(",") if c.strip()] or ["web"]
     child = await store.add_subtask(
-        task_id, title, description, reopen_parent=not scheduled, capabilities=caps,
+        task_id,
+        title,
+        description,
+        reopen_parent=not scheduled,
+        capabilities=caps,
     )
     await store.add_deliverable(child.id, description or f"Output of: {title}")
     await resume_task(store, manager, task_id)  # no-op for scheduled tasks
@@ -111,8 +115,10 @@ async def do_reschedule(store, task_id, when="", recurrence="") -> str:
         fields["recurrence"] = None
     elif rec:
         if parse_recurrence(rec) is None:
-            return (f"I don't understand the repeat '{recurrence}'. Try daily, weekly, "
-                    "hourly, or 'every 2 days'.")
+            return (
+                f"I don't understand the repeat '{recurrence}'. Try daily, weekly, "
+                "hourly, or 'every 2 days'."
+            )
         fields["recurrence"] = rec
     if not fields:
         return "Tell me the new time and/or how it should repeat."
@@ -151,7 +157,10 @@ def build_task_tools(store, manager, task_id: str) -> list:
         title: Annotated[str, Field(description="Short title of the new subtask.")],
         description: Annotated[str, Field(description="What this subtask should do.")] = "",
         capabilities: Annotated[
-            str, Field(description="Comma-separated tool groups it needs: web, code, files, calendar, drive.")
+            str,
+            Field(
+                description="Comma-separated tool groups it needs: web, code, files, calendar, drive."
+            ),
         ] = "web",
     ) -> str:
         """Add a subtask (e.g. 'also research X'). It's scheduled and run automatically."""
@@ -175,13 +184,19 @@ def build_task_tools(store, manager, task_id: str) -> list:
     @tool
     async def reschedule(
         when: Annotated[
-            str, Field(description="New next-run time as an ISO 8601 datetime (compute "
-                       "from your environment's current date/time). Empty = keep current time.")
+            str,
+            Field(
+                description="New next-run time as an ISO 8601 datetime (compute "
+                "from your environment's current date/time). Empty = keep current time."
+            ),
         ] = "",
         recurrence: Annotated[
-            str, Field(description="New repeat: daily / hourly / weekly / 'every N "
-                       "minutes/hours/days/weeks', or specific days like 'weekdays', "
-                       "'weekends', 'mon,wed,fri'; or 'off' to stop repeating. Empty = keep current.")
+            str,
+            Field(
+                description="New repeat: daily / hourly / weekly / 'every N "
+                "minutes/hours/days/weeks', or specific days like 'weekdays', "
+                "'weekends', 'mon,wed,fri'; or 'off' to stop repeating. Empty = keep current."
+            ),
         ] = "",
     ) -> str:
         """Change WHEN this task runs and/or how it repeats — e.g. 'make it weekly',

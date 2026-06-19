@@ -54,11 +54,11 @@ async def test_bridge_replays_then_forwards_and_runs_turns():
     bridge = StreamBridge(gw, ws, "s1")
 
     await bridge.open()
-    assert _events(ws)[0]["event"]["type"].endswith("TaskCreated")   # replayed history
+    assert _events(ws)[0]["event"]["type"].endswith("TaskCreated")  # replayed history
     assert any(m.get("type") == "ready" for m in ws.sent)
-    assert stream.sub is not None                                     # subscribed for live
+    assert stream.sub is not None  # subscribed for live
 
-    await stream.sub(TaskCreated("task-2", title="Y"))               # a live event
+    await stream.sub(TaskCreated("task-2", title="Y"))  # a live event
     assert len(_events(ws)) == 2
 
     await bridge.run_turn("hello", asker=None)
@@ -76,4 +76,4 @@ async def test_bridge_skips_binary_audio_events():
     bridge = StreamBridge(_GW(stream), (ws := _WS()), "s1")
     await bridge.open()
     await stream.sub(SynthesizedAudioEvent(b"\x00\x01"))
-    assert _events(ws) == []   # audio never forwarded as {type,data}
+    assert _events(ws) == []  # audio never forwarded as {type,data}

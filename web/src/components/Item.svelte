@@ -5,12 +5,14 @@
   import TaskCard from './items/TaskCard.svelte'
   import Deliverable from './items/Deliverable.svelte'
   import Inquiry from './items/Inquiry.svelte'
+  import Subagent from './items/Subagent.svelte'
   import Note from './items/Note.svelte'
 
   let { item } = $props()
   const map = {
     user: UserMessage, agent: AgentMessage, tools: Tools,
-    taskcard: TaskCard, deliverable: Deliverable, inquiry: Inquiry, note: Note,
+    taskcard: TaskCard, deliverable: Deliverable, inquiry: Inquiry,
+    subagent: Subagent, note: Note,
   }
   const Cmp = $derived(map[item.kind])
 </script>

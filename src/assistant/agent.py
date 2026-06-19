@@ -247,13 +247,16 @@ def environment_context(config: Config) -> str:
     return "Environment (live):\n" + "\n".join(lines)
 
 
-def turn_prompt(config: Config) -> list[str]:
+def turn_prompt(config: Config, memory: bool = True) -> list[str]:
     """Per-turn system prompt: persona + live environment context.
 
     `ask(prompt=...)` replaces the base prompt for that turn, so we include the
-    persona, the always-on behaviour guidance, and the refreshed environment.
+    persona, the always-on behaviour guidance, optional memory guidance, and the
+    refreshed environment.
     """
-    parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE, MEMORY_GUIDANCE]
+    parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE]
+    if memory:
+        parts.append(MEMORY_GUIDANCE)
     try:
         from assistant.integrations.google_auth import has_token
 

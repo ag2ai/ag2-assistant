@@ -56,6 +56,25 @@ async def test_executor_exception_fails_task(tmp_path):
     assert got.status == TaskStatus.FAILED and "boom" in got.error
 
 
+async def test_manager_forwards_raw_ag2_events(tmp_path):
+    from autogen.beta.events import TaskStarted
+
+    store = _store(tmp_path)
+    seen = []
+
+    async def executor(task_id, mgr, asker):
+        return
+
+    async def on_event(task_id, event):
+        seen.append((task_id, event))
+
+    mgr = TaskManager(store, executor, on_event=on_event)
+    event = TaskStarted(task_id="sub-1", agent_name="researcher", objective="find sources")
+    await mgr.emit_event("task-1", event)
+
+    assert seen == [("task-1", event)]
+
+
 async def test_parent_completes_despite_failed_subtask(tmp_path):
     """Resilience: a subtask that fails does NOT abort the parent — the parent
     still does its own work and completes if its own deliverable is met."""
