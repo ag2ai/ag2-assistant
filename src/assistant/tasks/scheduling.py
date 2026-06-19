@@ -116,6 +116,33 @@ def is_due(scheduled_for: str | None, now: datetime) -> bool:
     return dt is not None and dt <= now
 
 
+def validate_schedule(
+    when: str | None, recurrence: str | None, *, require_when: bool = False
+) -> str | None:
+    """Validate agent-supplied schedule args; return a correctable error message or
+    None if they're fine. Catches a malformed `when`/`recurrence` at the tool
+    boundary so it can't silently store a schedule that never fires.
+
+    `require_when=True` for first scheduling (a run time is mandatory); reschedule
+    allows an empty `when` (keep) and `recurrence` "off" (stop) / empty (keep).
+    """
+    w = (when or "").strip()
+    if w and _parse_dt(w) is None:
+        return (
+            f"Couldn't parse '{when}' as a date/time. Use an ISO 8601 datetime from "
+            "your environment clock, e.g. 2026-06-20T17:00:00+10:00."
+        )
+    if require_when and not w:
+        return "A first run time is required — give an ISO 8601 datetime."
+    r = (recurrence or "").strip().lower()
+    if r and r != "off" and parse_recurrence(r) is None:
+        return (
+            f"Couldn't parse '{recurrence}' as a recurrence. Use daily / hourly / "
+            "weekly, 'every N units', 'weekdays', 'weekends', or 'mon,wed,fri'."
+        )
+    return None
+
+
 def _at_time_of(day: datetime, t: datetime) -> datetime:
     return day.replace(hour=t.hour, minute=t.minute, second=t.second, microsecond=0)
 

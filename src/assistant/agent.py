@@ -387,6 +387,7 @@ def create_agent(
         hitl_hook = build_hitl_hook(asker)
 
     from assistant.observability import agent_logging_middleware
+    from assistant.observers import build_observers
 
     agent = Agent(
         config.agent.name,
@@ -398,6 +399,7 @@ def create_agent(
         hitl_hook=hitl_hook,
         dependencies=dependencies,
         middleware=[agent_logging_middleware()],  # per-turn LLM/tool logs → ag2assistant.log
+        observers=build_observers(),  # stuck-turn guards (loop + tool-churn) → stream alerts
     )
 
     return agent

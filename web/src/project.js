@@ -169,6 +169,13 @@ export function foldEvent(items, wire) {
       if (d.inner && d.inner.type) foldEvent(card.items, d.inner)
       break
     }
+    case 'ObserverAlert':
+      // A behaviour observer flagged something (e.g. a stuck/flailing turn) — show
+      // it as a subtle warning note in the thread. De-dupe identical consecutive
+      // alerts (an observer fires once but replay + live can both deliver it).
+      if (items[items.length - 1]?.text !== '⚠ ' + d.message)
+        items.push({ id: nid(), kind: 'note', text: '⚠ ' + d.message, alert: true })
+      break
     case 'DeliverableProduced':
       items.push({ id: nid(), kind: 'deliverable', taskId: d.task_id, deliverableId: d.deliverable_id, description: d.description, preview: d.preview })
       break

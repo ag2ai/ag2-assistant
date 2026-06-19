@@ -114,6 +114,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed var(--accent); cursor: pointer; }
 
 .note { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
+.note.alert { color: #c2410c; }
 .tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; align-items: center; }
 .chip { font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
 .dots span { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin-right: 4px; animation: blink 1.2s infinite both; }

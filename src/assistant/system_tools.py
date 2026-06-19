@@ -149,6 +149,10 @@ def build_system_tools(tasks, chats=None) -> list:
         context: Context = None,
     ) -> str:
         """Schedule a task to run later, optionally recurring."""
+        from assistant.tasks.scheduling import validate_schedule
+
+        if err := validate_schedule(when, recurrence, require_when=True):
+            return err  # correctable: the agent sees this and retries with a valid value
         tid = await tasks.schedule_task(request, when, recurrence or None)
         _note_started(tid, request)  # voice delegate card path (contextvar)
         await _emit_task_card(context, tid, request, "scheduled")  # event-stream card
@@ -164,6 +168,10 @@ def build_system_tools(tasks, chats=None) -> list:
         ] = "",
     ) -> str:
         """Change when a task runs and/or how it repeats."""
+        from assistant.tasks.scheduling import validate_schedule
+
+        if err := validate_schedule(when, recurrence):
+            return err  # correctable: empty keeps, 'off' stops; bad values rejected
         return await tasks.reschedule(task_id, when, recurrence)
 
     @tool

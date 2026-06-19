@@ -2,4 +2,4 @@
   let { item } = $props()
 </script>
 
-<div class="note">{item.text}</div>
+<div class="note" class:alert={item.alert}>{item.text}</div>

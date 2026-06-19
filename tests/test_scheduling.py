@@ -9,7 +9,22 @@ from assistant.tasks.scheduling import (
     is_due,
     next_occurrence,
     parse_recurrence,
+    validate_schedule,
 )
+
+
+def test_validate_schedule_accepts_valid_and_rejects_malformed():
+    good = "2030-01-01T09:00:00+10:00"
+    # valid combinations
+    assert validate_schedule(good, "daily", require_when=True) is None
+    assert validate_schedule(good, "weekdays", require_when=True) is None
+    assert validate_schedule(good, "", require_when=True) is None  # one-off
+    assert validate_schedule("", "off") is None  # reschedule: stop repeating, keep time
+    assert validate_schedule("", "") is None  # reschedule: keep both
+    # malformed when / missing required when / malformed recurrence → correctable error
+    assert "date/time" in (validate_schedule("banana", "", require_when=True) or "")
+    assert "required" in (validate_schedule("", "", require_when=True) or "")
+    assert "recurrence" in (validate_schedule(good, "every blue moon", require_when=True) or "")
 
 
 def test_parse_recurrence_intervals():
