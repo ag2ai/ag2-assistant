@@ -14,6 +14,7 @@ store, so resolution always arrives via `InquiryStore.answer()`.
 import asyncio
 
 from assistant.config import Config, load_config
+from assistant.hitl import NullAsker
 
 _CONTROL_PROMPT = (
     "You manage ONE task for the user. When they ask for a change — add or cancel "
@@ -29,12 +30,9 @@ _CONTROL_PROMPT = (
 )
 
 
-class _ParkingAsker:
-    """A transport asker with no live channel: blocks until the matching inquiry
-    is answered out of band (the inquiry store wakes the DurableAsker)."""
-
-    async def ask(self, question, timeout=None):
-        await asyncio.Event().wait()
+# A transport asker with no live channel — blocks until the inquiry is answered
+# out of band. Same as the public NullAsker; aliased for the existing local name.
+_ParkingAsker = NullAsker
 
 
 class TaskService:
@@ -145,14 +143,18 @@ class TaskService:
             pass
 
     async def _emit_inquiry(self, inquiry, kind) -> None:
-        """Durable HITL lifecycle → InquiryRaised/InquiryAnswered on the task's stream.
-        (AG2's HumanInputRequest is transient; our inquiries are durable & task-scoped.)"""
-        if self._emit is None or not inquiry.task_id:
+        """Durable HITL lifecycle → InquiryRaised/InquiryAnswered on its stream.
+        (AG2's HumanInputRequest is transient; our inquiries are durable.) The
+        target stream is the inquiry's `session` — a task page (`task:<id>`) or a
+        chat session — so the question renders inline wherever it was raised."""
+        if self._emit is None:
             return
         from assistant.events import InquiryAnswered, InquiryRaised
         from assistant.hitl.inquiry import InquiryStatus
 
-        sid = f"task:{inquiry.task_id}"
+        sid = inquiry.session or (f"task:{inquiry.task_id}" if inquiry.task_id else None)
+        if not sid:
+            return
         try:
             if kind == "raised":
                 await self._emit(
@@ -639,6 +641,7 @@ class TaskService:
         return {
             "id": i.id,
             "task_id": i.task_id,
+            "session": i.session,  # stream it's on → strip matches it to the open page
             "kind": i.kind,
             "text": i.text,
             "detail": i.detail,

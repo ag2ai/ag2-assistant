@@ -119,13 +119,26 @@ export function foldEvent(items, wire) {
     }
     case 'ModelResponse': {
       const msg = d.message && d.message.content
+      const calls = (d.tool_calls && d.tool_calls.calls) || []
+      const cur = items[items.length - 1]
       if (msg) {
-        const cur = items[items.length - 1]
         if (cur && cur.kind === 'agent' && cur.streaming) {
           cur.text = msg
           cur.streaming = false
         } else {
           items.push({ id: nid(), kind: 'agent', text: msg })
+        }
+      } else if (!calls.length) {
+        // Final response with neither text nor tool calls → the turn ended without
+        // a reply. Render a placeholder so the thread doesn't hang on "…" forever
+        // (isBusy needs a finalized agent item to clear). Intermediate tool-calling
+        // responses (calls.length > 0) are skipped — the turn isn't over.
+        if (cur && cur.kind === 'agent' && cur.streaming) {
+          cur.text = '_(no reply)_'
+          cur.streaming = false
+          cur.empty = true
+        } else {
+          items.push({ id: nid(), kind: 'agent', text: '_(no reply)_', empty: true })
         }
       }
       break

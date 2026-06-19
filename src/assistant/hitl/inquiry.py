@@ -48,6 +48,10 @@ class Inquiry:
     detail: str | None = None
     resource: str | None = None  # for permission: the folder/command at stake
     channel: str | None = None  # the surface it was raised on
+    # Stream the InquiryRaised/Answered events surface on (so it renders inline) and
+    # that the GUI matches against the open page. Tasks: "task:<id>"; chat: the
+    # chat session id. None → falls back to "task:<task_id>".
+    session: str | None = None
     status: str = InquiryStatus.PENDING
     answer: str | None = None
     created_at: str = field(default_factory=now_iso)
@@ -115,6 +119,7 @@ class InquiryStore:
         detail: str | None = None,
         resource: str | None = None,
         channel: str | None = None,
+        session: str | None = None,
     ) -> Inquiry:
         inq = Inquiry(
             id=new_id("inq"),
@@ -125,6 +130,7 @@ class InquiryStore:
             detail=detail,
             resource=resource,
             channel=channel,
+            session=session,
         )
         await self._save(inq)
         await self._notify(inq, "raised")
@@ -206,6 +212,20 @@ class InquiryStore:
             self._events.pop(inquiry_id, None)
 
 
+class NullAsker:
+    """A transport that never delivers anywhere — it just blocks until cancelled.
+
+    Use as the inner transport of a `DurableAsker` when the durable inquiry itself
+    is the surface (e.g. a web chat: the question renders inline via InquiryRaised
+    and is answered from the GUI). DurableAsker cancels this once the out-of-band
+    answer arrives, or on timeout.
+    """
+
+    async def ask(self, question: Question, timeout: float | None = None) -> str:
+        await asyncio.Event().wait()  # block forever; DurableAsker cancels us
+        return ""  # pragma: no cover
+
+
 class DurableAsker:
     """Wraps a transport `Asker` so every prompt is persisted as an `Inquiry`.
 
@@ -224,12 +244,14 @@ class DurableAsker:
         *,
         task_id: str | None = None,
         channel: str | None = None,
+        session: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         self._inner = inner
         self._store = store
         self.task_id = task_id
         self.channel = channel
+        self._session = session
         self._timeout = timeout
 
     def rebind(self, task_id: str) -> "DurableAsker":
@@ -239,11 +261,15 @@ class DurableAsker:
             self._store,
             task_id=task_id,
             channel=self.channel,
+            session=self._session,
             timeout=self._timeout,
         )
 
     async def ask(self, question: Question, timeout: float | None = None) -> str:
         to = timeout or self._timeout
+        # Surface on the explicit session, else the task's stream (so a task's
+        # inquiries render inline on its page exactly as before).
+        session = self._session or (f"task:{self.task_id}" if self.task_id else None)
         inq = await self._store.create(
             text=question.text,
             kind=getattr(question, "kind", "question") or "question",
@@ -251,6 +277,7 @@ class DurableAsker:
             options=list(question.options or []),
             detail=getattr(question, "detail", None),
             channel=self.channel,
+            session=session,
         )
 
         async def via_transport() -> None:

@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 dependencies = [
     # Pinned to AG2 main for the OpenAI realtime zero-arg-tool fix (ag2ai/ag2#2985);
     # ddgs powers the native DuckDuckSearchTool, openai powers the OpenAI voice provider.
-    "ag2[gemini,ddgs,openai] @ git+https://github.com/ag2ai/ag2.git@main",
+    "ag2[gemini,ddgs,openai,docker] @ git+https://github.com/ag2ai/ag2.git@main",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",

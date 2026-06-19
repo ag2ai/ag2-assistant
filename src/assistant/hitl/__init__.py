@@ -4,7 +4,13 @@ from assistant.hitl.base import Asker, Question, build_hitl_hook
 from assistant.hitl.channel import PendingAsks
 from assistant.hitl.desktop import DesktopAsker, HitlServer, add_hitl_routes
 from assistant.hitl.gateway import GatewayAsker
-from assistant.hitl.inquiry import DurableAsker, Inquiry, InquiryStatus, InquiryStore
+from assistant.hitl.inquiry import (
+    DurableAsker,
+    Inquiry,
+    InquiryStatus,
+    InquiryStore,
+    NullAsker,
+)
 
 __all__ = [
     "Asker",
@@ -19,4 +25,5 @@ __all__ = [
     "InquiryStatus",
     "InquiryStore",
     "DurableAsker",
+    "NullAsker",
 ]

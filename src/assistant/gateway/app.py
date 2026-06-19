@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from assistant.config import Config
 from assistant.gateway.core import Gateway
-from assistant.hitl import GatewayAsker, HitlServer, add_hitl_routes
+from assistant.hitl import DurableAsker, GatewayAsker, HitlServer, NullAsker, add_hitl_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -33,6 +33,18 @@ def _allowed_origins() -> set[str]:
     AG2ASSISTANT_ALLOWED_ORIGINS — an escape hatch for proxied/remote demos."""
     raw = os.environ.get("AG2ASSISTANT_ALLOWED_ORIGINS", "")
     return {o.strip().rstrip("/") for o in raw.split(",") if o.strip()}
+
+
+def _chat_asker(app, session_id: str):
+    """Durable, inline HITL for a chat turn: the agent's question persists as an
+    Inquiry and surfaces inline on this session's stream (InquiryRaised),
+    answerable from the thread or the strip — no separate live channel. Falls back
+    to the transient HitlServer asker if the inquiry store isn't available."""
+    tasks = getattr(app.state, "tasks", None)
+    inquiries = getattr(tasks, "inquiries", None) if tasks is not None else None
+    if inquiries is None:
+        return GatewayAsker(app.state.hitl)
+    return DurableAsker(NullAsker(), inquiries, session=session_id)
 
 
 def _origin_ok(origin: str | None, host: str | None) -> bool:
@@ -378,7 +390,7 @@ def create_app(
             f"usually about THIS task — inspect or steer it with your task tools "
             f"(its id is {task_id}). Current state:\n{format_task(node)}"
         )
-        asker = GatewayAsker(app.state.hitl)
+        asker = _chat_asker(app, f"task:{task_id}")
         reply = await app.state.gateway.send_message(
             req.text,
             session_id=f"task:{task_id}",
@@ -537,9 +549,9 @@ def create_app(
 
     @app.post("/api/message", response_model=MessageResponse)
     async def message(req: MessageRequest) -> MessageResponse:
-        # REST clients answer prompts by polling /api/hitl/pending and POSTing
-        # /hitl/{id}/answer; the request blocks until answered (or times out).
-        asker = GatewayAsker(app.state.hitl)
+        # Durable, inline HITL bound to this chat session (answerable from the
+        # thread or the strip); the request blocks until answered (or times out).
+        asker = _chat_asker(app, req.session_id)
         reply = await app.state.gateway.send_message(
             req.text, session_id=req.session_id, asker=asker
         )
@@ -594,7 +606,7 @@ def create_app(
                     text = "Here is a file I'm sharing with you."
                 if not text:
                     continue
-                asker = GatewayAsker(app.state.hitl)
+                asker = _chat_asker(app, session_id)
                 surface = await turn_surface()
                 asyncio.create_task(
                     bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)

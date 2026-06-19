@@ -193,6 +193,32 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
     assert traces[0].inner["data"]["agent_name"] == "researcher"
 
 
+async def test_chat_inquiry_surfaces_on_its_session_stream(tmp_path):
+    """A durable inquiry bound to a chat session emits InquiryRaised on THAT session
+    stream (so it renders inline in the chat), and answering it out of band resolves
+    the asker — durable, inline chat HITL with no separate live channel."""
+    import asyncio
+
+    from assistant.events import InquiryRaised
+    from assistant.hitl import DurableAsker, NullAsker, Question
+
+    svc, emitted = await _started(tmp_path)
+    asker = DurableAsker(NullAsker(), svc.inquiries, session="web-chat-1")
+
+    pending = asyncio.ensure_future(
+        asker.ask(Question(text="Which city?", options=["Sydney", "Perth"]))
+    )
+    await asyncio.sleep(0.05)  # let create + emit happen before it blocks on the answer
+
+    raised = [e for _, e in emitted if isinstance(e, InquiryRaised)]
+    assert raised, "InquiryRaised should be emitted"
+    assert ("web-chat-1", raised[0]) in emitted  # on the chat session stream, not task:
+
+    await svc.answer_inquiry(raised[0].inquiry_id, "Sydney")
+    assert await asyncio.wait_for(pending, timeout=2) == "Sydney"
+    await svc.close()
+
+
 async def test_inline_answer_falls_back_to_inquiry_store(tmp_path):
     """Answering inline on a task page sends the InquiryStore id over the WS. The
     HitlServer won't know it (different id space), so the gateway falls back to the

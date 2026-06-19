@@ -1,26 +1,24 @@
-"""Docker-backed sandbox for AG2 Assistant's shell/code tools.
+"""One-shot Docker sandbox for running untrusted SKILL scripts.
 
-AG2 ships a `LocalEnvironment` (subprocess on the host) but, as of the current
-version, no Docker backend — so this implements one against AG2's public
-`Sandbox` protocol. Commands run inside a throwaway container that does **not**
-mount the host filesystem, so model-written code/shell can't read or modify the
-user's files. That isolation is the safety boundary, which is why the agent
-factory drops the per-command approval prompt when this backend is active.
+AG2 now ships an official `autogen.beta.extensions.docker.DockerEnvironment` (a
+long-lived, cached container), which AG2 Assistant uses for the shell/code tools
+— see `tools.build_agent_tools`. This module keeps the one piece AG2's model
+doesn't fit: a **one-shot** `docker run --rm` bind-mount sandbox for skill
+scripts. Each run gets a fresh container that mounts ONLY the skill's `scripts/`
+directory (nothing else on the host) and is removed immediately — the right
+hygiene for untrusted, potentially-throwaway skill code, where a reused
+long-lived container would accumulate and carry state between runs.
 
-This is a deliberate "build it on top, migrate to native when it lands" move —
-when AG2 adds an official `DockerEnvironment`, swap this out for it.
+`docker_available()` gates whether the Docker path is used at all (here and for
+the shell/code tools).
 """
 
 import asyncio
-import atexit
-import shlex
 import shutil
 import subprocess
-import uuid
 from pathlib import Path, PurePosixPath
 
 from autogen.beta.tools.sandbox.base import ExecResult, SandboxBase
-from autogen.beta.tools.sandbox.factory import SingletonFactory
 
 _DEFAULT_IMAGE = "python:3.12-slim"
 _DEFAULT_WORKDIR = "/workspace"
@@ -50,191 +48,6 @@ def docker_available() -> bool:
         return subprocess.run([exe, "info"], capture_output=True, timeout=10).returncode == 0
     except Exception:
         return False
-
-
-class DockerSandbox(SandboxBase):
-    """A `Sandbox` that runs commands inside a long-lived Docker container.
-
-    The container is started lazily on first use (`docker run -d ... sleep
-    infinity`) and removed on `aclose` / process exit. Each `exec` runs via
-    `docker exec`. No host path is bind-mounted, so the container can't touch
-    the user's files.
-    """
-
-    def __init__(
-        self,
-        *,
-        image: str = _DEFAULT_IMAGE,
-        network: str = "bridge",
-        workdir: str = _DEFAULT_WORKDIR,
-        timeout: float = 60,
-        max_output: int = 100_000,
-        env_vars: dict[str, str] | None = None,
-        memory: str = "512m",
-        cpus: str = "1.0",
-        name: str | None = None,
-    ) -> None:
-        if timeout <= 0:
-            raise ValueError("`timeout` must be > 0 seconds.")
-        self._image = image
-        self._network = network
-        self._workdir = PurePosixPath(workdir)
-        self._default_timeout = timeout
-        self._max_output = max_output
-        self._env_vars = dict(env_vars or {})
-        self._memory = memory
-        self._cpus = cpus
-        self._name = name or f"ag2assistant_sbx_{uuid.uuid4().hex[:12]}"
-        self._started = False
-        self._closed = False
-        self._lock = asyncio.Lock()
-        self._atexit_registered = False
-
-    @property
-    def workdir(self) -> PurePosixPath:
-        return self._workdir
-
-    @property
-    def host_workdir(self) -> Path | None:
-        return None  # container filesystem is not visible on the host
-
-    async def _ensure_started(self) -> None:
-        if self._started:
-            return
-        async with self._lock:
-            if self._started:
-                return
-            argv = [
-                "docker",
-                "run",
-                "-d",
-                "--rm",
-                "--name",
-                self._name,
-                "--network",
-                self._network,
-                "--memory",
-                self._memory,
-                "--cpus",
-                self._cpus,
-                "-w",
-                str(self._workdir),
-                self._image,
-                "sleep",
-                "infinity",
-            ]
-            result = await asyncio.to_thread(
-                subprocess.run, argv, capture_output=True, text=True, timeout=120
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"Failed to start Docker sandbox: {result.stderr.strip()}")
-            self._started = True
-            if not self._atexit_registered:
-                atexit.register(self._atexit_cleanup)
-                self._atexit_registered = True
-
-    async def exec(
-        self,
-        argv: list[str],
-        *,
-        env: dict[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> ExecResult:
-        if self._closed:
-            raise RuntimeError("DockerSandbox has been closed.")
-        if not argv:
-            return ExecResult(output="", exit_code=2)
-        await self._ensure_started()
-
-        merged = {**self._env_vars, **(env or {})}
-        cmd = ["docker", "exec"]
-        for key, value in merged.items():
-            cmd += ["-e", f"{key}={value}"]
-        cmd += ["-w", str(self._workdir), self._name, *argv]
-
-        eff_timeout = timeout if timeout is not None else self._default_timeout
-        return await asyncio.to_thread(_capture, cmd, eff_timeout, self._max_output)
-
-    async def put_file(self, path: PurePosixPath, content: bytes) -> None:
-        if path.is_absolute():
-            raise ValueError(f"Absolute paths are not allowed in put_file: {path}")
-        await self._ensure_started()
-        target = self._workdir / path
-        await self.exec(["mkdir", "-p", str(target.parent)])
-        cmd = [
-            "docker",
-            "exec",
-            "-i",
-            self._name,
-            "sh",
-            "-c",
-            f"cat > {shlex.quote(str(target))}",
-        ]
-        await asyncio.to_thread(
-            subprocess.run,
-            cmd,
-            input=content,
-            capture_output=True,
-            timeout=self._default_timeout,
-        )
-
-    async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        if self._started:
-            await asyncio.to_thread(
-                subprocess.run,
-                ["docker", "rm", "-f", self._name],
-                capture_output=True,
-                timeout=30,
-            )
-        self._unregister_atexit()
-
-    def _unregister_atexit(self) -> None:
-        if self._atexit_registered:
-            try:
-                atexit.unregister(self._atexit_cleanup)
-            except ValueError:
-                pass
-            self._atexit_registered = False
-
-    def _atexit_cleanup(self) -> None:
-        if self._started and not self._closed:
-            subprocess.run(["docker", "rm", "-f", self._name], capture_output=True, timeout=30)
-
-
-class DockerEnvironment(SingletonFactory):
-    """A `SandboxFactory` over one `DockerSandbox` — pass it to
-    `SandboxShellTool`/`SandboxCodeTool` exactly like `LocalEnvironment`."""
-
-    def __init__(
-        self,
-        *,
-        image: str = _DEFAULT_IMAGE,
-        network: str = "bridge",
-        workdir: str = _DEFAULT_WORKDIR,
-        timeout: float = 60,
-        max_output: int = 100_000,
-        env_vars: dict[str, str] | None = None,
-        memory: str = "512m",
-        cpus: str = "1.0",
-    ) -> None:
-        super().__init__(
-            DockerSandbox(
-                image=image,
-                network=network,
-                workdir=workdir,
-                timeout=timeout,
-                max_output=max_output,
-                env_vars=env_vars,
-                memory=memory,
-                cpus=cpus,
-            )
-        )
-
-    async def aclose(self) -> None:
-        await self.sandbox.aclose()
 
 
 class DockerMountSandbox(SandboxBase):
@@ -351,9 +164,7 @@ def build_docker_skill_runtime(
 
 
 __all__ = [
-    "DockerEnvironment",
     "DockerMountSandbox",
-    "DockerSandbox",
     "build_docker_skill_runtime",
     "docker_available",
 ]

@@ -100,9 +100,13 @@ def build_agent_tools(
                     stacklevel=2,
                 )
         if use_docker:
-            from assistant.tools.docker_sandbox import DockerEnvironment
+            # AG2's official Docker backend: a long-lived, cached container with no
+            # host mount (host_path=None) — model code/shell can't touch the user's
+            # files, which is why approval is dropped on this path. State persists
+            # across tool calls in a session (the factory caches the container).
+            from autogen.beta.extensions.docker import DockerEnvironment
 
-            env = DockerEnvironment(image=docker_image, network=docker_network)
+            env = DockerEnvironment(image=docker_image, network_mode=docker_network)
             tools += [
                 SandboxShellTool(environment=env, blocked=_SHELL_BLOCKED),
                 SandboxCodeTool(environment=env),

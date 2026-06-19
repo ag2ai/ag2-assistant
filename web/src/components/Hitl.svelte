@@ -9,14 +9,23 @@
   let seen = new Set()   // inquiry ids already surfaced — chime only on genuinely new ones
   let first = true
 
-  // An inquiry the open task page already renders inline (its InquiryRaised rides
-  // that task's stream) is dropped from the strip — answer it in context, not
-  // twice. Everything else stays: other tasks' inquiries, subtask inquiries (on a
-  // different stream), and chat permission prompts (no task_id, never inline).
+  // The stream the open page renders inline: a task page → "task:<id>", a chat
+  // page → the chat id (mirrors controller.js's session mapping).
+  const pageSession = $derived(
+    $route.name === 'task' ? 'task:' + $route.id : $route.name === 'chat' ? $route.id : null,
+  )
+
+  // An inquiry the open page already renders inline (its InquiryRaised rides that
+  // session's stream) is dropped from the strip — answer it in context, not twice.
+  // Everything else stays: other pages' inquiries, subtask inquiries (different
+  // stream), and transient prompts without a session.
   const visible = $derived(
-    $inquiries.filter(
-      (q) => !(q._src === 'inquiry' && $route.name === 'task' && q.task_id === $route.id),
-    ),
+    $inquiries.filter((q) => {
+      if (q._src !== 'inquiry') return true
+      if (q.session && q.session === pageSession) return false
+      if ($route.name === 'task' && q.task_id === $route.id) return false // pre-session fallback
+      return true
+    }),
   )
 
   async function refresh() {

@@ -1,45 +1,18 @@
-"""Tests for the Docker sandbox backend and its wiring into the tool list.
+"""Tests for the skill-script Docker sandbox and the tool-list wiring.
 
-The unit tests never touch Docker (construction is lazy). The integration test
-runs a real container and is skipped when Docker isn't available.
+The shell/code tools use AG2's official `DockerEnvironment`; this module keeps the
+one-shot mounted sandbox for skill scripts. Unit tests never touch Docker
+(construction is lazy); the integration tests run a real container and are skipped
+when Docker isn't available.
 """
-
-from pathlib import PurePosixPath
 
 import pytest
 
 from assistant.tools.docker_sandbox import (
-    DockerEnvironment,
     DockerMountSandbox,
-    DockerSandbox,
     build_docker_skill_runtime,
     docker_available,
 )
-
-
-def test_sandbox_paths_without_starting():
-    sb = DockerSandbox(workdir="/work")
-    assert sb.workdir == PurePosixPath("/work")
-    assert sb.host_workdir is None  # container fs not on the host
-
-
-def test_rejects_nonpositive_timeout():
-    with pytest.raises(ValueError):
-        DockerSandbox(timeout=0)
-
-
-async def test_exec_empty_argv_short_circuits():
-    sb = DockerSandbox()
-    result = await sb.exec([])
-    assert result.exit_code == 2  # never starts a container for empty argv
-
-
-async def test_exec_after_close_raises():
-    sb = DockerSandbox()
-    await sb.aclose()  # closing an unstarted sandbox is a no-op
-    with pytest.raises(RuntimeError):
-        await sb.exec(["echo", "hi"])
-
 
 # --- build_agent_tools wiring (no real Docker) ---
 
@@ -82,6 +55,28 @@ def test_build_tools_uses_docker_and_drops_approval(monkeypatch):
     assert calls["approval"] == 0  # container is the boundary → no approval gate
 
 
+def test_build_tools_wires_ag2_docker_environment(monkeypatch):
+    """The docker path uses AG2's official DockerEnvironment, passing our image and
+    network through (network_mode), rather than a custom sandbox."""
+    import autogen.beta.extensions.docker as agdoc
+
+    import assistant.tools as tools_mod
+    import assistant.tools.docker_sandbox as ds
+
+    monkeypatch.setattr(ds, "docker_available", lambda: True)
+    captured = {}
+    real_env = agdoc.DockerEnvironment
+
+    def recorder(**kwargs):
+        captured.update(kwargs)
+        return real_env(**kwargs)  # a real factory (no container until .open())
+
+    monkeypatch.setattr(agdoc, "DockerEnvironment", recorder)
+    tools_mod.build_agent_tools(provider="gemini", sandbox="docker", docker_network="bridge")
+    assert captured.get("network_mode") == "bridge"
+    assert captured.get("image")  # the configured image is forwarded
+
+
 # --- skill-script sandbox (mounted, one-shot) ---
 
 
@@ -107,36 +102,6 @@ def test_docker_skill_runtime_uses_mounted_sandbox(tmp_path):
 
 
 # --- real Docker (integration) ---
-
-
-@pytest.mark.integration
-@pytest.mark.skipif(not docker_available(), reason="Docker not available")
-async def test_docker_exec_and_put_file_roundtrip():
-    sb = DockerSandbox(network="none")
-    try:
-        echoed = await sb.exec(["echo", "hello-from-container"])
-        assert echoed.exit_code == 0
-        assert "hello-from-container" in echoed.output
-
-        await sb.put_file(PurePosixPath("note.txt"), b"persisted")
-        read = await sb.exec(["cat", "note.txt"])
-        assert "persisted" in read.output
-
-        # no host filesystem is mounted
-        assert sb.host_workdir is None
-    finally:
-        await sb.aclose()
-
-
-@pytest.mark.integration
-@pytest.mark.skipif(not docker_available(), reason="Docker not available")
-async def test_docker_environment_factory_opens_same_sandbox():
-    env = DockerEnvironment(network="none")
-    try:
-        async with env.open() as a, env.open() as b:
-            assert a is b  # singleton: shell + code share one container
-    finally:
-        await env.aclose()
 
 
 @pytest.mark.integration
