@@ -37,20 +37,33 @@ def model_config(config: Config, model: str | None = None):
     if provider == "anthropic":
         from autogen.beta.config import AnthropicConfig
 
-        return AnthropicConfig(model=model, api_key=api_key)
+        return AnthropicConfig(
+            model=model, api_key=api_key, streaming=config.llm.streaming
+        )
     if provider in ("openai", "oai"):
         from autogen.beta.config import OpenAIConfig
 
-        return OpenAIConfig(model=model, api_key=api_key)
+        return OpenAIConfig(
+            model=model, api_key=api_key, streaming=config.llm.streaming
+        )
     if provider == "ollama":
         from autogen.beta.config import OllamaConfig
 
-        return OllamaConfig(model=model, host=os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE))
+        return OllamaConfig(
+            model=model,
+            host=os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
+            streaming=config.llm.streaming,
+        )
     from autogen.beta.config.gemini import GeminiConfig
 
     # Generous output budget so long research notes / briefings aren't truncated
     # mid-sentence (the default is small).
-    return GeminiConfig(model=model, api_key=api_key, max_output_tokens=8192)
+    return GeminiConfig(
+        model=model,
+        api_key=api_key,
+        max_output_tokens=8192,
+        streaming=config.llm.streaming,
+    )
 
 
 def cheap_model(config: Config) -> str | None:

@@ -58,6 +58,9 @@ class LLMConfig(BaseModel):
     provider: str = "gemini"  # gemini | anthropic | openai
     model: str = "gemini-3.5-flash"
     api_key_env: str = "GEMINI_API_KEY"
+    # AG2 Beta emits ModelMessageChunk events only when provider configs opt into
+    # streaming. The web/task UI is built to consume those chunks live.
+    streaming: bool = True
     # Optional cheaper model for the passive memory-aggregation pass. None → reuse
     # the main model. Aggregation is a background summarisation, so a smaller/
     # cheaper model is usually fine and saves cost on long sessions.
@@ -158,6 +161,8 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.llm.model = v
     if v := env("AG2ASSISTANT_API_KEY_ENV"):
         cfg.llm.api_key_env = v
+    if v := env("AG2ASSISTANT_STREAMING"):
+        cfg.llm.streaming = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := env("AG2ASSISTANT_AGGREGATE_MODEL"):
         cfg.llm.aggregate_model = v
     if v := env("AG2ASSISTANT_LOCATION"):

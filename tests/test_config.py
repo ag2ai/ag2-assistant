@@ -10,6 +10,7 @@ def test_default_config():
     config = Config()
     assert config.llm.provider == "gemini"
     assert config.llm.model.startswith("gemini")
+    assert config.llm.streaming is True
     assert config.agent.name == "ag2assistant"
     assert config.data_dir == Path.home() / ".ag2assistant"
 
@@ -51,10 +52,12 @@ def test_env_overrides_json(tmp_path, monkeypatch):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"llm": {"model": "from-json"}}))
     monkeypatch.setenv("AG2ASSISTANT_MODEL", "from-env")
+    monkeypatch.setenv("AG2ASSISTANT_STREAMING", "false")
     monkeypatch.setenv("AG2ASSISTANT_SANDBOX", "docker")
     monkeypatch.setenv("AG2ASSISTANT_AGGREGATE_EVERY_N", "7")
     cfg = load_config(p)
     assert cfg.llm.model == "from-env"  # env beats json
+    assert cfg.llm.streaming is False
     assert cfg.tools.sandbox == "docker"
     assert cfg.memory.aggregate_every_n_turns == 7
 
@@ -73,10 +76,19 @@ def test_model_config_gemini_and_aggregate_override():
     mc = model_config(cfg)
     assert type(mc).__name__ == "GeminiConfig"
     assert mc.model == "gemini-3.5-flash"
+    assert mc.streaming is True
     # aggregate override picks a different (cheaper) model, same provider
     mc2 = model_config(cfg, "gemini-2.5-flash")
     assert type(mc2).__name__ == "GeminiConfig"
     assert mc2.model == "gemini-2.5-flash"
+    assert mc2.streaming is True
+
+
+def test_model_config_respects_streaming_disabled():
+    from assistant.agent import model_config
+
+    cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.5-flash", streaming=False))
+    assert model_config(cfg).streaming is False
 
 
 def test_model_config_dispatches_anthropic(monkeypatch):
