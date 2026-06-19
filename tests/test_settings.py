@@ -6,13 +6,13 @@ from assistant import settings, voice_providers
 
 
 def test_voice_provider_env(monkeypatch):
-    monkeypatch.delenv("AGCLAW_VOICE_PROVIDER", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_VOICE_PROVIDER", raising=False)
     assert settings.voice_provider() == "gemini"  # default
-    monkeypatch.setenv("AGCLAW_VOICE_PROVIDER", "openai")
+    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "openai")
     assert settings.voice_provider() == "openai"
-    monkeypatch.setenv("AGCLAW_VOICE_PROVIDER", "OpenAI")  # case-insensitive
+    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "OpenAI")  # case-insensitive
     assert settings.voice_provider() == "openai"
-    monkeypatch.setenv("AGCLAW_VOICE_PROVIDER", "bogus")   # unknown → gemini
+    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "bogus")   # unknown → gemini
     assert settings.voice_provider() == "gemini"
 
 
@@ -43,9 +43,9 @@ def test_set_voice_is_per_provider(monkeypatch):
     assert settings.get_voice("openai") == "cedar"
 
     # active-provider default resolution follows the env var
-    monkeypatch.setenv("AGCLAW_VOICE_PROVIDER", "openai")
+    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "openai")
     assert settings.get_voice() == "cedar"
-    monkeypatch.setenv("AGCLAW_VOICE_PROVIDER", "gemini")
+    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "gemini")
     assert settings.get_voice() == "Kore"
 
 

@@ -1,4 +1,4 @@
-"""Tests for the AGClaw gateway and its REST/WebSocket facade.
+"""Tests for the AG2 Assistant gateway and its REST/WebSocket facade.
 
 Unit tests stub the agent so they run without an LLM. Integration tests exercise
 the real agent end-to-end.
@@ -207,7 +207,7 @@ def test_rest_message_endpoint(monkeypatch):
 
 
 def test_create_app_shares_injected_gateway(fake_gateway):
-    """When a gateway is injected (combined `agclaw run`), the app reuses it
+    """When a gateway is injected (combined `ag2assistant run`), the app reuses it
     rather than creating its own, and doesn't tear it down on shutdown."""
     from fastapi.testclient import TestClient
 
@@ -411,7 +411,7 @@ def test_origin_ok_unit(monkeypatch):
     """The same-origin rule: no-Origin and same host:port pass; others don't."""
     from assistant.gateway.app import _origin_ok
 
-    monkeypatch.delenv("AGCLAW_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
     assert _origin_ok(None, "127.0.0.1:8800")                  # non-browser caller
     assert _origin_ok("http://127.0.0.1:8800", "127.0.0.1:8800")   # same-origin
     assert _origin_ok("http://127.0.0.1:8800/", "127.0.0.1:8800")  # trailing slash
@@ -420,10 +420,10 @@ def test_origin_ok_unit(monkeypatch):
 
 
 def test_origin_allowlist_env(monkeypatch):
-    """AGCLAW_ALLOWED_ORIGINS adds extra accepted origins for proxied demos."""
+    """AG2ASSISTANT_ALLOWED_ORIGINS adds extra accepted origins for proxied demos."""
     from assistant.gateway.app import _origin_ok
 
-    monkeypatch.setenv("AGCLAW_ALLOWED_ORIGINS", "https://demo.example, http://foo")
+    monkeypatch.setenv("AG2ASSISTANT_ALLOWED_ORIGINS", "https://demo.example, http://foo")
     assert _origin_ok("https://demo.example", "127.0.0.1:8800")
     assert not _origin_ok("https://other.example", "127.0.0.1:8800")
 
@@ -436,7 +436,7 @@ def test_cross_origin_requests_rejected(monkeypatch):
     import assistant.gateway.app as app_mod
     import assistant.gateway.core as core_mod
 
-    monkeypatch.delenv("AGCLAW_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
     app = app_mod.create_app(memory=False, persist=False)

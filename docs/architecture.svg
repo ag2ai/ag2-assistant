@@ -19,7 +19,7 @@
     </style>
   </defs>
 
-  <text x="500" y="30" text-anchor="middle" font-size="20" class="h">AGClaw — event-stream architecture</text>
+  <text x="500" y="30" text-anchor="middle" font-size="20" class="h">AG2 Assistant — event-stream architecture</text>
   <text x="500" y="50" text-anchor="middle" class="m">AG2 Stream is the source of truth; everything is a projection of it (wire = log = {type, data})</text>
 
   <!-- Clients -->
@@ -99,7 +99,7 @@
 
   <rect x="670" y="556" width="270" height="62" rx="10" class="box"/>
   <text x="805" y="579" text-anchor="middle" class="h">Observability</text>
-  <text x="805" y="598" text-anchor="middle" class="m">agclaw.log · failure snapshots</text>
+  <text x="805" y="598" text-anchor="middle" class="m">ag2assistant.log · failure snapshots</text>
 
   <rect x="60" y="632" width="430" height="50" rx="10" class="box"/>
   <text x="275" y="655" text-anchor="middle" class="h">Memory</text>
@@ -110,7 +110,7 @@
 
   <!-- Storage -->
   <rect x="60" y="696" width="880" height="44" rx="10" class="found"/>
-  <text x="78" y="723" class="h">Storage ~/.agclaw/</text>
+  <text x="78" y="723" class="h">Storage ~/.ag2assistant/</text>
   <text x="922" y="723" text-anchor="end" class="m">sessions.db · tasks.db · inquiries.db · profile.db · permissions.json · debug/ · skills/</text>
 
   <!-- AG2 foundation -->

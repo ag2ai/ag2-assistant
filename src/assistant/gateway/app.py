@@ -1,4 +1,4 @@
-"""FastAPI facade over the AGClaw gateway.
+"""FastAPI facade over the AG2 Assistant gateway.
 
 Exposes a plain REST + WebSocket API so any UI client (web, desktop, mobile) can
 drive the agent without knowing anything about AG2. The gateway is created on
@@ -31,8 +31,8 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 def _allowed_origins() -> set[str]:
     """Extra browser origins to accept besides same-origin. Comma-separated in
-    AGCLAW_ALLOWED_ORIGINS — an escape hatch for proxied/remote demos."""
-    raw = os.environ.get("AGCLAW_ALLOWED_ORIGINS", "")
+    AG2ASSISTANT_ALLOWED_ORIGINS — an escape hatch for proxied/remote demos."""
+    raw = os.environ.get("AG2ASSISTANT_ALLOWED_ORIGINS", "")
     return {o.strip().rstrip("/") for o in raw.split(",") if o.strip()}
 
 
@@ -133,7 +133,7 @@ def create_app(
 ) -> FastAPI:
     """Build the FastAPI app.
 
-    If `gateway` is provided (e.g. shared with channels in `agclaw run`), it's
+    If `gateway` is provided (e.g. shared with channels in `ag2assistant run`), it's
     used as-is and its lifecycle is owned by the caller. Otherwise the app
     creates and manages its own gateway.
     """
@@ -165,7 +165,7 @@ def create_app(
             if owns_gateway:
                 await gateway.close()
 
-    app = FastAPI(title="AGClaw Gateway", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AG2 Assistant Gateway", version="0.1.0", lifespan=lifespan)
 
     @app.middleware("http")
     async def _origin_guard(request: Request, call_next):
@@ -239,7 +239,7 @@ def create_app(
     async def google_login_url(request: Request) -> dict:
         """Build a Google consent URL whose redirect returns to this gateway.
 
-        The user opens the URL (web button or a channel link). AGCLAW_PUBLIC_URL
+        The user opens the URL (web button or a channel link). AG2ASSISTANT_PUBLIC_URL
         overrides the redirect base when the gateway is reachable at a public URL
         (so the round-trip can complete from another device).
         """
@@ -247,7 +247,7 @@ def create_app(
 
         if not google_auth.is_configured():
             return {"ok": False, "error": "No OAuth client configured."}
-        base = os.environ.get("AGCLAW_PUBLIC_URL") or str(request.base_url)
+        base = os.environ.get("AG2ASSISTANT_PUBLIC_URL") or str(request.base_url)
         redirect_uri = base.rstrip("/") + "/api/google/callback"
         try:
             auth_url, state, flow = await asyncio.to_thread(
@@ -280,7 +280,7 @@ def create_app(
             email = await asyncio.to_thread(google_auth.complete_login, flow, code)
         except Exception as exc:
             return HTMLResponse(_page("Sign-in failed", str(exc)))
-        return HTMLResponse(_page("Connected ✓", f"AGClaw is now connected to {email}."))
+        return HTMLResponse(_page("Connected ✓", f"AG2 Assistant is now connected to {email}."))
 
     @app.post("/api/google/logout")
     async def google_logout() -> dict:
@@ -769,7 +769,7 @@ def create_app(
         deep links (/app/c/<id>, /app/t/<id>) survive refresh."""
         index = _APP_DIR / "index.html"
         if not index.exists():
-            return HTMLResponse("<h1>AGClaw</h1><p>New UI not built. Run: cd web && npm install && npm run build</p>")
+            return HTMLResponse("<h1>AG2 Assistant</h1><p>New UI not built. Run: cd web && npm install && npm run build</p>")
         f = (_APP_DIR / path).resolve()
         if path and f.is_file() and str(f).startswith(str(_APP_DIR.resolve())):
             return FileResponse(f)

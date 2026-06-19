@@ -109,7 +109,7 @@ OpenClaw registers 15+ core tools via `createOpenClawTools()` in `src/agents/ope
 
 This means web search works out of the box with zero config (DuckDuckGo fallback) but improves with API keys.
 
-**AGClaw comparison:** We currently use Gemini's native `GoogleSearch` grounding, which is simpler but provider-specific. A pluggable provider system like OpenClaw's would make search provider-agnostic.
+**AG2 Assistant comparison:** We currently use Gemini's native `GoogleSearch` grounding, which is simpler but provider-specific. A pluggable provider system like OpenClaw's would make search provider-agnostic.
 
 ### Web Fetch
 
@@ -135,7 +135,7 @@ This means web search works out of the box with zero config (DuckDuckGo fallback
 
 **Caching:** 60-minute TTL (configurable). **Timeout:** 30 seconds.
 
-**AGClaw comparison:** We currently use Gemini's native `UrlContext` tool. OpenClaw's approach gives more control (extract modes, caching, SSRF protection) but requires more code.
+**AG2 Assistant comparison:** We currently use Gemini's native `UrlContext` tool. OpenClaw's approach gives more control (extract modes, caching, SSRF protection) but requires more code.
 
 ### Browser Control
 
@@ -164,7 +164,7 @@ This means web search works out of the box with zero config (DuckDuckGo fallback
 - Configurable headless/headed modes
 - Environment variable sanitization
 
-**AGClaw comparison:** We don't have browser control yet. When we add it, we should consider a similar Docker-sandboxed approach for security. The CDP/playwright pattern is proven.
+**AG2 Assistant comparison:** We don't have browser control yet. When we add it, we should consider a similar Docker-sandboxed approach for security. The CDP/playwright pattern is proven.
 
 ### Code Execution
 
@@ -191,7 +191,7 @@ This means web search works out of the box with zero config (DuckDuckGo fallback
 - Path safety checks via `SandboxFsBridge` when sandboxed
 - Max poll wait: 120 seconds
 
-**AGClaw comparison:** We currently use Gemini's native `ToolCodeExecution` (runs in Gemini's cloud sandbox). OpenClaw's approach gives local execution with interactive PTY support — more powerful but less secure without Docker. For AGClaw, we should support both: Gemini-native for simple code, and a local/Docker sandbox for complex interactive tasks.
+**AG2 Assistant comparison:** We currently use Gemini's native `ToolCodeExecution` (runs in Gemini's cloud sandbox). OpenClaw's approach gives local execution with interactive PTY support — more powerful but less secure without Docker. For AG2 Assistant, we should support both: Gemini-native for simple code, and a local/Docker sandbox for complex interactive tasks.
 
 ### Tool Composition Summary
 

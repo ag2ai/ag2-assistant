@@ -19,7 +19,7 @@ from assistant.hitl.channel import PendingAsks
 
 SLACK_LIMIT = 3500
 _ASK_TIMEOUT = 300.0
-_ACTION_RE = re.compile(r"agclaw_opt_\d+")
+_ACTION_RE = re.compile(r"ag2assistant_opt_\d+")
 _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
@@ -80,7 +80,7 @@ class SlackAsker:
                             "type": "button",
                             "text": {"type": "plain_text", "text": opt[:75]},
                             "value": opt,
-                            "action_id": f"agclaw_opt_{i}",
+                            "action_id": f"ag2assistant_opt_{i}",
                         }
                         for i, opt in enumerate(question.options)
                     ],

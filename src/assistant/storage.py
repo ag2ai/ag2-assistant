@@ -1,4 +1,4 @@
-"""Shared persistence helpers for AGClaw's JSON-in-SQLite stores.
+"""Shared persistence helpers for AG2 Assistant's JSON-in-SQLite stores.
 
 Both the task store and the inquiry store keep one JSON doc per record in a
 SQLite knowledge store. SQLite isn't safe for concurrent multi-coroutine access

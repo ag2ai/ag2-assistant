@@ -1,4 +1,4 @@
-"""AGClaw application events that ride the AG2 stream.
+"""AG2 Assistant application events that ride the AG2 stream.
 
 These are ordinary AG2 events (``BaseEvent`` subclasses), so they serialize,
 persist (via ``EventLogWriter``), replay, and stream over the wire with exactly
@@ -7,7 +7,7 @@ renders them by type alongside AG2's own events (see docs/gui-redesign-plan.md).
 
 We only define what AG2 main doesn't already cover. Conversation, tool, voice,
 HITL (`HumanInputRequest`), and task-lifecycle (`TaskStarted`/`TaskCompleted`/…)
-events are AG2 native and reused as-is. These add the AGClaw-specific signals:
+events are AG2 native and reused as-is. These add the AG2 Assistant-specific signals:
 a task was spawned from a chat, a deliverable was produced, a task was scheduled,
 and the durable-inquiry lifecycle.
 """
@@ -15,11 +15,11 @@ and the durable-inquiry lifecycle.
 from autogen.beta.events import BaseEvent, Field
 
 
-class AGClawEvent(BaseEvent):
-    """Marker base for AGClaw app-level events (no fields of its own)."""
+class AssistantEvent(BaseEvent):
+    """Marker base for AG2 Assistant app-level events (no fields of its own)."""
 
 
-class TaskCreated(AGClawEvent):
+class TaskCreated(AssistantEvent):
     """A background task was spawned (e.g. from a chat) — renders as a task card."""
 
     task_id: str = Field(kw_only=False)
@@ -27,7 +27,7 @@ class TaskCreated(AGClawEvent):
     kind: str = "task"          # "task" | "scheduled"
 
 
-class TaskScheduled(AGClawEvent):
+class TaskScheduled(AssistantEvent):
     """A task was scheduled (or rescheduled) to run later — renders as a schedule note."""
 
     task_id: str = Field(kw_only=False)
@@ -35,7 +35,7 @@ class TaskScheduled(AGClawEvent):
     recurrence: str = ""        # "" for one-off
 
 
-class DeliverableProduced(AGClawEvent):
+class DeliverableProduced(AssistantEvent):
     """A task produced a deliverable — renders as a deliverable item with a preview."""
 
     task_id: str = Field(kw_only=False)
@@ -44,7 +44,7 @@ class DeliverableProduced(AGClawEvent):
     preview: str = ""           # short preview; full asset fetched via REST
 
 
-class InquiryRaised(AGClawEvent):
+class InquiryRaised(AssistantEvent):
     """A durable HITL question/permission was raised (backed by InquiryStore).
 
     Mirrors AG2's transient ``HumanInputRequest`` but is durable and task-scoped,
@@ -58,7 +58,7 @@ class InquiryRaised(AGClawEvent):
     kind: str = "question"      # "question" | "permission"
 
 
-class InquiryAnswered(AGClawEvent):
+class InquiryAnswered(AssistantEvent):
     """A durable inquiry was answered — resolves the matching HITL item."""
 
     inquiry_id: str = Field(kw_only=False)

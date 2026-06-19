@@ -3,7 +3,7 @@
 This is the same representation ``EventLogWriter`` persists, so persist, replay,
 and live-stream share one shape. The gateway forwards `to_wire(event)` over the
 WebSocket; the client renders by ``type`` and reloads history by replaying the
-exact same records. Custom ``agclaw.events.*`` round-trip because deserialization
+exact same records. Custom ``ag2assistant.events.*`` round-trip because deserialization
 resolves the class by its fully-qualified name (dynamic import).
 
 Audio events travel as raw binary frames, not JSON — `is_binary_event` flags them.

@@ -1,6 +1,6 @@
 """Realtime voice providers (Gemini, OpenAI) behind a tiny registry.
 
-The rest of AGClaw selects a provider by name and asks the registry for its voice
+The rest of AG2 Assistant selects a provider by name and asks the registry for its voice
 catalogue, its realtime config, or a preview clip — it never branches on the
 provider. Add a provider by calling ``register(VoiceProvider(...))``; nothing else
 in the codebase changes (no ``if gemini / elif openai`` anywhere).
@@ -32,12 +32,12 @@ def pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
 
 @dataclass(frozen=True)
 class VoiceProvider:
-    """Everything AGClaw needs to talk to one realtime voice backend."""
+    """Everything AG2 Assistant needs to talk to one realtime voice backend."""
 
     name: str
     voices: dict[str, str]          # voice name -> short style (also the display order)
     default_voice: str
-    realtime_model: str             # default model; AGCLAW_VOICE_MODEL overrides at the call site
+    realtime_model: str             # default model; AG2ASSISTANT_VOICE_MODEL overrides at the call site
     input_rate: int                 # mic capture rate the backend expects (Hz); the browser matches it
     build_realtime: Callable[[Config, str, str], object]            # (config, voice, model) -> RealtimeConfig
     synthesize: Callable[[Config, str, str], Awaitable[bytes]]      # (config, voice, text) -> WAV bytes
@@ -56,7 +56,7 @@ def names() -> tuple[str, ...]:
 
 
 def active_provider() -> str:
-    """The active voice provider: persisted UI setting → AGCLAW_VOICE_PROVIDER → default.
+    """The active voice provider: persisted UI setting → AG2ASSISTANT_VOICE_PROVIDER → default.
     The settings read is a lazy import to avoid a circular import at module load."""
     try:
         from assistant import settings
@@ -66,7 +66,7 @@ def active_provider() -> str:
             return p
     except Exception:
         pass
-    p = (os.environ.get("AGCLAW_VOICE_PROVIDER") or DEFAULT_PROVIDER).strip().lower()
+    p = (os.environ.get("AG2ASSISTANT_VOICE_PROVIDER") or DEFAULT_PROVIDER).strip().lower()
     return p if p in _REGISTRY else DEFAULT_PROVIDER
 
 

@@ -1,4 +1,4 @@
-"""AGClaw persistent user-profile memory.
+"""AG2 Assistant persistent user-profile memory.
 
 A passive "observer" layer that learns the user over time and persists what it
 learns to a SQLite-backed knowledge store. After each conversation, an
@@ -154,7 +154,7 @@ Return the updated profile document only (headings and bullets, no commentary)."
 
 def default_store_path() -> Path:
     """Default on-disk location for the profile store."""
-    return Path.home() / ".agclaw" / "profile.db"
+    return Path.home() / ".ag2assistant" / "profile.db"
 
 
 def build_profile_store(store_path: Path | None = None) -> SqliteKnowledgeStore:

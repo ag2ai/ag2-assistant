@@ -35,7 +35,7 @@ def test_setup_logging_creates_logfile(tmp_path):
     logger.info("hello")
     for h in logger.handlers:
         h.flush()
-    assert (cfg.data_dir / "agclaw.log").exists()
+    assert (cfg.data_dir / "ag2assistant.log").exists()
 
 
 async def test_capture_failure_writes_record_with_history_shape(tmp_path):

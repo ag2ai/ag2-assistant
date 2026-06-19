@@ -1,4 +1,4 @@
-"""System tools — let the universal agent know and do everything in AGClaw.
+"""System tools — let the universal agent know and do everything in AG2 Assistant.
 
 These are retrieval + action tools over the whole system (tasks, chats, durable
 HITL questions), so the one agent you talk to anywhere can answer "what tasks do

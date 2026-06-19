@@ -1,4 +1,4 @@
-"""Gateway core — session management over the AGClaw agent.
+"""Gateway core — session management over the AG2 Assistant agent.
 
 The Gateway exposes a simple `send_message(text, session_id)` surface that any
 facade (REST/WebSocket/channel) can call. Each session is a persistent AG2
@@ -97,7 +97,7 @@ def sanitize_history(events: list) -> list:
 
 
 class Gateway:
-    """Manages per-session, resumable conversations with the AGClaw agent."""
+    """Manages per-session, resumable conversations with the AG2 Assistant agent."""
 
     def __init__(
         self,

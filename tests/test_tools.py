@@ -1,4 +1,4 @@
-"""Tests for AGClaw tools.
+"""Tests for AG2 Assistant tools.
 
 Most tools are now native AG2 built-ins (DuckDuckSearchTool, SandboxShellTool,
 SandboxCodeTool). We only test our provider-aware tool selection and the custom

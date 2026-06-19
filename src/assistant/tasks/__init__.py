@@ -1,4 +1,4 @@
-"""AGClaw task management — persistent, trackable, nestable tasks."""
+"""AG2 Assistant task management — persistent, trackable, nestable tasks."""
 
 from assistant.tasks.executor import make_task_executor
 from assistant.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus

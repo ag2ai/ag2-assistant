@@ -1,4 +1,4 @@
-"""Tests for AGClaw agent."""
+"""Tests for AG2 Assistant agent."""
 
 import pytest
 

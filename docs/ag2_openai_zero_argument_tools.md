@@ -1,7 +1,7 @@
 # AG2 bug: zero-argument tools break tool calling on the OpenAI realtime `LiveAgent`
 
 > **Status: RESOLVED upstream** — fixed in ag2ai/ag2#2985 (no-arg tools now serialise to
-> `{"type": "object", "properties": {}}`). AGClaw pins `ag2 @ git main` and has removed
+> `{"type": "object", "properties": {}}`). AG2 Assistant pins `ag2 @ git main` and has removed
 > its interim workaround. Kept as a historical record of the investigation.
 
 **Component:** `autogen.beta` — `LiveAgent` + `autogen.beta.live.openai` (OpenAI realtime)
@@ -28,7 +28,7 @@ Any realtime agent that includes at least one zero-arg tool loses tool calling
 entirely — including its *other*, well-formed tools. Common zero-arg tools that
 trigger it: `current_time()`, `end_call()`, `list_items()`, etc.
 
-In our app (AGClaw) the voice agent exposed four zero-arg tools alongside a
+In our app (AG2 Assistant) the voice agent exposed four zero-arg tools alongside a
 `ask_assistant(request: str)` delegate; the model never called any tool on
 OpenAI, while the identical agent worked on Gemini.
 
@@ -166,9 +166,9 @@ questionable for any consumer; OpenAI realtime is just the strict one that
 surfaces it. Worth a regression test asserting a no-arg `@tool` serializes to
 `{"type": "object", "properties": {}}`.
 
-## Interim workaround (downstream, AGClaw)
+## Interim workaround (downstream, AG2 Assistant)
 
-Until the upstream fix lands, AGClaw monkeypatches the mapper at its OpenAI
+Until the upstream fix lands, AG2 Assistant monkeypatches the mapper at its OpenAI
 boundary to coerce the null schema (idempotent; removed once AG2 is re-pinned):
 
 ```python

@@ -1,4 +1,4 @@
-"""User-adjustable settings persisted to ``~/.agclaw/settings.json``.
+"""User-adjustable settings persisted to ``~/.ag2assistant/settings.json``.
 
 Currently just the realtime voice. Kept separate from `config` (which is
 env/file/defaults, read-only at runtime) because these are toggled live from the

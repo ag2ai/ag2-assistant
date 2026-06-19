@@ -1,4 +1,4 @@
-"""Docker-backed sandbox for AGClaw's shell/code tools.
+"""Docker-backed sandbox for AG2 Assistant's shell/code tools.
 
 AG2 ships a `LocalEnvironment` (subprocess on the host) but, as of the current
 version, no Docker backend — so this implements one against AG2's public
@@ -89,7 +89,7 @@ class DockerSandbox(SandboxBase):
         self._env_vars = dict(env_vars or {})
         self._memory = memory
         self._cpus = cpus
-        self._name = name or f"agclaw_sbx_{uuid.uuid4().hex[:12]}"
+        self._name = name or f"ag2assistant_sbx_{uuid.uuid4().hex[:12]}"
         self._started = False
         self._closed = False
         self._lock = asyncio.Lock()

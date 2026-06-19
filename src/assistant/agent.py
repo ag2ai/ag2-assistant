@@ -1,4 +1,4 @@
-"""AGClaw agent built on AG2 Beta."""
+"""AG2 Assistant agent built on AG2 Beta."""
 
 import os
 from contextvars import ContextVar
@@ -12,13 +12,13 @@ from assistant.tools import build_agent_tools
 
 # Set (to a list) by a caller that wants to learn which tasks the agent spawned
 # this turn via the `start_task` tool — e.g. the gateway, to push a chat task-card.
-started_tasks_var: ContextVar = ContextVar("agclaw_started_tasks", default=None)
+started_tasks_var: ContextVar = ContextVar("ag2assistant_started_tasks", default=None)
 
 # Commands skill scripts must never run (defense-in-depth; skills can ship code).
 _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
 
 # Default (cheaper) model for the passive memory-aggregation pass, per provider.
-# Used only when llm.aggregate_model isn't set. Override via AGCLAW_AGGREGATE_MODEL.
+# Used only when llm.aggregate_model isn't set. Override via AG2ASSISTANT_AGGREGATE_MODEL.
 _DEFAULT_AGGREGATE_MODEL = {"gemini": "gemini-3.1-flash-lite"}
 
 
@@ -61,7 +61,7 @@ def cheap_model(config: Config) -> str | None:
 
 
 def bundled_skills_dir():
-    """Directory of first-party skills shipped with AGClaw (read-only)."""
+    """Directory of first-party skills shipped with AG2 Assistant (read-only)."""
     from pathlib import Path
 
     return Path(__file__).parent / "skills"
@@ -72,7 +72,7 @@ def build_skills_toolkit(config: Config):
 
     `SkillSearchToolkit` extends the local skills toolkit (list/load/read/run)
     with registry search + install from skills.sh. Skills install into
-    `config.skills_dir`; AGClaw's bundled first-party skills are always available
+    `config.skills_dir`; AG2 Assistant's bundled first-party skills are always available
     too (read-only, via `extra_paths`), so it's capable on first run.
 
     When the Docker sandbox is selected (`config.tools.sandbox == "docker"`),
@@ -300,10 +300,10 @@ def create_agent(
     extra_tools: list | None = None,
     compact: bool = False,
 ) -> Agent:
-    """Create an AGClaw agent with the given configuration.
+    """Create an AG2 Assistant agent with the given configuration.
 
     Args:
-        config: AGClaw configuration (defaults to Config()).
+        config: AG2 Assistant configuration (defaults to Config()).
         memory: Whether to enable the persistent user-profile memory.
         platform: The channel this session is on (cli, telegram, discord, ...).
             Observations learned this session are tagged with it.
@@ -389,7 +389,7 @@ def create_agent(
         assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
-        middleware=[agent_logging_middleware()],  # per-turn LLM/tool logs → agclaw.log
+        middleware=[agent_logging_middleware()],  # per-turn LLM/tool logs → ag2assistant.log
     )
 
     return agent

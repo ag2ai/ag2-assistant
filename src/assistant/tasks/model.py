@@ -1,7 +1,7 @@
 """The Task primitive — a tracked, nestable unit of work.
 
 Mirrors AG2's task lifecycle (created/running/completed/failed/cancelled) and adds
-the states AGClaw needs for its user-facing flow (scheduled, awaiting_input,
+the states AG2 Assistant needs for its user-facing flow (scheduled, awaiting_input,
 planning). Serialises to/from a plain dict for JSON persistence.
 """
 

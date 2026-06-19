@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AGClaw — Agents Architecture</title>
+<title>AG2 Assistant — Agents Architecture</title>
 <style>
   :root {
     --ink:#171717; --muted:#5f5f5f; --line:#e6e6e6; --accent:#f95339;
@@ -54,12 +54,12 @@
 <div class="wrap">
 
 <header class="h">
-  <span class="mark">AGClaw</span>
+  <span class="mark">AG2 Assistant</span>
   <h1>Agents Architecture</h1>
-  <p class="sub">The LLM agents in AGClaw — who they are, their tools, their prompts, and where the design is currently disconnected. A working note for review (June 2026).</p>
+  <p class="sub">The LLM agents in AG2 Assistant — who they are, their tools, their prompts, and where the design is currently disconnected. A working note for review (June 2026).</p>
 </header>
 
-<p>AGClaw runs <b>five distinct LLM agents</b> (plus two non-conversational passes), each created in a
+<p>AG2 Assistant runs <b>five distinct LLM agents</b> (plus two non-conversational passes), each created in a
 different module with its own model, tools, and prompt. Work flows between them as a relay — and because
 each is a fresh agent with a partial view, capabilities like <i>scheduling</i> are known to some and
 invisible to others. That fragmentation is the source of the rough edges.</p>
@@ -193,9 +193,9 @@ and carries unused web/shell/Google tools. Conceptually it's just "request → T
 </ul>
 
 <footer>
-  Generated as a working note. Source of truth is the code: <code>agclaw/agent.py</code>,
-  <code>agclaw/tasks/planner.py</code>, <code>agclaw/tasks/executor.py</code>,
-  <code>agclaw/tasks/control.py</code>, <code>agclaw/gateway/tasks_service.py</code>.
+  Generated as a working note. Source of truth is the code: <code>ag2assistant/agent.py</code>,
+  <code>ag2assistant/tasks/planner.py</code>, <code>ag2assistant/tasks/executor.py</code>,
+  <code>ag2assistant/tasks/control.py</code>, <code>ag2assistant/gateway/tasks_service.py</code>.
 </footer>
 
 </div>

@@ -1,4 +1,4 @@
-"""Tests for AGClaw configuration."""
+"""Tests for AG2 Assistant configuration."""
 
 import json
 from pathlib import Path
@@ -10,8 +10,8 @@ def test_default_config():
     config = Config()
     assert config.llm.provider == "gemini"
     assert config.llm.model.startswith("gemini")
-    assert config.agent.name == "agclaw"
-    assert config.data_dir == Path.home() / ".agclaw"
+    assert config.agent.name == "ag2assistant"
+    assert config.data_dir == Path.home() / ".ag2assistant"
 
 
 def test_custom_llm_config():
@@ -50,9 +50,9 @@ def test_load_config_reads_json(tmp_path):
 def test_env_overrides_json(tmp_path, monkeypatch):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"llm": {"model": "from-json"}}))
-    monkeypatch.setenv("AGCLAW_MODEL", "from-env")
-    monkeypatch.setenv("AGCLAW_SANDBOX", "docker")
-    monkeypatch.setenv("AGCLAW_AGGREGATE_EVERY_N", "7")
+    monkeypatch.setenv("AG2ASSISTANT_MODEL", "from-env")
+    monkeypatch.setenv("AG2ASSISTANT_SANDBOX", "docker")
+    monkeypatch.setenv("AG2ASSISTANT_AGGREGATE_EVERY_N", "7")
     cfg = load_config(p)
     assert cfg.llm.model == "from-env"  # env beats json
     assert cfg.tools.sandbox == "docker"

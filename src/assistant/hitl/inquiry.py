@@ -81,7 +81,7 @@ class InquiryStore:
         else:
             from autogen.beta.knowledge import SqliteKnowledgeStore
 
-            path = path or (Path.home() / ".agclaw" / "inquiries.db")
+            path = path or (Path.home() / ".ag2assistant" / "inquiries.db")
             path.parent.mkdir(parents=True, exist_ok=True)
             self._store = SerialStore(SqliteKnowledgeStore(str(path)))
         self._events: dict[str, asyncio.Event] = {}

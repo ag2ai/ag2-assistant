@@ -11,12 +11,12 @@ A serialized event is exactly what `EventLogWriter` already writes:
 
 ```json
 { "type": "autogen.beta.events.task_events.TaskCompleted", "data": { ... } }
-{ "type": "agclaw.events.DeliverableProduced", "data": { ... } }
+{ "type": "ag2assistant.events.DeliverableProduced", "data": { ... } }
 ```
 
 - Persist, replay, and live-stream all use this shape.
 - Load resolves the class by dynamic import (`import_event_class`), falling back to
-  `UnknownEvent` — **verified that custom `agclaw.events.*` round-trip.**
+  `UnknownEvent` — **verified that custom `ag2assistant.events.*` round-trip.**
 - History (replay persisted events) and live (subscribed new events) are the SAME path.
 - Transient events (`__transient__`: `ModelMessageChunk`, `TaskProgress`) stream live
   but aren't persisted; their finals (`ModelResponse`, `TaskCompleted`) are what reload shows.
@@ -37,7 +37,7 @@ A serialized event is exactly what `EventLogWriter` already writes:
 
 No `RunStarted` in main → "thinking" is a client derivation (message sent, no chunk yet).
 
-**New `src/agclaw/events.py` (custom `BaseEvent` subclasses — the only new "model"):**
+**New `src/ag2assistant/events.py` (custom `BaseEvent` subclasses — the only new "model"):**
 | Event | Fields | Renders as |
 |---|---|---|
 | `TaskCreated` | `task_id, title, kind` | task card (replaces the `started_tasks_var` hack) |
@@ -49,8 +49,8 @@ No `RunStarted` in main → "thinking" is a client derivation (message sent, no 
 ## Phases (each shippable; gateway REST/task engine otherwise untouched)
 
 ### Phase 0 — Event module + wire helper (no behavior change)
-- `src/agclaw/events.py`: the custom events above.
-- `src/agclaw/gateway/wire.py`: `to_wire(event) -> {type,data}` (reuse `qualified_name` +
+- `src/ag2assistant/events.py`: the custom events above.
+- `src/ag2assistant/gateway/wire.py`: `to_wire(event) -> {type,data}` (reuse `qualified_name` +
   `to_dict`); `WIRE_BINARY` set for audio. One serializer for WS + logs.
 - Tests: `test_events.py` round-trips every custom event through serialize→import→from_dict.
 - **Risk: none** (additive). 282+ tests stay green.
@@ -78,7 +78,7 @@ No `RunStarted` in main → "thinking" is a client derivation (message sent, no 
 - **Risk: medium** — touches executor/store emission points; covered by event-assertion tests.
 
 ### Phase 3 — Vite + Svelte client (built beside `index.html`)
-- `web/` (Vite + Svelte 5), builds to `src/agclaw/gateway/static/app/`. **Built assets are
+- `web/` (Vite + Svelte 5), builds to `src/ag2assistant/gateway/static/app/`. **Built assets are
   committed** so deploy stays Python-only (Node needed only for dev/build). Dev:
   `npm run dev` proxying `/api` to the gateway. Served at `/app` until cutover.
 - Structure:

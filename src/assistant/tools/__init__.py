@@ -1,4 +1,4 @@
-"""AGClaw agent tools.
+"""AG2 Assistant agent tools.
 
 Prefers AG2's native built-in tools (provider-agnostic local toolkits) and
 falls back to a small custom implementation only where a native tool isn't

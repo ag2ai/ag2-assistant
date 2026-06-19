@@ -1,11 +1,11 @@
-"""Google tools for AGClaw — Gmail, Calendar, Drive.
+"""Google tools for AG2 Assistant — Gmail, Calendar, Drive.
 
 Read/search tools run freely; anything that writes or sends is wrapped with the
 human-approval middleware, so e.g. sending an email always shows a HITL approval
 card first and is denied if there's no one to ask.
 
 All Google API calls are lazy and run in a thread (the client is blocking). The
-agent only gets these tools when the user is signed in (`agclaw google login`).
+agent only gets these tools when the user is signed in (`ag2assistant google login`).
 """
 
 import asyncio

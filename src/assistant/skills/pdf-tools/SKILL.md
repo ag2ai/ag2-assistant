@@ -10,7 +10,7 @@ license: Apache-2.0
 ## Reading a PDF
 
 - To **understand or summarise** a PDF the user points you at, use the
-  `read_file` tool with its path. AGClaw hands PDFs to the model as visual
+  `read_file` tool with its path. AG2 Assistant hands PDFs to the model as visual
   content, so this works even for **scanned PDFs with no text layer** (forms,
   signed documents, image scans). Ask permission the first time if prompted.
 - For a **born-digital PDF where you need the exact text** (to quote precisely,

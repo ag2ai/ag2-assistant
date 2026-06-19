@@ -1,12 +1,12 @@
-"""Google OAuth + API client management for AGClaw.
+"""Google OAuth + API client management for AG2 Assistant.
 
 A personal-desktop OAuth flow: the user downloads an OAuth *client* JSON from
-Google Cloud to `~/.agclaw/google_credentials.json`, runs `agclaw google login`
+Google Cloud to `~/.ag2assistant/google_credentials.json`, runs `ag2assistant google login`
 once (browser consent), and the resulting *token* is cached at
-`~/.agclaw/google_token.json` and silently refreshed thereafter.
+`~/.ag2assistant/google_token.json` and silently refreshed thereafter.
 
 The Google client libraries are an optional dependency (`pip install
-agclaw[google]`); everything here imports them lazily so the rest of AGClaw works
+ag2assistant[google]`); everything here imports them lazily so the rest of AG2 Assistant works
 without them.
 """
 
@@ -23,15 +23,15 @@ SCOPES = [
 
 
 def credentials_path() -> Path:
-    return Path.home() / ".agclaw" / "google_credentials.json"
+    return Path.home() / ".ag2assistant" / "google_credentials.json"
 
 
 def token_path() -> Path:
-    return Path.home() / ".agclaw" / "google_token.json"
+    return Path.home() / ".ag2assistant" / "google_token.json"
 
 
 def account_path() -> Path:
-    return Path.home() / ".agclaw" / "google_account.txt"
+    return Path.home() / ".ag2assistant" / "google_account.txt"
 
 
 def account_email() -> str | None:
@@ -74,7 +74,7 @@ def _require_libs():
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise ImportError(
             "Google integration needs extra deps. Install with: "
-            'pip install "agclaw[google]"'
+            'pip install "ag2assistant[google]"'
         ) from exc
     return Credentials, Request, InstalledAppFlow
 
@@ -209,6 +209,6 @@ def build_service(api: str, version: str):
     creds = load_credentials(interactive=False)
     if creds is None:
         raise RuntimeError(
-            "Not signed in to Google. Run `agclaw google login` first."
+            "Not signed in to Google. Run `ag2assistant google login` first."
         )
     return build(api, version, credentials=creds, cache_discovery=False)

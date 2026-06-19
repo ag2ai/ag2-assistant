@@ -24,11 +24,11 @@ from tempfile import mktemp
 
 from pydantic import BaseModel
 
-import agclaw.config  # noqa: F401  (loads .env)
-from agclaw.agent import create_agent, model_config
-from agclaw.config import load_config
-from agclaw.tasks import TaskManager, TaskStatus, TaskStore, make_task_executor
-from agclaw.tasks.planner import prepare_task
+import ag2assistant.config  # noqa: F401  (loads .env)
+from ag2assistant.agent import create_agent, model_config
+from ag2assistant.config import load_config
+from ag2assistant.tasks import TaskManager, TaskStatus, TaskStore, make_task_executor
+from ag2assistant.tasks.planner import prepare_task
 
 # --- SAFETY ---
 # 1) Capabilities the planner may assign: NO gmail, and Drive/Calendar reads only
@@ -37,7 +37,7 @@ from agclaw.tasks.planner import prepare_task
 #    and the simulated user denies any write/send permission.
 EVAL_CAPABILITIES = ["web", "code", "files", "skills", "calendar", "drive"]
 
-import agclaw.tools.google as _g  # noqa: E402
+import ag2assistant.tools.google as _g  # noqa: E402
 
 _READ_ONLY = {"calendar_list_events", "drive_search", "drive_read"}
 _orig_build_google = _g.build_google_tools

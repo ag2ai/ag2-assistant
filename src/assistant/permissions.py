@@ -24,7 +24,7 @@ class PermissionStore:
     """Persistent record of folders the user has granted access to."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self._path = path or (Path.home() / ".agclaw" / "permissions.json")
+        self._path = path or (Path.home() / ".ag2assistant" / "permissions.json")
         self._granted: set[str] = set()
         self._blocked: set[str] = set()
         self._load()
@@ -139,8 +139,8 @@ class PermissionManager:
 
         answer = await self.asker.ask(
             Question(
-                text=f"Allow AGClaw to read {folder.name or folder}?",
-                detail=f"AGClaw wants to access {folder} (to read {target.name}). "
+                text=f"Allow AG2 Assistant to read {folder.name or folder}?",
+                detail=f"AG2 Assistant wants to access {folder} (to read {target.name}). "
                 "Allow just this once, always allow this folder, or deny.",
                 options=[ALLOW_ONCE, ALWAYS_ALLOW, DENY],
                 kind="permission",
@@ -178,7 +178,7 @@ class PermissionManager:
             where = "on your computer — NOT sandboxed (it can touch your files)"
         answer = await self.asker.ask(
             Question(
-                text=f"Allow AGClaw to run {tool_name} {where}?",
+                text=f"Allow AG2 Assistant to run {tool_name} {where}?",
                 detail=detail,
                 options=[ALLOW_ONCE, ALWAYS_ALLOW_CMD, DENY],
                 kind="permission",
@@ -194,7 +194,7 @@ class PermissionManager:
         self._any_denied = True
         return False
 
-    # Management pass-throughs (for a future `agclaw permissions` CLI, etc.)
+    # Management pass-throughs (for a future `ag2assistant permissions` CLI, etc.)
     def is_allowed(self, folder) -> bool:
         return self.store.is_allowed(folder)
 

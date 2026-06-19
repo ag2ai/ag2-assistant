@@ -1,10 +1,10 @@
 """First-run onboarding — a short, skippable interview that seeds the profile.
 
-When AGClaw has no learned profile yet, it asks a handful of questions (name,
+When AG2 Assistant has no learned profile yet, it asks a handful of questions (name,
 location, working hours, preferred answer style) through the same pluggable HITL
 `Asker` used everywhere else — so it works identically on the desktop popup or in
 Telegram/Discord/Slack. The answers seed the persistent profile and the
-`AGCLAW_LOCATION` config, so the agent starts out knowing the basics instead of
+`AG2ASSISTANT_LOCATION` config, so the agent starts out knowing the basics instead of
 having to learn them slowly.
 
 Every question is skippable (type "skip", or pick "No preference").
@@ -71,7 +71,7 @@ STEPS: list[OnboardingStep] = [
 
 def marker_path() -> Path:
     """File whose existence means onboarding has already been offered."""
-    return Path.home() / ".agclaw" / "onboarded"
+    return Path.home() / ".ag2assistant" / "onboarded"
 
 
 def _skipped(answer: str | None) -> bool:
@@ -87,17 +87,17 @@ async def needs_onboarding(store_path: Path | None = None) -> bool:
 
 
 def _persist_location(location: str, env_path: Path | None = None) -> None:
-    """Write AGCLAW_LOCATION into the process env and the project `.env`."""
+    """Write AG2ASSISTANT_LOCATION into the process env and the project `.env`."""
     import os
 
-    os.environ["AGCLAW_LOCATION"] = location
+    os.environ["AG2ASSISTANT_LOCATION"] = location
     env_path = env_path or Path(".env")
-    line = f"AGCLAW_LOCATION={location}"
+    line = f"AG2ASSISTANT_LOCATION={location}"
     try:
         if env_path.exists():
             lines = env_path.read_text().splitlines()
             for i, existing in enumerate(lines):
-                if existing.startswith("AGCLAW_LOCATION="):
+                if existing.startswith("AG2ASSISTANT_LOCATION="):
                     lines[i] = line
                     break
             else:

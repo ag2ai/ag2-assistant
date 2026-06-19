@@ -20,7 +20,7 @@ _PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AGClaw — {title}</title>
+<title>AG2 Assistant — {title}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
 <link href="https://fonts.cdnfonts.com/css/open-sauce-sans" rel="stylesheet">
@@ -79,7 +79,7 @@ _PAGE = """<!doctype html>
     }});
     document.getElementById("card").innerHTML =
       `<div class="done"><div class="tick">&#10003;</div>
-       <h1>Thanks</h1><p class="detail">Your response was sent to AGClaw. You can close this tab.</p></div>`;
+       <h1>Thanks</h1><p class="detail">Your response was sent to AG2 Assistant. You can close this tab.</p></div>`;
   }}
   function submitText() {{
     const v = document.getElementById("freetext").value.trim();
@@ -93,7 +93,7 @@ _PAGE = """<!doctype html>
 def _render_body(question: Question) -> str:
     kind = "Permission" if question.kind == "permission" else "Question"
     parts = [
-        '<div class="brand"><span class="mark">AGClaw</span>'
+        '<div class="brand"><span class="mark">AG2 Assistant</span>'
         f'<span class="kind">{html.escape(kind)}</span></div>',
         f"<h1>{html.escape(question.text)}</h1>",
     ]
@@ -122,7 +122,7 @@ def _render_body(question: Question) -> str:
             '<div class="options"><button class="primary" onclick="submitText()">Send</button></div>'
         )
 
-    parts.append('<div class="foot">Requested by your AGClaw assistant</div>')
+    parts.append('<div class="foot">Requested by your AG2 Assistant assistant</div>')
     return "".join(parts)
 
 
@@ -297,7 +297,7 @@ class DesktopAsker:
                 webbrowser.open(url)
             except Exception:
                 pass
-        print(f"[AGClaw] Awaiting your answer at {url}", flush=True)
+        print(f"[AG2 Assistant] Awaiting your answer at {url}", flush=True)
         try:
             if timeout:
                 return await asyncio.wait_for(fut, timeout=timeout)

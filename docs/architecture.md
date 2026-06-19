@@ -1,8 +1,8 @@
-# AGClaw Architecture
+# AG2 Assistant Architecture
 
 ## Overview
 
-AGClaw is a personal AI-assistant platform built on **AG2 Beta**. The backend is
+AG2 Assistant is a personal AI-assistant platform built on **AG2 Beta**. The backend is
 Python; the web UI is a separate Svelte client that talks to the gateway's API.
 
 The defining decision (see `docs/gui-redesign-plan.md`, and the memory
@@ -10,7 +10,7 @@ The defining decision (see `docs/gui-redesign-plan.md`, and the memory
 of truth, and everything is a projection of it.** We lean on AG2 primitives
 (streams, the event taxonomy, observers/subscriptions, `EventLogWriter`,
 knowledge/compaction) rather than inventing parallel machinery, and add an
-AGClaw-specific layer only where AG2 main genuinely doesn't reach yet (durable
+AG2 Assistant-specific layer only where AG2 main genuinely doesn't reach yet (durable
 scheduled tasks, durable HITL).
 
 ## The spine: AG2 event streams
@@ -18,7 +18,7 @@ scheduled tasks, durable HITL).
 Each conversation surface — a web chat, each task, a voice session — is a
 per-session AG2 **`Stream`** keyed by `session_id` (`web-…`, `task:<id>`,
 `voice:<id>`). Its event history *is* the conversation; after each turn the
-events are persisted with `EventLogWriter` to `~/.agclaw/sessions.db` and
+events are persisted with `EventLogWriter` to `~/.ag2assistant/sessions.db` and
 reloaded on demand, so sessions are **resumable** and never cross histories.
 
 **One wire contract — `wire = log = {type, data}`.** A serialized event is
@@ -26,13 +26,13 @@ exactly what `EventLogWriter` persists:
 
 ```json
 { "type": "autogen.beta.events.types.ModelResponse", "data": { … } }
-{ "type": "agclaw.events.DeliverableProduced", "data": { … } }
+{ "type": "ag2assistant.events.DeliverableProduced", "data": { … } }
 ```
 
 The same representation is used to **persist, replay, and live-stream**. So
 *history (replay the log) and live (subscribe to new events) are the same path*,
 and the GUI is a thin renderer that maps event `type` → component. Custom
-`agclaw.events.*` round-trip because deserialization resolves the class by its
+`ag2assistant.events.*` round-trip because deserialization resolves the class by its
 fully-qualified name.
 
 **Event taxonomy** (reused AG2-native unless noted):
@@ -47,10 +47,10 @@ fully-qualified name.
 | `HumanInputRequest` | in-stream HITL (durable copy in `InquiryStore`) |
 | `TaskStarted/Progress/Completed/Failed/Cancelled` | task lifecycle |
 | `ObserverAlert` / `HaltEvent` | alerts / halts |
-| `agclaw.events.TaskCreated` | task card (chat → spawned task) |
-| `agclaw.events.TaskScheduled` | schedule note |
-| `agclaw.events.DeliverableProduced` | deliverable item |
-| `agclaw.events.InquiryRaised` / `InquiryAnswered` | durable HITL lifecycle |
+| `ag2assistant.events.TaskCreated` | task card (chat → spawned task) |
+| `ag2assistant.events.TaskScheduled` | schedule note |
+| `ag2assistant.events.DeliverableProduced` | deliverable item |
+| `ag2assistant.events.InquiryRaised` / `InquiryAnswered` | durable HITL lifecycle |
 
 The custom five exist only where AG2 main has no equivalent.
 
@@ -63,7 +63,7 @@ The custom five exist only where AG2 main has no equivalent.
 ### 1. Client
 
 The web UI is a **Vite + Svelte 5** SPA in `web/`, built (committed) into
-`src/agclaw/gateway/static/app/` and served at **`/app`** (`/` and any unknown
+`src/ag2assistant/gateway/static/app/` and served at **`/app`** (`/` and any unknown
 path 307-redirect there). It's a pure projection of the event stream:
 `transport/stream.js` opens one `/api/stream` WebSocket; `project.js` folds
 `{type,data}` events into thread items; per-event-type Svelte components are
@@ -78,7 +78,7 @@ is the only contract.
 
 ### 2. Gateway
 
-A FastAPI facade (`agclaw.gateway`) over the agent and task engine:
+A FastAPI facade (`ag2assistant.gateway`) over the agent and task engine:
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -95,12 +95,12 @@ A FastAPI facade (`agclaw.gateway`) over the agent and task engine:
 `Gateway.send_message`. `Gateway.emit_event(session, event)` appends an event
 onto a stream *outside* a turn (the `SoundDeviceRecorder` pattern) and persists
 it — used by the task engine and voice transcripts. A per-session lock serialises
-turns; failures are snapshotted (see Observability). Launch with `agclaw gateway`,
-or `agclaw run` to also start every configured channel.
+turns; failures are snapshotted (see Observability). Launch with `ag2assistant gateway`,
+or `ag2assistant run` to also start every configured channel.
 
 ### 3. Agent
 
-One **universal `Agent`** (`agclaw.agent.create_agent`) backs every surface;
+One **universal `Agent`** (`ag2assistant.agent.create_agent`) backs every surface;
 isolation comes from the per-session stream. Per turn, `universal_turn_prompt`
 assembles persona + behaviour guidance + capability map + (when signed in) Google
 guidance + the **surface context** (e.g. a task snapshot) + live environment
@@ -114,8 +114,8 @@ runs bulk work (memory aggregation, deliverable verification, leaf subtasks).
 
 ### 4. Tasks — a durable engine that is an *event source*
 
-`agclaw.tasks` (see `docs/tasks-design.md`) is the one place AG2 main doesn't
-cover: a persistent, nestable **`Task`** (`TaskStore`, `~/.agclaw/tasks.db`) with
+`ag2assistant.tasks` (see `docs/tasks-design.md`) is the one place AG2 main doesn't
+cover: a persistent, nestable **`Task`** (`TaskStore`, `~/.ag2assistant/tasks.db`) with
 objective, deliverables (criteria + verification + asset), capability scope,
 iterative HITL intake, a resilient concurrent runner (`TaskManager`), and a
 deterministic no-LLM **scheduler** (one-shot + recurring; recurring tasks stay a
@@ -131,7 +131,7 @@ The durable store remains system-of-record; it speaks the AG2 event vocabulary.
 
 ### 5. Voice
 
-`agclaw.voice` runs an AG2 **`LiveAgent`** (Gemini Live) per browser voice
+`ag2assistant.voice` runs an AG2 **`LiveAgent`** (Gemini Live) per browser voice
 session. It has a small basic toolset (read tasks, answer questions) and an
 `ask_assistant` tool that **delegates heavy work to the universal agent** on the
 same session (continuity). The browser captures 16 kHz PCM via an AudioWorklet
@@ -142,20 +142,20 @@ conversation.
 
 ### 6. HITL & permissions
 
-`agclaw.hitl`: a pluggable **`Asker`** (chat buttons / styled desktop pages) wired
+`ag2assistant.hitl`: a pluggable **`Asker`** (chat buttons / styled desktop pages) wired
 via AG2's `hitl_hook` and the permission manager. Inside tasks, prompts are
-**durable `Inquiry` primitives** (`InquiryStore`, `~/.agclaw/inquiries.db`):
+**durable `Inquiry` primitives** (`InquiryStore`, `~/.ag2assistant/inquiries.db`):
 persisted the moment they're raised, answerable from any surface; `DurableAsker`
 races live delivery against an out-of-band answer. An `on_change` hook emits
 `InquiryRaised`/`InquiryAnswered` onto the task stream. One turn-level
-`PermissionManager` (`agclaw.permissions`) gates folder access and shell/code
+`PermissionManager` (`ag2assistant.permissions`) gates folder access and shell/code
 (Allow once / Always / Deny; "always" persists to `permissions.json`; sandbox-mode
 aware).
 
 ### 7. Observability
 
-`agclaw.observability` — file-based so it's readable back without reproducing:
-a rolling `~/.agclaw/agclaw.log` (folds in AG2's `autogen.*` logs + per-turn
+`ag2assistant.observability` — file-based so it's readable back without reproducing:
+a rolling `~/.ag2assistant/ag2assistant.log` (folds in AG2's `autogen.*` logs + per-turn
 `LoggingMiddleware`), and a **failure snapshot** written on any turn exception
 (`<data_dir>/debug/<ts>-<session>.json`) capturing the error, traceback, and the
 *shape* of the history that triggered it (event-type counts + tail). The full
@@ -164,15 +164,15 @@ per-turn event stream (`EventLogWriter`) is the deep record. (OpenTelemetry
 
 ### 8. Memory, Google, Config, Storage
 
-- **Memory** (`agclaw.memory`): passive user-profile learning
+- **Memory** (`ag2assistant.memory`): passive user-profile learning
   (`WorkingMemoryAggregate` + `WorkingMemoryPolicy`, SQLite, platform-tagged,
   cadence-batched on a cheap model; permission decisions excluded). See `docs/memory.md`.
-- **Google** (`agclaw.integrations.google_auth` + `agclaw.tools.google`): OAuth;
+- **Google** (`ag2assistant.integrations.google_auth` + `ag2assistant.tools.google`): OAuth;
   Gmail/Calendar/Drive read freely, sends/writes HITL-gated.
-- **Config**: Pydantic, precedence env (`AGCLAW_*`) > `~/.agclaw/config.json` > defaults.
-- **Storage** `~/.agclaw/`: `sessions.db` (streams + transcripts) · `tasks.db` ·
+- **Config**: Pydantic, precedence env (`AG2ASSISTANT_*`) > `~/.ag2assistant/config.json` > defaults.
+- **Storage** `~/.ag2assistant/`: `sessions.db` (streams + transcripts) · `tasks.db` ·
   `inquiries.db` · `profile.db` · `permissions.json` · Google creds/token ·
-  `agclaw.log` + `debug/` · `skills/` · optional `config.json`.
+  `ag2assistant.log` + `debug/` · `skills/` · optional `config.json`.
 
 ## Turn flow (current)
 

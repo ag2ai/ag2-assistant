@@ -1,4 +1,4 @@
-# AGClaw Task Management — Design
+# AG2 Assistant Task Management — Design
 
 A persistent, user-facing task system: small ad-hoc jobs ("any unread emails?")
 and big multi-step jobs ("research the Anthropic & OpenAI IPOs and prepare a
@@ -9,22 +9,30 @@ presentation") are first-class, tracked **task** primitives.
 - **Scheduling:** tasks can run now, at a future time (one-shot), or on a
   recurrence (e.g. daily) — a scheduler is in scope.
 - **Concurrency:** several tasks run in the background concurrently, up to a cap.
-- **Intake (HITL):** for any *non-trivial* task, AGClaw first asks a short set of
+- **Intake (HITL):** for any *non-trivial* task, AG2 Assistant first asks a short set of
   clarifying questions via HITL on the triggering channel, then plans and runs.
   Trivial tasks skip intake. The agent classifies trivial vs non-trivial.
 - **Subtasks:** durable, nestable task tree from Phase 1; cancelling a task
   cancels all descendants immediately.
 
-## What we reuse from AG2 vs build
+## How this relates to AG2 (app-layer, not native tasking)
 
-Reuse (native): the `Task` lifecycle concepts (`TaskState`, `TaskProgress`,
-`checkpoint`/`resume_from`, `TaskSpec`), `run_subtasks(parallel=True)` for
-execution, and `EventLogWriter` for per-task history (recall/resume).
+This durable task system is an **application layer** AG2 Assistant owns — it is *not*
+built on AG2's `Task` primitive. AG2's `Task` is agent-owned and, by design, the
+framework "does not assign or schedule them" (`autogen.beta.task`), so it doesn't
+provide the durable store, scheduler, or tree we need. The engine here uses none
+of `Task` / `TaskConfig` / `run_subtasks` / `checkpoint`.
 
-Build (ours): the durable task **store + tree**, the background **runner** with
-**immediate cascading cancel** (AG2's `cancel()` only flips a flag), the HITL
-**intake**, the **scheduler**, the gateway **task API**, the **GUI Tasks view**,
-**channel** triggering/routing, and the task **observer/memory**.
+What it *does* build on AG2: each task runs on a real AG2 `Agent`, and task
+lifecycle is expressed through the **AG2 Beta event vocabulary** on a `Stream`
+(persisted via `EventLogWriter`), so the same recall/replay machinery as chats
+applies. Everything else is ours: the durable task **store + tree**, the
+background **runner** with **immediate cascading cancel**, the HITL **intake**,
+the **scheduler**, the gateway **task API**, the **GUI Tasks view**, **channel**
+triggering/routing, and the task **observer/memory**.
+
+(If AG2's task/subagent primitives later grow durable scheduling, revisit this
+per the build-on-main policy — but today the app layer is the right call.)
 
 > #16 (custom AG2 network *channel adapter* for task delivery): researched —
 > not a fit. The network is agent↔agent orchestration; our tasks are user↔agent.
@@ -32,7 +40,7 @@ Build (ours): the durable task **store + tree**, the background **runner** with
 
 ## Model
 
-A `Task` record (persisted as JSON in `~/.agclaw/tasks.db`):
+A `Task` record (persisted as JSON in `~/.ag2assistant/tasks.db`):
 
 - `id`, `title`, `description`
 - `status`: pending | scheduled | awaiting_input | planning | running |

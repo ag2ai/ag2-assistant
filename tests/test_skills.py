@@ -15,7 +15,7 @@ def test_skills_toolkit_builds_and_creates_dir(tmp_path):
 
 
 def test_bundled_skills_are_discoverable(tmp_path):
-    """First-party skills ship with AGClaw and are available without installing."""
+    """First-party skills ship with AG2 Assistant and are available without installing."""
     import tempfile
 
     from autogen.beta.tools.skills import LocalRuntime

@@ -1,8 +1,8 @@
-"""AGClaw configuration.
+"""AG2 Assistant configuration.
 
 Resolution order (highest precedence first):
-  1. Environment variables (AGCLAW_*), loaded from .env if present
-  2. ~/.agclaw/config.json
+  1. Environment variables (AG2ASSISTANT_*), loaded from .env if present
+  2. ~/.ag2assistant/config.json
   3. Built-in defaults
 
 Use `load_config()` to get a fully resolved Config; bare `Config()` is just the
@@ -17,6 +17,39 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 load_dotenv()
+
+# Data/identity. The data dir was historically ~/.agclaw and env vars AGCLAW_*;
+# both were renamed to ag2assistant. A one-time dir migration + an env-var
+# fallback keep existing installs working (keys, memory, tasks, Google auth).
+_DATA_DIR_NAME = ".ag2assistant"
+_LEGACY_DATA_DIR_NAME = ".agclaw"
+_ENV_PREFIX = "AG2ASSISTANT_"
+_LEGACY_ENV_PREFIX = "AGCLAW_"
+
+
+def _mirror_legacy_env() -> None:
+    """Expose old AGCLAW_* vars under AG2ASSISTANT_* when the new one is unset, so
+    a pre-rename .env keeps working. The new prefix wins when both are present."""
+    for key, val in list(os.environ.items()):
+        if key.startswith(_LEGACY_ENV_PREFIX):
+            os.environ.setdefault(_ENV_PREFIX + key[len(_LEGACY_ENV_PREFIX) :], val)
+
+
+def _migrate_legacy_data_dir() -> None:
+    """One-time: if ~/.ag2assistant is absent but ~/.agclaw exists, move it, so an
+    existing install's keys/memory/tasks/Google auth carry over under the new name."""
+    new = Path.home() / _DATA_DIR_NAME
+    old = Path.home() / _LEGACY_DATA_DIR_NAME
+    if new.exists() or not old.exists():
+        return
+    try:
+        old.rename(new)
+    except Exception:
+        pass  # best-effort; on failure the app just creates a fresh dir
+
+
+_mirror_legacy_env()
+_migrate_legacy_data_dir()
 
 
 class LLMConfig(BaseModel):
@@ -34,7 +67,7 @@ class LLMConfig(BaseModel):
 class AgentConfig(BaseModel):
     """Agent configuration."""
 
-    name: str = "agclaw"
+    name: str = "ag2assistant"
     system_prompt: str = (
         "You are AG2 Assistant, a helpful personal AI assistant. "
         "You are direct, concise, and helpful."
@@ -63,20 +96,22 @@ class MemoryConfig(BaseModel):
 
 
 class Config(BaseModel):
-    """Root AGClaw configuration (built-in defaults; see `load_config`)."""
+    """Root AG2 Assistant configuration (built-in defaults; see `load_config`)."""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    data_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw")
+    data_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME)
     # Where installed skills live (SKILL.md packages).
-    skills_dir: Path = Field(default_factory=lambda: Path.home() / ".agclaw" / "skills")
+    skills_dir: Path = Field(
+        default_factory=lambda: Path.home() / _DATA_DIR_NAME / "skills"
+    )
 
 
 def default_config_path() -> Path:
-    """Where AGClaw looks for a JSON config file."""
-    return Path.home() / ".agclaw" / "config.json"
+    """Where AG2 Assistant looks for a JSON config file."""
+    return Path.home() / _DATA_DIR_NAME / "config.json"
 
 
 def data_dir() -> Path:
@@ -91,13 +126,15 @@ def data_dir() -> Path:
                 return Path(d)
         except Exception:
             pass
-    return Path.home() / ".agclaw"
+    return Path.home() / _DATA_DIR_NAME
 
 
 def _apply_settings_overrides(cfg: Config) -> None:
     """Layer the UI-selected assistant provider/model (persisted via the settings
     store) over file/defaults. Explicit AGCLAW_* env vars still win — they're applied
-    after this. Best-effort: a missing/broken settings store changes nothing."""
+    after this. Best-effort: a missing/broken settings store changes nothing.
+
+    Explicit AG2ASSISTANT_* env vars still win (applied after this)."""
     try:
         from assistant import settings
 
@@ -111,25 +148,27 @@ def _apply_settings_overrides(cfg: Config) -> None:
 
 
 def _apply_env_overrides(cfg: Config) -> None:
-    """Layer AGCLAW_* environment variables on top (highest precedence)."""
+    """Layer AG2ASSISTANT_* environment variables on top (highest precedence).
+    Legacy AGCLAW_* vars are mirrored to AG2ASSISTANT_* at import (see
+    `_mirror_legacy_env`), so a pre-rename .env still applies here."""
     env = os.environ.get
-    if v := env("AGCLAW_LLM_PROVIDER"):
+    if v := env("AG2ASSISTANT_LLM_PROVIDER"):
         cfg.llm.provider = v
-    if v := env("AGCLAW_MODEL"):
+    if v := env("AG2ASSISTANT_MODEL"):
         cfg.llm.model = v
-    if v := env("AGCLAW_API_KEY_ENV"):
+    if v := env("AG2ASSISTANT_API_KEY_ENV"):
         cfg.llm.api_key_env = v
-    if v := env("AGCLAW_AGGREGATE_MODEL"):
+    if v := env("AG2ASSISTANT_AGGREGATE_MODEL"):
         cfg.llm.aggregate_model = v
-    if v := env("AGCLAW_LOCATION"):
+    if v := env("AG2ASSISTANT_LOCATION"):
         cfg.agent.location = v
-    if v := env("AGCLAW_SANDBOX"):
+    if v := env("AG2ASSISTANT_SANDBOX"):
         cfg.tools.sandbox = v
-    if v := env("AGCLAW_DOCKER_IMAGE"):
+    if v := env("AG2ASSISTANT_DOCKER_IMAGE"):
         cfg.tools.docker_image = v
-    if v := env("AGCLAW_DOCKER_NETWORK"):
+    if v := env("AG2ASSISTANT_DOCKER_NETWORK"):
         cfg.tools.docker_network = v
-    if v := env("AGCLAW_AGGREGATE_EVERY_N"):
+    if v := env("AG2ASSISTANT_AGGREGATE_EVERY_N"):
         try:
             cfg.memory.aggregate_every_n_turns = int(v)
         except ValueError:
@@ -147,5 +186,5 @@ def load_config(path: Path | None = None) -> Config:
             data = {}  # a malformed config file falls back to defaults
     cfg = Config(**data)
     _apply_settings_overrides(cfg)   # UI-selected provider/model over file/defaults
-    _apply_env_overrides(cfg)        # explicit AGCLAW_* env still wins last
+    _apply_env_overrides(cfg)        # explicit AG2ASSISTANT_* env still wins last
     return cfg

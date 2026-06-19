@@ -1,16 +1,18 @@
-# AGClaw
+# AG2 Assistant
 
-An open-source personal AI assistant built on [AG2](https://ag2.ai)'s Beta framework. Inspired by [OpenClaw](https://github.com/openclaw/openclaw), reimagined in Python.
+An open-source personal AI assistant powered by [AG2](https://ag2.ai)'s Beta framework. Inspired by [OpenClaw](https://github.com/openclaw/openclaw), reimagined in Python.
 
-AGClaw connects to your messaging platforms (Telegram, Discord, Slack) and acts as your personal AI agent — searching the web, running code, managing tasks, and more.
+> Public product name: **AG2 Assistant**. `ag2assistant` remains the internal package, CLI command, and data-dir name.
+
+AG2 Assistant connects to your messaging platforms (Telegram, Discord, Slack) and acts as your personal AI agent — searching the web, running code, managing tasks, and more.
 
 ## Quick Start
 
 ### 1. Install
 
 ```bash
-git clone https://github.com/agclaw/agclaw.git
-cd agclaw
+git clone https://github.com/marklysze/ag2-assistant.git
+cd ag2-assistant
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -29,7 +31,7 @@ Get a Gemini API key at [aistudio.google.com](https://aistudio.google.com/apikey
 ### 3. Run
 
 ```bash
-agclaw agent "Hello, what can you do?"
+ag2assistant agent "Hello, what can you do?"
 ```
 
 ## Examples
@@ -37,8 +39,8 @@ agclaw agent "Hello, what can you do?"
 ### General conversation
 
 ```bash
-agclaw agent "Explain what AG2 is in one sentence"
-agclaw agent "Write a haiku about Python programming"
+ag2assistant agent "Explain what AG2 is in one sentence"
+ag2assistant agent "Write a haiku about Python programming"
 ```
 
 ### Web search (grounded, real-time)
@@ -46,9 +48,9 @@ agclaw agent "Write a haiku about Python programming"
 The agent can search the web for current information:
 
 ```bash
-agclaw agent "What's the current AG2 version? Search the web."
-agclaw agent "What happened in the news today?"
-agclaw agent "Find the latest Python release notes"
+ag2assistant agent "What's the current AG2 version? Search the web."
+ag2assistant agent "What happened in the news today?"
+ag2assistant agent "Find the latest Python release notes"
 ```
 
 ### Code execution
@@ -56,8 +58,8 @@ agclaw agent "Find the latest Python release notes"
 The agent can write and run code:
 
 ```bash
-agclaw agent "Calculate the first 20 Fibonacci numbers"
-agclaw agent "Write a Python function that checks if a string is a palindrome, then test it"
+ag2assistant agent "Calculate the first 20 Fibonacci numbers"
+ag2assistant agent "Write a Python function that checks if a string is a palindrome, then test it"
 ```
 
 ### Research tasks
@@ -65,15 +67,15 @@ agclaw agent "Write a Python function that checks if a string is a palindrome, t
 Combine web search with reasoning:
 
 ```bash
-agclaw agent "Compare FastAPI vs Flask for building REST APIs. Search the web for current benchmarks."
-agclaw agent "What are the top 3 trending Python libraries this month?"
+ag2assistant agent "Compare FastAPI vs Flask for building REST APIs. Search the web for current benchmarks."
+ag2assistant agent "What are the top 3 trending Python libraries this month?"
 ```
 
 ### CLI
 
 ```bash
-agclaw version          # Show version
-agclaw agent "message"  # Talk to your agent
+ag2assistant version          # Show version
+ag2assistant agent "message"  # Talk to your agent
 ```
 
 ## Running Tests
@@ -109,7 +111,7 @@ See [docs/architecture.md](docs/architecture.md) and [docs/architecture.svg](doc
 
 ## Project Status
 
-AGClaw is in early development. See [docs/plan.md](docs/plan.md) for the full roadmap.
+AG2 Assistant is in early development. See [docs/plan.md](docs/plan.md) for the full roadmap.
 
 - [x] Core agent with Gemini integration
 - [x] CLI interface
@@ -128,7 +130,7 @@ AGClaw is in early development. See [docs/plan.md](docs/plan.md) for the full ro
 - [Architecture](docs/architecture.md) — system design, concurrency model, message flows
 - [Usage Guide](docs/usage.md) — CLI commands, configuration, channels
 - [Plan](docs/plan.md) — implementation roadmap with progress tracking
-- [OpenClaw Research](docs/research-openclaw.md) — analysis of the project that inspired AGClaw
+- [OpenClaw Research](docs/research-openclaw.md) — analysis of the project that inspired AG2 Assistant
 - [AG2 Beta Research](docs/research-ag2-beta.md) — AG2 Beta capabilities and availability
 
 ## License

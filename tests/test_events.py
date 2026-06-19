@@ -1,4 +1,4 @@
-"""AGClaw custom events round-trip through the AG2 serialize/persist contract.
+"""AG2 Assistant custom events round-trip through the AG2 serialize/persist contract.
 
 The whole GUI-redesign rests on this: app events serialize to `{type, data}`,
 persist via EventLogWriter, and reload by dynamic class import — exactly like

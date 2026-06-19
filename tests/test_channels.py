@@ -45,7 +45,7 @@ def _telegram_channel():
     from assistant.channels.telegram import TelegramChannel
 
     ch = TelegramChannel(token="fake-token")
-    ch._bot_username = "agclawbot"
+    ch._bot_username = "ag2assistantbot"
     ch._bot_id = 999
     return ch
 
@@ -77,11 +77,11 @@ def test_normalize_dm():
 def test_normalize_group_with_mention_strips_handle():
     ch = _telegram_channel()
     inbound = ch._normalize(
-        _fake_update("@agclawbot what is 2+2?", chat_type="supergroup")
+        _fake_update("@ag2assistantbot what is 2+2?", chat_type="supergroup")
     )
     assert inbound.is_direct is False
     assert inbound.mentioned is True
-    assert "@agclawbot" not in inbound.text
+    assert "@ag2assistantbot" not in inbound.text
     assert inbound.text == "what is 2+2?"
 
 

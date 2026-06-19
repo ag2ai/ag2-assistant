@@ -1,8 +1,8 @@
-# AGClaw Examples
+# AG2 Assistant Examples
 
 ## `network_gateway_spike.py` — distributed gateway prototype
 
-A proof-of-concept showing an AGClaw agent served over WebSocket via AG2's `Hub`,
+A proof-of-concept showing an AG2 Assistant agent served over WebSocket via AG2's `Hub`,
 reachable from a separate process (the "gateway" client) that could run on
 another machine. Validates the distributed-network direction for Phase 2.
 
@@ -29,10 +29,10 @@ python examples/network_gateway_spike.py client "Search the web: what is AG2?"
 - **`consulting` channel** — strict one-question-one-response, auto-closes after
   the reply. The gateway client is a `HumanClient` (no LLM).
 
-### Why it matters for AGClaw
+### Why it matters for AG2 Assistant
 
 The gateway (Phase 2) can be built *on* the Hub instead of from scratch —
 inheriting routing, durable channels, audit, auth, and rate limits — and the
-WebSocket transport gives AGClaw a federation story (agents across devices /
+WebSocket transport gives AG2 Assistant a federation story (agents across devices /
 machines / users) that single-process OpenClaw can't match. See
 `docs/research-ag2-beta.md` → "Network & Distributed".

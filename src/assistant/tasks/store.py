@@ -31,7 +31,7 @@ class TaskStore:
         else:
             from autogen.beta.knowledge import SqliteKnowledgeStore
 
-            path = path or (Path.home() / ".agclaw" / "tasks.db")
+            path = path or (Path.home() / ".ag2assistant" / "tasks.db")
             path.parent.mkdir(parents=True, exist_ok=True)
             self._store = _SerialStore(SqliteKnowledgeStore(str(path)))
 

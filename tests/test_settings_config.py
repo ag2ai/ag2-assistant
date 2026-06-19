@@ -7,7 +7,7 @@ import pytest
 
 
 def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))      # data_dir → tmp/.agclaw
+    monkeypatch.setenv("HOME", str(tmp_path))      # data_dir → tmp/.ag2assistant
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")    # empty = "no key" (load_dotenv won't override)
     from assistant import secrets
 
@@ -40,8 +40,8 @@ def test_ollama_base_url(monkeypatch, tmp_path):
 
 def test_settings_llm_overrides_config(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("AGCLAW_LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("AGCLAW_MODEL", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
     from assistant import settings
     from assistant.config import load_config
 
@@ -50,7 +50,7 @@ def test_settings_llm_overrides_config(monkeypatch, tmp_path):
     assert cfg.llm.provider == "anthropic" and cfg.llm.model == "claude-x"
 
     # explicit env still wins over the UI setting
-    monkeypatch.setenv("AGCLAW_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "gemini")
     assert load_config().llm.provider == "gemini"
 
 

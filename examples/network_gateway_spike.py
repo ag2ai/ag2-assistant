@@ -1,6 +1,6 @@
-"""Distributed gateway spike — an AGClaw agent served over WebSocket via AG2's Hub.
+"""Distributed gateway spike — an AG2 Assistant agent served over WebSocket via AG2's Hub.
 
-This demonstrates the novel distributed capability AG2 0.13 unlocks: an AGClaw
+This demonstrates the novel distributed capability AG2 0.13 unlocks: an AG2 Assistant
 agent registered on a Hub and reachable over a WebSocket from a *separate
 process* (a thin "gateway" client), which could just as easily be on another
 machine. Every message flows through the hub, so it's all audited and replayable.
@@ -8,7 +8,7 @@ machine. Every message flows through the hub, so it's all audited and replayable
 Architecture:
 
     ┌─────────────── server process ───────────────┐
-    │  Hub  ──(LocalLink)──  AGClaw Agent (tools)   │
+    │  Hub  ──(LocalLink)──  AG2 Assistant Agent (tools)   │
     │   │                                            │
     │  serve_ws  ws://127.0.0.1:8765                 │
     └────┼───────────────────────────────────────────┘
@@ -41,32 +41,32 @@ from autogen.beta.network import (
 )
 from autogen.beta.network.transport import WsLink, serve_ws
 
-from agclaw.agent import create_agent
+from ag2assistant.agent import create_agent
 
 HOST = "127.0.0.1"
 PORT = 8765
 URL = f"ws://{HOST}:{PORT}"
-AGENT_NAME = "agclaw"
+AGENT_NAME = "ag2assistant"
 
 
 async def run_server() -> None:
-    """Boot a Hub, register the AGClaw agent, and serve it over WebSocket."""
+    """Boot a Hub, register the AG2 Assistant agent, and serve it over WebSocket."""
     hub = await Hub.open(MemoryKnowledgeStore(), ttl_sweep_interval=0)
     hub_client = HubClient(LocalLink(hub), hub=hub)
 
-    # Register AGClaw as a network agent. Its default handler runs Agent.ask on
+    # Register AG2 Assistant as a network agent. Its default handler runs Agent.ask on
     # each inbound question — tools (search/shell/code) and all.
     await hub_client.register(
         create_agent(memory=False),
         Passport(name=AGENT_NAME, model="gemini-3.5-flash"),
         Resume(
             claimed_capabilities=["assistant", "web_search", "code"],
-            summary="AGClaw personal assistant with web/search/code tools.",
+            summary="AG2 Assistant personal assistant with web/search/code tools.",
         ),
     )
 
     async with serve_ws(hub, HOST, PORT):
-        print(f"AGClaw agent '{AGENT_NAME}' serving at {URL}")
+        print(f"AG2 Assistant agent '{AGENT_NAME}' serving at {URL}")
         print("Waiting for gateway clients. Ctrl+C to stop.")
         try:
             await asyncio.Event().wait()  # run until interrupted

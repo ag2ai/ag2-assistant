@@ -78,7 +78,7 @@ async def test_run_onboarding_seeds_profile_and_env(isolate):
     profile = await store.read(PROFILE_PATH)
     assert "Name: Mark" in profile
     # location persisted to .env
-    assert "AGCLAW_LOCATION=Sydney, Australia" in env_path.read_text()
+    assert "AG2ASSISTANT_LOCATION=Sydney, Australia" in env_path.read_text()
     # marker written → won't ask again
     assert marker.exists()
     assert await onboarding.needs_onboarding(store_path) is False
@@ -102,7 +102,7 @@ async def test_run_onboarding_partial(isolate):
         asker, store_path=store_path, env_path=env_path
     )
     assert answers == {"location": "Melbourne", "style": "Detailed & thorough"}
-    assert "AGCLAW_LOCATION=Melbourne" in env_path.read_text()
+    assert "AG2ASSISTANT_LOCATION=Melbourne" in env_path.read_text()
 
 
 async def test_run_onboarding_preserves_existing_profile(isolate):

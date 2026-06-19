@@ -1,4 +1,4 @@
-"""AGClaw CLI."""
+"""AG2 Assistant CLI."""
 
 import asyncio
 import os
@@ -8,7 +8,7 @@ import typer
 from assistant.agent import ask
 from assistant.config import load_config
 
-app = typer.Typer(name="agclaw", help="AGClaw - Personal AI Assistant")
+app = typer.Typer(name="ag2assistant", help="AG2 Assistant - Personal AI Assistant")
 
 
 @app.command()
@@ -22,12 +22,12 @@ def agent(
     sandbox: str | None = typer.Option(
         None,
         help="Execution sandbox: 'local' (host, approval-gated) or 'docker' "
-        "(isolated container, no prompts). Overrides AGCLAW_SANDBOX.",
+        "(isolated container, no prompts). Overrides AG2ASSISTANT_SANDBOX.",
     ),
 ) -> None:
-    """Send a message to the AGClaw agent."""
+    """Send a message to the AG2 Assistant agent."""
     if sandbox:
-        os.environ["AGCLAW_SANDBOX"] = sandbox
+        os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
     config = load_config()
 
     async def run() -> str:
@@ -88,12 +88,12 @@ def chat(
         True, help="Enable desktop permission/HITL prompts (browser popup)."
     ),
     sandbox: str | None = typer.Option(
-        None, help="Execution sandbox: 'local' or 'docker'. Overrides AGCLAW_SANDBOX."
+        None, help="Execution sandbox: 'local' or 'docker'. Overrides AG2ASSISTANT_SANDBOX."
     ),
 ) -> None:
-    """Start an interactive, multi-turn chat with AGClaw (type 'exit' to quit)."""
+    """Start an interactive, multi-turn chat with AG2 Assistant (type 'exit' to quit)."""
     if sandbox:
-        os.environ["AGCLAW_SANDBOX"] = sandbox
+        os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
     from assistant.gateway.core import Gateway
 
@@ -105,7 +105,7 @@ def chat(
             asker = DesktopAsker()
         gateway = Gateway(memory=memory, platform=platform)
         await gateway.start()
-        typer.echo("AGClaw chat — type 'exit' (or Ctrl-D) to quit.\n")
+        typer.echo("AG2 Assistant chat — type 'exit' (or Ctrl-D) to quit.\n")
         try:
             while True:
                 try:
@@ -119,7 +119,7 @@ def chat(
                 reply = await gateway.send_message(
                     user, session_id="cli-chat", asker=asker
                 )
-                typer.echo(f"agclaw> {reply}\n")
+                typer.echo(f"ag2assistant> {reply}\n")
         finally:
             if asker is not None:
                 await asker.aclose()
@@ -138,7 +138,7 @@ app.add_typer(profile_app, name="profile")
 
 @profile_app.command("show")
 def profile_show() -> None:
-    """Show the user profile AGClaw has learned so far."""
+    """Show the user profile AG2 Assistant has learned so far."""
     from assistant.memory import read_profile
 
     text = asyncio.run(read_profile())
@@ -228,7 +228,7 @@ def google_login(
         False, "--no-browser", help="Print the consent URL instead of opening a browser."
     ),
 ) -> None:
-    """Authorise AGClaw to access your Google account (opens a browser once)."""
+    """Authorise AG2 Assistant to access your Google account (opens a browser once)."""
     from assistant.integrations.google_auth import (
         credentials_path,
         is_configured,
@@ -273,12 +273,12 @@ def gateway(
     port: int = typer.Option(8800, help="Port to bind."),
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
-    """Start the AGClaw gateway (REST + WebSocket API for UI clients)."""
+    """Start the AG2 Assistant gateway (REST + WebSocket API for UI clients)."""
     import uvicorn
 
     from assistant.gateway.app import create_app
 
-    typer.echo(f"AGClaw gateway starting on http://{host}:{port}")
+    typer.echo(f"AG2 Assistant gateway starting on http://{host}:{port}")
     typer.echo(f"  Web UI  http://{host}:{port}/")
     typer.echo(f"  POST    http://{host}:{port}/api/message")
     typer.echo(f"  WS      ws://{host}:{port}/api/ws")
@@ -289,7 +289,7 @@ def gateway(
 def telegram(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
-    """Run AGClaw on Telegram (long-polling). Needs TELEGRAM_BOT_TOKEN in env/.env."""
+    """Run AG2 Assistant on Telegram (long-polling). Needs TELEGRAM_BOT_TOKEN in env/.env."""
     import asyncio
 
     from assistant.channels import get_channel
@@ -300,7 +300,7 @@ def telegram(
         await gateway.start()
         channel = get_channel("telegram")
         await channel.start(gateway)
-        typer.echo("AGClaw is live on Telegram. Press Ctrl+C to stop.")
+        typer.echo("AG2 Assistant is live on Telegram. Press Ctrl+C to stop.")
         try:
             await asyncio.Event().wait()
         finally:
@@ -317,7 +317,7 @@ def telegram(
 def discord(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
-    """Run AGClaw on Discord. Needs DISCORD_BOT_TOKEN in env/.env and the
+    """Run AG2 Assistant on Discord. Needs DISCORD_BOT_TOKEN in env/.env and the
     Message Content Intent enabled in the Discord Developer Portal."""
     import asyncio
 
@@ -329,7 +329,7 @@ def discord(
         await gateway.start()
         channel = get_channel("discord")
         await channel.start(gateway)
-        typer.echo("AGClaw is live on Discord. Press Ctrl+C to stop.")
+        typer.echo("AG2 Assistant is live on Discord. Press Ctrl+C to stop.")
         try:
             await asyncio.Event().wait()
         finally:
@@ -346,7 +346,7 @@ def discord(
 def slack(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
-    """Run AGClaw on Slack (Socket Mode). Needs SLACK_BOT_TOKEN and SLACK_APP_TOKEN."""
+    """Run AG2 Assistant on Slack (Socket Mode). Needs SLACK_BOT_TOKEN and SLACK_APP_TOKEN."""
     import asyncio
 
     from assistant.channels import get_channel
@@ -357,7 +357,7 @@ def slack(
         await gateway.start()
         channel = get_channel("slack")
         await channel.start(gateway)
-        typer.echo("AGClaw is live on Slack. Press Ctrl+C to stop.")
+        typer.echo("AG2 Assistant is live on Slack. Press Ctrl+C to stop.")
         try:
             await asyncio.Event().wait()
         finally:
@@ -377,13 +377,13 @@ def run(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
     rest: bool = typer.Option(True, help="Also serve the REST/WebSocket API."),
     sandbox: str | None = typer.Option(
-        None, help="Execution sandbox: 'local' or 'docker'. Overrides AGCLAW_SANDBOX."
+        None, help="Execution sandbox: 'local' or 'docker'. Overrides AG2ASSISTANT_SANDBOX."
     ),
 ) -> None:
     """Run everything in one process — REST/WS gateway + every channel whose
     token is configured (Telegram/Discord/Slack), all sharing one agent."""
     if sandbox:
-        os.environ["AGCLAW_SANDBOX"] = sandbox
+        os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
     import uvicorn
 
@@ -417,7 +417,7 @@ def run(
             server_task = asyncio.create_task(server.serve())
             typer.echo(f"  Web UI + REST/WS: http://{host}:{port}/")
 
-        typer.echo("AGClaw is running. Press Ctrl+C to stop.")
+        typer.echo("AG2 Assistant is running. Press Ctrl+C to stop.")
         try:
             if server_task is not None:
                 await server_task
@@ -438,10 +438,10 @@ def run(
 
 @app.command()
 def version() -> None:
-    """Show AGClaw version."""
+    """Show AG2 Assistant version."""
     from assistant import __version__
 
-    typer.echo(f"agclaw {__version__}")
+    typer.echo(f"ag2assistant {__version__}")
 
 
 if __name__ == "__main__":

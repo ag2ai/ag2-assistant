@@ -3,9 +3,9 @@ requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agclaw"
+name = "ag2assistant"
 version = "0.1.0"
-description = "An OpenClaw alternative built using AG2's Beta framework"
+description = "AG2 Assistant — an OpenClaw-inspired personal assistant powered by AG2 Beta"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -34,7 +34,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
 ]
-# Google integration (Gmail / Calendar / Drive). Opt-in: `pip install agclaw[google]`.
+# Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2assistant[google]`.
 google = [
     "google-api-python-client>=2.0",
     "google-auth>=2.0",
@@ -42,7 +42,7 @@ google = [
 ]
 
 [project.scripts]
-agclaw = "assistant.cli:app"
+ag2assistant = "assistant.cli:app"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

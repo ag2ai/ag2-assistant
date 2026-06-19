@@ -4,8 +4,8 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_agclaw_home(monkeypatch, tmp_path):
-    """Isolate tests from the developer's real ~/.agclaw state.
+def _isolate_ag2assistant_home(monkeypatch, tmp_path):
+    """Isolate tests from the developer's real ~/.ag2assistant state.
 
     A real Google token/credentials would make build_agent_tools append the 8
     Google tools and break tool-set assertions. We point the Google paths at an
@@ -13,7 +13,7 @@ def _isolate_agclaw_home(monkeypatch, tmp_path):
     that need a token write to their own (separately-monkeypatched) paths, which
     run after this fixture and therefore override it.
 
-    We also redirect HOME to a tmp dir so anything resolving `~/.agclaw`
+    We also redirect HOME to a tmp dir so anything resolving `~/.ag2assistant`
     (PermissionStore, the gateway's task/inquiry stores) writes to disposable
     space instead of the developer's real state.
     """

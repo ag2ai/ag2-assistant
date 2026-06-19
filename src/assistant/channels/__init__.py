@@ -1,4 +1,4 @@
-"""AGClaw channel adapters — messaging-platform frontends to the gateway."""
+"""AG2 Assistant channel adapters — messaging-platform frontends to the gateway."""
 
 from assistant.channels.base import Channel, InboundMessage, should_respond
 

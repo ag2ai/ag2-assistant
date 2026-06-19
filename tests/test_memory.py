@@ -1,4 +1,4 @@
-"""Tests for AGClaw persistent user-profile memory."""
+"""Tests for AG2 Assistant persistent user-profile memory."""
 
 from pathlib import Path
 

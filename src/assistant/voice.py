@@ -8,7 +8,7 @@ delegates anything heavier — research, Google, creating/scheduling tasks,
 detailed work — to the **universal agent**, which owns all the tools and context.
 The voice agent then speaks back whatever the assistant returns.
 
-The provider (Gemini or OpenAI) is selected by `AGCLAW_VOICE_PROVIDER` and lives
+The provider (Gemini or OpenAI) is selected by `AG2ASSISTANT_VOICE_PROVIDER` and lives
 behind `voice_providers` — this module never branches on it. Audio I/O is
 event-based: the browser's mic frames arrive as `RecordedAudioEvent` and the
 model's speech leaves as `SynthesizedAudioEvent` on the same conversation stream
@@ -66,13 +66,13 @@ def voice_realtime_config(config: Config, voice: str | None = None,
     Delegates to the provider registry — input transcription is enabled per
     provider so the user's speech arrives as text (TranscriptionChunk/Completed)
     for the on-screen bubbles. `voice` defaults to that provider's persisted
-    setting. `AGCLAW_VOICE_MODEL` overrides the provider's default model.
+    setting. `AG2ASSISTANT_VOICE_MODEL` overrides the provider's default model.
     """
     from assistant import voice_providers
     from assistant.settings import get_voice
 
     p = voice_providers.get(provider)
-    model = os.environ.get("AGCLAW_VOICE_MODEL") or p.realtime_model
+    model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or p.realtime_model
     return p.build_realtime(config, voice or get_voice(p.name), model)
 
 

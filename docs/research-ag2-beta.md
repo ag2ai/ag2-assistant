@@ -245,11 +245,11 @@ Frame protocol (`transport/frames.py`): Hello/Welcome handshake, Request/Respons
 - `ViewPolicy` (`FullTranscript`, `WindowedSummary`) controls what each agent perceives
 - `HumanClient` for human participants
 
-### Relevance to AGClaw
+### Relevance to AG2 Assistant
 
 This is a major unlock for **Phase 7 (multi-agent)** and reshapes options for the **gateway**:
 - Multi-agent coordination is now native — no custom orchestration needed
-- WebSocket distributed transport could underpin AGClaw's own gateway or let AGClaw agents federate across machines
+- WebSocket distributed transport could underpin AG2 Assistant's own gateway or let AG2 Assistant agents federate across machines
 - Governance (rate limits, auth, audit) maps directly to OpenClaw's per-channel policies and approvals
 
 See sibling skills: `ag2-network-quickstart`, `ag2-network-workflow`, `ag2-network-discussion`, `ag2-network-governance`, `ag2-network-tools-and-views`.

@@ -24,7 +24,7 @@ def web_fetch(url: str, max_chars: int = 10000) -> str:
             url,
             follow_redirects=True,
             timeout=30.0,
-            headers={"User-Agent": "AGClaw/0.1"},
+            headers={"User-Agent": "AG2 Assistant/0.1"},
         )
         response.raise_for_status()
     except httpx.HTTPError as e:

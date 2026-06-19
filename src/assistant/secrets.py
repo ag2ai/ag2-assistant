@@ -1,4 +1,4 @@
-"""API-key store, persisted to ``~/.agclaw/secrets.json`` with 0600 perms.
+"""API-key store, persisted to ``~/.ag2assistant/secrets.json`` with 0600 perms.
 
 Keys are plaintext on disk (comparable to a ``.env`` file) — the gateway binds
 127.0.0.1 only, the API never returns raw keys (only a set/last-4 hint), and keys

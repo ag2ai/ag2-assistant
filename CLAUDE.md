@@ -1,6 +1,6 @@
-# AGClaw
+# AG2 Assistant
 
-An OpenClaw alternative built using AG2's Beta framework (Python).
+An AI Assistant built using AG2's Beta framework (Python).
 
 ## Key Repos
 
@@ -13,7 +13,7 @@ See `LOCAL_PATHS.md` for local clone locations (not committed).
 
 - `docs/research-openclaw.md` — OpenClaw architecture and capabilities
 - `docs/research-ag2-beta.md` — AG2 Beta available vs unreleased features
-- `docs/plan.md` — AGClaw implementation plan and phases
+- `docs/plan.md` — AG2 Assistant implementation plan and phases
 
 ## Virtual Environment
 

@@ -2,7 +2,7 @@
 fact (without reproducing).
 
 Three layers, all writing where they can be read back:
-- A rolling log at ``<data_dir>/agclaw.log`` (AGClaw + AG2's own `autogen.*` logs).
+- A rolling log at ``<data_dir>/ag2assistant.log`` (AG2 Assistant + AG2's own `autogen.*` logs).
 - AG2-native ``LoggingMiddleware`` on each agent → per-turn LLM call / tool / turn
   entries in that same log.
 - A failure snapshot: when an agent turn raises (e.g. a provider 400), a compact
@@ -25,9 +25,9 @@ _CONFIGURED = False
 
 
 def setup_logging(config) -> logging.Logger:
-    """Initialise rolling file logging (idempotent). Returns the 'agclaw' logger."""
+    """Initialise rolling file logging (idempotent). Returns the 'ag2assistant' logger."""
     global _CONFIGURED
-    logger = logging.getLogger("agclaw")
+    logger = logging.getLogger("ag2assistant")
     if _CONFIGURED:
         return logger
     logger.setLevel(logging.INFO)
@@ -35,7 +35,7 @@ def setup_logging(config) -> logging.Logger:
     data_dir.mkdir(parents=True, exist_ok=True)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     fh = logging.handlers.RotatingFileHandler(
-        data_dir / "agclaw.log", maxBytes=2_000_000, backupCount=3
+        data_dir / "ag2assistant.log", maxBytes=2_000_000, backupCount=3
     )
     fh.setFormatter(fmt)
     logger.addHandler(fh)
@@ -44,15 +44,15 @@ def setup_logging(config) -> logging.Logger:
     ag2.addHandler(fh)
     ag2.setLevel(logging.INFO)
     _CONFIGURED = True
-    logger.info("logging initialised → %s", data_dir / "agclaw.log")
+    logger.info("logging initialised → %s", data_dir / "ag2assistant.log")
     return logger
 
 
 def agent_logging_middleware():
-    """AG2-native LoggingMiddleware routed to the agclaw logger (per-turn LLM/tool)."""
+    """AG2-native LoggingMiddleware routed to the ag2assistant logger (per-turn LLM/tool)."""
     from autogen.beta.middleware import LoggingMiddleware
 
-    return LoggingMiddleware(logger=logging.getLogger("agclaw.agent"))
+    return LoggingMiddleware(logger=logging.getLogger("ag2assistant.agent"))
 
 
 async def capture_failure(config, *, session_id, surface="", user_text="",
@@ -63,7 +63,7 @@ async def capture_failure(config, *, session_id, surface="", user_text="",
     counts + tail), which is usually enough to spot malformed sequences (e.g. an
     orphaned tool cycle) without re-running. Best-effort; never raises.
     """
-    logger = logging.getLogger("agclaw")
+    logger = logging.getLogger("ag2assistant")
     try:
         events = []
         if stream is not None:

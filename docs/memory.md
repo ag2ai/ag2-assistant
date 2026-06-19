@@ -1,6 +1,6 @@
-# AGClaw Observer Memory
+# AG2 Assistant Observer Memory
 
-AGClaw passively learns about you over time and remembers it across conversations and platforms. This is the "personal" in personal assistant — the agent adapts to how you work without you having to repeat yourself.
+AG2 Assistant passively learns about you over time and remembers it across conversations and platforms. This is the "personal" in personal assistant — the agent adapts to how you work without you having to repeat yourself.
 
 ## What it learns
 
@@ -17,7 +17,7 @@ Each observation is tagged with the platform it was seen on (cli, telegram, disc
 
 ## How it works
 
-AGClaw uses AG2 Beta's native knowledge and memory primitives — nothing bespoke:
+AG2 Assistant uses AG2 Beta's native knowledge and memory primitives — nothing bespoke:
 
 ```
 Conversation ends
@@ -26,7 +26,7 @@ Conversation ends
 WorkingMemoryAggregate   ← custom prompt distills durable preferences
       │                    (4 dimensions, platform-tagged)
       ▼
-SqliteKnowledgeStore     ← persists to ~/.agclaw/profile.db (/memory/working.md)
+SqliteKnowledgeStore     ← persists to ~/.ag2assistant/profile.db (/memory/working.md)
       │
       ▼  (next conversation, any process/platform)
 WorkingMemoryPolicy      ← injects the profile into the agent's context
@@ -36,38 +36,38 @@ Agent acts on what it knows about you
 ```
 
 - **Passive**: learning happens automatically after each conversation via an aggregation LLM pass. You don't have to tell it to remember.
-- **Persistent**: stored in SQLite at `~/.agclaw/profile.db`, survives restarts.
+- **Persistent**: stored in SQLite at `~/.ag2assistant/profile.db`, survives restarts.
 - **Global + platform-aware**: one profile shared across all channels, with platform noted per observation.
 - **Private to the model's behaviour**: the profile shapes responses via context injection. The knowledge tool and event-log dumping are turned off (`expose_tool=False`, `write_event_log=False`) to keep it purely observational.
 
 ## Implementation
 
-| Concern | AG2 primitive | AGClaw code |
+| Concern | AG2 primitive | AG2 Assistant code |
 |---------|---------------|-------------|
 | Storage | `SqliteKnowledgeStore` | `memory.build_knowledge_config()` |
 | Learning | `WorkingMemoryAggregate(prompt=…)` + `AggregateTrigger(on_end=True)` | `memory.build_profile_prompt()` |
 | Recall | `WorkingMemoryPolicy` + `ConversationPolicy` | `memory.profile_assembly()` |
 | Wiring | `KnowledgeConfig` + `Agent(knowledge=, assembly=)` | `agent.create_agent(memory=True, platform=…)` |
 
-See `src/agclaw/memory.py`.
+See `src/ag2assistant/memory.py`.
 
 ## CLI
 
 ```bash
 # Talk normally — learning happens passively
-agclaw agent "I prefer short bulleted answers and I hate emojis at work"
+ag2assistant agent "I prefer short bulleted answers and I hate emojis at work"
 
-# See what AGClaw has learned about you
-agclaw profile show
+# See what AG2 Assistant has learned about you
+ag2assistant profile show
 
 # Start fresh
-agclaw profile clear
+ag2assistant profile clear
 
 # Disable memory for a one-off
-agclaw agent "..." --no-memory
+ag2assistant agent "..." --no-memory
 
 # Tag the platform (channels set this automatically)
-agclaw agent "..." --platform telegram
+ag2assistant agent "..." --platform telegram
 ```
 
 ## Design notes
