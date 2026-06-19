@@ -95,6 +95,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--ink); }
 .drow .statusicon.failed { color: #d8552f; }
 .drow .statusicon.running, .drow .statusicon.scheduled { color: var(--accent); }
 .drow .ttitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drow .nextin { flex: none; font-size: 11px; color: var(--accent); white-space: nowrap; }
 .drow .runwhen { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
 .drow.child { margin-left: 14px; padding-left: 11px; border-left: 2px solid var(--line); border-radius: 0 9px 9px 0; }
 .drow .unreadcount { flex: none; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; line-height: 17px; text-align: center; }

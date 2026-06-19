@@ -75,6 +75,26 @@
     try { return new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) }
     catch { return '' }
   }
+
+  // Relative time until the next scheduled run, e.g. "Next in 3 mins", "Next in
+  // 1 day", "Next in 4 weeks". Recomputed every drawer refresh (5s) so it ticks down.
+  const _plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`
+  function fmtNextIn(iso) {
+    if (!iso) return ''
+    const ms = new Date(iso).getTime() - Date.now()
+    if (isNaN(ms)) return ''
+    if (ms <= 0) return 'Due now'
+    const mins = Math.round(ms / 60000)
+    if (mins < 1) return 'Next in <1 min'
+    if (mins < 60) return `Next in ${_plural(mins, 'min')}`
+    const hours = Math.round(mins / 60)
+    if (hours < 24) return `Next in ${_plural(hours, 'hour')}`
+    const days = Math.round(hours / 24)
+    if (days < 7) return `Next in ${_plural(days, 'day')}`
+    const weeks = Math.round(days / 7)
+    if (weeks < 5) return `Next in ${_plural(weeks, 'week')}`
+    return `Next in ${_plural(Math.round(days / 30), 'month')}`
+  }
 </script>
 
 <div class="drawer">
@@ -99,11 +119,13 @@
     {:else}
       {#if !groups.length}<div class="none">No tasks yet.</div>{/if}
       {#each groups as g (g.task.id)}
+        {@const nextIn = g.task.status === 'scheduled' ? fmtNextIn(g.task.scheduled_for) : ''}
         <div class="drow trow" class:on={$route.name === 'task' && $route.id === g.task.id}
              class:unseen={!g.runs.length && isUnread(g.task)} onclick={() => openTask(g.task.id)}>
           <span class="statusicon {g.task.status}" title={stat(g.task.status).label}>{stat(g.task.status).icon}</span>
           <span class="ttitle">{g.task.title}</span>
           {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}">🔁 {g.task.recurrence}</span>{/if}
+          {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
           {#if g.unread}<span class="unreadcount" title="{g.unread} unread">{g.unread}</span>{/if}
         </div>
         {#each visibleRuns(g) as r (r.id)}
