@@ -50,6 +50,10 @@ ag2assistant = "assistant.cli:app"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Integration tests hit a real LLM / network / Docker, so they're slow and
+# non-deterministic — excluded from the default run. Run them with `pytest -m
+# integration` (needs API keys). `pytest -m ""` runs everything.
+addopts = "-m 'not integration'"
 markers = [
     "integration: tests that call a real LLM or network (require API keys)",
 ]

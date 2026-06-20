@@ -1,15 +1,43 @@
 # AG2 Assistant - Project Plan
 
+## Recently shipped
+
+Built on AG2 Beta primitives throughout — surfaced in-app via **AG2 view** (live
+event inspector + per-item provenance + a "Powered by AG2" architecture map).
+Highlights since the last refresh:
+
+- **Rebrand → AG2 Assistant** — package / CLI (`ag2assistant`) / data-dir / env
+  (`AG2ASSISTANT_*`), with a one-time `~/.agclaw → ~/.ag2assistant` migration and a
+  legacy-env fallback so existing installs keep working.
+- **Docker → AG2 official** — shell/code use `autogen.beta.extensions.docker.DockerEnvironment`;
+  a one-shot bind-mount sandbox is kept only for untrusted **skill** scripts.
+- **Subagents** — task execution runs as named AG2 `subagents.run_task` agents, with
+  **live nested visibility** (inner tool calls / responses stream into the subagent
+  card via `SubagentTrace`; recursion-ready).
+- **Observers** — `LoopDetector` + a custom `ToolChurnObserver` flag stuck/flailing
+  turns as `ObserverAlert`s on the stream (observe-only first cut).
+- **Working file space** — a configurable `workspace_dir` (default
+  `~/Documents/AG2 Assistant`) via AG2 `FilesystemToolkit` (sandboxed write/update/
+  find/delete; reads of the user's own files stay on the permission-gated reader).
+- **Durable, inline chat HITL** — chat questions/permissions persist (`InquiryStore`)
+  and render **inline** on the session stream, answerable from the thread or the
+  strip (not just the transient top strip); page-related ones are de-duped from the strip.
+- **Memory UX** — GUI viewer/editor of the learned profile + a `remember` tool for
+  explicit saves.
+- **Security** — same-origin/allowlist guard on all `/api/*` + WebSocket routes.
+- **Structured + reliable** — `response_schema` for planning/verification; schedule-arg
+  validation at the tool boundary; "(no reply)" placeholder for empty final responses.
+- **MCP** — user-configurable MCP servers (Settings) feeding agent tools.
+- **Streaming** — token streaming in the web/task UI.
+- **Tasks UI** — runs nested under their template; ordered by **next run** (finished
+  last); two-line rows (full title, then schedule + "Next in …").
+
 ## Backlog / Ideas
 
-- **Tasks nav — nest scheduled runs under their parent.** In the left-nav Tasks
-  list, each occurrence of a recurring scheduled task (the per-run clones from
-  `_fire`/`_clone_for_run` in `gateway/tasks_service.py`) should appear **indented
-  as a child under the parent scheduled task**, rather than as separate top-level
-  rows. The runs already carry the link (`run_of`/parent id); the work is in the
-  Tasks listing (`list_all`/`list_tasks` grouping) + the Drawer's task rendering
-  (`web/src/components/Drawer.svelte`) to group-and-indent runs beneath their
-  template. (Requested after scheduled AI-news/weather runs worked well.)
+- ✅ **Tasks nav — nest scheduled runs under their parent.** *Done* — runs group
+  under their template in `Drawer.svelte` (by `run_of`), with recent-N + "show all",
+  unread highlighting, status icons, ordering by **next run** (finished last), and
+  two-line rows (full title, then schedule + "Next in …").
 
 - **Task Manager — a maintained running summary per task (non-scheduled first).**
   A lightweight per-task "manager" that keeps a human-readable **summary** so when
@@ -70,14 +98,14 @@
 
 | Phase | Status | Summary |
 |-------|--------|---------|
-| Phase 1: Core Agent Runtime | 🟢 Mostly Done | Agent + CLI + Config + 4 custom tools working on AG2 0.13.4 / Gemini. 22 unit tests pass |
-| Phase 2: Gateway & API | 🟢 Core Done | FastAPI facade (`ag2assistant gateway`): REST `/api/message` + WS `/api/ws` + health. Per-session isolated multi-turn, tool use over HTTP — all verified. Distributed Hub option spiked (`examples/network_gateway_spike.py`) |
+| Phase 1: Core Agent Runtime | 🟢 Done | Agent + CLI + Config on AG2 0.13.4; native + custom tools (search, fetch, shell/code sandbox, files, **workspace**, skills, MCP, Google), `response_schema`, observers. 330+ tests pass |
+| Phase 2: Gateway & API | 🟢 Core Done | FastAPI facade (`ag2assistant gateway`): REST `/api/message` + WS `/api/stream` + health, **cross-origin guarded**. Per-session isolated multi-turn, tool use over HTTP. Distributed Hub option spiked (`examples/network_gateway_spike.py`) |
 | Phase 3: Channel Integrations | 🟢 Telegram + Discord + Slack Live | Three adapters live-verified (DM + @mention gating, memory, tools, per-channel formatting, live date/time/location). Slack adds 👀 reaction while working. WhatsApp next |
-| Phase 4: Skills & Plugins | 🟢 Core Done | Agent has AG2's `SkillSearchToolkit` — searches skills.sh registry, installs, and runs skills (progressive disclosure). Live-verified registry search. Skills install to `~/.ag2assistant/skills` |
-| Phase 5: Memory & Intelligence | 🟡 In Progress | User-profile observer memory built (SQLite, passive, platform-tagged). Works end-to-end across processes |
-| Phase 6: UI | 🟢 Reference UI Done | Self-contained web chat client served by the gateway at `/` (vanilla JS over REST/WS), ag2.ai-styled: streaming replies + inline HITL permission cards. Live-verified end-to-end with Chrome DevTools (chat round-trip, permission card → Allow once → file read). Richer/framework UI still optional |
-| Phase 7: Advanced Features | ⬜ Not Started | AG2 0.13 network/distributed now available — reshapes this phase |
-| HITL & Permissions | 🟡 In Progress | Pluggable `Asker` seam (via AG2 `hitl_hook`) + styled desktop `/hitl/{id}` pages (concurrent, AG2-branded). Core done; channel askers + permission store + attachments next |
+| Phase 4: Skills & Plugins | 🟢 Core Done | Agent has AG2's `SkillSearchToolkit` — searches skills.sh registry, installs, and runs skills (progressive disclosure, Docker-sandboxed scripts). Installs to `~/.ag2assistant/skills` |
+| Phase 5: Memory & Intelligence | 🟢 Core Done | User-profile observer memory (AG2 `KnowledgeConfig` + `WorkingMemoryAggregate`); GUI viewer/editor + a `remember` tool. Cross-process. (Multi-store namespaces = future) |
+| Phase 6: UI | 🟢 Done | Vite+Svelte event-stream client at `/app` (a projection of the AG2 `Stream`): streaming replies, inline HITL, tasks view, voice, memory editor, **AG2 view** (event inspector + provenance + Powered-by map). Legacy vanilla client at `/legacy` |
+| Phase 7: Advanced Features | 🟡 In Progress | **Subagents (AG2 `run_task`)** with live nested visibility, and **observers** (stuck-turn guards) shipped. Network/Hub distributed mode still optional/future |
+| HITL & Permissions | 🟢 Core Done | Pluggable `Asker` (AG2 `hitl_hook`) + styled `/hitl/{id}` pages + Telegram/Discord/Slack channel askers + `PermissionManager`. **Durable, inline** chat HITL via `InquiryStore` (answerable anywhere, survives restart) |
 
 ### HITL & Permissions Detail
 
