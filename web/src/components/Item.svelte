@@ -7,6 +7,8 @@
   import Inquiry from './items/Inquiry.svelte'
   import Subagent from './items/Subagent.svelte'
   import Note from './items/Note.svelte'
+  import { ag2View } from '../store.js'
+  import { itemAg2 } from '../lib/ag2map.js'
 
   let { item } = $props()
   const map = {
@@ -15,6 +17,13 @@
     subagent: Subagent, note: Note,
   }
   const Cmp = $derived(map[item.kind])
+  // In AG2 view, caption each item with the AG2 primitive it's a projection of.
+  const prov = $derived($ag2View ? itemAg2(item.kind) : null)
 </script>
 
 {#if Cmp}<Cmp {item} />{/if}
+{#if prov}
+  <div class="ag2tag" class:right={item.kind === 'user'} class:app={prov.layer === 'app'}>
+    AG2 · {prov.label}
+  </div>
+{/if}

@@ -1,5 +1,5 @@
 <script>
-  import { thread, taskPanel } from '../store.js'
+  import { thread, taskPanel, ag2View } from '../store.js'
   import { go, newChatId } from '../router.js'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
@@ -26,6 +26,8 @@
     {#if $thread.kind === 'task'}{($taskPanel && $taskPanel.title) || 'Task'}{:else}Conversation{/if}
   </span>
   {#if $thread.kind === 'task' && $taskPanel}<span class="badge">{$taskPanel.status}</span>{/if}
+  <button class="ag2toggle" class:on={$ag2View} onclick={() => ($ag2View = !$ag2View)}
+          title="AG2 view — reveal the live AG2 events powering the UI">&lt;/&gt; AG2</button>
 </div>
 
 <div class="thread" bind:this={scroller}>

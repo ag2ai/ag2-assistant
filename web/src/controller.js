@@ -2,7 +2,7 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, taskPanel, sessions } from './store.js'
+import { thread, taskPanel, sessions, inspectorEvents } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
@@ -20,14 +20,26 @@ let _suppressStream = false     // suppress stream folding while voice drives th
 let _vitem = null, _vrole = null, _vseq = 0
 const _vkey = () => 'v' + ++_vseq
 
+// Buffer raw {type,data} events for the AG2 Inspector (bounded ring). The stream
+// already delivers every AG2 event here — we just keep them so the inspector can
+// reveal the live AG2 activity behind the UI (no extra server work).
+const _INSPECT_CAP = 600
+function _inspect(ev) {
+  inspectorEvents.update((buf) => {
+    const next = buf.length >= _INSPECT_CAP ? buf.slice(buf.length - _INSPECT_CAP + 1) : buf
+    return [...next, { ...ev, _t: Date.now(), _id: (next.at(-1)?._id || 0) + 1 }]
+  })
+}
+
 export function openThread(kind, id) {
   closeThread()
   _suppressStream = false       // a fresh thread always folds its stream
   const session = kind === 'task' ? 'task:' + id : id
   thread.set({ id, kind, session, items: [], busy: false })
+  inspectorEvents.set([])       // fresh inspector buffer per thread
 
   client = new StreamClient(session, {
-    onEvent: (ev) => { if (_suppressStream) return; thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } }) },
+    onEvent: (ev) => { _inspect(ev); if (_suppressStream) return; thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } }) },
     onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
     onError: (m) => thread.update((t) => {
       t.items.push({ id: Date.now(), kind: 'note', text: '⚠ ' + (m.message || 'error') })

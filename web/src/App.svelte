@@ -1,7 +1,7 @@
 <script>
   import { route, go, newChatId } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen } from './store.js'
+  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, ag2View } from './store.js'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
   import Hitl from './components/Hitl.svelte'
@@ -10,6 +10,11 @@
   import Viewer from './components/Viewer.svelte'
   import Settings from './components/Settings.svelte'
   import Memory from './components/Memory.svelte'
+  import Inspector from './components/Inspector.svelte'
+  import PoweredBy from './components/PoweredBy.svelte'
+
+  // The AG2 Inspector occupies a right rail when AG2 view is on and a thread is open.
+  const showInspector = $derived($ag2View && $route.name !== 'home')
 
   // React to route changes: open the matching thread. $effect tracks $route only
   // (writing `last` is untracked), so this can't self-invalidate.
@@ -25,7 +30,7 @@
   })
 </script>
 
-<div class="app">
+<div class="app" class:ag2={showInspector}>
   <Drawer />
   <div class="main">
     <Hitl />
@@ -35,8 +40,10 @@
       <Thread />
     {/if}
   </div>
+  {#if showInspector}<Inspector />{/if}
   {#if $settingsOpen}<Settings />{/if}
   {#if $memoryOpen}<Memory />{/if}
+  {#if $poweredByOpen}<PoweredBy />{/if}
   {#if $googleOpen}<Google />{/if}
   {#if $voicePickerOpen}<VoicePicker />{/if}
   {#if $viewer}<Viewer />{/if}

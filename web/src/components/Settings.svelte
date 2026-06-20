@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View } from '../store.js'
   import { api } from '../transport/api.js'
   import { chime } from '../lib/chime.js'
 
@@ -60,6 +60,7 @@
   const openVoice = () => { $settingsOpen = false; $voicePickerOpen = true }
   const openGoogle = () => { $settingsOpen = false; $googleOpen = true }
   const openMemory = () => { $settingsOpen = false; $memoryOpen = true }
+  const openPoweredBy = () => { $settingsOpen = false; $poweredByOpen = true }
 </script>
 
 <div class="modal-backdrop" onclick={close}></div>
@@ -117,6 +118,17 @@
         <span class="sv">what the assistant has learned about you</span>
         <span class="sgo">View & edit →</span>
       </button>
+
+      <div class="setsec">AG2</div>
+      <button class="setrow" onclick={openPoweredBy}>
+        <span class="sk">⚡ Powered by AG2</span>
+        <span class="sv">the AG2 Beta primitives behind this app</span>
+        <span class="sgo">View →</span>
+      </button>
+      <label class="setcheck">
+        <input type="checkbox" bind:checked={$ag2View} />
+        AG2 view — reveal live AG2 events + per-item provenance
+      </label>
 
       <div class="setsec">Notifications</div>
       <label class="setcheck">
