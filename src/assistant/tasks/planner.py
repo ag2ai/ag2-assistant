@@ -69,9 +69,11 @@ Produce a plan:
 - capabilities: for the top-level work AND for each subtask, list ONLY the tool
   groups it genuinely needs, chosen from: {capabilities}. Use the fewest that fit
   — e.g. factual research → ["web"]; running/calculating → ["code"]; the user's
-  calendar → ["calendar"]; their Drive files → ["drive"]; reading a local file →
-  ["files"]. A pure writing/synthesis step that only combines other results needs
-  NONE ([]). Never request a capability the work doesn't need (e.g. don't add
+  calendar → ["calendar"]; their Drive files → ["drive"]; reading a local file OR
+  saving a file to the workspace (e.g. writing a markdown report/document) →
+  ["files"]. A pure writing/synthesis step that only combines other results into
+  the deliverable text (no file saved) needs NONE ([]). Never request a capability
+  the work doesn't need (e.g. don't add
   "drive" to web research).
 
 Keep it tight. Trivial tasks need no questions, no subtasks, and one deliverable.

@@ -161,3 +161,22 @@ def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(monkeypatch):
     mcp_only = build_agent_tools("gemini", capabilities=["mcp"])
     assert len(mcp_only) == 1
     assert isinstance(mcp_only[0], NamespacedMCPToolkit)
+
+
+def test_files_capability_wires_workspace_toolkit(tmp_path):
+    """The `files` capability adds AG2's filesystem toolkit (write/update/find/
+    delete) scoped to the workspace, creating it — and keeps exactly one `read_file`
+    (our host reader; AG2's is dropped to avoid a duplicate tool name)."""
+    ws = tmp_path / "workspace"
+    tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=ws)
+    names = [t.name for t in tools if getattr(t, "name", None)]
+    assert {"write_file", "update_file", "find_files", "delete_file"} <= set(names)
+    assert names.count("read_file") == 1  # only the custom host reader
+    assert ws.exists()
+
+
+def test_no_workspace_dir_means_no_fs_tools():
+    """Without a workspace_dir, only the custom read_file is present (no FS toolkit)."""
+    tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=None)
+    names = [t.name for t in tools if getattr(t, "name", None)]
+    assert "read_file" in names and "write_file" not in names

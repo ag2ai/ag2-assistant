@@ -112,3 +112,11 @@ def test_model_config_dispatches_anthropic(monkeypatch):
         )
     )
     assert type(model_config(cfg)).__name__ == "AnthropicConfig"
+
+
+def test_workspace_dir_default_and_env(monkeypatch):
+    monkeypatch.delenv("AG2ASSISTANT_WORKSPACE", raising=False)
+    cfg = load_config()
+    assert cfg.workspace_dir == Path.home() / "Documents" / "AG2 Assistant"
+    monkeypatch.setenv("AG2ASSISTANT_WORKSPACE", "/tmp/custom-ws")
+    assert load_config().workspace_dir == Path("/tmp/custom-ws")

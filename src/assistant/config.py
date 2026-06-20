@@ -108,6 +108,9 @@ class Config(BaseModel):
     data_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME)
     # Where installed skills live (SKILL.md packages).
     skills_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME / "skills")
+    # The agent's working file space — a real, visible folder it can read/write via
+    # AG2's FilesystemToolkit (confined to here). Configurable via AG2ASSISTANT_WORKSPACE.
+    workspace_dir: Path = Field(default_factory=lambda: Path.home() / "Documents" / "AG2 Assistant")
 
 
 def default_config_path() -> Path:
@@ -165,6 +168,8 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.llm.aggregate_model = v
     if v := env("AG2ASSISTANT_LOCATION"):
         cfg.agent.location = v
+    if v := env("AG2ASSISTANT_WORKSPACE"):
+        cfg.workspace_dir = Path(v).expanduser()
     if v := env("AG2ASSISTANT_SANDBOX"):
         cfg.tools.sandbox = v
     if v := env("AG2ASSISTANT_DOCKER_IMAGE"):

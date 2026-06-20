@@ -67,6 +67,7 @@ def build_agent_tools(
     docker_image: str = "python:3.12-slim",
     docker_network: str = "bridge",
     capabilities: list[str] | None = None,
+    workspace_dir=None,
 ) -> list:
     """Build the agent's tools.
 
@@ -119,7 +120,21 @@ def build_agent_tools(
             ]
 
     if want("files"):
-        tools.append(read_file)  # permission-gated (host FS)
+        tools.append(read_file)  # permission-gated (host FS, any path, vision)
+        # AG2's sandboxed filesystem toolkit, confined to the agent's workspace —
+        # write/update/list/delete its own files (no approval needed; it's the
+        # agent's own dir). We drop its `read_file` to avoid a name clash with the
+        # custom host reader above (providers require unique tool names); reading
+        # workspace files goes through that reader.
+        if workspace_dir:
+            from pathlib import Path
+
+            from autogen.beta.tools import FilesystemToolkit
+
+            wd = Path(workspace_dir).expanduser()
+            wd.mkdir(parents=True, exist_ok=True)
+            fk = FilesystemToolkit(base_path=wd)
+            tools += [t for t in fk.tools if t.name != "read_file"]
 
     # Google tools (only when signed in), per requested group.
     from assistant.integrations.google_auth import has_token

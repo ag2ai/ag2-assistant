@@ -91,7 +91,9 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
     # Seed the archetype as the persona, then compose the full turn prompt around
     # it without memory guidance because these subagents run with memory=False.
     sub_config.agent.system_prompt = archetype_prompt
-    sub_config.agent.system_prompt = "\n\n".join(turn_prompt(sub_config, memory=False))
+    sub_config.agent.system_prompt = "\n\n".join(
+        turn_prompt(sub_config, memory=False, workspace="files" in caps)
+    )
     sub_model = cheap_model(config) if task.parent_id else None
     agent = create_agent(
         sub_config,

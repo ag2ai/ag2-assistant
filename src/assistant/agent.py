@@ -247,7 +247,19 @@ def environment_context(config: Config) -> str:
     return "Environment (live):\n" + "\n".join(lines)
 
 
-def turn_prompt(config: Config, memory: bool = True) -> list[str]:
+def workspace_guidance(config: Config) -> str:
+    """Tell the agent about its working file space (only when it has the file tools)."""
+    return (
+        "You have a persistent working folder (your workspace) where you can save "
+        "and organise files for the user: use write_file to create a file (e.g. a "
+        "markdown report), update_file to edit one, find_files to list them, and "
+        "delete_file to remove one. Paths are relative to the workspace and you may "
+        "use subfolders. When asked to produce or save a file, write it there and "
+        f"tell the user the filename. Your workspace is at: {config.workspace_dir}."
+    )
+
+
+def turn_prompt(config: Config, memory: bool = True, workspace: bool = True) -> list[str]:
     """Per-turn system prompt: persona + live environment context.
 
     `ask(prompt=...)` replaces the base prompt for that turn, so we include the
@@ -257,6 +269,8 @@ def turn_prompt(config: Config, memory: bool = True) -> list[str]:
     parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE]
     if memory:
         parts.append(MEMORY_GUIDANCE)
+    if workspace:
+        parts.append(workspace_guidance(config))
     try:
         from assistant.integrations.google_auth import has_token
 
@@ -281,6 +295,7 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
         BEHAVIOR_GUIDANCE,
         CAPABILITY_GUIDANCE,
         MEMORY_GUIDANCE,
+        workspace_guidance(config),  # the universal agent always has the file tools
     ]
     try:
         from assistant.integrations.google_auth import has_token
@@ -357,6 +372,7 @@ def create_agent(
         docker_image=config.tools.docker_image,
         docker_network=config.tools.docker_network,
         capabilities=capabilities,
+        workspace_dir=config.workspace_dir,
     )
     if skills and (capabilities is None or "skills" in capabilities):
         tools.append(build_skills_toolkit(config))

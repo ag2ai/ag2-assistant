@@ -44,6 +44,22 @@
     expanded = n
   }
 
+  // Top-level ordering: what's active now first, then upcoming scheduled tasks by
+  // soonest next run, then finished (completed/failed/cancelled) at the bottom.
+  function taskRank(t) {
+    if (TERMINAL.has(t.status)) return 2 // finished → bottom
+    if (t.status === 'scheduled') return 1 // upcoming → middle, ordered by next run
+    return 0 // running / pending / planning / awaiting input → active now, at top
+  }
+  function compareTasks(a, b) {
+    const ra = taskRank(a), rb = taskRank(b)
+    if (ra !== rb) return ra - rb
+    if (ra === 1) // scheduled: soonest next run first
+      return (a.scheduled_for || '').localeCompare(b.scheduled_for || '')
+    // active-now and finished: most recent first
+    return (b.created_at || '').localeCompare(a.created_at || '')
+  }
+
   // Group runs (run_of) under their template; templates + standalone tasks are
   // top-level. Orphan runs (template absent) fall back to top level.
   const groups = $derived.by(() => {
@@ -56,11 +72,14 @@
     }
     const topIds = new Set(list.filter((t) => !t.run_of).map((t) => t.id))
     const tops = list.filter((t) => !t.run_of || !topIds.has(t.run_of))
-    return tops.map((t) => {
-      const runs = (byParent.get(t.id) || []).slice().sort((a, b) =>
-        (b.scheduled_for || b.created_at || '').localeCompare(a.scheduled_for || a.created_at || ''))
-      return { task: t, runs, unread: runs.filter(isUnread).length }
-    })
+    return tops
+      .slice()
+      .sort(compareTasks)
+      .map((t) => {
+        const runs = (byParent.get(t.id) || []).slice().sort((a, b) =>
+          (b.scheduled_for || b.created_at || '').localeCompare(a.scheduled_for || a.created_at || ''))
+        return { task: t, runs, unread: runs.filter(isUnread).length }
+      })
   })
 
   // recent N runs, but always include unread ones even past the cap
@@ -120,13 +139,19 @@
       {#if !groups.length}<div class="none">No tasks yet.</div>{/if}
       {#each groups as g (g.task.id)}
         {@const nextIn = g.task.status === 'scheduled' ? fmtNextIn(g.task.scheduled_for) : ''}
-        <div class="drow trow" class:on={$route.name === 'task' && $route.id === g.task.id}
+        <div class="drow ttask" class:on={$route.name === 'task' && $route.id === g.task.id}
              class:unseen={!g.runs.length && isUnread(g.task)} onclick={() => openTask(g.task.id)}>
-          <span class="statusicon {g.task.status}" title={stat(g.task.status).label}>{stat(g.task.status).icon}</span>
-          <span class="ttitle">{g.task.title}</span>
-          {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}">🔁 {g.task.recurrence}</span>{/if}
-          {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
-          {#if g.unread}<span class="unreadcount" title="{g.unread} unread">{g.unread}</span>{/if}
+          <div class="tline1">
+            <span class="statusicon {g.task.status}" title={stat(g.task.status).label}>{stat(g.task.status).icon}</span>
+            <span class="ttitle">{g.task.title}</span>
+            {#if g.unread}<span class="unreadcount" title="{g.unread} unread">{g.unread}</span>{/if}
+          </div>
+          {#if g.task.recurrence || nextIn}
+            <div class="tmeta">
+              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}">🔁 {g.task.recurrence}</span>{/if}
+              {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
+            </div>
+          {/if}
         </div>
         {#each visibleRuns(g) as r (r.id)}
           <div class="drow child trow" class:on={$route.name === 'task' && $route.id === r.id}

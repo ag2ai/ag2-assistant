@@ -129,7 +129,9 @@ async def test_visible_subagent_emits_cancelled_when_interrupted(monkeypatch):
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
-    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg, memory=True: ["prompt"])
+    monkeypatch.setattr(
+        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True: ["prompt"]
+    )
     monkeypatch.setattr(run_task_mod, "run_task", cancelled_run_task)
 
     task = SimpleNamespace(id="task-1", title="do work", parent_id=None)
@@ -179,7 +181,9 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
         return SimpleNamespace(completed=True, result="done", error=None, stream=stream)
 
     monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
-    monkeypatch.setattr(agent_mod, "turn_prompt", lambda cfg, memory=True: ["prompt"])
+    monkeypatch.setattr(
+        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True: ["prompt"]
+    )
     monkeypatch.setattr(run_task_mod, "run_task", fake_run_task)
 
     task = SimpleNamespace(id="task-1", title="do work", parent_id=None)
