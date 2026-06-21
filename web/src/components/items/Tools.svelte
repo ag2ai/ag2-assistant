@@ -26,13 +26,11 @@
   }
 
   async function openFile(c) {
-    try {
-      $viewer = { title: c.name, text: await api.fileText(c.path) }
-    } catch {
-      const p = await livePath(c)
-      if (p) $viewer = { title: c.name, text: await api.fileText(p) }
-      else markGone(c)
-    }
+    // Resolve the live workspace path (also catches deletion + task-relative paths);
+    // the Viewer then renders by file type (html/image/pdf/markdown/code/…).
+    const p = await livePath(c)
+    if (p) $viewer = { title: c.name, name: c.name, path: p }
+    else markGone(c)
   }
 
   async function downloadFile(c) {

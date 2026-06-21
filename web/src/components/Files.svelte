@@ -4,6 +4,7 @@
   import { onMount } from 'svelte'
   import { filesOpen, viewer } from '../store.js'
   import { api } from '../transport/api.js'
+  import { previewable } from '../lib/preview.js'
 
   let files = $state([])
   let root = $state('')
@@ -30,7 +31,7 @@
     try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
     catch { return '' }
   }
-  const viewable = (name) => /\.(md|markdown|txt|json|csv|ya?ml|py|js|ts|html|css|log)$/i.test(name)
+  const viewable = previewable  // extension → has an in-app preview (else download-only)
 
   const groups = $derived.by(() => {
     const m = new Map()
@@ -42,9 +43,9 @@
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   })
 
-  async function view(f) {
-    try { $viewer = { title: f.name, text: await api.fileText(f.path) } }
-    catch (e) { err = String(e.message || e) }
+  function view(f) {
+    // The Viewer fetches/renders by type (path is workspace-relative and listed).
+    $viewer = { title: f.name, name: f.name, path: f.path }
   }
 
   let confirming = $state('')   // path awaiting delete confirmation

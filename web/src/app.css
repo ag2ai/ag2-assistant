@@ -250,6 +250,13 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .viewer .vhead h2 { font-size: 18px; margin: 0; flex: 1; overflow-wrap: anywhere; }
 .viewer .vhead .modal-close { align-self: auto; }
 .viewer .vbody { padding: 20px 26px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+.viewer .vhead .dl { font-size: 12px; color: var(--accent); text-decoration: none; }
+.viewer .vhead .dl:hover { text-decoration: underline; }
+.viewer .vbody.native { padding: 10px; }
+.viewer .vframe { width: 100%; height: 74vh; border: 0; border-radius: 6px; background: #fff; }
+.viewer .vimg { display: block; max-width: 100%; max-height: 74vh; height: auto; margin: 0 auto; }
+.viewer .vcode { white-space: pre; overflow: auto; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; background: var(--code); padding: 14px; border-radius: 6px; }
+.viewer .vtext { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; background: var(--code); padding: 14px; border-radius: 6px; }
 
 .voicepick .vlist { max-height: 56vh; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .vrow { display: flex; align-items: baseline; gap: 8px; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 9px; padding: 9px 11px; cursor: pointer; }
