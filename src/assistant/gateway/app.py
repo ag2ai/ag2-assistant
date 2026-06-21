@@ -735,7 +735,6 @@ def create_app(
             ModelRequest,
             ModelResponse,
             TextInput,
-            ToolCallEvent,
             ToolCallsEvent,
         )
         from autogen.beta.events.voice import (
@@ -744,6 +743,8 @@ def create_app(
             TranscriptionChunkEvent,
             TranscriptionCompletedEvent,
         )
+
+        from assistant.gateway.wire import to_wire
 
         sid = uuid.uuid4().hex[:8]
         task_id = websocket.query_params.get("task") or None
@@ -776,19 +777,12 @@ def create_app(
                         persist_session, ModelResponse(message=ModelMessage(content=text))
                     )
 
-        async def on_tool(name: str) -> None:  # surface delegated (universal-agent) tools
+        async def forward_event(event) -> None:
+            # Forward a structured AG2 event verbatim (same wire shape as the text
+            # StreamBridge) so the voice client folds it with the one shared reducer
+            # → tool chips/cards, task cards, deliverables, all "for free".
             with contextlib.suppress(Exception):
-                await websocket.send_json({"type": "tool", "name": name})
-
-        async def on_task(st: dict) -> None:  # a task the voice agent just spawned → card
-            with contextlib.suppress(Exception):
-                await websocket.send_json(
-                    {
-                        "type": "task_card",
-                        "id": st["id"],
-                        "title": st.get("title", "Task"),
-                    }
-                )
+                await websocket.send_json({"event": to_wire(event)})
 
         # The voice agent can hang up the call itself via its end_call tool, which
         # trips this event; wait_end() (below) then ends the job race → teardown.
@@ -799,8 +793,7 @@ def create_app(
                 session_id=sid,
                 task_id=task_id,
                 chat_session=chat_session,
-                on_tool=on_tool,
-                on_task=on_task,
+                on_event=forward_event,  # delegated universal-agent events → voice client
                 on_end=end_requested.set,
             )
         except Exception as exc:
@@ -849,22 +842,21 @@ def create_app(
                             frame["final"] = True
                     await websocket.send_json(frame)
 
-        async def pump_tools(context):
-            # the voice agent's OWN basic tools (delegated tools come via on_tool).
-            seen: set[str] = set()  # ToolCallsEvent + provider ToolCallEvent share an id
-            with context.stream.where(ToolCallEvent | ToolCallsEvent).join() as evs:
+        async def pump_events(context):
+            # The voice agent's OWN basic tools (delegated universal-agent events
+            # come through forward_event). Forward the batch raw — minus the plumbing
+            # tools (ask_assistant/end_call) the user shouldn't see — so the client
+            # folds chips/cards the same way it does for text. Only the ToolCallsEvent
+            # batch is forwarded; the client's reducer ignores the singular event.
+            with context.stream.where(ToolCallsEvent).join() as evs:
                 async for e in evs:
-                    calls = e.calls if isinstance(e, ToolCallsEvent) else [e]
-                    for c in calls:
-                        name = getattr(c, "name", "") or ""
-                        cid = getattr(c, "id", "") or ""
-                        if not name or name in ("ask_assistant", "end_call"):  # hide plumbing tools
-                            continue
-                        if cid and cid in seen:
-                            continue
-                        if cid:
-                            seen.add(cid)
-                        await on_tool(name)
+                    calls = [
+                        c
+                        for c in e.calls
+                        if (getattr(c, "name", "") or "") not in ("ask_assistant", "end_call")
+                    ]
+                    if calls:
+                        await forward_event(ToolCallsEvent(calls=calls))
 
         async def recv_loop(context):
             while True:
@@ -887,7 +879,7 @@ def create_app(
                 jobs = [
                     asyncio.create_task(pump_audio(context)),
                     asyncio.create_task(pump_text(context)),
-                    asyncio.create_task(pump_tools(context)),
+                    asyncio.create_task(pump_events(context)),
                     asyncio.create_task(recv_loop(context)),
                     asyncio.create_task(wait_end()),
                 ]

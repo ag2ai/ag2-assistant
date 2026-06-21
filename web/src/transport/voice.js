@@ -20,7 +20,7 @@ registerProcessor('pcm16', PCM16)`
 export class VoiceController {
   constructor(query, handlers = {}, inputRate = 16000) {
     this.query = query // "?task=<id>" or "?session=<id>"
-    this.h = handlers  // {onState, onTranscript, onTurnEnd, onTool, onTaskCard, onAudio}
+    this.h = handlers  // {onState, onTranscript, onTurnEnd, onEvent, onAudio}
     this.inputRate = inputRate  // mic capture rate the active provider expects (Gemini 16k / OpenAI 24k)
     this.ws = null; this.micCtx = null; this.micNode = null; this.micStream = null
     this.playCtx = null; this.playHead = 0
@@ -65,11 +65,12 @@ export class VoiceController {
     if (typeof ev.data === 'string') {
       let m
       try { m = JSON.parse(ev.data) } catch { return }
-      if (m.type === 'ready') this.h.onState && this.h.onState('listening', 'Listening…')
+      // Structured AG2 events ride the same {event:{type,data}} shape as the text
+      // stream, folded by the one shared reducer (tool chips/cards, task cards, …).
+      if (m.event) this.h.onEvent && this.h.onEvent(m.event)
+      else if (m.type === 'ready') this.h.onState && this.h.onState('listening', 'Listening…')
       else if (m.type === 'transcript') this.h.onTranscript && this.h.onTranscript(m.role, m.text, !!m.final)
       else if (m.type === 'turn_end') this.h.onTurnEnd && this.h.onTurnEnd(m.role)
-      else if (m.type === 'tool') this.h.onTool && this.h.onTool(m.name)
-      else if (m.type === 'task_card') this.h.onTaskCard && this.h.onTaskCard(m)
       else if (m.type === 'error') this.h.onState && this.h.onState('error', 'Voice error: ' + (m.message || ''))
       return
     }

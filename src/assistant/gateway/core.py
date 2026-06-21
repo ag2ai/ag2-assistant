@@ -25,6 +25,18 @@ REPLY_TIMEOUT = 240.0
 _TRANSCRIPT_PREFIX = "/transcript/"
 
 
+def _conversation_events() -> tuple:
+    """Event types a voice client renders itself as spoken transcript (so they are
+    NOT re-forwarded as structured events during voice delegation). Imported lazily
+    so a missing optional event type can't break module import."""
+    from autogen.beta.events import ModelMessageChunk, ModelRequest, ModelResponse
+
+    return (ModelRequest, ModelMessageChunk, ModelResponse)
+
+
+_CONVERSATION_EVENTS = _conversation_events()
+
+
 def sanitize_history(events: list) -> list:
     """Repair a loaded event history before resume so the provider doesn't reject it.
 
@@ -236,7 +248,7 @@ class Gateway:
         asker=None,
         attachments: list | None = None,
         surface: str = "",
-        on_tool=None,
+        on_event=None,
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -247,8 +259,11 @@ class Gateway:
 
         `asker` binds human-in-the-loop questions/permission prompts to the
         surface that made the request. `attachments` are AG2 multimodal `Input`s.
-        `on_tool` is an optional async callback ``(name) -> None`` invoked with each
-        tool the agent calls during the turn, so a UI can show progress.
+        `on_event` is an optional async callback ``(event) -> None`` that receives
+        the agent's structured events (tool calls, task cards, deliverables, …) raw
+        as they're emitted — the voice channel forwards them so its client folds
+        them with the same reducer the text path uses. Conversation/audio events are
+        omitted (voice renders those itself).
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -263,10 +278,10 @@ class Gateway:
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             ask_coro = self._agent.ask(*msg, stream=stream, prompt=prompt, **extra)
             try:
-                if on_tool is None:
+                if on_event is None:
                     reply = await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
                 else:
-                    reply = await self._ask_watching_tools(stream, ask_coro, on_tool)
+                    reply = await self._ask_forwarding_events(stream, ask_coro, on_event)
             except Exception as exc:
                 # snapshot the error + the exact history shape that triggered it
                 from assistant.observability import capture_failure
@@ -283,41 +298,26 @@ class Gateway:
             await self._persist_turn(session_id, stream, text, reply.body)
             return reply.body
 
-    async def _ask_watching_tools(self, stream, ask_coro, on_tool):
-        """Run a turn while reporting each tool the agent invokes.
+    async def _ask_forwarding_events(self, stream, ask_coro, on_event):
+        """Run a turn, forwarding the agent's structured events raw to `on_event`.
 
-        Uses AG2's stream subscription — the same event mechanism observers are
-        built on, but scoped to *this session's* stream so it can't cross-talk
-        with other sessions sharing the one universal agent. The subscriber fires
-        live as tool-call events are emitted; we unsubscribe when the turn ends.
+        Uses AG2's stream subscription — the same event mechanism observers and the
+        StreamBridge are built on, scoped to *this session's* stream so it can't
+        cross-talk with other sessions sharing the one universal agent. Every event
+        EXCEPT the conversation ones (those a voice client renders itself as spoken
+        transcript) and binary audio is forwarded verbatim, so the client folds it
+        with the same reducer the text path uses — tool chips/cards, task cards,
+        deliverables, inquiries all appear without per-field plumbing.
         """
-        from autogen.beta.events import ToolCallEvent, ToolCallsEvent
-
-        # Each call is emitted twice — once as a ToolCallsEvent batch and once as a
-        # provider ToolCallEvent (e.g. GeminiToolCallEvent), both sharing the same
-        # tool-call id. Dedupe by that id so a single call reports once.
-        seen: set[str] = set()
+        from assistant.gateway.wire import is_binary_event
 
         async def report(event):  # event injected positionally by the stream
-            if isinstance(event, ToolCallsEvent):
-                calls = event.calls
-            elif isinstance(event, ToolCallEvent):
-                calls = [event]
-            else:
-                return
-            for c in calls:
-                name = getattr(c, "name", "") or ""
-                if not name:
-                    continue
-                cid = getattr(c, "id", "") or ""
-                if cid and cid in seen:
-                    continue
-                if cid:
-                    seen.add(cid)
-                try:
-                    await on_tool(name)
-                except Exception:
-                    pass
+            if isinstance(event, _CONVERSATION_EVENTS) or is_binary_event(event):
+                return  # transcript/audio are the voice channel's own to render
+            try:
+                await on_event(event)
+            except Exception:
+                pass
 
         sub_id = stream.subscribe(report)
         try:
@@ -331,8 +331,7 @@ class Gateway:
         voice: str | None = None,
         task_id: str | None = None,
         chat_session: str | None = None,
-        on_tool=None,
-        on_task=None,
+        on_event=None,
         on_end=None,
     ):
         """A LiveAgent (Gemini Live) for a browser voice session. Its heavy work
@@ -369,29 +368,16 @@ class Gateway:
                 )
 
         async def _send_capturing(request: str, session: str, surface: str) -> str:
-            # Capture any tasks the universal agent spawns this turn (create_task /
-            # schedule_task append to started_tasks_var) and report them so the WS
-            # can show a task card live — same mechanism as the text chat.
-            import assistant.agent as agent_mod
-
-            spawned: list = []
-            token = agent_mod.started_tasks_var.set(spawned)
-            try:
-                reply = await self.send_message(
-                    request,
-                    session_id=session,
-                    surface=surface,
-                    on_tool=on_tool,
-                )
-            finally:
-                agent_mod.started_tasks_var.reset(token)
-            if on_task:
-                for st in spawned:
-                    try:
-                        await on_task(st)
-                    except Exception:
-                        pass
-            return reply
+            # The universal agent's structured events (tool calls, the TaskCreated a
+            # create_task/schedule_task emits, deliverables, …) are forwarded raw via
+            # on_event so the voice client folds them with the same reducer as text —
+            # no separate task-capture path needed.
+            return await self.send_message(
+                request,
+                session_id=session,
+                surface=surface,
+                on_event=on_event,
+            )
 
         async def delegate(request: str) -> str:
             if task_id:

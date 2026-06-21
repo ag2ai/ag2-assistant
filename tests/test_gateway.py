@@ -43,10 +43,17 @@ async def test_send_message_returns_reply(fake_gateway):
     assert reply == "echo[1]: hello"
 
 
-async def test_on_tool_reports_each_tool_name(fake_gateway):
-    """The on_tool callback receives every tool the agent calls (single + batch),
-    and the stream subscription is cleaned up when the turn ends."""
-    from autogen.beta.events import ToolCallEvent, ToolCallsEvent
+async def test_forwarding_events_passes_structured_events_not_transcript(fake_gateway):
+    """`_ask_forwarding_events` forwards the agent's structured events verbatim
+    (so a voice client folds them with the text reducer) while OMITTING the
+    conversation events it renders itself as transcript — and always unsubscribes."""
+    from autogen.beta.events import (
+        ModelMessage,
+        ModelMessageChunk,
+        ModelResponse,
+        ToolCallEvent,
+        ToolCallsEvent,
+    )
 
     captured: dict = {}
 
@@ -58,24 +65,25 @@ async def test_on_tool_reports_each_tool_name(fake_gateway):
         def unsubscribe(self, sid):
             captured["unsub"] = sid
 
-    names: list = []
+    forwarded: list = []
 
-    async def on_tool(name):
-        names.append(name)
+    async def on_event(event):
+        forwarded.append(event)
+
+    batch = ToolCallsEvent(calls=[ToolCallEvent(id="a", name="write_file", arguments="{}")])
 
     async def ask_coro():
-        # Each call arrives twice (batch + provider event) with the SAME id, the
-        # way AG2 really emits them — must still report once per id.
-        await captured["fn"](ToolCallsEvent(calls=[ToolCallEvent(id="a", name="web_search")]))
-        await captured["fn"](ToolCallEvent(id="a", name="web_search"))
-        await captured["fn"](ToolCallsEvent(calls=[ToolCallEvent(id="b", name="get_task")]))
-        await captured["fn"](ToolCallEvent(id="b", name="get_task"))
+        await captured["fn"](batch)
+        await captured["fn"](ModelMessageChunk(content="spoken words"))  # transcript → omitted
+        await captured["fn"](ModelResponse(message=ModelMessage(content="spoken")))  # → omitted
         return _FakeReply("done")
 
-    reply = await fake_gateway._ask_watching_tools(_Stream(), ask_coro(), on_tool)
+    reply = await fake_gateway._ask_forwarding_events(_Stream(), ask_coro(), on_event)
 
     assert reply.body == "done"
-    assert names == ["web_search", "get_task"]  # deduped by id, not ×2
+    # only the structured event is forwarded; conversation events are the voice
+    # channel's own to render, so they don't double up as folded bubbles.
+    assert forwarded == [batch]
     assert captured["unsub"] == "sub-1"  # always unsubscribed
 
 

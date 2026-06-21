@@ -6,7 +6,7 @@ import { thread, taskPanel, sessions, inspectorEvents } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
-import { addTool, foldEvent, isBusy } from './project.js'
+import { foldEvent, isBusy } from './project.js'
 
 let client = null
 let panelTimer = null
@@ -122,8 +122,10 @@ export async function startVoice() {
     },
     onTranscript: _voiceTranscript,
     onTurnEnd: () => { _vitem = null; _vrole = null; _setBusy(false) },  // close the bubble; next reply is fresh
-    onTool: (name) => { _setBusy(true); thread.update((t) => { addTool(t.items, name); return { ...t, items: t.items } }) },
-    onTaskCard: (m) => { _setBusy(false); thread.update((t) => { t.items.push({ id: _vkey(), kind: 'taskcard', taskId: m.id, title: m.title }); return { ...t, items: t.items } }) },
+    // Structured events (tool chips/cards, task cards, deliverables) fold through
+    // the SAME reducer as the text stream — one projection, voice just adds spoken
+    // transcript on top. Also feed the AG2 Inspector, exactly like the text path.
+    onEvent: (ev) => { _inspect(ev); thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items } }) },
     onAudio: () => _setBusy(false),
   }, inputRate)
   const ok = await voiceCtl.start()
