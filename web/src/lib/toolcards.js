@@ -29,6 +29,12 @@ for (const name of FILE_WRITE)
 for (const name of SEARCH)
   REGISTRY[name] = (a) => (a.query ? { kind: 'search', query: a.query } : null)
 
+// Skill provenance: the agent consulting a skill (load_skill) or running one of its
+// scripts (run_skill_script) — surface which skill, from the call's `name` arg.
+REGISTRY.load_skill = (a) => (a.name ? { kind: 'skill', name: a.name } : null)
+REGISTRY.run_skill_script = (a) =>
+  a.name ? { kind: 'skill', name: a.name, script: a.script || '', ran: true } : null
+
 // Return a card descriptor for a tool call, or null if the tool has no card.
 export function cardFor(name, args) {
   const fn = REGISTRY[name]
