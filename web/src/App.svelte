@@ -1,7 +1,7 @@
 <script>
   import { route, go, newChatId } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, ag2View } from './store.js'
+  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View } from './store.js'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
   import Hitl from './components/Hitl.svelte'
@@ -12,6 +12,7 @@
   import Memory from './components/Memory.svelte'
   import Inspector from './components/Inspector.svelte'
   import PoweredBy from './components/PoweredBy.svelte'
+  import Files from './components/Files.svelte'
 
   // The AG2 Inspector occupies a right rail when AG2 view is on and a thread is open.
   const showInspector = $derived($ag2View && $route.name !== 'home')
@@ -44,6 +45,7 @@
   {#if $settingsOpen}<Settings />{/if}
   {#if $memoryOpen}<Memory />{/if}
   {#if $poweredByOpen}<PoweredBy />{/if}
+  {#if $filesOpen}<Files />{/if}
   {#if $googleOpen}<Google />{/if}
   {#if $voicePickerOpen}<VoicePicker />{/if}
   {#if $viewer}<Viewer />{/if}

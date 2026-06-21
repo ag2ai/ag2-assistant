@@ -34,6 +34,9 @@ export const memoryOpen = writable(false)
 // "Powered by AG2" architecture-map modal open/closed.
 export const poweredByOpen = writable(false)
 
+// Files browser modal (the agent's working file space) open/closed.
+export const filesOpen = writable(false)
+
 // A bounded buffer of the raw {type,data} events the current session's stream
 // already delivers — the AG2 Inspector renders it to show the live AG2 events
 // behind the UI. Reset when a thread opens (see controller.openThread).

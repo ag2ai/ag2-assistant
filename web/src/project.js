@@ -2,6 +2,8 @@
 // projection: the GUI is a view of the event stream. History (replay) and live
 // use the same reducer, so they produce identical items.
 
+import { cardFor } from './lib/toolcards.js'
+
 const tail = (s) => (s || '').split('.').pop()
 let _seq = 0
 const nid = () => ++_seq
@@ -14,17 +16,20 @@ function joinText(parts) {
     .trim()
 }
 
-export function addTool(items, name) {
+export function addTool(items, name, card) {
   if (!name) return
   const pretty = prettyToolName(name)
-  const last = items[items.length - 1]
-  if (last && last.kind === 'tools') {
-    const e = last.names[last.names.length - 1]
-    if (e && e.name === pretty) e.n++
-    else last.names.push({ name: pretty, n: 1 })
-  } else {
-    items.push({ id: nid(), kind: 'tools', names: [{ name: pretty, n: 1 }] })
+  let last = items[items.length - 1]
+  if (!(last && last.kind === 'tools')) {
+    last = { id: nid(), kind: 'tools', names: [], cards: [] }
+    items.push(last)
   }
+  const e = last.names[last.names.length - 1]
+  if (e && e.name === pretty) e.n++
+  else last.names.push({ name: pretty, n: 1 })
+  // A tool can contribute a card (file written, search run, …) — a projection of
+  // the call's structured args, rendered alongside the chips. See lib/toolcards.js.
+  if (card) (last.cards ||= []).push({ id: nid(), ...card })
 }
 
 function prettyToolName(name) {
@@ -153,7 +158,7 @@ export function foldEvent(items, wire) {
     // Only the batch event carries the calls; the per-provider ToolCallEvent
     // duplicates it (same ids), so we ignore the singular to avoid double chips.
     case 'ToolCallsEvent':
-      for (const c of d.calls || []) addTool(items, c.name)
+      for (const c of d.calls || []) addTool(items, c.name, cardFor(c.name, c.arguments))
       break
     case 'TaskCreated':
       items.push({ id: nid(), kind: 'taskcard', taskId: d.task_id, title: d.title, scheduled: d.kind === 'scheduled' })

@@ -133,6 +133,15 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .note.alert { color: #c2410c; }
 .tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; align-items: center; }
 .chip { font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
+.toolcards { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.toolcard { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; max-width: 100%; }
+.toolcard .tcicon { font-size: 13px; line-height: 1; }
+.toolcard .tclink { background: none; border: none; padding: 0; color: var(--accent, #d8552f); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+.toolcard .tcdl { background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); font-size: 13px; }
+.toolcard .tcdl:hover { color: var(--text, inherit); }
+.toolcard.gone .tcname { color: var(--muted); text-decoration: line-through; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolcard .tcgone { color: var(--muted); font-size: 11px; font-style: italic; }
+.toolcard .tcquery { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .dots span { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin-right: 4px; animation: blink 1.2s infinite both; }
 .dots span:nth-child(2) { animation-delay: .2s; } .dots span:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
@@ -291,3 +300,19 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .poweredby .pbwhat { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
 .poweredby .mfoot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .poweredby .mfoot .open { text-decoration: none; }
+
+/* ---- Files browser (the agent's working file space) ---- */
+.dfoot { display: flex; gap: 6px; }
+.dfoot .settingsbtn { width: auto; flex: 1; text-align: center; }
+.modal.files { width: min(680px, 94vw); max-height: 86vh; }
+.files .filescroll { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.files .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 10px 0 2px; }
+.files .filerow { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.files .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 13px; }
+.files .fmeta { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.files .linkbtn { flex: none; border: none; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; padding: 0; text-decoration: none; }
+.files .linkbtn:hover { text-decoration: underline; }
+.files .linkbtn.danger { color: var(--muted); }
+.files .linkbtn.danger:hover { color: #d8552f; }
+.files .linkbtn.danger:disabled { cursor: default; opacity: 0.6; }
+.files .confirm { flex: none; color: #d8552f; font-size: 12px; }

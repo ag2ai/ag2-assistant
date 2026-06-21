@@ -42,6 +42,16 @@ export const api = {
   healthMcpServer: (name) => j('POST', `/api/settings/mcp/${encodeURIComponent(name)}/health`),
   getMemory: () => j('GET', '/api/memory'),
   setMemory: (text) => j('POST', '/api/memory', { text }),
+  // Workspace files (the agent's working file space)
+  files: () => j('GET', '/api/files'),
+  fileUrl: (path, download = false) =>
+    '/api/files/raw?path=' + encodeURIComponent(path) + (download ? '&download=true' : ''),
+  fileText: async (path) => {
+    const r = await fetch('/api/files/raw?path=' + encodeURIComponent(path))
+    if (!r.ok) throw new Error('file not found')
+    return r.text()
+  },
+  deleteFile: (path) => j('DELETE', '/api/files/raw?path=' + encodeURIComponent(path)),
   selectVoice: (voice) => j('POST', '/api/voice/select', { voice }),
   previewVoice: async (voice) => {
     const r = await fetch('/api/voice/preview', {

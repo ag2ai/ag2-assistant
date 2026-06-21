@@ -88,6 +88,11 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
     name, archetype_prompt = _subagent_archetype(caps)
     sub_config = config.model_copy(deep=True)
     sub_config.agent.name = name
+    # Scope the subagent's workspace to this task's folder, so any files it writes
+    # group with the task's deliverable files (Phase 2 of the working file space).
+    from assistant.workspace import task_dir
+
+    sub_config.workspace_dir = task_dir(config.workspace_dir, task)
     # Seed the archetype as the persona, then compose the full turn prompt around
     # it without memory guidance because these subagents run with memory=False.
     sub_config.agent.system_prompt = archetype_prompt
@@ -325,15 +330,22 @@ def make_task_executor(config, skills: bool = True):
             verdict = await _verify_deliverable(config, d, output)
             if verdict.satisfied:
                 produced += 1
+                # Persist the deliverable as a real file in the task's workspace
+                # folder (best-effort); keep the inline content for the viewer.
+                asset = {
+                    "name": d["description"][:60],
+                    "kind": "text",
+                    "content": output[:_MAX_ASSET_CHARS],
+                }
+                try:
+                    from assistant.workspace import write_deliverable_file
+
+                    asset["path"] = write_deliverable_file(config.workspace_dir, task, d, output)
+                    asset["kind"] = "file"
+                except Exception:
+                    pass  # file write is best-effort; the inline content still stands
                 await store.set_deliverable_status(
-                    task_id,
-                    d["id"],
-                    DeliverableStatus.PRODUCED,
-                    asset={
-                        "name": d["description"][:60],
-                        "kind": "text",
-                        "content": output[:_MAX_ASSET_CHARS],
-                    },
+                    task_id, d["id"], DeliverableStatus.PRODUCED, asset=asset
                 )
                 await manager.deliverable_produced(
                     task_id,

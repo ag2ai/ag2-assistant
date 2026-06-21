@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { sessions, tasks, drawerTab, settingsOpen } from '../store.js'
+  import { sessions, tasks, drawerTab, settingsOpen, filesOpen } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
   import logo from '../assets/ag2-logo.png'
@@ -171,6 +171,7 @@
   </div>
 
   <div class="dfoot">
+    <button class="settingsbtn" onclick={() => ($filesOpen = true)}>📁 Files</button>
     <button class="settingsbtn" onclick={() => ($settingsOpen = true)}>⚙ Settings</button>
   </div>
 </div>

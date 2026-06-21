@@ -615,6 +615,40 @@ def create_app(
         await write_profile(req.text)
         return {"ok": True}
 
+    # ---- Workspace (the agent's working file space) ----
+
+    @app.get("/api/files")
+    async def list_workspace_files() -> dict:
+        """Files the agent has written in the workspace (for the GUI browser)."""
+        from assistant.workspace import list_files
+
+        return {
+            "root": str(Path(config.workspace_dir).expanduser()),
+            "files": list_files(config.workspace_dir),
+        }
+
+    @app.get("/api/files/raw")
+    async def workspace_file(path: str, download: bool = False):
+        """Serve one workspace file (view inline or download), sandboxed to the
+        workspace root — a path that escapes it is rejected."""
+        from assistant.workspace import resolve
+
+        p = resolve(config.workspace_dir, path)
+        if p is None:
+            return JSONResponse({"error": "file not found"}, status_code=404)
+        disp = "attachment" if download else "inline"
+        return FileResponse(p, headers={"Content-Disposition": f'{disp}; filename="{p.name}"'})
+
+    @app.delete("/api/files/raw")
+    async def delete_workspace_file(path: str) -> dict:
+        """Delete one workspace file, sandboxed to the workspace root (same guard as
+        serving). Prunes an emptied per-task subfolder afterwards."""
+        from assistant.workspace import delete
+
+        if not delete(config.workspace_dir, path):
+            return JSONResponse({"error": "file not found"}, status_code=404)
+        return {"ok": True}
+
     @app.post("/api/message", response_model=MessageResponse)
     async def message(req: MessageRequest) -> MessageResponse:
         # Durable, inline HITL bound to this chat session (answerable from the
