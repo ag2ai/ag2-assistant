@@ -18,6 +18,15 @@ from pydantic import Field
 _PREVIEW = 240  # chars of a produced asset to surface in a summary
 
 
+def _followup_note(platform: str) -> str:
+    """On a non-GUI channel (Telegram/Discord/Slack/multi), tell the user where any
+    follow-up clarifying questions will appear — task HITL is answered in the web app,
+    not on the channel. Empty on the web ("gateway"), where questions surface inline."""
+    if platform and platform != "gateway":
+        return " If I need any clarification to complete it, I'll ask in the AG2 Assistant web app."
+    return ""
+
+
 async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
     """Emit a TaskCreated event onto the active chat stream so the event-stream
     client shows a task card. Best-effort."""
@@ -76,9 +85,12 @@ def format_task(node: dict) -> str:
     return _fmt_node(node)
 
 
-def build_system_tools(tasks, chats=None) -> list:
+def build_system_tools(tasks, chats=None, platform: str = "gateway") -> list:
     """Build the system toolkit. `tasks` is a TaskService; `chats` (optional) is a
-    provider with `list_sessions()` and `transcript(session_id)` (the gateway)."""
+    provider with `list_sessions()` and `transcript(session_id)` (the gateway).
+    `platform` is the surface ("gateway" for web, else a channel name) — on a channel,
+    task confirmations note that follow-up questions are asked in the web app."""
+    note = _followup_note(platform)
 
     # ---- tasks: retrieval ----
     @tool
@@ -120,7 +132,7 @@ def build_system_tools(tasks, chats=None) -> list:
         substantial/multi-step work — not quick answers you can give now."""
         tid = await tasks.submit_request(request)
         await _emit_task_card(context, tid, request, "task")  # event-stream card
-        return f"Created task {tid}. It will ask any clarifying questions, then run."
+        return f"Created task {tid}. It will ask any clarifying questions, then run.{note}"
 
     @tool
     async def schedule_task(
@@ -143,7 +155,8 @@ def build_system_tools(tasks, chats=None) -> list:
             return err  # correctable: the agent sees this and retries with a valid value
         tid = await tasks.schedule_task(request, when, recurrence or None)
         await _emit_task_card(context, tid, request, "scheduled")  # event-stream card
-        return f"Scheduled task {tid} for {when}{' (' + recurrence + ')' if recurrence else ''}."
+        sched = f"Scheduled task {tid} for {when}{' (' + recurrence + ')' if recurrence else ''}."
+        return sched + note
 
     @tool
     async def reschedule_task(

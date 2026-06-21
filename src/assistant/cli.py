@@ -285,11 +285,13 @@ def telegram(
     import asyncio
 
     from assistant.channels import get_channel
-    from assistant.gateway.core import Gateway
+    from assistant.gateway.core import build_gateway
 
     async def run() -> None:
-        gateway = Gateway(memory=memory, platform="telegram")
+        gateway, tasks = build_gateway(memory=memory, platform="telegram")
         await gateway.start()
+        tasks.set_emitter(gateway.emit_event)
+        await tasks.start()  # task tools (create/schedule/query) + scheduler
         channel = get_channel("telegram")
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Telegram. Press Ctrl+C to stop.")
@@ -297,6 +299,7 @@ def telegram(
             await asyncio.Event().wait()
         finally:
             await channel.stop()
+            await tasks.close()
             await gateway.close()
 
     try:
@@ -314,11 +317,13 @@ def discord(
     import asyncio
 
     from assistant.channels import get_channel
-    from assistant.gateway.core import Gateway
+    from assistant.gateway.core import build_gateway
 
     async def run() -> None:
-        gateway = Gateway(memory=memory, platform="discord")
+        gateway, tasks = build_gateway(memory=memory, platform="discord")
         await gateway.start()
+        tasks.set_emitter(gateway.emit_event)
+        await tasks.start()  # task tools (create/schedule/query) + scheduler
         channel = get_channel("discord")
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Discord. Press Ctrl+C to stop.")
@@ -326,6 +331,7 @@ def discord(
             await asyncio.Event().wait()
         finally:
             await channel.stop()
+            await tasks.close()
             await gateway.close()
 
     try:
@@ -342,11 +348,13 @@ def slack(
     import asyncio
 
     from assistant.channels import get_channel
-    from assistant.gateway.core import Gateway
+    from assistant.gateway.core import build_gateway
 
     async def run() -> None:
-        gateway = Gateway(memory=memory, platform="slack")
+        gateway, tasks = build_gateway(memory=memory, platform="slack")
         await gateway.start()
+        tasks.set_emitter(gateway.emit_event)
+        await tasks.start()  # task tools (create/schedule/query) + scheduler
         channel = get_channel("slack")
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Slack. Press Ctrl+C to stop.")
@@ -354,6 +362,7 @@ def slack(
             await asyncio.Event().wait()
         finally:
             await channel.stop()
+            await tasks.close()
             await gateway.close()
 
     try:
@@ -381,11 +390,13 @@ def run(
 
     from assistant.channels import get_channel
     from assistant.gateway.app import create_app
-    from assistant.gateway.core import Gateway
+    from assistant.gateway.core import build_gateway
 
     async def main() -> None:
-        gateway = Gateway(memory=memory, platform="multi")
+        gateway, tasks = build_gateway(memory=memory, platform="multi")
         await gateway.start()
+        tasks.set_emitter(gateway.emit_event)
+        await tasks.start()  # task tools + scheduler, shared by channels and the web UI
 
         channels = []
         if os.environ.get("TELEGRAM_BOT_TOKEN"):
@@ -403,7 +414,10 @@ def run(
         server_task = None
         if rest:
             config = uvicorn.Config(
-                create_app(gateway=gateway), host=host, port=port, log_level="warning"
+                create_app(gateway=gateway, task_service=tasks),
+                host=host,
+                port=port,
+                log_level="warning",
             )
             server = uvicorn.Server(config)
             server_task = asyncio.create_task(server.serve())
@@ -420,6 +434,7 @@ def run(
                 await ch.stop()
             if server is not None:
                 server.should_exit = True
+            await tasks.close()
             await gateway.close()
 
     try:

@@ -152,42 +152,45 @@ def create_app(
     memory: bool = True,
     platform: str = "gateway",
     gateway: Gateway | None = None,
+    task_service=None,
     persist: bool = True,
 ) -> FastAPI:
     """Build the FastAPI app.
 
     If `gateway` is provided (e.g. shared with channels in `ag2assistant run`), it's
-    used as-is and its lifecycle is owned by the caller. Otherwise the app
-    creates and manages its own gateway.
+    used as-is and its lifecycle is owned by the caller — pass its `task_service` too
+    so the REST endpoints and the agent share one TaskService. Otherwise the app
+    creates and manages its own gateway + task service (wired together).
     """
     from assistant.config import load_config
+    from assistant.gateway.core import build_gateway
     from assistant.gateway.tasks_service import TaskService
 
     config = config or load_config()  # resolve once so routes have a real Config
-    tasks = TaskService(config=config)
 
     owns_gateway = gateway is None
-    if gateway is None:
-        gateway = Gateway(
-            config=config,
-            memory=memory,
-            platform=platform,
-            persist=persist,
-            task_service=tasks,  # the agent knows/does everything via system tools
-        )
+    owns_tasks = task_service is None  # we start/stop only the TaskService we create
+    if owns_gateway:
+        gateway, tasks = build_gateway(config, memory=memory, platform=platform, persist=persist)
+    else:
+        # Caller-supplied gateway: reuse its task service if given, else a fresh one
+        # for the REST endpoints (its lifecycle is the caller's when supplied).
+        tasks = task_service or TaskService(config=config)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if owns_gateway:
             await gateway.start()
-        tasks.set_emitter(getattr(gateway, "emit_event", None))  # lifecycle → AG2 stream
-        await tasks.start()
+        if owns_tasks:
+            tasks.set_emitter(getattr(gateway, "emit_event", None))  # lifecycle → AG2 stream
+            await tasks.start()
         app.state.gateway = gateway
         app.state.tasks = tasks
         try:
             yield
         finally:
-            await tasks.close()
+            if owns_tasks:
+                await tasks.close()
             if owns_gateway:
                 await gateway.close()
 

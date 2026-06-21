@@ -152,8 +152,9 @@ class Gateway:
             from assistant.system_tools import build_system_tools
 
             # create/schedule come from the system tools, so we don't also wire
-            # start_task/schedule_task here (that duplicated names).
-            extra_tools = build_system_tools(self._tasks, chats=self)
+            # start_task/schedule_task here (that duplicated names). `platform` lets
+            # those tools note (on channels) that follow-up questions go to the web app.
+            extra_tools = build_system_tools(self._tasks, chats=self, platform=self._platform)
         return create_agent(
             self._config,
             memory=self._memory,
@@ -599,3 +600,24 @@ class Gateway:
         self._locks.clear()
         self._loaded.clear()
         self._agent = None
+
+
+def build_gateway(
+    config: Config | None = None,
+    *,
+    memory: bool = True,
+    platform: str = "gateway",
+    persist: bool = True,
+) -> "tuple[Gateway, object]":
+    """Canonical construction: a Gateway wired to its TaskService, so the universal
+    agent gets the task system tools (create/schedule/query). Used by the web app and
+    every channel command. Returns ``(gateway, task_service)``; the caller starts both
+    and wires ``task_service.set_emitter(gateway.emit_event)``."""
+    from assistant.gateway.tasks_service import TaskService
+
+    config = config or load_config()
+    tasks = TaskService(config=config)
+    gateway = Gateway(
+        config=config, memory=memory, platform=platform, persist=persist, task_service=tasks
+    )
+    return gateway, tasks
