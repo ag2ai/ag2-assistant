@@ -61,7 +61,7 @@ const NOTE = {
   TaskCancelled: '⏹ Task cancelled',
 }
 
-const ROOT_AGENT_NAMES = new Set(['ag2assistant', 'agclaw'])
+const ROOT_AGENT_NAMES = new Set(['ag2assistant'])
 
 function isRootTaskEvent(d) {
   return !d.agent_name || ROOT_AGENT_NAMES.has(d.agent_name)

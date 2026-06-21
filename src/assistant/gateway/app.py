@@ -7,7 +7,7 @@ app startup and torn down on shutdown.
 Endpoints:
   GET  /api/health              -> gateway status
   POST /api/message             -> {reply} for a {text, session_id?} message
-  WS   /api/ws                  -> send {text, session_id?}, receive {type, ...}
+  WS   /api/stream              -> send {text}, receive {event:{type,data}} (replay + live)
 """
 
 import asyncio
@@ -666,9 +666,9 @@ def create_app(
 
     @app.websocket("/api/stream")
     async def stream_ws(websocket: WebSocket) -> None:
-        """Event-stream protocol (the redesign's transport): the client receives
-        the session's events as `{event:{type,data}}` — replayed on connect, then
-        live — and sends `{text}` turns. Old /api/ws stays during migration."""
+        """Event-stream transport: the client receives the session's events as
+        `{event:{type,data}}` — replayed on connect, then live — and sends `{text}`
+        turns."""
         if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
             await websocket.close(code=1008)  # policy violation
             return

@@ -225,8 +225,3 @@ class PermissionManager:
 
     def granted_folders(self) -> list[str]:
         return self.store.granted_folders()
-
-
-async def request_access(target: Path, store: PermissionStore, asker: Asker | None) -> bool:
-    """Backwards-compatible shim — delegates to `PermissionManager.check`."""
-    return await PermissionManager(store, asker).check(target)

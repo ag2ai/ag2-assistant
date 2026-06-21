@@ -125,6 +125,6 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Task":
-        # tolerate unknown/legacy keys so the store survives schema growth
+        # ignore unknown keys so the store survives schema growth
         known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
         return cls(**known)

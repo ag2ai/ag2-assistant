@@ -18,20 +18,9 @@ from pydantic import Field
 _PREVIEW = 240  # chars of a produced asset to surface in a summary
 
 
-def _note_started(task_id: str, title: str) -> None:
-    """Record a just-created task into the started-tasks contextvar so the voice
-    delegate can surface a task card (the web client uses the TaskCreated event)."""
-    from assistant.agent import started_tasks_var
-
-    lst = started_tasks_var.get()
-    if lst is not None:
-        lst.append({"id": task_id, "title": title})
-
-
 async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
     """Emit a TaskCreated event onto the active chat stream so the event-stream
-    client shows a task card — the AG2-native replacement for the started_tasks_var
-    contextvar (which only the legacy client reads). Best-effort."""
+    client shows a task card. Best-effort."""
     if context is None:
         return
     from assistant.events import TaskCreated
@@ -130,7 +119,6 @@ def build_system_tools(tasks, chats=None) -> list:
         """Start a background task (it clarifies if needed, then runs). For
         substantial/multi-step work — not quick answers you can give now."""
         tid = await tasks.submit_request(request)
-        _note_started(tid, request)  # voice delegate card path (contextvar)
         await _emit_task_card(context, tid, request, "task")  # event-stream card
         return f"Created task {tid}. It will ask any clarifying questions, then run."
 
@@ -154,7 +142,6 @@ def build_system_tools(tasks, chats=None) -> list:
         if err := validate_schedule(when, recurrence, require_when=True):
             return err  # correctable: the agent sees this and retries with a valid value
         tid = await tasks.schedule_task(request, when, recurrence or None)
-        _note_started(tid, request)  # voice delegate card path (contextvar)
         await _emit_task_card(context, tid, request, "scheduled")  # event-stream card
         return f"Scheduled task {tid} for {when}{' (' + recurrence + ')' if recurrence else ''}."
 

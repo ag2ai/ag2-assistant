@@ -273,7 +273,7 @@ def gateway(
     typer.echo(f"AG2 Assistant gateway starting on http://{host}:{port}")
     typer.echo(f"  Web UI  http://{host}:{port}/")
     typer.echo(f"  POST    http://{host}:{port}/api/message")
-    typer.echo(f"  WS      ws://{host}:{port}/api/ws")
+    typer.echo(f"  WS      ws://{host}:{port}/api/stream")
     uvicorn.run(create_app(memory=memory), host=host, port=port)
 
 

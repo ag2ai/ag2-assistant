@@ -7,7 +7,6 @@ from assistant.permissions import (
     DENY,
     PermissionManager,
     PermissionStore,
-    request_access,
 )
 
 
@@ -82,45 +81,45 @@ async def test_manager_blocked_never_asks(tmp_path):
     assert asker.asked == 0  # blocked → never prompts
 
 
-async def test_request_access_already_allowed_does_not_ask(tmp_path):
+async def test_check_already_allowed_does_not_ask(tmp_path):
     store = PermissionStore(path=tmp_path / "p.json")
     store.grant(tmp_path)
     asker = FakeAsker(DENY)
-    assert await request_access(tmp_path / "f.txt", store, asker) is True
+    assert await PermissionManager(store, asker).check(tmp_path / "f.txt") is True
     assert asker.asked == 0  # no prompt when already granted
 
 
-async def test_request_access_always_persists(tmp_path):
+async def test_check_always_persists(tmp_path):
     store = PermissionStore(path=tmp_path / "p.json")
     f = tmp_path / "f.txt"
     f.write_text("x")
     asker = FakeAsker(ALWAYS_ALLOW)
-    assert await request_access(f, store, asker) is True
+    assert await PermissionManager(store, asker).check(f) is True
     # persisted: a fresh store sees it
     assert PermissionStore(path=tmp_path / "p.json").is_allowed(tmp_path) is True
 
 
-async def test_request_access_once_does_not_persist(tmp_path):
+async def test_check_once_does_not_persist(tmp_path):
     store = PermissionStore(path=tmp_path / "p.json")
     f = tmp_path / "f.txt"
     f.write_text("x")
     asker = FakeAsker(ALLOW_ONCE)
-    assert await request_access(f, store, asker) is True
+    assert await PermissionManager(store, asker).check(f) is True
     assert PermissionStore(path=tmp_path / "p.json").is_allowed(tmp_path) is False
 
 
-async def test_request_access_deny(tmp_path):
+async def test_check_deny(tmp_path):
     store = PermissionStore(path=tmp_path / "p.json")
     f = tmp_path / "f.txt"
     f.write_text("x")
-    assert await request_access(f, store, FakeAsker(DENY)) is False
+    assert await PermissionManager(store, FakeAsker(DENY)).check(f) is False
 
 
-async def test_request_access_no_asker_denies(tmp_path):
+async def test_check_no_asker_denies(tmp_path):
     store = PermissionStore(path=tmp_path / "p.json")
     f = tmp_path / "f.txt"
     f.write_text("x")
-    assert await request_access(f, store, None) is False
+    assert await PermissionManager(store, None).check(f) is False
 
 
 # --- read_file_impl ---

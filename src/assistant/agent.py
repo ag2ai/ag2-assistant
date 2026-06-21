@@ -1,7 +1,6 @@
 """AG2 Assistant agent built on AG2 Beta."""
 
 import os
-from contextvars import ContextVar
 from datetime import datetime
 
 from autogen.beta import Agent
@@ -9,10 +8,6 @@ from autogen.beta import Agent
 from assistant.config import Config, load_config
 from assistant.memory import build_knowledge_config, profile_assembly
 from assistant.tools import build_agent_tools
-
-# Set (to a list) by a caller that wants to learn which tasks the agent spawned
-# this turn via the `start_task` tool — e.g. the gateway, to push a chat task-card.
-started_tasks_var: ContextVar = ContextVar("ag2assistant_started_tasks", default=None)
 
 # Commands skill scripts must never run (defense-in-depth; skills can ship code).
 _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]

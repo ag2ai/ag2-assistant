@@ -195,11 +195,8 @@ def _write(data: dict) -> None:
 
 
 def _voice_map(data: dict) -> dict:
-    """The per-provider voice selections, migrating the legacy flat string
-    (``{"voice": "Puck"}``) to ``{"voice": {"gemini": "Puck"}}`` on read."""
+    """The per-provider voice selections, e.g. ``{"gemini": "Puck"}``."""
     raw = data.get("voice")
-    if isinstance(raw, str):
-        return {"gemini": raw}
     return raw if isinstance(raw, dict) else {}
 
 

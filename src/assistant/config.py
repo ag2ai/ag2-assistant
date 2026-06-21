@@ -18,38 +18,10 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-# Data/identity. The data dir was historically ~/.agclaw and env vars AGCLAW_*;
-# both were renamed to ag2assistant. A one-time dir migration + an env-var
-# fallback keep existing installs working (keys, memory, tasks, Google auth).
+# Data/identity: secrets, config, memory, tasks, and Google auth live under
+# ~/.ag2assistant; env-var overrides use the AG2ASSISTANT_ prefix.
 _DATA_DIR_NAME = ".ag2assistant"
-_LEGACY_DATA_DIR_NAME = ".agclaw"
 _ENV_PREFIX = "AG2ASSISTANT_"
-_LEGACY_ENV_PREFIX = "AGCLAW_"
-
-
-def _mirror_legacy_env() -> None:
-    """Expose old AGCLAW_* vars under AG2ASSISTANT_* when the new one is unset, so
-    a pre-rename .env keeps working. The new prefix wins when both are present."""
-    for key, val in list(os.environ.items()):
-        if key.startswith(_LEGACY_ENV_PREFIX):
-            os.environ.setdefault(_ENV_PREFIX + key[len(_LEGACY_ENV_PREFIX) :], val)
-
-
-def _migrate_legacy_data_dir() -> None:
-    """One-time: if ~/.ag2assistant is absent but ~/.agclaw exists, move it, so an
-    existing install's keys/memory/tasks/Google auth carry over under the new name."""
-    new = Path.home() / _DATA_DIR_NAME
-    old = Path.home() / _LEGACY_DATA_DIR_NAME
-    if new.exists() or not old.exists():
-        return
-    try:
-        old.rename(new)
-    except Exception:
-        pass  # best-effort; on failure the app just creates a fresh dir
-
-
-_mirror_legacy_env()
-_migrate_legacy_data_dir()
 
 
 class LLMConfig(BaseModel):
@@ -135,10 +107,8 @@ def data_dir() -> Path:
 
 def _apply_settings_overrides(cfg: Config) -> None:
     """Layer the UI-selected assistant provider/model (persisted via the settings
-    store) over file/defaults. Explicit AGCLAW_* env vars still win — they're applied
-    after this. Best-effort: a missing/broken settings store changes nothing.
-
-    Explicit AG2ASSISTANT_* env vars still win (applied after this)."""
+    store) over file/defaults. Best-effort: a missing/broken settings store changes
+    nothing. Explicit AG2ASSISTANT_* env vars still win (applied after this)."""
     try:
         from assistant import settings
 
@@ -152,9 +122,7 @@ def _apply_settings_overrides(cfg: Config) -> None:
 
 
 def _apply_env_overrides(cfg: Config) -> None:
-    """Layer AG2ASSISTANT_* environment variables on top (highest precedence).
-    Legacy AGCLAW_* vars are mirrored to AG2ASSISTANT_* at import (see
-    `_mirror_legacy_env`), so a pre-rename .env still applies here."""
+    """Layer AG2ASSISTANT_* environment variables on top (highest precedence)."""
     env = os.environ.get
     if v := env("AG2ASSISTANT_LLM_PROVIDER"):
         cfg.llm.provider = v

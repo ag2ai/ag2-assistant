@@ -6,9 +6,8 @@ Built on AG2 Beta primitives throughout — surfaced in-app via **AG2 view** (li
 event inspector + per-item provenance + a "Powered by AG2" architecture map).
 Highlights since the last refresh:
 
-- **Rebrand → AG2 Assistant** — package / CLI (`ag2assistant`) / data-dir / env
-  (`AG2ASSISTANT_*`), with a one-time `~/.agclaw → ~/.ag2assistant` migration and a
-  legacy-env fallback so existing installs keep working.
+- **AG2 Assistant** — package / CLI (`ag2assistant`) / data-dir (`~/.ag2assistant`) /
+  env (`AG2ASSISTANT_*`).
 - **Docker → AG2 official** — shell/code use `autogen.beta.extensions.docker.DockerEnvironment`;
   a one-shot bind-mount sandbox is kept only for untrusted **skill** scripts.
 - **Subagents** — task execution runs as named AG2 `subagents.run_task` agents, with
