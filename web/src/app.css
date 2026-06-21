@@ -202,6 +202,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .inquiry .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .inquiry .opts button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 11px; }
 .inquiry input { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.inquiry .idetail { margin: 8px 0; padding: 10px 12px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; overflow: auto; max-height: 320px; }
 
 .composer { border-top: 1px solid var(--line); padding: 14px 20px; }
 .crow { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
@@ -230,7 +231,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .qcard .qk { font-size: 11px; color: var(--muted); }
 .qcard .qk a { color: var(--accent); cursor: pointer; }
 .qcard .qt { margin: 4px 0; font-size: 14px; }
-.qcard .qd { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.qcard .qd { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink); background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 4px 0; white-space: pre-wrap; word-break: break-word; overflow: auto; max-height: 240px; }
 .qcard .qopts { display: flex; flex-wrap: wrap; gap: 6px; }
 .qcard .qopts button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
 .qcard input { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }

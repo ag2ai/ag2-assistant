@@ -68,6 +68,7 @@ class InquiryRaised(AssistantEvent):
     inquiry_id: str = Field(kw_only=False)
     task_id: str = ""
     question: str = ""
+    detail: str = ""  # secondary context, e.g. the exact code/command to be run
     options: list[str] = Field(default_factory=list)
     kind: str = "question"  # "question" | "permission"
 

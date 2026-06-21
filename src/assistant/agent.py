@@ -130,7 +130,10 @@ BEHAVIOR_GUIDANCE = (
     "asks you to run a command, execute code, or work with local files. NEVER use "
     "them to 'look around', orient yourself, explore the filesystem (e.g. `ls`), "
     "inspect your environment, or as a fallback when unsure — they have nothing to "
-    "do with web pages, videos, messages, or cloud data."
+    "do with web pages, videos, messages, or cloud data.\n"
+    "If a sandboxed runner is offered (e.g. run_code_sandboxed / run_shell_sandboxed), "
+    "prefer it; only reach for a host runner (run_code_local / run_shell_local) when "
+    "the task truly needs the user's own files — it will ask their permission."
 )
 
 

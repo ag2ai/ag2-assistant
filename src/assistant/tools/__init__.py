@@ -101,16 +101,61 @@ def build_agent_tools(
                     stacklevel=2,
                 )
         if use_docker:
-            # AG2's official Docker backend: a long-lived, cached container with no
-            # host mount (host_path=None) — model code/shell can't touch the user's
-            # files, which is why approval is dropped on this path. State persists
-            # across tool calls in a session (the factory caches the container).
+            # Docker is available → give the agent BOTH a sandboxed runner (isolated,
+            # silent) and a host runner (approval-gated), and let it choose per call.
+            # Distinct names are required (providers reject duplicate tool names).
+            # The agent is steered by the descriptions below, not the prompt — so when
+            # only one runner exists (no Docker, below) there's nothing to confuse it.
             from autogen.beta.extensions.docker import DockerEnvironment
 
+            # AG2's official Docker backend: a long-lived, cached container with no
+            # host mount — code/shell can't touch the user's files, which is why these
+            # carry no approval middleware. State persists across calls in a session.
             env = DockerEnvironment(image=docker_image, network_mode=docker_network)
+            approval = require_command_approval()
             tools += [
-                SandboxShellTool(environment=env, blocked=_SHELL_BLOCKED),
-                SandboxCodeTool(environment=env),
+                SandboxCodeTool(
+                    environment=env,
+                    name="run_code_sandboxed",
+                    description=(
+                        "Run code in an isolated container with NO access to the "
+                        "user's files; runs immediately without asking. PREFER THIS "
+                        "for calculations, data transforms, and any code that doesn't "
+                        "need the user's real files. Supported languages: {languages}."
+                    ),
+                ),
+                SandboxShellTool(
+                    environment=env,
+                    blocked=_SHELL_BLOCKED,
+                    name="run_shell_sandboxed",
+                    description=(
+                        "Run a shell command in an isolated container with NO access "
+                        "to the user's files; runs immediately without asking. Prefer "
+                        "this whenever you don't need the user's real files."
+                    ),
+                ),
+                SandboxCodeTool(
+                    environment=LocalEnvironment(),
+                    middleware=[approval],
+                    name="run_code_local",
+                    description=(
+                        "Run code on the USER'S COMPUTER with access to their real "
+                        "files — REQUIRES the user's approval each time. Use ONLY when "
+                        "the task genuinely needs to read or write the user's own "
+                        "files outside the workspace; otherwise use run_code_sandboxed."
+                    ),
+                ),
+                SandboxShellTool(
+                    blocked=_SHELL_BLOCKED,
+                    middleware=[approval],
+                    name="run_shell_local",
+                    description=(
+                        "Run a shell command on the USER'S COMPUTER with access to "
+                        "their real files — REQUIRES the user's approval each time. "
+                        "Use ONLY when the task genuinely needs host file access; "
+                        "otherwise use run_shell_sandboxed."
+                    ),
+                ),
             ]
         else:
             approval = require_command_approval()

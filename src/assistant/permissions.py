@@ -20,6 +20,23 @@ def _norm(folder) -> Path:
     return Path(folder).expanduser().resolve()
 
 
+def _command_detail(arguments) -> str:
+    """Human-readable preview of what a shell/code tool will run — so the user can
+    see the actual code/command before approving. Pulls the meaningful field out of
+    the tool arguments (code/command/script/cmd) rather than showing wrapped JSON."""
+    raw = arguments if isinstance(arguments, str) else json.dumps(arguments)
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return str(arguments).strip()
+    if isinstance(data, dict):
+        for key in ("code", "command", "script", "cmd", "snippet"):
+            if data.get(key):
+                return str(data[key]).strip()
+        return "\n".join(f"{k}: {v}" for k, v in data.items()).strip()
+    return str(arguments).strip()
+
+
 class PermissionStore:
     """Persistent record of folders the user has granted access to."""
 
@@ -171,9 +188,9 @@ class PermissionManager:
         if self.asker is None:
             return False
 
-        detail = str(arguments)
-        if len(detail) > 800:
-            detail = detail[:800] + " …"
+        detail = _command_detail(arguments)
+        if len(detail) > 4000:
+            detail = detail[:4000] + "\n… (truncated)"
         if self.sandbox == "docker":
             where = "in an isolated Docker sandbox (no access to your files)"
         else:

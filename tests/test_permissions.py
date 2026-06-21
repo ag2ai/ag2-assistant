@@ -259,3 +259,18 @@ async def test_read_file_pdf_returns_document(tmp_path):
     result = await read_file_impl(str(pdf), mgr)
     # PDFs return a ToolResult carrying the document for vision reading.
     assert isinstance(result, ToolResult)
+
+
+def test_command_detail_extracts_code():
+    from assistant.permissions import _command_detail
+
+    # run_code-style args: show the code, not the wrapped JSON
+    assert _command_detail('{"code": "import os\\nprint(1)"}') == "import os\nprint(1)"
+    # shell-style
+    assert _command_detail('{"command": "ls -la /tmp"}') == "ls -la /tmp"
+    # a dict (already parsed) works too
+    assert _command_detail({"script": "build.sh"}) == "build.sh"
+    # no known field → key: value lines
+    assert "foo: bar" in _command_detail('{"foo": "bar"}')
+    # non-JSON → returned as-is
+    assert _command_detail("echo hi") == "echo hi"

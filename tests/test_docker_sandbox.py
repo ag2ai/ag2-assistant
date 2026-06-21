@@ -37,22 +37,37 @@ def test_build_tools_falls_back_when_docker_unavailable(monkeypatch):
     assert calls["approval"] == 1  # local fallback keeps the approval gate
 
 
-def test_build_tools_uses_docker_and_drops_approval(monkeypatch):
+def test_build_tools_offers_sandboxed_and_local_when_docker(monkeypatch):
+    """With Docker available the agent gets BOTH a sandboxed runner (no approval)
+    and a host runner (approval-gated) for code AND shell, and chooses per call."""
     import assistant.tools as tools_mod
     import assistant.tools.docker_sandbox as ds
 
     monkeypatch.setattr(ds, "docker_available", lambda: True)
     calls = {"approval": 0}
+    real_approval = tools_mod.require_command_approval
 
     def counting_approval(*a, **k):
         calls["approval"] += 1
-        return None  # not used on the docker path
+        return real_approval(*a, **k)
 
     monkeypatch.setattr(tools_mod, "require_command_approval", counting_approval)
 
-    tools = tools_mod.build_agent_tools(provider="gemini", sandbox="docker")
-    assert len(tools) == 5
-    assert calls["approval"] == 0  # container is the boundary → no approval gate
+    names = {
+        t.name
+        for t in tools_mod.build_agent_tools(
+            provider="gemini", sandbox="docker", capabilities=["code"]
+        )
+    }
+    # four distinct tools: isolated (silent) + host (approval-gated), code + shell
+    assert names == {
+        "run_code_sandboxed",
+        "run_shell_sandboxed",
+        "run_code_local",
+        "run_shell_local",
+    }
+    # one approval middleware, shared by the two host tools; the sandboxed pair has none
+    assert calls["approval"] == 1
 
 
 def test_build_tools_wires_ag2_docker_environment(monkeypatch):

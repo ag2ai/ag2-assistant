@@ -192,7 +192,7 @@ export function foldEvent(items, wire) {
       items.push({ id: nid(), kind: 'deliverable', taskId: d.task_id, deliverableId: d.deliverable_id, description: d.description, preview: d.preview })
       break
     case 'InquiryRaised':
-      items.push({ id: nid(), kind: 'inquiry', inquiryId: d.inquiry_id, question: d.question, options: d.options || [], qkind: d.kind, resolved: false })
+      items.push({ id: nid(), kind: 'inquiry', inquiryId: d.inquiry_id, question: d.question, detail: d.detail || '', options: d.options || [], qkind: d.kind, resolved: false })
       break
     case 'InquiryAnswered': {
       const it = items.find((i) => i.kind === 'inquiry' && i.inquiryId === d.inquiry_id)

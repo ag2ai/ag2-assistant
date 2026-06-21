@@ -9,6 +9,7 @@
 <div class="inquiry" class:resolved={item.resolved}>
   <div class="k">{item.qkind === 'permission' ? 'Permission' : 'Question'}</div>
   <div class="t">{item.question}</div>
+  {#if item.detail}<pre class="idetail" title="What will run">{item.detail}</pre>{/if}
   {#if item.resolved}
     <div class="d">Answered: {item.answer}</div>
   {:else if item.options && item.options.length}

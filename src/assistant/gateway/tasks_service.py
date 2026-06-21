@@ -163,6 +163,7 @@ class TaskService:
                         inquiry.id,
                         task_id=inquiry.task_id,
                         question=inquiry.text,
+                        detail=getattr(inquiry, "detail", "") or "",
                         options=list(inquiry.options or []),
                         kind=inquiry.kind,
                     ),
