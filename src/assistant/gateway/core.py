@@ -491,6 +491,30 @@ class Gateway:
         doc["messages"].append({"role": "agent", "text": reply_text})
         doc["updated"] = datetime.now().astimezone().isoformat()
         await self._event_store.write(path, json.dumps(doc))
+        # After the FIRST complete exchange, name the chat once (async, non-blocking —
+        # like ChatGPT/Claude). A single revision: only when there's no title yet.
+        if len(doc["messages"]) == 2 and not doc.get("title"):
+            asyncio.create_task(self._title_session(session_id, user_text, reply_text))
+
+    async def _title_session(self, session_id, user_text, reply_text) -> None:
+        """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
+        from assistant.title import generate_title
+
+        try:
+            title = await generate_title(self._config, user_text, reply_text)
+        except Exception:
+            return
+        if not title:
+            return
+        path = self._transcript_path(session_id)
+        try:
+            doc = json.loads(await self._event_store.read(path))
+            if doc.get("title"):  # already named (single revision) — leave it
+                return
+            doc["title"] = title
+            await self._event_store.write(path, json.dumps(doc))
+        except Exception:
+            pass
 
     async def transcript(self, session_id: str) -> list[dict]:
         """The display transcript (role/text turns) for a session."""
@@ -522,6 +546,7 @@ class Gateway:
                 {
                     "session_id": doc.get("session_id", ""),
                     "updated": doc.get("updated", ""),
+                    "title": doc.get("title", ""),  # LLM-named after the first exchange
                     "preview": first_user[:80],
                     "turns": len(msgs) // 2,
                 }

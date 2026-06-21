@@ -36,6 +36,7 @@ class TaskPlan(BaseModel):
     """The agent's structured plan for a task."""
 
     trivial: bool = False
+    title: str = ""  # concise display name for the task (refines the raw request)
     objective: str = ""
     questions: list[ClarifyQuestion] = Field(default_factory=list)
     deliverables: list[PlanDeliverable] = Field(default_factory=list)
@@ -52,6 +53,8 @@ a presentation").
 
 Produce a plan:
 - trivial: true/false
+- title: a concise 2–6 word name for the task, Title Case, no quotes or trailing
+  punctuation (e.g. "Sydney Trip Itinerary", "Weekly AI News Digest")
 - objective: one concise sentence describing what "done" looks like
 - questions: ONLY if non-trivial — 2 to 5 clarifying questions that materially
   change the work (scope, audience, format, depth, deadline). Give options when
@@ -115,12 +118,14 @@ def _valid_caps(caps: list[str]) -> list[str]:
 
 async def apply_plan(store: TaskStore, task_id: str, plan: TaskPlan) -> None:
     """Write objective, deliverables, subtasks, and capability scopes from a plan."""
-    await store.update(
-        task_id,
-        objective=plan.objective,
-        plan=[s.title for s in plan.subtasks],
-        capabilities=_valid_caps(plan.capabilities),
-    )
+    updates = {
+        "objective": plan.objective,
+        "plan": [s.title for s in plan.subtasks],
+        "capabilities": _valid_caps(plan.capabilities),
+    }
+    if title := plan.title.strip():  # refine the display title (raw request → concise)
+        updates["title"] = title[:80]
+    await store.update(task_id, **updates)
     for d in plan.deliverables:
         await store.add_deliverable(task_id, d.description, d.criteria)
     for s in plan.subtasks:

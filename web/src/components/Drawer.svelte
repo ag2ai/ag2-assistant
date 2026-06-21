@@ -151,7 +151,7 @@
       {#if !$sessions.length}<div class="none">No conversations yet.</div>{/if}
       {#each $sessions as s (s.session_id)}
         <div class="drow" class:on={$route.name === 'chat' && $route.id === s.session_id} onclick={() => openChat(s.session_id)}>
-          <div>{s.preview || s.session_id}</div>
+          <div title={s.preview || ''}>{s.title || s.preview || s.session_id}</div>
         </div>
       {/each}
     {:else}
