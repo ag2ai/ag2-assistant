@@ -14,6 +14,7 @@ stream, never crossing histories.
 """
 
 import asyncio
+import contextlib
 import json
 from datetime import datetime
 from urllib.parse import quote
@@ -135,6 +136,13 @@ class Gateway:
         self._streams: dict[str, object] = {}
         self._loaded: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = {}
+        from assistant.usage import UsageLedger
+
+        self._usage = UsageLedger()  # daily token/cost tally for the activity HUD
+
+    def usage_today(self) -> dict:
+        """Today's token + estimated-cost totals (for the cost & activity HUD)."""
+        return self._usage.today()
 
     def _make_agent(self):
         """Build the one universal agent: capability + system tools (know/do
@@ -277,26 +285,56 @@ class Gateway:
             stream = await self._get_stream(session_id)
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             ask_coro = self._agent.ask(*msg, stream=stream, prompt=prompt, **extra)
+            usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
             try:
-                if on_event is None:
-                    reply = await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
-                else:
-                    reply = await self._ask_forwarding_events(stream, ask_coro, on_event)
-            except Exception as exc:
-                # snapshot the error + the exact history shape that triggered it
-                from assistant.observability import capture_failure
+                try:
+                    if on_event is None:
+                        reply = await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
+                    else:
+                        reply = await self._ask_forwarding_events(stream, ask_coro, on_event)
+                except Exception as exc:
+                    # snapshot the error + the exact history shape that triggered it
+                    from assistant.observability import capture_failure
 
-                await capture_failure(
-                    self._config,
-                    session_id=session_id,
-                    surface=surface,
-                    user_text=text,
-                    error=exc,
-                    stream=stream,
-                )
-                raise
-            await self._persist_turn(session_id, stream, text, reply.body)
-            return reply.body
+                    await capture_failure(
+                        self._config,
+                        session_id=session_id,
+                        surface=surface,
+                        user_text=text,
+                        error=exc,
+                        stream=stream,
+                    )
+                    raise
+                await self._persist_turn(session_id, stream, text, reply.body)
+                return reply.body
+            finally:
+                self._record_usage(stream, usage_handle)  # always tally, even on error
+
+    def _watch_usage(self, stream):
+        """Subscribe to this turn's UsageEvents; returns (sub_id, collected list).
+        Finalized by _record_usage when the turn ends."""
+        from autogen.beta.events import UsageEvent
+
+        collected: list = []
+
+        async def collect(event):  # event injected positionally by the stream
+            if isinstance(event, UsageEvent) and event.usage:
+                collected.append(event.usage)
+
+        return stream.subscribe(collect), collected
+
+    def _record_usage(self, stream, handle) -> None:
+        """Unsubscribe and add this turn's summed tokens to the daily ledger."""
+        sub_id, collected = handle
+        with contextlib.suppress(Exception):
+            stream.unsubscribe(sub_id)
+        if not collected:
+            return
+        prompt = sum(u.prompt_tokens or 0 for u in collected)
+        completion = sum(u.completion_tokens or 0 for u in collected)
+        total = sum(u.total_tokens or 0 for u in collected)
+        with contextlib.suppress(Exception):
+            self._usage.record(self._config.llm.model, prompt, completion, total or None)
 
     async def _ask_forwarding_events(self, stream, ask_coro, on_event):
         """Run a turn, forwarding the agent's structured events raw to `on_event`.

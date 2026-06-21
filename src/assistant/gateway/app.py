@@ -639,6 +639,11 @@ def create_app(
         disp = "attachment" if download else "inline"
         return FileResponse(p, headers={"Content-Disposition": f'{disp}; filename="{p.name}"'})
 
+    @app.get("/api/usage")
+    async def usage_today() -> dict:
+        """Today's token + estimated-cost totals (cost & activity HUD)."""
+        return app.state.gateway.usage_today()
+
     @app.delete("/api/files/raw")
     async def delete_workspace_file(path: str) -> dict:
         """Delete one workspace file, sandboxed to the workspace root (same guard as

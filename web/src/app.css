@@ -311,6 +311,9 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* ---- Files browser (the agent's working file space) ---- */
 .dfoot { display: flex; gap: 6px; }
 .dfoot .settingsbtn { width: auto; flex: 1; text-align: center; }
+.usagehud { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line); cursor: default; }
+.usagehud .uhicon { font-size: 12px; }
+.usagehud .uhlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal.files { width: min(680px, 94vw); max-height: 86vh; }
 .files .filescroll { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
 .files .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 10px 0 2px; }

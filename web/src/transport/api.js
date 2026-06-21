@@ -52,6 +52,7 @@ export const api = {
     return r.text()
   },
   deleteFile: (path) => j('DELETE', '/api/files/raw?path=' + encodeURIComponent(path)),
+  usage: () => j('GET', '/api/usage'),
   selectVoice: (voice) => j('POST', '/api/voice/select', { voice }),
   previewVoice: async (voice) => {
     const r = await fetch('/api/voice/preview', {

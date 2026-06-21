@@ -5,6 +5,8 @@
   import { api } from '../transport/api.js'
   import logo from '../assets/ag2-logo.png'
 
+  let usage = $state(null)   // today's token/cost totals for the activity HUD
+
   async function refresh() {
     try {
       const server = await api.sessions()
@@ -13,7 +15,24 @@
       $sessions = [...$sessions.filter((s) => !ids.has(s.session_id)), ...server]
     } catch {}
     try { $tasks = await api.tasksAll('all') } catch {}
+    try { usage = await api.usage() } catch {}
   }
+
+  const fmtTok = (n) =>
+    !n ? '0' : n < 1000 ? String(Math.round(n)) : `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
+  // Cost is an estimate (~) and only shown when the model(s) used had known pricing.
+  const usageLabel = $derived.by(() => {
+    if (!usage || !usage.total) return ''
+    const tok = `${fmtTok(usage.total)} tok`
+    return usage.priced ? `${tok} · ~$${usage.cost.toFixed(usage.cost < 1 ? 3 : 2)}` : tok
+  })
+  const usageTitle = $derived.by(() => {
+    if (!usage) return ''
+    const models = Object.keys(usage.by_model || {}).join(', ')
+    return `Today (${usage.date}): ${fmtTok(usage.prompt)} in / ${fmtTok(usage.completion)} out`
+      + (usage.priced ? ` · ~$${(usage.cost || 0).toFixed(4)} (estimate)` : ' · cost: no price set')
+      + (models ? `\nmodels: ${models}` : '')
+  })
   onMount(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t) })
 
   const openChat = (id) => go('/c/' + id)
@@ -170,6 +189,11 @@
     {/if}
   </div>
 
+  {#if usageLabel}
+    <div class="usagehud" title={usageTitle}>
+      <span class="uhicon">📊</span><span class="uhlabel">Today · {usageLabel}</span>
+    </div>
+  {/if}
   <div class="dfoot">
     <button class="settingsbtn" onclick={() => ($filesOpen = true)}>📁 Files</button>
     <button class="settingsbtn" onclick={() => ($settingsOpen = true)}>⚙ Settings</button>
