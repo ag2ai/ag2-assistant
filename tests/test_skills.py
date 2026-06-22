@@ -25,10 +25,11 @@ def test_bundled_skills_are_discoverable(tmp_path):
     d = bundled_skills_dir()
     assert d.exists()
     rt = LocalRuntime(dir=tempfile.mkdtemp(), extra_paths=[str(d)])
-    discovered = rt.discover()
+    discovered = rt.skills  # AG2 main renamed discover() → the `skills` accessor
     names = {m.name for m in discovered}
     assert {"web-research", "pdf-tools", "email-drafting"} <= names
-    assert all(m.description for m in discovered)  # required for disclosure
+    # description moved under metadata in AG2 main's Skill model
+    assert all(m.metadata.description for m in discovered)  # required for disclosure
 
 
 def test_skills_toolkit_exposes_search_and_install(tmp_path):

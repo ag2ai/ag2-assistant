@@ -34,9 +34,11 @@ def model_config(config: Config, model: str | None = None):
 
         return AnthropicConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider in ("openai", "oai"):
-        from autogen.beta.config import OpenAIConfig
+        # OpenAI's Responses API (their preferred surface; also enables the native
+        # image_generation tool). Drop-in for the old Chat Completions OpenAIConfig.
+        from autogen.beta.config import OpenAIResponsesConfig
 
-        return OpenAIConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
+        return OpenAIResponsesConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider == "ollama":
         from autogen.beta.config import OllamaConfig
 
