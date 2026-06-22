@@ -1,7 +1,6 @@
 <script>
-  import { taskPanel, viewer } from '../../store.js'
+  import { taskPanel } from '../../store.js'
   import { api } from '../../transport/api.js'
-  import Markdown from '../Markdown.svelte'
   import Icon from '../Icon.svelte'
   import { fmtStamp, fmtDateTime } from '../../lib/time.js'
 
@@ -40,15 +39,8 @@
     {/if}
     {#if $taskPanel.run_of}<div class="note" style="text-align:left;display:inline-flex;align-items:center;gap:6px"><Icon name="zap" size={13} /> One run of a recurring task.</div>{/if}
 
-    {#each ($taskPanel.deliverables || []) as d}
-      <div class="deliv">
-        <div class="d">{d.description} [{d.status}]</div>
-        {#if d.asset}
-          <div class="asset"><Markdown text={d.asset} /></div>
-          <button class="viewbtn" onclick={() => ($viewer = { title: d.description, text: d.asset })}>View full →</button>
-        {/if}
-      </div>
-    {/each}
+    <!-- Deliverable output is shown once, in the thread's "Deliverable produced"
+         item below — the panel stays a compact header (no repeated body). -->
 
     {#each ($taskPanel.children || []) as c}
       <div class="child"><span class="badge">{c.status}</span> {c.title}</div>

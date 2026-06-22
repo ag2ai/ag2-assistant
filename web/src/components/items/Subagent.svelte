@@ -28,11 +28,15 @@
     <span class="scaret">{open ? '▾' : '▸'}</span>
   </div>
   {#if item.objective}<div class="sobj">{item.objective}</div>{/if}
-  {#if open && kids.length}
-    <div class="skids">
-      {#each kids as k (k.id)}<Item item={k} />{/each}
-    </div>
+  {#if open}
+    {#if kids.length}
+      <div class="skids">
+        {#each kids as k (k.id)}<Item item={k} />{/each}
+      </div>
+    {/if}
+    <!-- The worker's result is the deliverable (shown in the thread's Deliverable
+         produced item); keep it here only behind the expand, not reprinted inline. -->
+    {#if item.result}<div class="sres">{item.result}</div>{/if}
   {/if}
-  {#if item.result}<div class="sres">{item.result}</div>{/if}
   {#if item.error}<div class="serr">{item.error}</div>{/if}
 </div>
