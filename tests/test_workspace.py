@@ -1,4 +1,6 @@
-"""The agent's working file space: per-task folders, deliverable files, sandboxing."""
+"""The agent's working file space: shared deliverables folder, image/upload
+folders, sandboxing. Tasks save into the SAME shared workspace as chat (no
+per-task subfolders)."""
 
 from types import SimpleNamespace
 
@@ -7,7 +9,6 @@ from assistant.workspace import (
     list_files,
     resolve,
     slugify,
-    task_dir,
     write_deliverable_file,
     write_image,
     write_upload,
@@ -20,23 +21,27 @@ def test_slugify():
     assert slugify("") == "task"
 
 
-def test_task_dir_groups_by_title(tmp_path):
-    t = SimpleNamespace(title="AI Headlines", id="task-1", run_of=None)
-    assert task_dir(tmp_path, t) == tmp_path / "ai-headlines"
-
-
-def test_deliverable_written_as_file(tmp_path):
+def test_deliverable_written_to_shared_folder(tmp_path):
     t = SimpleNamespace(title="AI Headlines", id="task-1", run_of=None)
     rel = write_deliverable_file(tmp_path, t, {"description": "the briefing"}, "# Hello\n")
-    assert rel == "ai-headlines/the-briefing.md"
+    # shared <workspace>/deliverables/ — NOT a per-task <title-slug>/ subfolder
+    assert rel == "deliverables/the-briefing.md"
     assert (tmp_path / rel).read_text() == "# Hello\n"
+
+
+def test_deliverable_no_clobber(tmp_path):
+    t = SimpleNamespace(title="AI Headlines", id="task-1", run_of=None)
+    first = write_deliverable_file(tmp_path, t, {"description": "briefing"}, "a")
+    second = write_deliverable_file(tmp_path, t, {"description": "briefing"}, "b")
+    assert first == "deliverables/briefing.md"
+    assert second == "deliverables/briefing-2.md"  # doesn't overwrite the first
 
 
 def test_recurring_run_file_is_timestamped(tmp_path):
     run = SimpleNamespace(title="AI Headlines", id="task-1:run", run_of="task-1")
     rel = write_deliverable_file(tmp_path, run, {"description": "briefing"}, "x")
-    assert rel.startswith("ai-headlines/") and rel.endswith("-briefing.md")
-    assert rel != "ai-headlines/briefing.md"  # carries a date prefix
+    assert rel.startswith("deliverables/") and rel.endswith("-briefing.md")
+    assert rel != "deliverables/briefing.md"  # carries a date prefix
 
 
 def test_resolve_blocks_traversal(tmp_path):

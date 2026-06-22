@@ -50,16 +50,19 @@
 .settings .keyrow { display: flex; align-items: center; gap: 8px; }
 .settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
 .settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
-/* Modal action buttons (Save / Change voice / Close …) — bordered, accent on hover */
-.modal .open {
-  flex: none; font-family: var(--sans); font-size: 13px; cursor: pointer;
-  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
-  border-radius: 8px; padding: 7px 14px;
-  transition: border-color .12s ease, color .12s ease, background .12s ease;
+/* Secondary action buttons (Save / Change voice / Cancel task / Close …) —
+   bordered "greyed" pill: soft radius, icon + label, accent on hover. Shared by
+   modal and task-panel actions so every secondary button reads the same. */
+.modal .open, .panel .open {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: var(--radius-sm); padding: 7px 14px;
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
-.modal .open:hover { border-color: var(--accent); color: var(--accent); }
-.modal .open:active { background: var(--code); }
-.modal .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); }
+.modal .open:hover, .panel .open:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.modal .open:active, .panel .open:active { background: var(--code); }
+.modal .open:disabled, .panel .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
 
 /* Memory editor */
 .modal.memory { width: min(720px, 92vw); height: min(88vh, 940px); }
@@ -129,7 +132,8 @@
 a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed var(--accent); cursor: pointer; }
 
 .note { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
-.note.alert { color: #c2410c; }
+.note.withicon { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.note.alert { color: var(--ag2-observer); }
 .tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 2px 9px; }
 .toolcards { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
@@ -182,14 +186,15 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .card .k { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; }
 .card .t { margin: 4px 0 8px; font-size: 14px; }
 .card button, .composer .send, .panel button { font-family: var(--sans); cursor: pointer; }
-.card .open { font-size: 13px; border: 1px solid var(--accent); color: var(--accent); background: none; border-radius: 8px; padding: 5px 11px; }
+.card .open { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: var(--fw-medium); border: 1px solid var(--accent); color: var(--accent); background: none; border-radius: var(--radius-sm); padding: 6px 12px; transition: background var(--dur-fast) var(--ease-out); }
+.card .open:hover { background: var(--accent-soft); }
 
 .deliv { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
 .deliv .d { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .deliv .dprev { font-size: 13px; color: var(--ink); margin: 2px 0; overflow-wrap: anywhere; }
 .asset { background: var(--code); border-radius: 8px; padding: 10px 12px; margin: 4px 0; font-size: 13px; max-height: 260px; overflow: auto; }
-.viewbtn { margin: 4px 0 2px; font-size: 12px; color: var(--accent); background: none; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-family: var(--sans); }
-.viewbtn:hover { border-color: var(--accent); }
+.viewbtn { display: inline-flex; align-items: center; gap: 5px; margin: 4px 0 2px; font-size: 12px; color: var(--accent); background: none; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 11px; cursor: pointer; font-family: var(--sans); transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.viewbtn:hover { border-color: var(--accent); background: var(--accent-soft); }
 
 /* shared markdown rendering (deliverable assets + full-view viewer) */
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
@@ -253,12 +258,21 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .pending .chip { display: inline-flex; align-items: center; gap: 4px; }
 .pending .chip .x { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
 
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 20; }
-.modal { position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(560px, 92vw); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 20; animation: ag2-fade var(--dur-base) var(--ease-out) both; }
+.modal { position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(560px, 92vw); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow-lg); animation: modal-pop var(--dur-base) var(--ease-spring) both; }
+/* Spring scale-in that preserves the translate(-50%,-50%) centering transform. */
+@keyframes modal-pop {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal, .modal-backdrop { animation: none; }
+}
 .modal h2 { margin: 0; }
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
 .modal .muted { color: var(--muted); }
-.modal-close { align-self: flex-end; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+.modal-close { display: inline-flex; align-items: center; gap: 6px; align-self: flex-end; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 14px; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.modal-close:hover { border-color: var(--accent); color: var(--accent); }
 
 .viewer { width: min(820px, 92vw); max-height: 84vh; padding: 0; gap: 0; }
 .viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }

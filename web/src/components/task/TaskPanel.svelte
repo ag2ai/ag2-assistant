@@ -39,10 +39,10 @@
 
     <div style="margin-top:10px;display:flex;gap:8px">
       {#if !TERMINAL.includes($taskPanel.status)}
-        <button class="open" onclick={cancel}>Cancel task</button>
+        <button class="open" onclick={cancel}><Icon name="x" size={14} /> Cancel task</button>
       {/if}
       {#if $taskPanel.archived || TERMINAL.includes($taskPanel.status)}
-        <button class="open" onclick={archive}>{$taskPanel.archived ? 'Unarchive' : 'Archive'}</button>
+        <button class="open" onclick={archive}><Icon name="folder" size={14} /> {$taskPanel.archived ? 'Unarchive' : 'Archive'}</button>
       {/if}
     </div>
   </div>

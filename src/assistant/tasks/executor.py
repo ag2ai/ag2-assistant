@@ -88,11 +88,11 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
     name, archetype_prompt = _subagent_archetype(caps)
     sub_config = config.model_copy(deep=True)
     sub_config.agent.name = name
-    # Scope the subagent's workspace to this task's folder, so any files it writes
-    # group with the task's deliverable files (Phase 2 of the working file space).
-    from assistant.workspace import task_dir
-
-    sub_config.workspace_dir = task_dir(config.workspace_dir, task)
+    # Tasks write into the SHARED workspace root (same as chat) — `sub_config`
+    # already inherits `config.workspace_dir` from the deep copy, so generated
+    # images land in `<workspace>/images/`, files at the root, and reported paths
+    # are workspace-relative (and so findable in the Files browser). We no longer
+    # scope a task to its own `<workspace>/<slug>/` subfolder.
     # Seed the archetype as the persona, then compose the full turn prompt around
     # it without memory guidance because these subagents run with memory=False.
     sub_config.agent.system_prompt = archetype_prompt

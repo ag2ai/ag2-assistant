@@ -54,11 +54,13 @@ export function isBusy(items) {
   return false
 }
 
+// Root task lifecycle notes. `icon` is a Lucide name (see Icon.svelte) rendered
+// by Note.svelte — replaces the old ▶/✓/⚠/⏹ emoji glyphs.
 const NOTE = {
-  TaskStarted: '▶ Task started',
-  TaskCompleted: '✓ Task completed',
-  TaskFailed: '⚠ Task failed',
-  TaskCancelled: '⏹ Task cancelled',
+  TaskStarted: { icon: 'zap', text: 'Task started' },
+  TaskCompleted: { icon: 'check', text: 'Task completed' },
+  TaskFailed: { icon: 'x', text: 'Task failed' },
+  TaskCancelled: { icon: 'x', text: 'Task cancelled' },
 }
 
 const ROOT_AGENT_NAMES = new Set(['ag2assistant'])
@@ -164,13 +166,13 @@ export function foldEvent(items, wire) {
       items.push({ id: nid(), kind: 'taskcard', taskId: d.task_id, title: d.title, scheduled: d.kind === 'scheduled' })
       break
     case 'TaskScheduled':
-      items.push({ id: nid(), kind: 'note', text: `⏰ Scheduled for ${d.scheduled_for}${d.recurrence ? ' · repeats ' + d.recurrence : ''}` })
+      items.push({ id: nid(), kind: 'note', icon: 'clock', text: `Scheduled for ${d.scheduled_for}${d.recurrence ? ' · repeats ' + d.recurrence : ''}` })
       break
     case 'TaskStarted':
     case 'TaskCompleted':
     case 'TaskFailed':
     case 'TaskCancelled':
-      if (isRootTaskEvent(d)) items.push({ id: nid(), kind: 'note', text: NOTE[t] })
+      if (isRootTaskEvent(d)) items.push({ id: nid(), kind: 'note', icon: NOTE[t].icon, text: NOTE[t].text })
       else upsertSubagent(items, t, d)
       break
     case 'SubagentTrace': {
@@ -185,8 +187,8 @@ export function foldEvent(items, wire) {
       // A behaviour observer flagged something (e.g. a stuck/flailing turn) — show
       // it as a subtle warning note in the thread. De-dupe identical consecutive
       // alerts (an observer fires once but replay + live can both deliver it).
-      if (items[items.length - 1]?.text !== '⚠ ' + d.message)
-        items.push({ id: nid(), kind: 'note', text: '⚠ ' + d.message, alert: true })
+      if (items[items.length - 1]?.text !== d.message)
+        items.push({ id: nid(), kind: 'note', icon: 'zap', text: d.message, alert: true })
       break
     case 'DeliverableProduced':
       items.push({ id: nid(), kind: 'deliverable', taskId: d.task_id, deliverableId: d.deliverable_id, description: d.description, preview: d.preview })

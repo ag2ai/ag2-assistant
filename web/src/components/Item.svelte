@@ -23,9 +23,13 @@
   const prov = $derived($ag2View ? itemAg2(item.kind) : null)
 </script>
 
-{#if Cmp}<Cmp {item} />{/if}
-{#if prov}
-  <div class="ag2tag" class:right={item.kind === 'user'} class:app={prov.layer === 'app'}>
-    AG2 · {prov.label}
-  </div>
-{/if}
+<!-- ag2-rise: a subtle rise+fade entrance per item (runs once on mount; gated by
+     prefers-reduced-motion in base.css). Streaming updates don't re-trigger it. -->
+<div class="ag2-rise">
+  {#if Cmp}<Cmp {item} />{/if}
+  {#if prov}
+    <div class="ag2tag" class:right={item.kind === 'user'} class:app={prov.layer === 'app'}>
+      AG2 · {prov.label}
+    </div>
+  {/if}
+</div>

@@ -24,25 +24,25 @@ def _root(workspace_dir) -> Path:
     return Path(workspace_dir).expanduser().resolve()
 
 
-def task_dir(workspace_dir, task) -> Path:
-    """The folder for a task's files: ``<workspace>/<title-slug>``. Recurring runs
-    share their template's title, so a task's outputs group in one folder."""
-    label = getattr(task, "title", "") or getattr(task, "id", "")
-    return Path(workspace_dir).expanduser() / slugify(label)
-
-
 def write_deliverable_file(workspace_dir, task, deliverable: dict, content: str) -> str:
-    """Persist a produced deliverable's content as a markdown file in the task's
-    folder; return its path relative to the workspace root (for the asset + API).
-    Recurring runs are timestamped so successive runs don't overwrite each other."""
-    folder = task_dir(workspace_dir, task)
+    """Persist a produced deliverable's content as a markdown file in the SHARED
+    ``<workspace>/deliverables/`` folder (so task outputs land in the same workspace
+    as chat, not a per-task subfolder); return its path relative to the workspace
+    root (for the asset + API). Recurring runs are timestamped, and a name clash is
+    de-duped, so successive/concurrent runs don't overwrite each other."""
+    root = _root(workspace_dir)
+    folder = root / "deliverables"
     folder.mkdir(parents=True, exist_ok=True)
     name = slugify(deliverable.get("description") or "deliverable")
     if getattr(task, "run_of", None):
         name = f"{datetime.now().strftime('%Y%m%d-%H%M')}-{name}"
     path = folder / f"{name}.md"
+    n = 2
+    while path.exists():  # don't clobber an existing deliverable with the same slug
+        path = folder / f"{name}-{n}.md"
+        n += 1
     path.write_text(content or "")
-    return str(path.relative_to(Path(workspace_dir).expanduser()))
+    return str(path.relative_to(root))
 
 
 _IMAGE_EXT = {

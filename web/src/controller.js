@@ -42,7 +42,7 @@ export function openThread(kind, id) {
     onEvent: (ev) => { _inspect(ev); if (_suppressStream) return; thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } }) },
     onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
     onError: (m) => thread.update((t) => {
-      t.items.push({ id: Date.now(), kind: 'note', text: '⚠ ' + (m.message || 'error') })
+      t.items.push({ id: Date.now(), kind: 'note', icon: 'x', text: m.message || 'error', alert: true })
       return { ...t, busy: false }
     }),
   }).connect()
