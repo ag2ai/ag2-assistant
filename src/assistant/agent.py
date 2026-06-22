@@ -130,7 +130,10 @@ BEHAVIOR_GUIDANCE = (
     "do with web pages, videos, messages, or cloud data.\n"
     "If a sandboxed runner is offered (e.g. run_code_sandboxed / run_shell_sandboxed), "
     "prefer it; only reach for a host runner (run_code_local / run_shell_local) when "
-    "the task truly needs the user's own files — it will ask their permission."
+    "the task truly needs the user's own files — it will ask their permission.\n"
+    "To create or edit images, use the generate_image tool — never shell/osascript or "
+    "code. To change an image you already made, call it again with source_image set to "
+    "that image's path (returned by the previous call)."
 )
 
 
@@ -373,6 +376,7 @@ def create_agent(
         docker_network=config.tools.docker_network,
         capabilities=capabilities,
         workspace_dir=config.workspace_dir,
+        config=config,  # enables generate_image (needs provider/keys)
     )
     if skills and (capabilities is None or "skills" in capabilities):
         tools.append(build_skills_toolkit(config))

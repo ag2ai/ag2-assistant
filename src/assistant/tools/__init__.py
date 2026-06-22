@@ -42,7 +42,7 @@ _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
 # Capability groups → the tools they unlock. Tasks declare the capabilities they
 # need so an agent is built with EXACTLY those (privacy, focus, speed); chat
 # (capabilities=None) gets everything.
-CAPABILITIES = ("web", "code", "files", "skills", "mcp", "gmail", "calendar", "drive")
+CAPABILITIES = ("web", "code", "files", "images", "skills", "mcp", "gmail", "calendar", "drive")
 
 _GOOGLE_GROUPS = {
     "gmail": {"gmail_search", "gmail_read", "gmail_send", "gmail_create_draft"},
@@ -55,7 +55,7 @@ def available_capabilities() -> list[str]:
     """Capabilities currently usable (Google ones only when signed in)."""
     from assistant.integrations.google_auth import has_token
 
-    caps = ["web", "code", "files", "skills", "mcp"]
+    caps = ["web", "code", "files", "images", "skills", "mcp"]
     if has_token():
         caps += ["gmail", "calendar", "drive"]
     return caps
@@ -68,6 +68,7 @@ def build_agent_tools(
     docker_network: str = "bridge",
     capabilities: list[str] | None = None,
     workspace_dir=None,
+    config=None,
 ) -> list:
     """Build the agent's tools.
 
@@ -163,6 +164,13 @@ def build_agent_tools(
                 SandboxShellTool(blocked=_SHELL_BLOCKED, middleware=[approval]),
                 SandboxCodeTool(environment=LocalEnvironment(), middleware=[approval]),
             ]
+
+    if want("images") and config is not None:
+        # generate_image: provider-aware image generation + editing → saved to the
+        # workspace. Needs `config` (provider/keys) so it's skipped when unavailable.
+        from assistant.tools.image_gen import build_image_tool
+
+        tools.append(build_image_tool(config, workspace_dir))
 
     if want("files"):
         tools.append(read_file)  # permission-gated (host FS, any path, vision)

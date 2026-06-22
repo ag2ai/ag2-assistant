@@ -7,6 +7,7 @@
   import Inquiry from './items/Inquiry.svelte'
   import Subagent from './items/Subagent.svelte'
   import Note from './items/Note.svelte'
+  import GenImage from './items/GenImage.svelte'
   import { ag2View } from '../store.js'
   import { itemAg2 } from '../lib/ag2map.js'
 
@@ -14,7 +15,7 @@
   const map = {
     user: UserMessage, agent: AgentMessage, tools: Tools,
     taskcard: TaskCard, deliverable: Deliverable, inquiry: Inquiry,
-    subagent: Subagent, note: Note,
+    subagent: Subagent, note: Note, genimage: GenImage,
   }
   const Cmp = $derived(map[item.kind])
   // In AG2 view, caption each item with the AG2 primitive it's a projection of.

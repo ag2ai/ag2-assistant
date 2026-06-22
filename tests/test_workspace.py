@@ -9,6 +9,7 @@ from assistant.workspace import (
     slugify,
     task_dir,
     write_deliverable_file,
+    write_image,
 )
 
 
@@ -72,3 +73,17 @@ def test_delete_keeps_nonempty_folder(tmp_path):
 def test_delete_blocks_traversal(tmp_path):
     assert delete(tmp_path, "../../etc/passwd") is False
     assert delete(tmp_path, "missing.md") is False
+
+
+def test_write_image_saves_to_images_folder(tmp_path):
+    rel = write_image(tmp_path, "A Red Circle", b"\x89PNG-bytes", "image/png")
+    assert rel == "images/a-red-circle.png"
+    assert (tmp_path / rel).read_bytes() == b"\x89PNG-bytes"
+
+
+def test_write_image_no_clobber_and_ext_from_media_type(tmp_path):
+    write_image(tmp_path, "Sunset", b"a", "image/png")
+    second = write_image(tmp_path, "Sunset", b"b", "image/png")
+    assert second == "images/sunset-2.png"  # doesn't overwrite the first
+    jpg = write_image(tmp_path, "Beach", b"c", "image/jpeg")
+    assert jpg == "images/beach.jpg"

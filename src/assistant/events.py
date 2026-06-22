@@ -44,6 +44,15 @@ class DeliverableProduced(AssistantEvent):
     preview: str = ""  # short preview; full asset fetched via REST
 
 
+class ImageGenerated(AssistantEvent):
+    """An image was generated/edited and saved to the workspace — renders inline as
+    a clickable thumbnail. `path` is workspace-relative (served via /api/files/raw)."""
+
+    path: str = Field(kw_only=False)
+    prompt: str = ""
+    media_type: str = "image/png"
+
+
 class SubagentTrace(AssistantEvent):
     """One inner event from a subagent's own run, forwarded onto the parent task
     stream so the GUI nests it under the subagent card — live, persistent (rides

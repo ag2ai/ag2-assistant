@@ -175,6 +175,25 @@ def test_files_capability_wires_workspace_toolkit(tmp_path):
     assert ws.exists()
 
 
+def test_images_capability_adds_generate_image(tmp_path):
+    """The `images` capability wires generate_image — but only when a config is given
+    (it needs the provider/keys)."""
+    from assistant.config import Config
+
+    cfg = Config()
+    with_cfg = {
+        t.name
+        for t in build_agent_tools(
+            "gemini", capabilities=["images"], workspace_dir=tmp_path, config=cfg
+        )
+    }
+    assert "generate_image" in with_cfg
+    without_cfg = {
+        t.name for t in build_agent_tools("gemini", capabilities=["images"], workspace_dir=tmp_path)
+    }
+    assert "generate_image" not in without_cfg  # no config → skipped
+
+
 def test_no_workspace_dir_means_no_fs_tools():
     """Without a workspace_dir, only the custom read_file is present (no FS toolkit)."""
     tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=None)

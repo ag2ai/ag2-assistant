@@ -45,6 +45,31 @@ def write_deliverable_file(workspace_dir, task, deliverable: dict, content: str)
     return str(path.relative_to(Path(workspace_dir).expanduser()))
 
 
+_IMAGE_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def write_image(workspace_dir, prompt: str, data: bytes, media_type: str = "image/png") -> str:
+    """Save a generated image into ``<workspace>/images/`` named from the prompt;
+    return its workspace-relative path (so it shows in the Files browser / preview)."""
+    root = _root(workspace_dir)
+    folder = root / "images"
+    folder.mkdir(parents=True, exist_ok=True)
+    ext = _IMAGE_EXT.get(media_type, ".png")
+    base = slugify(prompt, default="image")
+    path = folder / f"{base}{ext}"
+    n = 2
+    while path.exists():  # don't clobber an earlier image with the same prompt slug
+        path = folder / f"{base}-{n}{ext}"
+        n += 1
+    path.write_bytes(data)
+    return str(path.relative_to(root))
+
+
 def resolve(workspace_dir, rel: str) -> Path | None:
     """Resolve a workspace-relative path to an absolute file path, or None if it
     escapes the workspace root (path-traversal guard) or isn't a file."""

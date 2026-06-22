@@ -35,6 +35,11 @@ REGISTRY.load_skill = (a) => (a.name ? { kind: 'skill', name: a.name } : null)
 REGISTRY.run_skill_script = (a) =>
   a.name ? { kind: 'skill', name: a.name, script: a.script || '', ran: true } : null
 
+// Image generation/editing — surface the prompt (the saved file shows in the Files
+// browser / image preview; the path is in the result, not the args).
+REGISTRY.generate_image = (a) =>
+  a.prompt ? { kind: 'image', prompt: a.prompt, edit: !!a.source_image } : null
+
 // Return a card descriptor for a tool call, or null if the tool has no card.
 export function cardFor(name, args) {
   const fn = REGISTRY[name]

@@ -77,6 +77,11 @@
           <span class="tcicon">🔍</span>
           <span class="tcquery" title="Search query">{c.query}</span>
         </div>
+      {:else if c.kind === 'image'}
+        <div class="toolcard" title={c.edit ? 'Editing image' : 'Generating image'}>
+          <span class="tcicon">🖼</span>
+          <span class="tcquery">{c.edit ? 'Edit' : 'Image'} · {c.prompt}</span>
+        </div>
       {:else if c.kind === 'skill'}
         <div class="toolcard" title={c.ran ? `Ran script ${c.script} from skill ${c.name}` : `Used skill ${c.name}`}>
           <span class="tcicon">🧩</span>
