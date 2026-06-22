@@ -1,13 +1,33 @@
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
-// Open external (non-local) links in a new tab. Runs after attribute
-// sanitization, so attributes we add here aren't re-filtered out. In-app links
-// (relative hrefs, #anchors, same-origin) are left to navigate in place.
+// A bare relative path the agent emitted (e.g. images/foo.jpg, uploads/bar.png) —
+// not absolute/scheme/anchor — refers to a WORKSPACE file. The browser would resolve
+// it against the page URL (/app/c/…) and 404, so serve it via the files API instead.
+const isWorkspaceRel = (u) => !!u && !/^(https?:|data:|blob:|mailto:|#|\/)/i.test(u)
+const filesApi = (p) => '/api/files/raw?path=' + encodeURIComponent(p.replace(/^\.\//, ''))
+
+// Rewrite workspace-relative images/links to the files API, and open external links
+// in a new tab. Runs after sanitization so attributes we add aren't re-filtered.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'IMG' && node.hasAttribute('src')) {
+    const src = node.getAttribute('src')
+    if (isWorkspaceRel(src)) {
+      node.setAttribute('src', filesApi(src))
+      node.setAttribute('loading', 'lazy')
+    }
+    return
+  }
   if (node.tagName !== 'A' || !node.hasAttribute('href')) return
   const href = node.getAttribute('href')
-  if (!/^https?:\/\//i.test(href)) return // relative / #anchor / mailto → in place
+  if (isWorkspaceRel(href)) {
+    // link to a workspace file → open it via the files API
+    node.setAttribute('href', filesApi(href))
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+    return
+  }
+  if (!/^https?:\/\//i.test(href)) return // #anchor / mailto → in place
   try {
     if (new URL(href, window.location.href).host !== window.location.host) {
       node.setAttribute('target', '_blank')

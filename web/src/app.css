@@ -146,6 +146,12 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .genimage { margin: 8px 0; }
 .genimage .thumb { max-width: 340px; max-height: 280px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
 .genimage .thumb:hover { border-color: var(--accent); }
+.attach { margin: 8px 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.attach .who { font-size: 11px; color: var(--muted); }
+.attach .thumb { max-width: 260px; max-height: 220px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
+.attach .thumb:hover { border-color: var(--accent); }
+.attach .filechip { border: 1px solid var(--line); background: var(--code); color: var(--ink); border-radius: 9px; padding: 7px 11px; font-size: 13px; cursor: pointer; }
+.attach .filechip:hover { border-color: var(--accent); color: var(--accent); }
 .dots span { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin-right: 4px; animation: blink 1.2s infinite both; }
 .dots span:nth-child(2) { animation-delay: .2s; } .dots span:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }

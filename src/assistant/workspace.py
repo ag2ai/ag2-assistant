@@ -70,6 +70,25 @@ def write_image(workspace_dir, prompt: str, data: bytes, media_type: str = "imag
     return str(path.relative_to(root))
 
 
+def write_upload(workspace_dir, filename: str, data: bytes) -> str:
+    """Save a user-uploaded file into ``<workspace>/uploads/`` (keeping a clean
+    extension); return its workspace-relative path so the agent can edit it with
+    generate_image(source_image=…) or read it by path — no more guessing via search."""
+    root = _root(workspace_dir)
+    folder = root / "uploads"
+    folder.mkdir(parents=True, exist_ok=True)
+    stem, dot, ext = (filename or "file").rpartition(".")
+    base = slugify(stem or filename, default="upload")
+    suffix = f".{slugify(ext)}" if dot and ext else ""
+    path = folder / f"{base}{suffix}"
+    n = 2
+    while path.exists():
+        path = folder / f"{base}-{n}{suffix}"
+        n += 1
+    path.write_bytes(data)
+    return str(path.relative_to(root))
+
+
 def resolve(workspace_dir, rel: str) -> Path | None:
     """Resolve a workspace-relative path to an absolute file path, or None if it
     escapes the workspace root (path-traversal guard) or isn't a file."""

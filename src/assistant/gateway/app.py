@@ -711,13 +711,35 @@ def create_app(
                             await app.state.tasks.answer_inquiry(iid, ans)
                     continue
                 text = data.get("text", "")
-                attachments = _decode_attachments(data.get("attachments"))
+                raw_atts = data.get("attachments")
+                attachments = _decode_attachments(raw_atts)
                 if not text and attachments:
                     text = "Here is a file I'm sharing with you."
                 if not text:
                     continue
                 asker = _chat_asker(app, session_id)
                 surface = await turn_surface()
+                # Persist uploads into the workspace and tell the agent their paths (via
+                # surface, so the transcript stays clean) — enables editing/reading them.
+                saved = _persist_uploads(config.workspace_dir, raw_atts)
+                if saved:
+                    from assistant.events import Attachment
+
+                    surface = (surface + "\n\n" if surface else "") + (
+                        "The user attached file(s), saved in the workspace at: "
+                        + ", ".join(p for p, _ in saved)
+                        + ". To edit an uploaded image, call generate_image with "
+                        "source_image set to its path; to read an uploaded document, "
+                        "read_file that path."
+                    )
+                    # Surface each upload in the thread (thumbnail / file chip) — emitted
+                    # before the turn so it sits with the user's message; persists on the
+                    # session stream so it survives reload.
+                    for path, name in saved:
+                        with contextlib.suppress(Exception):
+                            await app.state.gateway.emit_event(
+                                session_id, Attachment(path, name=name)
+                            )
                 asyncio.create_task(
                     bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
                 )
@@ -952,4 +974,27 @@ def _decode_attachments(items) -> list:
         inp = build_input(raw, a.get("name", "file"), a.get("mime"))
         if inp is not None:
             out.append(inp)
+    return out
+
+
+def _persist_uploads(workspace_dir, items) -> list[tuple[str, str]]:
+    """Save uploaded files into the workspace (uploads/) so the agent can edit/read
+    them by path — returns ``(workspace_path, original_name)`` per saved file."""
+    import base64
+
+    from assistant.workspace import write_upload
+
+    out = []
+    for a in items or []:
+        try:
+            raw = base64.b64decode(a.get("data", ""))
+        except Exception:
+            continue
+        if not raw:
+            continue
+        try:
+            name = a.get("name", "file")
+            out.append((write_upload(workspace_dir, name, raw), name))
+        except Exception:
+            pass
     return out

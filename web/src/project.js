@@ -194,6 +194,9 @@ export function foldEvent(items, wire) {
     case 'ImageGenerated':
       items.push({ id: nid(), kind: 'genimage', path: d.path, prompt: d.prompt })
       break
+    case 'Attachment':
+      items.push({ id: nid(), kind: 'attachment', path: d.path, name: d.name })
+      break
     case 'InquiryRaised':
       items.push({ id: nid(), kind: 'inquiry', inquiryId: d.inquiry_id, question: d.question, detail: d.detail || '', options: d.options || [], qkind: d.kind, resolved: false })
       break

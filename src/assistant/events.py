@@ -44,6 +44,15 @@ class DeliverableProduced(AssistantEvent):
     preview: str = ""  # short preview; full asset fetched via REST
 
 
+class Attachment(AssistantEvent):
+    """A file the user attached to a chat turn, saved to the workspace — renders in
+    the thread as a thumbnail (images) or a file chip. `path` is workspace-relative."""
+
+    path: str = Field(kw_only=False)
+    name: str = ""
+    media_type: str = ""
+
+
 class ImageGenerated(AssistantEvent):
     """An image was generated/edited and saved to the workspace — renders inline as
     a clickable thumbnail. `path` is workspace-relative (served via /api/files/raw)."""

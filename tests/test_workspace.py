@@ -10,6 +10,7 @@ from assistant.workspace import (
     task_dir,
     write_deliverable_file,
     write_image,
+    write_upload,
 )
 
 
@@ -87,3 +88,13 @@ def test_write_image_no_clobber_and_ext_from_media_type(tmp_path):
     assert second == "images/sunset-2.png"  # doesn't overwrite the first
     jpg = write_image(tmp_path, "Beach", b"c", "image/jpeg")
     assert jpg == "images/beach.jpg"
+
+
+def test_write_upload_saves_to_uploads_with_clean_name(tmp_path):
+    rel = write_upload(tmp_path, "My Photo.PNG", b"img-bytes")
+    assert rel == "uploads/my-photo.png"  # slugified stem + clean extension
+    assert (tmp_path / rel).read_bytes() == b"img-bytes"
+    # resolvable (so generate_image source_image / read_file can use it)
+    assert resolve(tmp_path, rel) is not None
+    # no clobber
+    assert write_upload(tmp_path, "My Photo.PNG", b"x") == "uploads/my-photo-2.png"

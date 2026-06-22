@@ -111,8 +111,9 @@ def build_image_tool(config, workspace_dir):
             with contextlib.suppress(Exception):
                 await context.send(ImageGenerated(rel, prompt=prompt, media_type=media))
         return (
-            f"Generated image saved to {rel}. To modify it, call generate_image again "
-            f"with source_image='{rel}'."
+            f"Generated image saved to {rel} and ALREADY shown to the user inline — do "
+            f"NOT embed it again with markdown image syntax. Just refer to it. To modify "
+            f"it, call generate_image again with source_image='{rel}'."
         )
 
     return generate_image
