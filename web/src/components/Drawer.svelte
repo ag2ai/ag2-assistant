@@ -5,6 +5,7 @@
   import { api } from '../transport/api.js'
   import Monogram from './Monogram.svelte'
   import Icon from './Icon.svelte'
+  import { fmtWhen, fmtNextIn } from '../lib/time.js'
 
   let usage = $state(null)   // today's token/cost totals for the activity HUD
 
@@ -110,31 +111,6 @@
     return [...recent, ...g.runs.slice(RECENT).filter(isUnread)]
   }
 
-  function fmtWhen(iso) {
-    if (!iso) return ''
-    try { return new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) }
-    catch { return '' }
-  }
-
-  // Relative time until the next scheduled run, e.g. "Next in 3 mins", "Next in
-  // 1 day", "Next in 4 weeks". Recomputed every drawer refresh (5s) so it ticks down.
-  const _plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`
-  function fmtNextIn(iso) {
-    if (!iso) return ''
-    const ms = new Date(iso).getTime() - Date.now()
-    if (isNaN(ms)) return ''
-    if (ms <= 0) return 'Due now'
-    const mins = Math.round(ms / 60000)
-    if (mins < 1) return 'Next in <1 min'
-    if (mins < 60) return `Next in ${_plural(mins, 'min')}`
-    const hours = Math.round(mins / 60)
-    if (hours < 24) return `Next in ${_plural(hours, 'hour')}`
-    const days = Math.round(hours / 24)
-    if (days < 7) return `Next in ${_plural(days, 'day')}`
-    const weeks = Math.round(days / 7)
-    if (weeks < 5) return `Next in ${_plural(weeks, 'week')}`
-    return `Next in ${_plural(Math.round(days / 30), 'month')}`
-  }
 </script>
 
 <div class="drawer">

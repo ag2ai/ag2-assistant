@@ -1,5 +1,6 @@
 <script>
   import Item from '../Item.svelte'
+  import { fmtStamp } from '../../lib/time.js'
 
   let { item } = $props()
   const label = $derived(`${(item.agent || 'subagent').replace(/[-_]/g, ' ')} (subagent)`)
@@ -22,6 +23,7 @@
     <span class="sdot"></span>
     <span class="sname">{label}</span>
     {#if kids.length}<span class="scount">{kids.length}</span>{/if}
+    {#if item.at}<span class="itemtime">{fmtStamp(item.at)}</span>{/if}
     <span class="sstatus">{item.status || 'running'}</span>
     <span class="scaret">{open ? '▾' : '▸'}</span>
   </div>

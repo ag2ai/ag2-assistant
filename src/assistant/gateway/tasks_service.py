@@ -692,6 +692,8 @@ class TaskService:
             "objective": t.objective or "",
             "description": t.description or "",
             "created_at": t.created_at,
+            "started_at": getattr(t, "started_at", None),
+            "ended_at": getattr(t, "ended_at", None),
             "capabilities": t.capabilities or [],
             "archived": bool(getattr(t, "archived", False)),
             "scheduled_for": t.scheduled_for,

@@ -3,6 +3,7 @@
 // use the same reducer, so they produce identical items.
 
 import { cardFor } from './lib/toolcards.js'
+import { fmtDateTime } from './lib/time.js'
 
 const tail = (s) => (s || '').split('.').pop()
 let _seq = 0
@@ -115,6 +116,7 @@ function upsertSubagent(items, type, d) {
 export function foldEvent(items, wire) {
   const t = tail(wire.type)
   const d = wire.data || {}
+  const before = items.length
 
   switch (t) {
     case 'ModelRequest': {
@@ -166,7 +168,7 @@ export function foldEvent(items, wire) {
       items.push({ id: nid(), kind: 'taskcard', taskId: d.task_id, title: d.title, scheduled: d.kind === 'scheduled' })
       break
     case 'TaskScheduled':
-      items.push({ id: nid(), kind: 'note', icon: 'clock', text: `Scheduled for ${d.scheduled_for}${d.recurrence ? ' · repeats ' + d.recurrence : ''}` })
+      items.push({ id: nid(), kind: 'note', icon: 'clock', text: `Scheduled for ${fmtDateTime(d.scheduled_for)}${d.recurrence ? ' · repeats ' + d.recurrence : ''}` })
       break
     case 'TaskStarted':
     case 'TaskCompleted':
@@ -210,5 +212,11 @@ export function foldEvent(items, wire) {
     default:
       break // UsageEvent, ToolResult*, GeminiToolCallEvent, etc. — not rendered
   }
+  // Stamp newly-appended items with the event's production time. Every AG2 event
+  // carries `created_at` (Unix seconds) on the wire; it's persisted and survives
+  // replay, so this is the true "when produced" — not a render-time clock. `??=`
+  // leaves coalesced/streamed items (agent chunks, merged tool cards) on their
+  // first event's time.
+  for (let i = before; i < items.length; i++) items[i].at ??= d.created_at
   return items
 }

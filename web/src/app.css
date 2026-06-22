@@ -134,6 +134,11 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .note { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 .note.withicon { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .note.alert { color: var(--ag2-observer); }
+
+/* Subtle "when produced" stamp on task-thread items — projects the AG2 event's
+   created_at (Unix time on the wire, persisted, replay-safe). */
+.itemtime { flex: none; color: var(--text-faint); font-size: var(--text-xs); font-weight: var(--fw-regular); letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.srow .itemtime, .deliv .d .itemtime { margin-left: auto; }
 .tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 2px 9px; }
 .toolcards { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
@@ -190,7 +195,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .card .open:hover { background: var(--accent-soft); }
 
 .deliv { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-.deliv .d { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.deliv .d { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .deliv .dprev { font-size: 13px; color: var(--ink); margin: 2px 0; overflow-wrap: anywhere; }
 .asset { background: var(--code); border-radius: 8px; padding: 10px 12px; margin: 4px 0; font-size: 13px; max-height: 260px; overflow: auto; }
 .viewbtn { display: inline-flex; align-items: center; gap: 5px; margin: 4px 0 2px; font-size: 12px; color: var(--accent); background: none; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 11px; cursor: pointer; font-family: var(--sans); transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
@@ -241,6 +246,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 
 .panel { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 0 auto 14px; max-width: 760px; }
 .panel .ptitle { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+.panel .tasktime { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: var(--text-sm); color: var(--text-muted); }
 .panel .child { border-left: 2px solid var(--line); padding-left: 10px; margin: 6px 0; }
 
 .hitl { border-bottom: 1px solid var(--line); background: var(--panel); padding: 10px 20px; max-height: 40vh; overflow-y: auto; }
