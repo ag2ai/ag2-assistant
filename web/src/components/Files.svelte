@@ -5,6 +5,7 @@
   import { filesOpen, viewer } from '../store.js'
   import { api } from '../transport/api.js'
   import { previewable } from '../lib/preview.js'
+  import Icon from './Icon.svelte'
 
   let files = $state([])
   let root = $state('')
@@ -75,7 +76,7 @@
       <p class="muted">No files yet — ask the agent to save something, or run a task that produces a deliverable.</p>
     {:else}
       {#each groups as [dir, list] (dir)}
-        <div class="setsec">📁 {dir || '/'}</div>
+        <div class="setsec dirsec"><Icon name="folder" size={13} /> {dir || '/'}</div>
         {#each list as f (f.path)}
           <div class="filerow">
             <span class="fname" title={f.path}>{f.name}</span>

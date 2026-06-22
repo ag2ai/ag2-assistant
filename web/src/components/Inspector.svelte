@@ -5,6 +5,7 @@
   // the normal UI folds away.
   import { inspectorEvents, ag2View, poweredByOpen } from '../store.js'
   import { describe, SUBSYSTEMS } from '../lib/ag2map.js'
+  import Icon from './Icon.svelte'
 
   let open = $state(new Set())
   const toggle = (id) => {
@@ -16,11 +17,11 @@
   const rows = $derived([...$inspectorEvents].reverse()) // newest first
 </script>
 
-<aside class="inspector">
+<aside class="inspector ag2-slide-left">
   <div class="insp-head">
     <span class="insp-title">AG2 events</span>
     <button class="linklike" onclick={() => ($poweredByOpen = true)}>Powered by AG2 →</button>
-    <button class="insp-x" title="Hide AG2 view" onclick={() => ($ag2View = false)}>✕</button>
+    <button class="insp-x" title="Hide AG2 view" aria-label="Hide AG2 view" onclick={() => ($ag2View = false)}><Icon name="x" size={16} /></button>
   </div>
   <div class="insp-sub">
     Live events on this session's AG2 <code>Stream</code> — the substrate this UI projects.

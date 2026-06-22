@@ -1,6 +1,7 @@
 <script>
   import { thread } from '../store.js'
   import { send, startVoice, stopVoice, voice } from '../controller.js'
+  import Icon from './Icon.svelte'
 
   let text = $state('')
   let pending = $state([])  // {name, payload:{name,mime,data(b64)}}
@@ -41,12 +42,12 @@
   {#if pending.length}
     <div class="pending">
       {#each pending as p, i}
-        <span class="chip">📎 {p.name}<button class="x" onclick={() => removeFile(i)}>×</button></span>
+        <span class="chip"><Icon name="paperclip" size={13} /> {p.name}<button class="x" onclick={() => removeFile(i)}>×</button></span>
       {/each}
     </div>
   {/if}
   <div class="crow">
-    <button class="icon" onclick={() => fileInput.click()} title="Attach files">📎</button>
+    <button class="icon" onclick={() => fileInput.click()} title="Attach files" aria-label="Attach files"><Icon name="paperclip" size={18} /></button>
     <input type="file" multiple hidden bind:this={fileInput} onchange={pick} />
     <textarea
       bind:this={ta}
@@ -56,8 +57,8 @@
       oninput={grow}
       onkeydown={key}
     ></textarea>
-    <button class="icon mic" class:live={$voice.active} onclick={toggleMic} title="Talk to AG2 Assistant">🎙</button>
-    <button class="send" onclick={submit}>Send</button>
+    <button class="icon mic" class:live={$voice.active} onclick={toggleMic} title="Talk to AG2 Assistant" aria-label="Talk to AG2 Assistant"><Icon name="mic" size={18} /></button>
+    <button class="send" onclick={submit}><Icon name="send" size={16} /> Send</button>
   </div>
   {#if $voice.active}
     <div class="voicebar"><span class="vdot"></span>{$voice.status}</div>

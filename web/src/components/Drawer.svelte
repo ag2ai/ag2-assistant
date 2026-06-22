@@ -3,7 +3,8 @@
   import { sessions, tasks, drawerTab, settingsOpen, filesOpen } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
-  import logo from '../assets/ag2-logo.png'
+  import Monogram from './Monogram.svelte'
+  import Icon from './Icon.svelte'
 
   let usage = $state(null)   // today's token/cost totals for the activity HUD
 
@@ -39,18 +40,19 @@
   const openTask = (id) => go('/t/' + id)
   const newChat = () => go('/c/' + newChatId())
 
-  // status → icon + tooltip label (replaces the old text badges/tags)
+  // status → Lucide icon name + tooltip label. Colored per-status via the
+  // .statusicon CSS classes; replaces the old emoji/unicode glyphs.
   const STATUS = {
-    pending: { icon: '○', label: 'pending' },
-    scheduled: { icon: '⏰', label: 'scheduled' },
-    awaiting_input: { icon: '✋', label: 'needs input' },
-    planning: { icon: '✎', label: 'planning' },
-    running: { icon: '●', label: 'running' },
-    completed: { icon: '✓', label: 'completed' },
-    failed: { icon: '⚠', label: 'failed' },
-    cancelled: { icon: '⊘', label: 'cancelled' },
+    pending: { icon: 'clock', label: 'pending' },
+    scheduled: { icon: 'clock', label: 'scheduled' },
+    awaiting_input: { icon: 'message', label: 'needs input' },
+    planning: { icon: 'brain', label: 'planning' },
+    running: { icon: 'zap', label: 'running' },
+    completed: { icon: 'check', label: 'completed' },
+    failed: { icon: 'x', label: 'failed' },
+    cancelled: { icon: 'x', label: 'cancelled' },
   }
-  const stat = (s) => STATUS[s] || { icon: '•', label: s || '' }
+  const stat = (s) => STATUS[s] || { icon: 'clock', label: s || '' }
 
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   const isUnread = (t) => TERMINAL.has(t.status) && !t.seen  // a finished result not yet opened
@@ -137,13 +139,13 @@
 
 <div class="drawer">
   <div class="dhead">
-    <img class="brandlogo" src={logo} alt="AG2" />
+    <Monogram size={30} />
     <span class="brand">Assistant</span>
   </div>
   <div class="tabs">
-    <button class="tab" class:on={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}>Chats</button>
-    <button class="tab" class:on={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}>Tasks</button>
-    <button class="newbtn" onclick={newChat}>+ New</button>
+    <button class="tab" class:on={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={13} /> Chats</button>
+    <button class="tab" class:on={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={13} /> Tasks</button>
+    <button class="newbtn" onclick={newChat}><Icon name="plus" size={14} /> New</button>
   </div>
 
   <div class="dlist">
@@ -161,13 +163,13 @@
         <div class="drow ttask" class:on={$route.name === 'task' && $route.id === g.task.id}
              class:unseen={!g.runs.length && isUnread(g.task)} onclick={() => openTask(g.task.id)}>
           <div class="tline1">
-            <span class="statusicon {g.task.status}" title={stat(g.task.status).label}>{stat(g.task.status).icon}</span>
+            <span class="statusicon {g.task.status}" title={stat(g.task.status).label}><Icon name={stat(g.task.status).icon} size={14} /></span>
             <span class="ttitle">{g.task.title}</span>
             {#if g.unread}<span class="unreadcount" title="{g.unread} unread">{g.unread}</span>{/if}
           </div>
           {#if g.task.recurrence || nextIn}
             <div class="tmeta">
-              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}">🔁 {g.task.recurrence}</span>{/if}
+              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}"><Icon name="clock" size={11} /> {g.task.recurrence}</span>{/if}
               {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
             </div>
           {/if}
@@ -175,8 +177,8 @@
         {#each visibleRuns(g) as r (r.id)}
           <div class="drow child trow" class:on={$route.name === 'task' && $route.id === r.id}
                class:unseen={isUnread(r)} onclick={() => openTask(r.id)}>
-            <span class="statusicon {r.status}" title={stat(r.status).label}>{stat(r.status).icon}</span>
-            <span class="runwhen">↻ {fmtWhen(r.scheduled_for || r.created_at) || 'run'}</span>
+            <span class="statusicon {r.status}" title={stat(r.status).label}><Icon name={stat(r.status).icon} size={13} /></span>
+            <span class="runwhen">{fmtWhen(r.scheduled_for || r.created_at) || 'run'}</span>
             {#if isUnread(r)}<span class="dot" title="unread"></span>{/if}
           </div>
         {/each}
@@ -191,11 +193,11 @@
 
   {#if usageLabel}
     <div class="usagehud" title={usageTitle}>
-      <span class="uhicon">📊</span><span class="uhlabel">Today · {usageLabel}</span>
+      <span class="uhicon"><Icon name="cpu" size={13} /></span><span class="uhlabel">Today · {usageLabel}</span>
     </div>
   {/if}
   <div class="dfoot">
-    <button class="settingsbtn" onclick={() => ($filesOpen = true)}>📁 Files</button>
-    <button class="settingsbtn" onclick={() => ($settingsOpen = true)}>⚙ Settings</button>
+    <button class="settingsbtn" onclick={() => ($filesOpen = true)}><Icon name="folder" size={15} /> Files</button>
+    <button class="settingsbtn" onclick={() => ($settingsOpen = true)}><Icon name="settings" size={15} /> Settings</button>
   </div>
 </div>

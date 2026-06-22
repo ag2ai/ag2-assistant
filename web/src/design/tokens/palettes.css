@@ -1,0 +1,101 @@
+/* ============================================================
+   AG2 Assistant — Switchable accent palettes
+   ------------------------------------------------------------
+   The accent is themeable. Each palette defines a --p-* ramp;
+   the semantic --accent* tokens (in colors.css) resolve to it.
+   Switch by setting a [data-palette="…"] attribute on <html>
+   (or any wrapper) — do it in code with palette.js:
+
+       AG2Palette.setPalette('ocean')
+
+   …or hand the agent that same call as a tool. Default = Teal
+   (calmer + more organic than the heritage coral, which stays
+   alive as --brand-coral in the mascot antenna).
+
+   Palettes: teal · coral · ocean · violet · sage · sunset
+   ============================================================ */
+
+/* ---- Teal (default) ---- */
+:root,
+[data-palette="teal"] {
+  --p-50:  #ecfbf7;
+  --p-100: #cdf3eb;
+  --p-200: #9ce7da;
+  --p-300: #63d4c4;
+  --p-400: #2fbbac;
+  --p-500: #109e91;
+  --p-600: #0c8076;
+  --p-700: #0d655d;
+  --p-800: #0e4f4a;
+  --p-900: #0a3a37;
+}
+
+/* ---- Coral (AG2 heritage) ---- */
+[data-palette="coral"] {
+  --p-50:  #fff2ee;
+  --p-100: #ffe1d8;
+  --p-200: #ffc4b4;
+  --p-300: #fb9e84;
+  --p-400: #fb7758;
+  --p-500: #f95339;
+  --p-600: #e53c20;
+  --p-700: #bd2f18;
+  --p-800: #8f2614;
+  --p-900: #5e1b10;
+}
+
+/* ---- Ocean (deep friendly blue) ---- */
+[data-palette="ocean"] {
+  --p-50:  #ecf3ff;
+  --p-100: #d6e6ff;
+  --p-200: #aeccff;
+  --p-300: #7dabfb;
+  --p-400: #4c8bf5;
+  --p-500: #2f6fe0;
+  --p-600: #2057bd;
+  --p-700: #1c4593;
+  --p-800: #1a3771;
+  --p-900: #142850;
+}
+
+/* ---- Violet (soft, modern) ---- */
+[data-palette="violet"] {
+  --p-50:  #f4f0ff;
+  --p-100: #e8e0ff;
+  --p-200: #d2c2ff;
+  --p-300: #b39bff;
+  --p-400: #9472fb;
+  --p-500: #7a52ec;
+  --p-600: #6438cf;
+  --p-700: #512ca6;
+  --p-800: #3f2480;
+  --p-900: #2c1a59;
+}
+
+/* ---- Sage (calm botanical green) ---- */
+[data-palette="sage"] {
+  --p-50:  #eef8ee;
+  --p-100: #d6efd6;
+  --p-200: #abdcab;
+  --p-300: #79c47c;
+  --p-400: #4ea857;
+  --p-500: #2f8c44;
+  --p-600: #237036;
+  --p-700: #1d592d;
+  --p-800: #194726;
+  --p-900: #11331c;
+}
+
+/* ---- Sunset (warm amber-rose) ---- */
+[data-palette="sunset"] {
+  --p-50:  #fff3ec;
+  --p-100: #ffe2d1;
+  --p-200: #ffc29c;
+  --p-300: #ff9d63;
+  --p-400: #fb7a36;
+  --p-500: #ec5d18;
+  --p-600: #c8480f;
+  --p-700: #a03a10;
+  --p-800: #7c2f12;
+  --p-900: #52210e;
+}

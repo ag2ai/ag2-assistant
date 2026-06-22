@@ -11,9 +11,25 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    // dev: proxy API + WebSockets to the running gateway
+    // dev: proxy API + WebSockets to the running gateway. The gateway rejects
+    // cross-origin browser requests (_origin_ok in gateway/app.py). Same-origin
+    // REST GETs send no Origin header so they pass, but browsers ALWAYS send an
+    // Origin on the WebSocket handshake (here: the dev server's localhost:5173+),
+    // which wouldn't match the gateway host → 403, so the event stream never
+    // connects and chats render empty. Rewrite the Origin on proxied requests to
+    // the target so the dev server's stream is accepted. Dev-only; prod is served
+    // same-origin by the gateway and never hits this.
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8800', ws: true, changeOrigin: true },
+      '/api': {
+        target: 'http://127.0.0.1:8800',
+        ws: true,
+        changeOrigin: true,
+        configure: (proxy) => {
+          const origin = 'http://127.0.0.1:8800'
+          proxy.on('proxyReq', (proxyReq) => proxyReq.setHeader('origin', origin))
+          proxy.on('proxyReqWs', (proxyReq) => proxyReq.setHeader('origin', origin))
+        },
+      },
     },
   },
 })

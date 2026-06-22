@@ -1,0 +1,19 @@
+/* ============================================================
+   AG2 Assistant — Webfonts
+   ------------------------------------------------------------
+   The shipping app uses the system sans + ui-monospace stacks.
+   This design system EVOLVES the brand toward a warmer, friendlier
+   voice with three Google Fonts (an intentional brand decision,
+   not a substitution for missing files):
+
+     • Bricolage Grotesque — display / headings. Characterful,
+       slightly condensed humanist grotesque; warm and modern.
+     • Hanken Grotesk      — UI + body. Soft, highly readable,
+       friendly without being cute.
+     • JetBrains Mono      — code, AG2 event names, token values.
+
+   Loaded from Google Fonts so consuming projects pick them up
+   with one stylesheet link. Weights kept tight for performance.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');

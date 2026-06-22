@@ -5,6 +5,7 @@
   import { viewer } from '../../store.js'
   import { api } from '../../transport/api.js'
   import { viewerKind } from '../../lib/preview.js'
+  import Icon from '../Icon.svelte'
 
   let { item } = $props()
   const isImage = $derived(viewerKind(item.name || item.path) === 'image')
@@ -17,6 +18,6 @@
   {#if isImage}
     <img class="thumb" src={api.fileUrl(item.path)} alt={item.name} title={item.name} onclick={open} />
   {:else}
-    <button class="filechip" onclick={open} title={item.path}>📎 {item.name || item.path}</button>
+    <button class="filechip" onclick={open} title={item.path}><Icon name="paperclip" size={14} /> {item.name || item.path}</button>
   {/if}
 </div>

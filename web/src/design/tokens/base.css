@@ -1,0 +1,115 @@
+/* ============================================================
+   AG2 Assistant — Base / reset
+   ------------------------------------------------------------
+   Minimal element defaults + the brand's thin warm scrollbars.
+   Sets the page in the warm paper canvas with Hanken Grotesk.
+   ============================================================ */
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Thin, warm, subtle scrollbars on every scrollable area. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: var(--radius-pill); }
+*::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+/* Display headings default to Bricolage Grotesque. */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  margin: 0;
+}
+
+code, pre, kbd, samp { font-family: var(--font-mono); }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+::selection { background: var(--accent-soft); color: var(--accent-press); }
+
+/* ============================================================
+   Motion — shared keyframes + helper classes
+   ------------------------------------------------------------
+   Professional but fluid: short, eased entrances and a soft
+   palette-following glow. Use the .ag2-* helpers in markup, or
+   reference the keyframes directly. All gated by reduced-motion
+   below.
+   ============================================================ */
+
+/* SubsystemDot pulse + typing dots. */
+@keyframes ag2-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.82); }
+}
+@keyframes ag2-blink {
+  0%, 80%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
+}
+
+/* Entrance: rise + fade — for messages, cards, list items. */
+@keyframes ag2-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Entrance: gentle scale-in — for modals, popovers, avatars. */
+@keyframes ag2-pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* Backdrop fade. */
+@keyframes ag2-fade { from { opacity: 0; } to { opacity: 1; } }
+/* Panel slide-in from the right edge (inspector rail). */
+@keyframes ag2-slide-left {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+/* Soft breathing glow that tracks the active accent. */
+@keyframes ag2-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  50%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 14%, transparent); }
+}
+/* Sheen sweep — for skeletons / live "thinking" strips. */
+@keyframes ag2-shimmer {
+  from { background-position: -180% 0; }
+  to   { background-position: 180% 0; }
+}
+
+.ag2-rise  { animation: ag2-rise var(--dur-slow) var(--ease-out) both; }
+.ag2-pop   { animation: ag2-pop var(--dur-base) var(--ease-spring) both; }
+.ag2-fade  { animation: ag2-fade var(--dur-base) var(--ease-out) both; }
+.ag2-slide-left { animation: ag2-slide-left var(--dur-slow) var(--ease-out) both; }
+.ag2-glow  { animation: ag2-glow 2.8s var(--ease-in-out) infinite; }
+
+/* Stagger helper: set --i on successive children for a cascade. */
+.ag2-rise { animation-delay: calc(var(--i, 0) * 55ms); }
+
+/* A reusable smooth hover lift — components opt in via this class. */
+.ag2-lift { transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
+.ag2-lift:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+/* Respect reduced motion globally. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

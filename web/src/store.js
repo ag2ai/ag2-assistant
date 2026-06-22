@@ -57,3 +57,15 @@ export const soundOnInput = persisted('soundOnInput', false)
 // "AG2 view" — reveal where AG2 powers things: opens the live event inspector and
 // adds per-item provenance tags. A deliberate demo mode. Off by default.
 export const ag2View = persisted('ag2View', false)
+
+// First-run onboarding overlay open/closed. Opened automatically on first launch
+// when no provider key is stored (see App.svelte), or via Settings → "Re-run setup".
+export const onboardingOpen = writable(false)
+
+// Has the user completed (or dismissed) onboarding at least once? Per-device flag
+// so the welcome flow doesn't reappear every launch.
+export const onboarded = persisted('ag2-onboarded', false)
+
+// Local user profile seeded by onboarding: name + focus areas. Greets the user and
+// could tailor suggestions. Kept on-device (mirrors keys/model in Settings).
+export const profile = persisted('ag2-profile', { name: '', focuses: [] })

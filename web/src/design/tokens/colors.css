@@ -1,0 +1,154 @@
+/* ============================================================
+   AG2 Assistant — Color tokens
+   ------------------------------------------------------------
+   Anchored to the real app (--accent #f95339 coral, the AG2
+   brand red) but evolved WARM + organic: neutrals carry a faint
+   amber/sand tint instead of the cold pure greys of the shipping
+   build, so surfaces feel like paper rather than glass.
+
+   Three layers:
+     1. Brand scales      — coral primary, full ramp
+     2. Categorical / AG2 — the robot-antenna palette, mapped to
+                            AG2 event subsystems (Model, Tool, …)
+     3. Semantic aliases  — bg / surface / text / border / state,
+                            themed for light (default) + dark.
+   ============================================================ */
+
+:root {
+  /* ---- Brand: AG2 Coral (primary) ---- */
+  --coral-50:  #fff2ee;
+  --coral-100: #ffe1d8;
+  --coral-200: #ffc4b4;
+  --coral-300: #fb9e84;
+  --coral-400: #fb7758;
+  --coral-500: #f95339;  /* ← AG2 brand accent (exact) */
+  --coral-600: #e53c20;
+  --coral-700: #bd2f18;
+  --coral-800: #8f2614;
+  --coral-900: #5e1b10;
+
+  /* ---- Warm neutral ramp (sand → espresso) ---- */
+  --sand-0:   #ffffff;
+  --sand-25:  #fcfbf8;
+  --sand-50:  #f8f5f0;
+  --sand-100: #f1ece4;
+  --sand-200: #e7e0d5;
+  --sand-300: #d6ccbd;
+  --sand-400: #b3a99a;
+  --sand-500: #8c847a;
+  --sand-600: #6b645b;
+  --sand-700: #4c463f;
+  --sand-800: #2e2a25;
+  --sand-900: #1d1a16;
+  --sand-950: #14110f;
+
+  /* ---- Categorical: AG2 subsystem palette ----
+     Drawn from the AG2 brand robot-antenna colors and the app's
+     own ag2map.js. Use to color-code agents, event layers, tags. */
+  --ag2-model:    #4c8bf5;  /* blue   — Agent ↔ model (LLM calls) */
+  --ag2-tool:     #1f9d55;  /* green  — tools: search/shell/code  */
+  --ag2-memory:   #9b59b6;  /* purple — knowledge & compaction    */
+  --ag2-subagent: #e67e22;  /* orange — run_task subagents         */
+  --ag2-hitl:     #e0b400;  /* amber  — human-in-the-loop          */
+  --ag2-observer: #c2410c;  /* rust   — observers: alerts & halts  */
+  --ag2-voice:    #16a3a3;  /* aqua   — LiveAgent realtime voice   */
+  --ag2-usage:    #8c847a;  /* sand   — token usage / stream       */
+
+  /* ---- State hues ---- */
+  --green-500:  #1f9d55;
+  --green-600:  #178048;
+  --amber-500:  #e0b400;
+  --red-500:    #d8552f;
+  --red-600:    #c2410c;
+  --blue-500:   #4c8bf5;
+
+  /* =========================================================
+     SEMANTIC ALIASES — Light theme (default)
+     ========================================================= */
+
+  /* Surfaces */
+  --bg:            var(--sand-50);   /* app canvas — warm paper   */
+  --surface:       var(--sand-0);    /* cards, bubbles, modals    */
+  --surface-sunk:  var(--sand-100);  /* code blocks, wells, input */
+  --surface-hover: var(--sand-100);
+  --panel:         var(--sand-25);   /* drawer / rails            */
+
+  /* Ink */
+  --text:          var(--sand-900);
+  --text-muted:    var(--sand-500);
+  --text-faint:    var(--sand-400);
+  --text-on-coral: #ffffff;
+  --text-on-dark:  var(--sand-25);
+
+  /* Lines */
+  --line:          var(--sand-200);
+  --line-strong:   var(--sand-300);
+
+  /* Brand / interactive — driven by the active palette (see palettes.css).
+     The --accent* tokens resolve to whatever palette is set via [data-palette];
+     soft + ring derive from --accent so they follow the palette automatically. */
+  --accent:        var(--p-500);
+  --accent-hover:  var(--p-600);
+  --accent-press:  var(--p-700);
+  --accent-soft:   color-mix(in srgb, var(--accent) 12%, transparent); /* tinted fills, unseen rows */
+  --accent-ring:   color-mix(in srgb, var(--accent) 38%, transparent);
+  --text-on-accent: #ffffff;
+  /* Fixed brand pop — AG2 coral, independent of the chosen palette
+     (lives in the mascot antenna + heritage moments). */
+  --brand-coral:   var(--coral-500);
+
+  /* Message bubbles — the user's bubble follows the palette accent. */
+  --user-bubble:     var(--accent);
+  --user-bubble-ink: #ffffff;
+  --agent-bubble:    var(--sand-0);
+  --agent-bubble-ink: var(--sand-900);
+
+  /* State */
+  --success: var(--green-500);
+  --warning: var(--amber-500);
+  --danger:  var(--red-500);
+  --info:    var(--blue-500);
+
+  /* Focus */
+  --focus-ring: 0 0 0 3px var(--accent-ring);
+
+  color-scheme: light;
+}
+
+/* =========================================================
+   SEMANTIC ALIASES — Dark theme
+   Warm espresso, not cold black. Opt in with [data-theme="dark"]
+   on a wrapper; also honors the OS preference automatically.
+   ========================================================= */
+
+[data-theme="dark"] {
+  --bg:            var(--sand-950);
+  --surface:       var(--sand-900);
+  --surface-sunk:  #221d19;
+  --surface-hover: #262019;
+  --panel:         #1a1713;
+
+  --text:          var(--sand-25);
+  --text-muted:    #998f83;
+  --text-faint:    #6b645b;
+  --text-on-coral: #ffffff;
+  --text-on-accent: #ffffff;
+  --text-on-dark:  var(--sand-25);
+
+  --line:          #2e2823;
+  --line-strong:   #3c352d;
+
+  /* Palette-driven; dark uses the brighter palette steps. */
+  --accent:        var(--p-400);
+  --accent-hover:  var(--p-300);
+  --accent-press:  var(--p-200);
+  --accent-soft:   color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-ring:   color-mix(in srgb, var(--accent) 45%, transparent);
+
+  --user-bubble:     var(--p-500);
+  --user-bubble-ink: #ffffff;
+  --agent-bubble:    var(--sand-900);
+  --agent-bubble-ink: var(--sand-25);
+
+  color-scheme: dark;
+}

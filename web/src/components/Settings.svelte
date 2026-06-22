@@ -1,8 +1,10 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen } from '../store.js'
   import { api } from '../transport/api.js'
   import { chime } from '../lib/chime.js'
+  import Icon from './Icon.svelte'
+  import Appearance from './Appearance.svelte'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
   // API-key rows. github is a stored token (skills registry), NOT a model provider,
@@ -61,6 +63,7 @@
   const openGoogle = () => { $settingsOpen = false; $googleOpen = true }
   const openMemory = () => { $settingsOpen = false; $memoryOpen = true }
   const openPoweredBy = () => { $settingsOpen = false; $poweredByOpen = true }
+  const reRunSetup = () => { $settingsOpen = false; $onboardingOpen = true }
 </script>
 
 <div class="modal-backdrop" onclick={close}></div>
@@ -72,6 +75,14 @@
     <p class="muted">Loading…</p>
   {:else}
     <div class="setscroll">
+      <div class="setsec">Appearance</div>
+      <Appearance />
+      <button class="setrow" onclick={reRunSetup}>
+        <span class="sk"><Icon name="sparkles" size={15} /> Re-run setup</span>
+        <span class="sv">replay the first-run welcome & onboarding</span>
+        <span class="sgo">Open →</span>
+      </button>
+
       <div class="setsec">API keys</div>
       {#each KEY_ROWS as k}
         <div class="keyrow">
@@ -114,14 +125,14 @@
 
       <div class="setsec">Memory</div>
       <button class="setrow" onclick={openMemory}>
-        <span class="sk">🧠 Memory</span>
+        <span class="sk"><Icon name="brain" size={15} /> Memory</span>
         <span class="sv">what the assistant has learned about you</span>
         <span class="sgo">View & edit →</span>
       </button>
 
       <div class="setsec">AG2</div>
       <button class="setrow" onclick={openPoweredBy}>
-        <span class="sk">⚡ Powered by AG2</span>
+        <span class="sk"><Icon name="zap" size={15} /> Powered by AG2</span>
         <span class="sv">the AG2 Beta primitives behind this app</span>
         <span class="sgo">View →</span>
       </button>

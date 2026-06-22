@@ -1,6 +1,7 @@
 <script>
   import { viewer } from '../../store.js'
   import { api } from '../../transport/api.js'
+  import Icon from '../Icon.svelte'
 
   let { item } = $props()
   let gone = $state(new Set()) // card ids whose file is no longer available
@@ -55,7 +56,7 @@
 
 <div class="tools">
   {#each item.names as t}
-    <span class="chip">⚙ {t.name}{t.n > 1 ? ' ×' + t.n : ''}</span>
+    <span class="chip"><Icon name="zap" size={12} /> {t.name}{t.n > 1 ? ' ×' + t.n : ''}</span>
   {/each}
 </div>
 {#if item.cards?.length}
@@ -63,28 +64,28 @@
     {#each item.cards as c (c.id)}
       {#if c.kind === 'file'}
         <div class="toolcard" class:gone={gone.has(c.id)}>
-          <span class="tcicon">📄</span>
+          <span class="tcicon"><Icon name="file-text" size={15} /></span>
           {#if gone.has(c.id)}
             <span class="tcname">{c.name}</span>
             <span class="tcgone">deleted</span>
           {:else}
             <button class="tclink" onclick={() => openFile(c)} title={c.path}>{c.name}</button>
-            <button class="tcdl" onclick={() => downloadFile(c)} title="Download {c.name}">⬇</button>
+            <button class="tcdl" onclick={() => downloadFile(c)} title="Download {c.name}" aria-label="Download {c.name}"><Icon name="download" size={15} /></button>
           {/if}
         </div>
       {:else if c.kind === 'search'}
         <div class="toolcard">
-          <span class="tcicon">🔍</span>
+          <span class="tcicon"><Icon name="search" size={15} /></span>
           <span class="tcquery" title="Search query">{c.query}</span>
         </div>
       {:else if c.kind === 'image'}
         <div class="toolcard" title={c.edit ? 'Editing image' : 'Generating image'}>
-          <span class="tcicon">🖼</span>
+          <span class="tcicon"><Icon name="image" size={15} /></span>
           <span class="tcquery">{c.edit ? 'Edit' : 'Image'} · {c.prompt}</span>
         </div>
       {:else if c.kind === 'skill'}
         <div class="toolcard" title={c.ran ? `Ran script ${c.script} from skill ${c.name}` : `Used skill ${c.name}`}>
-          <span class="tcicon">🧩</span>
+          <span class="tcicon"><Icon name="code" size={15} /></span>
           <span class="tcskill">Skill · {c.name}{c.ran ? ` · ▶ ${c.script}` : ''}</span>
         </div>
       {/if}

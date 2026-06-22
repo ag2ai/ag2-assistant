@@ -2,6 +2,7 @@
   import { taskPanel, viewer } from '../../store.js'
   import { api } from '../../transport/api.js'
   import Markdown from '../Markdown.svelte'
+  import Icon from '../Icon.svelte'
 
   const TERMINAL = ['completed', 'failed', 'cancelled']
 
@@ -18,9 +19,9 @@
     <div class="ptitle">Task</div>
     {#if $taskPanel.objective}<div>{$taskPanel.objective}</div>{/if}
     {#if $taskPanel.scheduled_for}
-      <div class="note" style="text-align:left;margin:6px 0">⏰ {$taskPanel.scheduled_for}{$taskPanel.recurrence ? ' · repeats ' + $taskPanel.recurrence : ' (one-off)'}</div>
+      <div class="note" style="text-align:left;margin:6px 0;display:inline-flex;align-items:center;gap:6px"><Icon name="clock" size={13} /> {$taskPanel.scheduled_for}{$taskPanel.recurrence ? ' · repeats ' + $taskPanel.recurrence : ' (one-off)'}</div>
     {/if}
-    {#if $taskPanel.run_of}<div class="note" style="text-align:left">↻ One run of a recurring task.</div>{/if}
+    {#if $taskPanel.run_of}<div class="note" style="text-align:left;display:inline-flex;align-items:center;gap:6px"><Icon name="zap" size={13} /> One run of a recurring task.</div>{/if}
 
     {#each ($taskPanel.deliverables || []) as d}
       <div class="deliv">
