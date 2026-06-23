@@ -168,6 +168,30 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .fb-save:disabled { opacity: .5; cursor: default; }
 .fb-x { display: inline-flex; align-items: center; border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
 .fb-x:hover { color: var(--accent); }
+
+/* Folder picker — server-driven directory browser for choosing a project folder. */
+.fp { display: flex; flex-direction: column; gap: 8px; }
+.fp-bar { display: flex; align-items: center; gap: 8px; }
+.fp-up { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border: 1px solid var(--line); background: var(--surface); color: var(--text-muted); border-radius: var(--radius-sm); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.fp-up:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.fp-up:disabled { opacity: .45; cursor: default; }
+.fp-path { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.fp-roots { display: flex; flex-wrap: wrap; gap: 6px; }
+.fp-root { border: 1px solid var(--line); background: var(--surface); color: var(--text-muted); border-radius: var(--radius-pill); padding: 3px 11px; font: inherit; font-size: var(--text-xs); font-weight: var(--fw-medium); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.fp-root:hover { border-color: var(--accent); color: var(--accent); }
+.fp-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-sunk); max-height: 240px; overflow-y: auto; }
+.fp-dir { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: none; background: none; color: var(--text); border-bottom: 1px solid var(--line); padding: 9px 12px; font: inherit; font-size: var(--text-sm); cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.fp-dir:last-child { border-bottom: none; }
+.fp-dir:hover { background: var(--surface-hover); }
+.fp-dir .fp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-dir > :global(svg):first-child { color: var(--text-muted); }
+.fp-dir > :global(svg):last-child { color: var(--text-faint); }
+.fp-msg { padding: 18px 12px; text-align: center; color: var(--text-muted); font-size: var(--text-sm); }
+.fp-msg.err { color: var(--ag2-observer); }
+.fp-use { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--accent); background: var(--accent); color: var(--text-on-accent); border-radius: var(--radius-sm); padding: 9px 16px; font: inherit; font-size: var(--text-sm); font-weight: var(--fw-semibold); cursor: pointer; box-shadow: var(--shadow-accent); transition: background var(--dur-fast) var(--ease-out); }
+.fp-use:hover:not(:disabled) { background: var(--accent-hover); }
+.fp-use:disabled { opacity: .5; cursor: default; box-shadow: none; }
+.fp-use.on { background: var(--success); border-color: var(--success); box-shadow: none; }
 .tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 2px 9px; }
 .toolcards { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }

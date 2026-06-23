@@ -3,14 +3,16 @@
   // model, focus areas, and appearance — then seeds the same store Settings reads
   // so the two stay in sync. Shown on first launch when no key is stored, or via
   // Settings → "Re-run setup".
+  import { onMount } from 'svelte'
   import { onboardingOpen, profile } from '../store.js'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
+  import FolderPicker from './FolderPicker.svelte'
   import ag2Mark from '../assets/ag2-mark.svg'
   import ag2MarkWhite from '../assets/ag2-mark-white.svg'
 
-  const STEPS = ['Welcome', 'Connect', 'Personalize', 'Ready']
+  const STEPS = ['Welcome', 'Connect', 'Project', 'Personalize', 'Ready']
   const FEATURES = [
     { icon: 'zap', title: 'Powered by AG2 Beta', desc: 'A universal agent runtime — the open-source framework behind every reply.' },
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
@@ -41,23 +43,28 @@
   let name = $state($profile.name || '')
   // Pre-select the user's saved focuses, or sensible defaults on a truly fresh run.
   let focuses = $state($profile.focuses?.length ? [...$profile.focuses] : ['research', 'coding'])
+  let folder = $state('')       // chosen project folder (mandatory — seeds the repo-files MCP)
+  let fsRoots = $state({})       // {home, cwd, workspace} start points for the picker
   let busy = $state(false)
 
+  // Folder-picker start roots (+ any already-chosen folder) come from the settings API.
+  onMount(async () => {
+    try {
+      const s = await api.settings()
+      fsRoots = s.fs || {}
+      if (s.project_folder) folder = s.project_folder
+    } catch {}
+  })
+
   const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
-  const canNext = $derived(step !== 1 || hasKey)
+  // Gate per step: Connect needs a key, Project needs a folder.
+  const canNext = $derived((step !== 1 || hasKey) && (step !== 2 || !!folder))
   const toggleFocus = (id) =>
     (focuses = focuses.includes(id) ? focuses.filter((x) => x !== id) : [...focuses, id])
 
   const next = () => (step = Math.min(step + 1, STEPS.length - 1))
   const back = () => (step = Math.max(step - 1, 0))
-  const startFromWelcome = () => { if (name.trim() || true) next() }
-
-  // Skip into the app without keys (degraded). Still records the name/focuses chosen.
-  function skip() {
-    $profile = { name: name.trim(), focuses }
-    api.setOnboarded().catch(() => {}) // mark done per install (server-side)
-    $onboardingOpen = false
-  }
+  const startFromWelcome = () => next()
 
   // Persist everything into the same store Settings reads, then enter the app.
   async function finish() {
@@ -68,6 +75,7 @@
       }
       const m = MODELS.find((x) => x.label === modelLabel)
       if (m) { try { await api.setLlm(m.provider, m.model) } catch {} }
+      if (folder) { try { await api.setProjectFolder(folder) } catch {} } // seed read-only repo-files MCP
       try { await api.setOnboarded() } catch {} // mark done per install (server-side)
     } finally {
       $profile = { name: name.trim(), focuses }
@@ -131,7 +139,6 @@
             </div>
             <div class="onb-welcomeactions">
               <button class="onb-btn primary lg" onclick={startFromWelcome}>Get started <Icon name="chevron-right" size={17} /></button>
-              <button class="onb-btn ghost lg" onclick={skip}>I'll explore first</button>
             </div>
 
           {:else if step === 1}
@@ -156,6 +163,11 @@
             </div>
 
           {:else if step === 2}
+            <h2>Give the assistant your project</h2>
+            <p class="lead">Pick a folder it can <b>read</b> — your code repo, notes, anything you'll ask about. Read-only: it can browse and search, never write or delete. You can change this anytime in Settings.</p>
+            <FolderPicker roots={fsRoots} start={fsRoots.cwd} bind:selected={folder} />
+
+          {:else if step === 3}
             <h2>{name.trim() ? `Make it yours, ${name.trim()}` : 'Make it yours'}</h2>
             <p class="lead">A couple of touches so the assistant feels like home.</p>
             <div class="onb-field">
@@ -183,6 +195,7 @@
             </div>
             <div class="onb-summary">
               <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">Model</span><span class="onb-sumval">{modelLabel}</span></div>
+              {#if folder}<div class="onb-sumrow"><span class="onb-sumicon"><Icon name="folder" size={16} /></span><span class="onb-sumkey">Folder</span><span class="onb-sumval">{folder}</span></div>{/if}
               <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="sparkles" size={16} /></span><span class="onb-sumkey">Focus</span><span class="onb-sumval cap">{focuses.length ? focuses.join(', ') : 'Anything you need'}</span></div>
             </div>
             <div class="onb-tip">
@@ -198,6 +211,7 @@
         <button class="onb-btn ghost" onclick={back}><Icon name="chevron-left" size={16} /> Back</button>
         <div class="onb-navright">
           {#if step === 1 && !hasKey}<span class="hint">Add a key to continue</span>{/if}
+          {#if step === 2 && !folder}<span class="hint">Choose a folder to continue</span>{/if}
           {#if step < STEPS.length - 1}
             <button class="onb-btn primary" disabled={!canNext} onclick={next}>Continue <Icon name="chevron-right" size={16} /></button>
           {:else}

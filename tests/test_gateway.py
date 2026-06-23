@@ -251,6 +251,81 @@ def test_mcp_settings_endpoints(monkeypatch):
         assert client.delete("/api/settings/mcp/local").status_code == 404
 
 
+def test_project_folder_endpoint_seeds_readonly_repo_files(monkeypatch, tmp_path):
+    """POST /api/settings/project-folder persists the folder AND seeds a `repo-files`
+    MCP scoped to it with exactly the 7 read tools (no write/edit/delete reaches the agent)."""
+    from fastapi.testclient import TestClient
+
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+
+    proj = tmp_path / "project"
+    proj.mkdir()
+
+    app = app_mod.create_app(memory=False, persist=False)
+    with TestClient(app) as client:
+        before = client.get("/api/settings").json()
+        assert before["project_folder"] == ""
+        assert before["mcp_servers"] == []
+        # the picker's start roots are advertised for the UI
+        assert set(before["fs"]) == {"home", "cwd", "workspace"}
+
+        resp = client.post("/api/settings/project-folder", json={"path": str(proj)})
+        assert resp.status_code == 200
+        assert resp.json()["project_folder"] == str(proj.resolve())
+
+        s = client.get("/api/settings").json()
+        assert s["project_folder"] == str(proj.resolve())
+        server = next(x for x in s["mcp_servers"] if x["name"] == "repo-files")
+        assert server["command"] == "npx"
+        assert server["args"] == [
+            "-y",
+            "@modelcontextprotocol/server-filesystem",
+            str(proj.resolve()),
+        ]
+        # read-only by whitelist — exactly the 7 read tools, nothing that mutates
+        assert server["allowed_tools"] == [
+            "read_file",
+            "read_multiple_files",
+            "list_directory",
+            "directory_tree",
+            "search_files",
+            "get_file_info",
+            "list_allowed_directories",
+        ]
+        assert not any(
+            "write" in t or "edit" in t or "delete" in t for t in server["allowed_tools"]
+        )
+
+        # a non-directory is rejected (and seeds nothing)
+        bad = client.post("/api/settings/project-folder", json={"path": str(proj / "nope")})
+        assert bad.status_code == 400
+
+
+def test_fs_list_endpoint_lists_subdirs(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import assistant.gateway.app as app_mod
+    import assistant.gateway.core as core_mod
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "beta").mkdir()
+    (tmp_path / "file.txt").write_text("x")
+
+    app = app_mod.create_app(memory=False, persist=False)
+    with TestClient(app) as client:
+        r = client.get("/api/fs/list", params={"path": str(tmp_path)}).json()
+        assert r["ok"] is True
+        assert [d["name"] for d in r["dirs"]] == ["alpha", "beta"]
+
+        bad = client.get("/api/fs/list", params={"path": str(tmp_path / "missing")}).json()
+        assert bad["ok"] is False
+
+
 def test_create_app_shares_injected_gateway(fake_gateway):
     """When a gateway is injected (combined `ag2assistant run`), the app reuses it
     rather than creating its own, and doesn't tear it down on shutdown."""

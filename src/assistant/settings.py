@@ -73,6 +73,21 @@ def set_onboarded(value: bool = True) -> None:
     _write(data)
 
 
+def get_project_folder() -> str:
+    """The folder the assistant may read (chosen in onboarding; backs the read-only
+    repo-files MCP). Empty string if not set."""
+    v = _read().get("project_folder")
+    return v if isinstance(v, str) else ""
+
+
+def set_project_folder(path: str) -> None:
+    """Persist the chosen project folder. (Seeding the repo-files MCP itself is done by
+    the gateway endpoint via upsert_mcp_server.)"""
+    data = _read()
+    data["project_folder"] = path or ""
+    _write(data)
+
+
 def list_mcp_servers(*, include_env: bool = False) -> list[dict]:
     """Persisted MCP stdio server configs. Env values are hidden by default."""
     servers = _read().get(_MCP_KEY)

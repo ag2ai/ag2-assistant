@@ -118,6 +118,10 @@ class OnboardedRequest(BaseModel):
     value: bool = True
 
 
+class ProjectFolderRequest(BaseModel):
+    path: str
+
+
 class VoiceRequest(BaseModel):
     voice: str
 
@@ -514,6 +518,12 @@ def create_app(
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
             "onboarded": settings.get_onboarded(),  # first-run flag (per install)
+            "project_folder": settings.get_project_folder(),  # repo-files MCP root
+            "fs": {  # start roots for the folder picker
+                "home": str(Path.home()),
+                "cwd": str(Path.cwd()),
+                "workspace": str(Path(cfg.workspace_dir).expanduser()),
+            },
         }
 
     async def _mcp_health(server: dict) -> dict:
@@ -588,6 +598,52 @@ def create_app(
 
         settings.set_onboarded(req.value)
         return {"ok": True}
+
+    @app.get("/api/fs/list")
+    async def fs_list(path: str = "") -> dict:
+        """List immediate subdirectories of a host path — drives the folder picker. The
+        gateway is local + single-user and `_origin_guard` blocks cross-origin, so this is
+        safe; dotfolders are hidden. Empty path starts at home."""
+        from assistant.workspace import list_dirs
+
+        result = list_dirs(path or str(Path.home()))
+        if result is None:
+            return {"ok": False, "error": "not a readable directory"}
+        return {"ok": True, **result}
+
+    # Read-only subset of @modelcontextprotocol/server-filesystem — the repo-files MCP
+    # gets exactly these so the agent can read the project but never write/edit/delete.
+    _REPO_FILES_READ_TOOLS = [
+        "read_file",
+        "read_multiple_files",
+        "list_directory",
+        "directory_tree",
+        "search_files",
+        "get_file_info",
+        "list_allowed_directories",
+    ]
+
+    @app.post("/api/settings/project-folder")
+    async def set_project_folder(req: ProjectFolderRequest):
+        """Persist the chosen project folder AND seed a read-only `repo-files` MCP pointed
+        at it (reusing the MCP-server settings path), then reload so the agent picks it up."""
+        from assistant import settings
+
+        p = Path(req.path or "").expanduser()
+        if not req.path or not p.is_dir():
+            return JSONResponse({"error": "not a directory"}, status_code=400)
+        folder = str(p.resolve())
+        settings.set_project_folder(folder)
+        settings.upsert_mcp_server(
+            {
+                "name": "repo-files",
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", folder],
+                "allowed_tools": list(_REPO_FILES_READ_TOOLS),
+            }
+        )
+        await app.state.gateway.reload()  # new turns get the repo-files tools
+        return {"ok": True, "project_folder": folder}
 
     @app.post("/api/settings/llm")
     async def set_settings_llm(req: LlmRequest) -> dict:

@@ -94,3 +94,13 @@ def test_onboarded_flag_roundtrips_per_install():
 
     assert settings.delete_mcp_server("github") is True
     assert settings.delete_mcp_server("github") is False
+
+
+def test_project_folder_roundtrips():
+    # Fresh install: no project folder until chosen.
+    assert settings.get_project_folder() == ""
+    settings.set_project_folder("/tmp/my-project")
+    assert settings.get_project_folder() == "/tmp/my-project"
+    # Clearing it (empty/None) resets to "".
+    settings.set_project_folder("")
+    assert settings.get_project_folder() == ""

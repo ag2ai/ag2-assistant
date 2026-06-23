@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from assistant.workspace import (
     delete,
+    list_dirs,
     list_files,
     resolve,
     slugify,
@@ -103,3 +104,31 @@ def test_write_upload_saves_to_uploads_with_clean_name(tmp_path):
     assert resolve(tmp_path, rel) is not None
     # no clobber
     assert write_upload(tmp_path, "My Photo.PNG", b"x") == "uploads/my-photo-2.png"
+
+
+def test_list_dirs_returns_subdirs_only_sorted_and_hides_dotfolders(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "Docs").mkdir()
+    (tmp_path / ".git").mkdir()  # dotfolder — hidden
+    (tmp_path / "readme.md").write_text("hi")  # a file — not a dir, excluded
+
+    r = list_dirs(str(tmp_path))
+    assert r["path"] == str(tmp_path.resolve())
+    assert r["parent"] == str(tmp_path.resolve().parent)
+    names = [d["name"] for d in r["dirs"]]
+    assert names == ["Docs", "src"]  # case-insensitive sort, no .git, no readme.md
+    assert all(d["path"] == str(tmp_path.resolve() / d["name"]) for d in r["dirs"])
+
+
+def test_list_dirs_missing_or_not_a_dir_returns_none(tmp_path):
+    assert list_dirs(str(tmp_path / "nope")) is None  # missing
+    f = tmp_path / "a.txt"
+    f.write_text("x")
+    assert list_dirs(str(f)) is None  # a file, not a directory
+
+
+def test_list_dirs_empty_path_defaults_to_home(tmp_path, monkeypatch):
+    # conftest points HOME at tmp_path; an empty path expands "~" to it.
+    (tmp_path / "proj").mkdir()
+    r = list_dirs("")
+    assert r is not None and "proj" in [d["name"] for d in r["dirs"]]

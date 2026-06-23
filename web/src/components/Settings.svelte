@@ -5,6 +5,7 @@
   import { chime } from '../lib/chime.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
+  import FolderPicker from './FolderPicker.svelte'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
   // API-key rows. github is a stored token (skills registry), NOT a model provider,
@@ -25,6 +26,11 @@
   let mcpHealth = $state({})
   let err = $state('')
   let busy = $state(false)
+  let editFolder = $state(false)   // project-folder picker expanded?
+  let folderSel = $state('')        // folder chosen in the picker
+
+  function openFolderEdit() { folderSel = s?.project_folder || ''; editFolder = true }
+  const saveFolder = () => run(() => api.setProjectFolder(folderSel).then(() => { editFolder = false }))
 
   async function load() {
     try {
@@ -82,6 +88,21 @@
         <span class="sv">replay the first-run welcome & onboarding</span>
         <span class="sgo">Open →</span>
       </button>
+
+      <div class="setsec">Project folder</div>
+      {#if !editFolder}
+        <button class="setrow" onclick={openFolderEdit}>
+          <span class="sk"><Icon name="folder" size={15} /> {s.project_folder ? 'Folder' : 'Choose a folder'}</span>
+          <span class="sv">{s.project_folder || 'the assistant can read this folder (read-only)'}</span>
+          <span class="sgo">Change →</span>
+        </button>
+      {:else}
+        <FolderPicker roots={s.fs || {}} start={s.project_folder || (s.fs && s.fs.cwd) || ''} bind:selected={folderSel} />
+        <div class="keyrow" style="justify-content:flex-end;gap:8px">
+          <button class="linkbtn" onclick={() => (editFolder = false)}>Cancel</button>
+          <button class="open" disabled={busy || !folderSel} onclick={saveFolder}>Save folder</button>
+        </div>
+      {/if}
 
       <div class="setsec">API keys</div>
       {#each KEY_ROWS as k}

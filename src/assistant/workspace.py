@@ -148,3 +148,30 @@ def list_files(workspace_dir) -> list[dict]:
         )
     out.sort(key=lambda f: f["modified"], reverse=True)
     return out
+
+
+def list_dirs(path: str) -> dict | None:
+    """Immediate subdirectories of `path` (non-recursive) — for the folder picker that
+    lets the user choose a project folder anywhere on the host (not workspace-scoped).
+    Dotfolders are hidden. Returns ``{path, parent, dirs:[{name, path}]}`` (absolute
+    paths), or None if `path` isn't a readable directory."""
+    try:
+        p = Path(path or "~").expanduser().resolve()
+    except Exception:
+        return None
+    if not p.is_dir():
+        return None
+    dirs: list[dict] = []
+    try:
+        for item in p.iterdir():
+            if item.name.startswith("."):
+                continue  # hide dotfolders (.git, .venv, …) by default
+            try:
+                if item.is_dir():
+                    dirs.append({"name": item.name, "path": str(item)})
+            except OSError:
+                continue  # skip entries we can't stat (broken symlinks, etc.)
+    except (PermissionError, OSError):
+        return None
+    dirs.sort(key=lambda d: d["name"].lower())
+    return {"path": str(p), "parent": (str(p.parent) if p.parent != p else None), "dirs": dirs}
