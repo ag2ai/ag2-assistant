@@ -79,23 +79,61 @@ def _insert_bullet(doc: str, heading: str, bullet: str) -> str:
     return "\n".join(out) + "\n"
 
 
-async def remember_note(note: str, category: str = "how", store_path: Path | None = None) -> str:
-    """Immediately save an explicit user preference/fact to the learned profile.
+def _strip_marker(text: str) -> str:
+    """A bullet's text without its leading list marker — so `-`/`*` bullets compare equal."""
+    return text.strip().lstrip("*-•").strip()
 
-    Unlike the passive aggregator (which distils memory only every few turns and
-    may filter out one-offs), this writes straight away — so "remember X" takes
-    effect now and survives. The aggregator later reorganises/dedupes it on its
-    normal cadence. Returns the updated profile document.
+
+def _remove_bullets(doc: str, removals) -> str:
+    """Drop bullet lines whose text matches any of `removals` (marker-insensitive, exact
+    text). Headings/blank lines are always kept."""
+    targets = {_strip_marker(r) for r in removals if r and r.strip()}
+    if not targets:
+        return doc
+    kept = [
+        ln
+        for ln in doc.splitlines()
+        if not (ln.lstrip().startswith(("*", "-")) and _strip_marker(ln) in targets)
+    ]
+    return "\n".join(kept) + ("\n" if doc.endswith("\n") else "")
+
+
+async def record_preference(
+    note: str = "",
+    category: str = "how",
+    remove=(),
+    store_path: Path | None = None,
+) -> str:
+    """Apply a learned preference to the profile: first delete any directly-conflicting
+    bullets (`remove`, matched verbatim & marker-insensitive), then append `note` under
+    `category`. Both parts are optional — the feedback learner uses this to *revise*
+    (drop a contradicted bullet + add the corrected one) or just dedupe (note=""), not
+    only append. The aggregator still reorganises on its cadence. Returns the updated doc.
     """
-    heading = PROFILE_HEADINGS.get(category, PROFILE_HEADINGS["how"])
+    note = (note or "").strip()
+    removals = [r for r in (remove or []) if r and r.strip()]
     store = build_profile_store(store_path)
     existing = await store.read(PROFILE_PATH) if await store.exists(PROFILE_PATH) else ""
     doc = existing if existing.strip() else _blank_profile()
-    # Use "* " to match the marker the passive aggregator writes, so the profile
-    # stays visually consistent (both are valid Markdown bullets).
-    updated = _insert_bullet(doc, heading, "* " + note.strip())
-    await store.write(PROFILE_PATH, updated)
-    return updated
+    if not note and not removals:
+        return doc  # nothing to do (e.g. the feedback is already captured)
+    if removals:
+        doc = _remove_bullets(doc, removals)
+    if note:
+        heading = PROFILE_HEADINGS.get(category, PROFILE_HEADINGS["how"])
+        # "* " matches the aggregator's marker; _insert_bullet de-dupes verbatim.
+        doc = _insert_bullet(doc, heading, "* " + note)
+    await store.write(PROFILE_PATH, doc)
+    return doc
+
+
+async def remember_note(note: str, category: str = "how", store_path: Path | None = None) -> str:
+    """Immediately save an explicit user preference/fact to the learned profile
+    (append-only). Used by the agent's `remember` tool and as the feedback learner's
+    fallback. The aggregator later reorganises/dedupes on its cadence. Returns the
+    updated profile document.
+    """
+    return await record_preference(note, category, store_path=store_path)
 
 
 def build_profile_prompt(platform: str) -> str:

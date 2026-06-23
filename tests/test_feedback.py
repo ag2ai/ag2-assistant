@@ -44,3 +44,25 @@ async def test_feedback_empty_reason_writes_nothing(monkeypatch):
     before = await memory.read_profile()
     await feedback.learn(cfg, sentiment="down", reason="   ", content="x", request="y")
     assert await memory.read_profile() == before  # no reason → no memory write
+
+
+async def test_record_preference_revises_conflicting_bullet():
+    # An earlier "like" that a later dislike contradicts.
+    await memory.record_preference("Likes long, detailed reports", category="how")
+    assert "Likes long, detailed reports" in await memory.read_profile()
+
+    # Memory-aware revise: drop the conflicting bullet (marker-insensitive), add the fix.
+    await memory.record_preference(
+        "Dislikes long reports; prefers brief ones",
+        category="dislikes",
+        remove=["Likes long, detailed reports"],
+    )
+    p = await memory.read_profile()
+    assert "Likes long, detailed reports" not in p  # conflict removed
+    assert "Dislikes long reports; prefers brief ones" in p  # correction added
+
+
+async def test_record_preference_noop_when_empty():
+    before = await memory.read_profile()
+    await memory.record_preference("", category="how", remove=[])  # pure skip
+    assert await memory.read_profile() == before
