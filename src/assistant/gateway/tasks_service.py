@@ -384,9 +384,10 @@ class TaskService:
         for gc in await self._store.children(src.id):
             await self._clone_subtree(gc, child.id)
 
-    async def _clone_for_run(self, template):
+    async def _clone_for_run(self, template, parent_id: str | None = None):
         """A fresh, unplanned-status copy of a planned task tree (deliverables reset,
-        no assets) — one occurrence's run, with the template's baked-in plan."""
+        no assets) — one occurrence's run, with the template's baked-in plan. The new
+        run is grouped under `parent_id` (defaults to the template itself)."""
         run = await self._store.create(
             template.title,
             description=template.description,
@@ -394,7 +395,7 @@ class TaskService:
             capabilities=template.capabilities,
             origin_channel=template.origin_channel,
             hitl_channel=template.hitl_channel,
-            run_of=template.id,  # mark this as one occurrence of the recurring task
+            run_of=parent_id or template.id,  # group as one occurrence
         )
         for d in template.deliverables or []:
             await self._store.add_deliverable(
@@ -559,6 +560,29 @@ class TaskService:
             return f"Running an occurrence of '{t.title}' now; its schedule is unchanged."
         self._run_in_bg(task_id, t.origin_channel or "web", clarify=False)
         return f"Running '{t.title}' now."
+
+    async def rerun(self, task_id: str) -> dict:
+        """Re-run a finished (failed/cancelled/completed) task from a clean start.
+
+        Clones the task's planned tree into a FRESH run — new id, reset deliverables,
+        no error, fresh timestamps, its own event stream — and executes it. The
+        original record is left untouched as history. Returns ``{id}`` of the new run
+        (or ``{error}``). Grouped as a sibling occurrence (under the recurring
+        template if this was a run, else under the task itself)."""
+        from assistant.tasks import TaskStatus
+
+        t = await self._store.get(task_id)
+        if t is None:
+            return {"error": "Task not found."}
+        if t.status not in TaskStatus.TERMINAL:
+            return {"error": "Task is still active — cancel it before re-running."}
+        parent_id = getattr(t, "run_of", None) or t.id
+        run = await self._clone_for_run(t, parent_id=parent_id)
+        if self._is_planned(t):
+            await self._manager.submit(run.id, asker=_ParkingAsker())  # execute the plan
+        else:  # never planned → best-effort, no questions
+            self._run_in_bg(run.id, t.origin_channel or "web", clarify=False)
+        return {"id": run.id}
 
     def _control(self, task_id: str):
         """A cached, task-scoped controller agent (+ its conversation stream)."""

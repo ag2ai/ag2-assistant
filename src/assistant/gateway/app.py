@@ -370,6 +370,14 @@ def create_app(
         ok = await app.state.tasks.cancel(task_id)
         return {"ok": ok}
 
+    @app.post("/api/tasks/{task_id}/rerun")
+    async def rerun_task(task_id: str):
+        """Re-run a finished task from a clean start; returns the new run's id."""
+        result = await app.state.tasks.rerun(task_id)
+        if "error" in result:
+            return JSONResponse(result, status_code=400)
+        return result
+
     @app.post("/api/tasks/{task_id}/seen")
     async def mark_task_seen(task_id: str) -> dict:
         """Mark a task/run as opened (clears its unread highlight in the nav)."""
