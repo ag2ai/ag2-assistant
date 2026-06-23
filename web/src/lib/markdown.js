@@ -40,6 +40,26 @@ export function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text || ''))
 }
 
+// Make rendered markdown images clickable → a full-size preview. Workspace images
+// (served via the files API) open the in-app Viewer through `onOpen({path,name,alt})`;
+// anything else opens in a new tab. Idempotent (assigns onclick), so safe to re-run on
+// each streaming re-render.
+export function bindImages(node, onOpen) {
+  for (const img of node.querySelectorAll('img')) {
+    img.style.cursor = 'zoom-in'
+    img.onclick = () => {
+      const src = img.getAttribute('src') || ''
+      let path = null
+      try {
+        const u = new URL(src, window.location.href)
+        if (u.pathname === '/api/files/raw') path = u.searchParams.get('path')
+      } catch {}
+      if (path && onOpen) onOpen({ path, name: path.split('/').pop(), alt: img.getAttribute('alt') || '' })
+      else window.open(src, '_blank', 'noopener')
+    }
+  }
+}
+
 // Turn bare task ids in already-rendered DOM into links that open the task.
 const TASK_RE = /\btask-[0-9a-f]{6,}\b/g
 export function linkifyDom(node, onOpen) {

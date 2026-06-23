@@ -1,7 +1,7 @@
 <script>
-  import { renderMarkdown, linkifyDom } from '../../lib/markdown.js'
+  import { renderMarkdown, linkifyDom, bindImages } from '../../lib/markdown.js'
   import { go } from '../../router.js'
-  import { thread, taskPanel } from '../../store.js'
+  import { thread, taskPanel, viewer } from '../../store.js'
   import { requestContext } from '../../lib/feedback.js'
   import Feedback from './Feedback.svelte'
   let { item } = $props()
@@ -10,6 +10,7 @@
     if (!el) return
     el.innerHTML = renderMarkdown(item.text)        // re-runs when item.text changes (streaming)
     linkifyDom(el, (id) => go('/t/' + id))
+    bindImages(el, (i) => ($viewer = { title: i.alt || i.name || 'Image', name: i.name, path: i.path }))
   })
   // Rate only finalized, non-empty replies that carry a stable key (created_at).
   const canRate = $derived(!item.streaming && !item.empty && item.at != null)

@@ -129,6 +129,9 @@
 .bubble a { color: var(--accent); }
 .bubble pre { background: var(--code); padding: 10px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
 .bubble code { font-family: var(--mono); font-size: .9em; }
+/* Contain markdown-embedded images so a wide one fits its box instead of pushing
+   off the side (workspace images the agent inlines via ![](…)). */
+.bubble img, .asset img, .viewer .vbody img { max-width: 100%; height: auto; display: block; margin: 8px 0; border: 1px solid var(--line); border-radius: 10px; }
 a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed var(--accent); cursor: pointer; }
 
 .note { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
