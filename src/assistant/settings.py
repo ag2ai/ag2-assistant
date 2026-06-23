@@ -59,6 +59,20 @@ def set_llm(provider: str | None = None, model: str | None = None) -> None:
     _write(data)
 
 
+def get_onboarded() -> bool:
+    """Whether first-run onboarding has been completed or dismissed on THIS install.
+    Server-side (not per-browser) so the welcome shows once per installation,
+    consistently across browsers/devices."""
+    return bool(_read().get("onboarded"))
+
+
+def set_onboarded(value: bool = True) -> None:
+    """Mark first-run onboarding completed/dismissed (or reset with value=False)."""
+    data = _read()
+    data["onboarded"] = bool(value)
+    _write(data)
+
+
 def list_mcp_servers(*, include_env: bool = False) -> list[dict]:
     """Persisted MCP stdio server configs. Env values are hidden by default."""
     servers = _read().get(_MCP_KEY)

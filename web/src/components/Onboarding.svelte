@@ -3,7 +3,7 @@
   // model, focus areas, and appearance — then seeds the same store Settings reads
   // so the two stay in sync. Shown on first launch when no key is stored, or via
   // Settings → "Re-run setup".
-  import { onboardingOpen, onboarded, profile } from '../store.js'
+  import { onboardingOpen, profile } from '../store.js'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import Monogram from './Monogram.svelte'
@@ -54,7 +54,7 @@
   // Skip into the app without keys (degraded). Still records the name/focuses chosen.
   function skip() {
     $profile = { name: name.trim(), focuses }
-    $onboarded = true
+    api.setOnboarded().catch(() => {}) // mark done per install (server-side)
     $onboardingOpen = false
   }
 
@@ -67,9 +67,9 @@
       }
       const m = MODELS.find((x) => x.label === modelLabel)
       if (m) { try { await api.setLlm(m.provider, m.model) } catch {} }
+      try { await api.setOnboarded() } catch {} // mark done per install (server-side)
     } finally {
       $profile = { name: name.trim(), focuses }
-      $onboarded = true
       $onboardingOpen = false
       busy = false
     }

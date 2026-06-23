@@ -79,6 +79,15 @@ def test_mcp_servers_hide_env_values_and_roundtrip():
     private = settings.list_mcp_servers(include_env=True)
     assert private[0]["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": "secret"}
 
+
+def test_onboarded_flag_roundtrips_per_install():
+    # Fresh install: not onboarded until explicitly marked (server-side, not browser).
+    assert settings.get_onboarded() is False
+    settings.set_onboarded()
+    assert settings.get_onboarded() is True
+    settings.set_onboarded(False)
+    assert settings.get_onboarded() is False
+
     settings.upsert_mcp_server({"name": "github", "command": "uvx", "args": ["mcp-server-github"]})
     assert len(settings.list_mcp_servers()) == 1
     assert settings.list_mcp_servers()[0]["command"] == "uvx"

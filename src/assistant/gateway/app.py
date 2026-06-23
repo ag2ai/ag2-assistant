@@ -114,6 +114,10 @@ class ArchiveRequest(BaseModel):
     archived: bool = True
 
 
+class OnboardedRequest(BaseModel):
+    value: bool = True
+
+
 class VoiceRequest(BaseModel):
     voice: str
 
@@ -501,6 +505,7 @@ def create_app(
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
+            "onboarded": settings.get_onboarded(),  # first-run flag (per install)
         }
 
     async def _mcp_health(server: dict) -> dict:
@@ -566,6 +571,14 @@ def create_app(
         if not secrets.set_key(req.provider, req.value):
             return Response(status_code=400)
         await app.state.gateway.reload()  # new turns pick up the key; voice next session
+        return {"ok": True}
+
+    @app.post("/api/settings/onboarded")
+    async def set_settings_onboarded(req: OnboardedRequest) -> dict:
+        """Mark first-run onboarding completed/dismissed (per install, not per browser)."""
+        from assistant import settings
+
+        settings.set_onboarded(req.value)
         return {"ok": True}
 
     @app.post("/api/settings/llm")

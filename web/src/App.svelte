@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, onboarded } from './store.js'
+  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen } from './store.js'
   import { api } from './transport/api.js'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
@@ -20,14 +20,14 @@
   // The AG2 Inspector occupies a right rail when AG2 view is on and a thread is open.
   const showInspector = $derived($ag2View && $route.name !== 'home')
 
-  // First-run welcome: show onboarding when the user hasn't completed it AND no
-  // provider key is stored yet. Skipped if the gateway isn't reachable.
+  // First-run welcome: show onboarding when this INSTALL hasn't completed/dismissed
+  // it AND no provider key is stored yet. Both signals are server-side (per install,
+  // not per browser). Skipped if the gateway isn't reachable.
   onMount(async () => {
-    if ($onboarded) return
     try {
       const s = await api.settings()
       const anyKey = ['gemini', 'openai', 'anthropic'].some((p) => s.keys?.[p]?.set)
-      if (!anyKey) $onboardingOpen = true
+      if (!s.onboarded && !anyKey) $onboardingOpen = true
     } catch {}
   })
 

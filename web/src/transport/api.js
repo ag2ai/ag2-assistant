@@ -36,6 +36,7 @@ export const api = {
   settings: () => j('GET', '/api/settings'),
   setKey: (provider, value) => j('POST', '/api/settings/key', { provider, value }),
   setLlm: (provider, model) => j('POST', '/api/settings/llm', { provider, model }),
+  setOnboarded: (value = true) => j('POST', '/api/settings/onboarded', { value }),
   setVoiceProvider: (provider) => j('POST', '/api/settings/voice_provider', { provider }),
   addMcpServer: (server) => j('POST', '/api/settings/mcp', server),
   deleteMcpServer: (name) => j('DELETE', `/api/settings/mcp/${encodeURIComponent(name)}`),

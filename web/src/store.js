@@ -59,12 +59,11 @@ export const soundOnInput = persisted('soundOnInput', false)
 export const ag2View = persisted('ag2View', false)
 
 // First-run onboarding overlay open/closed. Opened automatically on first launch
-// when no provider key is stored (see App.svelte), or via Settings → "Re-run setup".
+// when this install hasn't completed/dismissed it and no provider key is stored
+// (see App.svelte), or via Settings → "Re-run setup". The "have we onboarded?"
+// flag itself is server-side (settings.json → GET /api/settings `onboarded`), not
+// per-browser — set via api.setOnboarded() on finish/skip.
 export const onboardingOpen = writable(false)
-
-// Has the user completed (or dismissed) onboarding at least once? Per-device flag
-// so the welcome flow doesn't reappear every launch.
-export const onboarded = persisted('ag2-onboarded', false)
 
 // Local user profile seeded by onboarding: name + focus areas. Greets the user and
 // could tailor suggestions. Kept on-device (mirrors keys/model in Settings).
