@@ -38,7 +38,7 @@ async def render_task(store, task_id: str) -> str:
     delivs = t.deliverables or []
     if delivs:
         lines.append("Deliverables:")
-        lines += [f"  - {d.get('description')} [{d.get('status')}]" for d in delivs]
+        lines += [f"  - [{d.get('id')}] {d.get('description')} [{d.get('status')}]" for d in delivs]
     kids = await store.children(task_id)
     if kids:
         lines.append("Subtasks:")
@@ -97,6 +97,30 @@ async def do_add_deliverable(store, manager, task_id, description, criteria="") 
     await store.add_deliverable(task_id, description, criteria)
     await resume_task(store, manager, task_id)  # no-op for scheduled tasks
     return f"Added deliverable: {description}."
+
+
+async def do_remove_deliverable(store, manager, task_id, deliverable_id) -> str:
+    t = await store.get(task_id)
+    if t is None:
+        return "Task not found."
+    before = len(t.deliverables or [])
+    await store.remove_deliverable(task_id, deliverable_id)
+    after = await store.get(task_id)
+    if after is not None and len(after.deliverables or []) == before:
+        return f"No deliverable with id '{deliverable_id}'."
+    await resume_task(store, manager, task_id)  # no-op for scheduled tasks
+    return f"Removed deliverable {deliverable_id}."
+
+
+async def do_set_deliverables(store, manager, task_id, descriptions) -> str:
+    if await store.get(task_id) is None:
+        return "Task not found."
+    descs = [d.strip() for d in (descriptions or []) if d and d.strip()]
+    if not descs:
+        return "Give at least one deliverable description."
+    await store.set_deliverables(task_id, descs)
+    await resume_task(store, manager, task_id)  # no-op for scheduled tasks
+    return f"Set {len(descs)} deliverable(s): " + "; ".join(descs) + "."
 
 
 async def do_reschedule(store, task_id, when="", recurrence="") -> str:
@@ -182,6 +206,30 @@ def build_task_tools(store, manager, task_id: str) -> list:
         return await do_add_deliverable(store, manager, task_id, description, criteria)
 
     @tool
+    async def remove_deliverable(
+        deliverable_id: Annotated[
+            str, Field(description="The deliverable id to remove (see task_status for ids).")
+        ],
+    ) -> str:
+        """Remove ONE deliverable from this task by id. Call task_status first to see the ids."""
+        return await do_remove_deliverable(store, manager, task_id, deliverable_id)
+
+    @tool
+    async def set_deliverables(
+        descriptions: Annotated[
+            list[str],
+            Field(
+                description="The full new set of deliverables — this REPLACES all current "
+                "ones. One short description per item."
+            ),
+        ],
+    ) -> str:
+        """Replace this task's deliverables with a fresh set. Use this when RELAXING or
+        re-scoping (e.g. 'just one serene landscape, any style') so stale requirements
+        don't pile up and cause duplicate outputs — prefer it over add_deliverable for changes."""
+        return await do_set_deliverables(store, manager, task_id, descriptions)
+
+    @tool
     async def reschedule(
         when: Annotated[
             str,
@@ -212,4 +260,13 @@ def build_task_tools(store, manager, task_id: str) -> list:
         """Cancel this task, or one subtask by (partial) title. Cancels immediately."""
         return await do_cancel(store, manager, task_id, subtask)
 
-    return [task_status, add_subtask, set_objective, add_deliverable, reschedule, cancel]
+    return [
+        task_status,
+        add_subtask,
+        set_objective,
+        add_deliverable,
+        remove_deliverable,
+        set_deliverables,
+        reschedule,
+        cancel,
+    ]

@@ -209,6 +209,17 @@ class TaskStore:
         await self.save(task)
         return task
 
+    async def set_deliverables(self, task_id: str, descriptions: list[str]) -> Task | None:
+        """Replace the task's deliverables with a fresh list (one PENDING deliverable per
+        description). The re-scoping primitive — e.g. relaxing several stale requirements
+        down to one — so a recurring task's clones don't keep accumulating outputs."""
+        task = await self.get(task_id)
+        if task is None:
+            return None
+        task.deliverables = [Deliverable.new(d) for d in descriptions if d and d.strip()]
+        await self.save(task)
+        return task
+
     # --- deliverables (what gates completion) ---
 
     async def add_deliverable(

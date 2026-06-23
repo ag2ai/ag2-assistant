@@ -4,7 +4,7 @@ An open-source personal AI assistant powered by [AG2](https://ag2.ai)'s Beta fra
 
 > Public product name: **AG2 Assistant**. `ag2assistant` remains the internal package, CLI command, and data-dir name.
 
-AG2 Assistant connects to your messaging platforms (Telegram, Discord, Slack) and acts as your personal AI agent — searching the web, running code, managing tasks, and more.
+AG2 Assistant is a web app (with optional messaging-channel and CLI front-ends) that acts as your personal AI agent — it searches the web, runs code, generates images, reads your project files, and runs scheduled tasks, all while showing its work in the open. Every reply is a projection of the underlying AG2 event stream.
 
 ## Quick Start
 
@@ -18,70 +18,58 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### 2. Configure
-
-Create a `.env` file:
-
-```env
-GEMINI_API_KEY=your-gemini-api-key
-```
-
-Get a Gemini API key at [aistudio.google.com](https://aistudio.google.com/apikey).
-
-### 3. Run
+### 2. Run
 
 ```bash
-ag2assistant agent "Hello, what can you do?"
+ag2assistant run        # gateway + web UI (+ any configured channels), one process
 ```
 
-## Examples
+Then open **http://localhost:8800/** and complete the first-run onboarding: choose a theme, paste a provider API key (Gemini by default — get one at [aistudio.google.com](https://aistudio.google.com/apikey)), and pick a project folder the assistant can read. Everything else is configurable later in **Settings**.
 
-### General conversation
+> Prefer to set the key up front? Create a `.env` with `GEMINI_API_KEY=your-key` before running. Keys can also come from the environment; onboarding only needs to gate on first run.
+
+To serve the API/UI without any messaging channels, use `ag2assistant gateway` instead of `run`.
+
+## The web app
+
+The primary interface is the Svelte web UI served at `/` (→ `/app`). It includes:
+
+- **Chat** — multi-turn conversations with live, streamed agent events (tool calls, code runs, web searches) rendered inline.
+- **Tasks** — one-shot and recurring scheduled tasks with deliverables, timestamps, re-run, and cancel/archive.
+- **Image generation** — generated images are saved to the shared workspace and shown as clickable inline thumbnails.
+- **Memory** — the assistant passively learns your preferences; 👍/👎 feedback (with a reason) feeds a memory-aware learner that dedupes and prunes conflicting notes.
+- **Project folder** — a read-only `repo-files` MCP scoped to a folder you choose, so the assistant can read your code/notes (browse + search, never write).
+- **Voice** — talk to the assistant (Gemini Live / OpenAI realtime) over a browser audio bridge.
+- **Settings** — API keys, model, voice, MCP servers, Google connection, project folder, and re-run setup.
+
+## CLI
+
+The web app is the main experience, but the CLI is handy for quick one-shots and scripting:
 
 ```bash
-ag2assistant agent "Explain what AG2 is in one sentence"
-ag2assistant agent "Write a haiku about Python programming"
+ag2assistant run                       # everything in one process (gateway + UI + channels)
+ag2assistant gateway                   # REST + WebSocket API + web UI only
+ag2assistant chat                      # interactive multi-turn chat in the terminal
+ag2assistant agent "message"           # single-shot prompt → reply
+ag2assistant onboard                   # first-run interview (name, location, hours, style)
+ag2assistant telegram                  # run on Telegram   (needs TELEGRAM_BOT_TOKEN)
+ag2assistant discord                   # run on Discord    (needs DISCORD_BOT_TOKEN)
+ag2assistant slack                     # run on Slack      (needs SLACK_BOT_TOKEN + SLACK_APP_TOKEN)
+ag2assistant version                   # show version
 ```
 
-### Web search (grounded, real-time)
-
-The agent can search the web for current information:
+### Examples
 
 ```bash
 ag2assistant agent "What's the current AG2 version? Search the web."
-ag2assistant agent "What happened in the news today?"
-ag2assistant agent "Find the latest Python release notes"
-```
-
-### Code execution
-
-The agent can write and run code:
-
-```bash
 ag2assistant agent "Calculate the first 20 Fibonacci numbers"
-ag2assistant agent "Write a Python function that checks if a string is a palindrome, then test it"
-```
-
-### Research tasks
-
-Combine web search with reasoning:
-
-```bash
-ag2assistant agent "Compare FastAPI vs Flask for building REST APIs. Search the web for current benchmarks."
-ag2assistant agent "What are the top 3 trending Python libraries this month?"
-```
-
-### CLI
-
-```bash
-ag2assistant version          # Show version
-ag2assistant agent "message"  # Talk to your agent
+ag2assistant agent "Compare FastAPI vs Flask. Search the web for current benchmarks."
 ```
 
 ## Running Tests
 
 ```bash
-# Unit tests
+# Unit tests (no API key needed)
 pytest tests/ -v -m "not integration"
 
 # All tests (requires GEMINI_API_KEY)
@@ -93,37 +81,43 @@ pytest tests/ -v
 See [docs/architecture.md](docs/architecture.md) and [docs/architecture.svg](docs/architecture.svg) for the full system design.
 
 ```
-  UI clients (web / desktop / mobile / CLI)
-         |  REST + WebSocket
-    +---------+
-    | Gateway |  (FastAPI: /api/message, /api/ws, /api/health)
-    +---------+
-         |  per-session isolated multi-turn
-    +---------+
-    |  Agent  |  (AG2 Beta + Gemini)
-    |  Tools  |  (Web Search, Shell, Code Exec, Web Fetch)
-    +---------+
+  Web UI (Svelte)   ·   Messaging channels   ·   CLI
+         |  REST + WebSocket (event stream)        |
+    +-----------+
+    |  Gateway  |  (FastAPI: /api/message, /api/stream, /api/health, /app)
+    +-----------+
+         |  per-session isolated multi-turn; events streamed to every client
+    +-----------+
+    |   Agent   |  (AG2 Beta + Gemini / OpenAI / Anthropic / Ollama)
+    |   Tools   |  (web search, shell, code exec, web fetch, image gen,
+    |           |   tasks/scheduling, repo-files MCP, Google, skills, MCP servers)
+    +-----------+
          |
-    +---------+
-    | Memory  |  (profile learned passively → SQLite)
-    +---------+
+    +-----------+
+    |  Memory   |  (preferences learned passively + from 👍/👎 feedback → SQLite)
+    +-----------+
 ```
+
+State lives under `~/.ag2assistant/` (settings, sessions, memory, tasks); generated files live in the workspace (`~/Documents/AG2 Assistant/` by default).
 
 ## Project Status
 
-AG2 Assistant is in early development. See [docs/plan.md](docs/plan.md) for the full roadmap.
+See [docs/plan.md](docs/plan.md) for the full roadmap.
 
-- [x] Core agent with Gemini integration
-- [x] CLI interface
-- [x] Tools (native AG2: web search, shell, code execution; + web fetch)
-- [x] Observer memory (passively learns your preferences, persists across sessions)
+- [x] Core agent with multi-provider support (Gemini, OpenAI, Anthropic, Ollama)
+- [x] CLI interface (agent, chat, onboard, run)
+- [x] Tools (native AG2: web search, shell, code execution; + web fetch, image generation)
+- [x] Memory — passively learns preferences and from 👍/👎 feedback; persists across sessions
 - [x] Multi-turn conversations (per-session isolation)
-- [x] Gateway (REST + WebSocket API; distributed Hub spike)
+- [x] Gateway (REST + WebSocket event-stream API)
+- [x] Web UI — chat, tasks/scheduling, image gen, voice, memory, onboarding, settings
+- [x] Tasks & scheduling with deliverables (one-shot + recurring)
+- [x] Voice (Gemini Live / OpenAI realtime over a browser audio bridge)
+- [x] Project folder — read-only `repo-files` MCP; user-extensible MCP servers
 - [x] Channels: Telegram, Discord, Slack (DM + group @mention gating)
 - [x] Skills — searches & installs from the skills.sh registry, runs them
-- [ ] More channels (WhatsApp), web UI
-- [ ] Memory & context management
-- [ ] Web UI
+- [ ] More channels (WhatsApp)
+- [ ] Desktop / mobile clients
 
 ## Documentation
 

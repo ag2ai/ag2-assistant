@@ -53,7 +53,7 @@ def _fmt_node(n: dict, depth: int = 0, full: bool = False) -> str:
     if depth == 0 and n.get("objective"):
         lines.append(f"{pad}objective: {n['objective']}")
     for d in n.get("deliverables", []):
-        lines.append(f"{pad}  • {d['description']} [{d['status']}]")
+        lines.append(f"{pad}  • [{d.get('id', '?')}] {d['description']} [{d['status']}]")
         asset = d.get("asset")
         if asset:
             if full:
@@ -196,6 +196,32 @@ def build_system_tools(tasks, chats=None, platform: str = "gateway") -> list:
         return await tasks.add_deliverable(task_id, description, criteria)
 
     @tool
+    async def remove_deliverable(
+        task_id: Annotated[str, Field(description="The task id.")],
+        deliverable_id: Annotated[
+            str, Field(description="The deliverable id to remove (see get_task for ids).")
+        ],
+    ) -> str:
+        """Remove ONE deliverable from a task by id. Call get_task first to see the ids."""
+        return await tasks.remove_deliverable(task_id, deliverable_id)
+
+    @tool
+    async def set_deliverables(
+        task_id: Annotated[str, Field(description="The task id.")],
+        descriptions: Annotated[
+            list[str],
+            Field(
+                description="The full new set of deliverables — this REPLACES all current "
+                "ones. One short description per item."
+            ),
+        ],
+    ) -> str:
+        """Replace a task's deliverables with a fresh set. Use when RELAXING or re-scoping a
+        task (e.g. 'just one image, any style') so stale requirements don't accumulate and
+        cause duplicate outputs — prefer this over add_deliverable for changing requirements."""
+        return await tasks.set_deliverables(task_id, descriptions)
+
+    @tool
     async def set_task_objective(
         task_id: Annotated[str, Field(description="The task id.")],
         objective: Annotated[str, Field(description="The revised objective.")],
@@ -289,6 +315,8 @@ def build_system_tools(tasks, chats=None, platform: str = "gateway") -> list:
         reschedule_task,
         add_subtask,
         add_deliverable,
+        remove_deliverable,
+        set_deliverables,
         set_task_objective,
         cancel_task,
         archive_task,

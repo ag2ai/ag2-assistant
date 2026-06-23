@@ -18,10 +18,14 @@ from assistant.hitl import NullAsker
 
 _CONTROL_PROMPT = (
     "You manage ONE task for the user. When they ask for a change — add or cancel "
-    "a subtask, change the objective, add a deliverable, reschedule it (change when "
-    "it runs or how it repeats), or cancel the task — use your tools to do it "
+    "a subtask, change the objective, add/remove/replace a deliverable, reschedule it "
+    "(change when it runs or how it repeats), or cancel the task — use your tools to do it "
     "immediately (it's their task; don't ask permission), then confirm in one short "
-    "sentence what you changed. To change WHEN or HOW OFTEN it runs (e.g. 'make it "
+    "sentence what you changed. When the user RELAXES or CHANGES a requirement (e.g. 'any "
+    "style instead of watercolor', 'just one image'), REPLACE the deliverables — use "
+    "set_deliverables to reset the list, or remove_deliverable to drop a stale one (call "
+    "task_status for the ids). Do NOT add_deliverable on top of the old requirement, or the "
+    "task accumulates requirements and produces duplicate outputs. To change WHEN or HOW OFTEN it runs (e.g. 'make it "
     "weekdays', 'move to 8am', 'stop repeating') use the reschedule tool — never add "
     "a subtask for a scheduling change. Compute the ISO time from the current "
     "date/time in your environment context. For questions about progress or status, "
@@ -525,6 +529,16 @@ class TaskService:
         from assistant.tasks.control import do_add_deliverable
 
         return await do_add_deliverable(self._store, self._manager, task_id, description, criteria)
+
+    async def remove_deliverable(self, task_id, deliverable_id) -> str:
+        from assistant.tasks.control import do_remove_deliverable
+
+        return await do_remove_deliverable(self._store, self._manager, task_id, deliverable_id)
+
+    async def set_deliverables(self, task_id, descriptions) -> str:
+        from assistant.tasks.control import do_set_deliverables
+
+        return await do_set_deliverables(self._store, self._manager, task_id, descriptions)
 
     async def set_objective(self, task_id, objective) -> str:
         from assistant.tasks.control import do_set_objective

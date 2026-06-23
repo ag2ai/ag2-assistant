@@ -161,6 +161,8 @@ async def test_build_task_tools_exposes_the_set(tmp_path):
         "add_subtask",
         "set_objective",
         "add_deliverable",
+        "remove_deliverable",
+        "set_deliverables",
         "reschedule",
         "cancel",
     }

@@ -186,6 +186,18 @@ async def test_remove_deliverable(tmp_path):
     assert (await store.get(t.id)).deliverables == []
 
 
+async def test_set_deliverables_replaces_the_list(tmp_path):
+    store = _store(tmp_path)
+    t = await store.create("x")
+    await store.add_deliverable(t.id, "watercolor mandala")
+    await store.add_deliverable(t.id, "mandala in any style")
+    # re-scope down to one — the relax workflow that previously accumulated deliverables
+    await store.set_deliverables(t.id, ["just one serene landscape", "  "])
+    delivs = (await store.get(t.id)).deliverables
+    assert [d["description"] for d in delivs] == ["just one serene landscape"]  # blanks dropped
+    assert all(d["status"] == DeliverableStatus.PENDING for d in delivs)
+
+
 async def test_completion_needs_acceptance_when_not_auto(tmp_path):
     store = _store(tmp_path)
     t = await store.create("Deck", auto_accept=False)
