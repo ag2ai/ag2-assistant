@@ -40,7 +40,9 @@ const EVENT_SUB = {
 const APP_EVENT_SUB = {
   TaskCreated: 'Subagent', TaskScheduled: 'Subagent', DeliverableProduced: 'Subagent',
   InquiryRaised: 'HITL', InquiryAnswered: 'HITL', SubagentTrace: 'Subagent',
+  FeedbackGiven: 'Memory', // 👍/👎 feeds the learned memory profile
 }
+
 
 // Describe a wire event for the inspector.
 export function describe(type) {

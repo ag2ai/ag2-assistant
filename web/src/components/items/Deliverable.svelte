@@ -1,9 +1,12 @@
 <script>
-  import { viewer } from '../../store.js'
+  import { viewer, thread, taskPanel } from '../../store.js'
   import { api } from '../../transport/api.js'
   import Icon from '../Icon.svelte'
   import { fmtStamp } from '../../lib/time.js'
+  import { requestContext } from '../../lib/feedback.js'
+  import Feedback from './Feedback.svelte'
   let { item } = $props()
+  const request = $derived(requestContext($thread.items, item, $taskPanel))
   // The preview is a flattened 240-char teaser (newlines already collapsed at the
   // source), so block markdown can't render — strip the markers for a clean
   // one-liner. "View full" fetches the task's full asset and pops up the viewer.
@@ -26,4 +29,7 @@
   <div class="d"><Icon name="check" size={13} /> Deliverable produced — {item.description}{#if item.at}<span class="itemtime">{fmtStamp(item.at)}</span>{/if}</div>
   {#if teaser}<div class="dprev">{teaser}…</div>{/if}
   {#if item.taskId}<button class="viewbtn" onclick={openFull}>View full →</button>{/if}
+  {#if item.deliverableId}
+    <div class="itemfb"><Feedback targetKind="deliverable" targetId={item.deliverableId} content={(item.description || '') + '\n' + (item.preview || '')} {request} current={item.feedback} /></div>
+  {/if}
 </div>

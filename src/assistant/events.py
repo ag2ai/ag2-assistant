@@ -96,3 +96,22 @@ class InquiryAnswered(AssistantEvent):
 
     inquiry_id: str = Field(kw_only=False)
     answer: str = ""
+
+
+class FeedbackGiven(AssistantEvent):
+    """The user reacted to a generated item (👍/👎) with a mandatory reason. Rides the
+    stream so the thumb state persists + replays (and shows in the AG2 inspector); a
+    learner agent distils it into the memory profile.
+
+    `target_kind` is "message" | "image" | "deliverable"; `target_id` is that kind's
+    stable key (message → the reply's `created_at`; image → workspace path; deliverable
+    → deliverable_id). `content` is an excerpt of what was rated and `request` the user's
+    intent that produced it — both passed to the learner so it generalises correctly.
+    """
+
+    target_id: str = Field(kw_only=False)
+    target_kind: str = "message"  # "message" | "image" | "deliverable"
+    sentiment: str = "up"  # "up" | "down"
+    reason: str = ""
+    content: str = ""  # excerpt of the rated output
+    request: str = ""  # the user's ask / task objective that produced it

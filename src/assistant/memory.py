@@ -91,7 +91,9 @@ async def remember_note(note: str, category: str = "how", store_path: Path | Non
     store = build_profile_store(store_path)
     existing = await store.read(PROFILE_PATH) if await store.exists(PROFILE_PATH) else ""
     doc = existing if existing.strip() else _blank_profile()
-    updated = _insert_bullet(doc, heading, "- " + note.strip())
+    # Use "* " to match the marker the passive aggregator writes, so the profile
+    # stays visually consistent (both are valid Markdown bullets).
+    updated = _insert_bullet(doc, heading, "* " + note.strip())
     await store.write(PROFILE_PATH, updated)
     return updated
 

@@ -77,6 +77,12 @@ export function answer(inquiryId, text) {
   if (client) client.answer(inquiryId, text)
 }
 
+// Send 👍/👎 + a (mandatory) reason on a generated item. `target` carries the
+// stable id/kind plus context for the learner: { targetKind, targetId, content, request }.
+export function feedback({ targetKind, targetId, sentiment, reason, content = '', request = '' }) {
+  if (client) client.feedback({ target_kind: targetKind, target_id: targetId, sentiment, reason, content, request })
+}
+
 export function closeThread() {
   if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }  // _voiceEnded's reload is guarded out on nav
   _voiceActive = false; _vitem = null; _vrole = null

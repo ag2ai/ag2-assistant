@@ -209,6 +209,21 @@ export function foldEvent(items, wire) {
       if (it) { it.resolved = true; it.answer = d.answer }
       break
     }
+    case 'FeedbackGiven': {
+      // Project a 👍/👎 back onto the item it rated — match by the item's stable key
+      // (message → created_at, image → path, deliverable → deliverable_id). Latest
+      // event wins, so re-rating supersedes. Search newest-first.
+      const k = d.target_kind, tid = d.target_id
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i]
+        const match =
+          (k === 'message' && it.kind === 'agent' && String(it.at) === tid) ||
+          (k === 'image' && it.kind === 'genimage' && it.path === tid) ||
+          (k === 'deliverable' && it.kind === 'deliverable' && it.deliverableId === tid)
+        if (match) { it.feedback = { sentiment: d.sentiment, reason: d.reason }; break }
+      }
+      break
+    }
     default:
       break // UsageEvent, ToolResult*, GeminiToolCallEvent, etc. — not rendered
   }

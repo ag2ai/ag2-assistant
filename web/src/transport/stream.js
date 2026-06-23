@@ -40,5 +40,6 @@ export class StreamClient {
   }
   send(text, attachments) { this._send({ text, attachments }) }
   answer(id, answer) { this._send({ type: 'answer', id, answer }) }
+  feedback(payload) { this._send({ type: 'feedback', ...payload }) }
   close() { this._closed = true; try { this.ws && this.ws.close() } catch {} }
 }

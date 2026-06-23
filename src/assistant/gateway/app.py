@@ -731,6 +731,41 @@ def create_app(
                         with contextlib.suppress(Exception):
                             await app.state.tasks.answer_inquiry(iid, ans)
                     continue
+                if data.get("type") == "feedback" and data.get("target_id"):
+                    # 👍/👎 + mandatory reason on a generated item. Emit it onto the
+                    # session stream (persists/replays → the GUI projects the thumb
+                    # state, shows in the AG2 inspector), then fire-and-forget a learner
+                    # that distils it into the memory profile (never blocks the socket).
+                    from assistant import feedback as feedback_learner
+                    from assistant.events import FeedbackGiven
+
+                    sentiment = "down" if data.get("sentiment") == "down" else "up"
+                    reason = (data.get("reason") or "").strip()
+                    content = data.get("content") or ""
+                    request = data.get("request") or ""
+                    with contextlib.suppress(Exception):
+                        await app.state.gateway.emit_event(
+                            session_id,
+                            FeedbackGiven(
+                                data["target_id"],
+                                target_kind=data.get("target_kind", "message"),
+                                sentiment=sentiment,
+                                reason=reason,
+                                content=content[:2000],
+                                request=request[:2000],
+                            ),
+                        )
+                    if reason:  # reason is mandatory client-side; only learn when present
+                        asyncio.create_task(
+                            feedback_learner.learn(
+                                config,
+                                sentiment=sentiment,
+                                reason=reason,
+                                content=content,
+                                request=request,
+                            )
+                        )
+                    continue
                 text = data.get("text", "")
                 raw_atts = data.get("attachments")
                 attachments = _decode_attachments(raw_atts)
