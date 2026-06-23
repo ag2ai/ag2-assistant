@@ -3,9 +3,10 @@
   import { sessions, tasks, drawerTab, settingsOpen, filesOpen } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
-  import Monogram from './Monogram.svelte'
   import Icon from './Icon.svelte'
   import { fmtWhen, fmtNextIn } from '../lib/time.js'
+  import ag2Mark from '../assets/ag2-mark.svg'
+  import ag2MarkWhite from '../assets/ag2-mark-white.svg'
 
   let usage = $state(null)   // today's token/cost totals for the activity HUD
 
@@ -115,7 +116,8 @@
 
 <div class="drawer">
   <div class="dhead">
-    <Monogram size={30} />
+    <img class="brandlogo on-light" src={ag2Mark} alt="AG2" />
+    <img class="brandlogo on-dark" src={ag2MarkWhite} alt="AG2" />
     <span class="brand">Assistant</span>
   </div>
   <div class="tabs">

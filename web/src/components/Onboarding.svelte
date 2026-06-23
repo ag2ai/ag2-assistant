@@ -6,8 +6,9 @@
   import { onboardingOpen, profile } from '../store.js'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
-  import Monogram from './Monogram.svelte'
   import Appearance from './Appearance.svelte'
+  import ag2Mark from '../assets/ag2-mark.svg'
+  import ag2MarkWhite from '../assets/ag2-mark-white.svg'
 
   const STEPS = ['Welcome', 'Connect', 'Personalize', 'Ready']
   const FEATURES = [
@@ -80,7 +81,8 @@
   <!-- Hero panel -->
   <aside class="onb-hero">
     <div class="onb-brand">
-      <Monogram size={44} />
+      <img class="brandlogo on-light" src={ag2Mark} alt="AG2" />
+      <img class="brandlogo on-dark" src={ag2MarkWhite} alt="AG2" />
       <span class="onb-brandname">Assistant</span>
     </div>
     <div class="onb-herobody">

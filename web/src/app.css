@@ -26,9 +26,14 @@
 .drawer { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 .main { display: flex; flex-direction: column; min-width: 0; }
 
-.dhead { padding: 14px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
-.brandlogo { height: 24px; width: 24px; object-fit: contain; display: block; background: #fff; border: 2px solid #fff; border-radius: 6px; }
-.brand { font-weight: 700; letter-spacing: .5px; }
+.dhead { padding: 14px 16px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); }
+/* AG2 brand logo (real SVG mark) — black on light, white on dark (auto-swapped). */
+.brandlogo { height: 20px; width: auto; flex: none; display: block; }
+.brandlogo.on-dark { display: none; }
+[data-theme="dark"] .brandlogo.on-light { display: none; }
+[data-theme="dark"] .brandlogo.on-dark { display: block; }
+.onb-brand .brandlogo { height: 38px; }  /* larger on the onboarding hero */
+.brand { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-xl); letter-spacing: -0.01em; }
 .newbtn { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 5px 11px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .newbtn:hover { border-color: var(--accent); color: var(--accent); }
 .tabs { display: flex; gap: 6px; padding: 8px 12px; align-items: center; }
