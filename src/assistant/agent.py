@@ -279,8 +279,10 @@ def turn_prompt(config: Config, memory: bool = True, workspace: bool = True) -> 
 
         if has_token():
             parts.append(GOOGLE_GUIDANCE)
-    except Exception:
-        pass
+    except Exception as exc:
+        from assistant.observability import log_suppressed
+
+        log_suppressed("google token check for turn prompt", exc)
     parts.append(environment_context(config))
     return parts
 
@@ -305,8 +307,10 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
 
         if has_token():
             parts.append(GOOGLE_GUIDANCE)
-    except Exception:
-        pass
+    except Exception as exc:
+        from assistant.observability import log_suppressed
+
+        log_suppressed("google token check for universal prompt", exc)
     if surface:
         parts.append(surface)
     parts.append(environment_context(config))

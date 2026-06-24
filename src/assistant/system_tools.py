@@ -36,8 +36,10 @@ async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
 
     try:
         await context.send(TaskCreated(task_id, title=title, kind=kind))
-    except Exception:
-        pass
+    except Exception as exc:
+        from assistant.observability import log_suppressed
+
+        log_suppressed("chat task-card event emit", exc, task_id=task_id, kind=kind)
 
 
 def _fmt_schedule(t: dict) -> str:
@@ -117,7 +119,12 @@ def build_system_tools(tasks, chats=None, platform: str = "gateway") -> list:
         """Full detail of one task: objective, schedule, deliverables with their
         COMPLETE output (untruncated), subtasks, progress. Use before acting on or
         reporting a task — this is the source of truth for what the task produced."""
-        node = await tasks.get_task(task_id)
+        from assistant.tasks import TaskStoreCorruptionError
+
+        try:
+            node = await tasks.get_task(task_id)
+        except TaskStoreCorruptionError as exc:
+            return f"Task record is corrupt and cannot be read: {exc}"
         return _fmt_node(node, full=True) if node else "Task not found."
 
     # ---- tasks: actions ----

@@ -1,6 +1,8 @@
 """Tests for the task model and persistent store (Phase 1 foundation)."""
 
-from assistant.tasks import DeliverableStatus, Task, TaskStatus, TaskStore
+import pytest
+
+from assistant.tasks import DeliverableStatus, Task, TaskStatus, TaskStore, TaskStoreCorruptionError
 
 
 def _store(tmp_path):
@@ -32,6 +34,29 @@ async def test_create_get_persists(tmp_path):
     # a fresh store over the same db sees it (durable)
     got = await TaskStore(path=tmp_path / "tasks.db").get(t.id)
     assert got is not None and got.title == "Research IPOs"
+
+
+async def test_get_raises_for_corrupt_existing_record(tmp_path):
+    store = _store(tmp_path)
+    await store._store.write("/tasks/task-bad.json", "{not-json")
+
+    with pytest.raises(TaskStoreCorruptionError) as err:
+        await store.get("task-bad")
+
+    assert err.value.task_id == "task-bad"
+    assert "corrupt" in str(err.value)
+
+
+async def test_list_all_logs_and_skips_corrupt_records(tmp_path, caplog):
+    store = _store(tmp_path)
+    good = await store.create("good")
+    await store._store.write("/tasks/task-bad.json", "{not-json")
+
+    caplog.set_level("ERROR", logger="ag2assistant.tasks")
+    listed = await store.list_all()
+
+    assert [t.id for t in listed] == [good.id]
+    assert "skipping corrupt task record" in caplog.text
 
 
 async def test_children_and_roots(tmp_path):

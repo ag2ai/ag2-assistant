@@ -4,7 +4,7 @@ and the shape of the history that triggered it."""
 import json
 
 from assistant.config import load_config
-from assistant.observability import capture_failure, setup_logging
+from assistant.observability import capture_failure, log_suppressed, setup_logging
 
 
 class _Hist:
@@ -69,3 +69,13 @@ async def test_capture_failure_best_effort_no_stream(tmp_path):
     setup_logging(cfg)
     path = await capture_failure(cfg, session_id="s1", error=RuntimeError("x"))
     assert path and json.loads(open(path).read())["event_count"] == 0
+
+
+def test_log_suppressed_records_context(caplog):
+    caplog.set_level("WARNING", logger="ag2assistant")
+    err = RuntimeError("emit failed")
+    log_suppressed("task event emit", err, task_id="task-1", status="running")
+
+    assert "suppressed failure during task event emit" in caplog.text
+    assert "task-1" in caplog.text
+    assert "emit failed" in caplog.text

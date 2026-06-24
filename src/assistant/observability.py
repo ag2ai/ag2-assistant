@@ -20,6 +20,7 @@ import logging.handlers
 import traceback
 from collections import Counter
 from datetime import datetime
+from typing import Any
 
 _CONFIGURED = False
 
@@ -53,6 +54,15 @@ def agent_logging_middleware():
     from autogen.beta.middleware import LoggingMiddleware
 
     return LoggingMiddleware(logger=logging.getLogger("ag2assistant.agent"))
+
+
+def log_suppressed(operation: str, exc: BaseException, **context: Any) -> None:
+    """Record a best-effort-path failure that should not abort the caller."""
+    detail = " ".join(f"{key}={value!r}" for key, value in context.items() if value is not None)
+    msg = f"suppressed failure during {operation}"
+    if detail:
+        msg = f"{msg} ({detail})"
+    logging.getLogger("ag2assistant").warning(msg, exc_info=(type(exc), exc, exc.__traceback__))
 
 
 async def capture_failure(

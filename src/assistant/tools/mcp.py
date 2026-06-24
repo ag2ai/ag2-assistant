@@ -20,13 +20,14 @@ from autogen.beta.tools import MCPStdioServerConfig
 from autogen.beta.tools.final.function_tool import FunctionDefinition, FunctionToolSchema
 from autogen.beta.tools.final.toolkit import Toolkit
 from autogen.beta.tools.tool import Tool
-from autogen.beta.tools.toolkits.mcp_server.toolkit import (
+
+from assistant.tools._mcp_compat import (
     AnyMCPConfig,
     MCPTool,
-    _extract_content,
-    _mcp_session,
-    _resolve_config,
-    _wrap_middleware,
+    extract_content,
+    mcp_session,
+    resolve_config,
+    wrap_middleware,
 )
 
 _NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
@@ -98,8 +99,8 @@ class NamespacedMCPToolkit(Toolkit):
             if self._discovered:
                 return
 
-            resolved = _resolve_config(self.config, context)
-            async with _mcp_session(resolved) as session:
+            resolved = resolve_config(self.config, context)
+            async with mcp_session(resolved) as session:
                 raw_tools = (await session.list_tools()).tools
 
             allowed = resolved.allowed_tools
@@ -158,9 +159,9 @@ class _NamespacedMCPProxyTool(Tool):
     ) -> None:
         execution: ToolExecution = self
         for hook in reversed(self._middleware):
-            execution = _wrap_middleware(hook, execution)
+            execution = wrap_middleware(hook, execution)
         for mw in middleware:
-            execution = _wrap_middleware(mw.on_tool_execution, execution)
+            execution = wrap_middleware(mw.on_tool_execution, execution)
 
         async def execute(event: ToolCallEvent, context: Context) -> None:
             result = await execution(event, context)
@@ -174,8 +175,8 @@ class _NamespacedMCPProxyTool(Tool):
         self, event: ToolCallEvent, context: Context
     ) -> ToolResultEvent | ToolErrorEvent:
         try:
-            resolved = _resolve_config(self._config, context)
-            async with _mcp_session(resolved) as session:
+            resolved = resolve_config(self._config, context)
+            async with mcp_session(resolved) as session:
                 result = await session.call_tool(self.raw_name, event.serialized_arguments)
         except Exception as exc:
             return ToolErrorEvent.from_call(event, error=exc)
@@ -183,7 +184,7 @@ class _NamespacedMCPProxyTool(Tool):
         if result.isError:
             return ToolErrorEvent.from_call(event, error=RuntimeError(str(result)))
 
-        return ToolResultEvent.from_call(event, result=_extract_content(result))
+        return ToolResultEvent.from_call(event, result=extract_content(result))
 
 
 __all__ = [

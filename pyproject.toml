@@ -74,4 +74,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "assistant" = ["skills/*/SKILL.md"]
-"assistant.gateway" = ["static/*.html", "static/*.svg"]
+"assistant.gateway" = [
+    "static/*.html",
+    "static/*.svg",
+    "static/app/index.html",
+    "static/app/assets/*",
+    "static/app/assets/*.css",
+    "static/app/assets/*.js",
+]

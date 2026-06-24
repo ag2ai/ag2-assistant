@@ -213,8 +213,11 @@ class Scheduler:
                 break
             try:
                 await self.tick()
-            except Exception:
-                pass  # a bad record must never kill the loop
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("scheduler tick", exc)
+                # A bad record must never kill the loop.
 
     async def tick(self, now: datetime | None = None) -> list[str]:
         """One scan: fire every due scheduled task. Returns the ids fired."""

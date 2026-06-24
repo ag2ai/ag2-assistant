@@ -364,7 +364,12 @@ def create_app(
 
     @app.get("/api/tasks/{task_id}")
     async def get_task(task_id: str):
-        task = await app.state.tasks.get_task(task_id)
+        from assistant.tasks import TaskStoreCorruptionError
+
+        try:
+            task = await app.state.tasks.get_task(task_id)
+        except TaskStoreCorruptionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
         if task is None:
             return Response(status_code=404)
         return {"task": task}
@@ -1081,7 +1086,10 @@ def _decode_attachments(items) -> list:
     for a in items or []:
         try:
             raw = base64.b64decode(a.get("data", ""))
-        except Exception:
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("attachment decode", exc, name=a.get("name"))
             continue
         inp = build_input(raw, a.get("name", "file"), a.get("mime"))
         if inp is not None:
@@ -1100,13 +1108,18 @@ def _persist_uploads(workspace_dir, items) -> list[tuple[str, str]]:
     for a in items or []:
         try:
             raw = base64.b64decode(a.get("data", ""))
-        except Exception:
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("upload decode", exc, name=a.get("name"))
             continue
         if not raw:
             continue
         try:
             name = a.get("name", "file")
             out.append((write_upload(workspace_dir, name, raw), name))
-        except Exception:
-            pass
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("upload persist", exc, name=name)
     return out

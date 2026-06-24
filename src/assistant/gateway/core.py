@@ -224,13 +224,19 @@ class Gateway:
         stream = await self.stream_for(session_id)
         try:
             await ConversationContext(stream=stream).send(event)
-        except Exception:
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("external stream event emit", exc, session_id=session_id)
             return
         if self._writer is not None:
             try:
                 await self._writer.persist(session_id, list(await stream.history.get_events()))
-            except Exception:
-                pass  # persistence is best-effort; the live event still went out
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("external stream event persist", exc, session_id=session_id)
+                # Persistence is best-effort; the live event still went out.
 
     async def _get_stream(self, session_id: str):
         """Return the session's live Stream, hydrating from disk on first use."""
@@ -245,8 +251,11 @@ class Gateway:
                     events = sanitize_history(await self._writer.load(session_id))
                     if events:
                         await stream.history.replace(events)
-                except Exception:
-                    pass  # a corrupt/absent log just starts a fresh stream
+                except Exception as exc:
+                    from assistant.observability import log_suppressed
+
+                    log_suppressed("session stream hydrate", exc, session_id=session_id)
+                    # A corrupt/absent log just starts a fresh stream.
                 self._loaded.add(session_id)
         return stream
 
@@ -355,8 +364,10 @@ class Gateway:
                 return  # transcript/audio are the voice channel's own to render
             try:
                 await on_event(event)
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("voice event forward", exc, event=type(event).__name__)
 
         sub_id = stream.subscribe(report)
         try:
@@ -456,7 +467,10 @@ class Gateway:
         """A short plain-text snippet of the last few chat turns, for voice grounding."""
         try:
             msgs = await self.transcript(session_id)
-        except Exception:
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("recent transcript load", exc, session_id=session_id)
             return ""
         out = []
         for m in msgs[-turns:]:
@@ -473,8 +487,11 @@ class Gateway:
         try:
             await self._writer.persist(session_id, list(await stream.history.get_events()))
             await self._append_transcript(session_id, user_text, reply_text)
-        except Exception:
-            pass  # persistence is best-effort; never fail the user's turn
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("turn persistence", exc, session_id=session_id)
+            # Persistence is best-effort; never fail the user's turn.
 
     def _transcript_path(self, session_id: str) -> str:
         return f"{_TRANSCRIPT_PREFIX}{quote(session_id, safe='')}.json"
@@ -485,8 +502,10 @@ class Gateway:
         if await self._event_store.exists(path):
             try:
                 doc = json.loads(await self._event_store.read(path))
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("existing transcript read", exc, session_id=session_id)
         doc["session_id"] = session_id
         doc["messages"].append({"role": "user", "text": user_text})
         doc["messages"].append({"role": "agent", "text": reply_text})
@@ -503,7 +522,10 @@ class Gateway:
 
         try:
             title = await generate_title(self._config, user_text, reply_text)
-        except Exception:
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("chat title generation", exc, session_id=session_id)
             return
         if not title:
             return
@@ -514,8 +536,10 @@ class Gateway:
                 return
             doc["title"] = title
             await self._event_store.write(path, json.dumps(doc))
-        except Exception:
-            pass
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("chat title persist", exc, session_id=session_id)
 
     async def transcript(self, session_id: str) -> list[dict]:
         """The display transcript (role/text turns) for a session."""
@@ -526,7 +550,10 @@ class Gateway:
             return []
         try:
             return json.loads(await self._event_store.read(path)).get("messages", [])
-        except Exception:
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("transcript read", exc, session_id=session_id)
             return []
 
     async def list_sessions(self) -> list[dict]:
@@ -539,7 +566,10 @@ class Gateway:
                 continue
             try:
                 doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry))
-            except Exception:
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("session listing transcript read", exc, entry=entry)
                 continue
             msgs = doc.get("messages", [])
             first_user = next((m["text"] for m in msgs if m["role"] == "user"), "")
@@ -565,8 +595,11 @@ class Gateway:
         try:
             if await needs_onboarding():
                 await run_onboarding(asker)
-        except Exception:
-            pass  # onboarding is best-effort; never block the actual message
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("onboarding", exc)
+            # Onboarding is best-effort; never block the actual message.
 
     def _ask_kwargs(self, asker) -> dict:
         """Per-turn hitl_hook + dependencies bound to this request's asker."""

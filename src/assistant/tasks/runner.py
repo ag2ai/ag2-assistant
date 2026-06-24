@@ -87,8 +87,10 @@ class TaskManager:
                 res = self._on_status(task_id, status, error)
                 if asyncio.iscoroutine(res):
                     await res
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("task status callback", exc, task_id=task_id, status=status)
 
     async def submit(self, task_id: str, asker=None) -> asyncio.Task:
         """Start (or return the already-running) background run for a task."""
@@ -177,8 +179,10 @@ class TaskManager:
                 res = self._on_progress(task_id, message, pct)
                 if asyncio.iscoroutine(res):
                     await res
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("task progress callback", exc, task_id=task_id)
 
     async def emit_event(self, task_id: str, event) -> None:
         """Forward an AG2-native event onto this task's live stream."""
@@ -187,8 +191,12 @@ class TaskManager:
                 res = self._on_event(task_id, event)
                 if asyncio.iscoroutine(res):
                     await res
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed(
+                    "task event callback", exc, task_id=task_id, event=type(event).__name__
+                )
 
     async def deliverable_produced(
         self, task_id: str, deliverable_id: str, description: str, preview: str = ""
@@ -199,8 +207,15 @@ class TaskManager:
                 res = self._on_deliverable(task_id, deliverable_id, description, preview)
                 if asyncio.iscoroutine(res):
                     await res
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed(
+                    "task deliverable callback",
+                    exc,
+                    task_id=task_id,
+                    deliverable_id=deliverable_id,
+                )
 
     async def cancel(self, task_id: str, reason: str = "cancelled") -> None:
         """Cancel a task and **all its descendants** immediately (stop work now)."""

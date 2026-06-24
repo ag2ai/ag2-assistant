@@ -5,6 +5,7 @@ Each task is one JSON doc at `/tasks/{id}.json`; the tree is reconstructed from
 """
 
 import json
+import logging
 from pathlib import Path
 
 from assistant.storage import SerialStore as _SerialStore
@@ -12,6 +13,17 @@ from assistant.storage import new_id, now_iso
 from assistant.tasks.model import Deliverable, Task, TaskStatus
 
 _PREFIX = "/tasks/"
+logger = logging.getLogger("ag2assistant.tasks")
+
+
+class TaskStoreCorruptionError(RuntimeError):
+    """Raised when an existing task record cannot be decoded as a Task."""
+
+    def __init__(self, task_id: str, path: str, reason: BaseException) -> None:
+        self.task_id = task_id
+        self.path = path
+        self.reason = reason
+        super().__init__(f"Task record {task_id!r} at {path} is corrupt: {reason}")
 
 
 def _now() -> str:
@@ -70,8 +82,8 @@ class TaskStore:
             return None
         try:
             return Task.from_dict(json.loads(await self._store.read(path)))
-        except Exception:
-            return None
+        except Exception as exc:
+            raise TaskStoreCorruptionError(task_id, path, exc) from exc
 
     async def delete(self, task_id: str) -> None:
         await self._store.delete(self._path(task_id))
@@ -84,6 +96,7 @@ class TaskStore:
             try:
                 tasks.append(Task.from_dict(json.loads(await self._store.read(_PREFIX + entry))))
             except Exception:
+                logger.exception("skipping corrupt task record %s", entry)
                 continue
         return tasks
 

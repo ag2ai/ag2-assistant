@@ -4,7 +4,7 @@ from assistant.tasks.executor import make_task_executor
 from assistant.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus
 from assistant.tasks.planner import TaskPlan, apply_plan, make_plan, prepare_task, run_intake
 from assistant.tasks.runner import TaskManager
-from assistant.tasks.store import TaskStore
+from assistant.tasks.store import TaskStore, TaskStoreCorruptionError
 
 __all__ = [
     "Deliverable",
@@ -12,6 +12,7 @@ __all__ = [
     "Task",
     "TaskStatus",
     "TaskStore",
+    "TaskStoreCorruptionError",
     "TaskManager",
     "TaskPlan",
     "make_plan",

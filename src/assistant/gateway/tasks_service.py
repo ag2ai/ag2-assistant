@@ -115,8 +115,10 @@ class TaskService:
         if ev is not None:
             try:
                 await self._emit(f"task:{task_id}", ev)
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("task lifecycle event emit", exc, task_id=task_id, status=status)
 
     async def _emit_deliverable(self, task_id, deliverable_id, description, preview="") -> None:
         """A produced deliverable → DeliverableProduced on the task's stream."""
@@ -134,8 +136,15 @@ class TaskService:
                     preview=preview,
                 ),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed(
+                "deliverable event emit",
+                exc,
+                task_id=task_id,
+                deliverable_id=deliverable_id,
+            )
 
     async def _emit_task_event(self, task_id: str, event) -> None:
         """Forward raw AG2 Beta subagent events onto the durable task stream."""
@@ -143,8 +152,10 @@ class TaskService:
             return
         try:
             await self._emit(f"task:{task_id}", event)
-        except Exception:
-            pass
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("task raw event emit", exc, task_id=task_id, event=type(event).__name__)
 
     async def _emit_inquiry(self, inquiry, kind) -> None:
         """Durable HITL lifecycle → InquiryRaised/InquiryAnswered on its stream.
@@ -180,8 +191,10 @@ class TaskService:
                         answer=getattr(inquiry, "answer", "") or "",
                     ),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("inquiry event emit", exc, inquiry_id=inquiry.id, kind=kind, session=sid)
 
     async def start(self) -> None:
         """Build the durable stores + runner (cheap; no LLM agent yet)."""
@@ -333,8 +346,10 @@ class TaskService:
                         recurrence=recurrence or "",
                     ),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("scheduled task event emit", exc, task_id=task.id)
         bg = asyncio.create_task(self._plan_for_schedule(task.id, channel, when))
         self._bg.add(bg)
         bg.add_done_callback(self._bg.discard)
@@ -369,8 +384,11 @@ class TaskService:
                     status=TaskStatus.SCHEDULED,
                     scheduled_for=when,
                 )
-        except Exception:
-            pass  # planning is best-effort; the run can still plan on fire as a fallback
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("scheduled task upfront planning", exc, task_id=task_id)
+            # Planning is best-effort; the run can still plan on fire as a fallback.
 
     async def _clone_subtree(self, src, new_parent_id: str) -> None:
         child = await self._store.add_subtask(

@@ -203,7 +203,10 @@ async def _used_web_tools(source) -> bool:
     try:
         history = source.history if hasattr(source, "history") else source
         events = list(await history.get_events())
-    except Exception:
+    except Exception as exc:
+        from assistant.observability import log_suppressed
+
+        log_suppressed("web tool usage introspection", exc)
         return True  # can't introspect → don't falsely reject
     for ev in events:
         if isinstance(ev, (ToolCallEvent, BuiltinToolCallEvent)):
@@ -342,8 +345,16 @@ def make_task_executor(config, skills: bool = True):
 
                     asset["path"] = write_deliverable_file(config.workspace_dir, task, d, output)
                     asset["kind"] = "file"
-                except Exception:
-                    pass  # file write is best-effort; the inline content still stands
+                except Exception as exc:
+                    from assistant.observability import log_suppressed
+
+                    log_suppressed(
+                        "deliverable file write",
+                        exc,
+                        task_id=task_id,
+                        deliverable_id=d["id"],
+                    )
+                    # File write is best-effort; the inline content still stands.
                 await store.set_deliverable_status(
                     task_id, d["id"], DeliverableStatus.PRODUCED, asset=asset
                 )

@@ -163,6 +163,71 @@ def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(monkeypatch):
     assert isinstance(mcp_only[0], NamespacedMCPToolkit)
 
 
+async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes(monkeypatch):
+    """The namespaced adapter keeps AG2 MCP execution behavior behind our local
+    compatibility surface while presenting provider-safe names."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from autogen.beta import ToolResult
+    from autogen.beta.context import ConversationContext
+    from autogen.beta.events import ToolCallEvent
+    from autogen.beta.stream import MemoryStream
+    from autogen.beta.tools import MCPStdioServerConfig
+
+    import assistant.tools.mcp as mcp_mod
+    from assistant.tools.mcp import NamespacedMCPToolkit
+
+    calls = []
+
+    class _Session:
+        async def list_tools(self):
+            return SimpleNamespace(
+                tools=[
+                    SimpleNamespace(
+                        name="read_file",
+                        description="Read a file",
+                        inputSchema={"type": "object"},
+                    ),
+                    SimpleNamespace(name="write_file", description="", inputSchema={}),
+                    SimpleNamespace(name="search", description="", inputSchema={}),
+                ]
+            )
+
+        async def call_tool(self, name, args):
+            calls.append((name, args))
+            return SimpleNamespace(isError=False, content=[])
+
+    @asynccontextmanager
+    async def fake_session(config):
+        yield _Session()
+
+    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
+    monkeypatch.setattr(mcp_mod, "mcp_session", fake_session)
+    monkeypatch.setattr(mcp_mod, "extract_content", lambda result: ToolResult("ok"))
+
+    toolkit = NamespacedMCPToolkit(
+        MCPStdioServerConfig(
+            command="mcp",
+            server_label="repo-files",
+            allowed_tools=["read_file", "write_file"],
+            blocked_tools=["write_file"],
+        )
+    )
+    context = ConversationContext(stream=MemoryStream())
+    schemas = list(await toolkit.schemas(context))
+
+    assert [s.function.name for s in schemas] == ["repo_files_read_file"]
+
+    proxy = next(t for t in toolkit.tools if t.name == "repo_files_read_file")
+    result = await proxy(
+        ToolCallEvent(id="call-1", name=proxy.name, arguments='{"path":"x"}'), context
+    )
+
+    assert result.name == proxy.name
+    assert calls == [("read_file", {"path": "x"})]
+
+
 def test_files_capability_wires_workspace_toolkit(tmp_path):
     """The `files` capability adds AG2's filesystem toolkit (write/update/find/
     delete) scoped to the workspace, creating it — and keeps exactly one `read_file`
