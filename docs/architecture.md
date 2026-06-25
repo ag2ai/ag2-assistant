@@ -1,215 +1,542 @@
-# AG2 Assistant Architecture
+# AG2 Assistant — Architecture
 
-## Overview
+A thorough map of the system: its services, agents, endpoints, event model, data
+flow, and on-disk state. Companion diagram: [`architecture.svg`](architecture.svg).
 
-AG2 Assistant is a personal AI-assistant platform built on **AG2 Beta**. The backend is
-Python; the web UI is a separate Svelte client that talks to the gateway's API.
+> Conventions: file paths are repo-relative (e.g. `src/assistant/gateway/core.py`).
+> Runtime state lives under `~/.ag2assistant/`; generated files under the workspace
+> (`~/Documents/AG2 Assistant/` by default).
 
-The defining decision (see `docs/gui-redesign-plan.md`, and the memory
-`ag2-primitives-drive-architecture`): **AG2's event `Stream` is the single source
-of truth, and everything is a projection of it.** We lean on AG2 primitives
-(streams, the event taxonomy, observers/subscriptions, `EventLogWriter`,
-knowledge/compaction) rather than inventing parallel machinery, and add an
-AG2 Assistant-specific layer only where AG2 main genuinely doesn't reach yet (durable
-scheduled tasks, durable HITL).
+---
 
-## The spine: AG2 event streams
+## 1. Overview
+
+AG2 Assistant is a personal AI-assistant platform built on **AG2 Beta**
+(`autogen.beta`). The backend is Python (FastAPI); the primary client is a Svelte
+web app served by the gateway. The same backend also speaks to messaging channels
+(Telegram/Discord/Slack), a realtime voice client, and a CLI — all sharing **one
+universal agent** and **one event-stream spine**.
+
+The defining decision (memory `ag2-primitives-drive-architecture`, and
+`docs/gui-redesign-plan.md`): **AG2's event `Stream` is the single source of truth,
+and every surface is a projection of it.** We lean on AG2 primitives — streams, the
+event taxonomy, observers/subscriptions, `EventLogWriter`, knowledge/compaction —
+rather than inventing parallel machinery, and add an app-specific layer only where
+AG2 main genuinely doesn't reach yet (durable scheduled tasks, durable HITL).
+
+---
+
+## 2. Guiding principle: the event stream is the source of truth
 
 Each conversation surface — a web chat, each task, a voice session — is a
-per-session AG2 **`Stream`** keyed by `session_id` (`web-…`, `task:<id>`,
-`voice:<id>`). Its event history *is* the conversation; after each turn the
-events are persisted with `EventLogWriter` to `~/.ag2assistant/sessions.db` and
-reloaded on demand, so sessions are **resumable** and never cross histories.
+per-session AG2 **`Stream`** keyed by `session_id`:
 
-**One wire contract — `wire = log = {type, data}`.** A serialized event is
-exactly what `EventLogWriter` persists:
+| Session id          | Surface                          |
+| ------------------- | -------------------------------- |
+| `web-<uuid>`        | a web chat                       |
+| `task:<task_id>`    | a background task's own stream   |
+| `voice:<id>`        | a realtime voice session         |
+| `default`           | CLI single-shot                  |
+
+A stream's event history *is* the conversation. After each turn the events are
+persisted with AG2's `EventLogWriter` to `~/.ag2assistant/sessions.db` and reloaded
+on demand, so sessions are **resumable** and never cross histories.
+
+**One wire contract — `wire = log = {type, data}`.** A serialized event is exactly
+what `EventLogWriter` persists:
 
 ```json
 { "type": "autogen.beta.events.types.ModelResponse", "data": { … } }
-{ "type": "ag2assistant.events.DeliverableProduced", "data": { … } }
+{ "type": "ag2assistant.events.DeliverableProduced",  "data": { … } }
 ```
 
-The same representation is used to **persist, replay, and live-stream**. So
-*history (replay the log) and live (subscribe to new events) are the same path*,
-and the GUI is a thin renderer that maps event `type` → component. Custom
-`ag2assistant.events.*` round-trip because deserialization resolves the class by its
-fully-qualified name.
+The same representation is used to **persist, replay, and live-stream**, so *history
+(replay the log) and live (subscribe to new events) are the same path*. The GUI is a
+thin renderer that maps event `type` → Svelte component. Custom
+`ag2assistant.events.*` classes round-trip because deserialization resolves the class
+by its fully-qualified name.
 
-**Event taxonomy** (reused AG2-native unless noted):
+---
 
-| Event | Rendered as |
-|---|---|
-| `ModelRequest` | user message bubble |
-| `ModelMessageChunk` / `ModelResponse` | agent bubble (streams, then finalizes) |
-| `ToolCallsEvent` / `ToolResultEvent` | ⚙ tool chip / internal |
-| `TranscriptionChunkEvent` / `…Completed` | voice user transcript |
-| `SynthesizedAudioEvent` | binary audio (own frame, not an item) |
-| `HumanInputRequest` | in-stream HITL (durable copy in `InquiryStore`) |
-| `TaskStarted/Progress/Completed/Failed/Cancelled` | task lifecycle |
-| `ObserverAlert` / `HaltEvent` | alerts / halts |
-| `ag2assistant.events.TaskCreated` | task card (chat → spawned task) |
-| `ag2assistant.events.TaskScheduled` | schedule note |
-| `ag2assistant.events.DeliverableProduced` | deliverable item |
-| `ag2assistant.events.InquiryRaised` / `InquiryAnswered` | durable HITL lifecycle |
+## 3. Process & deployment topology
 
-The custom five exist only where AG2 main has no equivalent.
+Everything runs in **one process** by default. The CLI (`src/assistant/cli.py`)
+exposes:
 
-## System Architecture
+| Command                  | What it starts                                                        |
+| ------------------------ | --------------------------------------------------------------------- |
+| `ag2assistant run`       | gateway + web UI **+** every channel whose token is set (one agent)   |
+| `ag2assistant gateway`   | REST + WebSocket API + web UI only (`--host`, `--port`, default 8800) |
+| `ag2assistant chat`      | interactive terminal chat                                             |
+| `ag2assistant agent "…"` | single-shot prompt → reply                                            |
+| `ag2assistant onboard`   | first-run interview (name, location, hours, style)                    |
+| `ag2assistant telegram \| discord \| slack` | a single messaging channel                         |
+| `ag2assistant version`   | version string                                                        |
 
-![Architecture Diagram](architecture.svg)
+`run` builds the gateway + task service via `build_gateway()`
+(`src/assistant/gateway/core.py:638`), starts the scheduler, attaches channels whose
+tokens are present, and serves the FastAPI app from `create_app()`
+(`src/assistant/gateway/app.py`).
 
-## Layers
+**Scale.** For a single user (1–5 sessions) one process is sufficient; scaling out
+(worker pool, session affinity, external queue, or AG2 `Hub` distributed transport)
+is future work — the agent composes onto a Hub without changing the client API.
 
-### 1. Client
+**Security posture:** the gateway is single-user and local-first. The only access
+control is an **origin guard** on `/api/*` plus a per-socket origin check on the
+WebSocket routes (close code 1008). There are no auth headers; a remote deployment
+must sit behind its own auth proxy. See §12.
 
-The web UI is a **Vite + Svelte 5** SPA in `web/`, built (committed) into
-`src/ag2assistant/gateway/static/app/` and served at **`/app`** (`/` and any unknown
-path 307-redirect there). It's a pure projection of the event stream:
-`transport/stream.js` opens one `/api/stream` WebSocket; `project.js` folds
-`{type,data}` events into thread items; per-event-type Svelte components are
-reused across chat and task threads. `TaskPanel` reads the durable task tree via
-REST; the HITL strip polls `/api/inquiries/pending`; voice, attachments and
-Google-connect are first-class. Routing is full-path (`/app/c/<id>`,
-`/app/t/<id>`). `web/diag.mjs` is a headless jsdom smoke test that executes the
-built bundle to catch mount errors/loops without a browser.
+---
 
-Any other client (CLI, channels, future apps) is equally valid — the gateway API
-is the only contract.
+## 4. System diagram
 
-### 2. Gateway
+See [`architecture.svg`](architecture.svg) for the layered diagram: clients →
+gateway (REST + two WebSockets) → universal agent + tools, with the task subsystem,
+memory, voice, HITL, and the persistent stores hanging off the event-stream spine.
 
-A FastAPI facade (`ag2assistant.gateway`) over the agent and task engine:
+---
+
+## 5. Services & subsystems
+
+### 5.1 Gateway core — `src/assistant/gateway/core.py`, `gateway/app.py`
+
+`Gateway` owns sessions, streams, persistence, and the shared agent.
+
+- **Sessions & streams.** `stream_for(session_id)` returns the live per-session
+  `Stream`, hydrating it from disk on first use (`_get_stream`), repairing broken
+  compaction with `sanitize_history()` before resume.
+- **Turns.** `send_message()` resolves the stream, injects surface context, builds a
+  per-turn permission manager + HITL hook (`_ask_kwargs`), runs `agent.ask(...)`,
+  subscribes to the stream to tally usage and forward events, then persists events +
+  a display transcript. Persistence is best-effort and never fails the user's turn.
+- **Persistence.** Events → `EventLogWriter` → `sessions.db`. A separate compact
+  transcript (role/text) is written for fast session listing/restore.
+- **Reload.** `reload()` (`core.py:186`) reference-swaps the agent: in-flight turns
+  finish on the old agent; the next turn uses a freshly-built one (new keys/config).
+  Per-session streams are untouched, so no history is lost. The task service rebuilds
+  its planner lazily.
+- **app.py** wires it together: builds/owns the gateway + `TaskService`, mounts the
+  REST routes and the two WebSockets, serves the Svelte bundle at `/app`, and runs
+  the FastAPI `lifespan` (start/stop of gateway, task service, scheduler).
+- Helpers: `gateway/stream_bridge.py` (replay-then-subscribe bridge to a client),
+  `gateway/wire.py` (`to_wire()`, `is_binary_event()` — audio is binary, not JSON).
+
+No background loop lives here; the only long-running loop is the scheduler (§5.5).
+
+### 5.2 Universal agent — `src/assistant/agent.py`
+
+One shared `autogen.beta` `Agent`, built by `create_agent()` (`agent.py:320`).
+`model_config()` maps the provider to a config class (Gemini default 8192 max
+output; OpenAI via the Responses API; Anthropic; Ollama). Per-turn system prompts
+are assembled by `turn_prompt()` (chat) and `universal_turn_prompt()` (gateway/tasks
+— adds the capability map + surface description), both appending live
+`environment_context()` (date/time/location). Tools, memory policies, observers, and
+the HITL hook are attached at construction. See §6 for the full agent inventory.
+
+### 5.3 Tools & capabilities — `src/assistant/tools/`
+
+`build_agent_tools()` selects tools by **capability** (`web`, `code`, `files`,
+`images`, `skills`, `mcp`, `gmail`, `calendar`, `drive`). Chat gets the full set;
+task subagents are scoped to their declared capabilities.
+
+| Tool / group     | File                         | Notes                                             |
+| ---------------- | ---------------------------- | ------------------------------------------------- |
+| Web search       | `tools/__init__.py`          | native AG2 `DuckDuckSearchTool`                    |
+| Shell / code     | `tools/__init__.py`, `docker_sandbox.py` | host or Docker sandbox; approval-gated |
+| Web fetch        | `tools/web_fetch.py`         | function-tool fallback (native WF conflicts on Gemini) |
+| Read file        | `tools/files.py`             | permission-gated host-path reader                 |
+| Image generation | `tools/image_gen.py`         | provider-aware (Gemini native / OpenAI Responses) |
+| Google           | `tools/google.py`            | Gmail/Calendar/Drive when signed in               |
+| Skills           | skills registry toolkit      | search/install/run from skills.sh                 |
+| Approval         | `tools/approval.py`          | command-approval middleware → permissions         |
+
+### 5.4 MCP integration — `tools/mcp.py`, `tools/_mcp_compat.py`
+
+`build_mcp_tools()` builds a `NamespacedMCPToolkit` per configured server. Raw MCP
+tool names are namespaced (`<server>_<tool>`, e.g. `repo_files_read_file`) to avoid
+collisions with native tools, and filtered against `allowed_tools`/`blocked_tools`
+**before** namespacing. `_mcp_compat.py` quarantines the private AG2 MCP internals
+(`AnyMCPConfig`, `MCPTool`, `_resolve_config`, `_mcp_session`, `_extract_content`,
+`_wrap_middleware`) behind stable wrappers, raising `MCPCompatibilityError` on
+version drift. The onboarding project folder seeds a **read-only** `repo-files` MCP
+(7 read tools only).
+
+### 5.5 Task subsystem — `src/assistant/tasks/*`, `gateway/tasks_service.py`
+
+Durable background work with deliverables, scheduling, and subtask orchestration.
+
+- **`TaskStore`** (`tasks/store.py`) — CRUD + tree over `/tasks/{id}.json` in
+  `tasks.db`, serialized by `SerialStore`. `get()` raises `TaskStoreCorruptionError`
+  on a corrupt record; `list_all()` logs-and-skips so one bad record can't blank the
+  list. `Task` model in `tasks/model.py` (`title`, `description` = raw request,
+  `objective` = definition of done, `deliverables`, `status`, `recurrence`, …).
+- **`TaskManager`** (`tasks/runner.py`) — concurrency-limited runner (semaphore,
+  `MAX_CONCURRENT` default 3, `MAX_ATTEMPTS` 3). Executes a task, runs subtasks,
+  gates completion on deliverables, and cascades cancellation to descendants. Emits
+  status/progress/event/deliverable callbacks.
+- **`Scheduler`** (`tasks/scheduling.py`) — deterministic poll loop (`interval`
+  default **30.0s**). `tick()` fires every due `SCHEDULED` task; recurrence is
+  interval-based and anchored to `scheduled_for` ("daily", "hourly", "every N
+  units", weekday patterns). A bad record logs but never kills the loop.
+- **Executor** (`tasks/executor.py`) — `make_task_executor()` runs a **visible
+  subagent** per deliverable (archetype persona: researcher/operator/coder/worker),
+  cheap model for leaf subtasks, main model for root synthesis. Inner subagent events
+  are forwarded to the task stream as `SubagentTrace`. A **deliverable verifier**
+  (cheap model, `_Verdict{satisfied, reason}`) rejects plans/menus that don't meet
+  the acceptance criteria. Deliverable files are written to the shared workspace
+  (best-effort; inline content still stands on write failure).
+- **Planner** (`tasks/planner.py`) — `make_plan()` classifies trivial vs non-trivial,
+  produces a `TaskPlan{title, objective, questions, deliverables, subtasks,
+  capabilities}`, and drives an intake clarification loop (≤5 questions, ≤4 rounds).
+- **Controller** (per-task chat) — `gateway/tasks_service.py` builds a cached
+  `task-controller` agent with task-editing tools so a user can converse about/modify
+  a task on its page (`tasks/control.py` tools: add/cancel subtask, set objective…).
+- **`TaskService`** (`gateway/tasks_service.py`) — the bridge: owns store + manager +
+  scheduler + planner, translates lifecycle transitions into AG2 task events on the
+  task's stream (`_emit_status`, `_emit_deliverable`, `_emit_task_event`), and backs
+  the task REST endpoints. `set_emitter(gateway.emit_event)` wires task events onto
+  the shared event spine. `rerun()` clones a terminal task for a clean re-run.
+
+### 5.6 HITL (human-in-the-loop) — `src/assistant/hitl/*`
+
+Two stores, two lifetimes:
+
+- **Durable task inquiries** — `hitl/inquiry.py` (`Inquiry`, `InquiryStore` →
+  `inquiries.db`). Clarifications/permissions raised during task intake/execution;
+  survive restarts; answerable out-of-band from any surface. Surfaced as
+  `InquiryRaised`/`InquiryAnswered` events and via `/api/inquiries/*`.
+- **Transient chat-turn prompts** — `hitl/gateway.py` (`GatewayAsker` + an in-memory
+  `HitlServer` registry). Permission/clarification prompts during a chat turn;
+  answered inline (WS `answer` frame) or via the styled `/hitl/{id}` page.
+- Asker variants: `NullAsker` (block until answered — tasks), `ChannelAsker`
+  (Telegram/Discord/Slack), `DesktopAsker` (browser popup). `build_hitl_hook()` turns
+  an asker into the AG2 `hitl_hook` dependency injected per turn.
+
+### 5.7 Memory — `src/assistant/memory.py`, `observers.py`
+
+A rolling user **profile** in `profile.db` (document at `/memory/working.md`), under
+four headings (how / when / dislikes / writing style). Three write paths:
+
+1. **Passive aggregation** — AG2's `WorkingMemoryAggregate` distils the profile every
+   N turns (default 4); `WorkingMemoryPolicy` injects it into each turn.
+2. **Explicit** — the `remember` tool → `record_preference()`.
+3. **Feedback learner** — fire-and-forget after a 👍/👎 (see §6).
+
+`record_preference(note, category, remove=…)` inserts/dedupes bullets and can prune
+contradicting ones. `observers.py` adds passive guards (e.g. `ToolChurnObserver`)
+that emit `ObserverAlert`.
+
+### 5.8 Voice — `src/assistant/voice.py`, `voice_providers.py`
+
+`build_voice_agent()` constructs an AG2 **`LiveAgent`** (Gemini Live or OpenAI
+realtime, swappable via `voice_providers`). It carries a small read-only toolset
+(list/get task, list/answer questions, `current_time`) and an **`ask_assistant`**
+tool that delegates heavy work to the universal agent on the same session — so voice
+shares the chat's context and tools. Audio is full-duplex over `/api/voice`: 16 kHz
+mono PCM in, 24 kHz PCM out, with transcript + delegated-event JSON frames
+interleaved. No state is persisted per voice session.
+
+### 5.9 Channels — `src/assistant/channels/*`
+
+`Channel` adapters (`telegram.py`, `discord.py`, `slack.py`) normalize inbound
+messages to `InboundMessage`, apply **mention-gating** (`should_respond()`: DMs
+always, groups only on @mention), call `gateway.send_message()` with a per-chat
+session, and format replies (`formatting.py`). HITL surfaces through `ChannelAsker`.
+All channels share the one agent.
+
+### 5.10 Storage, config & cross-cutting — `storage.py`, `config.py`, …
+
+- **`storage.py`** — `SerialStore` (an `asyncio.Lock` over AG2's
+  `SqliteKnowledgeStore`, since SQLite isn't safe for concurrent coroutine access),
+  plus `now_iso()` / `new_id()`. `EventLogWriter` (AG2) writes the event log.
+- **`config.py`** — `Config` resolved defaults ← `config.json` ← UI settings ← env
+  (`AG2ASSISTANT_*` wins). `data_dir()`/`workspace_dir` derive from `Path.home()`.
+- **`secrets.py`** — API keys in `secrets.json` (chmod 0600), loaded into
+  `os.environ` at startup/reload (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
+  `ANTHROPIC_API_KEY`, GitHub token, Ollama base URL).
+- **`settings.py`** — non-secret UI prefs: provider/model, voice provider+voice,
+  onboarded flag, project folder, MCP server list.
+- **`permissions.py`** — `PermissionStore` (folder grants/blocks → `permissions.json`)
+  + per-turn `PermissionManager`.
+- **`usage.py`** — `UsageLedger` (daily tokens + estimated cost → `usage.json`,
+  priced from `pricing.json`).
+- **`workspace.py`** — sandbox-safe file I/O: `write_deliverable_file` (shared
+  `deliverables/`), `write_image` (`images/`), `write_upload` (`uploads/`),
+  `resolve()` (no traversal escape), `list_files()`, `list_dirs()` (folder picker).
+- **`observability.py`** — `setup_logging()` (rotating `ag2assistant.log`),
+  `agent_logging_middleware()`, `log_suppressed()` (best-effort warnings),
+  `capture_failure()` (JSON snapshot under `debug/`).
+
+---
+
+## 6. Agents & LLM calls
+
+Every model-backed call in the backend. Two model tiers: **main**
+(`config.llm.model`) for quality-sensitive work, **cheap/aggregate**
+(`cheap_model(config)` / `config.llm.aggregate_model`) for background/bulk.
+
+| # | Agent / call            | File                         | Tier  | Trigger                              | Structured output            |
+| - | ----------------------- | ---------------------------- | ----- | ------------------------------------ | ---------------------------- |
+| 1 | **Universal agent**     | `agent.py:320` (`create_agent`) | main  | every user turn (`agent.ask`)        | — (conversational)           |
+| 2 | **Chat title**          | `title.py`                   | cheap | after first exchange (fire-and-forget) | `ChatTitle{title}`         |
+| 3 | **Feedback learner**    | `feedback.py`                | cheap | on 👍/👎 (fire-and-forget)            | `FeedbackMemory{note, remove}` |
+| 4 | **Task planner**        | `tasks/planner.py`           | main  | task intake / before each scheduled run | `TaskPlan{…}`             |
+| 5 | **Executor subagents**  | `tasks/executor.py`          | cheap (leaf) / main (root) | each deliverable        | — (free-form deliverable)    |
+| 6 | **Deliverable verifier**| `tasks/executor.py`          | cheap | after each subagent finishes         | `_Verdict{satisfied, reason}`|
+| 7 | **Task controller**     | `gateway/tasks_service.py`   | main  | user chats on a task page (cached per task) | — |
+| 8 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
+| 9 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
+| 10| **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
+| 11| **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2assistant agent "…"`             | —                            |
+
+Onboarding (`onboarding.py`) is **not** an LLM call — it's a fixed 4-question HITL
+sequence that seeds the profile. The **reload** mechanism (§5.1) reference-swaps
+agents 1/4/7 without dropping streams.
+
+---
+
+## 7. HTTP & WebSocket endpoints
+
+All under `create_app()` (`gateway/app.py`); `/api/*` is origin-guarded. Two
+WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
+
+### Chat / sessions
 
 | Method | Path | Purpose |
-|---|---|---|
-| WS | `/api/stream?session=<id>` | **Primary transport.** Replays the session's events `{event:{type,data}}` then streams live; send `{text, attachments?}` / `{type:"answer",…}` |
-| WS | `/api/voice?session=\|task=` | Full-duplex Gemini Live: binary PCM in/out + transcript/tool/task_card JSON |
-| GET | `/api/sessions`, `/api/sessions/{id}` | resumable session list + transcript |
-| GET/POST | `/api/tasks*` | task list/create/schedule/detail/cancel/archive/chat |
-| GET/POST | `/api/inquiries/pending`, `/api/inquiries/{id}/answer` | durable HITL |
-| * | `/api/google/*`, `/hitl/*`, `/api/health` | Google OAuth, transient HITL pages, health |
-| GET | `/app`, `/app/{path}` | the Svelte SPA (deep-link fallback) |
+| ------ | ---- | ------- |
+| GET  | `/api/health` | gateway status |
+| GET  | `/api/sessions` | list resumable sessions (newest first) |
+| GET  | `/api/sessions/{session_id}` | display transcript for a session |
+| POST | `/api/message` | send a message, blocking → `{reply, session_id}` |
+| WS   | `/api/stream?session=&surface=` | **event stream**: replay + live (frames below) |
 
-`StreamBridge` (the generalized form of our subscriptions, à la the network
-`TaskMirror`) replays + forwards a session's events and runs input turns through
-`Gateway.send_message`. `Gateway.emit_event(session, event)` appends an event
-onto a stream *outside* a turn (the `SoundDeviceRecorder` pattern) and persists
-it — used by the task engine and voice transcripts. A per-session lock serialises
-turns; failures are snapshotted (see Observability). Launch with `ag2assistant gateway`,
-or `ag2assistant run` to also start every configured channel.
+### Tasks / inquiries
 
-### 3. Agent
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET  | `/api/tasks` | top-level tasks for the Tasks view |
+| POST | `/api/tasks` | start a task (intake runs in background) |
+| GET  | `/api/tasks/all?status=` | full history (active/completed/stopped/archived) |
+| POST | `/api/tasks/schedule` | schedule (optionally recurring) |
+| GET  | `/api/tasks/{id}` | task detail (`404`; `500` on corrupt record) |
+| POST | `/api/tasks/{id}/cancel` | cancel a running task |
+| POST | `/api/tasks/{id}/rerun` | clone + re-run from clean state |
+| POST | `/api/tasks/{id}/seen` | clear unread highlight |
+| POST | `/api/tasks/{id}/archive` | set archived flag |
+| POST | `/api/tasks/{id}/chat` | converse about a task (controller agent) |
+| GET  | `/api/inquiries/pending?task_id=` | open durable HITL inquiries |
+| POST | `/api/inquiries/{id}/answer` | answer a durable inquiry (out-of-band) |
 
-One **universal `Agent`** (`ag2assistant.agent.create_agent`) backs every surface;
-isolation comes from the per-session stream. Per turn, `universal_turn_prompt`
-assembles persona + behaviour guidance + capability map + (when signed in) Google
-guidance + the **surface context** (e.g. a task snapshot) + live environment
-(date/time/location). Tools: web search, sandboxed shell/code (local or Docker),
-`read_file` (vision, permission-gated), `web_fetch`, the skills toolkit, Google
-tools when signed in, and the **system tools** (`build_system_tools`) that let the
-one agent *know and do everything* — list/get/create/schedule/edit/cancel/archive
-tasks, answer questions, read chats. Knowledge/compaction via `KnowledgeConfig`;
-`LoggingMiddleware` for per-turn logs. A cheaper model (`gemini-3.1-flash-lite`)
-runs bulk work (memory aggregation, deliverable verification, leaf subtasks).
+### HITL (chat-turn prompts)
 
-### 4. Tasks — a durable engine that is an *event source*
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET  | `/api/hitl/pending` | open chat-turn questions |
+| GET  | `/hitl/{req_id}` | styled browser answer page |
+| POST | `/hitl/{req_id}/answer` | submit an answer to that page |
 
-`ag2assistant.tasks` (see `docs/tasks-design.md`) is the one place AG2 main doesn't
-cover: a persistent, nestable **`Task`** (`TaskStore`, `~/.ag2assistant/tasks.db`) with
-objective, deliverables (criteria + verification + asset), capability scope,
-iterative HITL intake, a resilient concurrent runner (`TaskManager`), and a
-deterministic no-LLM **scheduler** (one-shot + recurring; recurring tasks stay a
-template that clones a run per occurrence).
+### Settings / keys / MCP / project folder
 
-Crucially, the engine **emits events onto the relevant stream** so the GUI renders
-tasks like everything else: `TaskManager` has `on_status`/`on_deliverable` hooks →
-`TaskService` translates to AG2 `TaskStarted/Completed/Failed/Cancelled` +
-`DeliverableProduced` on `task:<id>`; `create_task`/`schedule_task` emit
-`TaskCreated`/`TaskScheduled` (on the chat stream via `Context.send`, for the card).
-The durable store remains system-of-record; it speaks the AG2 event vocabulary.
-(Migration target when AG2 ships it: A2A `TaskArtifact`/Hub.)
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET    | `/api/settings` | full snapshot (keys set, providers, voice, MCP, onboarded, project_folder, fs roots) |
+| POST   | `/api/settings/key` | set/clear an API key |
+| POST   | `/api/settings/llm` | set provider + model |
+| POST   | `/api/settings/voice_provider` | set voice provider |
+| POST   | `/api/settings/onboarded` | mark onboarding done (per install) |
+| POST   | `/api/settings/mcp` | add/upsert an MCP server |
+| DELETE | `/api/settings/mcp/{name}` | remove an MCP server |
+| POST   | `/api/settings/mcp/{name}/health` | health-check (lists tools) |
+| POST   | `/api/settings/project-folder` | persist folder + seed read-only `repo-files` MCP |
+| GET    | `/api/fs/list?path=` | list subdirectories (folder picker) |
 
-### 5. Voice
+### Files / memory / usage
 
-`ag2assistant.voice` runs an AG2 **`LiveAgent`** (Gemini Live) per browser voice
-session. It has a small basic toolset (read tasks, answer questions) and an
-`ask_assistant` tool that **delegates heavy work to the universal agent** on the
-same session (continuity). The browser captures 16 kHz PCM via an AudioWorklet
-over `/api/voice`; 24 kHz speech streams back; transcripts and tool chips render
-as bubbles. Spoken turns are **persisted onto the session stream** (user →
-`ModelRequest`, agent → `ModelResponse`) so voice and text share one resumable
-conversation.
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET    | `/api/files` | list workspace files |
+| GET    | `/api/files/raw?path=&download=` | serve one workspace file (sandboxed) |
+| DELETE | `/api/files/raw?path=` | delete a workspace file |
+| GET    | `/api/memory` | read learned profile |
+| POST   | `/api/memory` | overwrite learned profile |
+| GET    | `/api/usage` | today's token + cost totals |
 
-### 6. HITL & permissions
+### Voice
 
-`ag2assistant.hitl`: a pluggable **`Asker`** (chat buttons / styled desktop pages) wired
-via AG2's `hitl_hook` and the permission manager. Inside tasks, prompts are
-**durable `Inquiry` primitives** (`InquiryStore`, `~/.ag2assistant/inquiries.db`):
-persisted the moment they're raised, answerable from any surface; `DurableAsker`
-races live delivery against an out-of-band answer. An `on_change` hook emits
-`InquiryRaised`/`InquiryAnswered` onto the task stream. One turn-level
-`PermissionManager` (`ag2assistant.permissions`) gates folder access and shell/code
-(Allow once / Always / Deny; "always" persists to `permissions.json`; sandbox-mode
-aware).
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET  | `/api/voice/voices` | available voices + current + input rate |
+| POST | `/api/voice/select` | persist voice selection |
+| POST | `/api/voice/preview` | TTS preview (wav) |
+| GET  | `/voices/{name}.wav` | pre-recorded sample (falls back to TTS) |
+| WS   | `/api/voice?task=&session=` | full-duplex audio + transcript/event frames |
 
-### 7. Observability
+### Google
 
-`ag2assistant.observability` — file-based so it's readable back without reproducing:
-a rolling `~/.ag2assistant/ag2assistant.log` (folds in AG2's `autogen.*` logs + per-turn
-`LoggingMiddleware`), and a **failure snapshot** written on any turn exception
-(`<data_dir>/debug/<ts>-<session>.json`) capturing the error, traceback, and the
-*shape* of the history that triggered it (event-type counts + tail). The full
-per-turn event stream (`EventLogWriter`) is the deep record. (OpenTelemetry
-`TelemetryMiddleware` is available but not wired — no `opentelemetry` dependency.)
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET  | `/api/google/status` | configured / signed-in / email |
+| POST | `/api/google/credentials` | upload OAuth client JSON |
+| POST | `/api/google/login_url` | build consent URL |
+| GET  | `/api/google/callback` | OAuth redirect → styled status page |
+| POST | `/api/google/logout` | clear token |
 
-### 8. Memory, Google, Config, Storage
+### App / static
 
-- **Memory** (`ag2assistant.memory`): passive user-profile learning
-  (`WorkingMemoryAggregate` + `WorkingMemoryPolicy`, SQLite, platform-tagged,
-  cadence-batched on a cheap model; permission decisions excluded). See `docs/memory.md`.
-- **Google** (`ag2assistant.integrations.google_auth` + `ag2assistant.tools.google`): OAuth;
-  Gmail/Calendar/Drive read freely, sends/writes HITL-gated.
-- **Config**: Pydantic, precedence env (`AG2ASSISTANT_*`) > `~/.ag2assistant/config.json` > defaults.
-- **Storage** `~/.ag2assistant/`: `sessions.db` (streams + transcripts) · `tasks.db` ·
-  `inquiries.db` · `profile.db` · `permissions.json` · Google creds/token ·
-  `ag2assistant.log` + `debug/` · `skills/` · optional `config.json`.
+`GET /` → `/app/`; `GET /app/{path}` serves the SPA (index fallback for deep
+links); favicon/`*.svg`; catch-all routes unknown `/api/*` → 404, else → `/app/`.
 
-## Turn flow (current)
+### WebSocket frames
+
+**`/api/stream`** — server sends `{event:{type,data}}` (replay then live),
+`{type:"ready"|"turn_end"|"error", …}`. Client sends `{text, attachments?}`,
+`{type:"answer", id, answer}`, `{type:"feedback", target_id, target_kind, sentiment,
+reason, content?, request?}`.
+
+**`/api/voice`** — server sends `{type:"ready"|"transcript"|"turn_end"|"error"}`,
+`{event:{type,data}}` (delegated agent events), and binary 24 kHz PCM. Client sends
+binary 16 kHz mono PCM mic frames.
+
+---
+
+## 8. Event taxonomy
+
+### 8.1 Custom app events — `src/assistant/events.py`
+
+All extend `AssistantEvent(BaseEvent)` and serialize as
+`{"type":"ag2assistant.events.<Class>","data":{…}}`.
+
+| Event | Key fields | Rendered as |
+| ----- | ---------- | ----------- |
+| `TaskCreated` | `task_id, title, kind` | task card in the thread |
+| `TaskScheduled` | `task_id, scheduled_for, recurrence` | schedule note |
+| `DeliverableProduced` | `task_id, deliverable_id, description, preview` | deliverable item (asset via REST) |
+| `Attachment` | `path, name, media_type` | uploaded-file thumbnail / chip |
+| `ImageGenerated` | `path, prompt, media_type` | inline clickable thumbnail |
+| `SubagentTrace` | `subagent_id, inner{type,data}` | nested event under a subagent card |
+| `InquiryRaised` | `inquiry_id, task_id, question, detail, options, kind` | durable HITL prompt |
+| `InquiryAnswered` | `inquiry_id, answer` | resolves the HITL item |
+| `FeedbackGiven` | `target_id, target_kind, sentiment, reason, content, request` | folds 👍/👎 onto the target item |
+
+### 8.2 AG2-native events rendered — `web/src/lib/ag2map.js`, `web/src/project.js`
+
+Model: `ModelRequest`, `ModelMessageChunk` (streaming), `ModelResponse`. Tools:
+`ToolCallsEvent` (the rendered aggregate; `ToolCallEvent`/`GeminiToolCallEvent`/etc.
+fold into it). Subagent lifecycle: `TaskStarted/Completed/Failed/Cancelled`. HITL:
+`HumanInputRequest`. Observer: `ObserverAlert`. Memory/usage/voice events
+(`Aggregation*`, `Compaction*`, `UsageEvent`, audio/transcription) are tracked
+server-side and not rendered in the thread. `ag2map.js` colour-codes events into
+subsystems (model/tool/memory/subagent/HITL/observer/voice/usage) for the AG2
+Inspector.
+
+### 8.3 Wire contract
+
+`gateway/wire.py` `to_wire(event)` → `{type: fully-qualified-name, data:
+event.to_dict()}`; `is_binary_event()` flags audio (sent as raw frames). The same
+shape persists, replays, and live-streams — so replay and live are one path.
+
+---
+
+## 9. End-to-end data flow
 
 ```
-client →  WS /api/stream {text}         (or REST /api/message, a channel, voice)
-       →  StreamBridge.run_turn → Gateway.send_message(session_id)
-       →  load+sanitize stream history → universal Agent.ask(stream=…, prompt=surface+env)
-       →  agent emits events on the stream: ModelRequest → ToolCalls/Results → ModelResponse
-       →  StreamBridge subscription forwards each {type,data} to the client live
-       →  client folds events into thread items (user/agent bubbles, ⚙ chips, cards)
-       →  turn persisted via EventLogWriter; on failure → debug snapshot
+User (web / CLI / voice / channel)
+      │  WS /api/stream {text} (or REST /api/message, or channel inbound)
+      ▼
+StreamBridge ── replay history ──► client     (gateway/stream_bridge.py)
+      │  subscribe(live)
+      ▼
+Gateway.send_message()                          (gateway/core.py)
+   • resolve/hydrate session Stream
+   • inject surface context, permission mgr + HITL hook
+      ▼
+Universal Agent.ask(stream, prompt)             (agent.py)
+   • model call (provider config)
+   • tool calls (web/code/files/image/google/skills/MCP)
+   • system tools → TaskCreated / TaskScheduled / InquiryRaised
+   • observers → ObserverAlert
+      ▼
+Stream emits events ──► EventLogWriter ──► sessions.db   (persist)
+                   └──► subscribers ──► to_wire() ──► WS {event:{type,data}}  (live)
+      ▼
+Frontend foldEvent(items, wire) → thread items → Svelte components  (web/src/project.js)
+
+Side flows:
+   • Tasks: TaskService.run → planner → runner → executor subagents → verifier,
+     emitting on task:<id> stream; deliverable files → workspace.
+   • Memory: aggregator every N turns + feedback.learn() on 👍/👎 → profile.db.
+   • Resume: stream_for() hydrates from sessions.db; replay == live (same wire).
 ```
 
-Background tasks run independently in `TaskManager`, emitting lifecycle/deliverable
-events onto `task:<id>`; voice runs a `LiveAgent` whose delegated work and spoken
-transcripts also land on the session stream. History and live use one path, so a
-reload replays exactly what was streamed.
+---
 
-## Concurrency model
+## 10. Frontend projection
 
-Single-process asyncio. A per-session `asyncio.Lock` serialises turns *within* a
-session (no two LLM calls mutating one history); different sessions run
-concurrently. Same user on two channels = two sessions. The task runner is
-concurrency-capped with immediate cascading cancel. For a personal assistant
-(1–5 users) this is sufficient; scaling out (worker pool, session affinity,
-external queue, or AG2 `Hub` distributed transport) is future work — the agent
-composes onto a Hub without changing the client API.
+`web/src/project.js` `foldEvent(items, wire)` is a pure reducer mapping each
+`{type,data}` to renderable thread items (`user`, `agent` (streaming-aware),
+`tools`, `taskcard`, `deliverable`, `genimage`, `attachment`, `inquiry`, `note`,
+subagent cards). It stamps `item.at ??= data.created_at` (AG2's auto timestamp) and
+folds `FeedbackGiven` retroactively onto its target by stable key (message → `at`,
+image → `path`, deliverable → `deliverableId`). `web/src/lib/ag2map.js` maps event
+type → subsystem; `web/src/transport/` holds the WS client (`/api/stream`) and the
+REST client (`api.js`). The GUI never holds parallel state — it is a projection of
+the log.
+
+---
+
+## 11. On-disk state
+
+Under `~/.ag2assistant/`:
+
+| File | Holds |
+| ---- | ----- |
+| `sessions.db` | event log for all sessions (via `EventLogWriter`) + display transcripts |
+| `tasks.db` | task records, deliverables, progress, schedule |
+| `inquiries.db` | durable HITL inquiries (clarifications/permissions) |
+| `profile.db` | learned user profile (`/memory/working.md` inside) |
+| `settings.json` | provider/model, voice, onboarded flag, project folder, MCP servers |
+| `secrets.json` | API keys (chmod 0600), loaded into env at startup/reload |
+| `config.json` | optional config overrides (env still wins) |
+| `permissions.json` | folder grants/blocks |
+| `usage.json` / `pricing.json` | daily token+cost ledger / price overrides |
+| `ag2assistant.log` | rotating application log (2 MB × 3) |
+| `debug/<ts>-<session>.json` | failure snapshots (error + traceback + event tail) |
+
+Generated artifacts (images, deliverables, uploads) live in the **workspace**
+(`~/Documents/AG2 Assistant/` by default), in shared `images/`, `deliverables/`,
+`uploads/` folders.
+
+---
+
+## 12. Security model
+
+- **Origin guard** on every `/api/*` request and a per-socket origin check on both
+  WebSockets — the only access control. Same-origin browser traffic and non-browser
+  callers pass; cross-origin browser traffic is rejected (HTTP) / closed 1008 (WS).
+  Allowlist via `AG2ASSISTANT_ALLOWED_ORIGINS`.
+- **Single-user, local-first.** No auth headers; a remote deployment must front the
+  gateway with its own auth.
+- **Filesystem sandboxing.** Workspace reads/writes go through `workspace.resolve()`
+  (no traversal escape). The `repo-files` MCP is seeded **read-only** (7 read tools).
+  Arbitrary host reads (`read_file`, `/api/fs/list`) are acceptable only because the
+  gateway is local + single-user behind the origin guard.
+- **Permissions & HITL.** Shell/code/file actions are approval-gated through
+  `PermissionManager` + the HITL hook; grants persist in `permissions.json`.
+- **Secrets** live in `secrets.json` (0600) and are surfaced to the UI only as
+  set/hint, never echoed back.
+
+---
 
 ## Key design principles
 
-1. **AG2 primitives are the spine** — streams/events/observers/persistence;
-   don't build parallel architecture (`ag2-primitives-drive-architecture`).
+1. **AG2 primitives are the spine** — streams/events/observers/persistence; don't
+   build parallel architecture (`ag2-primitives-drive-architecture`).
 2. **The GUI is a projection of the event stream** — `wire = log = {type,data}`;
    history and live are one path.
-3. **UI-agnostic** — the gateway API is the only contract; the Svelte app is one client.
-4. **One universal agent, many resumable per-session streams** — isolation via streams.
-5. **Build on main; migrate to native as it lands** — the durable task/inquiry
-   layer is the seam, kept thin and speaking AG2's event vocabulary
-   (`ag2-build-on-main`).
-6. **Diagnosable by default** — file-based logs + failure snapshots over the event log.
+3. **UI-agnostic** — the gateway API is the only contract; the Svelte app is one
+   client among several (channels, voice, CLI).
+4. **One universal agent, many resumable per-session streams** — isolation via
+   streams, not separate agents.
+5. **Build on main; migrate to native as it lands** — the durable task/inquiry layer
+   is the seam, kept thin and speaking AG2's event vocabulary (`ag2-build-on-main`).

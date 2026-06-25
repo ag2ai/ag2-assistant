@@ -1,119 +1,204 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 820" font-family="system-ui, -apple-system, Helvetica, sans-serif" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1040" font-family="system-ui, -apple-system, Helvetica, sans-serif" font-size="13">
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-      <polygon points="0 0, 10 3.5, 0 7" fill="#888"/>
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7a8694"/>
     </marker>
-    <marker id="arrowA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-      <polygon points="0 0, 10 3.5, 0 7" fill="#f95339"/>
+    <marker id="arrowG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#1f9d55"/>
     </marker>
     <style>
-      .box{fill:#fafafa;stroke:#d9d9d9;stroke-width:1.5}
-      .accent{fill:#fff4f1;stroke:#f95339;stroke-width:2}
-      .spine{fill:#fff0ec;stroke:#f95339;stroke-width:2.5}
-      .found{fill:#f3f3f3;stroke:#cfcfcf;stroke-width:1.5}
-      .pill{fill:#fff;stroke:#cfcfcf;stroke-width:1}
-      .t{fill:#1a1a1a} .m{fill:#777;font-size:11px} .h{font-weight:700;fill:#1a1a1a}
-      .ac{fill:#f95339;font-weight:700} .lbl{fill:#888;font-size:11px}
-      .ln{stroke:#888;stroke-width:1.5;fill:none}
-      .lnA{stroke:#f95339;stroke-width:2;fill:none}
+      .lbl { fill:#1d2530; }
+      .sub { fill:#55606e; font-size:11.5px; }
+      .hd  { font-weight:700; fill:#1d2530; }
+      .tiny{ fill:#6b7480; font-size:10.5px; }
+      .edge{ stroke:#7a8694; stroke-width:1.5; fill:none; }
+      .edgeG{ stroke:#1f9d55; stroke-width:2; fill:none; }
     </style>
   </defs>
 
-  <text x="500" y="30" text-anchor="middle" font-size="20" class="h">AG2 Assistant — event-stream architecture</text>
-  <text x="500" y="50" text-anchor="middle" class="m">AG2 Stream is the source of truth; everything is a projection of it (wire = log = {type, data})</text>
+  <rect x="0" y="0" width="1200" height="1040" fill="#fbfbfa"/>
+  <text x="32" y="34" font-size="20" class="hd">AG2 Assistant — Architecture</text>
+  <text x="32" y="54" class="sub">One process · one universal agent · the AG2 event stream is the single source of truth (wire = log = {type, data})</text>
 
-  <!-- Clients -->
-  <rect x="60"  y="72" width="250" height="58" rx="10" class="box"/>
-  <text x="185" y="98" text-anchor="middle" class="h">Web UI — Svelte SPA</text>
-  <text x="185" y="116" text-anchor="middle" class="m">/app · projects events → bubbles, chips, cards</text>
+  <!-- ============ CLIENTS ============ -->
+  <g>
+    <rect x="32"  y="74" width="262" height="60" rx="10" fill="#eef1f5" stroke="#b8c0cc"/>
+    <text x="163" y="100" text-anchor="middle" class="hd">Web UI — Svelte</text>
+    <text x="163" y="119" text-anchor="middle" class="sub">/app · projection of the event log</text>
 
-  <rect x="375" y="72" width="250" height="58" rx="10" class="box"/>
-  <text x="500" y="98" text-anchor="middle" class="h">Channels</text>
-  <text x="500" y="116" text-anchor="middle" class="m">Telegram · Discord · Slack</text>
+    <rect x="312" y="74" width="262" height="60" rx="10" fill="#eef1f5" stroke="#b8c0cc"/>
+    <text x="443" y="100" text-anchor="middle" class="hd">CLI</text>
+    <text x="443" y="119" text-anchor="middle" class="sub">run · gateway · chat · agent</text>
 
-  <rect x="690" y="72" width="250" height="58" rx="10" class="box"/>
-  <text x="815" y="98" text-anchor="middle" class="h">CLI / other clients</text>
-  <text x="815" y="116" text-anchor="middle" class="m">the gateway API is the only contract</text>
+    <rect x="592" y="74" width="262" height="60" rx="10" fill="#eef1f5" stroke="#b8c0cc"/>
+    <text x="723" y="100" text-anchor="middle" class="hd">Voice client</text>
+    <text x="723" y="119" text-anchor="middle" class="sub">mic / speaker · PCM audio</text>
 
-  <path class="ln" d="M185 130 V 166" marker-end="url(#arrow)"/>
-  <path class="ln" d="M500 130 V 166" marker-end="url(#arrow)"/>
-  <path class="ln" d="M815 130 V 166" marker-end="url(#arrow)"/>
+    <rect x="872" y="74" width="296" height="60" rx="10" fill="#eef1f5" stroke="#b8c0cc"/>
+    <text x="1020" y="100" text-anchor="middle" class="hd">Channels</text>
+    <text x="1020" y="119" text-anchor="middle" class="sub">Telegram · Discord · Slack</text>
+  </g>
 
-  <!-- Gateway -->
-  <rect x="60" y="168" width="880" height="92" rx="10" class="box"/>
-  <text x="78" y="190" class="h">Gateway (FastAPI)</text>
-  <text x="820" y="190" class="m">StreamBridge · emit_event · per-session lock</text>
-  <rect x="78"  y="204" width="180" height="42" rx="14" class="pill"/>
-  <text x="168" y="222" text-anchor="middle" class="ac">WS /api/stream</text>
-  <text x="168" y="238" text-anchor="middle" class="m">replay + live events</text>
-  <rect x="270" y="204" width="170" height="42" rx="14" class="pill"/>
-  <text x="355" y="222" text-anchor="middle" class="ac">WS /api/voice</text>
-  <text x="355" y="238" text-anchor="middle" class="m">Gemini Live PCM</text>
-  <rect x="452" y="204" width="300" height="42" rx="14" class="pill"/>
-  <text x="602" y="222" text-anchor="middle" class="h">REST</text>
-  <text x="602" y="238" text-anchor="middle" class="m">/api/tasks · /api/inquiries · /api/sessions · /api/google</text>
-  <rect x="764" y="204" width="158" height="42" rx="14" class="pill"/>
-  <text x="843" y="229" text-anchor="middle" class="h">/app static</text>
+  <text x="600" y="160" text-anchor="middle" class="tiny">REST + WebSocket · origin-guarded (single-user, local-first)</text>
+  <line x1="163"  y1="134" x2="163"  y2="184" class="edge" marker-end="url(#arrow)"/>
+  <line x1="443"  y1="134" x2="443"  y2="184" class="edge" marker-end="url(#arrow)"/>
+  <line x1="723"  y1="134" x2="723"  y2="184" class="edge" marker-end="url(#arrow)"/>
+  <line x1="1020" y1="134" x2="1020" y2="184" class="edge" marker-end="url(#arrow)"/>
 
-  <path class="lnA" d="M500 260 V 300" marker-end="url(#arrowA)"/>
-  <text x="512" y="284" class="lbl">subscribe · run turns · emit</text>
+  <!-- ============ GATEWAY ============ -->
+  <rect x="32" y="184" width="1136" height="118" rx="12" fill="#e8f0fe" stroke="#4c8bf5"/>
+  <text x="48" y="206" class="hd">Gateway — FastAPI · create_app() / build_gateway()</text>
+  <text x="1152" y="206" text-anchor="end" class="tiny">_origin_guard · reload (reference-swap)</text>
 
-  <!-- Spine -->
-  <rect x="60" y="302" width="880" height="86" rx="12" class="spine"/>
-  <text x="500" y="328" text-anchor="middle" class="ac" font-size="15">Per-session AG2 event Streams</text>
-  <text x="500" y="348" text-anchor="middle" class="t">web-… · task:&lt;id&gt; · voice:&lt;id&gt;  —  one wire = log shape: { type, data }</text>
-  <text x="500" y="368" text-anchor="middle" class="m">history (replay) and live (subscribe) are the same path · persisted by EventLogWriter</text>
+  <rect x="48" y="222" width="392" height="62" rx="9" fill="#fff" stroke="#9cc0fb"/>
+  <text x="244" y="244" text-anchor="middle" class="hd" font-size="12">REST API</text>
+  <text x="244" y="263" text-anchor="middle" class="sub">/api/message · /tasks · /settings · /files</text>
+  <text x="244" y="278" text-anchor="middle" class="sub">/memory · /voice · /google · /inquiries</text>
 
-  <!-- producers/consumers -->
-  <rect x="60" y="430" width="270" height="96" rx="10" class="accent"/>
-  <text x="195" y="453" text-anchor="middle" class="h">Universal Agent</text>
-  <text x="195" y="472" text-anchor="middle" class="m">one agent, all surfaces</text>
-  <text x="195" y="490" text-anchor="middle" class="m">tools · system tools · knowledge</text>
-  <text x="195" y="508" text-anchor="middle" class="m">LoggingMiddleware · cheap model</text>
+  <rect x="456" y="222" width="340" height="62" rx="9" fill="#fff" stroke="#9cc0fb"/>
+  <text x="626" y="244" text-anchor="middle" class="hd" font-size="12">WS /api/stream</text>
+  <text x="626" y="263" text-anchor="middle" class="sub">event spine: replay + live</text>
+  <text x="626" y="278" text-anchor="middle" class="sub">in: text · answer · feedback</text>
 
-  <rect x="365" y="430" width="270" height="96" rx="10" class="box"/>
-  <text x="500" y="453" text-anchor="middle" class="h">Voice — LiveAgent</text>
-  <text x="500" y="472" text-anchor="middle" class="m">Gemini Live (basic tools)</text>
-  <text x="500" y="490" text-anchor="middle" class="m">ask_assistant → delegates to</text>
-  <text x="500" y="508" text-anchor="middle" class="m">the universal agent; transcripts persisted</text>
+  <rect x="812" y="222" width="340" height="62" rx="9" fill="#fff" stroke="#9cc0fb"/>
+  <text x="982" y="244" text-anchor="middle" class="hd" font-size="12">WS /api/voice</text>
+  <text x="982" y="263" text-anchor="middle" class="sub">full-duplex audio</text>
+  <text x="982" y="278" text-anchor="middle" class="sub">16 kHz in · 24 kHz out</text>
 
-  <rect x="670" y="430" width="270" height="96" rx="10" class="box"/>
-  <text x="805" y="453" text-anchor="middle" class="h">Task engine</text>
-  <text x="805" y="472" text-anchor="middle" class="m">TaskStore · runner · scheduler</text>
-  <text x="805" y="490" text-anchor="middle" class="m">durable, nestable, deliverables</text>
-  <text x="805" y="508" text-anchor="middle" class="ac">emits Task*/Deliverable events</text>
+  <line x1="600" y1="302" x2="600" y2="332" class="edge" marker-end="url(#arrow)"/>
 
-  <path class="lnA" d="M195 430 V 390" marker-end="url(#arrowA)"/>
-  <path class="ln"  d="M215 390 V 430" marker-end="url(#arrow)"/>
-  <path class="lnA" d="M500 430 V 390" marker-end="url(#arrowA)"/>
-  <path class="lnA" d="M805 430 V 390" marker-end="url(#arrowA)"/>
+  <!-- ============ EVENT STREAM SPINE ============ -->
+  <rect x="32" y="332" width="1136" height="66" rx="12" fill="#e7f6ee" stroke="#1f9d55" stroke-width="2"/>
+  <text x="48" y="358" class="hd">Event Stream spine — per-session AG2 Stream (web-… · task:&lt;id&gt; · voice:&lt;id&gt;)</text>
+  <text x="48" y="380" class="sub">StreamBridge: replay history, subscribe live · EventLogWriter persists every event · history == live (one path)</text>
+  <text x="1152" y="358" text-anchor="end" class="tiny">to_wire() → {type, data}</text>
 
-  <!-- cross-cutting -->
-  <rect x="60" y="556" width="270" height="62" rx="10" class="box"/>
-  <text x="195" y="579" text-anchor="middle" class="h">Durable HITL</text>
-  <text x="195" y="598" text-anchor="middle" class="m">InquiryStore · Asker · Inquiry* events</text>
+  <!-- spine to agent + stores -->
+  <line x1="320" y1="398" x2="320" y2="440" class="edgeG" marker-end="url(#arrowG)"/>
+  <text x="332" y="422" class="tiny">turn</text>
+  <line x1="1100" y1="398" x2="1100" y2="922" class="edgeG" marker-end="url(#arrowG)"/>
+  <text x="1112" y="690" class="tiny" transform="rotate(90 1112 690)">persist · replay</text>
 
-  <rect x="365" y="556" width="270" height="62" rx="10" class="box"/>
-  <text x="500" y="579" text-anchor="middle" class="h">Permissions</text>
-  <text x="500" y="598" text-anchor="middle" class="m">turn-level PermissionManager</text>
+  <!-- ============ AGENT + TOOLS + MEMORY/HITL ============ -->
+  <rect x="32" y="440" width="372" height="168" rx="12" fill="#eaf2ff" stroke="#4c8bf5"/>
+  <text x="48" y="462" class="hd">Universal Agent (one shared)</text>
+  <text x="48" y="482" class="sub">autogen.beta · create_agent()</text>
+  <text x="48" y="500" class="sub">providers: Gemini · OpenAI · Anthropic · Ollama</text>
+  <text x="48" y="520" class="sub">turn_prompt · environment context</text>
+  <text x="48" y="538" class="sub">memory policy · observers · HITL hook</text>
+  <text x="48" y="556" class="sub">two tiers: main + cheap/aggregate</text>
+  <text x="48" y="582" class="tiny">also: title · feedback-learner · image-gen (one-shot calls)</text>
 
-  <rect x="670" y="556" width="270" height="62" rx="10" class="box"/>
-  <text x="805" y="579" text-anchor="middle" class="h">Observability</text>
-  <text x="805" y="598" text-anchor="middle" class="m">ag2assistant.log · failure snapshots</text>
+  <rect x="420" y="440" width="372" height="168" rx="12" fill="#fff4e6" stroke="#e67e22"/>
+  <text x="436" y="462" class="hd">Tools &amp; capabilities</text>
+  <text x="436" y="482" class="sub">web search · web fetch</text>
+  <text x="436" y="500" class="sub">shell / code (local or Docker, approval-gated)</text>
+  <text x="436" y="518" class="sub">read file · image generation</text>
+  <text x="436" y="536" class="sub">Google (Gmail / Calendar / Drive)</text>
+  <text x="436" y="554" class="sub">skills (skills.sh registry)</text>
+  <text x="436" y="572" class="sub">MCP — namespaced; repo-files read-only</text>
+  <text x="436" y="595" class="tiny">scoped per task capability</text>
 
-  <rect x="60" y="632" width="430" height="50" rx="10" class="box"/>
-  <text x="275" y="655" text-anchor="middle" class="h">Memory</text>
-  <text x="275" y="672" text-anchor="middle" class="m">passive user profile (WorkingMemory, cheap model)</text>
-  <rect x="510" y="632" width="430" height="50" rx="10" class="box"/>
-  <text x="725" y="655" text-anchor="middle" class="h">Google</text>
-  <text x="725" y="672" text-anchor="middle" class="m">OAuth · Gmail/Calendar/Drive (writes HITL-gated)</text>
+  <rect x="808" y="440" width="360" height="78" rx="12" fill="#f5ecfb" stroke="#9b59b6"/>
+  <text x="824" y="462" class="hd">Memory</text>
+  <text x="824" y="482" class="sub">aggregator (every N turns) + feedback learner</text>
+  <text x="824" y="500" class="sub">rolling profile · dedupe / prune → profile.db</text>
 
-  <!-- Storage -->
-  <rect x="60" y="696" width="880" height="44" rx="10" class="found"/>
-  <text x="78" y="723" class="h">Storage ~/.ag2assistant/</text>
-  <text x="922" y="723" text-anchor="end" class="m">sessions.db · tasks.db · inquiries.db · profile.db · permissions.json · debug/ · skills/</text>
+  <rect x="808" y="530" width="360" height="78" rx="12" fill="#fbf3d6" stroke="#e0b400"/>
+  <text x="824" y="552" class="hd">HITL</text>
+  <text x="824" y="572" class="sub">durable task inquiries (inquiries.db)</text>
+  <text x="824" y="590" class="sub">+ transient chat-turn permission prompts</text>
 
-  <!-- AG2 foundation -->
-  <rect x="60" y="752" width="880" height="44" rx="10" class="found"/>
-  <text x="500" y="779" text-anchor="middle" class="h">AG2 Beta · Stream · event taxonomy · observers/subscribe · EventLogWriter · KnowledgeConfig · LiveAgent</text>
+  <!-- agent <-> tools -->
+  <line x1="404" y1="500" x2="420" y2="500" class="edge" marker-end="url(#arrow)"/>
+  <line x1="420" y1="520" x2="404" y2="520" class="edge" marker-end="url(#arrow)"/>
+  <!-- agent -> memory/hitl -->
+  <line x1="792" y1="486" x2="808" y2="479" class="edge" marker-end="url(#arrow)"/>
+  <line x1="792" y1="556" x2="808" y2="566" class="edge" marker-end="url(#arrow)"/>
+  <!-- agent -> tasks (system tools) -->
+  <line x1="218" y1="608" x2="218" y2="660" class="edge" marker-end="url(#arrow)"/>
+  <text x="230" y="640" class="tiny">system tools: create / schedule task</text>
+
+  <!-- ============ TASK SUBSYSTEM ============ -->
+  <rect x="32" y="660" width="1136" height="180" rx="12" fill="#fdeee4" stroke="#e67e22"/>
+  <text x="48" y="682" class="hd">Task subsystem — TaskService (durable background work · deliverables · scheduling)</text>
+  <text x="1152" y="682" text-anchor="end" class="tiny">emits on task:&lt;id&gt; stream → spine</text>
+
+  <rect x="48"  y="700" width="206" height="124" rx="9" fill="#fff" stroke="#eab38a"/>
+  <text x="151" y="722" text-anchor="middle" class="hd" font-size="12">Planner</text>
+  <text x="151" y="742" text-anchor="middle" class="sub">classify trivial /</text>
+  <text x="151" y="758" text-anchor="middle" class="sub">non-trivial</text>
+  <text x="151" y="778" text-anchor="middle" class="sub">objective · deliverables</text>
+  <text x="151" y="794" text-anchor="middle" class="sub">intake clarifications</text>
+  <text x="151" y="814" text-anchor="middle" class="tiny">TaskPlan{…}</text>
+
+  <rect x="270" y="700" width="206" height="124" rx="9" fill="#fff" stroke="#eab38a"/>
+  <text x="373" y="722" text-anchor="middle" class="hd" font-size="12">Runner</text>
+  <text x="373" y="742" text-anchor="middle" class="sub">TaskManager</text>
+  <text x="373" y="762" text-anchor="middle" class="sub">concurrency (≤3)</text>
+  <text x="373" y="780" text-anchor="middle" class="sub">retries · cascade cancel</text>
+  <text x="373" y="800" text-anchor="middle" class="sub">deliverable-gated done</text>
+
+  <rect x="492" y="700" width="206" height="124" rx="9" fill="#fff" stroke="#eab38a"/>
+  <text x="595" y="722" text-anchor="middle" class="hd" font-size="12">Scheduler</text>
+  <text x="595" y="742" text-anchor="middle" class="sub">poll loop ~30s</text>
+  <text x="595" y="762" text-anchor="middle" class="sub">fire due tasks</text>
+  <text x="595" y="780" text-anchor="middle" class="sub">recurrence: daily /</text>
+  <text x="595" y="796" text-anchor="middle" class="sub">hourly / every N / weekdays</text>
+
+  <rect x="714" y="700" width="222" height="124" rx="9" fill="#fff" stroke="#eab38a"/>
+  <text x="825" y="722" text-anchor="middle" class="hd" font-size="12">Executor subagents</text>
+  <text x="825" y="742" text-anchor="middle" class="sub">one per deliverable</text>
+  <text x="825" y="760" text-anchor="middle" class="sub">archetype persona</text>
+  <text x="825" y="778" text-anchor="middle" class="sub">cheap (leaf) / main (root)</text>
+  <text x="825" y="798" text-anchor="middle" class="sub">+ verifier · SubagentTrace</text>
+
+  <rect x="952" y="700" width="200" height="124" rx="9" fill="#fff" stroke="#eab38a"/>
+  <text x="1052" y="722" text-anchor="middle" class="hd" font-size="12">Controller</text>
+  <text x="1052" y="742" text-anchor="middle" class="sub">per-task chat</text>
+  <text x="1052" y="762" text-anchor="middle" class="sub">edit task,</text>
+  <text x="1052" y="778" text-anchor="middle" class="sub">objective,</text>
+  <text x="1052" y="794" text-anchor="middle" class="sub">deliverables</text>
+
+  <!-- tasks -> stores -->
+  <line x1="373" y1="840" x2="373" y2="922" class="edge" marker-end="url(#arrow)"/>
+  <line x1="595" y1="840" x2="595" y2="922" class="edge" marker-end="url(#arrow)"/>
+
+  <!-- agent/spine -> sessions store -->
+  <line x1="220" y1="398" x2="180" y2="922" class="edgeG" marker-end="url(#arrowG)"/>
+  <line x1="980" y1="518" x2="980" y2="922" class="edge" marker-end="url(#arrow)"/>
+
+  <!-- ============ STORES ============ -->
+  <text x="32" y="912" class="hd" font-size="13">Persistent state — ~/.ag2assistant/ &amp; workspace</text>
+  <g>
+    <rect x="32"  y="922" width="176" height="86" rx="10" fill="#f3f4f6" stroke="#9aa3af"/>
+    <text x="120" y="950" text-anchor="middle" class="hd" font-size="12">sessions.db</text>
+    <text x="120" y="970" text-anchor="middle" class="sub">event log +</text>
+    <text x="120" y="986" text-anchor="middle" class="sub">transcripts</text>
+
+    <rect x="224" y="922" width="176" height="86" rx="10" fill="#f3f4f6" stroke="#9aa3af"/>
+    <text x="312" y="950" text-anchor="middle" class="hd" font-size="12">tasks.db</text>
+    <text x="312" y="970" text-anchor="middle" class="sub">tasks · deliverables</text>
+    <text x="312" y="986" text-anchor="middle" class="sub">schedule</text>
+
+    <rect x="416" y="922" width="176" height="86" rx="10" fill="#f3f4f6" stroke="#9aa3af"/>
+    <text x="504" y="950" text-anchor="middle" class="hd" font-size="12">inquiries.db</text>
+    <text x="504" y="970" text-anchor="middle" class="sub">durable HITL</text>
+    <text x="504" y="986" text-anchor="middle" class="sub">inquiries</text>
+
+    <rect x="608" y="922" width="176" height="86" rx="10" fill="#f3f4f6" stroke="#9aa3af"/>
+    <text x="696" y="950" text-anchor="middle" class="hd" font-size="12">profile.db</text>
+    <text x="696" y="970" text-anchor="middle" class="sub">learned</text>
+    <text x="696" y="986" text-anchor="middle" class="sub">user profile</text>
+
+    <rect x="800" y="922" width="176" height="86" rx="10" fill="#f3f4f6" stroke="#9aa3af"/>
+    <text x="888" y="946" text-anchor="middle" class="hd" font-size="12">settings.json</text>
+    <text x="888" y="966" text-anchor="middle" class="sub">+ secrets.json (0600)</text>
+    <text x="888" y="984" text-anchor="middle" class="sub">+ permissions · usage</text>
+
+    <rect x="992" y="922" width="176" height="86" rx="10" fill="#f3f4f6" stroke="#9aa3af"/>
+    <text x="1080" y="950" text-anchor="middle" class="hd" font-size="12">workspace/</text>
+    <text x="1080" y="970" text-anchor="middle" class="sub">images · deliverables</text>
+    <text x="1080" y="986" text-anchor="middle" class="sub">uploads</text>
+  </g>
 </svg>

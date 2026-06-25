@@ -78,7 +78,11 @@ pytest tests/ -v
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) and [docs/architecture.svg](docs/architecture.svg) for the full system design.
+**[docs/architecture.md](docs/architecture.md)** is the full system design — every service, agent, endpoint, event type, data flow, and on-disk store — with a companion diagram, [docs/architecture.svg](docs/architecture.svg):
+
+[![AG2 Assistant architecture](docs/architecture.svg)](docs/architecture.md)
+
+A text sketch of the same shape:
 
 ```
   Web UI (Svelte)   ·   Messaging channels   ·   CLI
@@ -121,7 +125,7 @@ See [docs/plan.md](docs/plan.md) for the full roadmap.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — system design, concurrency model, message flows
+- [Architecture](docs/architecture.md) — full system design: services, agents, endpoints, event model, data flow ([diagram](docs/architecture.svg))
 - [Usage Guide](docs/usage.md) — CLI commands, configuration, channels
 - [Plan](docs/plan.md) — implementation roadmap with progress tracking
 - [OpenClaw Research](docs/research-openclaw.md) — analysis of the project that inspired AG2 Assistant
