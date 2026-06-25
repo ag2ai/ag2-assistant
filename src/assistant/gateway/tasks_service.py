@@ -62,6 +62,7 @@ class TaskService:
         self._max_concurrent = max_concurrent
         self._scheduler_interval = scheduler_interval
         self._scheduler = None
+        self._scheduler_lock = None
         self._bg: set[asyncio.Task] = set()
         self._control_agents: dict = {}  # task_id -> (agent, stream) for task chat
         # Async (session_id, event) -> None, wired by the gateway. Lets a task's
@@ -196,8 +197,13 @@ class TaskService:
 
             log_suppressed("inquiry event emit", exc, inquiry_id=inquiry.id, kind=kind, session=sid)
 
-    async def start(self) -> None:
-        """Build the durable stores + runner (cheap; no LLM agent yet)."""
+    async def start(self, *, scheduler: bool = True) -> None:
+        """Build the durable stores + runner (cheap; no LLM agent yet).
+
+        Task tools are always wired; ``scheduler=False`` (channel commands) skips
+        the polling loop so only one process ticks the shared ``tasks.db``. A
+        cross-process lock enforces a single live scheduler even with ``True``.
+        """
         from assistant.hitl import InquiryStore
         from assistant.tasks import TaskManager, TaskStore, make_task_executor
 
@@ -222,11 +228,24 @@ class TaskService:
                 on_event=self._emit_task_event,  # nested AG2 events → task stream
                 on_deliverable=self._emit_deliverable,  # → DeliverableProduced
             )
-        if self._scheduler is None:
+        if scheduler and self._scheduler is None:
+            from assistant.scheduler_lock import SchedulerLock
             from assistant.tasks.scheduling import Scheduler
 
-            self._scheduler = Scheduler(self._store, self._fire, interval=self._scheduler_interval)
-            await self._scheduler.start()
+            lock = SchedulerLock(d / "scheduler.lock")
+            if lock.acquire():
+                self._scheduler_lock = lock
+                self._scheduler = Scheduler(
+                    self._store, self._fire, interval=self._scheduler_interval
+                )
+                await self._scheduler.start()
+            else:
+                import logging
+
+                logging.getLogger("ag2assistant.tasks").info(
+                    "scheduler not started — another process already owns %s",
+                    d / "scheduler.lock",
+                )
 
     async def reload(self) -> None:
         """Rebuild the planner + executor from fresh config/keys after a settings
@@ -767,6 +786,9 @@ class TaskService:
     async def close(self) -> None:
         if self._scheduler is not None:
             await self._scheduler.stop()
+        if self._scheduler_lock is not None:
+            self._scheduler_lock.release()
+            self._scheduler_lock = None
         for bg in list(self._bg):
             bg.cancel()
         self._bg.clear()

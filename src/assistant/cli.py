@@ -291,7 +291,8 @@ def telegram(
         gateway, tasks = build_gateway(memory=memory, platform="telegram")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        await tasks.start()  # task tools (create/schedule/query) + scheduler
+        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        await tasks.start(scheduler=False)
         channel = get_channel("telegram")
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Telegram. Press Ctrl+C to stop.")
@@ -323,7 +324,8 @@ def discord(
         gateway, tasks = build_gateway(memory=memory, platform="discord")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        await tasks.start()  # task tools (create/schedule/query) + scheduler
+        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        await tasks.start(scheduler=False)
         channel = get_channel("discord")
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Discord. Press Ctrl+C to stop.")
@@ -354,7 +356,8 @@ def slack(
         gateway, tasks = build_gateway(memory=memory, platform="slack")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        await tasks.start()  # task tools (create/schedule/query) + scheduler
+        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        await tasks.start(scheduler=False)
         channel = get_channel("slack")
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Slack. Press Ctrl+C to stop.")
