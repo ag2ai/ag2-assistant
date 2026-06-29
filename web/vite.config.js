@@ -9,6 +9,12 @@ export default defineConfig({
   build: {
     outDir: '../src/assistant/gateway/static/app',
     emptyOutDir: true,
+    rollupOptions: {
+      // three.js (WebGPU build, ~1MB) is loaded from CDN at runtime via the
+      // index.html importmap — don't bundle it, so the committed SPA stays small
+      // and under the repo's large-file guard. Dev still resolves it locally.
+      external: [/^three($|\/)/],
+    },
   },
   server: {
     // dev: proxy API + WebSockets to the running gateway. The gateway rejects

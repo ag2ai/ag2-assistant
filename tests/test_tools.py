@@ -19,7 +19,8 @@ def test_build_agent_tools_has_core_capabilities():
     assert "run_code" in names
     assert "read_file" in names
     assert "web_fetch" in names
-    assert len(tools) == 5
+    assert "get_weather" in names
+    assert len(tools) == 6
 
 
 def test_build_agent_tools_gemini_uses_fallback_fetch():

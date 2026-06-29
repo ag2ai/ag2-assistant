@@ -40,6 +40,67 @@ export function renderMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text || ''))
 }
 
+function matchingJsonEnd(text, start) {
+  const open = text[start]
+  const close = open === '[' ? ']' : '}'
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === open) depth++
+    else if (ch === close && --depth === 0) return i + 1
+  }
+  return -1
+}
+
+function isA2UIPayload(value) {
+  const messages = Array.isArray(value) ? value : [value]
+  return messages.some((m) =>
+    m && typeof m === 'object' &&
+    (m.createSurface || m.updateComponents || m.updateDataModel || m.deleteSurface)
+  )
+}
+
+export function stripA2UIJson(text) {
+  let out = ''
+  let i = 0
+  const source = text || ''
+  while (i < source.length) {
+    const nextArray = source.indexOf('[', i)
+    const nextObject = source.indexOf('{', i)
+    const starts = [nextArray, nextObject].filter((n) => n >= 0)
+    const start = starts.length ? Math.min(...starts) : -1
+    if (start < 0) {
+      out += source.slice(i)
+      break
+    }
+    out += source.slice(i, start)
+    const end = matchingJsonEnd(source, start)
+    if (end < 0) {
+      out += source.slice(start)
+      break
+    }
+    const candidate = source.slice(start, end)
+    try {
+      if (isA2UIPayload(JSON.parse(candidate))) {
+        i = end
+        continue
+      }
+    } catch {}
+    out += candidate
+    i = end
+  }
+  return out.replace(/\n{3,}/g, '\n\n').trim()
+}
+
 // Make rendered markdown images clickable → a full-size preview. Workspace images
 // (served via the files API) open the in-app Viewer through `onOpen({path,name,alt})`;
 // anything else opens in a new tab. Idempotent (assigns onclick), so safe to re-run on

@@ -27,10 +27,10 @@
   let err = $state('')
   let busy = $state(false)
   let editFolder = $state(false)   // project-folder picker expanded?
-  let folderSel = $state('')        // folder chosen in the picker
 
-  function openFolderEdit() { folderSel = s?.project_folder || ''; editFolder = true }
-  const saveFolder = () => run(() => api.setProjectFolder(folderSel).then(() => { editFolder = false }))
+  function openFolderEdit() { editFolder = true }
+  // one-click commit: the folder you're viewing in the picker applies immediately
+  const commitFolder = (path) => run(() => api.setProjectFolder(path).then(() => { editFolder = false }))
 
   async function load() {
     try {
@@ -97,10 +97,9 @@
           <span class="sgo">Change →</span>
         </button>
       {:else}
-        <FolderPicker roots={s.fs || {}} start={s.project_folder || (s.fs && s.fs.cwd) || ''} bind:selected={folderSel} />
-        <div class="keyrow" style="justify-content:flex-end;gap:8px">
+        <FolderPicker roots={s.fs || {}} start={s.project_folder || (s.fs && s.fs.cwd) || ''} {busy} onUse={commitFolder} />
+        <div class="keyrow" style="justify-content:flex-end">
           <button class="linkbtn" onclick={() => (editFolder = false)}>Cancel</button>
-          <button class="open" disabled={busy || !folderSel} onclick={saveFolder}>Save folder</button>
         </div>
       {/if}
 
