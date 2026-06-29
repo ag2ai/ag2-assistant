@@ -11,9 +11,11 @@
      • Hanken Grotesk      — UI + body. Soft, highly readable,
        friendly without being cute.
      • JetBrains Mono      — code, AG2 event names, token values.
+     • Fraunces            — editorial serif, used only by the
+       NewsDigest "wire" surface for its broadsheet voice.
 
    Loaded from Google Fonts so consuming projects pick them up
    with one stylesheet link. Weights kept tight for performance.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');

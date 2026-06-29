@@ -195,11 +195,25 @@ def assistant_catalog() -> dict:
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
-                "meta": {"type": "string"},
-                "summary": {"type": "string"},
+                "source": {"type": "string", "description": "Publisher, e.g. 'Reuters'."},
+                "published": {"type": "string", "description": "Recency, e.g. '2h ago' or a date."},
+                "category": {
+                    "type": "string",
+                    "description": "Short tag, e.g. 'Breaking', 'Markets'.",
+                },
+                "summary": {"type": "string", "description": "One or two sentences of detail."},
+                "why": {
+                    "type": "string",
+                    "description": "Why it matters — used for the lead story.",
+                },
+                "image": {
+                    "type": "string",
+                    "description": "Article image URL; omit if you don't have one.",
+                },
                 "url": {"type": "string"},
             },
-            "required": ["title", "meta"],
+            # First story is rendered as the lead; the rest as a ranked list.
+            "required": ["title", "source"],
             "additionalProperties": False,
         },
     }
@@ -298,7 +312,7 @@ def assistant_catalog() -> dict:
 
 CATALOG_RULES = """
 Prefer an A2UI surface when it would make the answer easier to scan; users do not need to ask for A2UI explicitly.
-Use prose for orientation, then make the A2UI surface the canonical structured view.
+Lead with a brief 1-2 sentence prose orientation, then make the A2UI surface the canonical structured view. The surface IS the answer — do NOT also restate its contents in prose (don't list the stories, rows, items, or details in text as well); that duplication is unwanted.
 Every component is fully defined by the schema and the worked examples below — gather the real data the user asked for (e.g. the actual weather), then populate the matching component and emit it directly.
 
 Intent mapping:
@@ -322,9 +336,11 @@ Weather — user asks "What's the weather in Vienna?":
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"WeatherPanel","location":"Vienna, Austria","condition":"sunny","rows":[{"label":"Temperature","value":"24°C (feels 22°C)"},{"label":"Wind","value":"12 km/h NW"},{"label":"Humidity","value":"45%"}]}]}}
 
-News — user asks "Latest F1 news":
+News — user asks "Latest F1 news" (the first story is the lead: give it a category, a
+summary, and a one-line `why`; later stories just need title/source/published/summary):
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Headline","meta":"Source · 2h ago","summary":"One-sentence detail."}]}]}}
+{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
+Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
 """
 
 

@@ -2,6 +2,7 @@
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import WeatherBanner from './WeatherBanner.svelte'
+  import NewsWire from './NewsWire.svelte'
 
   const WEATHER_CONDITIONS = ['sunny', 'partly-cloudy', 'cloudy', 'foggy', 'rainy', 'thunderstorm', 'snow', 'windy']
   function weatherCondition(value) {
@@ -59,6 +60,9 @@
 </script>
 
 {#if !emptyAnswerBrief}
+{#if type === 'newsdigest' && list(data.stories).length}
+  <NewsWire {data} />
+{:else}
 <div class="a2ui">
   <div class="a2ui-head">
     <span class="a2ui-mark"><Icon name={componentIcon} size={15} /></span>
@@ -162,4 +166,5 @@
     </div>
   {/if}
 </div>
+{/if}
 {/if}
