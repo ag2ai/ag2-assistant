@@ -30,6 +30,7 @@ from autogen.beta.tools import (
 
 from assistant.tools.approval import require_command_approval
 from assistant.tools.files import read_file
+from assistant.tools.finance import get_quotes
 from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch, web_fetch_tool
 
@@ -88,6 +89,7 @@ def build_agent_tools(
         tools.append(DuckDuckSearchTool(max_results=5))
         tools.append(WebFetchTool() if provider in _NATIVE_WEB_FETCH_PROVIDERS else web_fetch_tool)
         tools.append(get_weather)  # deterministic weather → WeatherPanel, not a search spray
+        tools.append(get_quotes)  # deterministic global quotes → MarketBoard, not a search spray
 
     if want("code"):
         use_docker = False
@@ -219,6 +221,7 @@ __all__ = [
     "CAPABILITIES",
     "read_file",
     "get_weather",
+    "get_quotes",
     "web_fetch",
     "web_fetch_tool",
 ]

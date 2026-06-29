@@ -21,23 +21,23 @@
   const toggle = (i) => (open = { ...open, [i]: !open[i] })
 </script>
 
-<div class="wire">
-  <header class="masthead">
+<div class="bs">
+  <header class="bs-masthead">
     <div class="mast-l">
-      <div class="kicker">A2UI · News Digest</div>
+      <div class="bs-kicker">A2UI · News Digest</div>
       <h1>{topic}</h1>
     </div>
-    <div class="edition">
+    <div class="bs-edition">
       <div>{edition}</div>
       <div><b>{stories.length} {stories.length === 1 ? 'story' : 'stories'}</b></div>
     </div>
   </header>
 
   {#if stories.length}
-    <div class="ticker">
-      <div class="tag"><span class="dot"></span> Live Wire</div>
-      <div class="viewport">
-        <div class="track">
+    <div class="bs-ticker">
+      <div class="bs-tag"><span class="bs-dot"></span> Live Wire</div>
+      <div class="bs-viewport">
+        <div class="bs-track">
           {#each [...stories, ...stories] as s}
             <span class="h"><b>{srcOf(s)}</b> {s.title}</span>
           {/each}
@@ -46,7 +46,7 @@
     </div>
   {/if}
 
-  <div class="body">
+  <div class="bs-body">
     {#if lead}
       <article class="lead" class:nofig={!lead.image}>
         <div class="lead-text">
@@ -90,57 +90,21 @@
     {/if}
 
     {#if sources.length}
-      <div class="foot">
-        <div class="src">Sources: {#each sources as s}<span>{s}</span> {/each}</div>
-        <div class="upd"><span class="dot"></span> Updated just now</div>
+      <div class="bs-foot">
+        <div class="bs-src">Sources: {#each sources as s}<span>{s}</span> {/each}</div>
+        <div class="bs-upd"><span class="bs-dot"></span> Updated just now</div>
       </div>
     {/if}
   </div>
 </div>
 
 <style>
-  .wire {
-    --paper: #f4eee1; --paper-2: #ece3d2;
-    --ink: #18140d; --ink-2: #4f4636; --ink-3: #8a7f6b;
-    --accent: #c5402a; --accent-d: #972c1a;
-    --rule: rgba(24,20,13,.14); --rule-2: rgba(24,20,13,.28);
-    --serif: Fraunces, Georgia, serif;
-    --ui: 'Hanken Grotesk', system-ui, sans-serif;
-    --code: 'JetBrains Mono', ui-monospace, monospace;
-    position: relative;
-    background: var(--paper);
-    color: var(--ink);
-    border: 1px solid var(--rule-2);
-    border-radius: 6px;
-    overflow: hidden;
-    isolation: isolate;
-    font-family: var(--ui);
-  }
-  .wire::after {
-    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 5; opacity: .045;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
+  /* Shell (container, masthead, ticker, footer) is shared in broadsheet.css
+     (.bs/.bs-*). Only the News-specific ticker item + body styles live here. */
+  .h { display: inline-flex; align-items: center; gap: 11px; padding: 6px 17px; font-size: 12px; color: var(--ink-2); }
+  .h::before { content: "◆"; color: var(--accent); font-size: 7px; }
+  .h b { font-weight: 600; color: var(--ink); }
 
-  .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 15px 20px 11px; }
-  .kicker { font-family: var(--code); font-size: 10px; letter-spacing: .26em; text-transform: uppercase; color: var(--accent-d); font-weight: 700; }
-  .mast-l h1 { margin: 3px 0 0; font-family: var(--serif); font-weight: 900; font-size: clamp(24px, 5vw, 36px); line-height: .96; letter-spacing: -.01em; font-variation-settings: "opsz" 120; }
-  .edition { flex: none; text-align: right; font-family: var(--code); font-size: 10px; line-height: 1.7; color: var(--ink-3); letter-spacing: .03em; }
-  .edition b { color: var(--ink-2); font-weight: 700; }
-
-  .ticker { display: flex; align-items: stretch; border-top: 1.5px solid var(--ink); border-bottom: 1px solid var(--rule); background: var(--paper-2); }
-  .tag { flex: none; display: flex; align-items: center; gap: 7px; padding: 6px 12px; background: var(--ink); color: var(--paper); font-family: var(--code); font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 rgba(197,64,42,.6); animation: pulse 1.6s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(197,64,42,.55); } 70% { box-shadow: 0 0 0 7px rgba(197,64,42,0); } 100% { box-shadow: 0 0 0 0 rgba(197,64,42,0); } }
-  .viewport { overflow: hidden; flex: 1; position: relative; }
-  .viewport::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 42px; background: linear-gradient(90deg, transparent, var(--paper-2)); }
-  .track { display: inline-flex; white-space: nowrap; will-change: transform; animation: marquee 48s linear infinite; }
-  .ticker:hover .track { animation-play-state: paused; }
-  @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-  .track .h { display: inline-flex; align-items: center; gap: 11px; padding: 6px 17px; font-size: 12px; color: var(--ink-2); }
-  .track .h::before { content: "◆"; color: var(--accent); font-size: 7px; }
-  .track .h b { font-weight: 600; color: var(--ink); }
-
-  .body { padding: 16px 20px 18px; }
   .lead { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; padding-bottom: 16px; border-bottom: 2px solid var(--ink); }
   .lead.nofig { grid-template-columns: 1fr; }
   .cat { font-family: var(--code); font-size: 9.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--accent-d); display: inline-flex; align-items: center; gap: 7px; }
@@ -175,10 +139,6 @@
   .item.open .chev { transform: rotate(90deg); color: var(--accent); }
   .item:hover .chev { color: var(--accent); }
 
-  .foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 10px; border-top: 1.5px solid var(--ink); font-family: var(--code); font-size: 10px; color: var(--ink-3); letter-spacing: .03em; }
-  .src { display: flex; gap: 8px; flex-wrap: wrap; }
-  .src span { color: var(--ink-2); }
-  .upd { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 
   @media (max-width: 640px) {
     .lead { grid-template-columns: 1fr; }

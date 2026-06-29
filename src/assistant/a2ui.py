@@ -230,6 +230,42 @@ def assistant_catalog() -> dict:
             "additionalProperties": False,
         },
     }
+    quote_array = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Ticker, e.g. 'AAPL' or '^AXJO'."},
+                "name": {"type": "string", "description": "Instrument name, e.g. 'Apple Inc.'."},
+                "price": {"type": "number"},
+                "change": {"type": "number", "description": "Absolute change vs previous close."},
+                "changePercent": {
+                    "type": "number",
+                    "description": "Percent change vs previous close.",
+                },
+                "currency": {"type": "string", "description": "ISO code, e.g. 'USD', 'AUD'."},
+                "exchange": {"type": "string"},
+                "dayLow": {"type": "number"},
+                "dayHigh": {"type": "number"},
+                "spark": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Optional normalised intraday points (0-100) for the sparkline.",
+                },
+                "state": {
+                    "type": "string",
+                    "description": "Trading state if known: 'open', 'closed', 'pre', 'after'.",
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Optional one-line driver for the lead, only if genuinely known.",
+                },
+            },
+            # First quote is rendered as the lead/featured; the rest as a ranked table.
+            "required": ["symbol", "name", "price", "changePercent"],
+            "additionalProperties": False,
+        },
+    }
 
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -266,6 +302,28 @@ def assistant_catalog() -> dict:
                     "stories": story_array,
                 },
                 ["topic", "stories"],
+            ),
+            "MarketBoard": _component_schema(
+                "MarketBoard",
+                "Markets board for stock, index, or crypto quotes across global exchanges.",
+                {
+                    "title": {"type": "string", "description": "Board heading, e.g. 'Technology'."},
+                    "currency": {
+                        "type": "string",
+                        "description": "Board currency if all quotes share one.",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Market state if all agree: 'open'/'closed'/'pre'/'after'.",
+                    },
+                    "asOf": {
+                        "type": "string",
+                        "description": "Timestamp of the quotes (ISO-8601).",
+                    },
+                    "source": {"type": "string"},
+                    "quotes": quote_array,
+                },
+                ["title", "quotes"],
             ),
             "RestaurantFinder": _component_schema(
                 "RestaurantFinder",
@@ -318,6 +376,7 @@ Every component is fully defined by the schema and the worked examples below —
 Intent mapping:
 - Weather or forecast -> call get_weather(location), then render a WeatherPanel using the returned condition + rows.
 - Latest news, headlines, or recent developments -> NewsDigest.
+- Stocks, shares, ETFs, funds, indices, crypto, or market prices -> call get_quotes(symbols, title), then render a MarketBoard from the returned quotes (first quote = the lead).
 - Restaurants, cafes, bars, open-now, lunch, dinner -> RestaurantFinder.
 - Creating, scheduling, tracking, or planning tasks -> TaskPlan.
 - Multi-step operational work -> Checklist.
@@ -341,6 +400,12 @@ summary, and a one-line `why`; later stories just need title/source/published/su
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
 Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
+
+Markets — user asks "How are the tech stocks doing?" (call get_quotes first, then copy
+its quotes straight in; the first quote is the lead. Keep each quote's `spark`, `currency`,
+and numeric `price`/`change`/`changePercent` exactly as returned):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"MarketBoard","title":"Technology","currency":"USD","status":"open","asOf":"2026-06-29T18:17:30+00:00","source":"Yahoo Finance","quotes":[{"symbol":"NVDA","name":"NVIDIA Corporation","price":193.99,"change":1.46,"changePercent":0.76,"currency":"USD","exchange":"NasdaqGS","dayLow":190.1,"dayHigh":195.2,"spark":[12,30,22,45,38,60,55,72,64,80,70,88,76,92,84,100],"state":"open"},{"symbol":"AAPL","name":"Apple Inc.","price":281.51,"change":-2.27,"changePercent":-0.8,"currency":"USD","exchange":"NasdaqGS","spark":[100,82,90,60,66,48,40,20],"state":"open"}]}]}}
 """
 
 

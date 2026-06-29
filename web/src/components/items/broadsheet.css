@@ -1,0 +1,75 @@
+/* ============================================================
+   Broadsheet shell — shared structural styles for the editorial
+   A2UI surfaces (NewsWire, WeatherCard, MarketBoard).
+   ------------------------------------------------------------
+   Pairs with design/tokens/editorial.css (the day/night --ed-*
+   palette). These are plain GLOBAL classes (.bs / .bs-*) so the
+   three surfaces share ONE source of truth for the masthead,
+   ticker, and footer chrome; each component keeps only its own
+   body styles in its scoped <style>. Imported once from main.js.
+
+   The palette is aliased onto .bs to short local names (--paper,
+   --ink, --accent, …) so both these rules and each component's
+   scoped rules can use them without redeclaring.
+   ============================================================ */
+
+.bs {
+  --paper: var(--ed-paper); --paper-2: var(--ed-paper-2);
+  --ink: var(--ed-ink); --ink-2: var(--ed-ink-2); --ink-3: var(--ed-ink-3);
+  --accent: var(--ed-accent); --accent-d: var(--ed-accent-d);
+  --up: var(--ed-up); --up-d: var(--ed-up-d);
+  --rule: var(--ed-rule); --rule-2: var(--ed-rule-2);
+  --serif: var(--ed-serif); --ui: var(--ed-ui); --code: var(--ed-code);
+
+  /* live-dot colour + pulse glow (rgb triplet); markets overrides to green */
+  --bs-dot: var(--accent);
+  --bs-glow: 197, 64, 42;
+
+  position: relative;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule-2);
+  border-radius: 6px;
+  overflow: hidden;
+  isolation: isolate;
+  font-family: var(--ui);
+}
+.bs::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 5; opacity: var(--ed-noise);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Markets variant: gains-green live dot instead of vermillion. */
+.bs--markets { --bs-dot: var(--up); --bs-glow: 47, 107, 70; }
+
+/* ---- masthead ---- */
+.bs-masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 15px 20px 11px; }
+.bs-kicker { font-family: var(--code); font-size: 10px; letter-spacing: .26em; text-transform: uppercase; color: var(--accent-d); font-weight: 700; }
+.bs-masthead h1 { margin: 3px 0 0; font-family: var(--serif); font-weight: 900; font-size: clamp(24px, 5vw, 36px); line-height: .96; letter-spacing: -.01em; font-variation-settings: "opsz" 120; }
+.bs-edition { flex: none; text-align: right; font-family: var(--code); font-size: 10px; line-height: 1.7; color: var(--ink-3); letter-spacing: .03em; }
+.bs-edition b { color: var(--ink-2); font-weight: 700; }
+.bs-edition b.open { color: var(--up-d); } /* markets "Market open" status */
+
+/* ---- ticker / tape ---- */
+.bs-ticker { display: flex; align-items: stretch; border-top: 1.5px solid var(--ink); border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+.bs-tag { flex: none; display: flex; align-items: center; gap: 7px; padding: 6px 12px; background: var(--ink); color: var(--paper); font-family: var(--code); font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+.bs-viewport { overflow: hidden; flex: 1; position: relative; }
+.bs-viewport::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 42px; background: linear-gradient(90deg, transparent, var(--paper-2)); }
+.bs-track { display: inline-flex; white-space: nowrap; will-change: transform; animation: bs-marquee 46s linear infinite; }
+.bs-ticker:hover .bs-track { animation-play-state: paused; }
+@keyframes bs-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* ---- live dot + pulse (colour via --bs-dot / --bs-glow) ---- */
+.bs-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bs-dot); box-shadow: 0 0 0 0 rgba(var(--bs-glow), .6); animation: bs-pulse 1.6s infinite; }
+@keyframes bs-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(var(--bs-glow), .55); }
+  70% { box-shadow: 0 0 0 7px rgba(var(--bs-glow), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--bs-glow), 0); }
+}
+
+/* ---- body + footer ---- */
+.bs-body { padding: 16px 20px 18px; }
+.bs-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 10px; border-top: 1.5px solid var(--ink); font-family: var(--code); font-size: 10px; color: var(--ink-3); letter-spacing: .03em; }
+.bs-foot .bs-src { display: flex; gap: 8px; flex-wrap: wrap; }
+.bs-foot .bs-src span { color: var(--ink-2); }
+.bs-foot .bs-upd { display: inline-flex; align-items: center; gap: 6px; flex: none; }

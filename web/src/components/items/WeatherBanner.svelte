@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
 
-  let { condition = 'cloudy', temperatureText = '' } = $props()
+  let { condition = 'cloudy', temperatureText = '', flush = false } = $props()
 
   let canvas
   let active = $state(false) // WebGPU banner is live
@@ -24,7 +24,7 @@
   })
 </script>
 
-<div class="wx-banner wx-{condition}" class:wx-live={active}>
+<div class="wx-banner wx-{condition}" class:wx-live={active} class:wx-flush={flush}>
   <canvas bind:this={canvas} aria-hidden="true"></canvas>
 </div>
 
@@ -41,6 +41,9 @@
     background: linear-gradient(180deg, #9fb6cd, #dde7ed);
   }
   .wx-banner canvas { display: block; width: 100%; height: 100%; }
+
+  /* Flush variant: edge-to-edge hero band inside the broadsheet shell. */
+  .wx-flush { border-radius: 0; margin-bottom: 0; max-height: 200px; }
 
   .wx-sunny { background: radial-gradient(120% 90% at 30% 30%, #ffd27a, #ff9d3c 55%, #2c1008); }
   .wx-partly-cloudy { background: linear-gradient(180deg, #82b0cf, #e1edf2); }

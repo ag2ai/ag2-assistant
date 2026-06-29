@@ -1,19 +1,9 @@
 <script>
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import WeatherBanner from './WeatherBanner.svelte'
+  import WeatherCard from './WeatherCard.svelte'
   import NewsWire from './NewsWire.svelte'
-
-  const WEATHER_CONDITIONS = ['sunny', 'partly-cloudy', 'cloudy', 'foggy', 'rainy', 'thunderstorm', 'snow', 'windy']
-  function weatherCondition(value) {
-    const c = String(value || '').toLowerCase()
-    return WEATHER_CONDITIONS.includes(c) ? c : 'cloudy'
-  }
-  function weatherTemp(rows) {
-    const r = (Array.isArray(rows) ? rows : []).find((x) => /temp/i.test(x?.label || ''))
-    const m = String(r?.value || '').match(/-?\d+°?/)
-    return m ? m[0] : ''
-  }
+  import MarketBoard from './MarketBoard.svelte'
 
   let { item } = $props()
   const data = $derived(item.data || {})
@@ -25,6 +15,7 @@
       : type === 'weatherpanel' ? 'sun'
       : type === 'taskplan' || type === 'checklist' ? 'list'
       : type === 'newsdigest' ? 'globe'
+      : type === 'marketboard' ? 'trending-up'
       : type === 'restaurantfinder' ? 'search'
       : 'sparkles'
   )
@@ -33,6 +24,7 @@
       : type === 'weatherpanel' ? 'Live forecast'
       : type === 'taskplan' ? 'Task plan'
       : type === 'newsdigest' ? 'News brief'
+      : type === 'marketboard' ? 'Markets'
       : type === 'restaurantfinder' ? 'Places'
       : 'A2UI'
   )
@@ -51,7 +43,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'weatherpanel', 'taskplan', 'newsdigest', 'restaurantfinder', 'checklist'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'restaurantfinder', 'checklist'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -62,6 +54,10 @@
 {#if !emptyAnswerBrief}
 {#if type === 'newsdigest' && list(data.stories).length}
   <NewsWire {data} />
+{:else if type === 'weatherpanel'}
+  <WeatherCard {data} />
+{:else if type === 'marketboard' && list(data.quotes).length}
+  <MarketBoard {data} />
 {:else}
 <div class="a2ui">
   <div class="a2ui-head">
@@ -96,25 +92,6 @@
           {/each}
         </section>
       </div>
-    </div>
-  {:else if type === 'weatherpanel'}
-    {#key weatherCondition(data.condition)}
-      <WeatherBanner condition={weatherCondition(data.condition)} temperatureText={weatherTemp(data.rows)} />
-    {/key}
-    <div class="a2ui-weather-top">
-      <div>
-        <div class="a2ui-main">{data.location || 'Requested location'}</div>
-        <div class="a2ui-sub">Forecast summary</div>
-      </div>
-      <span class="a2ui-weather-glyph"><Icon name="sun" size={22} /></span>
-    </div>
-    <div class="a2ui-grid">
-      {#each list(data.rows) as row}
-        <div class="a2ui-cell">
-          <div class="a2ui-label">{row.label}</div>
-          <div>{row.value}</div>
-        </div>
-      {/each}
     </div>
   {:else if type === 'newsdigest'}
     <div class="a2ui-main">{data.topic || 'Latest news'}</div>
