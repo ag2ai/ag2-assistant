@@ -15,7 +15,7 @@ async def test_build_hitl_hook_adapts_asker():
 
     hook = build_hitl_hook(FakeAsker())
 
-    from autogen.beta.events import HumanInputRequest
+    from ag2.events import HumanInputRequest
 
     msg = await hook(HumanInputRequest(content="What is your name?"))
     assert msg.content == "answer-to:What is your name?"

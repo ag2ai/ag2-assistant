@@ -12,7 +12,7 @@ string the agent reads — never a giant blob — which is the point of retrieva
 
 from typing import Annotated
 
-from autogen.beta import Context, tool
+from ag2 import Context, tool
 from pydantic import Field
 
 _PREVIEW = 240  # chars of a produced asset to surface in a summary

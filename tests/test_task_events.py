@@ -5,7 +5,7 @@ it onto the task's stream (`task:<id>`); scheduling emits a custom `TaskSchedule
 We capture via a fake emitter so no gateway/LLM is needed.
 """
 
-from autogen.beta.events import TaskCompleted, TaskStarted
+from ag2.events import TaskCompleted, TaskStarted
 
 from assistant.events import TaskScheduled
 from assistant.gateway.tasks_service import TaskService
@@ -108,8 +108,8 @@ async def test_visible_subagent_emits_cancelled_when_interrupted(monkeypatch):
     import asyncio
     from types import SimpleNamespace
 
-    import autogen.beta.tools.subagents.run_task as run_task_mod
-    from autogen.beta.events import TaskCancelled
+    import ag2.tools.subagents.run_task as run_task_mod
+    from ag2.events import TaskCancelled
 
     import assistant.agent as agent_mod
     from assistant.config import Config
@@ -152,8 +152,8 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
     GUI can nest them under the card (and a nested lifecycle nests recursively)."""
     from types import SimpleNamespace
 
-    import autogen.beta.tools.subagents.run_task as run_task_mod
-    from autogen.beta.events import TaskStarted
+    import ag2.tools.subagents.run_task as run_task_mod
+    from ag2.events import TaskStarted
 
     import assistant.agent as agent_mod
     from assistant.config import Config
@@ -174,7 +174,7 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
         agent, objective, *, parent_context, context="", stream=None, task_id=None, **kw
     ):
         # Simulate inner work: a nested subagent's lifecycle on the work stream.
-        from autogen.beta.context import ConversationContext
+        from ag2.context import ConversationContext
 
         ev = TaskStarted(task_id="task-1:worker:deep", agent_name="researcher", objective="dig")
         await stream.send(ev, ConversationContext(stream=stream))

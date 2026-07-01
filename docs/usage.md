@@ -11,7 +11,7 @@ pip install ag2assistant
 Or from source:
 
 ```bash
-git clone https://github.com/marklysze/ag2-assistant.git
+git clone https://github.com/ag2ai/ag2-assistant.git
 cd ag2-assistant
 pip install -e ".[dev]"
 ```
@@ -132,7 +132,7 @@ curl -X POST http://127.0.0.1:8800/api/message \
 
 Each `session_id` keeps its own isolated multi-turn conversation. For
 distributed/multi-agent deployments, the agent can also be served over WebSocket
-through an AG2 Hub — see `examples/network_gateway_spike.py`.
+through an AG2 Hub.
 
 ### `ag2assistant run`
 
@@ -497,9 +497,14 @@ permission-gated regardless of backend, since it reads your **host** files.
 
 ## Google (Gmail / Calendar / Drive)
 
-AG2 Assistant can read and search your Gmail, manage your Calendar, and read your Drive.
+AG2 Assistant can read and search your Gmail, manage your Calendar events, and read your Drive.
 **Writes are gated** — sending an email or creating an event always shows a HITL
 approval card first and is denied if there's no one to ask.
+
+This is **bring-your-own** and **local-only**: you create your *own* Google Cloud
+OAuth client, and both it and the resulting token live under `~/.ag2assistant/`
+(owner-only, `0600`) and are sent only to Google — never to AG2 or anywhere else.
+It's entirely optional; the tools appear only after you sign in.
 
 ### One-time setup
 
@@ -509,7 +514,9 @@ pip install "ag2assistant[google]"
 
 1. In [Google Cloud Console](https://console.cloud.google.com): create a project
    and **enable** the Gmail API, Google Calendar API, and Google Drive API.
-2. Configure the **OAuth consent screen** (External) and add yourself as a **Test user**.
+2. Configure the **OAuth consent screen** (External), set the **App name** (this is
+   what you'll see on the consent screen at sign-in — call it whatever you like), and
+   add yourself as a **Test user**.
 3. **Credentials → Create OAuth client ID → Desktop app**, download the JSON, and
    save it to `~/.ag2assistant/google_credentials.json`.
 4. Sign in (opens a browser once):
@@ -521,7 +528,11 @@ ag2assistant google status     # show configured / signed-in state
 ag2assistant google logout     # remove the stored token
 ```
 
-The token is cached at `~/.ag2assistant/google_token.json` and refreshed automatically.
+The token is cached at `~/.ag2assistant/google_token.json` (owner-only) and refreshed automatically.
+
+> Because it's your own unpublished app, Google shows an **"unverified app"** warning
+> at sign-in — click **Advanced → Continue** (expected: it's your own OAuth client and
+> you're an approved test user).
 
 **From the web UI instead.** The gateway's web client has a **Google** button:
 it shows the connection status, lets you **upload the OAuth client JSON** (so you
@@ -551,7 +562,9 @@ Just ask: *"summarise my unread emails from this week"*, *"what's on my calendar
 tomorrow?"*, *"draft a reply to Alice's last email"*, *"find the Q3 budget doc and
 summarise it"*. To actually send, the agent will ask you to approve first.
 
-Scopes requested: `gmail.modify` + `gmail.send`, `calendar`, `drive.readonly`.
+Scopes requested (least-privilege): `gmail.readonly` + `gmail.compose` (read mail,
+create drafts, and send — but **not** delete or relabel existing mail),
+`calendar.events` (read + create events, not calendar management), and `drive.readonly`.
 
 ## Sessions
 

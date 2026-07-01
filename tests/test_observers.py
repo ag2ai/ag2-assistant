@@ -1,6 +1,6 @@
 """Stuck-turn behaviour observers."""
 
-from autogen.beta.events import (
+from ag2.events import (
     ModelResponse,
     ObserverAlert,
     Severity,
@@ -40,7 +40,7 @@ async def test_tool_churn_resets_after_a_final_response():
 
 
 def test_build_observers_includes_loop_and_churn():
-    from autogen.beta.observers import LoopDetector
+    from ag2.observers import LoopDetector
 
     obs = build_observers()
     kinds = {type(o).__name__ for o in obs}

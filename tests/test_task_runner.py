@@ -57,7 +57,7 @@ async def test_executor_exception_fails_task(tmp_path):
 
 
 async def test_manager_forwards_raw_ag2_events(tmp_path):
-    from autogen.beta.events import TaskStarted
+    from ag2.events import TaskStarted
 
     store = _store(tmp_path)
     seen = []

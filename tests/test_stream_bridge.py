@@ -70,7 +70,7 @@ async def test_bridge_replays_then_forwards_and_runs_turns():
 
 
 async def test_bridge_skips_binary_audio_events():
-    from autogen.beta.events.voice import SynthesizedAudioEvent
+    from ag2.events.voice import SynthesizedAudioEvent
 
     stream = _Stream([])
     bridge = StreamBridge(_GW(stream), (ws := _WS()), "s1")

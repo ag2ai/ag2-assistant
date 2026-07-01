@@ -82,7 +82,7 @@
   <!-- ============ AGENT + TOOLS + MEMORY/HITL ============ -->
   <rect x="32" y="440" width="372" height="168" rx="12" fill="#eaf2ff" stroke="#4c8bf5"/>
   <text x="48" y="462" class="hd">Universal Agent (one shared)</text>
-  <text x="48" y="482" class="sub">autogen.beta · create_agent()</text>
+  <text x="48" y="482" class="sub">ag2 · create_agent()</text>
   <text x="48" y="500" class="sub">providers: Gemini · OpenAI · Anthropic · Ollama</text>
   <text x="48" y="520" class="sub">turn_prompt · environment context</text>
   <text x="48" y="538" class="sub">memory policy · observers · HITL hook</text>

@@ -17,11 +17,11 @@ discord, ...) so the single global profile still carries channel context.
 
 from pathlib import Path
 
-from autogen.beta import KnowledgeConfig
-from autogen.beta.aggregate import AggregateTrigger, WorkingMemoryAggregate
-from autogen.beta.config.gemini import GeminiConfig
-from autogen.beta.knowledge import SqliteKnowledgeStore
-from autogen.beta.policies import ConversationPolicy, WorkingMemoryPolicy
+from ag2 import KnowledgeConfig
+from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
+from ag2.config.gemini import GeminiConfig
+from ag2.knowledge import SqliteKnowledgeStore
+from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
 
 # Path inside the knowledge store where the rolling profile lives.
 PROFILE_PATH = "/memory/working.md"
@@ -242,7 +242,7 @@ def build_knowledge_config(
     if compact:
         # Keep a long-running conversation's context bounded by summarising the
         # oldest events (on the cheap model) when the stream grows large.
-        from autogen.beta.compact import CompactTrigger, SummarizeCompact
+        from ag2.compact import CompactTrigger, SummarizeCompact
 
         compact_kwargs = {
             "compact": SummarizeCompact(target=60, config=aggregate_config),

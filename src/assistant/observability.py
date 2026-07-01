@@ -2,7 +2,7 @@
 fact (without reproducing).
 
 Three layers, all writing where they can be read back:
-- A rolling log at ``<data_dir>/ag2assistant.log`` (AG2 Assistant + AG2's own `autogen.*` logs).
+- A rolling log at ``<data_dir>/ag2assistant.log`` (AG2 Assistant + AG2's own `ag2.*` logs).
 - AG2-native ``LoggingMiddleware`` on each agent → per-turn LLM call / tool / turn
   entries in that same log.
 - A failure snapshot: when an agent turn raises (e.g. a provider 400), a compact
@@ -41,7 +41,7 @@ def setup_logging(config) -> logging.Logger:
     fh.setFormatter(fmt)
     logger.addHandler(fh)
     # fold AG2's own logs (compaction/aggregation/event-log failures, etc.) in too
-    ag2 = logging.getLogger("autogen")
+    ag2 = logging.getLogger("ag2")
     ag2.addHandler(fh)
     ag2.setLevel(logging.INFO)
     _CONFIGURED = True
@@ -51,7 +51,7 @@ def setup_logging(config) -> logging.Logger:
 
 def agent_logging_middleware():
     """AG2-native LoggingMiddleware routed to the ag2assistant logger (per-turn LLM/tool)."""
-    from autogen.beta.middleware import LoggingMiddleware
+    from ag2.middleware import LoggingMiddleware
 
     return LoggingMiddleware(logger=logging.getLogger("ag2assistant.agent"))
 

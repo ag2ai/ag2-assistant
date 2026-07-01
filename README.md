@@ -1,6 +1,6 @@
 # AG2 Assistant
 
-An open-source personal AI assistant powered by [AG2](https://ag2.ai)'s Beta framework. Inspired by [OpenClaw](https://github.com/openclaw/openclaw), reimagined in Python.
+An open-source personal AI assistant powered by [AG2](https://ag2.ai)'s Beta framework, built in Python.
 
 > Public product name: **AG2 Assistant**. `ag2assistant` remains the internal package, CLI command, and data-dir name.
 
@@ -11,7 +11,7 @@ AG2 Assistant is a web app (with optional messaging-channel and CLI front-ends) 
 ### 1. Install
 
 ```bash
-git clone https://github.com/marklysze/ag2-assistant.git
+git clone https://github.com/ag2ai/ag2-assistant.git
 cd ag2-assistant
 python -m venv .venv
 source .venv/bin/activate
@@ -106,8 +106,6 @@ State lives under `~/.ag2assistant/` (settings, sessions, memory, tasks); genera
 
 ## Project Status
 
-See [docs/plan.md](docs/plan.md) for the full roadmap.
-
 - [x] Core agent with multi-provider support (Gemini, OpenAI, Anthropic, Ollama)
 - [x] CLI interface (agent, chat, onboard, run)
 - [x] Tools (native AG2: web search, shell, code execution; + web fetch, image generation)
@@ -127,10 +125,7 @@ See [docs/plan.md](docs/plan.md) for the full roadmap.
 
 - [Architecture](docs/architecture.md) — full system design: services, agents, endpoints, event model, data flow ([diagram](docs/architecture.svg))
 - [Usage Guide](docs/usage.md) — CLI commands, configuration, channels
-- [Plan](docs/plan.md) — implementation roadmap with progress tracking
-- [OpenClaw Research](docs/research-openclaw.md) — analysis of the project that inspired AG2 Assistant
-- [AG2 Beta Research](docs/research-ag2-beta.md) — AG2 Beta capabilities and availability
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE) — matching [AG2](https://github.com/ag2ai/ag2).

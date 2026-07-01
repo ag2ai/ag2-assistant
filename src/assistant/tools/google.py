@@ -13,7 +13,7 @@ import base64
 from email.mime.text import MIMEText
 from typing import Annotated
 
-from autogen.beta import tool
+from ag2 import tool
 from pydantic import Field
 
 from assistant.integrations.google_auth import build_service

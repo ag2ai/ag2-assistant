@@ -12,12 +12,17 @@ without them.
 
 from pathlib import Path
 
-# Read + send Gmail, read/write Calendar, read-only Drive. (Send is still gated
-# by a human-approval prompt at the tool layer.)
+# Least-privilege scopes for exactly what the tools do:
+#   gmail.readonly — search + read mail
+#   gmail.compose  — create drafts AND send (does NOT allow deleting/relabelling
+#                    existing mail, unlike the broader gmail.modify)
+#   calendar.events — read + create events only (not calendar/ACL management)
+#   drive.readonly  — find + read files
+# Sending is additionally gated by a human-approval prompt at the tool layer.
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
@@ -52,6 +57,7 @@ def save_credentials_json(content: str) -> None:
     cp = credentials_path()
     cp.parent.mkdir(parents=True, exist_ok=True)
     cp.write_text(content)
+    cp.chmod(0o600)  # contains the OAuth client secret — keep it owner-only
 
 
 def is_configured() -> bool:
@@ -121,6 +127,7 @@ def _save_token(creds) -> None:
     tp = token_path()
     tp.parent.mkdir(parents=True, exist_ok=True)
     tp.write_text(creds.to_json())
+    tp.chmod(0o600)  # holds a long-lived refresh token — keep it owner-only
 
 
 def _email_for(creds) -> str:

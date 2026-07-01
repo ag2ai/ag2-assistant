@@ -39,7 +39,7 @@ def _clean_title(raw: str | None) -> str | None:
 
 async def generate_title(config: Config, user_text: str, agent_text: str) -> str | None:
     """Ask the cheap model for a chat title (None on any failure)."""
-    from autogen.beta import Agent
+    from ag2 import Agent
 
     from assistant.agent import cheap_model, model_config
 

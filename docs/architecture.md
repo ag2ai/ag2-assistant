@@ -12,13 +12,12 @@ flow, and on-disk state. Companion diagram: [`architecture.svg`](architecture.sv
 ## 1. Overview
 
 AG2 Assistant is a personal AI-assistant platform built on **AG2 Beta**
-(`autogen.beta`). The backend is Python (FastAPI); the primary client is a Svelte
+(`ag2`). The backend is Python (FastAPI); the primary client is a Svelte
 web app served by the gateway. The same backend also speaks to messaging channels
 (Telegram/Discord/Slack), a realtime voice client, and a CLI — all sharing **one
 universal agent** and **one event-stream spine**.
 
-The defining decision (memory `ag2-primitives-drive-architecture`, and
-`docs/gui-redesign-plan.md`): **AG2's event `Stream` is the single source of truth,
+The defining decision: **AG2's event `Stream` is the single source of truth,
 and every surface is a projection of it.** We lean on AG2 primitives — streams, the
 event taxonomy, observers/subscriptions, `EventLogWriter`, knowledge/compaction —
 rather than inventing parallel machinery, and add an app-specific layer only where
@@ -46,7 +45,7 @@ on demand, so sessions are **resumable** and never cross histories.
 what `EventLogWriter` persists:
 
 ```json
-{ "type": "autogen.beta.events.types.ModelResponse", "data": { … } }
+{ "type": "ag2.events.types.ModelResponse", "data": { … } }
 { "type": "ag2assistant.events.DeliverableProduced",  "data": { … } }
 ```
 
@@ -126,7 +125,7 @@ No background loop lives here; the only long-running loop is the scheduler (§5.
 
 ### 5.2 Universal agent — `src/assistant/agent.py`
 
-One shared `autogen.beta` `Agent`, built by `create_agent()` (`agent.py:320`).
+One shared `ag2` `Agent`, built by `create_agent()` (`agent.py:320`).
 `model_config()` maps the provider to a config class (Gemini default 8192 max
 output; OpenAI via the Responses API; Anthropic; Ollama). Per-turn system prompts
 are assembled by `turn_prompt()` (chat) and `universal_turn_prompt()` (gateway/tasks
@@ -179,6 +178,12 @@ Durable background work with deliverables, scheduling, and subtask orchestration
   default **30.0s**). `tick()` fires every due `SCHEDULED` task; recurrence is
   interval-based and anchored to `scheduled_for` ("daily", "hourly", "every N
   units", weekday patterns). A bad record logs but never kills the loop.
+  **Single-owner:** exactly one scheduler runs per data dir — `TaskService.start`
+  takes `scheduler=` (channel commands pass `False`; they keep the task tools but
+  not the loop), backed by a cross-process `flock` leader lock
+  (`scheduler_lock.py`, `~/.ag2assistant/scheduler.lock`). This prevents the
+  multi-process race where N schedulers fire the same `tasks.db` tasks. The
+  network-native evolution of this is one core with thin front-ends over AG2 `WsLink`.
 - **Executor** (`tasks/executor.py`) — `make_task_executor()` runs a **visible
   subagent** per deliverable (archetype persona: researcher/operator/coder/worker),
   cheap model for leaf subtasks, main model for root synthesis. Inner subagent events

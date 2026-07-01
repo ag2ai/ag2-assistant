@@ -495,7 +495,7 @@ def create_app(
 
     def _ollama_installed() -> bool:
         try:
-            from autogen.beta.config import OllamaConfig
+            from ag2.config import OllamaConfig
 
             return type(OllamaConfig).__module__ != "unittest.mock"
         except Exception:
@@ -532,8 +532,8 @@ def create_app(
         }
 
     async def _mcp_health(server: dict) -> dict:
-        from autogen.beta.context import ConversationContext
-        from autogen.beta.stream import MemoryStream
+        from ag2.context import ConversationContext
+        from ag2.stream import MemoryStream
 
         from assistant.tools.mcp import build_mcp_tools
 
@@ -876,7 +876,7 @@ def create_app(
         await websocket.accept()
         import uuid
 
-        from autogen.beta.events import (
+        from ag2.events import (
             ModelMessage,
             ModelMessageChunk,
             ModelRequest,
@@ -884,7 +884,7 @@ def create_app(
             TextInput,
             ToolCallsEvent,
         )
-        from autogen.beta.events.voice import (
+        from ag2.events.voice import (
             RecordedAudioEvent,
             SynthesizedAudioEvent,
             TranscriptionChunkEvent,

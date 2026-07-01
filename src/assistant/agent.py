@@ -3,7 +3,7 @@
 import os
 from datetime import datetime
 
-from autogen.beta import Agent
+from ag2 import Agent
 
 from assistant.config import Config, load_config
 from assistant.memory import build_knowledge_config, profile_assembly
@@ -30,24 +30,24 @@ def model_config(config: Config, model: str | None = None):
     provider = config.llm.provider.lower()
     api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     if provider == "anthropic":
-        from autogen.beta.config import AnthropicConfig
+        from ag2.config import AnthropicConfig
 
         return AnthropicConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider in ("openai", "oai"):
         # OpenAI's Responses API (their preferred surface; also enables the native
         # image_generation tool). Drop-in for the old Chat Completions OpenAIConfig.
-        from autogen.beta.config import OpenAIResponsesConfig
+        from ag2.config import OpenAIResponsesConfig
 
         return OpenAIResponsesConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider == "ollama":
-        from autogen.beta.config import OllamaConfig
+        from ag2.config import OllamaConfig
 
         return OllamaConfig(
             model=model,
             host=os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
             streaming=config.llm.streaming,
         )
-    from autogen.beta.config.gemini import GeminiConfig
+    from ag2.config.gemini import GeminiConfig
 
     # Generous output budget so long research notes / briefings aren't truncated
     # mid-sentence (the default is small).
@@ -83,7 +83,7 @@ def build_skills_toolkit(config: Config):
     skill *scripts* run inside a one-shot, bind-mounted container — so untrusted
     skill code can't reach the user's files. Storage/discovery stay local.
     """
-    from autogen.beta.tools import SkillSearchToolkit
+    from ag2.tools import SkillSearchToolkit
 
     config.skills_dir.mkdir(parents=True, exist_ok=True)
     extra = [str(bundled_skills_dir())]
@@ -104,7 +104,7 @@ def build_skills_toolkit(config: Config):
             )
             return SkillSearchToolkit(runtime)
 
-    from autogen.beta.tools.skills import LocalRuntime
+    from ag2.tools.skills import LocalRuntime
 
     runtime = LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
     return SkillSearchToolkit(runtime)
@@ -192,7 +192,7 @@ def build_memory_tool():
     turns, and won't reliably capture a one-off 'remember this')."""
     from typing import Annotated, Literal
 
-    from autogen.beta import tool
+    from ag2 import tool
     from pydantic import Field
 
     @tool

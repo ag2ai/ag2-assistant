@@ -1,6 +1,6 @@
 """One-shot Docker sandbox for running untrusted SKILL scripts.
 
-AG2 now ships an official `autogen.beta.extensions.docker.DockerEnvironment` (a
+AG2 now ships an official `ag2.extensions.docker.DockerEnvironment` (a
 long-lived, cached container), which AG2 Assistant uses for the shell/code tools
 — see `tools.build_agent_tools`. This module keeps the one piece AG2's model
 doesn't fit: a **one-shot** `docker run --rm` bind-mount sandbox for skill
@@ -18,7 +18,7 @@ import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
 
-from autogen.beta.tools.sandbox.base import ExecResult, SandboxBase
+from ag2.tools.sandbox.base import ExecResult, SandboxBase
 
 _DEFAULT_IMAGE = "python:3.12-slim"
 _DEFAULT_WORKDIR = "/workspace"
@@ -140,8 +140,8 @@ def build_docker_skill_runtime(
     bind-mounted Docker container (the skill's `scripts/` dir is the only host
     path it can see). Storage/discovery stay local — only execution is sandboxed.
     """
-    from autogen.beta.tools.sandbox.adapter import ShellAdapter
-    from autogen.beta.tools.skills import LocalRuntime
+    from ag2.tools.sandbox.adapter import ShellAdapter
+    from ag2.tools.skills import LocalRuntime
 
     class _DockerSkillRuntime(LocalRuntime):
         def shell(self, scripts_dir: Path) -> "ShellAdapter":

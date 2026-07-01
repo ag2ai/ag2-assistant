@@ -41,7 +41,7 @@ def test_setup_logging_creates_logfile(tmp_path):
 async def test_capture_failure_writes_record_with_history_shape(tmp_path):
     cfg = _cfg(tmp_path)
     setup_logging(cfg)
-    from autogen.beta.events import ModelRequest, ModelResponse
+    from ag2.events import ModelRequest, ModelResponse
 
     stream = _Stream([ModelRequest(parts=[]), ModelResponse(message=None)])
     err = ValueError("400 INVALID_ARGUMENT boom")

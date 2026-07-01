@@ -47,7 +47,7 @@ async def test_forwarding_events_passes_structured_events_not_transcript(fake_ga
     """`_ask_forwarding_events` forwards the agent's structured events verbatim
     (so a voice client folds them with the text reducer) while OMITTING the
     conversation events it renders itself as transcript — and always unsubscribes."""
-    from autogen.beta.events import (
+    from ag2.events import (
         ModelMessage,
         ModelMessageChunk,
         ModelResponse,

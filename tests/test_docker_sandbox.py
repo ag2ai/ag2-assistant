@@ -73,7 +73,7 @@ def test_build_tools_offers_sandboxed_and_local_when_docker(monkeypatch):
 def test_build_tools_wires_ag2_docker_environment(monkeypatch):
     """The docker path uses AG2's official DockerEnvironment, passing our image and
     network through (network_mode), rather than a custom sandbox."""
-    import autogen.beta.extensions.docker as agdoc
+    import ag2.extensions.docker as agdoc
 
     import assistant.tools as tools_mod
     import assistant.tools.docker_sandbox as ds

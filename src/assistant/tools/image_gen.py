@@ -16,7 +16,7 @@ import contextlib
 import os
 from typing import Annotated
 
-from autogen.beta import Agent, Context, tool
+from ag2 import Agent, Context, tool
 from pydantic import Field
 
 from assistant.attachments import build_input
@@ -32,15 +32,15 @@ def _image_agent(config):
 
     provider = (config.llm.provider or "gemini").lower()
     if provider in ("gemini", "google", ""):
-        from autogen.beta.config.gemini import GeminiConfig
+        from ag2.config.gemini import GeminiConfig
 
         key = os.environ.get(KEY_ENV.get("gemini", ""), "")
         model = os.environ.get("AG2ASSISTANT_IMAGE_MODEL") or DEFAULT_GEMINI_IMAGE_MODEL
         cfg = GeminiConfig(model=model, api_key=key, response_modalities=["TEXT", "IMAGE"])
         return Agent("imager", config=cfg)
     if provider in ("openai", "oai"):
-        from autogen.beta.config import OpenAIResponsesConfig
-        from autogen.beta.tools import ImageGenerationTool
+        from ag2.config import OpenAIResponsesConfig
+        from ag2.tools import ImageGenerationTool
 
         key = os.environ.get(KEY_ENV.get("openai", ""), "")
         cfg = OpenAIResponsesConfig(model=config.llm.model, api_key=key)

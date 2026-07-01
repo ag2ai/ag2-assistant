@@ -109,8 +109,8 @@ def build_voice_agent(
     of the universal assistant's tool names — surfaced in the prompt so the voice
     agent knows what it can delegate via ask_assistant.
     """
-    from autogen.beta import tool
-    from autogen.beta.live import LiveAgent
+    from ag2 import tool
+    from ag2.live import LiveAgent
 
     from assistant.agent import environment_context
     from assistant.system_tools import build_system_tools

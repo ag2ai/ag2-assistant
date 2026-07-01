@@ -8,7 +8,7 @@ on scanned PDFs with no text layer); text files are returned as text.
 
 from pathlib import Path
 
-from autogen.beta import Context, DocumentInput, ImageInput, ToolResult, tool
+from ag2 import Context, DocumentInput, ImageInput, ToolResult, tool
 
 from assistant.permissions import PermissionManager
 

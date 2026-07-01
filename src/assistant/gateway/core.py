@@ -30,7 +30,7 @@ def _conversation_events() -> tuple:
     """Event types a voice client renders itself as spoken transcript (so they are
     NOT re-forwarded as structured events during voice delegation). Imported lazily
     so a missing optional event type can't break module import."""
-    from autogen.beta.events import ModelMessageChunk, ModelRequest, ModelResponse
+    from ag2.events import ModelMessageChunk, ModelRequest, ModelResponse
 
     return (ModelRequest, ModelMessageChunk, ModelResponse)
 
@@ -51,7 +51,7 @@ def sanitize_history(events: list) -> list:
     if not events:
         return events
     try:
-        from autogen.beta.events import (
+        from ag2.events import (
             ModelRequest,
             ModelResponse,
             ToolCallEvent,
@@ -176,8 +176,8 @@ class Gateway:
         self._permissions = PermissionStore()
 
         if self._persist:
-            from autogen.beta.knowledge import SqliteKnowledgeStore
-            from autogen.beta.knowledge.log import EventLogWriter
+            from ag2.knowledge import SqliteKnowledgeStore
+            from ag2.knowledge.log import EventLogWriter
 
             self._config.data_dir.mkdir(parents=True, exist_ok=True)
             self._event_store = SqliteKnowledgeStore(str(self._config.data_dir / "sessions.db"))
@@ -219,7 +219,7 @@ class Gateway:
         """Emit an event onto a session's stream from outside an agent turn (the
         pattern AG2's own SoundDeviceRecorder uses). It reaches any live bridge
         subscriber and is persisted so it survives reload. Best-effort."""
-        from autogen.beta.context import ConversationContext
+        from ag2.context import ConversationContext
 
         stream = await self.stream_for(session_id)
         try:
@@ -240,7 +240,7 @@ class Gateway:
 
     async def _get_stream(self, session_id: str):
         """Return the session's live Stream, hydrating from disk on first use."""
-        from autogen.beta.stream import MemoryStream
+        from ag2.stream import MemoryStream
 
         stream = self._streams.get(session_id)
         if stream is None:
@@ -323,7 +323,7 @@ class Gateway:
     def _watch_usage(self, stream):
         """Subscribe to this turn's UsageEvents; returns (sub_id, collected list).
         Finalized by _record_usage when the turn ends."""
-        from autogen.beta.events import UsageEvent
+        from ag2.events import UsageEvent
 
         collected: list = []
 
