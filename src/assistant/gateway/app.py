@@ -165,7 +165,7 @@ def create_app(
 ) -> FastAPI:
     """Build the FastAPI app.
 
-    If `gateway` is provided (e.g. shared with channels in `ag2assistant run`), it's
+    If `gateway` is provided (e.g. shared with channels in `ag2-assistant run`), it's
     used as-is and its lifecycle is owned by the caller — pass its `task_service` too
     so the REST endpoints and the agent share one TaskService. Otherwise the app
     creates and manages its own gateway + task service (wired together).

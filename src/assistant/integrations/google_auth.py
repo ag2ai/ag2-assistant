@@ -1,12 +1,12 @@
 """Google OAuth + API client management for AG2 Assistant.
 
 A personal-desktop OAuth flow: the user downloads an OAuth *client* JSON from
-Google Cloud to `~/.ag2assistant/google_credentials.json`, runs `ag2assistant google login`
+Google Cloud to `~/.ag2assistant/google_credentials.json`, runs `ag2-assistant google login`
 once (browser consent), and the resulting *token* is cached at
 `~/.ag2assistant/google_token.json` and silently refreshed thereafter.
 
 The Google client libraries are an optional dependency (`pip install
-ag2assistant[google]`); everything here imports them lazily so the rest of AG2 Assistant works
+ag2-assistant[google]`); everything here imports them lazily so the rest of AG2 Assistant works
 without them.
 """
 
@@ -78,7 +78,7 @@ def _require_libs():
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise ImportError(
             "Google integration needs extra deps. Install with: "
-            'pip install "ag2assistant[google]"'
+            'pip install "ag2-assistant[google]"'
         ) from exc
     return Credentials, Request, InstalledAppFlow
 
@@ -209,5 +209,5 @@ def build_service(api: str, version: str):
 
     creds = load_credentials(interactive=False)
     if creds is None:
-        raise RuntimeError("Not signed in to Google. Run `ag2assistant google login` first.")
+        raise RuntimeError("Not signed in to Google. Run `ag2-assistant google login` first.")
     return build(api, version, credentials=creds, cache_discovery=False)

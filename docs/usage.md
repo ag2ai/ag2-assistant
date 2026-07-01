@@ -5,7 +5,7 @@
 ### 1. Install
 
 ```bash
-pip install ag2assistant
+pip install ag2-assistant
 ```
 
 Or from source:
@@ -34,55 +34,55 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### 3. Talk to your agent
 
 ```bash
-ag2assistant agent "What's on my calendar today?"
+ag2-assistant agent "What's on my calendar today?"
 ```
 
 ## CLI Commands
 
-### `ag2assistant agent <message>`
+### `ag2-assistant agent <message>`
 
 Send a message to your personal AI agent.
 
 ```bash
-ag2assistant agent "Summarize the latest news about AI"
-ag2assistant agent "Write a Python function that sorts a list"
-ag2assistant agent "What did I ask you about yesterday?"
+ag2-assistant agent "Summarize the latest news about AI"
+ag2-assistant agent "Write a Python function that sorts a list"
+ag2-assistant agent "What did I ask you about yesterday?"
 ```
 
-### `ag2assistant chat`
+### `ag2-assistant chat`
 
 Start an interactive, multi-turn conversation in your terminal (the single-shot
-`ag2assistant agent` is better for scripting/one-offs).
+`ag2-assistant agent` is better for scripting/one-offs).
 
 ```bash
-ag2assistant chat                     # talk back and forth; type 'exit' or Ctrl-D to quit
-ag2assistant chat --sandbox docker    # run shell/code in a container during the chat
-ag2assistant chat --no-memory         # don't learn from this session
+ag2-assistant chat                     # talk back and forth; type 'exit' or Ctrl-D to quit
+ag2-assistant chat --sandbox docker    # run shell/code in a container during the chat
+ag2-assistant chat --no-memory         # don't learn from this session
 ```
 
 It keeps one session, so AG2 Assistant remembers earlier turns, asks permissions via the
 desktop popup, and learns your profile as you go.
 
-### `ag2assistant version`
+### `ag2-assistant version`
 
 Show the installed version.
 
 ```bash
-ag2assistant version
-# ag2assistant 0.1.0
+ag2-assistant version
+# ag2-assistant 0.1.0
 ```
 
-### `ag2assistant gateway`
+### `ag2-assistant gateway`
 
 Start the AG2 Assistant gateway — a REST + WebSocket API any UI client (web, desktop, mobile) can drive.
 
 ```bash
-ag2assistant gateway                 # http://127.0.0.1:8800
-ag2assistant gateway --port 9000 --no-memory
+ag2-assistant gateway                 # http://127.0.0.1:8800
+ag2-assistant gateway --port 9000 --no-memory
 ```
 
 **Built-in web UI.** Open `http://127.0.0.1:8800/` in a browser for a ready-made
-chat client (also served by `ag2assistant run`). It's a single self-contained page
+chat client (also served by `ag2-assistant run`). It's a single self-contained page
 (vanilla JS over the WebSocket) styled to match ag2.ai: streaming markdown replies,
 file attachments, a stop button, light/dark following your system, and
 permission/HITL prompts rendered inline as cards. The **History** button lists
@@ -134,32 +134,32 @@ Each `session_id` keeps its own isolated multi-turn conversation. For
 distributed/multi-agent deployments, the agent can also be served over WebSocket
 through an AG2 Hub.
 
-### `ag2assistant run`
+### `ag2-assistant run`
 
 Run **everything in one process** — the REST/WebSocket gateway plus every channel
 whose token is configured (Telegram/Discord/Slack), all sharing one agent and one
 learned profile.
 
 ```bash
-ag2assistant run                      # REST/WS on :8800 + all configured channels
-ag2assistant run --no-rest            # channels only, no HTTP API
-ag2assistant run --port 9000          # REST/WS on a different port
-ag2assistant run --sandbox docker     # run shell/code in an isolated container
+ag2-assistant run                      # REST/WS on :8800 + all configured channels
+ag2-assistant run --no-rest            # channels only, no HTTP API
+ag2-assistant run --port 9000          # REST/WS on a different port
+ag2-assistant run --sandbox docker     # run shell/code in an isolated container
 ```
 
 AG2 Assistant starts only the channels it finds tokens for, so set whichever of
 `TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN`+`SLACK_APP_TOKEN`
 you want live. Press Ctrl+C to stop everything cleanly.
 
-### `ag2assistant onboard`
+### `ag2-assistant onboard`
 
 Run the first-run interview — AG2 Assistant asks your name, location, working hours, and
 preferred answer style (all skippable), then seeds its profile and `AG2ASSISTANT_LOCATION`
 so it starts out knowing the basics.
 
 ```bash
-ag2assistant onboard            # ask the questions (desktop popup)
-ag2assistant onboard --force    # re-run even if already onboarded
+ag2-assistant onboard            # ask the questions (desktop popup)
+ag2-assistant onboard --force    # re-run even if already onboarded
 ```
 
 This runs **automatically the first time** you talk to AG2 Assistant (on the CLI or any
@@ -167,12 +167,12 @@ channel) when there's no profile yet — answered through the same surface you'r
 (the desktop popup, or buttons/free-text in your chat). It's asked once; the marker
 lives at `~/.ag2assistant/onboarded`.
 
-### `ag2assistant setup` (coming soon)
+### `ag2-assistant setup` (coming soon)
 
 Interactive setup wizard for first-time configuration.
 
 ```bash
-ag2assistant setup
+ag2-assistant setup
 # ? Which LLM provider? (gemini / openai / anthropic)
 # ? API key: ****
 # ? Enable Telegram? (y/n)
@@ -180,12 +180,12 @@ ag2assistant setup
 # Configuration saved to ~/.ag2assistant/config.json
 ```
 
-### `ag2assistant status` (coming soon)
+### `ag2-assistant status` (coming soon)
 
 Check the status of the gateway, connected channels, and active sessions.
 
 ```bash
-ag2assistant status
+ag2-assistant status
 # Gateway: running (ws://127.0.0.1:8789)
 # Channels:
 #   telegram: connected (2 active sessions)
@@ -219,7 +219,7 @@ TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 3. Run AG2 Assistant on Telegram:
 
 ```bash
-ag2assistant telegram
+ag2-assistant telegram
 # AG2 Assistant is live on Telegram. Press Ctrl+C to stop.
 ```
 
@@ -247,7 +247,7 @@ DISCORD_BOT_TOKEN=your-token
 5. Run it:
 
 ```bash
-ag2assistant discord
+ag2-assistant discord
 # AG2 Assistant is live on Discord. Press Ctrl+C to stop.
 ```
 
@@ -277,7 +277,7 @@ SLACK_APP_TOKEN=xapp-...
 6. Run it:
 
 ```bash
-ag2assistant slack
+ag2-assistant slack
 # AG2 Assistant is live on Slack. Press Ctrl+C to stop.
 ```
 
@@ -325,7 +325,7 @@ So you can keep a base `config.json` and override per-run with an env var.
     "aggregate_model": "gemini-2.5-flash"
   },
   "agent": {
-    "name": "ag2assistant",
+    "name": "ag2-assistant",
     "system_prompt": "You are AG2 Assistant, a helpful personal AI assistant."
   },
   "tools": { "sandbox": "local" },
@@ -369,7 +369,7 @@ Or quickly, without a file:
 
 ```bash
 AG2ASSISTANT_LLM_PROVIDER=anthropic AG2ASSISTANT_MODEL=claude-sonnet-4-6 \
-  AG2ASSISTANT_API_KEY_ENV=ANTHROPIC_API_KEY ag2assistant chat
+  AG2ASSISTANT_API_KEY_ENV=ANTHROPIC_API_KEY ag2-assistant chat
 ```
 
 ## Personalizing Your Agent
@@ -429,22 +429,22 @@ AG2 Assistant passively builds a profile of how you like to work and remembers i
 
 ```bash
 # Just talk — it learns passively
-ag2assistant agent "I prefer short bulleted answers and I dislike emojis at work"
+ag2-assistant agent "I prefer short bulleted answers and I dislike emojis at work"
 
 # See what it's learned
-ag2assistant profile show
+ag2-assistant profile show
 
 # Clear it
-ag2assistant profile clear
+ag2-assistant profile clear
 
 # One-off without memory
-ag2assistant agent "..." --no-memory
+ag2-assistant agent "..." --no-memory
 ```
 
 The profile is stored locally at `~/.ag2assistant/profile.db`. See [memory.md](memory.md) for the full design.
 
 AG2 Assistant distils the profile every few turns (an LLM call each time) rather than after
-every message, so long chats stay cheap. Single-shot `ag2assistant agent` runs always
+every message, so long chats stay cheap. Single-shot `ag2-assistant agent` runs always
 distil their one turn. Tune the cadence with `AG2ASSISTANT_AGGREGATE_EVERY_N` (default 4).
 
 ## Permissions — control what AG2 Assistant can access
@@ -456,11 +456,11 @@ on the desktop. "Always allow" is remembered; denials apply for that turn only.
 Manage grants from the CLI:
 
 ```bash
-ag2assistant permissions list                       # show allowed + blocked folders
-ag2assistant permissions allow ~/Documents          # pre-grant a folder
-ag2assistant permissions revoke ~/Documents         # undo a grant
-ag2assistant permissions block ~/private            # permanently deny (never asks)
-ag2assistant permissions unblock ~/private          # remove the block
+ag2-assistant permissions list                       # show allowed + blocked folders
+ag2-assistant permissions allow ~/Documents          # pre-grant a folder
+ag2-assistant permissions revoke ~/Documents         # undo a grant
+ag2-assistant permissions block ~/private            # permanently deny (never asks)
+ag2-assistant permissions unblock ~/private          # remove the block
 ```
 
 Grants/blocks persist in `~/.ag2assistant/permissions.json`.
@@ -475,8 +475,8 @@ AG2 Assistant can run shell commands and execute code. Two backends:
 | `docker` | Runs in a throwaway container with **no access to your files** | No prompt — the container is the boundary |
 
 ```bash
-ag2assistant agent "run my tests" --sandbox docker
-ag2assistant run --sandbox docker
+ag2-assistant agent "run my tests" --sandbox docker
+ag2-assistant run --sandbox docker
 # or set it once:
 echo "AG2ASSISTANT_SANDBOX=docker" >> .env
 ```
@@ -509,7 +509,7 @@ It's entirely optional; the tools appear only after you sign in.
 ### One-time setup
 
 ```bash
-pip install "ag2assistant[google]"
+pip install "ag2-assistant[google]"
 ```
 
 1. In [Google Cloud Console](https://console.cloud.google.com): create a project
@@ -522,10 +522,10 @@ pip install "ag2assistant[google]"
 4. Sign in (opens a browser once):
 
 ```bash
-ag2assistant google login      # → "Signed in to Google as you@gmail.com."
-ag2assistant google login --no-browser   # print the consent URL instead of opening it
-ag2assistant google status     # show configured / signed-in state
-ag2assistant google logout     # remove the stored token
+ag2-assistant google login      # → "Signed in to Google as you@gmail.com."
+ag2-assistant google login --no-browser   # print the consent URL instead of opening it
+ag2-assistant google status     # show configured / signed-in state
+ag2-assistant google logout     # remove the stored token
 ```
 
 The token is cached at `~/.ag2assistant/google_token.json` (owner-only) and refreshed automatically.

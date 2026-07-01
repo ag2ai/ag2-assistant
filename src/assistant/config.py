@@ -42,7 +42,7 @@ class LLMConfig(BaseModel):
 class AgentConfig(BaseModel):
     """Agent configuration."""
 
-    name: str = "ag2assistant"
+    name: str = "ag2-assistant"
     system_prompt: str = (
         "You are AG2 Assistant, a helpful personal AI assistant. "
         "You are direct, concise, and helpful."

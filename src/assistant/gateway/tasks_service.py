@@ -92,7 +92,7 @@ class TaskService:
         t = await self._store.get(task_id)
         if t is None:
             return
-        obj, name = (t.objective or t.title or ""), "ag2assistant"
+        obj, name = (t.objective or t.title or ""), "ag2-assistant"
         ev = None
         if status == TaskStatus.RUNNING:
             ev = TaskStarted(task_id=task_id, agent_name=name, objective=obj)

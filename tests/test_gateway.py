@@ -327,7 +327,7 @@ def test_fs_list_endpoint_lists_subdirs(monkeypatch, tmp_path):
 
 
 def test_create_app_shares_injected_gateway(fake_gateway):
-    """When a gateway is injected (combined `ag2assistant run`), the app reuses it
+    """When a gateway is injected (combined `ag2-assistant run`), the app reuses it
     rather than creating its own, and doesn't tear it down on shutdown."""
     from fastapi.testclient import TestClient
 

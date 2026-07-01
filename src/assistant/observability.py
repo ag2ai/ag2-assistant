@@ -50,7 +50,7 @@ def setup_logging(config) -> logging.Logger:
 
 
 def agent_logging_middleware():
-    """AG2-native LoggingMiddleware routed to the ag2assistant logger (per-turn LLM/tool)."""
+    """AG2-native LoggingMiddleware routed to the `ag2assistant.agent` logger (per-turn LLM/tool)."""
     from ag2.middleware import LoggingMiddleware
 
     return LoggingMiddleware(logger=logging.getLogger("ag2assistant.agent"))

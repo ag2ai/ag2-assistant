@@ -213,7 +213,7 @@ class PermissionManager:
         self._any_denied = True
         return False
 
-    # Management pass-throughs (for a future `ag2assistant permissions` CLI, etc.)
+    # Management pass-throughs (for a future `ag2-assistant permissions` CLI, etc.)
     def is_allowed(self, folder) -> bool:
         return self.store.is_allowed(folder)
 

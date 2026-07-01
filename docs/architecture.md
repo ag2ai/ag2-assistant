@@ -64,13 +64,13 @@ exposes:
 
 | Command                  | What it starts                                                        |
 | ------------------------ | --------------------------------------------------------------------- |
-| `ag2assistant run`       | gateway + web UI **+** every channel whose token is set (one agent)   |
-| `ag2assistant gateway`   | REST + WebSocket API + web UI only (`--host`, `--port`, default 8800) |
-| `ag2assistant chat`      | interactive terminal chat                                             |
-| `ag2assistant agent "…"` | single-shot prompt → reply                                            |
-| `ag2assistant onboard`   | first-run interview (name, location, hours, style)                    |
-| `ag2assistant telegram \| discord \| slack` | a single messaging channel                         |
-| `ag2assistant version`   | version string                                                        |
+| `ag2-assistant run`       | gateway + web UI **+** every channel whose token is set (one agent)   |
+| `ag2-assistant gateway`   | REST + WebSocket API + web UI only (`--host`, `--port`, default 8800) |
+| `ag2-assistant chat`      | interactive terminal chat                                             |
+| `ag2-assistant agent "…"` | single-shot prompt → reply                                            |
+| `ag2-assistant onboard`   | first-run interview (name, location, hours, style)                    |
+| `ag2-assistant telegram \| discord \| slack` | a single messaging channel                         |
+| `ag2-assistant version`   | version string                                                        |
 
 `run` builds the gateway + task service via `build_gateway()`
 (`src/assistant/gateway/core.py:638`), starts the scheduler, attaches channels whose
@@ -293,7 +293,7 @@ Every model-backed call in the backend. Two model tiers: **main**
 | 8 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
 | 9 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
 | 10| **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
-| 11| **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2assistant agent "…"`             | —                            |
+| 11| **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
 
 Onboarding (`onboarding.py`) is **not** an LLM call — it's a fixed 4-question HITL
 sequence that seeds the profile. The **reload** mechanism (§5.1) reference-swaps
