@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=75.0"]
+requires = ["setuptools>=77.0.3"]  # PEP 639: SPDX license expression + license-files
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "ag2assistant"
 version = "0.1.0"
 description = "AG2 Assistant — an OpenClaw-inspired personal assistant powered by AG2 Beta"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     # Pinned to AG2 main for the OpenAI realtime zero-arg-tool fix (ag2ai/ag2#2985);
