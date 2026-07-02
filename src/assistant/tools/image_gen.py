@@ -22,7 +22,7 @@ from pydantic import Field
 from assistant.attachments import build_input
 
 # Default image models (overridable via env so they track provider deprecations).
-DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"
+DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-lite-image"
 
 
 def _image_agent(config):
