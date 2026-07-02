@@ -9,8 +9,8 @@
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
   import FolderPicker from './FolderPicker.svelte'
-  import ag2Mark from '../assets/ag2-mark.svg'
-  import ag2MarkWhite from '../assets/ag2-mark-white.svg'
+  import ag2Logo from '../assets/ag2.svg'
+  import ag2LogoWhite from '../assets/ag2-white.svg'
 
   const STEPS = ['Welcome', 'Connect', 'Project', 'Personalize', 'Ready']
   const FEATURES = [
@@ -89,8 +89,8 @@
   <!-- Hero panel -->
   <aside class="onb-hero">
     <div class="onb-brand">
-      <img class="brandlogo on-light" src={ag2Mark} alt="AG2" />
-      <img class="brandlogo on-dark" src={ag2MarkWhite} alt="AG2" />
+      <img class="brandlogo on-light" src={ag2Logo} alt="AG2" />
+      <img class="brandlogo on-dark" src={ag2LogoWhite} alt="AG2" />
       <span class="onb-brandname">Assistant</span>
     </div>
     <div class="onb-herobody">

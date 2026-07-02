@@ -31,15 +31,15 @@ def isolate(tmp_path, monkeypatch):
 def test_build_profile_renders_sections():
     md = onboarding.build_profile(
         {
-            "name": "Mark",
-            "location": "Sydney, Australia",
+            "name": "Ada",
+            "location": "London, United Kingdom",
             "hours": "9am–6pm",
             "style": "Short & direct",
         }
     )
     assert "## About the user" in md
-    assert "Name: Mark" in md
-    assert "Location: Sydney, Australia" in md
+    assert "Name: Ada" in md
+    assert "Location: London, United Kingdom" in md
     assert "## When they like things done" in md
     assert "9am–6pm" in md
     assert "Prefers short, direct answers." in md
@@ -63,20 +63,20 @@ async def test_needs_onboarding_false_after_marker(isolate):
 
 async def test_run_onboarding_seeds_profile_and_env(isolate):
     store_path, env_path, marker = isolate
-    asker = ScriptedAsker(["Mark", "Sydney, Australia", "9am–6pm", "Short & direct"])
+    asker = ScriptedAsker(["Ada", "London, United Kingdom", "9am–6pm", "Short & direct"])
     answers = await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
     assert answers == {
-        "name": "Mark",
-        "location": "Sydney, Australia",
+        "name": "Ada",
+        "location": "London, United Kingdom",
         "hours": "9am–6pm",
         "style": "Short & direct",
     }
     # profile persisted
     store = build_profile_store(store_path)
     profile = await store.read(PROFILE_PATH)
-    assert "Name: Mark" in profile
+    assert "Name: Ada" in profile
     # location persisted to .env
-    assert "AG2ASSISTANT_LOCATION=Sydney, Australia" in env_path.read_text()
+    assert "AG2ASSISTANT_LOCATION=London, United Kingdom" in env_path.read_text()
     # marker written → won't ask again
     assert marker.exists()
     assert await onboarding.needs_onboarding(store_path) is False
@@ -103,8 +103,8 @@ async def test_run_onboarding_preserves_existing_profile(isolate):
     store_path, env_path, _ = isolate
     store = build_profile_store(store_path)
     await store.write(PROFILE_PATH, "## How they like things done\n- Existing fact.\n")
-    asker = ScriptedAsker(["Mark", "skip", "skip", "No preference"])
+    asker = ScriptedAsker(["Ada", "skip", "skip", "No preference"])
     await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
     profile = await build_profile_store(store_path).read(PROFILE_PATH)
-    assert "Name: Mark" in profile
+    assert "Name: Ada" in profile
     assert "Existing fact." in profile  # not clobbered
