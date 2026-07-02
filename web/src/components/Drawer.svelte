@@ -5,8 +5,8 @@
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import { fmtWhen, fmtNextIn } from '../lib/time.js'
-  import ag2Mark from '../assets/ag2-mark.svg'
-  import ag2MarkWhite from '../assets/ag2-mark-white.svg'
+  import ag2Logo from '../assets/ag2.svg'
+  import ag2LogoWhite from '../assets/ag2-white.svg'
 
   let usage = $state(null)   // today's token/cost totals for the activity HUD
 
@@ -116,8 +116,8 @@
 
 <div class="drawer">
   <div class="dhead">
-    <img class="brandlogo on-light" src={ag2Mark} alt="AG2" />
-    <img class="brandlogo on-dark" src={ag2MarkWhite} alt="AG2" />
+    <img class="brandlogo on-light" src={ag2Logo} alt="AG2" />
+    <img class="brandlogo on-dark" src={ag2LogoWhite} alt="AG2" />
     <span class="brand">Assistant</span>
   </div>
   <div class="tabs">
