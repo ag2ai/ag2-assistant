@@ -38,77 +38,6 @@ def _conversation_events() -> tuple:
 _CONVERSATION_EVENTS = _conversation_events()
 
 
-def sanitize_history(events: list) -> list:
-    """Repair a loaded event history before resume so the provider doesn't reject it.
-
-    INTERIM guard: AG2 compaction can cut mid tool-call/result cycle, leaving a
-    half-cycle at the head whose issuing ModelResponse was dropped. Gemini then
-    400s ("function call/response must be adjacent") on resume. We (1) strip the
-    orphaned leading tool/usage remnants that appear before the first real model
-    turn (the broken cycle), and (2) defensively drop any other orphaned tool
-    result. Remove once the AG2 compaction/mapper fix is pinned.
-    """
-    if not events:
-        return events
-    try:
-        from ag2.events import (
-            ModelRequest,
-            ModelResponse,
-            ToolCallEvent,
-            ToolCallsEvent,
-            ToolResultEvent,
-            ToolResultsEvent,
-            UsageEvent,
-        )
-    except Exception:
-        return events
-
-    tool_types = (ToolCallEvent, ToolCallsEvent, ToolResultEvent, ToolResultsEvent, UsageEvent)
-    # Before the first USER turn we keep only non-conversational events (e.g.
-    # CompactionSummary); model/tool/result/usage events there are remnants of a
-    # turn whose user start was compacted away — and Gemini requires the contents
-    # to begin at a user turn (or after a function response).
-    drop_in_lead = (ModelResponse,) + tool_types
-
-    # 1) Require the conversation to begin at a user turn (ModelRequest). Drop any
-    #    leading model/tool remnants before it; keep a leading CompactionSummary.
-    first_user = next((i for i, e in enumerate(events) if isinstance(e, ModelRequest)), None)
-    if first_user is None:
-        stripped = [e for e in events if not isinstance(e, drop_in_lead)]
-    else:
-        lead = [e for e in events[:first_user] if not isinstance(e, drop_in_lead)]
-        stripped = lead + list(events[first_user:])
-
-    # 2) Defensive: drop any tool result whose call id isn't present anywhere.
-    call_ids: set[str] = set()
-    for e in stripped:
-        tc = getattr(e, "tool_calls", None)
-        for c in getattr(tc, "calls", None) or []:
-            if getattr(c, "id", None):
-                call_ids.add(c.id)
-        if isinstance(e, ToolCallsEvent):
-            for c in e.calls or []:
-                if getattr(c, "id", None):
-                    call_ids.add(c.id)
-        if isinstance(e, ToolCallEvent) and getattr(e, "id", None):
-            call_ids.add(e.id)
-
-    def _results(e):
-        if isinstance(e, ToolResultsEvent):
-            return list(getattr(e, "results", []) or [])
-        if isinstance(e, ToolResultEvent):
-            return [e]
-        return []
-
-    out = []
-    for e in stripped:
-        items = _results(e)
-        if items and not all(getattr(r, "parent_id", None) in call_ids for r in items):
-            continue
-        out.append(e)
-    return out
-
-
 class Gateway:
     """Manages per-session, resumable conversations with the AG2 Assistant agent."""
 
@@ -248,7 +177,7 @@ class Gateway:
             self._streams[session_id] = stream
             if self._writer is not None and session_id not in self._loaded:
                 try:
-                    events = sanitize_history(await self._writer.load(session_id))
+                    events = await self._writer.load(session_id)
                     if events:
                         await stream.history.replace(events)
                 except Exception as exc:
