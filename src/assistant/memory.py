@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ag2 import KnowledgeConfig
 from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
-from ag2.config.gemini import GeminiConfig
+from ag2.config import ModelConfig
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
 
@@ -201,14 +201,27 @@ def build_profile_store(store_path: Path | None = None) -> SqliteKnowledgeStore:
     return SqliteKnowledgeStore(str(store_path))
 
 
+def _default_aggregate_config() -> ModelConfig:
+    """Fallback config for aggregation/compaction LLM calls when the caller
+    didn't pass one: the user's configured provider, on its cheap aggregate
+    model when one is known (falling back to their main model). Imported
+    lazily — agent.py imports this module at load time."""
+    from assistant.agent import cheap_model, model_config
+    from assistant.config import load_config
+
+    config = load_config()
+    return model_config(config, cheap_model(config))
+
+
 def build_knowledge_config(
     platform: str = "cli",
     store_path: Path | None = None,
-    aggregate_config: GeminiConfig | None = None,
+    aggregate_config: ModelConfig | None = None,
     store=None,
     every_n_turns: int = 4,
     on_end: bool = False,
     compact: bool = False,
+    compact_max_tokens: int = 20_000,
 ) -> KnowledgeConfig:
     """Build a KnowledgeConfig that passively learns and persists the user profile.
 
@@ -223,6 +236,9 @@ def build_knowledge_config(
         on_end: Also distil when a conversation ends. Use for single-shot runs
             (CLI) so their one turn is still captured; leave off for long sessions
             to avoid an aggregation call per turn.
+        compact: Bound a long conversation's context by summarising the oldest
+            events (an LLM call on the cheap model) when the stream grows large.
+        compact_max_tokens: Stream size (approx. tokens) that triggers compaction.
 
     Returns:
         A KnowledgeConfig wiring a SQLite store + working-memory aggregation.
@@ -231,22 +247,15 @@ def build_knowledge_config(
         store = build_profile_store(store_path)
 
     if aggregate_config is None:
-        import os
-
-        aggregate_config = GeminiConfig(
-            model="gemini-3.5-flash",
-            api_key=os.environ.get("GEMINI_API_KEY", ""),
-        )
+        aggregate_config = _default_aggregate_config()
 
     compact_kwargs: dict = {}
     if compact:
-        # Keep a long-running conversation's context bounded by summarising the
-        # oldest events (on the cheap model) when the stream grows large.
         from ag2.compact import CompactTrigger, SummarizeCompact
 
         compact_kwargs = {
             "compact": SummarizeCompact(target=60, config=aggregate_config),
-            "compact_trigger": CompactTrigger(max_tokens=24_000),
+            "compact_trigger": CompactTrigger(max_tokens=compact_max_tokens),
         }
 
     return KnowledgeConfig(
@@ -260,6 +269,30 @@ def build_knowledge_config(
         ),
         aggregate_trigger=AggregateTrigger(every_n_turns=every_n_turns, on_end=on_end),
         **compact_kwargs,
+    )
+
+
+def build_compaction_config(
+    aggregate_config: ModelConfig | None = None,
+    max_tokens: int = 20_000,
+) -> KnowledgeConfig:
+    """Compaction-only harness wiring for agents that run without profile memory
+    (task subagents). Bounds a long run's context by summarising the oldest
+    events (an LLM call on the cheap model) once the stream crosses `max_tokens`.
+    Backed by an ephemeral in-memory store — nothing persists, no knowledge tool,
+    no event log; the KnowledgeConfig exists purely to carry the compactor."""
+    from ag2.compact import CompactTrigger, SummarizeCompact
+    from ag2.knowledge import MemoryKnowledgeStore
+
+    if aggregate_config is None:
+        aggregate_config = _default_aggregate_config()
+
+    return KnowledgeConfig(
+        store=MemoryKnowledgeStore(),
+        expose_tool=False,
+        write_event_log=False,
+        compact=SummarizeCompact(target=60, config=aggregate_config),
+        compact_trigger=CompactTrigger(max_tokens=max_tokens),
     )
 
 

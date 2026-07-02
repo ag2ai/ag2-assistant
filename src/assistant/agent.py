@@ -6,7 +6,7 @@ from datetime import datetime
 from ag2 import Agent
 
 from assistant.config import Config, load_config
-from assistant.memory import build_knowledge_config, profile_assembly
+from assistant.memory import build_compaction_config, build_knowledge_config, profile_assembly
 from assistant.tools import build_agent_tools
 
 # Commands skill scripts must never run (defense-in-depth; skills can ship code).
@@ -14,7 +14,15 @@ _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
 
 # Default (cheaper) model for the passive memory-aggregation pass, per provider.
 # Used only when llm.aggregate_model isn't set. Override via AG2ASSISTANT_AGGREGATE_MODEL.
-_DEFAULT_AGGREGATE_MODEL = {"gemini": "gemini-3.1-flash-lite"}
+# Per-provider default for bulk/background LLM work (aggregation, compaction,
+# research subtasks) — the provider's cheap tier, overridable via
+# `config.llm.aggregate_model`. Ollama is absent on purpose: it's local (nothing
+# to save) and any specific model here might not be pulled.
+_DEFAULT_AGGREGATE_MODEL = {
+    "gemini": "gemini-3.1-flash-lite",
+    "anthropic": "claude-haiku-4-5-20251001",
+    "openai": "gpt-5-mini",
+}
 
 
 def model_config(config: Config, model: str | None = None):
@@ -33,7 +41,7 @@ def model_config(config: Config, model: str | None = None):
         from ag2.config import AnthropicConfig
 
         return AnthropicConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
-    if provider in ("openai", "oai"):
+    if provider == "openai":
         # OpenAI's Responses API (their preferred surface; also enables the native
         # image_generation tool). Drop-in for the old Chat Completions OpenAIConfig.
         from ag2.config import OpenAIResponsesConfig
@@ -50,11 +58,12 @@ def model_config(config: Config, model: str | None = None):
     from ag2.config.gemini import GeminiConfig
 
     # Generous output budget so long research notes / briefings aren't truncated
-    # mid-sentence (the default is small).
+    # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
+    # this must cover reasoning plus the full report text.
     return GeminiConfig(
         model=model,
         api_key=api_key,
-        max_output_tokens=8192,
+        max_output_tokens=32768,
         streaming=config.llm.streaming,
     )
 
@@ -355,14 +364,14 @@ def create_agent(
 
     knowledge = None
     assembly: list = []
+    # Profile aggregation and stream compaction are both just summarisation, so
+    # run them on a cheaper model when one is configured (or a sensible
+    # per-provider default). Falls back to the main model if neither applies.
+    agg_model = config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(
+        config.llm.provider.lower()
+    )
+    agg_config = model_config(config, agg_model) if agg_model else llm_config
     if memory:
-        # The background profile-aggregation pass is just summarisation, so run it
-        # on a cheaper model when one is configured (or a sensible per-provider
-        # default). Falls back to the main model if neither applies.
-        agg_model = config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(
-            config.llm.provider.lower()
-        )
-        agg_config = model_config(config, agg_model) if agg_model else llm_config
         knowledge = build_knowledge_config(
             platform=platform,
             aggregate_config=agg_config,
@@ -370,8 +379,15 @@ def create_agent(
             every_n_turns=config.memory.aggregate_every_n_turns,
             on_end=single_shot,
             compact=compact,
+            compact_max_tokens=config.memory.compact_max_tokens,
         )
         assembly = profile_assembly()
+    elif compact:
+        # Memory-less agents (task subagents) still get their context bounded.
+        knowledge = build_compaction_config(
+            aggregate_config=agg_config,
+            max_tokens=config.memory.compact_max_tokens,
+        )
 
     tools = build_agent_tools(
         config.llm.provider,

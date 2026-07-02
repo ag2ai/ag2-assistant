@@ -38,7 +38,7 @@ def _image_agent(config):
         model = os.environ.get("AG2ASSISTANT_IMAGE_MODEL") or DEFAULT_GEMINI_IMAGE_MODEL
         cfg = GeminiConfig(model=model, api_key=key, response_modalities=["TEXT", "IMAGE"])
         return Agent("imager", config=cfg)
-    if provider in ("openai", "oai"):
+    if provider == "openai":
         from ag2.config import OpenAIResponsesConfig
         from ag2.tools import ImageGenerationTool
 

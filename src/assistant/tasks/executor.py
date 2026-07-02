@@ -107,6 +107,7 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
         asker=asker,
         capabilities=caps,
         model=sub_model,
+        compact=True,
     )
 
     from assistant.events import SubagentTrace
