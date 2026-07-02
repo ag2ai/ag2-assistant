@@ -68,6 +68,10 @@ class MemoryConfig(BaseModel):
 
     # Distil the profile every N conversation turns (an LLM call each time).
     aggregate_every_n_turns: int = 4
+    # Summarise the oldest stream events (an LLM call on the cheap model) once a
+    # conversation's history crosses this many tokens, keeping long chats and
+    # task runs inside the context window.
+    compact_max_tokens: int = 20_000
 
 
 class Config(BaseModel):
@@ -147,6 +151,11 @@ def _apply_env_overrides(cfg: Config) -> None:
     if v := env("AG2ASSISTANT_AGGREGATE_EVERY_N"):
         try:
             cfg.memory.aggregate_every_n_turns = int(v)
+        except ValueError:
+            pass
+    if v := env("AG2ASSISTANT_COMPACT_MAX_TOKENS"):
+        try:
+            cfg.memory.compact_max_tokens = int(v)
         except ValueError:
             pass
 
