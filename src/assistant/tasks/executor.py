@@ -78,9 +78,9 @@ def _subagent_archetype(caps: list[str]) -> tuple[str, str]:
 
 async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, asker, manager):
     """Run a named AG2 Beta subagent and forward its lifecycle events."""
-    from autogen.beta.context import ConversationContext
-    from autogen.beta.stream import MemoryStream
-    from autogen.beta.tools.subagents.run_task import run_task
+    from ag2.context import ConversationContext
+    from ag2.stream import MemoryStream
+    from ag2.tools.subagents.run_task import run_task
 
     from assistant.agent import cheap_model, create_agent, turn_prompt
     from assistant.permissions import PermissionManager
@@ -152,7 +152,7 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
                 task_id=subagent_task_id,
             )
         except asyncio.CancelledError:
-            from autogen.beta.events import TaskCancelled
+            from ag2.events import TaskCancelled
 
             await manager.emit_event(
                 task.id,
@@ -171,7 +171,7 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
 
 async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdict":
     """Strictly check produced output against a deliverable's criteria (cheap model)."""
-    from autogen.beta import Agent
+    from ag2 import Agent
 
     from assistant.agent import model_config
 
@@ -198,7 +198,7 @@ async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdi
 
 async def _used_web_tools(source) -> bool:
     """True if the agent actually called a search / web-fetch tool this turn."""
-    from autogen.beta.events import BuiltinToolCallEvent, ToolCallEvent
+    from ag2.events import BuiltinToolCallEvent, ToolCallEvent
 
     try:
         history = source.history if hasattr(source, "history") else source

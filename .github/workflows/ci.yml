@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Unit tests
+        run: pytest -m "not integration" -q
+
+  bundle-fresh:
+    name: SPA bundle is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+      - name: Build SPA bundle
+        working-directory: web
+        run: npm run build
+      # The bundle is committed; rebuilding from source must produce no diff.
+      # If it does, the committed bundle is stale — rebuild and commit it.
+      - name: Verify committed bundle matches source
+        run: |
+          if [ -n "$(git status --porcelain -- src/assistant/gateway/static/app)" ]; then
+            echo "::error::Committed SPA bundle is out of date. Run 'npm --prefix web run build' and commit src/assistant/gateway/static/app/."
+            git --no-pager diff --stat -- src/assistant/gateway/static/app
+            git status --porcelain -- src/assistant/gateway/static/app
+            exit 1
+          fi
+          echo "SPA bundle matches web/ source ✓"

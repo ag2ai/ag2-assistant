@@ -205,7 +205,7 @@ def test_task_rest_endpoints(monkeypatch, tmp_path):
             i = await svc.inquiries.create("Confirm?", task_id=t.id, options=["Yes", "No"])
             return t.id, i.id
 
-        task_id, inq_id = asyncio.get_event_loop().run_until_complete(_seed())
+        task_id, inq_id = asyncio.run(_seed())
 
         tasks = client.get("/api/tasks").json()["tasks"]
         assert any(t["id"] == task_id for t in tasks)
@@ -277,7 +277,7 @@ def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
             active = await svc.store.create("t2")  # pending
             return done.id, active.id
 
-        tid, active_id = asyncio.get_event_loop().run_until_complete(_seed())
+        tid, active_id = asyncio.run(_seed())
 
         # /api/tasks/all must not be captured as a task id
         assert client.get("/api/tasks/all").status_code == 200
@@ -507,11 +507,7 @@ def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch, tmp_path)
     app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
     with TestClient(app) as client:
         svc = app.state.tasks
-        task_id = (
-            asyncio.get_event_loop()
-            .run_until_complete(svc.store.create("seeded", objective="do it"))
-            .id
-        )
+        task_id = asyncio.run(svc.store.create("seeded", objective="do it")).id
 
         r = client.post(f"/api/tasks/{task_id}/chat", json={"text": "what's the status?"})
         assert r.json()["reply"] == "on it"

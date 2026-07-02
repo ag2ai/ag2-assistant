@@ -3,7 +3,7 @@
 These are ordinary AG2 events (``BaseEvent`` subclasses), so they serialize,
 persist (via ``EventLogWriter``), replay, and stream over the wire with exactly
 the same `{type, data}` shape as every native event — no parallel model. The GUI
-renders them by type alongside AG2's own events (see docs/gui-redesign-plan.md).
+renders them by type alongside AG2's own events.
 
 We only define what AG2 main doesn't already cover. Conversation, tool, voice,
 HITL (`HumanInputRequest`), and task-lifecycle (`TaskStarted`/`TaskCompleted`/…)
@@ -12,7 +12,7 @@ a task was spawned from a chat, a deliverable was produced, a task was scheduled
 and the durable-inquiry lifecycle.
 """
 
-from autogen.beta.events import BaseEvent, Field
+from ag2.events import BaseEvent, Field
 
 
 class AssistantEvent(BaseEvent):

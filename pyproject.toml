@@ -3,9 +3,9 @@ requires = ["setuptools>=77.0.3"]  # PEP 639: SPDX license expression + license-
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ag2assistant"
+name = "ag2-assistant"
 version = "0.1.0"
-description = "AG2 Assistant — an OpenClaw-inspired personal assistant powered by AG2 Beta"
+description = "AG2 Assistant — a personal AI assistant powered by AG2's Beta framework"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -38,7 +38,7 @@ dev = [
     "ruff>=0.8.0",
     "pre-commit>=4.0.0",
 ]
-# Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2assistant[google]`.
+# Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",
     "google-auth>=2.0",
@@ -46,7 +46,7 @@ google = [
 ]
 
 [project.scripts]
-ag2assistant = "assistant.cli:app"
+ag2-assistant = "assistant.cli:app"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

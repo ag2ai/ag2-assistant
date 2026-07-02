@@ -20,7 +20,7 @@ cleanly. Anthropic permits mixing server-side and function tools, so it gets the
 native one.
 """
 
-from autogen.beta.tools import (
+from ag2.tools import (
     DuckDuckSearchTool,
     LocalEnvironment,
     SandboxCodeTool,
@@ -107,7 +107,7 @@ def build_agent_tools(
             # Distinct names are required (providers reject duplicate tool names).
             # The agent is steered by the descriptions below, not the prompt — so when
             # only one runner exists (no Docker, below) there's nothing to confuse it.
-            from autogen.beta.extensions.docker import DockerEnvironment
+            from ag2.extensions.docker import DockerEnvironment
 
             # AG2's official Docker backend: a long-lived, cached container with no
             # host mount — code/shell can't touch the user's files, which is why these
@@ -182,7 +182,7 @@ def build_agent_tools(
         if workspace_dir:
             from pathlib import Path
 
-            from autogen.beta.tools import FilesystemToolkit
+            from ag2.tools import FilesystemToolkit
 
             wd = Path(workspace_dir).expanduser()
             wd.mkdir(parents=True, exist_ok=True)

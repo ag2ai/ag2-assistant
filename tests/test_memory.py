@@ -117,7 +117,7 @@ async def test_read_profile_empty(tmp_path):
 
 
 async def test_read_and_clear_profile_roundtrip(tmp_path):
-    from autogen.beta.knowledge import SqliteKnowledgeStore
+    from ag2.knowledge import SqliteKnowledgeStore
 
     store_path = tmp_path / "profile.db"
     store = SqliteKnowledgeStore(str(store_path))

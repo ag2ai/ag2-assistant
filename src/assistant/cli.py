@@ -8,7 +8,7 @@ import typer
 from assistant.agent import ask
 from assistant.config import load_config
 
-app = typer.Typer(name="ag2assistant", help="AG2 Assistant - Personal AI Assistant")
+app = typer.Typer(name="ag2-assistant", help="AG2 Assistant - Personal AI Assistant")
 
 
 @app.command()
@@ -113,7 +113,7 @@ def chat(
                 if not user.strip():
                     continue
                 reply = await gateway.send_message(user, session_id="cli-chat", asker=asker)
-                typer.echo(f"ag2assistant> {reply}\n")
+                typer.echo(f"ag2-assistant> {reply}\n")
         finally:
             if asker is not None:
                 await asker.aclose()
@@ -291,7 +291,7 @@ def telegram(
         gateway, tasks = build_gateway(memory=memory, platform="telegram")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("telegram")
         await channel.start(gateway)
@@ -324,7 +324,7 @@ def discord(
         gateway, tasks = build_gateway(memory=memory, platform="discord")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("discord")
         await channel.start(gateway)
@@ -356,7 +356,7 @@ def slack(
         gateway, tasks = build_gateway(memory=memory, platform="slack")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("slack")
         await channel.start(gateway)
@@ -451,7 +451,7 @@ def version() -> None:
     """Show AG2 Assistant version."""
     from assistant import __version__
 
-    typer.echo(f"ag2assistant {__version__}")
+    typer.echo(f"ag2-assistant {__version__}")
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@ function-response, or a window starting before any user turn) is repaired before
 resume, so Gemini doesn't 400 on function call/response adjacency.
 """
 
-from autogen.beta.compact import CompactionSummary
-from autogen.beta.events import (
+from ag2.compact import CompactionSummary
+from ag2.events import (
     ModelRequest,
     ModelResponse,
     ToolCallEvent,

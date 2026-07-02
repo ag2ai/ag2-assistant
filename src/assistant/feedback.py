@@ -75,7 +75,7 @@ async def learn(
     thumb = "a thumbs-DOWN (disliked it)" if down else "a thumbs-UP (liked it)"
     polarity = "dislike" if down else "preference (a like)"
     try:
-        from autogen.beta import Agent
+        from ag2 import Agent
 
         from assistant.agent import cheap_model, model_config
 

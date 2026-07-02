@@ -14,16 +14,16 @@ Observe-only for now: alerts surface + persist but don't halt the turn or get
 injected into the model (no `AlertPolicy` wired yet).
 """
 
-from autogen.beta.annotations import Context
-from autogen.beta.events import (
+from ag2.annotations import Context
+from ag2.events import (
     BaseEvent,
     ModelResponse,
     ObserverAlert,
     Severity,
     ToolCallEvent,
 )
-from autogen.beta.observers import BaseObserver, LoopDetector
-from autogen.beta.watch import EventWatch
+from ag2.observers import BaseObserver, LoopDetector
+from ag2.watch import EventWatch
 
 # A turn that calls this many tools without answering is treated as stuck/flailing.
 _CHURN_THRESHOLD = 20

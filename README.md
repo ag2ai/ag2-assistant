@@ -1,8 +1,8 @@
 # AG2 Assistant
 
-An open-source personal AI assistant powered by [AG2](https://ag2.ai)'s Beta framework. Inspired by [OpenClaw](https://github.com/openclaw/openclaw), reimagined in Python.
+An open-source personal AI assistant powered by [AG2](https://ag2.ai)'s Beta framework, built in Python.
 
-> Public product name: **AG2 Assistant**. `ag2assistant` remains the internal package, CLI command, and data-dir name.
+> Public product name: **AG2 Assistant**. `ag2-assistant` remains the internal package, CLI command, and data-dir name.
 
 AG2 Assistant is a web app (with optional messaging-channel and CLI front-ends) that acts as your personal AI agent — it searches the web, runs code, generates images, reads your project files, and runs scheduled tasks, all while showing its work in the open. Every reply is a projection of the underlying AG2 event stream.
 
@@ -11,7 +11,7 @@ AG2 Assistant is a web app (with optional messaging-channel and CLI front-ends) 
 ### 1. Install
 
 ```bash
-git clone https://github.com/marklysze/ag2-assistant.git
+git clone https://github.com/ag2ai/ag2-assistant.git
 cd ag2-assistant
 python -m venv .venv
 source .venv/bin/activate
@@ -21,14 +21,14 @@ pip install -e ".[dev]"
 ### 2. Run
 
 ```bash
-ag2assistant run        # gateway + web UI (+ any configured channels), one process
+ag2-assistant run        # gateway + web UI (+ any configured channels), one process
 ```
 
 Then open **http://localhost:8800/** and complete the first-run onboarding: choose a theme, paste a provider API key (Gemini by default — get one at [aistudio.google.com](https://aistudio.google.com/apikey)), and pick a project folder the assistant can read. Everything else is configurable later in **Settings**.
 
 > Prefer to set the key up front? Create a `.env` with `GEMINI_API_KEY=your-key` before running. Keys can also come from the environment; onboarding only needs to gate on first run.
 
-To serve the API/UI without any messaging channels, use `ag2assistant gateway` instead of `run`.
+To serve the API/UI without any messaging channels, use `ag2-assistant gateway` instead of `run`.
 
 ## The web app
 
@@ -47,23 +47,23 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 The web app is the main experience, but the CLI is handy for quick one-shots and scripting:
 
 ```bash
-ag2assistant run                       # everything in one process (gateway + UI + channels)
-ag2assistant gateway                   # REST + WebSocket API + web UI only
-ag2assistant chat                      # interactive multi-turn chat in the terminal
-ag2assistant agent "message"           # single-shot prompt → reply
-ag2assistant onboard                   # first-run interview (name, location, hours, style)
-ag2assistant telegram                  # run on Telegram   (needs TELEGRAM_BOT_TOKEN)
-ag2assistant discord                   # run on Discord    (needs DISCORD_BOT_TOKEN)
-ag2assistant slack                     # run on Slack      (needs SLACK_BOT_TOKEN + SLACK_APP_TOKEN)
-ag2assistant version                   # show version
+ag2-assistant run                       # everything in one process (gateway + UI + channels)
+ag2-assistant gateway                   # REST + WebSocket API + web UI only
+ag2-assistant chat                      # interactive multi-turn chat in the terminal
+ag2-assistant agent "message"           # single-shot prompt → reply
+ag2-assistant onboard                   # first-run interview (name, location, hours, style)
+ag2-assistant telegram                  # run on Telegram   (needs TELEGRAM_BOT_TOKEN)
+ag2-assistant discord                   # run on Discord    (needs DISCORD_BOT_TOKEN)
+ag2-assistant slack                     # run on Slack      (needs SLACK_BOT_TOKEN + SLACK_APP_TOKEN)
+ag2-assistant version                   # show version
 ```
 
 ### Examples
 
 ```bash
-ag2assistant agent "What's the current AG2 version? Search the web."
-ag2assistant agent "Calculate the first 20 Fibonacci numbers"
-ag2assistant agent "Compare FastAPI vs Flask. Search the web for current benchmarks."
+ag2-assistant agent "What's the current AG2 version? Search the web."
+ag2-assistant agent "Calculate the first 20 Fibonacci numbers"
+ag2-assistant agent "Compare FastAPI vs Flask. Search the web for current benchmarks."
 ```
 
 ## Running Tests
@@ -106,8 +106,6 @@ State lives under `~/.ag2assistant/` (settings, sessions, memory, tasks); genera
 
 ## Project Status
 
-See [docs/plan.md](docs/plan.md) for the full roadmap.
-
 - [x] Core agent with multi-provider support (Gemini, OpenAI, Anthropic, Ollama)
 - [x] CLI interface (agent, chat, onboard, run)
 - [x] Tools (native AG2: web search, shell, code execution; + web fetch, image generation)
@@ -127,10 +125,7 @@ See [docs/plan.md](docs/plan.md) for the full roadmap.
 
 - [Architecture](docs/architecture.md) — full system design: services, agents, endpoints, event model, data flow ([diagram](docs/architecture.svg))
 - [Usage Guide](docs/usage.md) — CLI commands, configuration, channels
-- [Plan](docs/plan.md) — implementation roadmap with progress tracking
-- [OpenClaw Research](docs/research-openclaw.md) — analysis of the project that inspired AG2 Assistant
-- [AG2 Beta Research](docs/research-ag2-beta.md) — AG2 Beta capabilities and availability
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE) — matching [AG2](https://github.com/ag2ai/ag2).

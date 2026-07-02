@@ -47,7 +47,7 @@ const APP_EVENT_SUB = {
 // Describe a wire event for the inspector.
 export function describe(type) {
   const t = tail(type)
-  const native = (type || '').startsWith('autogen.')
+  const native = (type || '').startsWith('ag2.')
   const sub = EVENT_SUB[t] || APP_EVENT_SUB[t] || 'Stream'
   const layer = native ? 'ag2' : 'app' // app events still ride the AG2 stream
   return { sub, label: t, layer }
@@ -69,7 +69,7 @@ export const itemAg2 = (kind) => ITEM_AG2[kind] || null
 // Curated architecture map for the "Powered by AG2" page. layer: 'ag2' (the
 // framework gives you this) vs 'app' (built on top of AG2).
 export const PRIMITIVES = [
-  { sub: 'Model', name: 'autogen.beta.Agent', what: 'The universal runtime: model config, tools, knowledge, assembly, HITL, middleware, observers', layer: 'ag2' },
+  { sub: 'Model', name: 'ag2.Agent', what: 'The universal runtime: model config, tools, knowledge, assembly, HITL, middleware, observers', layer: 'ag2' },
   { sub: 'Stream', name: 'Stream + EventLogWriter', what: 'One event stream is the log, the wire protocol, and the source this whole UI is a projection of', layer: 'ag2' },
   { sub: 'Memory', name: 'KnowledgeConfig + WorkingMemoryAggregate', what: 'Persistent learned profile, distilled & injected each turn (+ SummarizeCompact)', layer: 'ag2' },
   { sub: 'Tool', name: 'Native tools', what: 'DuckDuckSearchTool, SandboxShell/CodeTool, WebFetchTool, FilesystemToolkit, SkillSearchToolkit, MCP', layer: 'ag2' },

@@ -18,7 +18,7 @@ def test_bundled_skills_are_discoverable(tmp_path):
     """First-party skills ship with AG2 Assistant and are available without installing."""
     import tempfile
 
-    from autogen.beta.tools.skills import LocalRuntime
+    from ag2.tools.skills import LocalRuntime
 
     from assistant.agent import bundled_skills_dir
 

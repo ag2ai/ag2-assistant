@@ -35,7 +35,7 @@ def build_hitl_hook(asker: "Asker"):
     AG2's `HumanInputRequest` carries only a prompt string, so these are
     free-text questions. Multi-option approvals call `asker.ask` directly.
     """
-    from autogen.beta.events import HumanMessage
+    from ag2.events import HumanMessage
 
     # No annotations on `hook`: AG2 inspects the hook's signature, and a
     # forward-ref annotation it can't resolve raises a Pydantic error at call time.

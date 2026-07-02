@@ -80,7 +80,7 @@ class TaskService:
         those from the task panel."""
         if self._emit is None:
             return
-        from autogen.beta.events import (
+        from ag2.events import (
             TaskCancelled,
             TaskCompleted,
             TaskFailed,
@@ -92,7 +92,7 @@ class TaskService:
         t = await self._store.get(task_id)
         if t is None:
             return
-        obj, name = (t.objective or t.title or ""), "ag2assistant"
+        obj, name = (t.objective or t.title or ""), "ag2-assistant"
         ev = None
         if status == TaskStatus.RUNNING:
             ev = TaskStarted(task_id=task_id, agent_name=name, objective=obj)
@@ -488,15 +488,27 @@ class TaskService:
         """Active/recent top-level tasks for the drawer (archived excluded), each
         carrying any pending inquiries in its subtree. Needs-input first, then
         newest."""
-        roots = [t for t in await self._store.roots() if not getattr(t, "archived", False)]
+        # One store scan; children/descendants come from the in-memory map (O(N)).
+        all_tasks = await self._store.list_all()
+        kids_map = self._children_map(all_tasks)
+        roots = [t for t in all_tasks if t.parent_id is None and not getattr(t, "archived", False)]
+
         by_task: dict[str, list] = {}
         for inq in await self._inquiries.list_pending():
             by_task.setdefault(inq.task_id, []).append(inq)
 
         out = []
         for t in roots:
-            s = await self._summary(t)
-            ids = {t.id} | {d.id for d in await self._store.descendants(t.id)}
+            s = await self._summary(t, kids_map)
+            # subtree ids (self + all descendants), walked over the child map
+            ids: set[str] = set()
+            stack = [t.id]
+            while stack:
+                tid = stack.pop()
+                if tid in ids:
+                    continue
+                ids.add(tid)
+                stack.extend(k.id for k in kids_map.get(tid, []))
             s["inquiries"] = [self._inquiry_view(i) for tid in ids for i in by_task.get(tid, [])]
             out.append(s)
 
@@ -507,7 +519,10 @@ class TaskService:
     async def list_all(self, status: str | None = None) -> list[dict]:
         """The full task history for the listing page, newest first. `status` filters:
         active / completed / stopped / archived; None or 'all' = everything not archived."""
-        roots = await self._store.roots()
+        # One store scan; child counts come from the in-memory map (O(N)).
+        all_tasks = await self._store.list_all()
+        kids_map = self._children_map(all_tasks)
+        roots = [t for t in all_tasks if t.parent_id is None]
         out = []
         for t in roots:
             archived = bool(getattr(t, "archived", False))
@@ -522,7 +537,7 @@ class TaskService:
                 continue
             elif status == "stopped" and t.status not in self._STOPPED:
                 continue
-            s = await self._summary(t)
+            s = await self._summary(t, kids_map)
             s["archived"] = archived
             out.append(s)
         out.sort(key=lambda s: s["created_at"], reverse=True)
@@ -639,8 +654,8 @@ class TaskService:
         """A cached, task-scoped controller agent (+ its conversation stream)."""
         entry = self._control_agents.get(task_id)
         if entry is None:
-            from autogen.beta import Agent
-            from autogen.beta.stream import MemoryStream
+            from ag2 import Agent
+            from ag2.stream import MemoryStream
 
             from assistant.agent import model_config
             from assistant.tasks.control import build_task_tools
@@ -725,8 +740,23 @@ class TaskService:
             "created_at": i.created_at,
         }
 
-    async def _summary(self, t) -> dict:
-        kids = await self._store.children(t.id)
+    @staticmethod
+    def _children_map(all_tasks: list) -> dict[str, list]:
+        """parent_id -> [child Task, …], built once from a preloaded task list so
+        task listing is O(N) instead of re-scanning the whole store per root."""
+        m: dict[str, list] = {}
+        for child in all_tasks:
+            if child.parent_id:
+                m.setdefault(child.parent_id, []).append(child)
+        return m
+
+    async def _summary(self, t, kids_map: dict[str, list] | None = None) -> dict:
+        # Use the preloaded child map when supplied (O(N) listing); otherwise fall
+        # back to a direct store query for single-task callers.
+        if kids_map is not None:
+            kids_count = len(kids_map.get(t.id, []))
+        else:
+            kids_count = len(await self._store.children(t.id))
         delivs = t.deliverables or []
         done = sum(1 for d in delivs if d.get("status") in ("produced", "accepted"))
         progress = t.progress or []
@@ -736,7 +766,7 @@ class TaskService:
             "status": t.status,
             "objective": t.objective or "",
             "created_at": t.created_at,
-            "children": len(kids),
+            "children": kids_count,
             "deliverables": len(delivs),
             "deliverables_done": done,
             "last_progress": progress[-1]["message"] if progress else None,

@@ -169,11 +169,11 @@ async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes(monkeypatch)
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
 
-    from autogen.beta import ToolResult
-    from autogen.beta.context import ConversationContext
-    from autogen.beta.events import ToolCallEvent
-    from autogen.beta.stream import MemoryStream
-    from autogen.beta.tools import MCPStdioServerConfig
+    from ag2 import ToolResult
+    from ag2.context import ConversationContext
+    from ag2.events import ToolCallEvent
+    from ag2.stream import MemoryStream
+    from ag2.tools import MCPStdioServerConfig
 
     import assistant.tools.mcp as mcp_mod
     from assistant.tools.mcp import NamespacedMCPToolkit

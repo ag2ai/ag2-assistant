@@ -7,7 +7,7 @@ access, so a denial anywhere in the turn stops further command prompts too, and
 the user gets the same Allow once / Always allow / Deny buttons.
 """
 
-from autogen.beta.events import ToolCallEvent, ToolResultEvent
+from ag2.events import ToolCallEvent, ToolResultEvent
 
 from assistant.permissions import PermissionManager
 

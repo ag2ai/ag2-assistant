@@ -120,7 +120,7 @@ _GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 
 def _gemini_realtime(config: Config, voice: str, model: str):
-    from autogen.beta.live import gemini
+    from ag2.live import gemini
     from google.genai import Client
 
     client = Client(api_key=os.environ.get(config.llm.api_key_env, ""))
@@ -183,7 +183,7 @@ def _openai_key() -> str:
 
 
 def _openai_realtime(config: Config, voice: str, model: str):
-    from autogen.beta.live import openai as oai
+    from ag2.live import openai as oai
     from openai import AsyncOpenAI
 
     # Minimal config matching AG2's known-working tool-calling example: model + voice,
@@ -196,7 +196,7 @@ def _openai_realtime(config: Config, voice: str, model: str):
 
 
 async def _openai_preview(config: Config, voice: str, text: str) -> bytes:
-    from autogen.beta.live import OpenAITTSConfig
+    from ag2.live import OpenAITTSConfig
     from openai import AsyncOpenAI
 
     tts = OpenAITTSConfig(_OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key()))

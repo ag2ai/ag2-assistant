@@ -9,8 +9,8 @@ resolves the class by its fully-qualified name (dynamic import).
 Audio events travel as raw binary frames, not JSON — `is_binary_event` flags them.
 """
 
-from autogen.beta.events._serialization import qualified_name
-from autogen.beta.events.voice import RecordedAudioEvent, SynthesizedAudioEvent
+from ag2.events._serialization import qualified_name
+from ag2.events.voice import RecordedAudioEvent, SynthesizedAudioEvent
 
 # Events that travel as raw PCM binary on their own frame, never as {type, data}.
 _BINARY = (SynthesizedAudioEvent, RecordedAudioEvent)

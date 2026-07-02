@@ -25,7 +25,7 @@ class MCPCompatibilityError(RuntimeError):
 
 def _load() -> Any:
     try:
-        from autogen.beta.tools.toolkits.mcp_server import toolkit
+        from ag2.tools.toolkits.mcp_server import toolkit
     except Exception as exc:
         raise MCPCompatibilityError(f"AG2 MCP toolkit is unavailable: {exc}") from exc
 

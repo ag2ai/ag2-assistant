@@ -24,7 +24,7 @@ def test_gemini_image_agent_requests_image_modality():
     agent = _image_agent(_cfg("gemini"))
     cfg = agent.config
     assert "IMAGE" in (cfg.response_modalities or [])
-    assert "image" in cfg.model  # an image model, e.g. gemini-3.1-flash-image
+    assert "image" in cfg.model  # an image model, e.g. gemini-3.1-flash-lite-image
 
 
 def test_build_image_tool_is_named_generate_image(tmp_path):

@@ -41,7 +41,7 @@ def test_setup_logging_creates_logfile(tmp_path):
 async def test_capture_failure_writes_record_with_history_shape(tmp_path):
     cfg = _cfg(tmp_path)
     setup_logging(cfg)
-    from autogen.beta.events import ModelRequest, ModelResponse
+    from ag2.events import ModelRequest, ModelResponse
 
     stream = _Stream([ModelRequest(parts=[]), ModelResponse(message=None)])
     err = ValueError("400 INVALID_ARGUMENT boom")
@@ -72,7 +72,7 @@ async def test_capture_failure_best_effort_no_stream(tmp_path):
 
 
 def test_log_suppressed_records_context(caplog):
-    caplog.set_level("WARNING", logger="ag2assistant")
+    caplog.set_level("WARNING", logger="ag2-assistant")
     err = RuntimeError("emit failed")
     log_suppressed("task event emit", err, task_id="task-1", status="running")
 
