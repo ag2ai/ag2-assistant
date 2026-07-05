@@ -69,19 +69,16 @@ STEPS: list[OnboardingStep] = [
 ]
 
 
-def marker_path() -> Path:
-    """File whose existence means onboarding has already been offered."""
-    return Path.home() / ".ag2assistant" / "onboarded"
-
-
 def _skipped(answer: str | None) -> bool:
     return answer is None or answer.strip().lower() in _SKIP_WORDS
 
 
-async def needs_onboarding(store_path: Path | None = None) -> bool:
-    """True if the user hasn't been onboarded and has no learned profile yet."""
-    if marker_path().exists():
-        return False
+async def needs_onboarding(store_path: Path) -> bool:
+    """True if THIS profile has no learned profile yet (its `profile.db` is empty).
+
+    Per-profile: the interview seeds a profile's learned memory, so every new
+    persona gets it on first chat. There is no marker file — the profile store
+    being empty is the only gate."""
     profile = await read_profile(store_path)
     return not profile.strip()
 
@@ -141,14 +138,13 @@ def build_profile(answers: dict[str, str]) -> str:
 
 async def run_onboarding(
     asker: Asker,
-    store_path: Path | None = None,
+    store_path: Path,
     env_path: Path | None = None,
-    mark: bool = True,
 ) -> dict[str, str]:
     """Ask the onboarding questions and seed the profile + location config.
 
-    Returns the (non-skipped) answers. Always writes the onboarding marker (when
-    `mark`) so we don't ask again, even if everything was skipped.
+    Returns the (non-skipped) answers. Writes to the given profile store; there is
+    no marker file — an empty `profile.db` is the only gate (`needs_onboarding`).
     """
     answers: dict[str, str] = {}
     for step in STEPS:
@@ -171,9 +167,5 @@ async def run_onboarding(
         # Don't clobber a real learned profile; append seeded facts above it.
         merged = profile_md if not existing else profile_md + "\n" + existing
         await store.write(PROFILE_PATH, merged)
-
-    if mark:
-        marker_path().parent.mkdir(parents=True, exist_ok=True)
-        marker_path().write_text("done\n")
 
     return answers

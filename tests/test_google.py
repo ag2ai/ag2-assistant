@@ -109,18 +109,20 @@ def test_save_credentials_validates(google_paths):
 def _client(monkeypatch):
     from fastapi.testclient import TestClient
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
+    from tests.conftest import make_profile_app, use_fake_agent
 
     class _FakeAgent:
+        tools = []
+
         async def ask(self, *a, stream=None, **k):
             class R:
                 body = "ok"
 
             return R()
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
-    return TestClient(app_mod.create_app(memory=False, persist=False))
+    use_fake_agent(monkeypatch, lambda *a, **k: _FakeAgent())
+    app, _pid = make_profile_app()
+    return TestClient(app)
 
 
 def test_google_status_endpoint(monkeypatch):

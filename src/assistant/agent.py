@@ -195,10 +195,13 @@ MEMORY_GUIDANCE = (
 )
 
 
-def build_memory_tool():
+def build_memory_tool(store_path):
     """A tool the agent calls to save an explicit user preference to long-term
     memory immediately (the passive aggregator otherwise only updates every few
-    turns, and won't reliably capture a one-off 'remember this')."""
+    turns, and won't reliably capture a one-off 'remember this').
+
+    `store_path` is the profile's ``profile.db`` — the tool closes over it so an
+    explicit "remember this" writes to THIS profile's memory, never a global one."""
     from typing import Annotated, Literal
 
     from ag2 import tool
@@ -234,7 +237,7 @@ def build_memory_tool():
         from assistant.memory import remember_note
 
         try:
-            await remember_note(note, category)
+            await remember_note(store_path, note, category)
         except Exception as exc:  # surface a clear failure rather than a tool error
             return f"Could not save to memory: {exc}"
         return f"Saved to memory (under '{category}')."
@@ -374,6 +377,7 @@ def create_agent(
     if memory:
         knowledge = build_knowledge_config(
             platform=platform,
+            store_path=config.data_dir / "profile.db",  # this profile's learned memory
             aggregate_config=agg_config,
             store=knowledge_store,
             every_n_turns=config.memory.aggregate_every_n_turns,
@@ -409,15 +413,23 @@ def create_agent(
 
     # When the profile memory is on, let the agent commit an explicit "remember
     # this" immediately (the passive aggregator alone is slow and may filter it).
+    # The tool closes over THIS profile's store so a "remember this" never leaks
+    # across profiles.
     if memory:
-        tools.append(build_memory_tool())
+        tools.append(build_memory_tool(config.data_dir / "profile.db"))
 
-    from assistant.permissions import PermissionManager
+    from assistant.permissions import PermissionManager, PermissionStore
 
     # One injected authority for all permission decisions (knows the sandbox mode
-    # so prompts can say where a command actually runs — host vs container).
+    # so prompts can say where a command actually runs — host vs container). Backed
+    # by THIS profile's persistent grant store so an allow in one profile isn't
+    # pre-authorised in another.
     dependencies: dict = {
-        PermissionManager: PermissionManager(asker=asker, sandbox=config.tools.sandbox)
+        PermissionManager: PermissionManager(
+            PermissionStore(config.data_dir / "permissions.json"),
+            asker=asker,
+            sandbox=config.tools.sandbox,
+        )
     }
 
     hitl_hook = None

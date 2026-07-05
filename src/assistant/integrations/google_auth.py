@@ -12,6 +12,8 @@ without them.
 
 from pathlib import Path
 
+from assistant.config import data_dir
+
 # Least-privilege scopes for exactly what the tools do:
 #   gmail.readonly — search + read mail
 #   gmail.compose  — create drafts AND send (does NOT allow deleting/relabelling
@@ -28,15 +30,15 @@ SCOPES = [
 
 
 def credentials_path() -> Path:
-    return Path.home() / ".ag2assistant" / "google_credentials.json"
+    return data_dir() / "google_credentials.json"
 
 
 def token_path() -> Path:
-    return Path.home() / ".ag2assistant" / "google_token.json"
+    return data_dir() / "google_token.json"
 
 
 def account_path() -> Path:
-    return Path.home() / ".ag2assistant" / "google_account.txt"
+    return data_dir() / "google_account.txt"
 
 
 def account_email() -> str | None:

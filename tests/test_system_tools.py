@@ -2,8 +2,13 @@
 
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
+from assistant.settings import Settings
 from assistant.system_tools import _fmt_node, build_system_tools, format_task
 from assistant.tasks import TaskManager, TaskStatus, TaskStore
+
+
+def _settings(tmp_path):
+    return Settings(tmp_path / "settings.json")
 
 
 def _service(tmp_path):
@@ -28,7 +33,9 @@ class _Chats:
 
 
 def test_tool_set_covers_retrieval_and_actions(tmp_path):
-    names = {t.name for t in build_system_tools(_service(tmp_path), chats=_Chats())}
+    names = {
+        t.name for t in build_system_tools(_service(tmp_path), _settings(tmp_path), chats=_Chats())
+    }
     assert {
         "list_tasks",
         "get_task",
@@ -49,7 +56,7 @@ def test_tool_set_covers_retrieval_and_actions(tmp_path):
 
 
 def test_tool_set_without_chats(tmp_path):
-    names = {t.name for t in build_system_tools(_service(tmp_path))}
+    names = {t.name for t in build_system_tools(_service(tmp_path), _settings(tmp_path))}
     assert "list_chats" not in names and "list_tasks" in names
 
 
@@ -64,7 +71,10 @@ def test_followup_note_only_on_channels():
 def test_build_system_tools_accepts_platform(tmp_path):
     # channels still get the full task toolset (platform only tunes confirmations)
     names = {
-        t.name for t in build_system_tools(_service(tmp_path), chats=_Chats(), platform="telegram")
+        t.name
+        for t in build_system_tools(
+            _service(tmp_path), _settings(tmp_path), chats=_Chats(), platform="telegram"
+        )
     }
     assert {"create_task", "schedule_task", "get_task"} <= names
 

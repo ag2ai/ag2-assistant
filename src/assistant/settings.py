@@ -1,147 +1,212 @@
-"""User-adjustable settings persisted to ``~/.ag2assistant/settings.json``.
+"""User-adjustable settings persisted to a profile's ``settings.json``.
 
-Currently just the realtime voice. Kept separate from `config` (which is
-env/file/defaults, read-only at runtime) because these are toggled live from the
-GUI / tools and must persist across restarts.
+Per-profile persistence for things toggled live from the GUI / tools: the LLM
+provider/model choice, the realtime voice (per provider), the persisted voice
+provider, the project folder, and the MCP server list. Kept separate from
+`config` (env/file/defaults, read-only at runtime) because these are changed at
+runtime and must persist across restarts.
+
+The store is a :class:`Settings` instance bound to an explicit path — one per
+profile. There is **no** global default path: callers hold the path for the
+profile they operate on (``config.data_dir / "settings.json"``), so an agent
+changing its voice or loading its MCP servers touches only its own profile.
 
 The voice provider (Gemini or OpenAI) and its voice catalogue live in
 ``voice_providers``; this module is just the per-provider persistence layer, so
 each provider remembers its own selection across restarts and provider switches.
+
+Note: the install-level *onboarded* flag does NOT live here — it moved to the
+profile registry (``assistant.profiles.is_onboarded`` / ``set_onboarded``); one
+first-run flow can create several profiles, so the flag is install-level.
 """
 
 import json
 import re
 import shlex
+from pathlib import Path
 
 from assistant import voice_providers
-from assistant.config import data_dir
 
 _MCP_KEY = "mcp_servers"
 _MCP_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
-def voice_provider() -> str:
-    """The active realtime voice provider (persisted setting → env → default)."""
-    return voice_providers.active_provider()
+class Settings:
+    """Per-profile settings persisted to one ``settings.json`` file.
 
+    Bound to an explicit path at construction — there is no global default, so
+    each profile's runtime reads/writes only its own file.
+    """
 
-def get_voice_provider() -> str | None:
-    """The raw persisted voice-provider choice (or None). Used by
-    voice_providers.active_provider(); kept here so persistence lives in one place."""
-    return _read().get("voice_provider")
+    def __init__(self, path: Path) -> None:
+        self._path = Path(path)
 
+    # --- persistence ---
 
-def set_voice_provider(provider: str) -> bool:
-    """Persist the realtime voice provider. Returns False for an unknown provider."""
-    if provider not in voice_providers.names():
-        return False
-    data = _read()
-    data["voice_provider"] = provider
-    _write(data)
-    return True
-
-
-def get_llm() -> dict:
-    """The UI-selected assistant {provider, model} (or {}). Layered over config."""
-    v = _read().get("llm")
-    return v if isinstance(v, dict) else {}
-
-
-def set_llm(provider: str | None = None, model: str | None = None) -> None:
-    """Persist the assistant provider and/or model (only the given fields)."""
-    data = _read()
-    llm = data.get("llm") if isinstance(data.get("llm"), dict) else {}
-    if provider:
-        llm["provider"] = provider
-    if model:
-        llm["model"] = model
-    data["llm"] = llm
-    _write(data)
-
-
-def get_onboarded() -> bool:
-    """Whether first-run onboarding has been completed or dismissed on THIS install.
-    Server-side (not per-browser) so the welcome shows once per installation,
-    consistently across browsers/devices."""
-    return bool(_read().get("onboarded"))
-
-
-def set_onboarded(value: bool = True) -> None:
-    """Mark first-run onboarding completed/dismissed (or reset with value=False)."""
-    data = _read()
-    data["onboarded"] = bool(value)
-    _write(data)
-
-
-def get_project_folder() -> str:
-    """The folder the assistant may read (chosen in onboarding; backs the read-only
-    repo-files MCP). Empty string if not set."""
-    v = _read().get("project_folder")
-    return v if isinstance(v, str) else ""
-
-
-def set_project_folder(path: str) -> None:
-    """Persist the chosen project folder. (Seeding the repo-files MCP itself is done by
-    the gateway endpoint via upsert_mcp_server.)"""
-    data = _read()
-    data["project_folder"] = path or ""
-    _write(data)
-
-
-def list_mcp_servers(*, include_env: bool = False) -> list[dict]:
-    """Persisted MCP stdio server configs. Env values are hidden by default."""
-    servers = _read().get(_MCP_KEY)
-    if not isinstance(servers, list):
-        return []
-    out = []
-    for raw in servers:
+    def _read(self) -> dict:
         try:
-            server = _normalise_mcp_server(raw)
-        except ValueError:
-            continue
-        if include_env:
-            out.append(server)
-        else:
-            public = {k: v for k, v in server.items() if k != "env"}
-            public["env_keys"] = sorted((server.get("env") or {}).keys())
-            out.append(public)
-    return out
+            return json.loads(self._path.read_text())
+        except Exception:
+            return {}
+
+    def _write(self, data: dict) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(data, indent=2))
+
+    # --- voice provider ---
+
+    def voice_provider(self) -> str:
+        """The active realtime voice provider (persisted setting → env → default)."""
+        return voice_providers.active_provider(self.get_voice_provider())
+
+    def get_voice_provider(self) -> str | None:
+        """The raw persisted voice-provider choice (or None)."""
+        return self._read().get("voice_provider")
+
+    def set_voice_provider(self, provider: str) -> bool:
+        """Persist the realtime voice provider. Returns False for an unknown provider."""
+        if provider not in voice_providers.names():
+            return False
+        data = self._read()
+        data["voice_provider"] = provider
+        self._write(data)
+        return True
+
+    # --- llm ---
+
+    def get_llm(self) -> dict:
+        """The UI-selected assistant {provider, model} (or {}). Layered over config."""
+        v = self._read().get("llm")
+        return v if isinstance(v, dict) else {}
+
+    def set_llm(self, provider: str | None = None, model: str | None = None) -> None:
+        """Persist the assistant provider and/or model (only the given fields)."""
+        data = self._read()
+        llm = data.get("llm") if isinstance(data.get("llm"), dict) else {}
+        if provider:
+            llm["provider"] = provider
+        if model:
+            llm["model"] = model
+        data["llm"] = llm
+        self._write(data)
+
+    # --- channels ---
+
+    def channels(self) -> dict:
+        """Per-profile channel config, e.g. ``{"telegram": {"enabled": true}}`` (§4.5).
+
+        A channel starts for this profile iff its entry is enabled AND the platform's
+        token env vars are present. Empty/absent → no channels (the correct default for
+        a fresh profile). Malformed → treated as empty."""
+        v = self._read().get("channels")
+        return v if isinstance(v, dict) else {}
+
+    def channel_enabled(self, platform: str) -> bool:
+        """Whether ``platform``'s channel is enabled in this profile's settings."""
+        entry = self.channels().get(platform)
+        return bool(entry.get("enabled")) if isinstance(entry, dict) else False
+
+    def set_channel_enabled(self, platform: str, enabled: bool = True) -> None:
+        """Enable/disable a platform's channel for this profile."""
+        data = self._read()
+        chans = data.get("channels") if isinstance(data.get("channels"), dict) else {}
+        entry = chans.get(platform) if isinstance(chans.get(platform), dict) else {}
+        entry["enabled"] = bool(enabled)
+        chans[platform] = entry
+        data["channels"] = chans
+        self._write(data)
+
+    # --- project folder ---
+
+    def get_project_folder(self) -> str:
+        """The folder the assistant may read (chosen in onboarding; backs the read-only
+        repo-files MCP). Empty string if not set."""
+        v = self._read().get("project_folder")
+        return v if isinstance(v, str) else ""
+
+    def set_project_folder(self, path: str) -> None:
+        """Persist the chosen project folder. (Seeding the repo-files MCP itself is done by
+        the gateway endpoint via upsert_mcp_server.)"""
+        data = self._read()
+        data["project_folder"] = path or ""
+        self._write(data)
+
+    # --- MCP servers ---
+
+    def list_mcp_servers(self, *, include_env: bool = False) -> list[dict]:
+        """Persisted MCP stdio server configs. Env values are hidden by default."""
+        servers = self._read().get(_MCP_KEY)
+        if not isinstance(servers, list):
+            return []
+        out = []
+        for raw in servers:
+            try:
+                server = _normalise_mcp_server(raw)
+            except ValueError:
+                continue
+            if include_env:
+                out.append(server)
+            else:
+                public = {k: v for k, v in server.items() if k != "env"}
+                public["env_keys"] = sorted((server.get("env") or {}).keys())
+                out.append(public)
+        return out
+
+    def upsert_mcp_server(self, server: dict) -> dict:
+        """Add or replace one MCP stdio server config."""
+        clean = _normalise_mcp_server(server)
+        data = self._read()
+        servers = []
+        for raw in data.get(_MCP_KEY, []):
+            try:
+                existing = _normalise_mcp_server(raw)
+            except ValueError:
+                continue
+            if existing["name"] != clean["name"]:
+                servers.append(existing)
+        servers.append(clean)
+        data[_MCP_KEY] = sorted(servers, key=lambda s: s["name"].lower())
+        self._write(data)
+        public = {k: v for k, v in clean.items() if k != "env"}
+        public["env_keys"] = sorted((clean.get("env") or {}).keys())
+        return public
+
+    def delete_mcp_server(self, name: str) -> bool:
+        data = self._read()
+        before = self.list_mcp_servers(include_env=True)
+        after = [s for s in before if s["name"] != name]
+        if len(after) == len(before):
+            return False
+        data[_MCP_KEY] = after
+        self._write(data)
+        return True
+
+    # --- voice selection (per provider) ---
+
+    def voices_for(self, provider: str | None = None) -> dict[str, str]:
+        """The voice catalogue (name → style) for a provider (default: the active one)."""
+        return voice_providers.get(provider or self.voice_provider()).voices
+
+    def get_voice(self, provider: str | None = None) -> str:
+        """The persisted voice for a provider (default: active), or its default voice."""
+        p = voice_providers.get(provider or self.voice_provider())
+        v = _voice_map(self._read()).get(p.name)
+        return v if v in p.voices else p.default_voice
+
+    def set_voice(self, name: str, provider: str | None = None) -> bool:
+        """Persist the realtime voice for a provider. Returns False for an unknown voice."""
+        p = voice_providers.get(provider or self.voice_provider())
+        if name not in p.voices:
+            return False
+        data = self._read()
+        vmap = _voice_map(data)
+        vmap[p.name] = name
+        data["voice"] = vmap
+        self._write(data)
+        return True
 
 
-def upsert_mcp_server(server: dict) -> dict:
-    """Add or replace one MCP stdio server config."""
-    clean = _normalise_mcp_server(server)
-    data = _read()
-    servers = []
-    for raw in data.get(_MCP_KEY, []):
-        try:
-            existing = _normalise_mcp_server(raw)
-        except ValueError:
-            continue
-        if existing["name"] != clean["name"]:
-            servers.append(existing)
-    servers.append(clean)
-    data[_MCP_KEY] = sorted(servers, key=lambda s: s["name"].lower())
-    _write(data)
-    public = {k: v for k, v in clean.items() if k != "env"}
-    public["env_keys"] = sorted((clean.get("env") or {}).keys())
-    return public
-
-
-def delete_mcp_server(name: str) -> bool:
-    data = _read()
-    before = list_mcp_servers(include_env=True)
-    after = [s for s in before if s["name"] != name]
-    if len(after) == len(before):
-        return False
-    data[_MCP_KEY] = after
-    _write(data)
-    return True
-
-
-def voices_for(provider: str | None = None) -> dict[str, str]:
-    """The voice catalogue (name → style) for a provider (default: the active one)."""
-    return voice_providers.get(provider).voices
+# --- pure helpers (path-free; shared by validation and the Settings methods) ---
 
 
 def _list_value(value) -> list[str]:
@@ -206,44 +271,7 @@ def _normalise_mcp_server(raw: dict) -> dict:
     }
 
 
-def _path():
-    return data_dir() / "settings.json"
-
-
-def _read() -> dict:
-    try:
-        return json.loads(_path().read_text())
-    except Exception:
-        return {}
-
-
-def _write(data: dict) -> None:
-    p = _path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2))
-
-
 def _voice_map(data: dict) -> dict:
     """The per-provider voice selections, e.g. ``{"gemini": "Puck"}``."""
     raw = data.get("voice")
     return raw if isinstance(raw, dict) else {}
-
-
-def get_voice(provider: str | None = None) -> str:
-    """The persisted voice for a provider (default: active), or its default voice."""
-    p = voice_providers.get(provider)
-    v = _voice_map(_read()).get(p.name)
-    return v if v in p.voices else p.default_voice
-
-
-def set_voice(name: str, provider: str | None = None) -> bool:
-    """Persist the realtime voice for a provider. Returns False for an unknown voice."""
-    p = voice_providers.get(provider)
-    if name not in p.voices:
-        return False
-    data = _read()
-    vmap = _voice_map(data)
-    vmap[p.name] = name
-    data["voice"] = vmap
-    _write(data)
-    return True

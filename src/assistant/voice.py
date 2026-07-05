@@ -16,9 +16,13 @@ model's speech leaves as `SynthesizedAudioEvent` on the same conversation stream
 """
 
 import os
+from typing import TYPE_CHECKING
 
 from assistant.config import Config
 from assistant.voice_providers import PREVIEW_TEXT
+
+if TYPE_CHECKING:
+    from assistant.settings import Settings
 
 # Basic tools the voice agent may run itself: quick, low-context reads/answers.
 # Everything else is delegated to the universal agent via ask_assistant.
@@ -59,24 +63,33 @@ VOICE_PROMPT = (
 )
 
 
-def voice_realtime_config(config: Config, voice: str | None = None, provider: str | None = None):
-    """Build the realtime RealtimeConfig for the active (or given) provider.
+def voice_realtime_config(
+    config: Config,
+    settings: "Settings",
+    voice: str | None = None,
+    provider: str | None = None,
+):
+    """Build the realtime RealtimeConfig for the profile's active (or given) provider.
 
     Delegates to the provider registry — input transcription is enabled per
     provider so the user's speech arrives as text (TranscriptionChunk/Completed)
-    for the on-screen bubbles. `voice` defaults to that provider's persisted
-    setting. `AG2ASSISTANT_VOICE_MODEL` overrides the provider's default model.
+    for the on-screen bubbles. The provider defaults to the profile's persisted
+    choice; `voice` defaults to that provider's persisted setting.
+    `AG2ASSISTANT_VOICE_MODEL` overrides the provider's default model.
     """
     from assistant import voice_providers
-    from assistant.settings import get_voice
 
-    p = voice_providers.get(provider)
+    p = voice_providers.get(provider or settings.voice_provider())
     model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or p.realtime_model
-    return p.build_realtime(config, voice or get_voice(p.name), model)
+    return p.build_realtime(config, voice or settings.get_voice(p.name), model)
 
 
 async def synthesize_preview(
-    config: Config, voice: str, text: str = PREVIEW_TEXT, provider: str | None = None
+    config: Config,
+    settings: "Settings",
+    voice: str,
+    text: str = PREVIEW_TEXT,
+    provider: str | None = None,
 ) -> bytes:
     """Single-shot TTS of a sample sentence in `voice`; returns WAV bytes.
 
@@ -86,11 +99,14 @@ async def synthesize_preview(
     """
     from assistant import voice_providers
 
-    return await voice_providers.get(provider).synthesize(config, voice, text)
+    return await voice_providers.get(provider or settings.voice_provider()).synthesize(
+        config, voice, text
+    )
 
 
 def build_voice_agent(
     config: Config,
+    settings: "Settings",
     tasks,
     delegate,
     voice: str | None = None,
@@ -100,6 +116,7 @@ def build_voice_agent(
 ):
     """A LiveAgent with a basic tool subset + an ask_assistant delegate tool.
 
+    `settings` is the profile's Settings (resolves the voice provider/voice).
     `tasks` is the TaskService (for the basic read tools); `delegate` is an async
     `(request: str) -> str` that runs the universal agent and returns its reply.
     `task_context`, when the session is opened from a task page, names the task so
@@ -115,7 +132,7 @@ def build_voice_agent(
     from assistant.agent import environment_context
     from assistant.system_tools import build_system_tools
 
-    basic = [t for t in build_system_tools(tasks) if t.name in _BASIC_VOICE_TOOLS]
+    basic = [t for t in build_system_tools(tasks, settings) if t.name in _BASIC_VOICE_TOOLS]
     # A realtime session's prompt is fixed at connect, so the injected clock would
     # drift on a long call — pair it with a tool the agent can call for fresh time.
     capabilities = (
@@ -167,6 +184,6 @@ def build_voice_agent(
     return LiveAgent(
         name="voice",
         prompt=prompt,
-        config=voice_realtime_config(config, voice=voice),
+        config=voice_realtime_config(config, settings, voice=voice),
         tools=tools,
     )

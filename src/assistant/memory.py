@@ -99,10 +99,10 @@ def _remove_bullets(doc: str, removals) -> str:
 
 
 async def record_preference(
+    store_path: Path,
     note: str = "",
     category: str = "how",
     remove=(),
-    store_path: Path | None = None,
 ) -> str:
     """Apply a learned preference to the profile: first delete any directly-conflicting
     bullets (`remove`, matched verbatim & marker-insensitive), then append `note` under
@@ -127,13 +127,13 @@ async def record_preference(
     return doc
 
 
-async def remember_note(note: str, category: str = "how", store_path: Path | None = None) -> str:
+async def remember_note(store_path: Path, note: str, category: str = "how") -> str:
     """Immediately save an explicit user preference/fact to the learned profile
     (append-only). Used by the agent's `remember` tool and as the feedback learner's
     fallback. The aggregator later reorganises/dedupes on its cadence. Returns the
     updated profile document.
     """
-    return await record_preference(note, category, store_path=store_path)
+    return await record_preference(store_path, note, category)
 
 
 def build_profile_prompt(platform: str) -> str:
@@ -188,15 +188,9 @@ New conversation:
 Return the updated profile document only (headings and bullets, no commentary)."""
 
 
-def default_store_path() -> Path:
-    """Default on-disk location for the profile store."""
-    return Path.home() / ".ag2assistant" / "profile.db"
-
-
-def build_profile_store(store_path: Path | None = None) -> SqliteKnowledgeStore:
+def build_profile_store(store_path: Path) -> SqliteKnowledgeStore:
     """Open the SQLite profile store, creating its parent directory."""
-    if store_path is None:
-        store_path = default_store_path()
+    store_path = Path(store_path)
     store_path.parent.mkdir(parents=True, exist_ok=True)
     return SqliteKnowledgeStore(str(store_path))
 
@@ -304,17 +298,16 @@ def profile_assembly() -> list:
     ]
 
 
-async def write_profile(text: str, store_path: Path | None = None) -> None:
+async def write_profile(text: str, store_path: Path) -> None:
     """Overwrite the learned user profile (a user edit via the GUI). The passive
     aggregator treats this as the new base it merges future conversation into."""
     store = build_profile_store(store_path)
     await store.write(PROFILE_PATH, text or "")
 
 
-async def read_profile(store_path: Path | None = None) -> str:
+async def read_profile(store_path: Path) -> str:
     """Read the learned user profile, or empty string if none exists yet."""
-    if store_path is None:
-        store_path = default_store_path()
+    store_path = Path(store_path)
     if not store_path.exists():
         return ""
     store = SqliteKnowledgeStore(str(store_path))
@@ -323,10 +316,9 @@ async def read_profile(store_path: Path | None = None) -> str:
     return await store.read(PROFILE_PATH)
 
 
-async def clear_profile(store_path: Path | None = None) -> bool:
+async def clear_profile(store_path: Path) -> bool:
     """Delete the learned user profile. Returns True if something was removed."""
-    if store_path is None:
-        store_path = default_store_path()
+    store_path = Path(store_path)
     if not store_path.exists():
         return False
     store = SqliteKnowledgeStore(str(store_path))

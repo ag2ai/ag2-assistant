@@ -1,12 +1,45 @@
 <script>
   import { onMount } from 'svelte'
-  import { sessions, tasks, drawerTab, settingsOpen, filesOpen } from '../store.js'
+  import { sessions, tasks, drawerTab, settingsOpen, filesOpen, profiles } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
+  import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
   import { fmtWhen, fmtNextIn } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
+
+  // Active-profile indicator + switcher (§7 Phase 1). Name + palette dot, and —
+  // when there's more than one profile — a way to switch. Resolve the active
+  // profile from the `profiles` store and map its palette id to the hex the
+  // create form already uses (reuse PALETTES, don't duplicate).
+  const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
+  const list = $derived($profiles.list || [])
+  const active = $derived(list.find((p) => p.id === $profiles.activeId))
+  const others = $derived(list.filter((p) => p.id !== $profiles.activeId))
+
+  // Phase-1 switch is a full page load to /app/{pid}/ — App.svelte's boot
+  // resolves the URL pid and makes it the persisted choice (no hot-switching).
+  const switchTo = (pid) => location.assign('/app/' + pid + '/')
+
+  // 1 profile → non-interactive label. 2 → click alternates to the other.
+  // 3+ → click opens a small anchored picker.
+  const canSwitch = $derived(list.length >= 2)
+  let pickerOpen = $state(false)
+  function onIndicator() {
+    if (list.length === 2) switchTo(others[0].id)     // straight to the other
+    else if (list.length >= 3) pickerOpen = !pickerOpen // small picker
+  }
+  const indicatorTitle = $derived(
+    list.length === 2 ? 'Switch to ' + (others[0]?.name || 'profile')
+      : list.length >= 3 ? 'Switch profile'
+      : 'Active profile: ' + (active?.name || '')
+  )
+  // Close the picker on click-outside / Escape.
+  function onDocPointer(e) {
+    if (pickerOpen && !e.target.closest('.profswitch')) pickerOpen = false
+  }
+  function onDocKey(e) { if (pickerOpen && e.key === 'Escape') pickerOpen = false }
 
   let usage = $state(null)   // today's token/cost totals for the activity HUD
 
@@ -36,7 +69,17 @@
       + (usage.priced ? ` · ~$${(usage.cost || 0).toFixed(4)} (estimate)` : ' · cost: no price set')
       + (models ? `\nmodels: ${models}` : '')
   })
-  onMount(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t) })
+  onMount(() => {
+    refresh()
+    const t = setInterval(refresh, 5000)
+    document.addEventListener('pointerdown', onDocPointer, true)
+    document.addEventListener('keydown', onDocKey)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('pointerdown', onDocPointer, true)
+      document.removeEventListener('keydown', onDocKey)
+    }
+  })
 
   const openChat = (id) => go('/c/' + id)
   const openTask = (id) => go('/t/' + id)
@@ -119,6 +162,47 @@
     <img class="brandlogo on-light" src={ag2Logo} alt="AG2" />
     <img class="brandlogo on-dark" src={ag2LogoWhite} alt="AG2" />
     <span class="brand">Assistant</span>
+    {#if active}
+      <div class="profswitch">
+        {#if canSwitch}
+          <button
+            class="profind"
+            title={indicatorTitle}
+            aria-haspopup={list.length >= 3 ? 'menu' : undefined}
+            aria-expanded={list.length >= 3 ? pickerOpen : undefined}
+            onclick={onIndicator}
+          >
+            <span class="profdot" style="--dot:{paletteHex(active.palette)}"></span>
+            <span class="profname">{active.name}</span>
+            <Icon name="chevron-down" size={12} />
+          </button>
+        {:else}
+          <span class="profind static" title={indicatorTitle}>
+            <span class="profdot" style="--dot:{paletteHex(active.palette)}"></span>
+            <span class="profname">{active.name}</span>
+          </span>
+        {/if}
+
+        {#if pickerOpen && list.length >= 3}
+          <div class="profmenu" role="menu">
+            {#each list as p (p.id)}
+              {@const isActive = p.id === active.id}
+              <button
+                class="profitem"
+                class:active={isActive}
+                role="menuitem"
+                aria-current={isActive ? 'true' : undefined}
+                onclick={() => (isActive ? (pickerOpen = false) : switchTo(p.id))}
+              >
+                <span class="profdot" style="--dot:{paletteHex(p.palette)}"></span>
+                <span class="profname">{p.name}</span>
+                {#if isActive}<Icon name="check" size={13} />{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
   <div class="tabs">
     <button class="tab" class:on={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={13} /> Chats</button>
@@ -179,3 +263,54 @@
     <button class="settingsbtn" onclick={() => ($settingsOpen = true)}><Icon name="settings" size={15} /> Settings</button>
   </div>
 </div>
+
+<style>
+  /* Active-profile indicator + switcher. Sits at the end of the header row,
+     marking which profile the client is viewing. With 1 profile it's a plain
+     label; with 2+ it becomes a small quiet switcher (alternate at 2, picker
+     at 3+). A utility control, not a modal — small and understated.
+     Phase 2's §5.4 chips supersede this. */
+  .profswitch { margin-left: auto; position: relative; min-width: 0; }
+  .profind {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    min-width: 0; font-size: var(--text-xs); color: var(--muted);
+  }
+  /* button variant: quiet by default, faint hover affordance */
+  button.profind {
+    cursor: pointer; border: 1px solid transparent; background: none;
+    font: inherit; font-size: var(--text-xs); color: var(--muted);
+    padding: 3px 6px; border-radius: var(--radius-sm);
+    transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  }
+  button.profind:hover { background: var(--surface-hover); border-color: var(--line); color: var(--text); }
+  button.profind:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .profdot {
+    width: 8px; height: 8px; flex: none; border-radius: var(--radius-pill);
+    background: var(--dot, var(--accent));
+  }
+  .profname {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: var(--fw-medium);
+  }
+
+  /* Small anchored picker (3+ profiles). Absolutely positioned under the
+     indicator, styled with existing tokens to match the drawer aesthetic. */
+  .profmenu {
+    position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-modal);
+    min-width: 150px; max-width: 220px; display: flex; flex-direction: column;
+    padding: 4px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+  }
+  .profitem {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 6px 8px; cursor: pointer; text-align: left;
+    border: none; background: none; font: inherit; font-size: var(--text-xs);
+    color: var(--text); border-radius: var(--radius-xs, 6px);
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .profitem:hover { background: var(--surface-hover); }
+  .profitem .profname { flex: 1; font-weight: var(--fw-medium); }
+  .profitem.active { color: var(--muted); cursor: default; }
+  .profitem.active:hover { background: none; }
+  .profitem :global(svg) { flex: none; opacity: .7; }
+</style>

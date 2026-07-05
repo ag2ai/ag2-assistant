@@ -2,15 +2,28 @@
 
 The LLM distillation itself needs a model; here we exercise the deterministic parts —
 category routing by sentiment and the no-LLM fallback that guarantees the reason is
-never lost — by forcing the model path to fail. Memory writes are isolated to a tmp
-HOME by the autouse conftest fixture.
+never lost — by forcing the model path to fail. Memory is per-profile: each test
+points the config's data_dir at a tmp dir and reads that profile's store.
 """
+
+import pytest
 
 from assistant import feedback, memory
 from assistant.config import load_config
 
 
-async def test_feedback_routes_by_sentiment_via_fallback(monkeypatch):
+@pytest.fixture
+def cfg(tmp_path):
+    c = load_config()
+    c.data_dir = tmp_path
+    return c
+
+
+def _store_path(cfg):
+    return cfg.data_dir / "profile.db"
+
+
+async def test_feedback_routes_by_sentiment_via_fallback(cfg, monkeypatch):
     # Force the LLM path to raise so we hit the fallback (which writes the raw reason
     # under the sentiment's heading) — no network/model needed.
     import assistant.agent as agent_mod
@@ -19,14 +32,13 @@ async def test_feedback_routes_by_sentiment_via_fallback(monkeypatch):
         raise RuntimeError("no model in test")
 
     monkeypatch.setattr(agent_mod, "model_config", _boom)
-    cfg = load_config()
 
     await feedback.learn(
         cfg, sentiment="down", reason="too verbose and corporate", content="x", request="y"
     )
     await feedback.learn(cfg, sentiment="up", reason="loved the brevity", content="x", request="y")
 
-    profile = await memory.read_profile()
+    profile = await memory.read_profile(_store_path(cfg))
     dislikes = profile.split("## What they dislike", 1)[1].split("\n## ", 1)[0]
     how = profile.split("## How they like things done", 1)[1].split("\n## ", 1)[0]
 
@@ -34,35 +46,37 @@ async def test_feedback_routes_by_sentiment_via_fallback(monkeypatch):
     assert "loved the brevity" in how  # 👍 → How they like things done
 
 
-async def test_feedback_empty_reason_writes_nothing(monkeypatch):
+async def test_feedback_empty_reason_writes_nothing(cfg, monkeypatch):
     import assistant.agent as agent_mod
 
     monkeypatch.setattr(
         agent_mod, "model_config", lambda *a, **k: (_ for _ in ()).throw(RuntimeError())
     )
-    cfg = load_config()
-    before = await memory.read_profile()
+    before = await memory.read_profile(_store_path(cfg))
     await feedback.learn(cfg, sentiment="down", reason="   ", content="x", request="y")
-    assert await memory.read_profile() == before  # no reason → no memory write
+    assert await memory.read_profile(_store_path(cfg)) == before  # no reason → no write
 
 
-async def test_record_preference_revises_conflicting_bullet():
+async def test_record_preference_revises_conflicting_bullet(tmp_path):
+    store_path = tmp_path / "profile.db"
     # An earlier "like" that a later dislike contradicts.
-    await memory.record_preference("Likes long, detailed reports", category="how")
-    assert "Likes long, detailed reports" in await memory.read_profile()
+    await memory.record_preference(store_path, "Likes long, detailed reports", category="how")
+    assert "Likes long, detailed reports" in await memory.read_profile(store_path)
 
     # Memory-aware revise: drop the conflicting bullet (marker-insensitive), add the fix.
     await memory.record_preference(
+        store_path,
         "Dislikes long reports; prefers brief ones",
         category="dislikes",
         remove=["Likes long, detailed reports"],
     )
-    p = await memory.read_profile()
+    p = await memory.read_profile(store_path)
     assert "Likes long, detailed reports" not in p  # conflict removed
     assert "Dislikes long reports; prefers brief ones" in p  # correction added
 
 
-async def test_record_preference_noop_when_empty():
-    before = await memory.read_profile()
-    await memory.record_preference("", category="how", remove=[])  # pure skip
-    assert await memory.read_profile() == before
+async def test_record_preference_noop_when_empty(tmp_path):
+    store_path = tmp_path / "profile.db"
+    before = await memory.read_profile(store_path)
+    await memory.record_preference(store_path, "", category="how", remove=[])  # pure skip
+    assert await memory.read_profile(store_path) == before

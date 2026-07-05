@@ -12,6 +12,7 @@ store, so resolution always arrives via `InquiryStore.answer()`.
 """
 
 import asyncio
+from collections.abc import Callable
 
 from assistant.config import Config, load_config
 from assistant.hitl import NullAsker
@@ -52,8 +53,12 @@ class TaskService:
         executor=None,
         max_concurrent: int = 3,
         scheduler_interval: float = 30.0,
+        config_factory: Callable[[], Config] | None = None,
     ) -> None:
         self._config = config or load_config()
+        # How reload() re-resolves config (a profile runtime's factory re-reads the
+        # profile's registry entry + settings; the default is load_config).
+        self._config_factory = config_factory or load_config
         self._store = store
         self._inquiries = inquiry_store
         self._manager = manager
@@ -252,10 +257,9 @@ class TaskService:
         change. The manager's executor reference is swapped so new runs use it while
         in-flight runs (tracked in the manager) finish on the old one; the planner is
         reset for a lazy rebuild. Stores and the scheduler are unaffected."""
-        from assistant.config import load_config
         from assistant.tasks import make_task_executor
 
-        self._config = load_config()
+        self._config = self._config_factory()
         self._planner = None  # rebuilt lazily by _planner_agent() with fresh config
         self._executor = make_task_executor(self._config)
         if self._manager is not None:
@@ -567,6 +571,19 @@ class TaskService:
             return False
         await self._manager.cancel(task_id, reason=reason)
         return True
+
+    async def cancel_all(self, reason: str = "cancelled") -> int:
+        """Cancel every non-terminal task via the cascading cancel path so state lands
+        CANCELLED (not limbo). Used when archiving a profile (§4.9). Returns the count
+        of top-level tasks cancelled."""
+        if self._store is None or self._manager is None:
+            return 0
+        roots = [
+            t for t in await self._store.list_all() if t.parent_id is None and not t.is_terminal
+        ]
+        for t in roots:
+            await self._manager.cancel(t.id, reason=reason)
+        return len(roots)
 
     # --- action wrappers (thin; the universal agent's system tools call these) ---
 

@@ -1,7 +1,9 @@
-// Full-duplex voice transport (Gemini Live over /api/voice): captures mic at
-// 16 kHz mono PCM via an AudioWorklet, streams it as binary, plays back 24 kHz
-// PCM, and surfaces JSON frames (ready / transcript / tool / task_card / error)
-// to the caller. Audio + WS only — rendering is the controller's job.
+// Full-duplex voice transport (Gemini Live over /api/p/{pid}/voice): captures
+// mic at 16 kHz mono PCM via an AudioWorklet, streams it as binary, plays back
+// 24 kHz PCM, and surfaces JSON frames (ready / transcript / tool / task_card /
+// error) to the caller. Audio + WS only — rendering is the controller's job.
+
+import { api as P } from '../lib/profile.js'
 
 const WORKLET = `
 class PCM16 extends AudioWorkletProcessor {
@@ -37,7 +39,7 @@ export class VoiceController {
     }
     this.h.onState && this.h.onState('connecting', 'Connecting…')
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    this.ws = new WebSocket(`${proto}://${location.host}/api/voice${this.query}`)
+    this.ws = new WebSocket(`${proto}://${location.host}${P('/voice' + this.query)}`)
     this.ws.binaryType = 'arraybuffer'
     this.ws.onmessage = (ev) => this._onMessage(ev)
     this.ws.onclose = () => this.stop(false)

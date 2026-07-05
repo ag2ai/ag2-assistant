@@ -87,7 +87,9 @@ class InquiryStore:
         else:
             from ag2.knowledge import SqliteKnowledgeStore
 
-            path = path or (Path.home() / ".ag2assistant" / "inquiries.db")
+            if path is None:
+                raise ValueError("InquiryStore needs an explicit `path` (or a `store`)")
+            path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             self._store = SerialStore(SqliteKnowledgeStore(str(path)))
         self._events: dict[str, asyncio.Event] = {}

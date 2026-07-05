@@ -22,11 +22,12 @@ class _Stream:
 
 def _cfg(tmp_path):
     cfg = load_config()
-    cfg.data_dir = tmp_path / "d"
+    cfg.root_dir = tmp_path / "root"  # the log lives at root_dir (shared across profiles)
+    cfg.data_dir = tmp_path / "d"  # debug snapshots are per-profile (data_dir)
     return cfg
 
 
-def test_setup_logging_creates_logfile(tmp_path):
+def test_setup_logging_creates_logfile_at_root(tmp_path):
     import assistant.observability as obs
 
     obs._CONFIGURED = False  # setup is idempotent via a module global; reset for this test
@@ -35,7 +36,24 @@ def test_setup_logging_creates_logfile(tmp_path):
     logger.info("hello")
     for h in logger.handlers:
         h.flush()
-    assert (cfg.data_dir / "ag2assistant.log").exists()
+    # single shared log at root_dir, not under the profile's data_dir
+    assert (cfg.root_dir / "ag2assistant.log").exists()
+    assert not (cfg.data_dir / "ag2assistant.log").exists()
+
+
+def test_profile_logger_tags_records(tmp_path):
+    import assistant.observability as obs
+
+    obs._CONFIGURED = False
+    cfg = _cfg(tmp_path)
+    setup_logging(cfg)
+    adapter = obs.profile_logger("work")
+    adapter.info("scoped line")
+    for h in obs.logging.getLogger("ag2assistant").handlers:
+        h.flush()
+    text = (cfg.root_dir / "ag2assistant.log").read_text()
+    assert "[work]" in text  # per-profile records are attributable
+    assert "scoped line" in text
 
 
 async def test_capture_failure_writes_record_with_history_shape(tmp_path):

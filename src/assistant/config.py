@@ -12,9 +12,13 @@ built-in defaults (handy in tests).
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from assistant.profiles import ProfileMeta
 
 load_dotenv()
 
@@ -81,12 +85,27 @@ class Config(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    # The install root: holds only global files (profiles.json, secrets.json,
+    # pricing.json, log) and the profiles/ tree. Stays fixed across with_profile().
+    root_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME)
+    # Profile-owned data dir. Equals root_dir for the base config; with_profile()
+    # repoints it at root_dir/profiles/<id>.
     data_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME)
     # Where installed skills live (SKILL.md packages).
     skills_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME / "skills")
     # The agent's working file space — a real, visible folder it can read/write via
     # AG2's FilesystemToolkit (confined to here). Configurable via AG2ASSISTANT_WORKSPACE.
     workspace_dir: Path = Field(default_factory=lambda: Path.home() / "Documents" / "AG2 Assistant")
+
+    def with_profile(self, meta: "ProfileMeta") -> "Config":
+        """A deep copy whose path fields are reinterpreted for a profile: data_dir and
+        skills_dir land under root_dir/profiles/<id>, workspace_dir is the profile's
+        workspace. root_dir is unchanged (the global files stay at the root)."""
+        cfg = self.model_copy(deep=True)
+        cfg.data_dir = cfg.root_dir / "profiles" / meta.id
+        cfg.skills_dir = cfg.data_dir / "skills"
+        cfg.workspace_dir = Path(meta.workspace)
+        return cfg
 
 
 def default_config_path() -> Path:
@@ -107,22 +126,6 @@ def data_dir() -> Path:
         except Exception:
             pass
     return Path.home() / _DATA_DIR_NAME
-
-
-def _apply_settings_overrides(cfg: Config) -> None:
-    """Layer the UI-selected assistant provider/model (persisted via the settings
-    store) over file/defaults. Best-effort: a missing/broken settings store changes
-    nothing. Explicit AG2ASSISTANT_* env vars still win (applied after this)."""
-    try:
-        from assistant import settings
-
-        llm = settings.get_llm()
-    except Exception:
-        return
-    if llm.get("provider"):
-        cfg.llm.provider = llm["provider"]
-    if llm.get("model"):
-        cfg.llm.model = llm["model"]
 
 
 def _apply_env_overrides(cfg: Config) -> None:
@@ -170,6 +173,9 @@ def load_config(path: Path | None = None) -> Config:
         except Exception:
             data = {}  # a malformed config file falls back to defaults
     cfg = Config(**data)
-    _apply_settings_overrides(cfg)  # UI-selected provider/model over file/defaults
+    # root_dir tracks whatever data_dir resolves to (config.json may override it); the
+    # profiles/ tree and global files live under this root. Profile derivation is via
+    # Config.with_profile(); load_config() itself is profile-agnostic.
+    cfg.root_dir = cfg.data_dir
     _apply_env_overrides(cfg)  # explicit AG2ASSISTANT_* env still wins last
     return cfg

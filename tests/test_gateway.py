@@ -1,31 +1,16 @@
 """Tests for the AG2 Assistant gateway and its REST/WebSocket facade.
 
 Unit tests stub the agent so they run without an LLM. Integration tests exercise
-the real agent end-to-end.
+the real agent end-to-end. The REST facade is now profile-scoped: the app is built
+around a ``ProfileManager`` with one profile and routes live under
+``/api/p/{pid}/…`` (see ``conftest.make_profile_app`` / the ``profile_app`` fixture).
 """
 
 import asyncio
 
 import pytest
 
-
-class _FakeReply:
-    """Minimal stand-in for AgentReply."""
-
-    def __init__(self, body: str):
-        self.body = body
-
-
-class _FakeAgent:
-    """Counts turns per stream id so echo[N] proves per-session continuity."""
-
-    def __init__(self):
-        self._counts: dict = {}
-
-    async def ask(self, *msg, stream=None, **kwargs) -> _FakeReply:
-        sid = getattr(stream, "id", "default")
-        self._counts[sid] = self._counts.get(sid, 0) + 1
-        return _FakeReply(f"echo[{self._counts[sid]}]: {msg[0]}")
+from tests.conftest import FakeAgent, FakeReply, api, make_profile_app, use_fake_agent
 
 
 @pytest.fixture
@@ -34,7 +19,7 @@ def fake_gateway(monkeypatch):
     from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False, persist=False)
-    gw._agent = _FakeAgent()
+    gw._agent = FakeAgent()
     return gw
 
 
@@ -76,7 +61,7 @@ async def test_forwarding_events_passes_structured_events_not_transcript(fake_ga
         await captured["fn"](batch)
         await captured["fn"](ModelMessageChunk(content="spoken words"))  # transcript → omitted
         await captured["fn"](ModelResponse(message=ModelMessage(content="spoken")))  # → omitted
-        return _FakeReply("done")
+        return FakeReply("done")
 
     reply = await fake_gateway._ask_forwarding_events(_Stream(), ask_coro(), on_event)
 
@@ -153,7 +138,7 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     from assistant.config import Config
     from assistant.gateway.core import Gateway
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
 
     gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
     await gw.start()
@@ -173,110 +158,107 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     assert s1["preview"] == "hello there"
 
 
-def test_sessions_rest_endpoints(monkeypatch, tmp_path):
-    from fastapi.testclient import TestClient
-
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
-
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
-    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False)
-    with TestClient(app) as client:
-        client.post("/api/message", json={"text": "first msg", "session_id": "u1"})
-        sessions = client.get("/api/sessions").json()["sessions"]
-        assert any(s["session_id"] == "u1" for s in sessions)
-        msgs = client.get("/api/sessions/u1").json()["messages"]
-        assert msgs[0]["text"] == "first msg"
+# --- REST facade (profile-scoped) ---
 
 
-def test_rest_message_endpoint(monkeypatch):
+def test_sessions_rest_endpoints(profile_app):
+    client, pid = profile_app
+    client.post(api(pid, "/message"), json={"text": "first msg", "session_id": "u1"})
+    sessions = client.get(api(pid, "/sessions")).json()["sessions"]
+    assert any(s["session_id"] == "u1" for s in sessions)
+    msgs = client.get(api(pid, "/sessions/u1")).json()["messages"]
+    assert msgs[0]["text"] == "first msg"
+
+
+def test_rest_message_endpoint(profile_app):
     """The REST facade returns a reply for a posted message (fake agent)."""
+    client, pid = profile_app
+    health = client.get("/api/health").json()
+    assert health["status"] == "ok"
+
+    resp = client.post(api(pid, "/message"), json={"text": "hi there", "session_id": "u1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reply"] == "echo[1]: hi there"
+    assert body["session_id"] == "u1"
+
+
+def test_unknown_and_archived_profile_status(monkeypatch):
+    """A prefixed route on an unknown pid 404s; on an archived pid 410s."""
     from fastapi.testclient import TestClient
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
+    from assistant import profiles
+    from assistant.gateway.app import create_app
+    from assistant.gateway.profile_manager import ProfileManager
 
-    # Patch the agent factory where the gateway core looks it up.
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+    use_fake_agent(monkeypatch)
+    work = profiles.create_profile("Work", "teal")
+    profiles.profile_dir(work.id).mkdir(parents=True, exist_ok=True)
+    keep = profiles.create_profile("Personal", "coral")  # so archive isn't the last
+    profiles.profile_dir(keep.id).mkdir(parents=True, exist_ok=True)
 
-    app = app_mod.create_app(memory=False, persist=False)
+    app = create_app(ProfileManager(memory=False, persist=False))
     with TestClient(app) as client:
-        health = client.get("/api/health").json()
-        assert health["status"] == "ok"
-
-        resp = client.post("/api/message", json={"text": "hi there", "session_id": "u1"})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["reply"] == "echo[1]: hi there"
-        assert body["session_id"] == "u1"
+        assert client.get(api("ghost", "/sessions")).status_code == 404
+        assert client.get(api(work.id, "/sessions")).status_code == 200
+        # archive work (with a replacement default if needed), then it 410s
+        client.request("DELETE", f"/api/profiles/{work.id}", json={"new_default": keep.id})
+        assert client.get(api(work.id, "/sessions")).status_code == 410
 
 
-def test_mcp_settings_endpoints(monkeypatch):
-    from fastapi.testclient import TestClient
+def test_mcp_settings_endpoints(profile_app):
+    client, pid = profile_app
+    assert client.get(api(pid, "/settings")).json()["mcp_servers"] == []
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
+    resp = client.post(
+        api(pid, "/settings/mcp"),
+        json={
+            "name": "local",
+            "command": "__missing_mcp_server__",
+            "args": "--flag",
+            "env": "TOKEN=secret",
+        },
+    )
+    assert resp.status_code == 200
+    server = resp.json()["server"]
+    assert server["env_keys"] == ["TOKEN"]
+    assert "env" not in server
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+    listed = client.get(api(pid, "/settings")).json()["mcp_servers"]
+    assert listed[0]["name"] == "local"
+    assert "env" not in listed[0]
 
-    app = app_mod.create_app(memory=False, persist=False)
-    with TestClient(app) as client:
-        assert client.get("/api/settings").json()["mcp_servers"] == []
+    health = client.post(api(pid, "/settings/mcp/local/health"))
+    assert health.status_code == 200
+    assert health.json()["ok"] is False
 
-        resp = client.post(
-            "/api/settings/mcp",
-            json={
-                "name": "local",
-                "command": "__missing_mcp_server__",
-                "args": "--flag",
-                "env": "TOKEN=secret",
-            },
-        )
-        assert resp.status_code == 200
-        server = resp.json()["server"]
-        assert server["env_keys"] == ["TOKEN"]
-        assert "env" not in server
-
-        listed = client.get("/api/settings").json()["mcp_servers"]
-        assert listed[0]["name"] == "local"
-        assert "env" not in listed[0]
-
-        health = client.post("/api/settings/mcp/local/health")
-        assert health.status_code == 200
-        assert health.json()["ok"] is False
-
-        assert client.delete("/api/settings/mcp/local").json()["ok"] is True
-        assert client.get("/api/settings").json()["mcp_servers"] == []
-        assert client.delete("/api/settings/mcp/local").status_code == 404
+    assert client.delete(api(pid, "/settings/mcp/local")).json()["ok"] is True
+    assert client.get(api(pid, "/settings")).json()["mcp_servers"] == []
+    assert client.delete(api(pid, "/settings/mcp/local")).status_code == 404
 
 
-def test_project_folder_endpoint_seeds_readonly_repo_files(monkeypatch, tmp_path):
-    """POST /api/settings/project-folder persists the folder AND seeds a `repo-files`
+def test_project_folder_endpoint_seeds_readonly_repo_files(tmp_path, monkeypatch):
+    """POST settings/project-folder persists the folder AND seeds a `repo-files`
     MCP scoped to it with exactly the 7 read tools (no write/edit/delete reaches the agent)."""
     from fastapi.testclient import TestClient
-
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
     proj = tmp_path / "project"
     proj.mkdir()
 
-    app = app_mod.create_app(memory=False, persist=False)
+    use_fake_agent(monkeypatch)
+    app, pid = make_profile_app()
     with TestClient(app) as client:
-        before = client.get("/api/settings").json()
+        before = client.get(api(pid, "/settings")).json()
         assert before["project_folder"] == ""
         assert before["mcp_servers"] == []
         # the picker's start roots are advertised for the UI
         assert set(before["fs"]) == {"home", "cwd", "workspace"}
 
-        resp = client.post("/api/settings/project-folder", json={"path": str(proj)})
+        resp = client.post(api(pid, "/settings/project-folder"), json={"path": str(proj)})
         assert resp.status_code == 200
         assert resp.json()["project_folder"] == str(proj.resolve())
 
-        s = client.get("/api/settings").json()
+        s = client.get(api(pid, "/settings")).json()
         assert s["project_folder"] == str(proj.resolve())
         server = next(x for x in s["mcp_servers"] if x["name"] == "repo-files")
         assert server["command"] == "npx"
@@ -300,23 +282,19 @@ def test_project_folder_endpoint_seeds_readonly_repo_files(monkeypatch, tmp_path
         )
 
         # a non-directory is rejected (and seeds nothing)
-        bad = client.post("/api/settings/project-folder", json={"path": str(proj / "nope")})
+        bad = client.post(api(pid, "/settings/project-folder"), json={"path": str(proj / "nope")})
         assert bad.status_code == 400
 
 
-def test_fs_list_endpoint_lists_subdirs(monkeypatch, tmp_path):
+def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
-
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
     (tmp_path / "alpha").mkdir()
     (tmp_path / "beta").mkdir()
     (tmp_path / "file.txt").write_text("x")
 
-    app = app_mod.create_app(memory=False, persist=False)
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
     with TestClient(app) as client:
         r = client.get("/api/fs/list", params={"path": str(tmp_path)}).json()
         assert r["ok"] is True
@@ -326,99 +304,88 @@ def test_fs_list_endpoint_lists_subdirs(monkeypatch, tmp_path):
         assert bad["ok"] is False
 
 
-def test_create_app_shares_injected_gateway(fake_gateway):
-    """When a gateway is injected (combined `ag2-assistant run`), the app reuses it
-    rather than creating its own, and doesn't tear it down on shutdown."""
-    from fastapi.testclient import TestClient
-
-    import assistant.gateway.app as app_mod
-
-    app = app_mod.create_app(gateway=fake_gateway)
-    with TestClient(app) as client:
-        resp = client.post("/api/message", json={"text": "hi", "session_id": "u1"})
-        assert resp.json()["reply"] == "echo[1]: hi"
-    # the same shared gateway holds the session, and survives app shutdown
-    assert fake_gateway.status()["sessions"] == 1
-    assert fake_gateway.status()["status"] == "ok"
+def test_stream_roundtrip(profile_app):
+    """The stream WebSocket replays history (ready) then runs a turn (turn_end)."""
+    client, pid = profile_app
+    with client.websocket_connect(api(pid, "/stream?session=w1")) as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"text": "ping"})
+        assert ws.receive_json()["type"] == "turn_end"
 
 
-def test_stream_roundtrip(monkeypatch):
-    """The /api/stream WebSocket replays history (ready) then runs a turn (turn_end)."""
-    from fastapi.testclient import TestClient
+def test_stream_unknown_profile_ws_closed(profile_app):
+    """A stream WS on an unknown pid is closed before accept (code 4404)."""
+    from starlette.websockets import WebSocketDisconnect
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
-
-    app = app_mod.create_app(memory=False, persist=False)
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/stream?session=w1") as ws:
-            assert ws.receive_json()["type"] == "ready"
-            ws.send_json({"text": "ping"})
-            assert ws.receive_json()["type"] == "turn_end"
+    client, _pid = profile_app
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(api("ghost", "/stream?session=x")) as ws:
+            ws.receive_json()
+    assert exc.value.code == 4404
 
 
-# --- gateway-hosted HITL ---
+# --- static / redirects ---
 
 
-async def test_root_redirects_to_app(fake_gateway):
+def test_root_redirects_to_app(profile_app):
     """/ and unknown paths redirect to the Svelte app at /app."""
-    from fastapi.testclient import TestClient
-
-    import assistant.gateway.app as app_mod
-
-    app = app_mod.create_app(gateway=fake_gateway)
-    with TestClient(app) as client:
-        root = client.get("/", follow_redirects=False)
-        assert root.status_code == 307 and root.headers["location"] == "/app/"
-        other = client.get("/anything", follow_redirects=False)
-        assert other.status_code == 307 and other.headers["location"] == "/app/"
-        assert client.get("/api/bogus", follow_redirects=False).status_code == 404
+    client, _pid = profile_app
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 307 and root.headers["location"] == "/app/"
+    other = client.get("/anything", follow_redirects=False)
+    assert other.status_code == 307 and other.headers["location"] == "/app/"
+    assert client.get("/api/bogus", follow_redirects=False).status_code == 404
 
 
-def test_favicon_served(fake_gateway):
-    from fastapi.testclient import TestClient
-
-    import assistant.gateway.app as app_mod
-
-    app = app_mod.create_app(gateway=fake_gateway)
-    with TestClient(app) as client:
-        for path in ("/faviconlight.svg", "/favicondark.svg", "/favicon.ico"):
-            r = client.get(path)
-            assert r.status_code == 200, path
-            assert "svg" in r.headers["content-type"]
-            assert "<svg" in r.text
+def test_favicon_served(profile_app):
+    client, _pid = profile_app
+    for path in ("/faviconlight.svg", "/favicondark.svg", "/favicon.ico"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert "svg" in r.headers["content-type"]
+        assert "<svg" in r.text
 
 
-async def test_hitl_routes_served_by_gateway(fake_gateway):
-    """The gateway serves the styled /hitl page, lists pending, resolves answers."""
+# --- HITL: global dispatcher over per-profile registries ---
+
+
+async def test_hitl_routes_served_by_gateway(monkeypatch):
+    """The global /hitl page dispatches to the profile whose registry holds the id;
+    the profile-scoped /hitl/pending lists that profile's questions."""
     from httpx import ASGITransport, AsyncClient
 
-    import assistant.gateway.app as app_mod
+    from assistant import profiles
+    from assistant.gateway.app import create_app
+    from assistant.gateway.profile_manager import ProfileManager
     from assistant.hitl.base import Question
 
-    app = app_mod.create_app(gateway=fake_gateway)
-    # register a pending question in this test's loop (the routes don't need the
-    # gateway, and app.state.hitl is wired at create_app time)
-    req_id, fut = app.state.hitl.register(Question(text="Proceed?", options=["Yes", "No"]))
+    use_fake_agent(monkeypatch)
+    meta = profiles.create_profile("Test", "teal")
+    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    manager = ProfileManager(memory=False, persist=False)
+    app = create_app(manager)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as client:
-        listed = (await client.get("/api/hitl/pending")).json()["pending"]
-        assert any(item["id"] == req_id for item in listed)
+        # inside the ASGI lifespan the runtime is booted; register on its registry
+        async with app.router.lifespan_context(app):
+            runtime = manager.get(meta.id)
+            req_id, fut = runtime.hitl.register(Question(text="Proceed?", options=["Yes", "No"]))
 
-        page = await client.get(f"/hitl/{req_id}")
-        assert page.status_code == 200
-        assert "Proceed?" in page.text
+            listed = (await client.get(api(meta.id, "/hitl/pending"))).json()["pending"]
+            assert any(item["id"] == req_id for item in listed)
 
-        ok = await client.post(f"/hitl/{req_id}/answer", json={"answer": "Yes"})
-        assert ok.json()["ok"] is True
-        assert fut.result() == "Yes"  # the answer resolved the pending future
+            page = await client.get(f"/hitl/{req_id}")
+            assert page.status_code == 200
+            assert "Proceed?" in page.text
 
-        # unknown id → 404
-        missing = await client.post("/hitl/nope/answer", json={"answer": "x"})
-        assert missing.status_code == 404
+            ok = await client.post(f"/hitl/{req_id}/answer", json={"answer": "Yes"})
+            assert ok.json()["ok"] is True
+            assert fut.result() == "Yes"  # the answer resolved the pending future
+
+            # unknown id → 404
+            missing = await client.post("/hitl/nope/answer", json={"answer": "x"})
+            assert missing.status_code == 404
 
 
 def test_decode_attachments():
@@ -434,22 +401,23 @@ def test_decode_attachments():
 
 
 def test_stream_timeout_sends_error_frame(monkeypatch):
-    """A turn that exceeds REPLY_TIMEOUT surfaces an error frame on /api/stream."""
+    """A turn that exceeds REPLY_TIMEOUT surfaces an error frame on the stream WS."""
     from fastapi.testclient import TestClient
 
-    import assistant.gateway.app as app_mod
     import assistant.gateway.core as core_mod
 
     class _HangAgent:
+        tools = []
+
         async def ask(self, *a, stream=None, **k):
             await asyncio.Event().wait()  # never returns → triggers wait_for timeout
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _HangAgent())
+    use_fake_agent(monkeypatch, lambda *a, **k: _HangAgent())
     monkeypatch.setattr(core_mod, "REPLY_TIMEOUT", 0.2)
 
-    app = app_mod.create_app(memory=False, persist=False)
+    app, pid = make_profile_app()
     with TestClient(app) as client:
-        with client.websocket_connect("/api/stream?session=s1") as ws:
+        with client.websocket_connect(api(pid, "/stream?session=s1")) as ws:
             while ws.receive_json().get("type") != "ready":
                 pass
             ws.send_json({"text": "slow"})
@@ -549,13 +517,10 @@ def test_cross_origin_requests_rejected(monkeypatch):
     from fastapi.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-
     monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
+    use_fake_agent(monkeypatch)
 
-    app = app_mod.create_app(memory=False, persist=False)
+    app, pid = make_profile_app()
     with TestClient(app) as client:  # TestClient's Host is "testserver"
         assert client.get("/api/health").status_code == 200  # no Origin → ok
         assert (
@@ -568,12 +533,12 @@ def test_cross_origin_requests_rejected(monkeypatch):
         # cross-origin WebSocket handshake is closed before accept()
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(
-                "/api/stream?session=x", headers={"origin": "http://evil.example"}
+                api(pid, "/stream?session=x"), headers={"origin": "http://evil.example"}
             ) as ws:
                 ws.receive_json()
 
         # same-origin WebSocket still connects and replays history
         with client.websocket_connect(
-            "/api/stream?session=y", headers={"origin": "http://testserver"}
+            api(pid, "/stream?session=y"), headers={"origin": "http://testserver"}
         ) as ws:
             assert ws.receive_json()["type"] == "ready"

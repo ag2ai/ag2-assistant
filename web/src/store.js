@@ -1,5 +1,11 @@
 import { writable } from 'svelte/store'
 
+// Multi-profile registry (§5.2). `list` mirrors GET /api/profiles; `activeId`
+// is the profile the client is currently viewing (persisted separately in
+// localStorage via lib/profile.js). Minimal in Phase 1 — Phase 2 builds the
+// switcher chips + activity badges on top of this.
+export const profiles = writable({ list: [], activeId: null })
+
 // The active thread: a projection of one AG2 stream. `items` are folded from
 // `{type,data}` events (see project.js). `kind` is 'chat' or 'task'.
 export const thread = writable({ id: null, kind: 'chat', items: [], busy: false })

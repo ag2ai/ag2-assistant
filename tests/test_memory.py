@@ -135,18 +135,20 @@ async def test_read_and_clear_profile_roundtrip(tmp_path):
 
 
 @pytest.mark.integration
-async def test_profile_learned_after_conversation(tmp_path, monkeypatch):
-    """End-to-end: a conversation should produce a persisted profile."""
-    import assistant.memory as memory_mod
-
-    store_path = tmp_path / "profile.db"
-    monkeypatch.setattr(memory_mod, "default_store_path", lambda: store_path)
-
+async def test_profile_learned_after_conversation(tmp_path):
+    """End-to-end: a conversation should produce a persisted profile in this
+    profile's store (config.data_dir / profile.db)."""
     from assistant.agent import ask
+    from assistant.config import load_config
+
+    config = load_config()
+    config.data_dir = tmp_path  # this profile's learned memory lands here
+    store_path = tmp_path / "profile.db"
 
     await ask(
         "Please always keep your answers very short and bulleted. "
         "I hate long paragraphs. I usually work early mornings.",
+        config,
         memory=True,
         platform="cli",
     )

@@ -16,6 +16,7 @@ stream, never crossing histories.
 import asyncio
 import contextlib
 import json
+from collections.abc import Callable
 from datetime import datetime
 from urllib.parse import quote
 
@@ -49,6 +50,7 @@ class Gateway:
         onboard: bool = True,
         persist: bool = True,
         task_service=None,
+        config_factory: Callable[[], Config] | None = None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -56,6 +58,11 @@ class Gateway:
         self._onboard = onboard
         self._persist = persist
         self._tasks = task_service  # gives the universal agent its system tools
+        # How reload() re-resolves config. For a profile runtime this re-reads that
+        # profile's registry entry + settings on every call (§4.1), so workspace/model
+        # edits are picked up; for bare construction it defaults to load_config (the
+        # global root config, profile-agnostic).
+        self._config_factory = config_factory or load_config
         self._onboarding_done = False
         self._agent = None
         self._permissions = None
@@ -67,7 +74,14 @@ class Gateway:
         self._locks: dict[str, asyncio.Lock] = {}
         from assistant.usage import UsageLedger
 
-        self._usage = UsageLedger()  # daily token/cost tally for the activity HUD
+        # Per-profile daily token/cost tally for the activity HUD.
+        self._usage = UsageLedger(self._config.data_dir / "usage.json")
+
+    @property
+    def config(self) -> Config:
+        """The gateway's live config — re-resolved on ``reload()`` (so a profile
+        runtime's workspace/model edits are reflected here after a reload)."""
+        return self._config
 
     def usage_today(self) -> dict:
         """Today's token + estimated-cost totals (for the cost & activity HUD)."""
@@ -78,12 +92,17 @@ class Gateway:
         everything) + compaction. Used by start() and reload()."""
         extra_tools = None
         if self._tasks is not None:
+            from assistant.settings import Settings
             from assistant.system_tools import build_system_tools
 
             # create/schedule come from the system tools, so we don't also wire
             # start_task/schedule_task here (that duplicated names). `platform` lets
             # those tools note (on channels) that follow-up questions go to the web app.
-            extra_tools = build_system_tools(self._tasks, chats=self, platform=self._platform)
+            # The voice get/set tools read/write THIS profile's settings.
+            settings = Settings(self._config.data_dir / "settings.json")
+            extra_tools = build_system_tools(
+                self._tasks, settings, chats=self, platform=self._platform
+            )
         return create_agent(
             self._config,
             memory=self._memory,
@@ -102,7 +121,8 @@ class Gateway:
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
         self._agent = self._make_agent()
-        self._permissions = PermissionStore()
+        # Per-profile persistent grant store (config.data_dir is the profile dir).
+        self._permissions = PermissionStore(self._config.data_dir / "permissions.json")
 
         if self._persist:
             from ag2.knowledge import SqliteKnowledgeStore
@@ -122,10 +142,11 @@ class Gateway:
         work doesn't keep using stale keys. Voice needs no reload (built per session
         from env)."""
         from assistant import secrets
-        from assistant.config import load_config
 
         secrets.load_into_env()
-        self._config = load_config()
+        # Re-resolve via the injected factory (a profile runtime's factory re-reads
+        # the profile's registry entry + settings; the default is load_config).
+        self._config = self._config_factory()
         if self._agent is not None:
             self._agent = self._make_agent()
         if self._tasks is not None and hasattr(self._tasks, "reload"):
@@ -324,6 +345,7 @@ class Gateway:
         agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
+        from assistant.settings import Settings
         from assistant.system_tools import format_task
         from assistant.voice import build_voice_agent
 
@@ -384,6 +406,7 @@ class Gateway:
         assistant_tools = [n for n in assistant_tools if n]
         return build_voice_agent(
             self._config,
+            Settings(self._config.data_dir / "settings.json"),
             self._tasks,
             delegate,
             voice=voice,
@@ -521,9 +544,10 @@ class Gateway:
         self._onboarding_done = True  # set first: never double-prompt, even on error
         from assistant.onboarding import needs_onboarding, run_onboarding
 
+        store_path = self._config.data_dir / "profile.db"  # this profile's learned memory
         try:
-            if await needs_onboarding():
-                await run_onboarding(asker)
+            if await needs_onboarding(store_path):
+                await run_onboarding(asker, store_path)
         except Exception as exc:
             from assistant.observability import log_suppressed
 
@@ -570,16 +594,27 @@ def build_gateway(
     memory: bool = True,
     platform: str = "gateway",
     persist: bool = True,
+    config_factory: Callable[[], Config] | None = None,
 ) -> "tuple[Gateway, object]":
     """Canonical construction: a Gateway wired to its TaskService, so the universal
     agent gets the task system tools (create/schedule/query). Used by the web app and
     every channel command. Returns ``(gateway, task_service)``; the caller starts both
-    and wires ``task_service.set_emitter(gateway.emit_event)``."""
+    and wires ``task_service.set_emitter(gateway.emit_event)``.
+
+    ``config_factory`` (optional) is threaded into both the Gateway and TaskService so
+    their ``reload()`` re-resolves config the same way — a profile runtime passes one
+    that re-reads that profile's registry + settings (§4.1); when omitted both fall
+    back to ``load_config`` (the profile-agnostic root config)."""
     from assistant.gateway.tasks_service import TaskService
 
     config = config or load_config()
-    tasks = TaskService(config=config)
+    tasks = TaskService(config=config, config_factory=config_factory)
     gateway = Gateway(
-        config=config, memory=memory, platform=platform, persist=persist, task_service=tasks
+        config=config,
+        memory=memory,
+        platform=platform,
+        persist=persist,
+        task_service=tasks,
+        config_factory=config_factory,
     )
     return gateway, tasks
