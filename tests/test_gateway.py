@@ -158,6 +158,143 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     assert s1["preview"] == "hello there"
 
 
+# --- in-flight session stub (bug: a chat mid-turn must be listable so it survives
+#     a profile switch, which is a full-page nav that discards local page state) ---
+
+
+class _SlowAgent:
+    """A fake agent whose turn blocks on an event, so a test can observe state while
+    a turn is *in flight* (simulating a long agentic turn: web searches etc.)."""
+
+    def __init__(self):
+        self.gate = asyncio.Event()
+        self.tools = []
+        self._counts: dict = {}
+
+    async def ask(self, *msg, stream=None, **kwargs) -> FakeReply:
+        await self.gate.wait()  # hold the turn open until the test releases it
+        sid = getattr(stream, "id", "default")
+        self._counts[sid] = self._counts.get(sid, 0) + 1
+        return FakeReply(f"echo[{self._counts[sid]}]: {msg[0]}")
+
+
+async def _persistent_gateway(tmp_path, monkeypatch, agent):
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
+    from assistant.gateway.core import Gateway
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: agent)
+    gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await gw.start()
+    gw._agent = agent
+    return gw
+
+
+async def test_inflight_session_listed_before_completion(tmp_path, monkeypatch):
+    """(a) A session is listed with the user-message preview *while* its (slow) turn
+    is still running — the stub is written the instant the message is accepted."""
+    slow = _SlowAgent()
+    gw = await _persistent_gateway(tmp_path, monkeypatch, slow)
+    turn = asyncio.create_task(gw.send_message("search the web for X", session_id="live"))
+    try:
+        # Let send_message reach the (blocked) agent turn.
+        for _ in range(50):
+            if await gw._event_store.exists(gw._transcript_path("live")):
+                break
+            await asyncio.sleep(0.01)
+
+        listed = await gw.list_sessions()
+        s = next(s for s in listed if s["session_id"] == "live")
+        assert s["preview"] == "search the web for X"  # user message shows immediately
+        assert s["turns"] == 0  # no completed exchange yet
+        assert s["title"] == ""  # not yet named → drawer falls back to the preview
+
+        # The display transcript already carries the pending user message.
+        msgs = await gw.transcript("live")
+        assert msgs == [{"role": "user", "text": "search the web for X"}]
+    finally:
+        slow.gate.set()
+        await turn
+    await gw.close()
+
+
+async def test_inflight_stub_completed_in_place_no_duplicate(tmp_path, monkeypatch):
+    """(b)+(c) After the turn completes the entry has the reply, one turn, a title,
+    and the user message is NOT duplicated by the completion write; a second turn
+    threads on without duplicating either (multi-turn stub is a no-op)."""
+    import assistant.title as title_mod
+
+    async def fake_title(config, user_text, reply_text):
+        return "Named Chat"
+
+    monkeypatch.setattr(title_mod, "generate_title", fake_title)
+
+    gw = await _persistent_gateway(tmp_path, monkeypatch, FakeAgent())
+    await gw.send_message("first question", session_id="s1")
+    for _ in range(50):  # title generation is fire-and-forget
+        listed = await gw.list_sessions()
+        if next(x for x in listed if x["session_id"] == "s1")["title"]:
+            break
+        await asyncio.sleep(0.01)
+
+    msgs = await gw.transcript("s1")
+    # exactly one user + one agent — the stub was completed in place, not re-appended.
+    assert msgs == [
+        {"role": "user", "text": "first question"},
+        {"role": "agent", "text": "echo[1]: first question"},
+    ]
+    listed = await gw.list_sessions()
+    s1 = next(x for x in listed if x["session_id"] == "s1")
+    assert s1["turns"] == 1
+    assert s1["title"] == "Named Chat"
+
+    # Second turn: no stub duplication, history keeps growing normally.
+    await gw.send_message("second question", session_id="s1")
+    msgs = await gw.transcript("s1")
+    assert [m["text"] for m in msgs] == [
+        "first question",
+        "echo[1]: first question",
+        "second question",
+        "echo[2]: second question",
+    ]
+    listed = await gw.list_sessions()
+    assert next(x for x in listed if x["session_id"] == "s1")["turns"] == 2
+    await gw.close()
+
+
+async def test_inflight_session_stream_replay_returns_user_event(tmp_path, monkeypatch):
+    """(d) Reopening an in-flight session mid-turn replays the user message event, so
+    the stream bridge shows the history so far and attaches live. Here the user event
+    is emitted onto the session stream before the (blocked) turn, exactly as the WS
+    stream path does for a real message; a fresh bridge open() must replay it."""
+    from assistant.events import Attachment  # any persisted, replayable session event
+
+    slow = _SlowAgent()
+    gw = await _persistent_gateway(tmp_path, monkeypatch, slow)
+    # Emit a marker event onto the session stream (persisted + replayable), the way the
+    # app's stream handler surfaces the user's turn context before running it.
+    await gw.emit_event("live", Attachment("/tmp/x.png", name="x.png"))
+
+    turn = asyncio.create_task(gw.send_message("do the slow thing", session_id="live"))
+    try:
+        for _ in range(50):
+            if await gw._event_store.exists(gw._transcript_path("live")):
+                break
+            await asyncio.sleep(0.01)
+
+        # A fresh reader (new bridge) replays the persisted stream so far.
+        stream = await gw.stream_for("live")
+        events = await stream.history.get_events()
+        assert any(type(e).__name__ == "Attachment" for e in events)
+    finally:
+        # Release AND await the turn: a task still running at teardown races the
+        # loop shutdown and flakes unrelated tests.
+        slow.gate.set()
+        await turn
+        await turn
+    await gw.close()
+
+
 # --- REST facade (profile-scoped) ---
 
 
@@ -587,3 +724,120 @@ def test_cross_origin_requests_rejected(monkeypatch):
             api(pid, "/stream?session=y"), headers={"origin": "http://testserver"}
         ) as ws:
             assert ws.receive_json()["type"] == "ready"
+
+
+# --- POST /api/identity: seed the universal doc from web onboarding ---------- #
+#
+# The web onboarding "About you" step posts identity answers here; the endpoint
+# seeds the shared universal "who the user is" doc via the SAME identity_document
+# helper the CLI interview uses (format parity), and is seed-only: it refuses to
+# clobber an existing doc and no-ops on an all-empty payload. Seeding it is what
+# keeps the in-chat interview from firing for a web-onboarded user.
+
+
+def _identity_app():
+    from assistant.gateway.app import create_app
+    from assistant.gateway.profile_manager import ProfileManager
+
+    return create_app(ProfileManager(memory=False, persist=False))
+
+
+def test_identity_endpoint_seeds_when_empty():
+    from fastapi.testclient import TestClient
+
+    app = _identity_app()
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/identity",
+            json={"name": "Mark", "location": "Sydney", "hours": "9-5", "style": "concise"},
+        )
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "seeded": True}
+        doc = client.get("/api/memory").json()["text"]
+        assert "Name: Mark" in doc
+        assert "Location: Sydney" in doc
+        assert "Usual working hours: 9-5" in doc
+        assert "Prefers answers that are concise." in doc
+
+
+def test_identity_endpoint_refuses_to_clobber_existing_doc():
+    from fastapi.testclient import TestClient
+
+    app = _identity_app()
+    with TestClient(app) as client:
+        client.post(
+            "/api/memory", json={"text": "# User profile\n\n## About the user\n- Name: Ada\n"}
+        )
+        r = client.post("/api/identity", json={"name": "Mark"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["seeded"] is False and body["reason"] == "exists"
+        # the pre-existing doc is untouched
+        assert "Name: Ada" in client.get("/api/memory").json()["text"]
+        assert "Name: Mark" not in client.get("/api/memory").json()["text"]
+
+
+def test_identity_endpoint_noops_when_all_empty():
+    from fastapi.testclient import TestClient
+
+    app = _identity_app()
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/identity", json={"name": "", "location": "  ", "hours": "", "style": ""}
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["seeded"] is False and body["reason"] == "empty"
+        assert client.get("/api/memory").json()["text"].strip() == ""
+
+
+async def test_identity_seed_disables_interview_gate():
+    """After the endpoint seeds the universal store, the in-chat interview gate is
+    closed — a web-onboarded user's first chat won't trigger it."""
+    from fastapi.testclient import TestClient
+
+    from assistant.config import load_config
+    from assistant.onboarding import needs_onboarding
+
+    user_store_path = load_config().root_dir / "user.db"
+    assert await needs_onboarding(user_store_path) is True  # fresh install: gate open
+
+    app = _identity_app()
+    with TestClient(app) as client:
+        assert client.post("/api/identity", json={"location": "Sydney"}).json()["seeded"] is True
+
+    assert await needs_onboarding(user_store_path) is False  # gate now closed
+
+
+async def test_identity_document_endpoint_parity():
+    """The endpoint's stored doc is byte-identical to run_onboarding's for the same
+    answers — both go through identity_document, the single formatter."""
+    from fastapi.testclient import TestClient
+
+    from assistant import onboarding
+    from assistant.config import load_config
+    from assistant.memory import PROFILE_PATH, build_profile_store
+
+    answers = {"name": "Ada", "location": "London", "hours": "9am–6pm", "style": "Short & direct"}
+
+    app = _identity_app()
+    with TestClient(app) as client:
+        client.post("/api/identity", json=answers)
+        endpoint_doc = client.get("/api/memory").json()["text"]
+
+    # run_onboarding writes to a separate store; compare its stored doc.
+    class _Asker:
+        def __init__(self, vals):
+            self._vals = list(vals)
+
+        async def ask(self, q, timeout=None):
+            return self._vals.pop(0)
+
+    cli_store = load_config().root_dir / "cli_user.db"
+    await onboarding.run_onboarding(
+        _Asker(["Ada", "London", "9am–6pm", "Short & direct"]),
+        user_store_path=cli_store,
+        env_path=load_config().root_dir / ".env",
+    )
+    cli_doc = await build_profile_store(cli_store).read(PROFILE_PATH)
+    assert endpoint_doc == cli_doc

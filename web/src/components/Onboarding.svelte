@@ -32,8 +32,10 @@
   //   of the overlay). onComplete(firstPid?) — App adopts profiles + navigates.
   let { fresh = false, onComplete = null } = $props()
 
-  const STEPS = ['Welcome', 'Connect', 'Profiles', 'Set up', 'Ready']
-  const SETUP_STEP = 3
+  const STEPS = ['Welcome', 'About you', 'Connect', 'Profiles', 'Set up', 'Ready']
+  const CONNECT_STEP = 2
+  const PROFILES_STEP = 3
+  const SETUP_STEP = 4
   const FEATURES = [
     { icon: 'zap', title: 'Powered by AG2', desc: 'A universal agent runtime — the open-source framework behind every reply.' },
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
@@ -55,6 +57,9 @@
   let keys = $state({ gemini: '', openai: '', anthropic: '' })
   let modelLabel = $state(MODELS[0].label)
   let name = $state($profile.name || '')
+  // "About you" identity answers — seed the shared universal "who the user is" doc
+  // (POST /api/identity at flow completion). All optional; name comes from Welcome.
+  let identity = $state({ location: '', hours: '', style: '' })
   let busy = $state(false)
   let fsRoots = $state({})
 
@@ -103,7 +108,9 @@
   const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
   // Gate per step: Connect needs a key; Profiles needs ≥1 created. The Set up step
   // is fully skippable, so it never gates Continue.
-  const canNext = $derived((step !== 1 || hasKey) && (step !== 2 || created.length > 0))
+  const canNext = $derived(
+    (step !== CONNECT_STEP || hasKey) && (step !== PROFILES_STEP || created.length > 0)
+  )
 
   const back = () => {
     if (step === SETUP_STEP && setupIdx > 0) { enterSetup(setupIdx - 1); return }
@@ -113,7 +120,7 @@
 
   function next() {
     // Leaving Profiles → begin the per-profile setup loop at the first profile.
-    if (step === 2) { step = SETUP_STEP; enterSetup(0); return }
+    if (step === PROFILES_STEP) { step = SETUP_STEP; enterSetup(0); return }
     step = Math.min(step + 1, STEPS.length - 1)
   }
 
@@ -165,6 +172,12 @@
       }
       const m = MODELS.find((x) => x.label === modelLabel)
       if (m) { try { await api.setLlm(m.provider, m.model) } catch {} }
+      // Seed the universal "who the user is" doc from the About-you answers (name from
+      // Welcome). Posted once, at completion, so Back-navigation revisions are captured.
+      // Seed-only server-side: skips an all-empty payload and never clobbers an existing
+      // doc — this is what keeps the CLI first-chat interview from re-firing for web users.
+      const idFields = { name: name.trim(), location: identity.location.trim(), hours: identity.hours.trim(), style: identity.style.trim() }
+      if (Object.values(idFields).some((v) => v)) { try { await api.setIdentity(idFields) } catch {} }
       try { await api.setOnboarded() } catch {} // install-level flag (§4.2/§5.5)
     } finally {
       $profile = { name: name.trim() }
@@ -233,6 +246,31 @@
             </div>
 
           {:else if step === 1}
+            <h2>About you</h2>
+            <p class="lead">A few optional details so every profile knows you. Shared across all profiles — helps every profile know you. All optional.</p>
+            <div class="onb-field">
+              <div class="onb-flabel"><span>Where are you based?</span><span class="hint">city &amp; country</span></div>
+              <div class="onb-input">
+                <Icon name="globe" size={15} />
+                <input placeholder="e.g. Sydney, Australia" bind:value={identity.location} />
+              </div>
+            </div>
+            <div class="onb-field">
+              <div class="onb-flabel"><span>Usual working hours?</span><span class="hint">e.g. 9-5 weekdays</span></div>
+              <div class="onb-input">
+                <Icon name="clock" size={15} />
+                <input placeholder="e.g. 9am–6pm, Mon–Fri" bind:value={identity.hours} />
+              </div>
+            </div>
+            <div class="onb-field">
+              <div class="onb-flabel"><span>How do you like your answers?</span><span class="hint">e.g. short and direct</span></div>
+              <div class="onb-input">
+                <Icon name="message" size={15} />
+                <input placeholder="e.g. short and direct" bind:value={identity.style} />
+              </div>
+            </div>
+
+          {:else if step === CONNECT_STEP}
             <h2>Connect a model</h2>
             <p class="lead">Add at least one provider key. It's stored locally and shared across all your profiles — you can change these anytime in Settings.</p>
             {#each KEY_FIELDS as k}
@@ -253,7 +291,7 @@
               </div>
             </div>
 
-          {:else if step === 2}
+          {:else if step === PROFILES_STEP}
             <h2>Create your profiles</h2>
             <p class="lead">A profile is a colour-coded, isolated workspace — its own chats, tasks, memory, and files. Create one now (e.g. <b>Work</b>), and add more like <b>Personal</b> for day-one separation.</p>
 
@@ -353,8 +391,8 @@
       <div class="onb-nav">
         <button class="onb-btn ghost" onclick={back}><Icon name="chevron-left" size={16} /> Back</button>
         <div class="onb-navright">
-          {#if step === 1 && !hasKey}<span class="hint">Add a key to continue</span>{/if}
-          {#if step === 2 && !created.length}<span class="hint">Create a profile to continue</span>{/if}
+          {#if step === CONNECT_STEP && !hasKey}<span class="hint">Add a key to continue</span>{/if}
+          {#if step === PROFILES_STEP && !created.length}<span class="hint">Create a profile to continue</span>{/if}
           {#if step === SETUP_STEP}
             <!-- Per-profile setup: Skip (no save) or advance (save + next profile / Ready). -->
             <button class="onb-btn ghost" disabled={busy} onclick={() => commitSetup(true)}>Skip</button>

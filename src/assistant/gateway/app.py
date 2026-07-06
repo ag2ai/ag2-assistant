@@ -15,6 +15,7 @@ Route map:
     POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
     POST /api/onboarded                      -> set the install-level onboarding flag
     GET/POST /api/memory                     -> universal "who the user is" doc (shared root/user.db)
+    POST /api/identity                       -> seed universal doc from web onboarding (name/location/hours/style); seed-only, never clobbers
     GET  /api/profiles                       -> {profiles, active_default, onboarded} (§3.5 contract)
     POST /api/profiles                       -> create {name, palette, workspace?}; boots live
     POST /api/profiles/{pid}                 -> rename / palette / workspace (workspace reloads runtime)
@@ -203,6 +204,16 @@ class ChannelTokenRequest(BaseModel):
 
 class MemoryRequest(BaseModel):
     text: str
+
+
+class IdentityRequest(BaseModel):
+    """Identity answers collected in web onboarding (all optional). Seed the shared
+    universal "who the user is" doc, replacing the CLI first-chat interview."""
+
+    name: str | None = None
+    location: str | None = None
+    hours: str | None = None
+    style: str | None = None
 
 
 class ProfileCreateRequest(BaseModel):
@@ -477,6 +488,28 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         await write_universal(req.text, _user_store_path())
         return {"ok": True}
+
+    @app.post("/api/identity")
+    async def seed_identity(req: IdentityRequest) -> dict:
+        """Seed the universal "who the user is" doc from web-onboarding identity answers
+        (name/location/hours/style, all optional). Formats them with the SAME
+        `identity_document` helper the CLI interview uses, so both surfaces produce an
+        identical doc. Onboarding semantics: this only ever *seeds* — if the universal
+        store already holds a doc it is left untouched (returns ``seeded: false``), and
+        if every field is empty nothing is written (also ``seeded: false``). This is why
+        a web-onboarded user's first chat never triggers the in-chat interview: the
+        store is already seeded, so `needs_onboarding` is false."""
+        from assistant.memory import read_universal, write_universal
+        from assistant.onboarding import identity_document
+
+        doc = identity_document(req.model_dump())
+        if not doc:
+            return {"ok": True, "seeded": False, "reason": "empty"}
+        path = _user_store_path()
+        if (await read_universal(path)).strip():
+            return {"ok": True, "seeded": False, "reason": "exists"}
+        await write_universal(doc, path)
+        return {"ok": True, "seeded": True}
 
     # ---- Profile management (global) ----
 

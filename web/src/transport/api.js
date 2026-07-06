@@ -66,6 +66,9 @@ export const api = {
   // getMemory/setMemory below.
   globalMemory: () => j('GET', G('/memory')),
   setGlobalMemory: (text) => j('POST', G('/memory'), { text }),
+  // Seed the universal doc from web-onboarding identity answers (all optional).
+  // Seed-only: the server refuses to clobber an existing doc → {ok, seeded}.
+  setIdentity: (fields) => j('POST', G('/identity'), fields),
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
   sessions: () => j('GET', P('/sessions')).then((d) => d.sessions || []),

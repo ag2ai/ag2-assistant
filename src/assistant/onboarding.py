@@ -110,12 +110,21 @@ def _persist_location(location: str, env_path: Path | None = None) -> None:
         pass  # env file is best-effort; the in-process var is what matters now
 
 
-def build_profile(answers: dict[str, str]) -> str:
-    """Render collected answers as a profile markdown document, or '' if empty."""
-    name = answers.get("name")
-    location = answers.get("location")
-    hours = answers.get("hours")
-    style = answers.get("style")
+def identity_document(answers: dict[str, str]) -> str:
+    """Render collected identity answers as the "# User profile" markdown, or '' if
+    every field is empty/skipped.
+
+    The single source of truth for the seeded doc's format, shared by the CLI
+    interview (`run_onboarding`) and the web onboarding (`POST /api/identity`), so
+    both produce identical documents for the same answers. `style` accepts either
+    one of the interview's canned options (mapped via `_STYLE_MAP`) or free text
+    (rendered verbatim as an answer-style preference), so the web fields can carry a
+    plain phrase like "short and direct".
+    """
+    name = (answers.get("name") or "").strip()
+    location = (answers.get("location") or "").strip()
+    hours = (answers.get("hours") or "").strip()
+    style = (answers.get("style") or "").strip()
 
     about, how, when = [], [], []
     if name:
@@ -124,8 +133,8 @@ def build_profile(answers: dict[str, str]) -> str:
         about.append(f"- Location: {location}")
     if hours:
         when.append(f"- Usual working hours: {hours}")
-    if style and style in _STYLE_MAP:
-        how.append(f"- {_STYLE_MAP[style]}")
+    if style:
+        how.append(f"- {_STYLE_MAP.get(style, f'Prefers answers that are {style}.')}")
 
     sections: list[str] = []
     if about:
@@ -164,7 +173,7 @@ async def run_onboarding(
     if answers.get("location"):
         _persist_location(answers["location"], env_path)
 
-    profile_md = build_profile(answers)
+    profile_md = identity_document(answers)
     if profile_md:
         store = build_profile_store(user_store_path)
         existing = ""

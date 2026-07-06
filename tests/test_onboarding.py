@@ -27,8 +27,8 @@ def isolate(tmp_path):
     return user_store_path, env_path
 
 
-def test_build_profile_renders_sections():
-    md = onboarding.build_profile(
+def test_identity_document_renders_sections():
+    md = onboarding.identity_document(
         {
             "name": "Ada",
             "location": "London, United Kingdom",
@@ -44,9 +44,17 @@ def test_build_profile_renders_sections():
     assert "Prefers short, direct answers." in md
 
 
-def test_build_profile_empty_when_all_skipped():
-    assert onboarding.build_profile({}) == ""
-    assert onboarding.build_profile({"style": "No preference"}) == ""
+def test_identity_document_empty_when_all_skipped():
+    assert onboarding.identity_document({}) == ""
+    assert onboarding.identity_document({"name": "", "location": "  "}) == ""
+
+
+def test_identity_document_freetext_style_renders_verbatim():
+    """Web onboarding sends a free-text answer style (e.g. 'concise'), not one of the
+    CLI's canned options — it should still render as a preference."""
+    md = onboarding.identity_document({"style": "concise"})
+    assert "## How they like things done" in md
+    assert "Prefers answers that are concise." in md
 
 
 async def test_needs_onboarding_true_when_no_profile(isolate):

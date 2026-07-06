@@ -243,6 +243,12 @@ class Gateway:
 
         async with self._session_lock(session_id):
             stream = await self._get_stream(session_id)
+            # Persist a transcript stub the instant we accept the message, so the
+            # session shows up in list_sessions() *during* a long agentic turn — not
+            # only after it completes. Without this, a chat in flight lives solely in
+            # the web page's local state and vanishes on a profile switch (full-page
+            # nav). The completed-turn write below stays the authority (§_persist_turn).
+            await self._ensure_transcript_stub(session_id, text)
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             ask_coro = self._agent.ask(*msg, stream=stream, prompt=prompt, **extra)
             usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
@@ -448,6 +454,34 @@ class Gateway:
     def _transcript_path(self, session_id: str) -> str:
         return f"{_TRANSCRIPT_PREFIX}{quote(session_id, safe='')}.json"
 
+    async def _ensure_transcript_stub(self, session_id, user_text) -> None:
+        """Write a minimal transcript doc as soon as a user message is accepted, so
+        the session is listable *during* the turn (not only after it completes).
+
+        Only writes when there is NO doc yet (a brand-new session's first turn) — a
+        later turn's session is already listed, and its stub would be indistinguishable
+        from a lone pending user message, so we leave the existing doc untouched. The
+        completing turn's ``_append_transcript`` fills in the agent reply in place.
+        Called under the session lock, so it never races the completion write. Best-
+        effort: a persistence hiccup here must not fail the user's turn."""
+        if self._writer is None or self._event_store is None:
+            return
+        path = self._transcript_path(session_id)
+        try:
+            if await self._event_store.exists(path):
+                return  # session already listed — nothing to stub
+            doc = {
+                "session_id": session_id,
+                "messages": [{"role": "user", "text": user_text}],
+                "updated": datetime.now().astimezone().isoformat(),
+                "title": None,  # named after the first exchange completes
+            }
+            await self._event_store.write(path, json.dumps(doc))
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("transcript stub write", exc, session_id=session_id)
+
     async def _append_transcript(self, session_id, user_text, reply_text) -> None:
         path = self._transcript_path(session_id)
         doc = {"session_id": session_id, "messages": [], "updated": ""}
@@ -459,8 +493,19 @@ class Gateway:
 
                 log_suppressed("existing transcript read", exc, session_id=session_id)
         doc["session_id"] = session_id
-        doc["messages"].append({"role": "user", "text": user_text})
-        doc["messages"].append({"role": "agent", "text": reply_text})
+        msgs = doc.get("messages", [])
+        # If a stub for THIS turn is present (a trailing lone user message with the
+        # same text, no agent reply), complete it in place rather than re-appending —
+        # otherwise the user message would be duplicated. Any other tail means this is
+        # a genuinely new turn, so append the full user+agent pair as before.
+        if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("text") == user_text:
+            doc["messages"] = [*msgs, {"role": "agent", "text": reply_text}]
+        else:
+            doc["messages"] = [
+                *msgs,
+                {"role": "user", "text": user_text},
+                {"role": "agent", "text": reply_text},
+            ]
         doc["updated"] = datetime.now().astimezone().isoformat()
         await self._event_store.write(path, json.dumps(doc))
         # After the FIRST complete exchange, name the chat once (async, non-blocking —
@@ -529,8 +574,11 @@ class Gateway:
                 {
                     "session_id": doc.get("session_id", ""),
                     "updated": doc.get("updated", ""),
-                    "title": doc.get("title", ""),  # LLM-named after the first exchange
+                    # LLM-named after the first exchange; None on an in-flight stub —
+                    # normalise to "" so the drawer falls back to the preview cleanly.
+                    "title": doc.get("title") or "",
                     "preview": first_user[:80],
+                    # Completed exchanges only; a lone in-flight user message is 0 turns.
                     "turns": len(msgs) // 2,
                 }
             )
