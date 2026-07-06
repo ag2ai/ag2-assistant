@@ -52,6 +52,8 @@
 .settings .setrow .sgo { color: var(--accent); font-size: 12px; flex: none; }
 .settings .setscroll { display: flex; flex-direction: column; gap: 8px; max-height: 64vh; overflow-y: auto; }
 .settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
+/* Marks a section that applies to the whole install, not the titled profile. */
+.settings .setsec .setwide { font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
 .settings .keyrow { display: flex; align-items: center; gap: 8px; }
 .settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
 .settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }

@@ -29,8 +29,8 @@ _LEGACY_ITEMS = (
 )
 
 # Platform → env vars that must ALL be present for its channel to run. Migration
-# writes ``channels: {<platform>: {enabled: true}}`` into the default profile for
-# each platform whose token(s) are currently set, preserving current behaviour.
+# binds each platform whose token(s) are currently set to the "default" profile in
+# the install-level registry, preserving current behaviour.
 _CHANNEL_TOKENS = {
     "telegram": ("TELEGRAM_BOT_TOKEN",),
     "discord": ("DISCORD_BOT_TOKEN",),
@@ -103,12 +103,10 @@ def migrate_if_needed(root: Path | None = None) -> bool:
         shutil.move(str(src), str(target))
         log.info("migration: moved %s → %s", src, target)
 
-    # Strip the now-redundant onboarded key from the moved settings file, and record
-    # which channels were env-enabled so post-migration channel startup is unchanged.
+    # Strip the now-redundant onboarded key from the moved settings file.
     moved_settings = dest / "settings.json"
     if moved_settings.exists():
         _strip_onboarded_key(moved_settings)
-    _seed_channels(moved_settings)
 
     # Delete the legacy marker (the registry is the flag's only home now).
     if marker.exists():
@@ -123,6 +121,9 @@ def migrate_if_needed(root: Path | None = None) -> bool:
     profiles.set_active_default(meta.id)
     if onboarded:
         profiles.set_onboarded(True)
+    # Bind each env-enabled channel to the default profile so post-migration channel
+    # startup is unchanged (registry is the only home for channel assignment now).
+    _bind_channels(meta.id)
     log.info(
         "migration: registry written (profile=%s workspace=%s onboarded=%s)",
         meta.id,
@@ -132,15 +133,12 @@ def migrate_if_needed(root: Path | None = None) -> bool:
     return True
 
 
-def _seed_channels(settings_file: Path) -> None:
-    """Write ``channels: {<platform>: {enabled: true}}`` into the default profile's
-    settings for each platform whose token env vars are currently all set — preserving
-    the env-token-driven behaviour of existing installs (§4.5)."""
+def _bind_channels(pid: str) -> None:
+    """Bind each platform whose token env vars are all currently set to profile ``pid``
+    in the install-level registry — preserving the env-token-driven behaviour of
+    existing installs (channel assignment is install-level now)."""
     import os
 
-    from assistant.settings import Settings
-
-    settings = Settings(settings_file)
     for platform, envs in _CHANNEL_TOKENS.items():
         if all(os.environ.get(e) for e in envs):
-            settings.set_channel_enabled(platform, True)
+            profiles.bind_channel(platform, pid)

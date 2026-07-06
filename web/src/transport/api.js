@@ -47,6 +47,16 @@ export const api = {
   googleLoginUrl: () => j('POST', G('/google/login_url')),
   googleCredentials: (content) => j('POST', G('/google/credentials'), { content }),
   googleLogout: () => j('POST', G('/google/logout')),
+  // Messaging channels are install-level: a platform binds to exactly one profile
+  // (or is disabled). Both routes are GLOBAL. channels() → {telegram|discord|slack:
+  // {profile:pid|null, token_present, active, error}}. channelBind returns the one
+  // updated entry {platform: {…}}. The binding persists even if start fails
+  // (active:false + error).
+  channels: () => j('GET', G('/channels')),
+  channelBind: (platform, profile) => j('POST', G('/channels'), { platform, profile }),
+  // Save/clear channel bot token(s), like setKey — tokens is {ENV_NAME: value|''}
+  // (empty clears). Returns the one updated entry {platform: {…}}. Values never echoed.
+  channelTokens: (platform, tokens) => j('POST', G('/channels/token'), { platform, tokens }),
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
   sessions: () => j('GET', P('/sessions')).then((d) => d.sessions || []),

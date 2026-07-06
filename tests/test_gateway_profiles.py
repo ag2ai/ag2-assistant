@@ -47,7 +47,6 @@ def test_create_profile_serves_immediately(monkeypatch):
         listed = client.get("/api/profiles").json()
         assert listed["active_default"] == "work"
         assert [p["id"] for p in listed["profiles"]] == ["work"]
-        assert listed["profiles"][0]["channel_conflicts"] == []
 
         # its runtime is live: a prefixed route works right away
         assert client.get(api(pid, "/sessions")).status_code == 200

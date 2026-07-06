@@ -19,6 +19,23 @@ from assistant.config import data_dir
 # The 6 design-system palettes (web/src/design/tokens/palettes.css).
 PALETTES = ("teal", "coral", "ocean", "violet", "sage", "sunset")
 
+# The canonical messaging platforms a channel can bind to. This is the single
+# source of truth for platform names.
+CHANNEL_PLATFORMS = ("telegram", "discord", "slack")
+
+# Platform → env vars that must ALL be present for its channel to run. Lives here
+# (dependency-light) so both ProfileManager and the secrets store can import it
+# without a circular dependency. Slack needs BOTH a bot token and an app token.
+CHANNEL_TOKEN_ENVS = {
+    "telegram": ("TELEGRAM_BOT_TOKEN",),
+    "discord": ("DISCORD_BOT_TOKEN",),
+    "slack": ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"),
+}
+assert set(CHANNEL_TOKEN_ENVS) == set(CHANNEL_PLATFORMS)
+
+# Every channel env var name, flattened — the closed set the secrets store accepts.
+CHANNEL_TOKEN_ENV_NAMES = frozenset(e for envs in CHANNEL_TOKEN_ENVS.values() for e in envs)
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -56,18 +73,33 @@ def profile_dir(pid: str) -> Path:
     return data_dir() / "profiles" / pid
 
 
+def _empty_registry() -> dict:
+    return {
+        "active_default": None,
+        "onboarded": False,
+        "profiles": [],
+        "channels": {p: None for p in CHANNEL_PLATFORMS},
+    }
+
+
 def load_registry() -> dict:
     """Read the registry (empty, well-formed default if the file is absent/broken)."""
     try:
         data = json.loads(_path().read_text())
     except Exception:
-        return {"active_default": None, "onboarded": False, "profiles": []}
+        return _empty_registry()
     if not isinstance(data, dict):
-        return {"active_default": None, "onboarded": False, "profiles": []}
+        return _empty_registry()
     data.setdefault("active_default", None)
     data.setdefault("onboarded", False)
     if not isinstance(data.get("profiles"), list):
         data["profiles"] = []
+    # channels is a top-level {platform: owning-pid|null} map; absent platforms
+    # read as null (unbound). Malformed → treated as all-unbound.
+    chans = data.get("channels")
+    if not isinstance(chans, dict):
+        chans = {}
+    data["channels"] = {p: chans.get(p) for p in CHANNEL_PLATFORMS}
     return data
 
 
@@ -194,10 +226,14 @@ def set_workspace(pid: str, workspace: str) -> ProfileMeta:
 
 
 def archive_profile(pid: str) -> ProfileMeta:
-    """Mark a profile archived (registry-level only; guardrails live in ProfileManager)."""
+    """Mark a profile archived and clear any channel bindings pointing at it
+    (registry-level only; runtime guardrails live in ProfileManager)."""
     data = load_registry()
     entry = _find(data, pid)
     entry["archived"] = True
+    for platform, owner in data["channels"].items():
+        if owner == pid:
+            data["channels"][platform] = None
     _write(data)
     return _meta(entry)
 
@@ -219,4 +255,34 @@ def set_onboarded(value: bool = True) -> None:
     """Set the install-level onboarding flag."""
     data = load_registry()
     data["onboarded"] = bool(value)
+    _write(data)
+
+
+# --- channel bindings (install-level: a platform binds to one profile or is off) ---
+
+
+def channel_bindings() -> dict[str, str | None]:
+    """The install-level channel→profile map. Every canonical platform is present;
+    an unbound platform reads as ``None``."""
+    return dict(load_registry()["channels"])
+
+
+def bind_channel(platform: str, pid: str | None) -> None:
+    """Bind ``platform`` to profile ``pid`` (or ``None`` to disable it).
+
+    Validates the platform against the canonical list and, when ``pid`` is given,
+    that the profile exists and is not archived. Two profiles enabling the same
+    channel is structurally impossible — a platform maps to exactly one pid."""
+    if platform not in CHANNEL_PLATFORMS:
+        raise ValueError(
+            f"unknown channel platform: {platform} (choose from {', '.join(CHANNEL_PLATFORMS)})"
+        )
+    data = load_registry()
+    if pid is not None:
+        entry = next((e for e in data["profiles"] if e["id"] == pid), None)
+        if entry is None:
+            raise ValueError(f"unknown profile: {pid}")
+        if entry.get("archived"):
+            raise ValueError(f"profile archived: {pid}")
+    data["channels"][platform] = pid
     _write(data)

@@ -113,19 +113,21 @@ def test_migration_not_onboarded_when_neither_present():
     assert profiles.load_registry()["onboarded"] is False
 
 
-def test_migration_seeds_channels_from_env(monkeypatch):
+def test_migration_binds_channels_from_env(monkeypatch):
     for e in ("DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
         monkeypatch.delenv(e, raising=False)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    from assistant import profiles
     from assistant.gateway.migration import migrate_if_needed
-    from assistant.settings import Settings
 
     root = _root()
     _seed_legacy(root)
     assert migrate_if_needed() is True
-    settings = Settings(root / "profiles" / "default" / "settings.json")
-    assert settings.channel_enabled("telegram") is True
-    assert settings.channel_enabled("discord") is False
+    # env-enabled channels are bound to the default profile in the registry
+    bindings = profiles.channel_bindings()
+    assert bindings["telegram"] == "default"
+    assert bindings["discord"] is None
+    assert bindings["slack"] is None
 
 
 def test_migration_noop_on_fresh_install():

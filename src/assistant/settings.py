@@ -90,32 +90,6 @@ class Settings:
         data["llm"] = llm
         self._write(data)
 
-    # --- channels ---
-
-    def channels(self) -> dict:
-        """Per-profile channel config, e.g. ``{"telegram": {"enabled": true}}`` (§4.5).
-
-        A channel starts for this profile iff its entry is enabled AND the platform's
-        token env vars are present. Empty/absent → no channels (the correct default for
-        a fresh profile). Malformed → treated as empty."""
-        v = self._read().get("channels")
-        return v if isinstance(v, dict) else {}
-
-    def channel_enabled(self, platform: str) -> bool:
-        """Whether ``platform``'s channel is enabled in this profile's settings."""
-        entry = self.channels().get(platform)
-        return bool(entry.get("enabled")) if isinstance(entry, dict) else False
-
-    def set_channel_enabled(self, platform: str, enabled: bool = True) -> None:
-        """Enable/disable a platform's channel for this profile."""
-        data = self._read()
-        chans = data.get("channels") if isinstance(data.get("channels"), dict) else {}
-        entry = chans.get(platform) if isinstance(chans.get(platform), dict) else {}
-        entry["enabled"] = bool(enabled)
-        chans[platform] = entry
-        data["channels"] = chans
-        self._write(data)
-
     # --- project folder ---
 
     def get_project_folder(self) -> str:

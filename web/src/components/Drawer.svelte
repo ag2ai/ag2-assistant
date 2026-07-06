@@ -18,6 +18,15 @@
   // swatches) — profile.palette id → --p-500 hex.
   const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
   const list = $derived($profiles.list || [])
+  // ⌘1..9 shortcut hint for a chip's tooltip (§5.4): the profile's 1-based index in
+  // registry order, shown only for the first 9 (the shortcut range). ⌘ on mac, Ctrl
+  // elsewhere. The keydown handler itself lives once in App.svelte.
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '')
+  const shortcutHint = (pid) => {
+    const i = list.findIndex((p) => p.id === pid)
+    return i >= 0 && i < 9 ? ` — ${isMac ? '⌘' : 'Ctrl+'}${i + 1}` : ''
+  }
+  const chipTitle = (p) => p.name + shortcutHint(p.id)
   const active = $derived(list.find((p) => p.id === $profiles.activeId))
   const initial = (p) => (p?.name || '?').trim().charAt(0).toUpperCase() || '?'
 
@@ -192,7 +201,7 @@
             class="chip"
             class:active={isActive}
             style="--p:{paletteHex(p.palette)}"
-            title={p.name}
+            title={chipTitle(p)}
             role="tab"
             aria-selected={isActive}
             aria-current={isActive ? 'true' : undefined}
@@ -235,6 +244,7 @@
               class="profitem"
               class:active={isActive}
               role="menuitem"
+              title={chipTitle(p)}
               aria-current={isActive ? 'true' : undefined}
               onclick={() => (isActive ? (pickerOpen = false) : switchTo(p.id))}
             >

@@ -7,6 +7,7 @@
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
   import Profiles from './Profiles.svelte'
+  import Channels from './Channels.svelte'
   import FolderPicker from './FolderPicker.svelte'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
@@ -116,7 +117,7 @@
         </div>
       {/if}
 
-      <div class="setsec">API keys</div>
+      <div class="setsec">API keys <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
       {#each KEY_ROWS as k}
         <div class="keyrow">
           <span class="kp">{k.label}</span>
@@ -155,6 +156,9 @@
       {:else}
         <p class="muted" style="font-size:13px">Add an OpenAI or Gemini key above to enable voice.</p>
       {/if}
+
+      <div class="setsec">Channels <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
+      <Channels />
 
       <div class="setsec">Memory</div>
       <button class="setrow" onclick={openMemory}>

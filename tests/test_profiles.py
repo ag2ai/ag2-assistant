@@ -149,7 +149,12 @@ def test_onboarded_get_set():
 
 def test_load_registry_missing_file_is_empty():
     reg = profiles.load_registry()
-    assert reg == {"active_default": None, "onboarded": False, "profiles": []}
+    assert reg == {
+        "active_default": None,
+        "onboarded": False,
+        "profiles": [],
+        "channels": {"telegram": None, "discord": None, "slack": None},
+    }
 
 
 def test_profile_dir_does_not_create():

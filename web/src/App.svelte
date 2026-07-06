@@ -107,6 +107,37 @@
     } catch {}
   }
 
+  // ⌘1..9 / Ctrl+1..9 profile shortcuts (§5.4/§5.4). Registered once here (App owns
+  // the profiles store + boot). Maps the modifier + a digit to the Nth profile in
+  // registry order and triggers the SAME full-page nav as a chip click. Ignored
+  // when any modal is open or focus is in an editable field (typing "⌘2" in the
+  // message box must not switch profiles).
+  function anyModalOpen() {
+    return $settingsOpen || $memoryOpen || $poweredByOpen || $filesOpen
+      || $googleOpen || $voicePickerOpen || !!$viewer || $onboardingOpen
+  }
+  function editableFocused() {
+    const el = document.activeElement
+    if (!el) return false
+    const tag = el.tagName
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+  }
+  function onProfileShortcut(e) {
+    // Cmd on mac, Ctrl elsewhere; require exactly that modifier (no Shift/Alt).
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
+    if (e.key < '1' || e.key > '9') return
+    if (boot !== 'ready' || anyModalOpen() || editableFocused()) return
+    const list = $profiles.list || []
+    const target = list[Number(e.key) - 1]
+    if (!target) return
+    e.preventDefault()
+    if (target.id !== $profiles.activeId) location.assign('/app/' + target.id + '/')
+  }
+  onMount(() => {
+    window.addEventListener('keydown', onProfileShortcut)
+    return () => window.removeEventListener('keydown', onProfileShortcut)
+  })
+
   // React to route changes: open the matching thread. Gated on boot === 'ready'
   // so we don't create chats before the active profile is known. $effect tracks
   // $route + boot only (writing `last` is untracked), so this can't self-invalidate.
