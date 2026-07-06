@@ -1,10 +1,12 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles } from '../store.js'
   import { api } from '../transport/api.js'
+  import { getActiveProfileId } from '../lib/profile.js'
   import { chime } from '../lib/chime.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
+  import Profiles from './Profiles.svelte'
   import FolderPicker from './FolderPicker.svelte'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
@@ -64,6 +66,13 @@
     mcpHealth = { ...mcpHealth, [name]: await api.healthMcpServer(name) }
   })
 
+  // Settings values (model, voice, MCP, project folder) are per-profile — title
+  // the modal so it's clear which profile you're configuring (§5.4).
+  const activeName = $derived.by(() => {
+    const id = $profiles.activeId || getActiveProfileId()
+    return ($profiles.list || []).find((p) => p.id === id)?.name || ''
+  })
+
   const close = () => ($settingsOpen = false)
   const openVoice = () => { $settingsOpen = false; $voicePickerOpen = true }
   const openGoogle = () => { $settingsOpen = false; $googleOpen = true }
@@ -74,7 +83,7 @@
 
 <div class="modal-backdrop" onclick={close}></div>
 <div class="modal settings">
-  <h2>Settings</h2>
+  <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>
   {#if err}<p class="muted" style="color:#d8552f">{err}</p>{/if}
 
   {#if !s}
@@ -88,6 +97,9 @@
         <span class="sv">replay the first-run welcome & onboarding</span>
         <span class="sgo">Open →</span>
       </button>
+
+      <div class="setsec">Profiles</div>
+      <Profiles />
 
       <div class="setsec">Project folder</div>
       {#if !editFolder}

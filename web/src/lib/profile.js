@@ -8,6 +8,9 @@
 // store.js. To avoid clobbering it we persist the active *profile id* under
 // 'ag2-profile-id'. (Documented deviation.)
 
+import { get } from 'svelte/store'
+import { profiles, notice } from '../store.js'
+
 const LS_KEY = 'ag2-profile-id'
 
 let _activeId = null
@@ -43,11 +46,28 @@ export function globalApi(path) {
 }
 
 // A profile went away underneath us (WS close 4001/4410, or a 410 from a
-// scoped route). Drop the stored id and re-resolve from scratch via a full
-// reload of the SPA shell at /app/. Phase 2 replaces this with an in-place
-// toast + switch; for now a hard re-resolve is correct and simple (§7 item 6).
+// scoped route). §4.9 recovery: show a brief notice naming the archived profile
+// and the default it's switching to, then re-resolve via a full reload of the
+// SPA shell at /app/ (App.svelte's boot picks the new active_default and applies
+// its palette). Open tabs on the archived profile recover instead of spinning.
+//
+// store.js doesn't import this module, so a static import is cycle-free. Fired
+// once — a second gone-signal during the grace window is ignored (navigation is
+// already scheduled).
+const RECOVER_DELAY = 1500
+let _recovering = false
 export function onProfileGone(reason = '') {
-  console.warn('[profile] active profile gone (' + reason + '); re-resolving')
+  console.warn('[profile] active profile gone (' + reason + '); recovering')
+  const goneId = _activeId               // the archived profile is still "active" here
   clearStoredProfileId()
-  location.assign('/app/')
+  if (_recovering) return
+  _recovering = true
+  try {
+    const reg = get(profiles) || { list: [] }
+    const gone = reg.list.find((p) => p.id === goneId)?.name || 'This profile'
+    // Name the destination if we can (any surviving profile); else say "default".
+    const dest = reg.list.find((p) => p.id !== goneId)?.name || 'the default'
+    notice.set({ text: `Profile ${gone} was archived — switching to ${dest}.` })
+  } catch {}
+  setTimeout(() => location.assign('/app/'), RECOVER_DELAY)
 }

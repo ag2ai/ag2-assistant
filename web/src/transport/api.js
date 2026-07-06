@@ -32,6 +32,13 @@ export const api = {
   profiles: () => j('GET', G('/profiles')),
   createProfile: (name, palette, workspace) =>
     j('POST', G('/profiles'), workspace ? { name, palette, workspace } : { name, palette }),
+  // Metadata update (§4.2): {name?, palette?, workspace?}. workspace triggers a
+  // server-side runtime reload; name/palette are registry-only.
+  updateProfile: (pid, body) => j('POST', G('/profiles/' + encodeURIComponent(pid)), body),
+  // Archive (§4.9). newDefault is required when archiving the active_default —
+  // passed in the request body (DELETE with body → ProfileArchiveRequest).
+  archiveProfile: (pid, newDefault) =>
+    j('DELETE', G('/profiles/' + encodeURIComponent(pid)), newDefault ? { new_default: newDefault } : {}),
   status: () => j('GET', G('/status')),
   setKey: (provider, value) => j('POST', G('/secrets/key'), { provider, value }),
   setOnboarded: (value = true) => j('POST', G('/onboarded'), { value }),

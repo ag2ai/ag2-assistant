@@ -5,43 +5,56 @@
   import { api } from '../transport/api.js'
   import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
+  import ProfileForm from './ProfileForm.svelte'
   import { fmtWhen, fmtNextIn } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
 
-  // Active-profile indicator + switcher (§7 Phase 1). Name + palette dot, and —
-  // when there's more than one profile — a way to switch. Resolve the active
-  // profile from the `profiles` store and map its palette id to the hex the
-  // create form already uses (reuse PALETTES, don't duplicate).
+  // Profile switcher chips (§5.4). A row of palette-tinted monogram chips at the
+  // top of the Drawer: the active profile filled, others outlined; click switches
+  // (full-page nav — App.svelte's boot makes the URL pid the persisted choice and
+  // applies its palette). >4 profiles collapse the overflow into a small anchored
+  // picker. Reuses the PALETTES hex map (same source as the create-profile
+  // swatches) — profile.palette id → --p-500 hex.
   const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
   const list = $derived($profiles.list || [])
   const active = $derived(list.find((p) => p.id === $profiles.activeId))
-  const others = $derived(list.filter((p) => p.id !== $profiles.activeId))
+  const initial = (p) => (p?.name || '?').trim().charAt(0).toUpperCase() || '?'
 
-  // Phase-1 switch is a full page load to /app/{pid}/ — App.svelte's boot
-  // resolves the URL pid and makes it the persisted choice (no hot-switching).
   const switchTo = (pid) => location.assign('/app/' + pid + '/')
 
-  // 1 profile → non-interactive label. 2 → click alternates to the other.
-  // 3+ → click opens a small anchored picker.
-  const canSwitch = $derived(list.length >= 2)
+  // Chips shown inline vs. collapsed. ≤4 profiles: all inline, no menu. >4: show
+  // the first few inline and fold the rest into a "+N" overflow picker (which also
+  // includes the active one so it's always reachable/marked).
+  const MAX_CHIPS = 4
+  const inlineChips = $derived(list.length <= MAX_CHIPS ? list : list.slice(0, MAX_CHIPS - 1))
+  const overflow = $derived(list.length <= MAX_CHIPS ? [] : list.slice(MAX_CHIPS - 1))
+
   let pickerOpen = $state(false)
-  function onIndicator() {
-    if (list.length === 2) switchTo(others[0].id)     // straight to the other
-    else if (list.length >= 3) pickerOpen = !pickerOpen // small picker
-  }
-  const indicatorTitle = $derived(
-    list.length === 2 ? 'Switch to ' + (others[0]?.name || 'profile')
-      : list.length >= 3 ? 'Switch profile'
-      : 'Active profile: ' + (active?.name || '')
-  )
   // Close the picker on click-outside / Escape.
   function onDocPointer(e) {
-    if (pickerOpen && !e.target.closest('.profswitch')) pickerOpen = false
+    if (pickerOpen && !e.target.closest('.profchips')) pickerOpen = false
   }
-  function onDocKey(e) { if (pickerOpen && e.key === 'Escape') pickerOpen = false }
+  function onDocKey(e) {
+    if (createOpen && e.key === 'Escape') { createOpen = false; return }
+    if (pickerOpen && e.key === 'Escape') pickerOpen = false
+  }
+
+  // "+" chip → profile-creation modal (§5.4). Reuses ProfileForm (same form as
+  // onboarding). Palettes already claimed by existing profiles are hidden. On
+  // success → full-page navigate to /app/{pid}/ (App.svelte's boot adopts it and
+  // applies its palette). 400s (e.g. duplicate palette) surface inline in the form.
+  let createOpen = $state(false)
+  const claimedPalettes = $derived(list.map((p) => p.palette))
+  async function createProfile({ name, palette, workspace }) {
+    const res = await api.createProfile(name, palette, workspace) // throws → inline
+    location.assign('/app/' + res.profile.id + '/')
+  }
 
   let usage = $state(null)   // today's token/cost totals for the activity HUD
+  let statusById = $state({}) // pid -> {busy, running_tasks} from GET /api/status
+  // A chip's activity dot: true when that profile has tasks running right now.
+  const isBusy = (pid) => (statusById[pid]?.running_tasks || 0) > 0
 
   async function refresh() {
     try {
@@ -52,6 +65,12 @@
     } catch {}
     try { $tasks = await api.tasksAll('all') } catch {}
     try { usage = await api.usage() } catch {}
+    // Piggyback per-profile activity on the same 5s cycle (§5.4 activity badges).
+    // /api/status is global (all profiles) — index it by pid for the chips.
+    try {
+      const rows = await api.status()
+      statusById = Object.fromEntries((rows || []).map((r) => [r.pid, r]))
+    } catch {}
   }
 
   const fmtTok = (n) =>
@@ -162,48 +181,84 @@
     <img class="brandlogo on-light" src={ag2Logo} alt="AG2" />
     <img class="brandlogo on-dark" src={ag2LogoWhite} alt="AG2" />
     <span class="brand">Assistant</span>
-    {#if active}
-      <div class="profswitch">
-        {#if canSwitch}
+  </div>
+
+  {#if active}
+    <div class="profchips">
+      <div class="chiprow" role="tablist" aria-label="Profiles">
+        {#each inlineChips as p (p.id)}
+          {@const isActive = p.id === active.id}
           <button
-            class="profind"
-            title={indicatorTitle}
-            aria-haspopup={list.length >= 3 ? 'menu' : undefined}
-            aria-expanded={list.length >= 3 ? pickerOpen : undefined}
-            onclick={onIndicator}
+            class="chip"
+            class:active={isActive}
+            style="--p:{paletteHex(p.palette)}"
+            title={p.name}
+            role="tab"
+            aria-selected={isActive}
+            aria-current={isActive ? 'true' : undefined}
+            onclick={() => (isActive ? null : switchTo(p.id))}
           >
-            <span class="profdot" style="--dot:{paletteHex(active.palette)}"></span>
-            <span class="profname">{active.name}</span>
-            <Icon name="chevron-down" size={12} />
+            <span class="mono">{initial(p)}</span>
+            {#if isBusy(p.id)}<span class="actdot" title="running tasks"></span>{/if}
           </button>
-        {:else}
-          <span class="profind static" title={indicatorTitle}>
-            <span class="profdot" style="--dot:{paletteHex(active.palette)}"></span>
-            <span class="profname">{active.name}</span>
-          </span>
+        {/each}
+
+        {#if overflow.length}
+          {@const overflowActive = overflow.some((p) => p.id === active.id)}
+          {@const overflowBusy = overflow.some((p) => isBusy(p.id))}
+          <button
+            class="chip more"
+            class:active={overflowActive}
+            title="More profiles"
+            aria-haspopup="menu"
+            aria-expanded={pickerOpen}
+            onclick={() => (pickerOpen = !pickerOpen)}
+          >
+            <span class="mono">+{overflow.length}</span>
+            {#if overflowBusy}<span class="actdot" title="running tasks"></span>{/if}
+          </button>
         {/if}
 
-        {#if pickerOpen && list.length >= 3}
-          <div class="profmenu" role="menu">
-            {#each list as p (p.id)}
-              {@const isActive = p.id === active.id}
-              <button
-                class="profitem"
-                class:active={isActive}
-                role="menuitem"
-                aria-current={isActive ? 'true' : undefined}
-                onclick={() => (isActive ? (pickerOpen = false) : switchTo(p.id))}
-              >
-                <span class="profdot" style="--dot:{paletteHex(p.palette)}"></span>
-                <span class="profname">{p.name}</span>
-                {#if isActive}<Icon name="check" size={13} />{/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
+        <!-- "+" chip → create-profile modal (§5.4). -->
+        <button class="chip add" title="New profile" aria-label="New profile" onclick={() => (createOpen = true)}>
+          <Icon name="plus" size={15} />
+        </button>
       </div>
-    {/if}
-  </div>
+
+      <span class="activename" title={active.name}>{active.name}</span>
+
+      {#if pickerOpen && overflow.length}
+        <div class="profmenu" role="menu">
+          {#each overflow as p (p.id)}
+            {@const isActive = p.id === active.id}
+            <button
+              class="profitem"
+              class:active={isActive}
+              role="menuitem"
+              aria-current={isActive ? 'true' : undefined}
+              onclick={() => (isActive ? (pickerOpen = false) : switchTo(p.id))}
+            >
+              <span class="profdot" style="--dot:{paletteHex(p.palette)}"></span>
+              <span class="profname">{p.name}</span>
+              {#if isBusy(p.id)}<span class="actdot inmenu" title="running tasks"></span>{/if}
+              {#if isActive}<Icon name="check" size={13} />{/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if createOpen}
+    <div class="modal-backdrop" onclick={() => (createOpen = false)}></div>
+    <div class="modal profcreate">
+      <h2>New profile</h2>
+      <p class="pc-lead">A colour-coded, isolated workspace — its own chats, tasks, memory, and files.</p>
+      <ProfileForm claimed={claimedPalettes} submitLabel="Create profile" busyLabel="Creating…" onSubmit={createProfile} />
+      <button class="modal-close" onclick={() => (createOpen = false)}>Cancel</button>
+    </div>
+  {/if}
+
   <div class="tabs">
     <button class="tab" class:on={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={13} /> Chats</button>
     <button class="tab" class:on={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={13} /> Tasks</button>
@@ -265,25 +320,58 @@
 </div>
 
 <style>
-  /* Active-profile indicator + switcher. Sits at the end of the header row,
-     marking which profile the client is viewing. With 1 profile it's a plain
-     label; with 2+ it becomes a small quiet switcher (alternate at 2, picker
-     at 3+). A utility control, not a modal — small and understated.
-     Phase 2's §5.4 chips supersede this. */
-  .profswitch { margin-left: auto; position: relative; min-width: 0; }
-  .profind {
-    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-    min-width: 0; font-size: var(--text-xs); color: var(--muted);
+  /* Profile switcher chips (§5.4). A row of palette-tinted monogram chips below
+     the brand header — the active profile filled with its palette colour, others
+     outlined in it. The active profile's name sits beside the row (kept visible
+     by request). >4 profiles fold the overflow into a "+N" chip + anchored menu
+     (reusing .profmenu/.profitem below). Supersedes the Phase-1 indicator. */
+  .profchips {
+    position: relative;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    min-width: 0;
   }
-  /* button variant: quiet by default, faint hover affordance */
-  button.profind {
-    cursor: pointer; border: 1px solid transparent; background: none;
-    font: inherit; font-size: var(--text-xs); color: var(--muted);
-    padding: 3px 6px; border-radius: var(--radius-sm);
-    transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  .chiprow { display: flex; align-items: center; gap: 6px; flex: none; }
+  .chip {
+    position: relative; flex: none;
+    width: 28px; height: 28px; border-radius: var(--radius-pill);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; font: inherit; font-size: var(--text-xs);
+    font-weight: var(--fw-bold); line-height: 1;
+    /* outlined by default: tinted ring + tinted glyph on the surface */
+    background: var(--surface);
+    color: var(--p, var(--accent));
+    border: 1.5px solid var(--p, var(--accent));
+    transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
   }
-  button.profind:hover { background: var(--surface-hover); border-color: var(--line); color: var(--text); }
-  button.profind:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .chip:hover { transform: translateY(-1px); }
+  .chip:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--p, var(--accent)) 35%, transparent); }
+  /* active: filled with the palette colour, white glyph, cursor default */
+  .chip.active {
+    background: var(--p, var(--accent)); color: #fff; cursor: default;
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--p, var(--accent));
+  }
+  .chip.more { color: var(--muted); border-color: var(--line); background: var(--surface); font-weight: var(--fw-semibold); }
+  .chip.more:hover { color: var(--text); border-color: var(--text); }
+  .chip.more.active { color: var(--text); }
+  /* "+" chip: a quiet dashed affordance to add a profile */
+  .chip.add { color: var(--muted); border-style: dashed; border-color: var(--line); background: var(--surface); }
+  .chip.add:hover { color: var(--accent); border-color: var(--accent); }
+  .mono { pointer-events: none; }
+  /* activity dot: a small badge in the chip's top-right when tasks are running */
+  .actdot {
+    position: absolute; top: -1px; right: -1px;
+    width: 8px; height: 8px; border-radius: var(--radius-pill);
+    background: var(--success, #2f8c44);
+    border: 1.5px solid var(--surface);
+  }
+  .actdot.inmenu { position: static; margin-left: auto; border-color: var(--surface); }
+
+  .activename {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--text);
+  }
+
   .profdot {
     width: 8px; height: 8px; flex: none; border-radius: var(--radius-pill);
     background: var(--dot, var(--accent));
@@ -293,10 +381,10 @@
     font-weight: var(--fw-medium);
   }
 
-  /* Small anchored picker (3+ profiles). Absolutely positioned under the
-     indicator, styled with existing tokens to match the drawer aesthetic. */
+  /* Overflow picker (>4 profiles). Absolutely positioned under the chip row,
+     styled with existing tokens to match the drawer aesthetic. */
   .profmenu {
-    position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-modal);
+    position: absolute; top: calc(100% - 4px); left: 16px; z-index: var(--z-modal);
     min-width: 150px; max-width: 220px; display: flex; flex-direction: column;
     padding: 4px; background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
@@ -313,4 +401,8 @@
   .profitem.active { color: var(--muted); cursor: default; }
   .profitem.active:hover { background: none; }
   .profitem :global(svg) { flex: none; opacity: .7; }
+
+  /* Create-profile modal: uses the global .modal shell; just a lead line here. */
+  .profcreate { width: min(460px, 92vw); }
+  .pc-lead { font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-normal); margin: -2px 0 6px; }
 </style>

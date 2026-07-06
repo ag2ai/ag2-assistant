@@ -5,8 +5,8 @@
   import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
+  import { setPalette } from './design/palette.js'
   import Onboarding from './components/Onboarding.svelte'
-  import ProfileCreate from './components/ProfileCreate.svelte'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
   import Hitl from './components/Hitl.svelte'
@@ -18,11 +18,17 @@
   import Inspector from './components/Inspector.svelte'
   import PoweredBy from './components/PoweredBy.svelte'
   import Files from './components/Files.svelte'
+  import Notice from './components/Notice.svelte'
 
   // Boot gate: nothing profile-dependent renders until we've resolved the active
-  // profile. 'loading' → fetching /api/profiles; 'create' → zero profiles, show
-  // the create-first-profile form; 'ready' → active pid resolved, run the app.
+  // profile. 'loading' → fetching /api/profiles; 'create' → zero profiles, run the
+  // fresh-install onboarding flow (which contains the profile-creation loop, §5.5);
+  // 'ready' → active pid resolved, run the app.
   let boot = $state('loading')
+
+  // The install-level onboarding flag from the registry (§4.2). Drives whether the
+  // welcome/onboarding overlay opens once a profile already exists.
+  let registryOnboarded = $state(true)
 
   // The AG2 Inspector occupies a right rail when AG2 view is on and a thread is open.
   const showInspector = $derived(boot === 'ready' && $ag2View && $route.name !== 'home')
@@ -35,6 +41,7 @@
     try {
       const reg = await api.profiles()
       const list = reg.profiles || []
+      registryOnboarded = !!reg.onboarded
       $profiles = { list, activeId: null }
       if (!list.length) { boot = 'create'; return }
       resolveActive(list, reg.active_default)
@@ -60,30 +67,43 @@
       : list[0].id
     setActiveProfileId(pid)
     $profiles = { list, activeId: pid }
+    // §5.3 Palette ownership: the active profile's palette IS the applied palette.
+    // palette.js self-applied localStorage('ag2-palette') pre-Svelte as a *hint*
+    // (avoids flash); correct it from the registry now — the profile is the source
+    // of truth, not localStorage. Switching is full-page nav, so boot covers it too.
+    const active = list.find((p) => p.id === pid)
+    if (active?.palette) setPalette(active.palette)
     // Canonicalise the URL: bare /app/ or a stale/foreign pid → /app/{pid}/.
     if ($route.pid !== pid) redirectToProfile(pid)
     boot = 'ready'
     maybeOnboard()
   }
 
-  // The zero-profile form succeeded: adopt the new profile and start the app.
-  function onProfileCreated(profile) {
-    const list = [...($profiles.list || []), profile]
-    setActiveProfileId(profile.id)
-    $profiles = { list, activeId: profile.id }
-    redirectToProfile(profile.id)
+  // Fresh-install onboarding finished (§5.5): it created ≥1 profile live and set
+  // the install-level onboarded flag itself. The `profiles` store was populated by
+  // the flow as each profile was created; adopt the first and boot into it.
+  function onFreshOnboarded(firstPid) {
+    const list = $profiles.list || []
+    const pid = firstPid || (list[0] && list[0].id)
+    if (!pid) { boot = 'loading'; return } // nothing created — shouldn't happen
+    setActiveProfileId(pid)
+    $profiles = { list, activeId: pid }
+    const active = list.find((p) => p.id === pid)
+    if (active?.palette) setPalette(active.palette)
+    redirectToProfile(pid)
     boot = 'ready'
   }
 
   // First-run welcome overlay (the existing multi-step onboarding) — shown when
-  // this install hasn't onboarded AND no provider key is stored. Only reached
-  // when at least one profile already exists (fresh installs go through the
-  // create-first-profile form, which sets the onboarded flag itself).
+  // this install hasn't onboarded (registry flag §4.2) AND no provider key is
+  // stored. Only reached when at least one profile already exists (fresh installs
+  // render the onboarding flow directly via boot === 'create').
   async function maybeOnboard() {
+    if (registryOnboarded) return
     try {
       const s = await api.settings()
       const anyKey = ['gemini', 'openai', 'anthropic'].some((p) => s.keys?.[p]?.set)
-      if (!s.onboarded && !anyKey) $onboardingOpen = true
+      if (!anyKey) $onboardingOpen = true
     } catch {}
   }
 
@@ -106,7 +126,7 @@
 {#if boot === 'loading'}
   <div class="app"><div class="main"><div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Loading…</div></div></div></div>
 {:else if boot === 'create'}
-  <ProfileCreate onCreated={onProfileCreated} />
+  <Onboarding fresh={true} onComplete={onFreshOnboarded} />
 {:else}
   <div class="app" class:ag2={showInspector}>
     <Drawer />
@@ -129,3 +149,6 @@
     {#if $onboardingOpen}<Onboarding />{/if}
   </div>
 {/if}
+
+<!-- Transient recovery toast (§4.9); renders in any boot state. -->
+<Notice />
