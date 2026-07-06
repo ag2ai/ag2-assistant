@@ -152,7 +152,12 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
             intent="generated-ui",
         )
         for sid in order
-        if (state := states.get(sid)) and state.get("component")
+        # Keep any surface that carries a renderable payload. The frontend renders
+        # a data-only surface (createSurface + updateDataModel, no component tree)
+        # via its generic branch, so dropping those on `component` alone would make
+        # replayed history lose UI the live turn showed. A surface with neither a
+        # component nor data has nothing to render and is still dropped.
+        if (state := states.get(sid)) and (state.get("component") or state.get("data"))
     ]
 
 

@@ -2,7 +2,11 @@
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
 
-  let { component, components = [] } = $props()
+  let { component, components = [], depth = 0 } = $props()
+  // The component graph is agent-produced and children are resolved by id from a
+  // flat list, so a cyclic (A→B→A) or self-referential graph would recurse without
+  // bound and blow the stack. Cap the render depth — real layouts are shallow.
+  const MAX_DEPTH = 24
   const type = $derived(((component && component.component) || 'Text').toLowerCase())
   const byId = $derived(new Map((components || []).filter((c) => c && c.id).map((c) => [c.id, c])))
 
@@ -23,27 +27,29 @@
   }
 </script>
 
-{#if type === 'column'}
+{#if depth >= MAX_DEPTH}
+  <!-- cyclic or pathologically deep component graph — stop recursing -->
+{:else if type === 'column'}
   <div class="a2ui-basic-col">
     {#each childIds(component.children) as id}
-      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} />{/if}
+      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} depth={depth + 1} />{/if}
     {/each}
   </div>
 {:else if type === 'row'}
   <div class="a2ui-basic-row">
     {#each childIds(component.children) as id}
-      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} />{/if}
+      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} depth={depth + 1} />{/if}
     {/each}
   </div>
 {:else if type === 'list'}
   <div class="a2ui-list">
     {#each childIds(component.children) as id}
-      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} />{/if}
+      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} depth={depth + 1} />{/if}
     {/each}
   </div>
 {:else if type === 'card'}
   <div class="a2ui-basic-card">
-    {#if child(component.child)}<BasicA2UIComponent component={child(component.child)} {components} />{/if}
+    {#if child(component.child)}<BasicA2UIComponent component={child(component.child)} {components} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'text'}
   <div class:a2ui-main={component.variant && component.variant !== 'body'} class="a2ui-text">{component.text || ''}</div>
