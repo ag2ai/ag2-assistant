@@ -509,11 +509,11 @@
   .onb-profname { width: 96px; flex: none; font-size: var(--text-sm); font-weight: var(--fw-semibold); }
   .onb-profmeta { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .onb-profmetaitem {
-    display: flex; align-items: center; gap: 6px; font-size: var(--text-sm);
-    color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    display: flex; align-items: flex-start; gap: 6px; font-size: var(--text-sm);
+    color: var(--text-muted); min-width: 0; overflow-wrap: anywhere;
   }
   .onb-profmetaitem.cap { text-transform: capitalize; }
-  .onb-profmetaitem :global(svg) { color: var(--accent); flex: none; }
+  .onb-profmetaitem :global(svg) { color: var(--accent); flex: none; margin-top: 3px; }
   .onb-tip { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--text-muted); }
   .onb-tip b { color: var(--text); }
 
