@@ -159,6 +159,21 @@ def _resolve(client, query: str) -> str | None:
     return None
 
 
+def _fetch_one(client, item: str):
+    """Resolve one requested symbol/name to (meta, closes), or None on miss.
+
+    Tries the symbol as-is, then falls back to Yahoo search for a plain name or
+    fuzzy ticker. Self-contained so a whole board's symbols can be fetched
+    concurrently (Yahoo calls are independent and httpx.Client is thread-safe).
+    """
+    hit = _chart(client, item)
+    if hit is None:
+        resolved = _resolve(client, item)
+        if resolved:
+            hit = _chart(client, resolved)
+    return hit
+
+
 @tool
 def get_quotes(symbols: str, title: str = "") -> str:
     """Get live market quotes for stocks, ETFs, indices, or crypto across global exchanges.
@@ -181,23 +196,24 @@ def get_quotes(symbols: str, title: str = "") -> str:
         "quotes":[{"symbol","name","price","change","changePercent","currency",
         "exchange","dayLow"?,"dayHigh"?,"spark"?,"state"?}, …]}.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     import httpx
 
     wanted = [s.strip() for s in str(symbols).split(",") if s.strip()][:_MAX_SYMBOLS]
     if not wanted:
         return "No symbols requested."
 
+    # The per-symbol fetches are independent, so run them concurrently rather than
+    # in series — a 10-symbol board is ~10× faster and won't stack the 15s timeouts.
+    # httpx.Client is safe to share across threads; map() preserves request order.
     results: list[tuple[dict, list]] = []
     try:
         with httpx.Client(follow_redirects=True) as client:
-            for item in wanted:
-                hit = _chart(client, item)
-                if hit is None:
-                    resolved = _resolve(client, item)
-                    if resolved:
-                        hit = _chart(client, resolved)
-                if hit is not None:
-                    results.append(hit)
+            with ThreadPoolExecutor(max_workers=len(wanted)) as pool:
+                for hit in pool.map(lambda item: _fetch_one(client, item), wanted):
+                    if hit is not None:
+                        results.append(hit)
     except httpx.HTTPError as e:
         return f"Could not get market data: {e}"
 

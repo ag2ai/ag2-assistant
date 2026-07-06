@@ -2,6 +2,8 @@
   // "The Wire" — editorial broadsheet rendering of a NewsDigest A2UI surface.
   // Self-contained light/paper aesthetic (Fraunces serif + JetBrains Mono wire),
   // scoped so it doesn't inherit the chat theme. First story = lead; rest = list.
+  import { safeUrl } from '../../lib/url.js'
+
   let { data = {} } = $props()
 
   const topic = $derived(data.topic || 'Latest news')
@@ -52,7 +54,7 @@
         <div class="lead-text">
           {#if lead.category}<span class="cat">{lead.category}</span>{/if}
           <h2>
-            {#if lead.url}<a href={lead.url} target="_blank" rel="noopener noreferrer">{lead.title}</a>{:else}{lead.title}{/if}
+            {#if safeUrl(lead.url)}<a href={safeUrl(lead.url)} target="_blank" rel="noopener noreferrer">{lead.title}</a>{:else}{lead.title}{/if}
           </h2>
           {#if lead.summary}<p class="deck">{lead.summary}</p>{/if}
           {#if lead.why}<div class="why"><b>Why it matters</b>{lead.why}</div>{/if}
@@ -75,7 +77,7 @@
             <div class="num">{String(i + 2).padStart(2, '0')}</div>
             <div>
               <h3>
-                {#if s.url}<a href={s.url} target="_blank" rel="noopener noreferrer" onclick={(e) => e.stopPropagation()}>{s.title}</a>{:else}{s.title}{/if}
+                {#if safeUrl(s.url)}<a href={safeUrl(s.url)} target="_blank" rel="noopener noreferrer" onclick={(e) => e.stopPropagation()}>{s.title}</a>{:else}{s.title}{/if}
               </h3>
               <div class="meta">
                 <b>{srcOf(s)}</b>{#if timeOf(s)} · {timeOf(s)}{/if}{#if s.category} · {s.category}{/if}
