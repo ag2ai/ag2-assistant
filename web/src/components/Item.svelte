@@ -30,7 +30,7 @@
 <div class="ag2-rise">
   {#if Cmp}<Cmp {item} />{/if}
   {#if prov}
-    <div class="ag2tag" class:right={item.kind === 'user'} class:app={prov.layer === 'app'}>
+    <div class="ag2tag" class:right={item.kind === 'user'} class:applayer={prov.layer === 'app'}>
       AG2 · {prov.label}
     </div>
   {/if}

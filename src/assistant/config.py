@@ -41,6 +41,25 @@ class LLMConfig(BaseModel):
     # the main model. Aggregation is a background summarisation, so a smaller/
     # cheaper model is usually fine and saves cost on long sessions.
     aggregate_model: str | None = None
+    # Hard wall-clock ceiling on a single LLM call. Provider SDKs sometimes hang a
+    # streaming request indefinitely (no error, no timeout) — a stuck turn then sits
+    # "running" forever. The per-call timeout middleware wraps each call and raises
+    # after this many seconds so the turn fails cleanly (env: AG2ASSISTANT_LLM_TIMEOUT).
+    call_timeout_s: float = 180.0
+    # How many times to RE-TRY a failed LLM call (a per-call timeout or a transient
+    # provider error — 429/5xx) before letting it propagate. 2 retries = up to 3
+    # total attempts, each with its own fresh timeout window. Turns a one-off wedged
+    # or rate-limited call into a hiccup instead of an attempt/task death
+    # (env: AG2ASSISTANT_LLM_RETRIES). 0 disables retrying.
+    call_retries: int = 2
+    # Event-silence watchdog: emit a CRITICAL alert onto the turn's stream when NO
+    # event has been seen for this long during an active turn — the trigger-driven
+    # observers can't fire on the ABSENCE of events (env: AG2ASSISTANT_SILENCE_ALERT).
+    silence_alert_s: float = 300.0
+    # Second, harder silence threshold: when set (>0) the watchdog escalates to a
+    # FATAL alert (→ HaltEvent) so a truly dead turn terminates deterministically
+    # rather than alerting forever (env: AG2ASSISTANT_SILENCE_HALT).
+    silence_halt_s: float = 900.0
 
 
 class AgentConfig(BaseModel):
@@ -141,6 +160,26 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.llm.streaming = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := env("AG2ASSISTANT_AGGREGATE_MODEL"):
         cfg.llm.aggregate_model = v
+    if v := env("AG2ASSISTANT_LLM_TIMEOUT"):
+        try:
+            cfg.llm.call_timeout_s = float(v)
+        except ValueError:
+            pass
+    if v := env("AG2ASSISTANT_LLM_RETRIES"):
+        try:
+            cfg.llm.call_retries = int(v)
+        except ValueError:
+            pass
+    if v := env("AG2ASSISTANT_SILENCE_ALERT"):
+        try:
+            cfg.llm.silence_alert_s = float(v)
+        except ValueError:
+            pass
+    if v := env("AG2ASSISTANT_SILENCE_HALT"):
+        try:
+            cfg.llm.silence_halt_s = float(v)
+        except ValueError:
+            pass
     if v := env("AG2ASSISTANT_LOCATION"):
         cfg.agent.location = v
     if v := env("AG2ASSISTANT_WORKSPACE"):

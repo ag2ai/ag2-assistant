@@ -15,6 +15,34 @@ def test_default_config():
     assert config.data_dir == Path.home() / ".ag2assistant"
 
 
+def test_default_timeout_and_silence_thresholds():
+    llm = Config().llm
+    assert llm.call_timeout_s == 180.0
+    assert llm.call_retries == 2
+    assert llm.silence_alert_s == 300.0
+    assert llm.silence_halt_s == 900.0
+
+
+def test_timeout_and_silence_env_overrides(monkeypatch, tmp_path):
+    monkeypatch.setenv("AG2ASSISTANT_LLM_TIMEOUT", "45")
+    monkeypatch.setenv("AG2ASSISTANT_LLM_RETRIES", "5")
+    monkeypatch.setenv("AG2ASSISTANT_SILENCE_ALERT", "120")
+    monkeypatch.setenv("AG2ASSISTANT_SILENCE_HALT", "600")
+    cfg = load_config(tmp_path / "missing.json")
+    assert cfg.llm.call_timeout_s == 45.0
+    assert cfg.llm.call_retries == 5
+    assert cfg.llm.silence_alert_s == 120.0
+    assert cfg.llm.silence_halt_s == 600.0
+
+
+def test_bad_timeout_env_falls_back_to_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("AG2ASSISTANT_LLM_TIMEOUT", "not-a-number")
+    monkeypatch.setenv("AG2ASSISTANT_LLM_RETRIES", "not-a-number")
+    cfg = load_config(tmp_path / "missing.json")
+    assert cfg.llm.call_timeout_s == 180.0
+    assert cfg.llm.call_retries == 2
+
+
 def test_custom_llm_config():
     llm = LLMConfig(provider="openai", model="gpt-4o", api_key_env="OPENAI_API_KEY")
     config = Config(llm=llm)

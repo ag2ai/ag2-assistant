@@ -507,8 +507,19 @@ def create_agent(
 
         hitl_hook = build_hitl_hook(asker)
 
+    from ag2.policies import AlertPolicy
+
+    from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
     from assistant.observability import agent_logging_middleware
     from assistant.observers import build_observers
+
+    # AlertPolicy delivers observer alerts to the model and, on a FATAL alert,
+    # emits a HaltEvent that AG2's halt middleware turns into a short-circuited
+    # turn. Appending it makes `assembly` non-empty for EVERY agent (task
+    # subagents included), which is what wires that halt path in — so the
+    # SilenceWatchdog's FATAL escalation deterministically terminates a wedged
+    # turn even on the memory-less subagents that hang in the incident.
+    assembly = list(assembly) + [AlertPolicy()]
 
     agent = Agent(
         config.agent.name,
@@ -519,8 +530,21 @@ def create_agent(
         assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
-        middleware=[agent_logging_middleware()],  # per-turn LLM/tool logs → ag2assistant.log
-        observers=build_observers(),  # stuck-turn guards (loop + tool-churn) → stream alerts
+        middleware=[
+            agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
+            # Retry a failed call before it kills the attempt/task. Listed BEFORE
+            # the timeout so it wraps it (AG2 nests later middleware closer to the
+            # call): each retry re-enters the timeout, getting a fresh window. A
+            # transient hang or 429/5xx becomes a hiccup, not a failure.
+            LLMRetryMiddleware(config.llm.call_retries),
+            # Wall-clock ceiling per LLM call: a hung/stalled provider call raises
+            # instead of awaiting forever (the incident's silent 2-hour hang).
+            LLMTimeoutMiddleware(config.llm.call_timeout_s),
+        ],
+        observers=build_observers(  # stuck-turn + wedged-turn guards → stream alerts
+            silence_alert_s=config.llm.silence_alert_s,
+            silence_halt_s=config.llm.silence_halt_s,
+        ),
     )
 
     return agent

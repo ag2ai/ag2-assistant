@@ -21,6 +21,14 @@
 
   let open = $state({})
   const toggle = (i) => (open = { ...open, [i]: !open[i] })
+  // Enter/Space activate the disclosure like a button; preventDefault stops Space
+  // from scrolling the page.
+  const onKey = (e, i) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      toggle(i)
+    }
+  }
 </script>
 
 <div class="bs">
@@ -72,21 +80,39 @@
     {#if rest.length}
       <div class="more-label">More on this</div>
       <div class="list">
-        {#each rest as s, i}
-          <article class="item" class:open={open[i]} onclick={() => toggle(i)}>
-            <div class="num">{String(i + 2).padStart(2, '0')}</div>
-            <div>
-              <h3>
-                {#if safeUrl(s.url)}<a href={safeUrl(s.url)} target="_blank" rel="noopener noreferrer" onclick={(e) => e.stopPropagation()}>{s.title}</a>{:else}{s.title}{/if}
-              </h3>
-              <div class="meta">
-                <b>{srcOf(s)}</b>{#if timeOf(s)} · {timeOf(s)}{/if}{#if s.category} · {s.category}{/if}
-              </div>
-              {#if s.summary}<div class="summary">{s.summary}</div>{/if}
+        {#snippet row(s, i)}
+          <div class="num">{String(i + 2).padStart(2, '0')}</div>
+          <div>
+            <h3>
+              {#if safeUrl(s.url)}<a href={safeUrl(s.url)} target="_blank" rel="noopener noreferrer" onclick={(e) => e.stopPropagation()}>{s.title}</a>{:else}{s.title}{/if}
+            </h3>
+            <div class="meta">
+              <b>{srcOf(s)}</b>{#if timeOf(s)} · {timeOf(s)}{/if}{#if s.category} · {s.category}{/if}
             </div>
-            {#if s.image}<img class="thumb" src={s.image} alt="" loading="lazy" />{/if}
-            {#if s.summary}<div class="chev">›</div>{/if}
-          </article>
+            {#if s.summary}<div class="summary">{s.summary}</div>{/if}
+          </div>
+          {#if s.image}<img class="thumb" src={s.image} alt="" loading="lazy" />{/if}
+          {#if s.summary}<div class="chev">›</div>{/if}
+        {/snippet}
+        {#each rest as s, i}
+          <!-- A story with a summary is a disclosure: click/Enter/Space toggles it
+               open. Stories without one have nothing to reveal, so they render as a
+               plain, non-interactive row. -->
+          {#if s.summary}
+            <div
+              class="item"
+              class:open={open[i]}
+              role="button"
+              tabindex="0"
+              aria-expanded={open[i] ? true : false}
+              onclick={() => toggle(i)}
+              onkeydown={(e) => onKey(e, i)}
+            >
+              {@render row(s, i)}
+            </div>
+          {:else}
+            <div class="item">{@render row(s, i)}</div>
+          {/if}
         {/each}
       </div>
     {/if}
@@ -125,7 +151,8 @@
   .figure figcaption { position: absolute; left: 0; bottom: 0; margin: 0; padding: 4px 9px; background: var(--ink); color: var(--paper); font-family: var(--code); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; }
 
   .more-label { margin: 15px 0 0; font-family: var(--code); font-size: 9.5px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); }
-  .item { display: grid; grid-template-columns: 28px 1fr auto; gap: 13px; align-items: start; padding: 12px 0; border-top: 1px solid var(--rule); cursor: pointer; }
+  .item { display: grid; grid-template-columns: 28px 1fr auto; gap: 13px; align-items: start; padding: 12px 0; border-top: 1px solid var(--rule); }
+  .item[role='button'] { cursor: pointer; }
   .item:first-child { border-top: 1px solid var(--rule-2); }
   .num { font-family: var(--code); font-size: 11.5px; font-weight: 700; color: var(--accent); padding-top: 2px; }
   .item h3 { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 16.5px; line-height: 1.18; letter-spacing: -.005em; transition: color .15s; }
