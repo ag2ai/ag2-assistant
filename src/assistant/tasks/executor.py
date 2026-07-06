@@ -76,8 +76,15 @@ def _subagent_archetype(caps: list[str]) -> tuple[str, str]:
     )
 
 
-async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, asker, manager):
-    """Run a named AG2 subagent and forward its lifecycle events."""
+async def _run_visible_subagent(
+    config, task, caps, prompt: str, skills: bool, asker, manager, model: str | None = None
+):
+    """Run a named AG2 subagent and forward its lifecycle events.
+
+    `model` overrides the model for this run — the escalated main model on the
+    final attempt. When None, leaf subtasks (those with a parent) run on the
+    cheaper/faster model and the root synthesis on the main model, as before.
+    """
     from ag2.context import ConversationContext
     from ag2.stream import MemoryStream
     from ag2.tools.subagents.run_task import run_task
@@ -99,7 +106,9 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
     sub_config.agent.system_prompt = "\n\n".join(
         turn_prompt(sub_config, memory=False, workspace="files" in caps)
     )
-    sub_model = cheap_model(config) if task.parent_id else None
+    # Leaf subtasks run cheap; the root synthesis runs on the main model. `model`
+    # (set on the final attempt) overrides that, escalating a struggling leaf.
+    sub_model = model or (cheap_model(config) if task.parent_id else None)
     agent = create_agent(
         sub_config,
         memory=False,
@@ -314,7 +323,24 @@ def make_task_executor(config, skills: bool = True):
         )
 
         await manager.progress(task_id, f"working on {len(pending)} deliverable(s)")
-        result = await _run_visible_subagent(config, task, caps, prompt, skills, asker, manager)
+
+        # Final-attempt escalation: give the last shot the stronger (main) model.
+        # Only a leaf runs on the cheap model, so escalation applies only where
+        # cheap ≠ main — the root synthesis already uses the main model, and if
+        # they're configured equal there's nothing to escalate (skip silently, no
+        # duplicate note). The runner marks the in-flight attempt as final.
+        from assistant.agent import cheap_model
+
+        escalate_model = None
+        if task.parent_id and manager.is_final_attempt(task_id):
+            main = config.llm.model
+            if cheap_model(config) != main:
+                escalate_model = main
+                await manager.progress(task_id, f"final attempt — escalating to {main}")
+
+        result = await _run_visible_subagent(
+            config, task, caps, prompt, skills, asker, manager, model=escalate_model
+        )
         if not result.completed:
             raise RuntimeError(str(result.error or "subagent failed"))
         output = (result.result or "").strip()

@@ -44,6 +44,10 @@ class TaskManager:
         self._sem = asyncio.Semaphore(max_concurrent)
         self._running: dict[str, asyncio.Task] = {}
         self._cancelled: set[str] = set()
+        # Per-task attempt bookkeeping (current 1-based attempt, max attempts) so
+        # the executor can ask whether it's on its FINAL attempt and escalate to
+        # the stronger model. Set just before each executor call; cleared on settle.
+        self._attempts: dict[str, tuple[int, int]] = {}
         self._on_progress = on_progress
         # Notified on every lifecycle transition (RUNNING / terminal) so the
         # service can emit the matching AG2 task event onto the task's stream.
@@ -105,6 +109,8 @@ class TaskManager:
         try:
             await self._mark(task_id, TaskStatus.RUNNING)
             attempts = 0
+            last_crash = ""  # reason the most recent executor attempt RAISED (if any)
+            ran_clean = False  # did any attempt return without raising?
             while True:
                 if task_id in self._cancelled:
                     await self._mark(task_id, TaskStatus.CANCELLED)
@@ -141,29 +147,94 @@ class TaskManager:
                         if task_id in self._cancelled:
                             await self._mark(task_id, TaskStatus.CANCELLED)
                             return
-                        await self.executor(task_id, self, self._bind_asker(asker, task_id))
+                        # Publish attempt state so the executor can escalate the
+                        # model on the final attempt (current_attempt()).
+                        self._attempts[task_id] = (attempts, self.MAX_ATTEMPTS)
+                        try:
+                            await self.executor(task_id, self, self._bind_asker(asker, task_id))
+                            ran_clean = True
+                            last_crash = ""
+                        except asyncio.CancelledError:
+                            raise  # cancellation is not a crash — settle as CANCELLED
+                        except Exception as exc:
+                            # A crashed attempt (e.g. LLMCallTimeout after retries)
+                            # is ONE consumed attempt, not task death: record it and
+                            # let the loop try again (or FAIL when exhausted). This
+                            # is the incident's second failure mode — a wedged
+                            # synthesis turn used to kill the whole task outright.
+                            last_crash = str(exc) or exc.__class__.__name__
+                            await self.progress(
+                                task_id, f"attempt {attempts} crashed: {last_crash}"
+                            )
+                            await self._note_crash(task_id, attempts, last_crash)
                     continue  # re-check (may have produced deliverables / added subtasks)
 
-                # 3) Settle: complete iff deliverables satisfied + subtasks done.
-                if await self.store.is_complete(task_id):
+                # 3) Settle: complete iff deliverables satisfied + subtasks done. A
+                #    task whose only run(s) crashed (no clean run, nothing else to be
+                #    judged on) is NOT complete even when it has no deliverables.
+                complete = await self.store.is_complete(task_id)
+                if complete and (ran_clean or task.deliverables or children):
                     await self._mark(task_id, TaskStatus.COMPLETED)
                 else:
-                    pending = [d.get("description") for d in task.pending_deliverables()]
                     await self._mark(
                         task_id,
                         TaskStatus.FAILED,
-                        error=f"deliverables not met after {attempts} attempt(s): {pending}"
-                        if pending
-                        else "incomplete (subtasks unfinished)",
+                        error=self._failure_reason(task, attempts, last_crash, children),
                     )
                 return
         except asyncio.CancelledError:
             await self._mark(task_id, TaskStatus.CANCELLED)
             raise
-        except Exception as exc:  # the work blew up
+        except Exception as exc:  # the runner mechanics themselves blew up
             await self._mark(task_id, TaskStatus.FAILED, error=str(exc))
         finally:
+            self._attempts.pop(task_id, None)
             self._running.pop(task_id, None)
+
+    def current_attempt(self, task_id: str) -> tuple[int, int]:
+        """The (attempt, max_attempts) of the executor call in flight for `task_id`.
+
+        1-based; ``attempt == max_attempts`` means this is the FINAL attempt (the
+        executor escalates to the stronger model there). ``(0, MAX_ATTEMPTS)`` when
+        no attempt is in flight (defensive default for callers outside the loop)."""
+        return self._attempts.get(task_id, (0, self.MAX_ATTEMPTS))
+
+    def is_final_attempt(self, task_id: str) -> bool:
+        """True while the executor is on its last permitted attempt for `task_id`."""
+        attempt, max_attempts = self.current_attempt(task_id)
+        return attempt >= max_attempts
+
+    async def _note_crash(self, task_id: str, attempt: int, reason: str) -> None:
+        """Annotate pending deliverables with the crash so the NEXT attempt's prompt
+        carries it (same channel the verifier's rejection note uses), and a failed
+        task shows why. Best-effort: a note write must never mask the crash."""
+        note = f"attempt {attempt} crashed before producing this: {reason}"
+        task = await self.store.get(task_id)
+        if task is None:
+            return
+        for d in task.pending_deliverables():
+            try:
+                await self.store.set_deliverable_status(
+                    task_id, d["id"], d.get("status", "pending"), notes=note
+                )
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("crash note write", exc, task_id=task_id)
+
+    def _failure_reason(self, task, attempts: int, last_crash: str, children) -> str:
+        """Distinguish a crash-flavoured failure from a verification rejection."""
+        pending = [d.get("description") for d in task.pending_deliverables()]
+        if last_crash:
+            if pending:
+                return (
+                    f"deliverables not produced after {attempts} attempt(s); "
+                    f"last attempt crashed: {last_crash} — pending: {pending}"
+                )
+            return f"crashed after {attempts} attempt(s): {last_crash}"
+        if pending:
+            return f"deliverables not met after {attempts} attempt(s): {pending}"
+        return "incomplete (subtasks unfinished)"
 
     async def _run_subtree(self, task_id: str, asker) -> None:
         """Submit a subtask and await its background run to settle."""

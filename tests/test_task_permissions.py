@@ -71,7 +71,7 @@ async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
         error = None
         stream = None
 
-    async def fake_run(config, task, caps, prompt, skills, asker, manager):
+    async def fake_run(config, task, caps, prompt, skills, asker, manager, model=None):
         captured["asker"] = asker
         return _Result()
 
@@ -111,7 +111,7 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
         error = None
         stream = None
 
-    async def fake_run(config, task, caps, prompt, skills, asker, manager):
+    async def fake_run(config, task, caps, prompt, skills, asker, manager, model=None):
         prompts.append(prompt)
         return _Result()
 
@@ -158,7 +158,7 @@ async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
         error = None
         stream = None
 
-    async def fake_run(config, task, caps, prompt, skills, asker, manager):
+    async def fake_run(config, task, caps, prompt, skills, asker, manager, model=None):
         prompts.append(prompt)
         return _Result()
 
@@ -182,6 +182,107 @@ async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
     await mgr.wait(t.id)
 
     assert prompts and secret in prompts[0]  # the text to summarise reached the agent
+
+
+async def test_leaf_final_attempt_escalates_to_main_model(tmp_path, monkeypatch):
+    """A leaf subtask that keeps getting rejected runs the cheap model on early
+    attempts and escalates to the MAIN model on the final one, with a matching
+    'escalating' progress note."""
+    import assistant.tasks.executor as exec_mod
+    from assistant.tasks.executor import _Verdict
+
+    class _Result:
+        completed = True
+        result = "done"
+        error = None
+        stream = None
+
+    used_models: list[str | None] = []
+
+    async def fake_run(config, task, caps, prompt, skills, asker, manager, model=None):
+        used_models.append(model)
+        return _Result()
+
+    async def _reject(config, deliverable, output):
+        return _Verdict(satisfied=False, reason="not good enough")  # force reruns
+
+    monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
+    monkeypatch.setattr(exec_mod, "_verify_deliverable", _reject)
+
+    from assistant.agent import cheap_model
+    from assistant.config import Config
+
+    config = Config()
+    assert cheap_model(config) != config.llm.model  # precondition: cheap != main
+
+    store = _store(tmp_path)
+    parent = await store.create("parent")
+    child = await store.add_subtask(parent.id, "leaf work", reopen_parent=False)
+    await store.add_deliverable(child.id, "output")
+
+    mgr = TaskManager(store, make_task_executor(config))
+    await mgr.submit(parent.id, asker=object())
+    await mgr.wait(parent.id)
+
+    # Ran MAX_ATTEMPTS times; early attempts on cheap (model=None → leaf default),
+    # the final attempt escalated to the main model.
+    assert len(used_models) == TaskManager.MAX_ATTEMPTS
+    assert used_models[-1] == config.llm.model  # final attempt escalated to main
+    assert all(m is None for m in used_models[:-1])  # earlier attempts stayed cheap
+
+    child_after = await store.get(child.id)
+    notes = " ".join(p["message"] for p in child_after.progress)
+    assert f"escalating to {config.llm.model}" in notes
+
+
+async def test_no_escalation_when_cheap_equals_main(tmp_path, monkeypatch):
+    """When the cheap and main models are configured equal, the final attempt has
+    nothing to escalate to — no model override, no escalation note (skipped
+    silently)."""
+    import assistant.tasks.executor as exec_mod
+    from assistant.tasks.executor import _Verdict
+
+    class _Result:
+        completed = True
+        result = "done"
+        error = None
+        stream = None
+
+    used_models: list[str | None] = []
+
+    async def fake_run(config, task, caps, prompt, skills, asker, manager, model=None):
+        used_models.append(model)
+        return _Result()
+
+    async def _reject(config, deliverable, output):
+        return _Verdict(satisfied=False, reason="not good enough")
+
+    monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
+    monkeypatch.setattr(exec_mod, "_verify_deliverable", _reject)
+
+    from assistant.agent import cheap_model
+    from assistant.config import Config
+
+    config = Config()
+    # Pin cheap == main so escalation is a no-op.
+    config.llm.aggregate_model = config.llm.model
+    assert cheap_model(config) == config.llm.model
+
+    store = _store(tmp_path)
+    parent = await store.create("parent")
+    child = await store.add_subtask(parent.id, "leaf work", reopen_parent=False)
+    await store.add_deliverable(child.id, "output")
+
+    mgr = TaskManager(store, make_task_executor(config))
+    await mgr.submit(parent.id, asker=object())
+    await mgr.wait(parent.id)
+
+    assert len(used_models) == TaskManager.MAX_ATTEMPTS
+    assert all(m is None for m in used_models)  # never escalated on any attempt
+
+    child_after = await store.get(child.id)
+    notes = " ".join(p["message"] for p in child_after.progress)
+    assert "escalating" not in notes  # skipped silently
 
 
 async def test_no_asker_means_no_extra_access():
