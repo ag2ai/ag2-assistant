@@ -74,8 +74,8 @@ def _blank() -> dict:
 class UsageLedger:
     """Daily token + estimated-cost totals, persisted to disk. Thread-safe."""
 
-    def __init__(self, path=None):
-        self._path = path or (data_dir() / "usage.json")
+    def __init__(self, path):
+        self._path = path
         self._lock = threading.Lock()
         self._days: dict[str, dict] = {}
         self._load()

@@ -1,13 +1,43 @@
-"""FastAPI facade over the AG2 Assistant gateway.
+"""FastAPI facade over the AG2 Assistant ProfileManager.
 
 Exposes a plain REST + WebSocket API so any UI client (web, desktop, mobile) can
-drive the agent without knowing anything about AG2. The gateway is created on
-app startup and torn down on shutdown.
+drive the agent without knowing anything about AG2. The app OWNS a
+``ProfileManager``: it is constructed (not started) by the caller, passed in, and
+started/stopped in the app lifespan. Each request that touches profile-owned state
+resolves ``{pid}`` to a ``ProfileRuntime`` (gateway + task service + settings) via
+the ``get_runtime`` dependency; unknown → 404, archived → 410.
 
-Endpoints:
-  GET  /api/health              -> gateway status
-  POST /api/message             -> {reply} for a {text, session_id?} message
-  WS   /api/stream              -> send {text}, receive {event:{type,data}} (replay + live)
+Route map:
+  Global (unprefixed):
+    GET  /api/health                         -> process status (first running runtime)
+    GET  /api/status                         -> [{pid, busy, running_tasks}] activity badges
+    GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
+    POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
+    POST /api/onboarded                      -> set the install-level onboarding flag
+    GET/POST /api/memory                     -> universal "who the user is" doc (shared root/user.db)
+    POST /api/identity                       -> seed universal doc from web onboarding (name/location/hours/style); seed-only, never clobbers
+    GET  /api/profiles                       -> {profiles, active_default, onboarded} (§3.5 contract)
+    POST /api/profiles                       -> create {name, palette, workspace?}; boots live
+    POST /api/profiles/{pid}                 -> rename / palette / workspace (workspace reloads runtime)
+    DELETE /api/profiles/{pid}               -> archive (guardrails §4.9)
+    GET  /api/channels                       -> {platform: {profile, token_present, active, error}} (install-level)
+    POST /api/channels                       -> bind {platform, profile:pid|null}; hot-applies; returns updated entry
+    GET  /api/google/*                       -> account-level OAuth (shared like keys)
+    GET  /api/fs/list                        -> generic folder browser (pickers)
+    GET  /hitl/{req_id}, POST .../answer     -> styled HITL pages over a cross-profile dispatcher
+    static: /, /{name}.svg, /favicon.ico, /voices/{name}.wav, /app*, catch-all
+
+  Profile-scoped (under /api/p/{pid}):
+    GET  sessions, sessions/{sid}
+    POST message
+    GET/POST tasks* (all/schedule/{id}/cancel/rerun/seen/archive/chat)
+    GET  inquiries/pending, POST inquiries/{id}/answer
+    GET  hitl/pending
+    WS   stream, WS voice; GET voice/voices, POST voice/select, POST voice/preview
+    GET/POST settings, settings/mcp*, settings/project-folder, settings/focuses, settings/llm, settings/voice_provider
+    GET/POST memory                          -> THIS profile's persona memory (profiles/<id>/profile.db)
+    GET  files, GET/DELETE files/raw
+    GET  usage
 """
 
 import asyncio
@@ -17,15 +47,34 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from assistant.config import Config
-from assistant.gateway.core import Gateway
-from assistant.hitl import DurableAsker, GatewayAsker, HitlServer, NullAsker, add_hitl_routes
+from assistant.gateway.profile_manager import (
+    ArchivedProfile,
+    ProfileManager,
+    ProfileRuntime,
+    UnknownProfile,
+)
+from assistant.hitl import DurableAsker, GatewayAsker, NullAsker, add_hitl_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
+
+# WebSocket close codes for profile resolution failures (documented, coherent set).
+# Chosen to mirror the HTTP status they correspond to (4000 + status), and distinct
+# from 4001 = profile-archived-mid-session (§4.9) and 1008 = origin policy violation.
+_WS_UNKNOWN_PROFILE = 4404  # {pid} not in registry (≈ 404)
+_WS_ARCHIVED_PROFILE = 4410  # {pid} archived (≈ 410)
+_WS_PROFILE_ARCHIVED = 4001  # runtime archived while this socket was open (§4.9)
 
 
 def _allowed_origins() -> set[str]:
@@ -33,18 +82,6 @@ def _allowed_origins() -> set[str]:
     AG2ASSISTANT_ALLOWED_ORIGINS — an escape hatch for proxied/remote demos."""
     raw = os.environ.get("AG2ASSISTANT_ALLOWED_ORIGINS", "")
     return {o.strip().rstrip("/") for o in raw.split(",") if o.strip()}
-
-
-def _chat_asker(app, session_id: str):
-    """Durable, inline HITL for a chat turn: the agent's question persists as an
-    Inquiry and surfaces inline on this session's stream (InquiryRaised),
-    answerable from the thread or the strip — no separate live channel. Falls back
-    to the transient HitlServer asker if the inquiry store isn't available."""
-    tasks = getattr(app.state, "tasks", None)
-    inquiries = getattr(tasks, "inquiries", None) if tasks is not None else None
-    if inquiries is None:
-        return GatewayAsker(app.state.hitl)
-    return DurableAsker(NullAsker(), inquiries, session=session_id)
 
 
 def _origin_ok(origin: str | None, host: str | None) -> bool:
@@ -122,6 +159,10 @@ class ProjectFolderRequest(BaseModel):
     path: str
 
 
+class FocusesRequest(BaseModel):
+    focuses: list[str] = []
+
+
 class VoiceRequest(BaseModel):
     voice: str
 
@@ -151,58 +192,134 @@ class VoiceProviderRequest(BaseModel):
     provider: str
 
 
+class ChannelBindRequest(BaseModel):
+    platform: str
+    profile: str | None = None  # pid to bind to, or null to disable
+
+
+class ChannelTokenRequest(BaseModel):
+    platform: str
+    tokens: dict[str, str] = Field(default_factory=dict)  # {ENV_NAME: value_or_empty}
+
+
 class MemoryRequest(BaseModel):
     text: str
 
 
-def create_app(
-    config: Config | None = None,
-    memory: bool = True,
-    platform: str = "gateway",
-    gateway: Gateway | None = None,
-    task_service=None,
-    persist: bool = True,
-) -> FastAPI:
-    """Build the FastAPI app.
+class IdentityRequest(BaseModel):
+    """Identity answers collected in web onboarding (all optional). Seed the shared
+    universal "who the user is" doc, replacing the CLI first-chat interview."""
 
-    If `gateway` is provided (e.g. shared with channels in `ag2-assistant run`), it's
-    used as-is and its lifecycle is owned by the caller — pass its `task_service` too
-    so the REST endpoints and the agent share one TaskService. Otherwise the app
-    creates and manages its own gateway + task service (wired together).
+    name: str | None = None
+    location: str | None = None
+    hours: str | None = None
+    style: str | None = None
+
+
+class ProfileCreateRequest(BaseModel):
+    name: str
+    palette: str
+    workspace: str | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str | None = None
+    palette: str | None = None
+    workspace: str | None = None
+
+
+class ProfileArchiveRequest(BaseModel):
+    new_default: str | None = None
+
+
+class _HitlDispatcher:
+    """Global HITL registry facade over every runtime's per-profile HITL registry.
+
+    HITL request ids are globally unique (``uuid4().hex[:12]``), so the styled
+    ``/hitl/{req_id}`` pages can stay short + unprefixed while still resolving
+    against the right profile. This satisfies the ``add_hitl_routes`` registry
+    protocol (``question_for(id)`` / ``answer(id, text)``) by asking each running
+    runtime's registry in turn — first non-None wins."""
+
+    def __init__(self, manager: ProfileManager) -> None:
+        self._manager = manager
+
+    def _registries(self):
+        for runtime in self._manager.runtimes():
+            reg = getattr(runtime, "hitl", None)
+            if reg is not None:
+                yield reg
+
+    def question_for(self, req_id: str):
+        for reg in self._registries():
+            q = reg.question_for(req_id)
+            if q is not None:
+                return q
+        return None
+
+    def answer(self, req_id: str, answer: str) -> bool:
+        for reg in self._registries():
+            if reg.answer(req_id, answer):
+                return True
+        return False
+
+
+def _runtime_settings(runtime: ProfileRuntime):
+    """This profile's Settings, resolved from the runtime's derived config."""
+    from assistant.settings import Settings
+
+    return Settings(runtime.config.data_dir / "settings.json")
+
+
+def _chat_asker(runtime: ProfileRuntime, session_id: str):
+    """Durable, inline HITL for a chat turn: the agent's question persists as an
+    Inquiry and surfaces inline on this session's stream (InquiryRaised),
+    answerable from the thread or the strip. Falls back to the transient HITL
+    registry if the inquiry store isn't available."""
+    inquiries = getattr(runtime.tasks, "inquiries", None) if runtime.tasks is not None else None
+    if inquiries is None:
+        return GatewayAsker(runtime.hitl)
+    return DurableAsker(NullAsker(), inquiries, session=session_id)
+
+
+async def _running_tasks(runtime: ProfileRuntime) -> int:
+    """Count of RUNNING top-level+subtree tasks (cheap store scan) for activity badges."""
+    tasks = runtime.tasks
+    store = getattr(tasks, "store", None) if tasks is not None else None
+    if store is None:
+        return 0
+    try:
+        from assistant.tasks import TaskStatus
+
+        return sum(1 for t in await store.list_all() if t.status == TaskStatus.RUNNING)
+    except Exception:
+        return 0
+
+
+def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
+    """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
+
+    The app owns the manager's lifecycle: ``profiles.start()`` runs on lifespan
+    startup (migration + boot all unarchived profiles) and ``profiles.close()`` on
+    shutdown. ``persist`` is accepted for signature symmetry (the manager itself is
+    already configured with its persistence choice).
+
+    ``app.state.profiles`` holds the manager; there is no ``app.state.gateway`` /
+    ``app.state.tasks`` — profile-scoped routes resolve a runtime per request.
     """
-    from assistant.config import load_config
-    from assistant.gateway.core import build_gateway
-    from assistant.gateway.tasks_service import TaskService
-
-    config = config or load_config()  # resolve once so routes have a real Config
-
-    owns_gateway = gateway is None
-    owns_tasks = task_service is None  # we start/stop only the TaskService we create
-    if owns_gateway:
-        gateway, tasks = build_gateway(config, memory=memory, platform=platform, persist=persist)
-    else:
-        # Caller-supplied gateway: reuse its task service if given, else a fresh one
-        # for the REST endpoints (its lifecycle is the caller's when supplied).
-        tasks = task_service or TaskService(config=config)
+    manager = profiles
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        if owns_gateway:
-            await gateway.start()
-        if owns_tasks:
-            tasks.set_emitter(getattr(gateway, "emit_event", None))  # lifecycle → AG2 stream
-            await tasks.start()
-        app.state.gateway = gateway
-        app.state.tasks = tasks
+        await manager.start()  # migration + boot all unarchived profiles (+ channels)
         try:
             yield
         finally:
-            if owns_tasks:
-                await tasks.close()
-            if owns_gateway:
-                await gateway.close()
+            await manager.close()
 
     app = FastAPI(title="AG2 Assistant Gateway", version="0.1.0", lifespan=lifespan)
+    app.state.profiles = manager
+    app.state.google_flows = {}  # state token -> in-progress OAuth flow
 
     @app.middleware("http")
     async def _origin_guard(request: Request, call_next):
@@ -215,12 +332,41 @@ def create_app(
             return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
         return await call_next(request)
 
-    # Shared HITL registry: the gateway serves the styled /hitl/{id} pages and an
-    # answer endpoint, so permission/HITL prompts can be answered by any client.
-    hitl = HitlServer()
-    app.state.hitl = hitl
-    app.state.google_flows = {}  # state token -> in-progress OAuth flow
-    add_hitl_routes(app, hitl)
+    # One global HITL page pair backed by a dispatcher over every runtime's registry.
+    add_hitl_routes(app, _HitlDispatcher(manager))
+
+    # ------------------------------------------------------------------ #
+    #  get_runtime dependency (profile-scoped routes)                     #
+    # ------------------------------------------------------------------ #
+
+    def get_runtime(pid: str, request: Request) -> ProfileRuntime:
+        """Resolve ``{pid}`` to its live runtime; map manager errors to HTTP status."""
+        try:
+            return request.app.state.profiles.get(pid)
+        except UnknownProfile:
+            raise HTTPException(status_code=404, detail=f"unknown profile: {pid}") from None
+        except ArchivedProfile:
+            raise HTTPException(status_code=410, detail=f"profile archived: {pid}") from None
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from None
+
+    async def _ws_runtime(websocket: WebSocket, pid: str) -> ProfileRuntime | None:
+        """Resolve a runtime for a WS handler, closing the socket with a coherent
+        code on failure. WS close codes mirror the HTTP status (4404 unknown,
+        4410 archived) so the client can distinguish them; returns None on failure."""
+        try:
+            return websocket.app.state.profiles.get(pid)
+        except UnknownProfile:
+            await websocket.close(code=_WS_UNKNOWN_PROFILE, reason="unknown-profile")
+        except ArchivedProfile:
+            await websocket.close(code=_WS_ARCHIVED_PROFILE, reason="profile-archived")
+        except RuntimeError:
+            await websocket.close(code=1011, reason="profile-not-running")
+        return None
+
+    # ------------------------------------------------------------------ #
+    #  Global routes                                                      #
+    # ------------------------------------------------------------------ #
 
     @app.get("/")
     async def ui():
@@ -242,12 +388,279 @@ def create_app(
 
     @app.get("/api/health")
     async def health() -> dict:
-        return app.state.gateway.status()
+        """Process-level status: the first running runtime's gateway status, or a
+        zero-profile stub (fresh install, §3.5)."""
+        runtime = next(manager.runtimes(), None)
+        if runtime is None or runtime.gateway is None:
+            return {"status": "ok", "profiles": 0}
+        return runtime.gateway.status()
 
-    @app.get("/api/hitl/pending")
-    async def hitl_pending() -> dict:
-        """Open HITL questions for a UI client to render and answer."""
-        return {"pending": app.state.hitl.pending_list()}
+    @app.get("/api/usage")
+    async def usage() -> dict:
+        """Install-wide token/cost roll-up across ALL running profiles (for the HUD's
+        "all profiles" total). ``profiles`` is one ``usage_today()`` snapshot per
+        running runtime (with its ``pid``/``name``); ``total`` sums the numeric fields.
+
+        ``total.priced`` is true only when EVERY contributing profile is priced — an
+        unpriced profile means its tokens carry no cost, so the summed ``cost`` is an
+        underestimate and the flag says so (matching the per-profile flag semantics and
+        the HUD's "no price set" fallback). Archived profiles aren't running, so they're
+        naturally excluded. Zero profiles → empty list + a zeroed total.
+        """
+        rows = []
+        total = {"prompt": 0.0, "completion": 0.0, "total": 0.0, "cost": 0.0}
+        all_priced = True
+        any_profile = False
+        for runtime in manager.runtimes():
+            if runtime.gateway is None:
+                continue
+            any_profile = True
+            today = runtime.gateway.usage_today()
+            rows.append({"pid": runtime.pid, "name": runtime.meta.name, **today})
+            for k in total:
+                total[k] += today.get(k) or 0
+            if not today.get("priced"):
+                all_priced = False
+        # Zero profiles (or none priced) → not priced. With profiles present, priced iff
+        # every one is priced (an unpriced profile makes the summed cost incomplete).
+        total["priced"] = bool(any_profile and all_priced)
+        return {"profiles": rows, "total": total}
+
+    @app.get("/api/status")
+    async def status() -> list[dict]:
+        """Per-profile activity for badges: busy = agent alive, running_tasks = count
+        of RUNNING tasks. Aggregated over the running runtimes."""
+        out = []
+        for runtime in manager.runtimes():
+            gw_status = runtime.gateway.status() if runtime.gateway is not None else {}
+            out.append(
+                {
+                    "pid": runtime.pid,
+                    "busy": gw_status.get("status") == "ok",
+                    "running_tasks": await _running_tasks(runtime),
+                }
+            )
+        return out
+
+    @app.post("/api/secrets/key")
+    async def set_secrets_key(req: KeyRequest) -> dict:
+        """Save/clear a provider API key (global secrets). Reloads ALL runtimes so
+        every profile's agent picks up the change on its next turn."""
+        from assistant import secrets
+
+        if not secrets.set_key(req.provider, req.value):
+            return Response(status_code=400)
+        for runtime in list(manager.runtimes()):
+            with contextlib.suppress(Exception):
+                await manager.reload(runtime.pid)
+        return {"ok": True}
+
+    @app.post("/api/onboarded")
+    async def set_onboarded(req: OnboardedRequest) -> dict:
+        """Mark first-run onboarding completed/dismissed (install-level, in the registry)."""
+        from assistant import profiles as profiles_mod
+
+        profiles_mod.set_onboarded(req.value)
+        return {"ok": True}
+
+    # ---- Universal memory: the shared "who the user is" doc (root/user.db) ----
+
+    def _user_store_path() -> Path:
+        """The install-wide universal memory DB — the SAME file every profile's agent
+        reads (``root_dir/user.db``). Profile-agnostic, so resolved from the root config."""
+        from assistant.config import load_config
+
+        return load_config().root_dir / "user.db"
+
+    @app.get("/api/memory")
+    async def get_universal_memory() -> dict:
+        """Read the shared universal "who the user is" document (identity facts injected
+        into EVERY profile's context). Mirrors the per-profile GET /api/p/{pid}/memory."""
+        from assistant.memory import read_universal
+
+        return {"text": await read_universal(_user_store_path())}
+
+    @app.post("/api/memory")
+    async def set_universal_memory(req: MemoryRequest) -> dict:
+        """Replace the shared universal document (a user edit from any profile's Settings →
+        Memory). Read fresh per turn, so all profiles' agents pick it up next turn."""
+        from assistant.memory import write_universal
+
+        await write_universal(req.text, _user_store_path())
+        return {"ok": True}
+
+    @app.post("/api/identity")
+    async def seed_identity(req: IdentityRequest) -> dict:
+        """Seed the universal "who the user is" doc from web-onboarding identity answers
+        (name/location/hours/style, all optional). Formats them with the SAME
+        `identity_document` helper the CLI interview uses, so both surfaces produce an
+        identical doc. Onboarding semantics: this only ever *seeds* — if the universal
+        store already holds a doc it is left untouched (returns ``seeded: false``), and
+        if every field is empty nothing is written (also ``seeded: false``). This is why
+        a web-onboarded user's first chat never triggers the in-chat interview: the
+        store is already seeded, so `needs_onboarding` is false."""
+        from assistant.memory import read_universal, write_universal
+        from assistant.onboarding import identity_document
+
+        doc = identity_document(req.model_dump())
+        if not doc:
+            return {"ok": True, "seeded": False, "reason": "empty"}
+        path = _user_store_path()
+        if (await read_universal(path)).strip():
+            return {"ok": True, "seeded": False, "reason": "exists"}
+        await write_universal(doc, path)
+        return {"ok": True, "seeded": True}
+
+    # ---- Profile management (global) ----
+
+    def _profile_view(meta) -> dict:
+        return {
+            "id": meta.id,
+            "name": meta.name,
+            "palette": meta.palette,
+            "workspace": meta.workspace,
+            "created": meta.created,
+        }
+
+    @app.get("/api/profiles")
+    async def list_profiles() -> dict:
+        """The §3.5 contract, present in every state: unarchived profiles, the
+        server-side active default, and the install-level onboarded flag. Empty list +
+        null + false on fresh install. Channel bindings are install-level now — see
+        GET /api/channels."""
+        from assistant import profiles as profiles_mod
+
+        reg = profiles_mod.load_registry()
+        return {
+            "profiles": [
+                _profile_view(m) for m in profiles_mod.list_profiles(include_archived=False)
+            ],
+            "active_default": reg.get("active_default"),
+            "onboarded": bool(reg.get("onboarded")),
+        }
+
+    @app.post("/api/profiles")
+    async def create_profile(req: ProfileCreateRequest):
+        """Create a profile (dir + registry) and boot its runtime live (§3.5)."""
+        try:
+            runtime = await manager.create(req.name, req.palette, workspace=req.workspace)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"profile": _profile_view(runtime.meta)}
+
+    @app.post("/api/profiles/{pid}")
+    async def update_profile(pid: str, req: ProfileUpdateRequest):
+        """Rename / set palette (display-only) and/or set workspace (runtime config
+        change → reload that runtime). Unknown pid → 404, invalid value → 400."""
+        from assistant import profiles as profiles_mod
+
+        if profiles_mod.get_profile(pid) is None:
+            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+        try:
+            if req.name is not None:
+                profiles_mod.rename_profile(pid, req.name)
+            if req.palette is not None:
+                profiles_mod.set_palette(pid, req.palette)
+            workspace_changed = False
+            if req.workspace is not None:
+                profiles_mod.set_workspace(pid, req.workspace)
+                workspace_changed = True
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if workspace_changed:
+            # runtime config change — reference-swap reload so new turns use it.
+            with contextlib.suppress(Exception):
+                await manager.reload(pid)
+        return {"profile": _profile_view(profiles_mod.get_profile(pid))}
+
+    @app.delete("/api/profiles/{pid}")
+    async def archive_profile(pid: str, req: ProfileArchiveRequest | None = None):
+        """Archive a profile with the §4.9 guardrails. new_default may come in the
+        body. ValueError (guardrail) → 400, unknown → 404, already archived → 410."""
+        new_default = req.new_default if req is not None else None
+        try:
+            await manager.archive(pid, new_default=new_default)
+        except UnknownProfile:
+            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+        except ArchivedProfile:
+            return JSONResponse({"error": f"profile archived: {pid}"}, status_code=410)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True}
+
+    # ---- Channels (global, install-level: platform → one profile or disabled) ----
+
+    def _channel_entry(platform: str, pid: str | None) -> dict:
+        """The install-level state of one platform: which profile owns it (or null),
+        whether its token env is present, whether it is live on that runtime, and the
+        last start error (or null)."""
+        from assistant.gateway.profile_manager import _CHANNEL_TOKENS
+
+        active = False
+        if pid is not None:
+            runtime = manager.runtimes_by_id().get(pid)
+            active = bool(runtime and platform in runtime.channels)
+        return {
+            "profile": pid,
+            "token_present": all(os.environ.get(e) for e in _CHANNEL_TOKENS[platform]),
+            "active": active,
+            "error": manager.channel_errors.get(platform),
+        }
+
+    @app.get("/api/channels")
+    async def list_channels() -> dict:
+        """Install-level channel bindings: ``{platform: {profile, token_present, active,
+        error}}``. A fresh (zero-profile) install returns all profiles null."""
+        from assistant import profiles as profiles_mod
+
+        return {
+            platform: _channel_entry(platform, pid)
+            for platform, pid in profiles_mod.channel_bindings().items()
+        }
+
+    @app.post("/api/channels")
+    async def bind_channel(req: ChannelBindRequest):
+        """Assign a platform to a profile (or disable it with profile:null) and hot-apply
+        it. Returns the updated platform entry. Unknown platform → 400; unknown/archived
+        pid → 400. The binding persists even if the channel fails to start (bad/missing
+        token): ``active`` reports live state, ``error`` explains any failure."""
+        try:
+            await manager.bind_channel(req.platform, req.profile)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {req.platform: _channel_entry(req.platform, req.profile)}
+
+    @app.post("/api/channels/token")
+    async def set_channel_token(req: ChannelTokenRequest):
+        """Save/clear channel bot token(s) for a platform (global secrets, like provider
+        keys) and re-apply the channel live. Body: ``{platform, tokens:{ENV_NAME: value}}``
+        — an empty value clears that token. Only env names valid for the platform are
+        accepted; an unknown platform or env name → 400. Saving sets os.environ, so the
+        bound channel is restarted (stopped, then started if all tokens are now present).
+        Returns the updated GET /api/channels entry. Token values are never echoed."""
+        from assistant import profiles as profiles_mod
+        from assistant import secrets
+
+        platform = req.platform
+        if platform not in profiles_mod.CHANNEL_PLATFORMS:
+            return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
+        valid = set(profiles_mod.CHANNEL_TOKEN_ENVS[platform])
+        unknown = set(req.tokens) - valid
+        if unknown:
+            return JSONResponse(
+                {"error": f"invalid token env(s) for {platform}: {', '.join(sorted(unknown))}"},
+                status_code=400,
+            )
+        for env_name, value in req.tokens.items():
+            secrets.set_channel_token(env_name, value)
+        # Reconcile the live channel with the new tokens if the platform is bound.
+        bound = profiles_mod.channel_bindings().get(platform)
+        if bound is not None:
+            with contextlib.suppress(Exception):
+                await manager.restart_channel(platform)
+        return {platform: _channel_entry(platform, bound)}
+
+    # ---- Google OAuth (global, account-level) ----
 
     @app.get("/api/google/status")
     async def google_status() -> dict:
@@ -323,175 +736,32 @@ def create_app(
 
         return {"ok": google_auth.logout()}
 
-    @app.get("/api/sessions")
-    async def sessions() -> dict:
-        """List persisted, resumable conversations (newest first)."""
-        return {"sessions": await app.state.gateway.list_sessions()}
+    @app.get("/api/fs/list")
+    async def fs_list(path: str = "") -> dict:
+        """List immediate subdirectories of a host path — drives the folder picker. The
+        gateway is local + single-user and `_origin_guard` blocks cross-origin, so this is
+        safe; dotfolders are hidden. Empty path starts at home."""
+        from assistant.workspace import list_dirs
 
-    @app.get("/api/sessions/{session_id}")
-    async def session_transcript(session_id: str) -> dict:
-        """The display transcript for a session, for the UI to restore."""
-        return {
-            "session_id": session_id,
-            "messages": await app.state.gateway.transcript(session_id),
-        }
+        result = list_dirs(path or str(Path.home()))
+        if result is None:
+            return {"ok": False, "error": "not a readable directory"}
+        return {"ok": True, **result}
 
-    # --- Tasks + durable HITL inquiries ---
+    # ------------------------------------------------------------------ #
+    #  Profile-scoped router (/api/p/{pid})                              #
+    # ------------------------------------------------------------------ #
 
-    @app.get("/api/tasks")
-    async def list_tasks() -> dict:
-        """Top-level tasks (newest first) for the Tasks view."""
-        return {"tasks": await app.state.tasks.list_tasks()}
+    p = APIRouter(prefix="/api/p/{pid}")
 
-    @app.post("/api/tasks")
-    async def create_task(req: TaskRequest) -> dict:
-        """Kick off a task — intake (clarifying questions) runs in the background
-        and surfaces as inquiries to answer."""
-        task_id = await app.state.tasks.submit_request(req.text, channel=req.channel)
-        return {"id": task_id}
+    def _available_providers() -> dict:
+        """Which providers can actually be used right now (key set / Ollama deps)."""
+        from assistant import secrets
 
-    @app.get("/api/tasks/all")
-    async def list_all_tasks(status: str | None = None) -> dict:
-        """Full task history for the listing page (newest first). Optional status
-        filter: active / completed / stopped / archived."""
-        return {"tasks": await app.state.tasks.list_all(status)}
-
-    @app.post("/api/tasks/schedule")
-    async def schedule_task(req: ScheduleRequest) -> dict:
-        """Schedule a task for a future time (optionally recurring)."""
-        task_id = await app.state.tasks.schedule_task(req.text, req.when, req.recurrence)
-        return {"id": task_id}
-
-    @app.get("/api/tasks/{task_id}")
-    async def get_task(task_id: str):
-        from assistant.tasks import TaskStoreCorruptionError
-
-        try:
-            task = await app.state.tasks.get_task(task_id)
-        except TaskStoreCorruptionError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=500)
-        if task is None:
-            return Response(status_code=404)
-        return {"task": task}
-
-    @app.post("/api/tasks/{task_id}/cancel")
-    async def cancel_task(task_id: str) -> dict:
-        ok = await app.state.tasks.cancel(task_id)
-        return {"ok": ok}
-
-    @app.post("/api/tasks/{task_id}/rerun")
-    async def rerun_task(task_id: str):
-        """Re-run a finished task from a clean start; returns the new run's id."""
-        result = await app.state.tasks.rerun(task_id)
-        if "error" in result:
-            return JSONResponse(result, status_code=400)
-        return result
-
-    @app.post("/api/tasks/{task_id}/seen")
-    async def mark_task_seen(task_id: str) -> dict:
-        """Mark a task/run as opened (clears its unread highlight in the nav)."""
-        ok = await app.state.tasks.mark_seen(task_id)
-        return {"ok": ok}
-
-    @app.post("/api/tasks/{task_id}/archive")
-    async def archive_task(task_id: str, req: ArchiveRequest | None = None):
-        archived = True if req is None else req.archived
-        ok, reason = await app.state.tasks.set_archived(task_id, archived)
-        if ok:
-            return {"ok": True, "archived": archived}
-        if reason == "notfound":
-            return Response(status_code=404)
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "Only finished tasks can be archived — cancel it first to stop it.",
-            },
-            status_code=409,
-        )
-
-    @app.post("/api/tasks/{task_id}/chat")
-    async def task_chat(task_id: str, req: TaskChatRequest):
-        """Converse about a task — the SAME universal agent, given this task as its
-        surface context (it inspects/steers the task via its system tools)."""
-        from assistant.system_tools import format_task
-
-        node = await app.state.tasks.get_task(task_id)
-        if node is None:
-            return Response(status_code=404)
-        surface = (
-            f"You are on the page for task {task_id}. The user's messages here are "
-            f"usually about THIS task — inspect or steer it with your task tools "
-            f"(its id is {task_id}). Current state:\n{format_task(node)}"
-        )
-        asker = _chat_asker(app, f"task:{task_id}")
-        reply = await app.state.gateway.send_message(
-            req.text,
-            session_id=f"task:{task_id}",
-            asker=asker,
-            surface=surface,
-        )
-        return {"reply": reply}
-
-    @app.get("/api/inquiries/pending")
-    async def inquiries_pending(task_id: str | None = None) -> dict:
-        """Open HITL inquiries (clarifications / approvals) awaiting an answer."""
-        return {"pending": await app.state.tasks.pending_inquiries(task_id)}
-
-    @app.post("/api/inquiries/{inquiry_id}/answer")
-    async def answer_inquiry(inquiry_id: str, req: AnswerRequest):
-        ok = await app.state.tasks.answer_inquiry(inquiry_id, req.answer)
-        if not ok:
-            return Response(status_code=404)
-        return {"ok": True}
-
-    # --- Voice picker: list voices, select (persist), preview (TTS) ---
-
-    @app.get("/api/voice/voices")
-    async def voice_voices() -> dict:
-        from assistant import settings, voice_providers
-
-        return {
-            "voices": [{"name": n, "style": s} for n, s in settings.voices_for().items()],
-            "current": settings.get_voice(),
-            "provider": settings.voice_provider(),
-            "input_rate": voice_providers.get().input_rate,  # mic capture rate the client should use
-        }
-
-    @app.post("/api/voice/select")
-    async def voice_select(req: VoiceRequest) -> dict:
-        from assistant import settings
-
-        if not settings.set_voice(req.voice):
-            return Response(status_code=400)
-        return {"ok": True, "voice": req.voice}
-
-    @app.get("/voices/{name}.wav")
-    async def voice_sample(name: str):
-        """Pre-recorded voice sample (from scripts/record_voice_samples.py), if present.
-        404 → the client falls back to live TTS via /api/voice/preview."""
-        from assistant import settings
-
-        f = _STATIC_DIR / "voices" / f"{name}.wav"
-        if name in settings.voices_for() and f.is_file():
-            return FileResponse(f, media_type="audio/wav")
-        return Response(status_code=404)
-
-    @app.post("/api/voice/preview")
-    async def voice_preview(req: VoiceRequest):
-        from assistant import settings
-        from assistant.voice import synthesize_preview
-
-        if req.voice not in settings.voices_for():
-            return Response(status_code=400)
-        try:
-            wav = await synthesize_preview(config, req.voice)
-        except Exception as exc:
-            return Response(content=str(exc)[:200], status_code=502)
-        return Response(content=wav, media_type="audio/wav")
-
-    # --- Settings: API keys + assistant/voice provider selection ---
+        st = secrets.status()
+        avail = {prov: st[prov]["set"] for prov in ("openai", "gemini", "anthropic")}
+        avail["ollama"] = _ollama_installed()
+        return avail
 
     def _ollama_installed() -> bool:
         try:
@@ -501,29 +771,220 @@ def create_app(
         except Exception:
             return False
 
-    def _available_providers() -> dict:
-        """Which providers can actually be used right now (key set / Ollama deps)."""
+    # ---- Sessions ----
+
+    @p.get("/sessions")
+    async def sessions(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """List persisted, resumable conversations (newest first)."""
+        return {"sessions": await runtime.gateway.list_sessions()}
+
+    @p.get("/sessions/{session_id}")
+    async def session_transcript(
+        session_id: str, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The display transcript for a session, for the UI to restore."""
+        return {
+            "session_id": session_id,
+            "messages": await runtime.gateway.transcript(session_id),
+        }
+
+    # ---- Message ----
+
+    @p.post("/message", response_model=MessageResponse)
+    async def message(
+        req: MessageRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> MessageResponse:
+        # Durable, inline HITL bound to this chat session (answerable from the
+        # thread or the strip); the request blocks until answered (or times out).
+        asker = _chat_asker(runtime, req.session_id)
+        reply = await runtime.gateway.send_message(req.text, session_id=req.session_id, asker=asker)
+        return MessageResponse(reply=reply, session_id=req.session_id)
+
+    # ---- Tasks + durable HITL inquiries ----
+
+    @p.get("/tasks")
+    async def list_tasks(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Top-level tasks (newest first) for the Tasks view."""
+        return {"tasks": await runtime.tasks.list_tasks()}
+
+    @p.post("/tasks")
+    async def create_task(req: TaskRequest, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Kick off a task — intake (clarifying questions) runs in the background
+        and surfaces as inquiries to answer."""
+        task_id = await runtime.tasks.submit_request(req.text, channel=req.channel)
+        return {"id": task_id}
+
+    @p.get("/tasks/all")
+    async def list_all_tasks(
+        status: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Full task history for the listing page (newest first). Optional status
+        filter: active / completed / stopped / archived."""
+        return {"tasks": await runtime.tasks.list_all(status)}
+
+    @p.post("/tasks/schedule")
+    async def schedule_task(
+        req: ScheduleRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Schedule a task for a future time (optionally recurring)."""
+        task_id = await runtime.tasks.schedule_task(req.text, req.when, req.recurrence)
+        return {"id": task_id}
+
+    @p.get("/tasks/{task_id}")
+    async def get_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        from assistant.tasks import TaskStoreCorruptionError
+
+        try:
+            task = await runtime.tasks.get_task(task_id)
+        except TaskStoreCorruptionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        if task is None:
+            return Response(status_code=404)
+        return {"task": task}
+
+    @p.post("/tasks/{task_id}/cancel")
+    async def cancel_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        ok = await runtime.tasks.cancel(task_id)
+        return {"ok": ok}
+
+    @p.post("/tasks/{task_id}/rerun")
+    async def rerun_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Re-run a finished task from a clean start; returns the new run's id."""
+        result = await runtime.tasks.rerun(task_id)
+        if "error" in result:
+            return JSONResponse(result, status_code=400)
+        return result
+
+    @p.post("/tasks/{task_id}/seen")
+    async def mark_task_seen(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Mark a task/run as opened (clears its unread highlight in the nav)."""
+        ok = await runtime.tasks.mark_seen(task_id)
+        return {"ok": ok}
+
+    @p.post("/tasks/{task_id}/archive")
+    async def archive_task(
+        task_id: str,
+        req: ArchiveRequest | None = None,
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
+        archived = True if req is None else req.archived
+        ok, reason = await runtime.tasks.set_archived(task_id, archived)
+        if ok:
+            return {"ok": True, "archived": archived}
+        if reason == "notfound":
+            return Response(status_code=404)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "Only finished tasks can be archived — cancel it first to stop it.",
+            },
+            status_code=409,
+        )
+
+    @p.post("/tasks/{task_id}/chat")
+    async def task_chat(
+        task_id: str,
+        req: TaskChatRequest,
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
+        """Converse about a task — the SAME universal agent, given this task as its
+        surface context (it inspects/steers the task via its system tools)."""
+        from assistant.system_tools import format_task
+
+        node = await runtime.tasks.get_task(task_id)
+        if node is None:
+            return Response(status_code=404)
+        surface = (
+            f"You are on the page for task {task_id}. The user's messages here are "
+            f"usually about THIS task — inspect or steer it with your task tools "
+            f"(its id is {task_id}). Current state:\n{format_task(node)}"
+        )
+        asker = _chat_asker(runtime, f"task:{task_id}")
+        reply = await runtime.gateway.send_message(
+            req.text,
+            session_id=f"task:{task_id}",
+            asker=asker,
+            surface=surface,
+        )
+        return {"reply": reply}
+
+    @p.get("/inquiries/pending")
+    async def inquiries_pending(
+        task_id: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Open HITL inquiries (clarifications / approvals) awaiting an answer."""
+        return {"pending": await runtime.tasks.pending_inquiries(task_id)}
+
+    @p.post("/inquiries/{inquiry_id}/answer")
+    async def answer_inquiry(
+        inquiry_id: str,
+        req: AnswerRequest,
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
+        ok = await runtime.tasks.answer_inquiry(inquiry_id, req.answer)
+        if not ok:
+            return Response(status_code=404)
+        return {"ok": True}
+
+    # ---- HITL pending (this profile's registry) ----
+
+    @p.get("/hitl/pending")
+    async def hitl_pending(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Open HITL questions in THIS profile's registry, for a UI client to render."""
+        return {"pending": runtime.hitl.pending_list()}
+
+    # ---- Voice picker: list voices, select (persist), preview (TTS) ----
+
+    @p.get("/voice/voices")
+    async def voice_voices(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        from assistant import voice_providers
+
+        settings = _runtime_settings(runtime)
+        return {
+            "voices": [{"name": n, "style": s} for n, s in settings.voices_for().items()],
+            "current": settings.get_voice(),
+            "provider": settings.voice_provider(),
+            # mic capture rate the client should use, for this profile's provider
+            "input_rate": voice_providers.get(settings.voice_provider()).input_rate,
+        }
+
+    @p.post("/voice/select")
+    async def voice_select(
+        req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        if not _runtime_settings(runtime).set_voice(req.voice):
+            return Response(status_code=400)
+        return {"ok": True, "voice": req.voice}
+
+    @p.post("/voice/preview")
+    async def voice_preview(req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)):
+        from assistant.voice import synthesize_preview
+
+        settings = _runtime_settings(runtime)
+        if req.voice not in settings.voices_for():
+            return Response(status_code=400)
+        try:
+            wav = await synthesize_preview(runtime.config, settings, req.voice)
+        except Exception as exc:
+            return Response(content=str(exc)[:200], status_code=502)
+        return Response(content=wav, media_type="audio/wav")
+
+    # ---- Settings ----
+
+    @p.get("/settings")
+    async def get_settings(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         from assistant import secrets
 
-        st = secrets.status()
-        avail = {p: st[p]["set"] for p in ("openai", "gemini", "anthropic")}
-        avail["ollama"] = _ollama_installed()
-        return avail
-
-    @app.get("/api/settings")
-    async def get_settings() -> dict:
-        from assistant import secrets, settings
-        from assistant.config import load_config
-
-        cfg = load_config()
+        cfg = runtime.config
+        settings = _runtime_settings(runtime)
         return {
             "keys": secrets.status(),  # per-provider {set, hint} — never raw
             "available": _available_providers(),
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
-            "onboarded": settings.get_onboarded(),  # first-run flag (per install)
             "project_folder": settings.get_project_folder(),  # repo-files MCP root
+            "focuses": settings.get_focuses(),  # per-profile persona focus areas
             "fs": {  # start roots for the folder picker
                 "home": str(Path.home()),
                 "cwd": str(Path.cwd()),
@@ -552,32 +1013,34 @@ def create_app(
             ],
         }
 
-    @app.post("/api/settings/mcp")
-    async def add_mcp_server(req: MCPServerRequest) -> dict:
-        from assistant import settings
-
+    @p.post("/settings/mcp")
+    async def add_mcp_server(
+        req: MCPServerRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        settings = _runtime_settings(runtime)
         try:
             server = settings.upsert_mcp_server(req.model_dump())
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        await app.state.gateway.reload()
+        await manager.reload(runtime.pid)
         return {"ok": True, "server": server, "mcp_servers": settings.list_mcp_servers()}
 
-    @app.delete("/api/settings/mcp/{name}")
-    async def delete_mcp_server(name: str) -> dict:
-        from assistant import settings
-
+    @p.delete("/settings/mcp/{name}")
+    async def delete_mcp_server(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        settings = _runtime_settings(runtime)
         if not settings.delete_mcp_server(name):
             return Response(status_code=404)
-        await app.state.gateway.reload()
+        await manager.reload(runtime.pid)
         return {"ok": True, "mcp_servers": settings.list_mcp_servers()}
 
-    @app.post("/api/settings/mcp/{name}/health")
-    async def health_mcp_server(name: str) -> dict:
-        from assistant import settings
-
+    @p.post("/settings/mcp/{name}/health")
+    async def health_mcp_server(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         server = next(
-            (s for s in settings.list_mcp_servers(include_env=True) if s["name"] == name),
+            (
+                s
+                for s in _runtime_settings(runtime).list_mcp_servers(include_env=True)
+                if s["name"] == name
+            ),
             None,
         )
         if server is None:
@@ -586,35 +1049,6 @@ def create_app(
             return await _mcp_health(server)
         except Exception as exc:
             return {"ok": False, "error": str(exc)[:500]}
-
-    @app.post("/api/settings/key")
-    async def set_settings_key(req: KeyRequest) -> dict:
-        from assistant import secrets
-
-        if not secrets.set_key(req.provider, req.value):
-            return Response(status_code=400)
-        await app.state.gateway.reload()  # new turns pick up the key; voice next session
-        return {"ok": True}
-
-    @app.post("/api/settings/onboarded")
-    async def set_settings_onboarded(req: OnboardedRequest) -> dict:
-        """Mark first-run onboarding completed/dismissed (per install, not per browser)."""
-        from assistant import settings
-
-        settings.set_onboarded(req.value)
-        return {"ok": True}
-
-    @app.get("/api/fs/list")
-    async def fs_list(path: str = "") -> dict:
-        """List immediate subdirectories of a host path — drives the folder picker. The
-        gateway is local + single-user and `_origin_guard` blocks cross-origin, so this is
-        safe; dotfolders are hidden. Empty path starts at home."""
-        from assistant.workspace import list_dirs
-
-        result = list_dirs(path or str(Path.home()))
-        if result is None:
-            return {"ok": False, "error": "not a readable directory"}
-        return {"ok": True, **result}
 
     # Read-only subset of @modelcontextprotocol/server-filesystem — the repo-files MCP
     # gets exactly these so the agent can read the project but never write/edit/delete.
@@ -628,16 +1062,17 @@ def create_app(
         "list_allowed_directories",
     ]
 
-    @app.post("/api/settings/project-folder")
-    async def set_project_folder(req: ProjectFolderRequest):
+    @p.post("/settings/project-folder")
+    async def set_project_folder(
+        req: ProjectFolderRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
         """Persist the chosen project folder AND seed a read-only `repo-files` MCP pointed
         at it (reusing the MCP-server settings path), then reload so the agent picks it up."""
-        from assistant import settings
-
-        p = Path(req.path or "").expanduser()
-        if not req.path or not p.is_dir():
+        settings = _runtime_settings(runtime)
+        fp = Path(req.path or "").expanduser()
+        if not req.path or not fp.is_dir():
             return JSONResponse({"error": "not a directory"}, status_code=400)
-        folder = str(p.resolve())
+        folder = str(fp.resolve())
         settings.set_project_folder(folder)
         settings.upsert_mcp_server(
             {
@@ -647,17 +1082,27 @@ def create_app(
                 "allowed_tools": list(_REPO_FILES_READ_TOOLS),
             }
         )
-        await app.state.gateway.reload()  # new turns get the repo-files tools
+        await manager.reload(runtime.pid)  # new turns get the repo-files tools
         return {"ok": True, "project_folder": folder}
 
-    @app.post("/api/settings/llm")
-    async def set_settings_llm(req: LlmRequest) -> dict:
-        from assistant import settings
+    @p.post("/settings/focuses")
+    async def set_focuses(
+        req: FocusesRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Persist this profile's focus areas (a persona attribute injected into the
+        agent's context), then reload so the reference-swapped agent picks up the new
+        context line on its next turn."""
+        settings = _runtime_settings(runtime)
+        focuses = settings.set_focuses(req.focuses)
+        await manager.reload(runtime.pid)  # context change → next turn gets the line
+        return {"ok": True, "focuses": focuses}
 
+    @p.post("/settings/llm")
+    async def set_settings_llm(
+        req: LlmRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
         provider = req.provider.lower()
         if not _available_providers().get(provider):
-            from fastapi.responses import JSONResponse
-
             hint = (
                 "Install with `pip install ag2[ollama]`."
                 if provider == "ollama"
@@ -666,109 +1111,122 @@ def create_app(
             return JSONResponse(
                 {"ok": False, "error": f"{provider} isn't available. {hint}"}, status_code=409
             )
-        settings.set_llm(provider=provider, model=req.model or None)
-        await app.state.gateway.reload()
+        _runtime_settings(runtime).set_llm(provider=provider, model=req.model or None)
+        await manager.reload(runtime.pid)
         return {"ok": True}
 
-    @app.post("/api/settings/voice_provider")
-    async def set_settings_voice_provider(req: VoiceProviderRequest) -> dict:
-        from assistant import settings
-
+    @p.post("/settings/voice_provider")
+    async def set_settings_voice_provider(
+        req: VoiceProviderRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
         provider = req.provider.lower()
         if not _available_providers().get(provider):
-            from fastapi.responses import JSONResponse
-
             return JSONResponse(
                 {"ok": False, "error": f"Add the {provider} API key first."}, status_code=409
             )
-        if not settings.set_voice_provider(provider):
+        if not _runtime_settings(runtime).set_voice_provider(provider):
             return Response(status_code=400)
         return {"ok": True}
 
-    # --- Memory: view + edit the learned user profile ---
+    # ---- Memory: view + edit THIS profile's persona memory (profile.db) ----
+    # (The shared universal "who the user is" doc is the global GET/POST /api/memory.)
 
-    @app.get("/api/memory")
-    async def get_memory() -> dict:
+    @p.get("/memory")
+    async def get_memory(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         from assistant.memory import read_profile
 
-        return {"text": await read_profile()}
+        return {"text": await read_profile(runtime.config.data_dir / "profile.db")}
 
-    @app.post("/api/memory")
-    async def set_memory(req: MemoryRequest) -> dict:
+    @p.post("/memory")
+    async def set_memory(
+        req: MemoryRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
         from assistant.memory import write_profile
 
-        await write_profile(req.text)
+        await write_profile(req.text, runtime.config.data_dir / "profile.db")
         return {"ok": True}
 
     # ---- Workspace (the agent's working file space) ----
 
-    @app.get("/api/files")
-    async def list_workspace_files() -> dict:
+    @p.get("/files")
+    async def list_workspace_files(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """Files the agent has written in the workspace (for the GUI browser)."""
         from assistant.workspace import list_files
 
         return {
-            "root": str(Path(config.workspace_dir).expanduser()),
-            "files": list_files(config.workspace_dir),
+            "root": str(Path(runtime.config.workspace_dir).expanduser()),
+            "files": list_files(runtime.config.workspace_dir),
         }
 
-    @app.get("/api/files/raw")
-    async def workspace_file(path: str, download: bool = False):
+    @p.get("/files/raw")
+    async def workspace_file(
+        path: str, download: bool = False, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
         """Serve one workspace file (view inline or download), sandboxed to the
         workspace root — a path that escapes it is rejected."""
         from assistant.workspace import resolve
 
-        p = resolve(config.workspace_dir, path)
-        if p is None:
+        rp = resolve(runtime.config.workspace_dir, path)
+        if rp is None:
             return JSONResponse({"error": "file not found"}, status_code=404)
         disp = "attachment" if download else "inline"
-        return FileResponse(p, headers={"Content-Disposition": f'{disp}; filename="{p.name}"'})
+        return FileResponse(rp, headers={"Content-Disposition": f'{disp}; filename="{rp.name}"'})
 
-    @app.get("/api/usage")
-    async def usage_today() -> dict:
-        """Today's token + estimated-cost totals (cost & activity HUD)."""
-        return app.state.gateway.usage_today()
-
-    @app.delete("/api/files/raw")
-    async def delete_workspace_file(path: str) -> dict:
+    @p.delete("/files/raw")
+    async def delete_workspace_file(
+        path: str, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
         """Delete one workspace file, sandboxed to the workspace root (same guard as
         serving). Prunes an emptied per-task subfolder afterwards."""
         from assistant.workspace import delete
 
-        if not delete(config.workspace_dir, path):
+        if not delete(runtime.config.workspace_dir, path):
             return JSONResponse({"error": "file not found"}, status_code=404)
         return {"ok": True}
 
-    @app.post("/api/message", response_model=MessageResponse)
-    async def message(req: MessageRequest) -> MessageResponse:
-        # Durable, inline HITL bound to this chat session (answerable from the
-        # thread or the strip); the request blocks until answered (or times out).
-        asker = _chat_asker(app, req.session_id)
-        reply = await app.state.gateway.send_message(
-            req.text, session_id=req.session_id, asker=asker
-        )
-        return MessageResponse(reply=reply, session_id=req.session_id)
+    @p.get("/usage")
+    async def usage_today(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Today's token + estimated-cost totals (cost & activity HUD)."""
+        return runtime.gateway.usage_today()
 
-    @app.websocket("/api/stream")
-    async def stream_ws(websocket: WebSocket) -> None:
+    app.include_router(p)
+
+    # ------------------------------------------------------------------ #
+    #  Profile-scoped WebSockets (registered directly, not on the router  #
+    #  — Starlette APIRouter WS + Depends is fiddly; resolve inline)      #
+    # ------------------------------------------------------------------ #
+
+    @app.websocket("/api/p/{pid}/stream")
+    async def stream_ws(websocket: WebSocket, pid: str) -> None:
         """Event-stream transport: the client receives the session's events as
         `{event:{type,data}}` — replayed on connect, then live — and sends `{text}`
-        turns."""
+        turns. Closes with 4001 if the profile is archived mid-session (§4.9)."""
         if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
             await websocket.close(code=1008)  # policy violation
+            return
+        runtime = await _ws_runtime(websocket, pid)
+        if runtime is None:
             return
         await websocket.accept()
         from assistant.gateway.stream_bridge import StreamBridge
 
+        # Archive → close this socket with 4001 (§4.9). Tolerant: a closed socket
+        # must not error the archive loop (runtime.close suppresses callback errors).
+        async def _on_archive():
+            with contextlib.suppress(Exception):
+                await websocket.close(code=_WS_PROFILE_ARCHIVED, reason="profile-archived")
+
+        runtime.on_close(_on_archive)
+
         session_id = websocket.query_params.get("session") or "default"
         default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
-        bridge = StreamBridge(app.state.gateway, websocket, session_id)
+        bridge = StreamBridge(runtime.gateway, websocket, session_id)
 
         async def turn_surface() -> str:
             # task threads get a fresh task snapshot each turn so "this task" resolves
             if session_id.startswith("task:"):
                 tid = session_id.split(":", 1)[1]
-                node = await app.state.tasks.get_task(tid)
+                node = await runtime.tasks.get_task(tid)
                 if node:
                     from assistant.system_tools import format_task
 
@@ -784,13 +1242,13 @@ def create_app(
                 data = await websocket.receive_json()
                 if data.get("type") == "answer" and data.get("id"):
                     iid, ans = data["id"], data.get("answer", "")
-                    # Chat permission prompts live in the HitlServer; durable task
-                    # inquiries (answered inline on a task page) live in the
-                    # InquiryStore under a different id — fall back to it so an
+                    # Chat permission prompts live in this profile's HITL registry;
+                    # durable task inquiries (answered inline on a task page) live in
+                    # the InquiryStore under a different id — fall back to it so an
                     # inline answer resolves either kind.
-                    if not app.state.hitl.answer(iid, ans):
+                    if not runtime.hitl.answer(iid, ans):
                         with contextlib.suppress(Exception):
-                            await app.state.tasks.answer_inquiry(iid, ans)
+                            await runtime.tasks.answer_inquiry(iid, ans)
                     continue
                 if data.get("type") == "feedback" and data.get("target_id"):
                     # 👍/👎 + mandatory reason on a generated item. Emit it onto the
@@ -805,7 +1263,7 @@ def create_app(
                     content = data.get("content") or ""
                     request = data.get("request") or ""
                     with contextlib.suppress(Exception):
-                        await app.state.gateway.emit_event(
+                        await runtime.gateway.emit_event(
                             session_id,
                             FeedbackGiven(
                                 data["target_id"],
@@ -819,7 +1277,7 @@ def create_app(
                     if reason:  # reason is mandatory client-side; only learn when present
                         asyncio.create_task(
                             feedback_learner.learn(
-                                config,
+                                runtime.config,
                                 sentiment=sentiment,
                                 reason=reason,
                                 content=content,
@@ -834,17 +1292,17 @@ def create_app(
                     text = "Here is a file I'm sharing with you."
                 if not text:
                     continue
-                asker = _chat_asker(app, session_id)
+                asker = _chat_asker(runtime, session_id)
                 surface = await turn_surface()
                 # Persist uploads into the workspace and tell the agent their paths (via
                 # surface, so the transcript stays clean) — enables editing/reading them.
-                saved = _persist_uploads(config.workspace_dir, raw_atts)
+                saved = _persist_uploads(runtime.config.workspace_dir, raw_atts)
                 if saved:
                     from assistant.events import Attachment
 
                     surface = (surface + "\n\n" if surface else "") + (
                         "The user attached file(s), saved in the workspace at: "
-                        + ", ".join(p for p, _ in saved)
+                        + ", ".join(pth for pth, _ in saved)
                         + ". To edit an uploaded image, call generate_image with "
                         "source_image set to its path; to read an uploaded document, "
                         "read_file that path."
@@ -852,11 +1310,9 @@ def create_app(
                     # Surface each upload in the thread (thumbnail / file chip) — emitted
                     # before the turn so it sits with the user's message; persists on the
                     # session stream so it survives reload.
-                    for path, name in saved:
+                    for pth, name in saved:
                         with contextlib.suppress(Exception):
-                            await app.state.gateway.emit_event(
-                                session_id, Attachment(path, name=name)
-                            )
+                            await runtime.gateway.emit_event(session_id, Attachment(pth, name=name))
                 asyncio.create_task(
                     bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
                 )
@@ -865,13 +1321,16 @@ def create_app(
         finally:
             bridge.close()
 
-    @app.websocket("/api/voice")
-    async def voice_ws(websocket: WebSocket) -> None:
+    @app.websocket("/api/p/{pid}/voice")
+    async def voice_ws(websocket: WebSocket, pid: str) -> None:
         """Full-duplex voice. The browser streams 16 kHz mono PCM mic frames as
         binary; we feed them to a Gemini Live session and stream back 24 kHz PCM
         speech (binary) plus user/agent transcripts (JSON) for on-screen bubbles."""
         if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
             await websocket.close(code=1008)  # policy violation
+            return
+        runtime = await _ws_runtime(websocket, pid)
+        if runtime is None:
             return
         await websocket.accept()
         import uuid
@@ -893,6 +1352,13 @@ def create_app(
 
         from assistant.gateway.wire import to_wire
 
+        # Archive → close this voice socket with 4001 (§4.9), tolerant of a closed sock.
+        async def _on_archive():
+            with contextlib.suppress(Exception):
+                await websocket.close(code=_WS_PROFILE_ARCHIVED, reason="profile-archived")
+
+        runtime.on_close(_on_archive)
+
         sid = uuid.uuid4().hex[:8]
         task_id = websocket.query_params.get("task") or None
         chat_session = websocket.query_params.get("session") or None
@@ -911,7 +1377,7 @@ def create_app(
             user_buf.clear()
             if persist_session and text:
                 with contextlib.suppress(Exception):
-                    await app.state.gateway.emit_event(
+                    await runtime.gateway.emit_event(
                         persist_session, ModelRequest(parts=[TextInput(content=text)])
                     )
 
@@ -920,7 +1386,7 @@ def create_app(
             agent_buf.clear()
             if persist_session and text:
                 with contextlib.suppress(Exception):
-                    await app.state.gateway.emit_event(
+                    await runtime.gateway.emit_event(
                         persist_session, ModelResponse(message=ModelMessage(content=text))
                     )
 
@@ -936,7 +1402,7 @@ def create_app(
         end_requested = asyncio.Event()
 
         try:
-            agent = await app.state.gateway.build_voice_agent(
+            agent = await runtime.gateway.build_voice_agent(
                 session_id=sid,
                 task_id=task_id,
                 chat_session=chat_session,
@@ -1046,6 +1512,20 @@ def create_app(
             with contextlib.suppress(Exception):
                 await websocket.send_json({"type": "error", "message": str(exc)})
 
+    # ------------------------------------------------------------------ #
+    #  Static assets / SPA shell (global)                                 #
+    # ------------------------------------------------------------------ #
+
+    @app.get("/voices/{name}.wav")
+    async def voice_sample(name: str):
+        """Pre-recorded voice sample (from scripts/record_voice_samples.py), if present.
+        404 → the client falls back to live TTS. Profile-agnostic asset (the sample set
+        is a static bundle; the per-profile voice choice is served under /api/p/{pid})."""
+        f = _STATIC_DIR / "voices" / f"{name}.wav"
+        if f.is_file():
+            return FileResponse(f, media_type="audio/wav")
+        return Response(status_code=404)
+
     _APP_DIR = _STATIC_DIR / "app"
 
     @app.get("/app")
@@ -1053,7 +1533,7 @@ def create_app(
     async def spa_app(path: str = ""):
         """Serve the Vite+Svelte client (built into static/app). Real asset files
         are served as-is; any other /app/* path falls back to index.html so SPA
-        deep links (/app/c/<id>, /app/t/<id>) survive refresh."""
+        deep links (/app/{pid}/c/<id>, /app/{pid}/t/<id>) survive refresh."""
         index = _APP_DIR / "index.html"
         if not index.exists():
             return HTMLResponse(

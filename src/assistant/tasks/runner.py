@@ -48,7 +48,7 @@ class TaskManager:
         # Notified on every lifecycle transition (RUNNING / terminal) so the
         # service can emit the matching AG2 task event onto the task's stream.
         self._on_status = on_status
-        # Raw AG2 Beta events emitted by nested worker/subagent runs. These ride
+        # Raw AG2 events emitted by nested worker/subagent runs. These ride
         # the task stream without affecting durable task status.
         self._on_event = on_event
         # Notified when a deliverable is produced (the executor calls

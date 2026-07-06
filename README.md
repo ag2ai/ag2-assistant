@@ -92,7 +92,7 @@ A text sketch of the same shape:
     +-----------+
          |  per-session isolated multi-turn; events streamed to every client
     +-----------+
-    |   Agent   |  (AG2 Beta + Gemini / OpenAI / Anthropic / Ollama)
+    |   Agent   |  (AG2 + Gemini / OpenAI / Anthropic / Ollama)
     |   Tools   |  (web search, shell, code exec, web fetch, image gen,
     |           |   tasks/scheduling, repo-files MCP, Google, skills, MCP servers)
     +-----------+

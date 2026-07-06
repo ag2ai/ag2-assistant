@@ -1,4 +1,4 @@
-"""AG2 Assistant agent built on AG2 Beta."""
+"""AG2 Assistant agent built on AG2."""
 
 import os
 from datetime import datetime
@@ -195,10 +195,17 @@ MEMORY_GUIDANCE = (
 )
 
 
-def build_memory_tool():
-    """A tool the agent calls to save an explicit user preference to long-term
+def build_memory_tool(store_path, user_store_path):
+    """A tool the agent calls to save an explicit user preference/fact to long-term
     memory immediately (the passive aggregator otherwise only updates every few
-    turns, and won't reliably capture a one-off 'remember this')."""
+    turns, and won't reliably capture a one-off 'remember this').
+
+    Two layers, chosen by the tool's ``scope`` argument:
+      - ``store_path`` is THIS profile's ``profile.db`` — persona-scoped memory;
+      - ``user_store_path`` is the shared ``root_dir/user.db`` — the universal
+        "who the user is" memory read by EVERY profile.
+    The tool closes over both so a "remember this" lands in exactly one, never
+    leaking a persona preference into the shared layer (or vice versa)."""
     from typing import Annotated, Literal
 
     from ag2 import tool
@@ -223,21 +230,36 @@ def build_memory_tool():
                 "writing=tone/phrasing for emails & messages."
             ),
         ] = "how",
+        scope: Annotated[
+            Literal["profile", "universal"],
+            Field(
+                description="Which memory layer to write to. "
+                "universal = a lasting fact about the user AS A PERSON, true in any "
+                "context regardless of which persona they're using (their name, "
+                "location, timezone, family, health constraints, how they write). "
+                "profile = a preference, correction, or bit of context for the work "
+                "THIS persona does (how they want answers here, tools they favour). "
+                "Default 'profile'; choose 'universal' only for genuine identity facts."
+            ),
+        ] = "profile",
     ) -> str:
         """Save a durable preference or fact about the user to long-term memory now.
 
         Use when the user says "remember ...", "from now on ...", or states a
-        lasting preference. NOT for one-off task details. What you save is injected
-        into every future conversation and is viewable/editable by the user in
-        Settings → Memory.
+        lasting preference. NOT for one-off task details. Pick `scope`: 'universal'
+        for who-they-are identity facts shared across every profile, 'profile' for
+        this persona's own preferences. What you save is injected into future
+        conversations and is viewable/editable by the user in Settings → Memory.
         """
         from assistant.memory import remember_note
 
+        target = user_store_path if scope == "universal" else store_path
         try:
-            await remember_note(note, category)
+            await remember_note(target, note, category)
         except Exception as exc:  # surface a clear failure rather than a tool error
             return f"Could not save to memory: {exc}"
-        return f"Saved to memory (under '{category}')."
+        where = "shared 'who you are' memory" if scope == "universal" else "this profile's memory"
+        return f"Saved to {where} (under '{category}')."
 
     return remember
 
@@ -257,6 +279,41 @@ def environment_context(config: Config) -> str:
     if config.agent.location:
         lines.append(f"- User location: {config.agent.location}")
     return "Environment (live):\n" + "\n".join(lines)
+
+
+def universal_memory_guidance(config: Config) -> str:
+    """The shared "who the user is" document as a system-prompt part, or "" when it's
+    empty. Read FRESH each turn from ``config.root_dir / "user.db"`` (mirroring
+    ``focuses_guidance``'s read-settings-per-turn pattern) so an edit or a
+    remember(scope="universal") shows up on the next turn without a reload — and so
+    EVERY profile's agent injects the same identity facts. Empty doc → no section."""
+    from assistant.memory import read_profile_sync
+
+    try:
+        doc = read_profile_sync(config.root_dir / "user.db")
+    except Exception:
+        return ""
+    if not doc.strip():
+        return ""
+    return "Who the user is (shared across all profiles):\n" + doc.strip()
+
+
+def focuses_guidance(config: Config) -> str:
+    """The profile's focus areas as a persona line, or "" when none are set.
+
+    Focuses are a per-profile persona attribute chosen in onboarding / Settings and
+    persisted to that profile's ``settings.json``. Read here (mirroring core.py's
+    ``Settings(config.data_dir / "settings.json")`` pattern) so a reference-swap
+    reload picks up changes on the next turn. Empty focuses → no line at all."""
+    from assistant.settings import Settings
+
+    try:
+        focuses = Settings(config.data_dir / "settings.json").get_focuses()
+    except Exception:
+        return ""
+    if not focuses:
+        return ""
+    return "The user's focus areas for this profile: " + ", ".join(focuses) + "."
 
 
 def workspace_guidance(config: Config) -> str:
@@ -281,6 +338,9 @@ def turn_prompt(config: Config, memory: bool = True, workspace: bool = True) -> 
     parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE]
     if memory:
         parts.append(MEMORY_GUIDANCE)
+        universal = universal_memory_guidance(config)  # shared "who the user is" (root/user.db)
+        if universal:
+            parts.append(universal)
     if workspace:
         parts.append(workspace_guidance(config))
     try:
@@ -311,6 +371,12 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
         MEMORY_GUIDANCE,
         workspace_guidance(config),  # the universal agent always has the file tools
     ]
+    universal = universal_memory_guidance(config)  # shared "who the user is" (root/user.db)
+    if universal:
+        parts.append(universal)
+    focuses = focuses_guidance(config)  # per-profile persona attribute (settings.json)
+    if focuses:
+        parts.append(focuses)
     try:
         from assistant.integrations.google_auth import has_token
 
@@ -374,6 +440,7 @@ def create_agent(
     if memory:
         knowledge = build_knowledge_config(
             platform=platform,
+            store_path=config.data_dir / "profile.db",  # this profile's learned memory
             aggregate_config=agg_config,
             store=knowledge_store,
             every_n_turns=config.memory.aggregate_every_n_turns,
@@ -409,15 +476,25 @@ def create_agent(
 
     # When the profile memory is on, let the agent commit an explicit "remember
     # this" immediately (the passive aggregator alone is slow and may filter it).
+    # The tool closes over BOTH stores: THIS profile's ``profile.db`` (persona
+    # memory) and the shared ``root_dir/user.db`` (universal "who the user is"
+    # memory). Its `scope` argument picks the layer — a persona preference never
+    # leaks into the shared layer, and an identity fact is written once for all.
     if memory:
-        tools.append(build_memory_tool())
+        tools.append(build_memory_tool(config.data_dir / "profile.db", config.root_dir / "user.db"))
 
-    from assistant.permissions import PermissionManager
+    from assistant.permissions import PermissionManager, PermissionStore
 
     # One injected authority for all permission decisions (knows the sandbox mode
-    # so prompts can say where a command actually runs — host vs container).
+    # so prompts can say where a command actually runs — host vs container). Backed
+    # by THIS profile's persistent grant store so an allow in one profile isn't
+    # pre-authorised in another.
     dependencies: dict = {
-        PermissionManager: PermissionManager(asker=asker, sandbox=config.tools.sandbox)
+        PermissionManager: PermissionManager(
+            PermissionStore(config.data_dir / "permissions.json"),
+            asker=asker,
+            sandbox=config.tools.sandbox,
+        )
     }
 
     hitl_hook = None

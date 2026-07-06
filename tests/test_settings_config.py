@@ -38,20 +38,24 @@ def test_ollama_base_url(monkeypatch, tmp_path):
     assert secrets.status()["ollama"]["base_url"] == "http://host:1234"
 
 
-def test_settings_llm_overrides_config(monkeypatch, tmp_path):
+def test_load_config_no_longer_overlays_settings(monkeypatch, tmp_path):
+    """The UI-settings LLM overlay moved out of load_config() into the per-profile
+    config_factory (spec §4.1). load_config() is now profile-agnostic: defaults ←
+    config.json ← env only, no settings.json overlay."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
-    from assistant import settings
-    from assistant.config import load_config
+    from assistant.config import data_dir, load_config
+    from assistant.settings import Settings
 
-    settings.set_llm(provider="anthropic", model="claude-x")
+    Settings(data_dir() / "settings.json").set_llm(provider="anthropic", model="claude-x")
     cfg = load_config()
-    assert cfg.llm.provider == "anthropic" and cfg.llm.model == "claude-x"
+    assert cfg.llm.provider == "gemini"  # default, settings NOT overlaid
+    assert cfg.llm.model.startswith("gemini")
 
-    # explicit env still wins over the UI setting
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "gemini")
-    assert load_config().llm.provider == "gemini"
+    # explicit env still applies
+    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
+    assert load_config().llm.provider == "openai"
 
 
 @pytest.mark.asyncio

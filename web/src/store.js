@@ -1,5 +1,11 @@
 import { writable } from 'svelte/store'
 
+// Multi-profile registry (§5.2). `list` mirrors GET /api/profiles; `activeId`
+// is the profile the client is currently viewing (persisted separately in
+// localStorage via lib/profile.js). Minimal in Phase 1 — Phase 2 builds the
+// switcher chips + activity badges on top of this.
+export const profiles = writable({ list: [], activeId: null })
+
 // The active thread: a projection of one AG2 stream. `items` are folded from
 // `{type,data}` events (see project.js). `kind` is 'chat' or 'task'.
 export const thread = writable({ id: null, kind: 'chat', items: [], busy: false })
@@ -60,11 +66,17 @@ export const ag2View = persisted('ag2View', false)
 
 // First-run onboarding overlay open/closed. Opened automatically on first launch
 // when this install hasn't completed/dismissed it and no provider key is stored
-// (see App.svelte), or via Settings → "Re-run setup". The "have we onboarded?"
-// flag itself is server-side (settings.json → GET /api/settings `onboarded`), not
-// per-browser — set via api.setOnboarded() on finish/skip.
+// (see App.svelte), or via Settings → "Re-run setup". The install-level "have we
+// onboarded?" flag lives in the registry (GET /api/profiles `onboarded`, §4.2) —
+// set via api.setOnboarded() at the END of the onboarding flow (§5.5).
 export const onboardingOpen = writable(false)
 
-// Local user profile seeded by onboarding: name + focus areas. Greets the user and
-// could tailor suggestions. Kept on-device (mirrors keys/model in Settings).
-export const profile = persisted('ag2-profile', { name: '', focuses: [] })
+// Local user display name seeded by onboarding — greets the user. Kept on-device
+// (per-profile focus areas moved server-side into each profile's settings.json,
+// where they're injected into the agent's context).
+export const profile = persisted('ag2-profile', { name: '' })
+
+// Transient toast/notice: { text } when shown, null when hidden. Used by the
+// archived-profile recovery flow (§4.9) — a brief message before the client
+// re-resolves to a valid profile. Minimal by design; no queue.
+export const notice = writable(null)

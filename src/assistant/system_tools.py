@@ -87,11 +87,13 @@ def format_task(node: dict) -> str:
     return _fmt_node(node)
 
 
-def build_system_tools(tasks, chats=None, platform: str = "gateway") -> list:
-    """Build the system toolkit. `tasks` is a TaskService; `chats` (optional) is a
-    provider with `list_sessions()` and `transcript(session_id)` (the gateway).
-    `platform` is the surface ("gateway" for web, else a channel name) — on a channel,
-    task confirmations note that follow-up questions are asked in the web app."""
+def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -> list:
+    """Build the system toolkit. `tasks` is a TaskService; `settings` is the profile's
+    `Settings` (the voice get/set tools read/write it, so they touch only this
+    profile); `chats` (optional) is a provider with `list_sessions()` and
+    `transcript(session_id)` (the gateway). `platform` is the surface ("gateway" for
+    web, else a channel name) — on a channel, task confirmations note that follow-up
+    questions are asked in the web app."""
     note = _followup_note(platform)
 
     # ---- tasks: retrieval ----
@@ -293,8 +295,6 @@ def build_system_tools(tasks, chats=None, platform: str = "gateway") -> list:
     @tool
     async def list_voices() -> str:
         """List the available realtime voices (name · style) and the current one."""
-        from assistant import settings
-
         cur = settings.get_voice()
         return f"Voice provider: {settings.voice_provider()}\nCurrent voice: {cur}\n" + "\n".join(
             f"{n} — {s}" + (" (current)" if n == cur else "")
@@ -308,8 +308,6 @@ def build_system_tools(tasks, chats=None, platform: str = "gateway") -> list:
         ],
     ) -> str:
         """Change the assistant's realtime voice (persists; applies next voice session)."""
-        from assistant import settings
-
         if not settings.set_voice(voice):
             return f"Unknown voice '{voice}'. Use list_voices to see options."
         return f"Voice set to {voice}. It'll apply the next time you start a voice chat."

@@ -77,13 +77,13 @@ def _subagent_archetype(caps: list[str]) -> tuple[str, str]:
 
 
 async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, asker, manager):
-    """Run a named AG2 Beta subagent and forward its lifecycle events."""
+    """Run a named AG2 subagent and forward its lifecycle events."""
     from ag2.context import ConversationContext
     from ag2.stream import MemoryStream
     from ag2.tools.subagents.run_task import run_task
 
     from assistant.agent import cheap_model, create_agent, turn_prompt
-    from assistant.permissions import PermissionManager
+    from assistant.permissions import PermissionManager, PermissionStore
 
     name, archetype_prompt = _subagent_archetype(caps)
     sub_config = config.model_copy(deep=True)
@@ -139,7 +139,11 @@ async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, a
         context = ConversationContext(
             stream=parent_stream,
             dependencies={
-                PermissionManager: PermissionManager(asker=asker, sandbox=config.tools.sandbox)
+                PermissionManager: PermissionManager(
+                    PermissionStore(config.data_dir / "permissions.json"),
+                    asker=asker,
+                    sandbox=config.tools.sandbox,
+                )
             },
         )
         objective = f"Produce deliverables for: {task.title}"

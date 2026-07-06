@@ -131,34 +131,31 @@ def test_no_capabilities_filter_is_all_tools():
     assert any("run_" in n for n in names)
 
 
-def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(monkeypatch):
+def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(tmp_path):
     """MCP servers may expose generic names like read_file; present namespaced
     tool names so providers do not receive duplicate function schemas."""
-    from assistant import settings
+    from assistant.config import Config
+    from assistant.settings import Settings
     from assistant.tools.mcp import NamespacedMCPToolkit, namespaced_tool_name
 
-    monkeypatch.setattr(
-        settings,
-        "list_mcp_servers",
-        lambda include_env=False: [
-            {
-                "name": "repo-files",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-                "env": {},
-                "cwd": None,
-                "allowed_tools": ["read_file", "list_directory"],
-                "blocked_tools": [],
-            }
-        ],
+    # MCP servers are read from THIS profile's settings (config.data_dir), so write
+    # one there and pass the config — no module-level monkeypatch.
+    config = Config(data_dir=tmp_path)
+    Settings(config.data_dir / "settings.json").upsert_mcp_server(
+        {
+            "name": "repo-files",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+            "allowed_tools": ["read_file", "list_directory"],
+        }
     )
 
-    tools = build_agent_tools("gemini")
+    tools = build_agent_tools("gemini", config=config)
     assert any(getattr(t, "name", None) == "read_file" for t in tools)
     assert any(isinstance(t, NamespacedMCPToolkit) for t in tools)
     assert namespaced_tool_name("repo-files", "read_file") == "repo_files_read_file"
 
-    mcp_only = build_agent_tools("gemini", capabilities=["mcp"])
+    mcp_only = build_agent_tools("gemini", capabilities=["mcp"], config=config)
     assert len(mcp_only) == 1
     assert isinstance(mcp_only[0], NamespacedMCPToolkit)
 

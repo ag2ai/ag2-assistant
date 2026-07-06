@@ -3,6 +3,69 @@
 import pytest
 
 
+class FakeReply:
+    """Minimal stand-in for AgentReply."""
+
+    def __init__(self, body: str):
+        self.body = body
+
+
+class FakeAgent:
+    """Deterministic fake agent: echo[N] proves per-session continuity; empty tools."""
+
+    def __init__(self):
+        self._counts: dict = {}
+        self.tools = []
+
+    async def ask(self, *msg, stream=None, **kwargs) -> FakeReply:
+        sid = getattr(stream, "id", "default")
+        self._counts[sid] = self._counts.get(sid, 0) + 1
+        return FakeReply(f"echo[{self._counts[sid]}]: {msg[0]}")
+
+
+def use_fake_agent(monkeypatch, agent_factory=None):
+    """Patch the agent factory the gateway core looks up, so no runtime touches an LLM."""
+    import assistant.gateway.core as core_mod
+
+    factory = agent_factory or (lambda *a, **k: FakeAgent())
+    monkeypatch.setattr(core_mod, "create_agent", factory)
+
+
+def make_profile_app(*, name="Test", palette="teal", workspace=None, persist=False, memory=False):
+    """Build a create_app FastAPI app around a ProfileManager with ONE profile.
+
+    Returns ``(app, pid)``. Relies on the autouse HOME-isolation fixture so the
+    registry + profile dir land under the test's tmp root. The profile is created
+    in the registry before start() so lifespan boots it; hit ``/api/p/{pid}/…``.
+    """
+    from assistant import profiles
+    from assistant.gateway.app import create_app
+    from assistant.gateway.profile_manager import ProfileManager
+
+    meta = profiles.create_profile(name, palette, workspace=workspace)
+    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    manager = ProfileManager(memory=memory, persist=persist)
+    app = create_app(manager, persist=persist)
+    return app, meta.id
+
+
+def api(pid: str, path: str = "") -> str:
+    """Profile-scoped route prefix helper for tests: api('work', '/sessions')."""
+    return f"/api/p/{pid}{path}"
+
+
+@pytest.fixture
+def profile_app(monkeypatch):
+    """A started single-profile app + its pid, agent faked. Yields ``(client, pid)``
+    inside a TestClient context (lifespan boots the runtime)."""
+    from fastapi.testclient import TestClient
+
+    use_fake_agent(monkeypatch)
+    app, pid = make_profile_app(persist=True)
+    with TestClient(app) as client:
+        yield client, pid
+
+
 @pytest.fixture(autouse=True)
 def _isolate_ag2assistant_home(monkeypatch, tmp_path):
     """Isolate tests from the developer's real ~/.ag2assistant state.
