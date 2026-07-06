@@ -1,4 +1,10 @@
-from assistant.a2ui import CATALOG_ID, assistant_catalog, durable_surfaces_from_messages, runtime
+from assistant.a2ui import (
+    CATALOG_ID,
+    assistant_catalog,
+    durable_surfaces_from_messages,
+    runtime,
+    wrap_bare_a2ui,
+)
 
 
 def test_assistant_catalog_declares_custom_components():
@@ -145,3 +151,36 @@ def test_durable_surfaces_preserve_composed_component_tree():
     assert root["component"] == "Column"
     assert root["children"] == ["weather", "news"]
     assert [c["id"] for c in root["_components"]] == ["root", "weather", "news"]
+
+
+# --- tolerant recovery of un-wrapped A2UI (models that omit <a2ui-json>) ---
+
+_BARE_ARRAY = (
+    '[{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"c"}},'
+    '{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":'
+    '[{"id":"root","component":"MarketBoard","quotes":[{"symbol":"AAPL","price":313}]}]}}]'
+)
+
+
+def test_wrap_bare_a2ui_makes_untagged_array_parseable():
+    from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
+    from ag2.a2ui.parser import A2UIResponseParser
+
+    text = "Here are the quotes. " + _BARE_ARRAY
+    # Baseline: the raw response is NOT recognised by the parser (the live bug).
+    assert A2UIResponseParser("v1.0").parse(text).has_a2ui is False
+
+    wrapped = wrap_bare_a2ui(text)
+    assert wrapped is not None
+    assert A2UI_JSON_OPEN_TAG in wrapped and A2UI_JSON_CLOSE_TAG in wrapped
+
+    result = A2UIResponseParser("v1.0").parse(wrapped)
+    assert result.has_a2ui is True
+    assert len(result.operations) == 2
+    assert result.text.strip() == "Here are the quotes."  # prose preserved, JSON removed
+
+
+def test_wrap_bare_a2ui_ignores_non_a2ui_and_prose():
+    assert wrap_bare_a2ui("just prose, no json here") is None
+    assert wrap_bare_a2ui("a plain list [1, 2, 3] is not A2UI") is None
+    assert wrap_bare_a2ui("") is None

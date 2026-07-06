@@ -264,7 +264,18 @@ class Gateway:
                 from assistant.observability import log_suppressed
 
                 log_suppressed("a2ui runtime setup", exc, session_id=session_id)
-            middleware = a2ui_runtime.middleware_factories() if a2ui_runtime is not None else ()
+            if a2ui_runtime is not None:
+                from assistant.a2ui import tolerant_a2ui_middleware
+
+                # Append a fallback that recovers surfaces when the model omits the
+                # <a2ui-json> wrapper (fires only when the runtime's own extraction
+                # can't — the two are mutually exclusive per response).
+                middleware = (
+                    *a2ui_runtime.middleware_factories(),
+                    tolerant_a2ui_middleware(a2ui_runtime.parser),
+                )
+            else:
+                middleware = ()
             ask_coro = self._agent.ask(
                 *msg,
                 stream=stream,

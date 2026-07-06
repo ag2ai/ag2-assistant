@@ -1,9 +1,16 @@
 """A2UI configuration for AG2 Assistant's chat/task surfaces."""
 
+import json
 from functools import lru_cache
 from typing import Any
 
 from assistant.events import A2UISurface
+
+# A2UI protocol message keys — a JSON array whose items carry any of these is an
+# A2UI message batch (used to recover surfaces from models that omit the wrapper).
+_A2UI_MSG_KEYS = frozenset(
+    {"createSurface", "updateComponents", "updateDataModel", "deleteSurface"}
+)
 
 CATALOG_ID = "https://ag2.ai/assistant/a2ui/catalog.json"
 
@@ -440,3 +447,66 @@ def runtime():
             "Users do not need to mention A2UI for you to use it."
         ),
     )
+
+
+def wrap_bare_a2ui(text: str) -> str | None:
+    """Wrap a bare A2UI message array in the ``<a2ui-json>`` tags the parser needs.
+
+    The A2UI runtime only extracts a surface when the model wraps its message array
+    in ``<a2ui-json>…</a2ui-json>`` (see the system prompt). Some models — notably
+    non-Gemini ones — inconsistently emit the raw array without the wrapper, which
+    otherwise leaves the JSON stranded in the prose and renders no surface. This
+    finds the first JSON array whose items look like A2UI messages and re-wraps it
+    so the standard extraction path applies. Returns the rewritten text, or ``None``
+    if no A2UI array is present. Callers must only invoke this when the text has no
+    ``<a2ui-json>`` tag already (otherwise the normal path handles it).
+    """
+    if not text:
+        return None
+    from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
+
+    decoder = json.JSONDecoder()
+    i = 0
+    while True:
+        start = text.find("[", i)
+        if start == -1:
+            return None
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except ValueError:
+            i = start + 1  # not a JSON array here — keep scanning
+            continue
+        if isinstance(value, list) and any(
+            isinstance(op, dict) and (_A2UI_MSG_KEYS & op.keys()) for op in value
+        ):
+            return (
+                f"{text[:start]}{A2UI_JSON_OPEN_TAG}"
+                f"{text[start:end]}{A2UI_JSON_CLOSE_TAG}{text[end:]}"
+            )
+        i = end  # a JSON array, but not A2UI — skip past it and keep scanning
+
+
+def tolerant_a2ui_middleware(parser):
+    """Middleware factory that recovers A2UI surfaces from an un-wrapped response.
+
+    Complements the runtime's own extraction/validation middleware, which only
+    fires when the ``<a2ui-json>`` tags are present. This one fires only when they
+    are absent but a bare A2UI array is, so the two never both act on the same
+    response. Reuses the runtime ``parser`` and the runtime's publish path, so the
+    recovered surface travels the same out-of-band channel as a wrapped one.
+    """
+    from ag2.a2ui.constants import A2UI_JSON_OPEN_TAG
+    from ag2.a2ui.middleware import _publish_a2ui
+    from ag2.middleware.base import BaseMiddleware
+
+    class _TolerantMiddleware(BaseMiddleware):
+        async def on_llm_call(self, call_next, events, context):
+            response = await call_next(events, context)
+            text = response.content
+            if text and A2UI_JSON_OPEN_TAG not in text:
+                wrapped = wrap_bare_a2ui(text)
+                if wrapped is not None:
+                    await _publish_a2ui(parser.parse(wrapped), response, context)
+            return response
+
+    return lambda event, context: _TolerantMiddleware(event, context)
