@@ -18,3 +18,16 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      # Keep the committed SPA bundle in sync with its source. Any change to a Vite
+      # build input under web/ rebuilds static/app and stages it into the same commit,
+      # so the bundle can't drift (mirrors the CI "SPA bundle is up to date" gate).
+      # Requires Node/npm on PATH; only runs when a web/ build input is staged.
+      - id: build-web-bundle
+        name: rebuild SPA bundle (web/ → static/app)
+        language: system
+        files: '^web/(src/.*|package\.json|package-lock\.json|vite\.config\.js|index\.html)$'
+        pass_filenames: false
+        entry: bash -c 'cd web && npm run build && cd .. && git add src/assistant/gateway/static/app'

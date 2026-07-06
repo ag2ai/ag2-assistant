@@ -117,7 +117,7 @@ async def test_read_profile_empty(tmp_path):
 
 
 async def test_read_and_clear_profile_roundtrip(tmp_path):
-    from autogen.beta.knowledge import SqliteKnowledgeStore
+    from ag2.knowledge import SqliteKnowledgeStore
 
     store_path = tmp_path / "profile.db"
     store = SqliteKnowledgeStore(str(store_path))
@@ -134,19 +134,37 @@ async def test_read_and_clear_profile_roundtrip(tmp_path):
     assert await clear_profile(store_path=store_path) is False
 
 
+async def test_universal_roundtrip_and_sync_read(tmp_path):
+    """write_universal persists to user.db; read_universal reads it back; the
+    synchronous read_profile_sync (used by the per-turn prompt builders) sees the
+    same content, and returns '' for a missing DB."""
+    from assistant.memory import read_profile_sync, read_universal, write_universal
+
+    user_db = tmp_path / "user.db"
+    assert read_profile_sync(user_db) == ""  # missing file → empty, no raise
+    assert await read_universal(user_db) == ""
+
+    doc = "# User profile\n- Name: TestUser"
+    await write_universal(doc, user_db)
+    assert await read_universal(user_db) == doc
+    assert read_profile_sync(user_db) == doc  # sync path matches the async store read
+
+
 @pytest.mark.integration
-async def test_profile_learned_after_conversation(tmp_path, monkeypatch):
-    """End-to-end: a conversation should produce a persisted profile."""
-    import assistant.memory as memory_mod
-
-    store_path = tmp_path / "profile.db"
-    monkeypatch.setattr(memory_mod, "default_store_path", lambda: store_path)
-
+async def test_profile_learned_after_conversation(tmp_path):
+    """End-to-end: a conversation should produce a persisted profile in this
+    profile's store (config.data_dir / profile.db)."""
     from assistant.agent import ask
+    from assistant.config import load_config
+
+    config = load_config()
+    config.data_dir = tmp_path  # this profile's learned memory lands here
+    store_path = tmp_path / "profile.db"
 
     await ask(
         "Please always keep your answers very short and bulleted. "
         "I hate long paragraphs. I usually work early mornings.",
+        config,
         memory=True,
         platform="cli",
     )

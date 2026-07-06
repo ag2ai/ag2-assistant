@@ -61,23 +61,22 @@ def names() -> tuple[str, ...]:
     return tuple(_REGISTRY)
 
 
-def active_provider() -> str:
-    """The active voice provider: persisted UI setting → AG2ASSISTANT_VOICE_PROVIDER → default.
-    The settings read is a lazy import to avoid a circular import at module load."""
-    try:
-        from assistant import settings
-
-        p = (settings.get_voice_provider() or "").strip().lower()
-        if p in _REGISTRY:
-            return p
-    except Exception:
-        pass
+def active_provider(persisted: str | None = None) -> str:
+    """The active voice provider: `persisted` (a profile's saved choice) →
+    AG2ASSISTANT_VOICE_PROVIDER → default. This module never reads settings itself
+    (that would need a profile it doesn't know) — the caller passes the profile's
+    persisted value from its `Settings`."""
+    p = (persisted or "").strip().lower()
+    if p in _REGISTRY:
+        return p
     p = (os.environ.get("AG2ASSISTANT_VOICE_PROVIDER") or DEFAULT_PROVIDER).strip().lower()
     return p if p in _REGISTRY else DEFAULT_PROVIDER
 
 
 def get(name: str | None = None) -> VoiceProvider:
-    """The provider by name, or the active one when name is None / unknown."""
+    """The provider by name, or the env/default active one when name is None / unknown.
+    Pass a profile's persisted choice (via `Settings.voice_provider()`) as `name` to
+    honour per-profile selection; a bare `get()` falls back to env → default only."""
     return _REGISTRY.get(name or active_provider(), _REGISTRY[DEFAULT_PROVIDER])
 
 
@@ -120,7 +119,7 @@ _GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 
 def _gemini_realtime(config: Config, voice: str, model: str):
-    from autogen.beta.live import gemini
+    from ag2.live import gemini
     from google.genai import Client
 
     client = Client(api_key=os.environ.get(config.llm.api_key_env, ""))
@@ -183,7 +182,7 @@ def _openai_key() -> str:
 
 
 def _openai_realtime(config: Config, voice: str, model: str):
-    from autogen.beta.live import openai as oai
+    from ag2.live import openai as oai
     from openai import AsyncOpenAI
 
     # Minimal config matching AG2's known-working tool-calling example: model + voice,
@@ -196,7 +195,7 @@ def _openai_realtime(config: Config, voice: str, model: str):
 
 
 async def _openai_preview(config: Config, voice: str, text: str) -> bytes:
-    from autogen.beta.live import OpenAITTSConfig
+    from ag2.live import OpenAITTSConfig
     from openai import AsyncOpenAI
 
     tts = OpenAITTSConfig(_OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key()))

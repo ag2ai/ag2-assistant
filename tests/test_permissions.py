@@ -247,7 +247,7 @@ async def test_read_file_missing(tmp_path):
 
 
 async def test_read_file_pdf_returns_document(tmp_path):
-    from autogen.beta import ToolResult
+    from ag2 import ToolResult
 
     from assistant.tools.files import read_file_impl
 

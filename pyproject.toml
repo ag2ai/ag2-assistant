@@ -1,17 +1,20 @@
 [build-system]
-requires = ["setuptools>=75.0"]
+requires = ["setuptools>=77.0.3"]  # PEP 639: SPDX license expression + license-files
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ag2assistant"
+name = "ag2-assistant"
 version = "0.1.0"
-description = "AG2 Assistant — an OpenClaw-inspired personal assistant powered by AG2 Beta"
+description = "AG2 Assistant — a personal AI assistant powered by AG2's Beta framework"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    # Pinned to AG2 main for the OpenAI realtime zero-arg-tool fix (ag2ai/ag2#2985);
-    # ddgs powers the native DuckDuckSearchTool, openai powers the OpenAI voice provider.
+    # Tracks AG2 main; requires >= 1.0.0b0 (a direct git reference can't carry a
+    # version floor, so the minimum is enforced by keeping main, whose version is
+    # 1.0.0b0+). ddgs powers the native DuckDuckSearchTool, openai the OpenAI voice
+    # provider.
     "ag2[gemini,ddgs,openai,docker] @ git+https://github.com/ag2ai/ag2.git@main",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
@@ -37,7 +40,7 @@ dev = [
     "ruff>=0.8.0",
     "pre-commit>=4.0.0",
 ]
-# Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2assistant[google]`.
+# Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",
     "google-auth>=2.0",
@@ -45,7 +48,7 @@ google = [
 ]
 
 [project.scripts]
-ag2assistant = "assistant.cli:app"
+ag2-assistant = "assistant.cli:app"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

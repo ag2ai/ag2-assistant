@@ -40,14 +40,17 @@ def _command_detail(arguments) -> str:
 class PermissionStore:
     """Persistent record of folders the user has granted access to."""
 
-    def __init__(self, path: Path | None = None) -> None:
-        self._path = path or (Path.home() / ".ag2assistant" / "permissions.json")
+    def __init__(self, path: Path | None) -> None:
+        # `path` is REQUIRED (no global default). Pass ``None`` only for an explicit
+        # ephemeral, non-persisting store (e.g. an un-wired fallback) — there is no
+        # implicit on-disk location.
+        self._path = Path(path) if path is not None else None
         self._granted: set[str] = set()
         self._blocked: set[str] = set()
         self._load()
 
     def _load(self) -> None:
-        if self._path.exists():
+        if self._path is not None and self._path.exists():
             try:
                 data = json.loads(self._path.read_text())
                 self._granted = set(data.get("folders", []))
@@ -56,6 +59,8 @@ class PermissionStore:
                 self._granted, self._blocked = set(), set()
 
     def _save(self) -> None:
+        if self._path is None:
+            return  # ephemeral store — nothing to persist
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
             json.dumps(
@@ -134,7 +139,11 @@ class PermissionManager:
         asker: Asker | None = None,
         sandbox: str = "local",
     ) -> None:
-        self.store = store or PermissionStore()
+        # A store is normally injected (the profile's persistent grants). When one
+        # isn't (a defensive fallback where no dependency was wired), fall back to an
+        # ephemeral in-memory store — never a global on-disk default, which would leak
+        # grants across profiles.
+        self.store = store if store is not None else PermissionStore(path=None)
         self.asker = asker
         self.sandbox = sandbox  # "local" (host) or "docker" (isolated) — shown in prompts
         self._denied_folders: set[str] = set()
@@ -213,7 +222,7 @@ class PermissionManager:
         self._any_denied = True
         return False
 
-    # Management pass-throughs (for a future `ag2assistant permissions` CLI, etc.)
+    # Management pass-throughs (for a future `ag2-assistant permissions` CLI, etc.)
     def is_allowed(self, folder) -> bool:
         return self.store.is_allowed(folder)
 

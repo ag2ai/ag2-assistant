@@ -11,14 +11,13 @@ flow, and on-disk state. Companion diagram: [`architecture.svg`](architecture.sv
 
 ## 1. Overview
 
-AG2 Assistant is a personal AI-assistant platform built on **AG2 Beta**
-(`autogen.beta`). The backend is Python (FastAPI); the primary client is a Svelte
+AG2 Assistant is a personal AI-assistant platform built on **AG2**
+(`ag2`). The backend is Python (FastAPI); the primary client is a Svelte
 web app served by the gateway. The same backend also speaks to messaging channels
 (Telegram/Discord/Slack), a realtime voice client, and a CLI — all sharing **one
 universal agent** and **one event-stream spine**.
 
-The defining decision (memory `ag2-primitives-drive-architecture`, and
-`docs/gui-redesign-plan.md`): **AG2's event `Stream` is the single source of truth,
+The defining decision: **AG2's event `Stream` is the single source of truth,
 and every surface is a projection of it.** We lean on AG2 primitives — streams, the
 event taxonomy, observers/subscriptions, `EventLogWriter`, knowledge/compaction —
 rather than inventing parallel machinery, and add an app-specific layer only where
@@ -46,7 +45,7 @@ on demand, so sessions are **resumable** and never cross histories.
 what `EventLogWriter` persists:
 
 ```json
-{ "type": "autogen.beta.events.types.ModelResponse", "data": { … } }
+{ "type": "ag2.events.types.ModelResponse", "data": { … } }
 { "type": "ag2assistant.events.DeliverableProduced",  "data": { … } }
 ```
 
@@ -65,13 +64,13 @@ exposes:
 
 | Command                  | What it starts                                                        |
 | ------------------------ | --------------------------------------------------------------------- |
-| `ag2assistant run`       | gateway + web UI **+** every channel whose token is set (one agent)   |
-| `ag2assistant gateway`   | REST + WebSocket API + web UI only (`--host`, `--port`, default 8800) |
-| `ag2assistant chat`      | interactive terminal chat                                             |
-| `ag2assistant agent "…"` | single-shot prompt → reply                                            |
-| `ag2assistant onboard`   | first-run interview (name, location, hours, style)                    |
-| `ag2assistant telegram \| discord \| slack` | a single messaging channel                         |
-| `ag2assistant version`   | version string                                                        |
+| `ag2-assistant run`       | gateway + web UI **+** every channel whose token is set (one agent)   |
+| `ag2-assistant gateway`   | REST + WebSocket API + web UI only (`--host`, `--port`, default 8800) |
+| `ag2-assistant chat`      | interactive terminal chat                                             |
+| `ag2-assistant agent "…"` | single-shot prompt → reply                                            |
+| `ag2-assistant onboard`   | first-run interview (name, location, hours, style)                    |
+| `ag2-assistant telegram \| discord \| slack` | a single messaging channel                         |
+| `ag2-assistant version`   | version string                                                        |
 
 `run` builds the gateway + task service via `build_gateway()`
 (`src/assistant/gateway/core.py:638`), starts the scheduler, attaches channels whose
@@ -126,7 +125,7 @@ No background loop lives here; the only long-running loop is the scheduler (§5.
 
 ### 5.2 Universal agent — `src/assistant/agent.py`
 
-One shared `autogen.beta` `Agent`, built by `create_agent()` (`agent.py:320`).
+One shared `ag2` `Agent`, built by `create_agent()` (`agent.py:320`).
 `model_config()` maps the provider to a config class (Gemini default 8192 max
 output; OpenAI via the Responses API; Anthropic; Ollama). Per-turn system prompts
 are assembled by `turn_prompt()` (chat) and `universal_turn_prompt()` (gateway/tasks
@@ -179,6 +178,12 @@ Durable background work with deliverables, scheduling, and subtask orchestration
   default **30.0s**). `tick()` fires every due `SCHEDULED` task; recurrence is
   interval-based and anchored to `scheduled_for` ("daily", "hourly", "every N
   units", weekday patterns). A bad record logs but never kills the loop.
+  **Single-owner:** exactly one scheduler runs per data dir — `TaskService.start`
+  takes `scheduler=` (channel commands pass `False`; they keep the task tools but
+  not the loop), backed by a cross-process `flock` leader lock
+  (`scheduler_lock.py`, `~/.ag2assistant/scheduler.lock`). This prevents the
+  multi-process race where N schedulers fire the same `tasks.db` tasks. The
+  network-native evolution of this is one core with thin front-ends over AG2 `WsLink`.
 - **Executor** (`tasks/executor.py`) — `make_task_executor()` runs a **visible
   subagent** per deliverable (archetype persona: researcher/operator/coder/worker),
   cheap model for leaf subtasks, main model for root synthesis. Inner subagent events
@@ -288,7 +293,7 @@ Every model-backed call in the backend. Two model tiers: **main**
 | 8 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
 | 9 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
 | 10| **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
-| 11| **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2assistant agent "…"`             | —                            |
+| 11| **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
 
 Onboarding (`onboarding.py`) is **not** an LLM call — it's a fixed 4-question HITL
 sequence that seeds the profile. The **reload** mechanism (§5.1) reference-swaps
@@ -525,6 +530,75 @@ Generated artifacts (images, deliverables, uploads) live in the **workspace**
   `PermissionManager` + the HITL hook; grants persist in `permissions.json`.
 - **Secrets** live in `secrets.json` (0600) and are surfaced to the UI only as
   set/hint, never echoed back.
+
+---
+
+## 13. Profiles (multi-profile runtime)
+
+One install hosts several **isolated profiles** (e.g. *Work* / *Personal*) — each a
+named, colour-coded runtime. A profile is a **directory** on disk and, at runtime,
+**one `Gateway` + one `TaskService` + its own channels**, all alive at once inside
+the single process. The web client is a viewer pointed at exactly one profile.
+
+- **Registry & layout.** `profiles.json` (`src/assistant/profiles.py`) is the
+  registry: `{active_default, onboarded, profiles:[{id, name, palette, workspace,
+  archived}]}`. Each profile owns `~/.ag2assistant/profiles/<id>/` holding its
+  `settings.json`, `sessions.db`, `tasks.db`, `inquiries.db`, `profile.db`,
+  `permissions.json`, `usage.json`, `skills/`, `debug/`. `id` is an immutable slug;
+  `palette` is unique while ≤6 profiles exist (the palette *is* the profile's
+  identity).
+- **ProfileManager** (`gateway/profile_manager.py`) boots **all unarchived**
+  profiles at server start (so a non-viewed profile's scheduled tasks still fire),
+  and owns `create` / `archive` / `reload` / channel start-stop. `get(pid)` is
+  registry-first: unknown → 404, archived → 410, registered-but-not-running → 500
+  (never lazy-boot). Zero profiles is a legal state (fresh install → browser
+  onboarding creates the first, which boots live).
+- **Derived config.** Each runtime is built from `Config.with_profile(meta)`, which
+  overrides **every** path field (`data_dir`, `workspace_dir`, `skills_dir`) onto the
+  profile dir; `root_dir` still points at `~/.ag2assistant`. A per-profile
+  `config_factory(pid)` re-reads the registry entry on every call and overlays that
+  profile's `settings.json` LLM provider/model (env still wins) — so `reload()`
+  (workspace/model edit) rebuilds against the right profile, not the global root.
+- **Global vs per-profile split.** Per-profile: settings, sessions, tasks, memory,
+  usage, skills, permissions, inquiries, and the HITL store (on the runtime).
+  Global: `secrets.json` (keys load into one process-wide `os.environ`),
+  `pricing.json`, `ag2assistant.log` (records tagged `[profile]` via a
+  `LoggerAdapter`), and Google OAuth. The global-singleton audit removed every
+  module-level path default so nothing silently leaks across profiles (pinned by
+  `tests/test_profiles.py::test_no_global_path_defaults`).
+- **Routing.** Profile-scoped routes are prefixed `/api/p/{pid}/…`, resolved by a
+  `get_runtime` FastAPI dependency; global routes stay unprefixed (`/api/profiles`,
+  `/api/secrets/key`, `/api/onboarded`, `/api/google/*`, `/api/status`,
+  `/hitl/{id}`). No unprefixed aliases — a clean cutover.
+- **Channels — install-level assignment.** A bot token serves one live connection,
+  so each platform (Telegram / Discord / Slack) is an **install-level resource
+  assigned to exactly one profile or disabled** — not a per-profile toggle. The
+  binding lives in the registry (`profiles.json` `channels: {platform: pid|null}`),
+  so two profiles claiming one platform is structurally unrepresentable; there is no
+  first-wins race and no conflict state. The global `GET /api/channels` returns
+  `{platform: {profile, token_present, active, error}}`; `POST /api/channels`
+  `{platform, profile}` rebinds and hot-applies (stop on the old runtime, start on
+  the new), returning the updated entry. The binding **persists even if start
+  fails** — `active:false` with `error` set (bad/missing token, network). Bot tokens
+  are stored in the global secrets store (like provider keys) and are editable inline
+  in Settings → Channels via `POST /api/channels/token` `{platform, tokens:{ENV: val}}`
+  (empty value clears; saving re-applies the live channel; values are never echoed).
+  The Settings → Channels section is one profile-picker per platform, plus its token
+  field(s) underneath.
+- **Archive.** Refuses the last profile; archiving the `active_default` requires a
+  replacement. It cancels in-flight tasks (→ CANCELLED), closes WS with code `4001`,
+  drops the runtime, and marks `archived: true` — durable across restarts (not
+  booted, hidden from `GET /api/profiles`, folder kept on disk).
+- **Client model.** The URL carries the profile (`/app/{pid}/…`, `router.js`);
+  switching is a full-page navigation, so boot re-resolves and applies the profile's
+  palette (`App.svelte`). Chips + `⌘1..9` shortcuts (`Drawer.svelte`, App-level
+  keydown) switch; day/night theme stays a global preference.
+
+> Diagram: [`architecture.svg`](architecture.svg) predates profiles and shows the
+> single-runtime spine; conceptually every gateway/task/store box below the clients
+> is now instantiated once **per profile**, with secrets/pricing/log/Google shared
+> globally. The SVG is a hand-laid coordinate diagram — regenerating it for the
+> per-profile fan-out is deferred rather than risk breaking the layout.
 
 ---
 

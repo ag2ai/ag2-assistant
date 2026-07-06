@@ -1,11 +1,15 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles } from '../store.js'
   import { api } from '../transport/api.js'
+  import { getActiveProfileId } from '../lib/profile.js'
   import { chime } from '../lib/chime.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
+  import Profiles from './Profiles.svelte'
+  import Channels from './Channels.svelte'
   import FolderPicker from './FolderPicker.svelte'
+  import { FOCUS } from '../lib/focuses.js'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
   // API-key rows. github is a stored token (skills registry), NOT a model provider,
@@ -31,6 +35,14 @@
   function openFolderEdit() { editFolder = true }
   // one-click commit: the folder you're viewing in the picker applies immediately
   const commitFolder = (path) => run(() => api.setProjectFolder(path).then(() => { editFolder = false }))
+
+  // Focus areas — a per-profile persona attribute (settings.json → agent context).
+  // Toggling a pill persists immediately for the ACTIVE profile.
+  const toggleFocus = (id) => {
+    const cur = s?.focuses || []
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    run(() => api.setFocuses(next))
+  }
 
   async function load() {
     try {
@@ -64,6 +76,13 @@
     mcpHealth = { ...mcpHealth, [name]: await api.healthMcpServer(name) }
   })
 
+  // Settings values (model, voice, MCP, project folder) are per-profile — title
+  // the modal so it's clear which profile you're configuring (§5.4).
+  const activeName = $derived.by(() => {
+    const id = $profiles.activeId || getActiveProfileId()
+    return ($profiles.list || []).find((p) => p.id === id)?.name || ''
+  })
+
   const close = () => ($settingsOpen = false)
   const openVoice = () => { $settingsOpen = false; $voicePickerOpen = true }
   const openGoogle = () => { $settingsOpen = false; $googleOpen = true }
@@ -74,7 +93,7 @@
 
 <div class="modal-backdrop" onclick={close}></div>
 <div class="modal settings">
-  <h2>Settings</h2>
+  <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>
   {#if err}<p class="muted" style="color:#d8552f">{err}</p>{/if}
 
   {#if !s}
@@ -88,6 +107,9 @@
         <span class="sv">replay the first-run welcome & onboarding</span>
         <span class="sgo">Open →</span>
       </button>
+
+      <div class="setsec">Profiles</div>
+      <Profiles />
 
       <div class="setsec">Project folder</div>
       {#if !editFolder}
@@ -103,7 +125,17 @@
         </div>
       {/if}
 
-      <div class="setsec">API keys</div>
+      <div class="setsec">Focus areas</div>
+      <div class="focuspills">
+        {#each FOCUS as f}
+          <button class="focuspill" class:on={(s.focuses || []).includes(f.id)} disabled={busy} onclick={() => toggleFocus(f.id)}>
+            <Icon name={f.icon} size={13} /> {f.label}
+          </button>
+        {/each}
+      </div>
+      <p class="muted" style="font-size:12px;margin:2px 0 0">What this profile is for — shapes how the assistant helps.</p>
+
+      <div class="setsec">API keys <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
       {#each KEY_ROWS as k}
         <div class="keyrow">
           <span class="kp">{k.label}</span>
@@ -143,6 +175,9 @@
         <p class="muted" style="font-size:13px">Add an OpenAI or Gemini key above to enable voice.</p>
       {/if}
 
+      <div class="setsec">Channels <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
+      <Channels />
+
       <div class="setsec">Memory</div>
       <button class="setrow" onclick={openMemory}>
         <span class="sk"><Icon name="brain" size={15} /> Memory</span>
@@ -153,7 +188,7 @@
       <div class="setsec">AG2</div>
       <button class="setrow" onclick={openPoweredBy}>
         <span class="sk"><Icon name="zap" size={15} /> Powered by AG2</span>
-        <span class="sv">the AG2 Beta primitives behind this app</span>
+        <span class="sv">the AG2 primitives behind this app</span>
         <span class="sgo">View →</span>
       </button>
       <label class="setcheck">

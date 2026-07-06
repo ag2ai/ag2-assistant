@@ -1,37 +1,44 @@
 """Google OAuth + API client management for AG2 Assistant.
 
 A personal-desktop OAuth flow: the user downloads an OAuth *client* JSON from
-Google Cloud to `~/.ag2assistant/google_credentials.json`, runs `ag2assistant google login`
+Google Cloud to `~/.ag2assistant/google_credentials.json`, runs `ag2-assistant google login`
 once (browser consent), and the resulting *token* is cached at
 `~/.ag2assistant/google_token.json` and silently refreshed thereafter.
 
 The Google client libraries are an optional dependency (`pip install
-ag2assistant[google]`); everything here imports them lazily so the rest of AG2 Assistant works
+ag2-assistant[google]`); everything here imports them lazily so the rest of AG2 Assistant works
 without them.
 """
 
 from pathlib import Path
 
-# Read + send Gmail, read/write Calendar, read-only Drive. (Send is still gated
-# by a human-approval prompt at the tool layer.)
+from assistant.config import data_dir
+
+# Least-privilege scopes for exactly what the tools do:
+#   gmail.readonly — search + read mail
+#   gmail.compose  — create drafts AND send (does NOT allow deleting/relabelling
+#                    existing mail, unlike the broader gmail.modify)
+#   calendar.events — read + create events only (not calendar/ACL management)
+#   drive.readonly  — find + read files
+# Sending is additionally gated by a human-approval prompt at the tool layer.
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
 
 def credentials_path() -> Path:
-    return Path.home() / ".ag2assistant" / "google_credentials.json"
+    return data_dir() / "google_credentials.json"
 
 
 def token_path() -> Path:
-    return Path.home() / ".ag2assistant" / "google_token.json"
+    return data_dir() / "google_token.json"
 
 
 def account_path() -> Path:
-    return Path.home() / ".ag2assistant" / "google_account.txt"
+    return data_dir() / "google_account.txt"
 
 
 def account_email() -> str | None:
@@ -52,6 +59,7 @@ def save_credentials_json(content: str) -> None:
     cp = credentials_path()
     cp.parent.mkdir(parents=True, exist_ok=True)
     cp.write_text(content)
+    cp.chmod(0o600)  # contains the OAuth client secret — keep it owner-only
 
 
 def is_configured() -> bool:
@@ -72,7 +80,7 @@ def _require_libs():
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise ImportError(
             "Google integration needs extra deps. Install with: "
-            'pip install "ag2assistant[google]"'
+            'pip install "ag2-assistant[google]"'
         ) from exc
     return Credentials, Request, InstalledAppFlow
 
@@ -121,6 +129,7 @@ def _save_token(creds) -> None:
     tp = token_path()
     tp.parent.mkdir(parents=True, exist_ok=True)
     tp.write_text(creds.to_json())
+    tp.chmod(0o600)  # holds a long-lived refresh token — keep it owner-only
 
 
 def _email_for(creds) -> str:
@@ -202,5 +211,5 @@ def build_service(api: str, version: str):
 
     creds = load_credentials(interactive=False)
     if creds is None:
-        raise RuntimeError("Not signed in to Google. Run `ag2assistant google login` first.")
+        raise RuntimeError("Not signed in to Google. Run `ag2-assistant google login` first.")
     return build(api, version, credentials=creds, cache_discovery=False)

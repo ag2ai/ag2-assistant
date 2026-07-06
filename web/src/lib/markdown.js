@@ -1,11 +1,14 @@
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { api as P } from './profile.js'
 
 // A bare relative path the agent emitted (e.g. images/foo.jpg, uploads/bar.png) —
 // not absolute/scheme/anchor — refers to a WORKSPACE file. The browser would resolve
-// it against the page URL (/app/c/…) and 404, so serve it via the files API instead.
+// it against the page URL (/app/…) and 404, so serve it via the (profile-scoped) files API.
 const isWorkspaceRel = (u) => !!u && !/^(https?:|data:|blob:|mailto:|#|\/)/i.test(u)
-const filesApi = (p) => '/api/files/raw?path=' + encodeURIComponent(p.replace(/^\.\//, ''))
+const filesApi = (p) => P('/files/raw?path=' + encodeURIComponent(p.replace(/^\.\//, '')))
+// The files-raw route is now profile-scoped: /api/p/{pid}/files/raw.
+const isFilesRaw = (pathname) => /^\/api\/p\/[^/]+\/files\/raw$/.test(pathname)
 
 // Rewrite workspace-relative images/links to the files API, and open external links
 // in a new tab. Runs after sanitization so attributes we add aren't re-filtered.
@@ -113,7 +116,7 @@ export function bindImages(node, onOpen) {
       let path = null
       try {
         const u = new URL(src, window.location.href)
-        if (u.pathname === '/api/files/raw') path = u.searchParams.get('path')
+        if (isFilesRaw(u.pathname)) path = u.searchParams.get('path')
       } catch {}
       if (path && onOpen) onOpen({ path, name: path.split('/').pop(), alt: img.getAttribute('alt') || '' })
       else window.open(src, '_blank', 'noopener')

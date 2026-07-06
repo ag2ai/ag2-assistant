@@ -68,6 +68,7 @@ async def learn(
     errors and falls back to appending the raw reason so the signal is never lost."""
     from assistant.memory import read_profile, record_preference, remember_note
 
+    store_path = config.data_dir / "profile.db"  # this profile's learned memory
     down = sentiment == "down"
     category = (
         "dislikes" if down else "how"
@@ -75,11 +76,11 @@ async def learn(
     thumb = "a thumbs-DOWN (disliked it)" if down else "a thumbs-UP (liked it)"
     polarity = "dislike" if down else "preference (a like)"
     try:
-        from autogen.beta import Agent
+        from ag2 import Agent
 
         from assistant.agent import cheap_model, model_config
 
-        profile = (await read_profile()) or "(nothing yet)"
+        profile = (await read_profile(store_path)) or "(nothing yet)"
         cfg = model_config(config, cheap_model(config))
         agent = Agent("feedback-learner", config=cfg)
         prompt = _PROMPT.format(
@@ -97,7 +98,7 @@ async def learn(
         # A successful run always returns (even a deliberate skip) — the fallback below
         # is only for an LLM failure, so we never double-write the raw reason.
         if note or remove:
-            await record_preference(note, category, remove=remove)
+            await record_preference(store_path, note, category, remove=remove)
         return
     except Exception:
         pass
@@ -105,6 +106,6 @@ async def learn(
     fallback = (reason or "").strip()
     if fallback:
         try:
-            await remember_note(fallback, category)
+            await remember_note(store_path, fallback, category)
         except Exception:
             pass

@@ -13,7 +13,7 @@ The behaviour lives in plain async functions (testable without the agent); the
 import asyncio
 from typing import Annotated
 
-from autogen.beta import tool
+from ag2 import tool
 from pydantic import Field
 
 

@@ -13,13 +13,13 @@ import re
 from collections.abc import Iterable
 from contextlib import AsyncExitStack, ExitStack
 
-from autogen.beta.annotations import Context
-from autogen.beta.events import ToolCallEvent, ToolErrorEvent, ToolResultEvent
-from autogen.beta.middleware import BaseMiddleware, ToolExecution, ToolMiddleware
-from autogen.beta.tools import MCPStdioServerConfig
-from autogen.beta.tools.final.function_tool import FunctionDefinition, FunctionToolSchema
-from autogen.beta.tools.final.toolkit import Toolkit
-from autogen.beta.tools.tool import Tool
+from ag2.annotations import Context
+from ag2.events import ToolCallEvent, ToolErrorEvent, ToolResultEvent
+from ag2.middleware import BaseMiddleware, ToolExecution, ToolMiddleware
+from ag2.tools import MCPStdioServerConfig
+from ag2.tools.final.function_tool import FunctionDefinition, FunctionToolSchema
+from ag2.tools.final.toolkit import Toolkit
+from ag2.tools.tool import Tool
 
 from assistant.tools._mcp_compat import (
     AnyMCPConfig,

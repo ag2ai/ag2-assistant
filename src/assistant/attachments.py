@@ -9,8 +9,8 @@ inlined as a `TextInput` so they work even on text-only providers.
 
 from pathlib import PurePosixPath
 
-from autogen.beta import DocumentInput, ImageInput
-from autogen.beta.events import AudioInput, TextInput, VideoInput
+from ag2 import DocumentInput, ImageInput
+from ag2.events import AudioInput, TextInput, VideoInput
 
 _IMAGE = {
     ".png": "image/png",

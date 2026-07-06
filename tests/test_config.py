@@ -11,7 +11,7 @@ def test_default_config():
     assert config.llm.provider == "gemini"
     assert config.llm.model.startswith("gemini")
     assert config.llm.streaming is True
-    assert config.agent.name == "ag2assistant"
+    assert config.agent.name == "ag2-assistant"
     assert config.data_dir == Path.home() / ".ag2assistant"
 
 

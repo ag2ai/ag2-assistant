@@ -1,6 +1,8 @@
-// One WebSocket to /api/stream for a session. Receives the session's events
-// ({event:{type,data}}) — replayed on connect, then live — and sends turns.
-// The caller folds events into thread items via project.js.
+// One WebSocket to /api/p/{pid}/stream for a session. Receives the session's
+// events ({event:{type,data}}) — replayed on connect, then live — and sends
+// turns. The caller folds events into thread items via project.js.
+
+import { api as P, onProfileGone } from '../lib/profile.js'
 
 export class StreamClient {
   constructor(sessionId, { onEvent, onReady, onTurnEnd, onError } = {}) {
@@ -16,7 +18,7 @@ export class StreamClient {
 
   connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${location.host}/api/stream?session=${encodeURIComponent(this.sessionId)}`
+    const url = `${proto}://${location.host}${P('/stream?session=' + encodeURIComponent(this.sessionId))}`
     this.ws = new WebSocket(url)
     this.ws.onopen = () => { const q = this._queue; this._queue = []; q.forEach((o) => this._raw(o)) }
     this.ws.onmessage = (e) => {
@@ -27,7 +29,17 @@ export class StreamClient {
       else if (m.type === 'turn_end') this.onTurnEnd(m)
       else if (m.type === 'error') this.onError(m)
     }
-    this.ws.onclose = () => { if (!this._closed) setTimeout(() => this.connect(), 1500) }
+    this.ws.onclose = (e) => {
+      if (this._closed) return
+      // Profile archived (4001) / unknown or gone (4404/4410): don't retry
+      // forever against a dead profile — re-resolve (§7 item 6).
+      if (e && (e.code === 4001 || e.code === 4404 || e.code === 4410)) {
+        this._closed = true
+        onProfileGone('ws ' + e.code)
+        return
+      }
+      setTimeout(() => this.connect(), 1500)
+    }
     return this
   }
 

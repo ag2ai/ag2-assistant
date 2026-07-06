@@ -6,9 +6,33 @@ import os
 import typer
 
 from assistant.agent import ask
-from assistant.config import load_config
+from assistant.config import Config
 
-app = typer.Typer(name="ag2assistant", help="AG2 Assistant - Personal AI Assistant")
+app = typer.Typer(name="ag2-assistant", help="AG2 Assistant - Personal AI Assistant")
+
+
+def _resolve_profile_config(profile: str | None) -> Config:
+    """Resolve the derived config for a data-touching CLI command (§4.7).
+
+    Mirrors ``chat``: catch UnknownProfile (zero profiles / bad id → §3.5 guidance)
+    and ArchivedProfile, print a friendly message, and exit 1. Returns the profile's
+    derived config so callers read profile-owned paths off ``config.data_dir``.
+    """
+    from assistant.gateway.profile_manager import (
+        ArchivedProfile,
+        UnknownProfile,
+        resolve_active_profile,
+    )
+
+    try:
+        _, config, _ = resolve_active_profile(profile)
+    except ArchivedProfile as exc:
+        typer.echo(f"profile '{exc}' is archived")
+        raise typer.Exit(1)
+    except UnknownProfile as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1)
+    return config
 
 
 @app.command()
@@ -24,11 +48,14 @@ def agent(
         help="Execution sandbox: 'local' (host, approval-gated) or 'docker' "
         "(isolated container, no prompts). Overrides AG2ASSISTANT_SANDBOX.",
     ),
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile id to run in (default: the active default)."
+    ),
 ) -> None:
     """Send a message to the AG2 Assistant agent."""
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
-    config = load_config()
+    config = _resolve_profile_config(profile)
 
     async def run() -> str:
         asker = None
@@ -40,9 +67,10 @@ def agent(
             if asker is not None and memory:
                 from assistant.onboarding import needs_onboarding, run_onboarding
 
-                if await needs_onboarding():
+                user_store_path = config.root_dir / "user.db"  # shared universal memory
+                if await needs_onboarding(user_store_path):
                     typer.echo("First time here — a few quick questions (all skippable):")
-                    await run_onboarding(asker)
+                    await run_onboarding(asker, user_store_path)
             return await ask(message, config, memory=memory, platform=platform, asker=asker)
         finally:
             if asker is not None:
@@ -54,18 +82,26 @@ def agent(
 @app.command()
 def onboard(
     force: bool = typer.Option(False, "--force", "-f", help="Re-run even if already onboarded."),
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile id to onboard (default: the active default)."
+    ),
 ) -> None:
-    """Run the first-run onboarding interview (name, location, hours, style)."""
+    """Run the first-run onboarding interview (name, location, hours, style).
+
+    Seeds the UNIVERSAL "who the user is" memory (``root_dir/user.db``), shared by
+    every profile — so this is install-wide, not per-profile."""
     from assistant.hitl import DesktopAsker
-    from assistant.onboarding import marker_path, needs_onboarding, run_onboarding
+    from assistant.onboarding import needs_onboarding, run_onboarding
+
+    user_store_path = _resolve_profile_config(profile).root_dir / "user.db"
 
     async def run() -> None:
-        if not force and not await needs_onboarding():
-            typer.echo(f"Already onboarded (marker at {marker_path()}). Use --force to redo.")
+        if not force and not await needs_onboarding(user_store_path):
+            typer.echo("Already onboarded (the universal profile exists). Use --force to redo.")
             return
         asker = DesktopAsker()
         try:
-            answers = await run_onboarding(asker)
+            answers = await run_onboarding(asker, user_store_path)
         finally:
             await asker.aclose()
         if answers:
@@ -86,12 +122,29 @@ def chat(
     sandbox: str | None = typer.Option(
         None, help="Execution sandbox: 'local' or 'docker'. Overrides AG2ASSISTANT_SANDBOX."
     ),
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile id to chat in (default: the active default)."
+    ),
 ) -> None:
     """Start an interactive, multi-turn chat with AG2 Assistant (type 'exit' to quit)."""
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
     from assistant.gateway.core import Gateway
+    from assistant.gateway.profile_manager import (
+        ArchivedProfile,
+        UnknownProfile,
+        resolve_active_profile,
+    )
+
+    try:
+        _, chat_config, factory = resolve_active_profile(profile)
+    except ArchivedProfile as exc:
+        typer.echo(f"profile '{exc}' is archived")
+        raise typer.Exit(1)
+    except UnknownProfile as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1)
 
     async def main() -> None:
         asker = None
@@ -99,7 +152,9 @@ def chat(
             from assistant.hitl import DesktopAsker
 
             asker = DesktopAsker()
-        gateway = Gateway(memory=memory, platform=platform)
+        gateway = Gateway(
+            config=chat_config, memory=memory, platform=platform, config_factory=factory
+        )
         await gateway.start()
         typer.echo("AG2 Assistant chat — type 'exit' (or Ctrl-D) to quit.\n")
         try:
@@ -113,7 +168,7 @@ def chat(
                 if not user.strip():
                     continue
                 reply = await gateway.send_message(user, session_id="cli-chat", asker=asker)
-                typer.echo(f"ag2assistant> {reply}\n")
+                typer.echo(f"ag2-assistant> {reply}\n")
         finally:
             if asker is not None:
                 await asker.aclose()
@@ -131,41 +186,139 @@ app.add_typer(profile_app, name="profile")
 
 
 @profile_app.command("show")
-def profile_show() -> None:
+def profile_show(
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile id to inspect (default: the active default)."
+    ),
+) -> None:
     """Show the user profile AG2 Assistant has learned so far."""
     from assistant.memory import read_profile
 
-    text = asyncio.run(read_profile())
+    store_path = _resolve_profile_config(profile).data_dir / "profile.db"
+    text = asyncio.run(read_profile(store_path))
     typer.echo(text or "(no profile learned yet)")
 
 
 @profile_app.command("clear")
 def profile_clear(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile id to clear (default: the active default)."
+    ),
 ) -> None:
     """Delete the learned user profile."""
-    from assistant.memory import clear_profile, default_store_path
+    from assistant.memory import clear_profile
 
+    store_path = _resolve_profile_config(profile).data_dir / "profile.db"
     if not yes:
-        confirm = typer.confirm(f"Delete the learned profile at {default_store_path()}?")
+        confirm = typer.confirm(f"Delete the learned profile at {store_path}?")
         if not confirm:
             typer.echo("Aborted.")
             raise typer.Exit()
 
-    cleared = asyncio.run(clear_profile())
+    cleared = asyncio.run(clear_profile(store_path))
     typer.echo("Profile cleared." if cleared else "No profile to clear.")
 
 
-perms_app = typer.Typer(help="Manage folder access permissions.")
+profiles_app = typer.Typer(help="Manage assistant profiles (isolated workspaces).")
+app.add_typer(profiles_app, name="profiles")
+
+
+def _first_unused_palette() -> str | None:
+    """The first PALETTES entry not claimed by an unarchived profile, or None if all
+    six are taken (uniqueness only holds while ≤6 profiles exist, §3.2)."""
+    from assistant.profiles import PALETTES, list_profiles
+
+    used = {p.palette for p in list_profiles()}
+    for palette in PALETTES:
+        if palette not in used:
+            return palette
+    return None
+
+
+@profiles_app.command("create")
+def profiles_create(
+    name: str = typer.Argument(help="Display name for the profile (its id is a slug of this)."),
+    palette: str | None = typer.Option(
+        None, "--palette", help="Colour palette (default: first unused). One of PALETTES."
+    ),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace folder (default: ~/Documents/AG2 Assistant/<Name>)."
+    ),
+) -> None:
+    """Register a new profile (headless bootstrap, §3.5).
+
+    Registry-only: writes the profiles.json entry and creates the profile dir; it does
+    NOT boot a runtime (a later `run`/`chat` picks it up). The first profile created
+    becomes the active default automatically.
+    """
+    from assistant import profiles
+
+    if palette is None:
+        palette = _first_unused_palette()
+        if palette is None:
+            typer.echo(
+                "all palettes are in use — pass --palette explicitly to reuse one "
+                f"(choose from {', '.join(profiles.PALETTES)})"
+            )
+            raise typer.Exit(1)
+
+    try:
+        meta = profiles.create_profile(name, palette, workspace=workspace)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(1)
+
+    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    typer.echo(f"Created profile '{meta.id}':")
+    typer.echo(f"  name      {meta.name}")
+    typer.echo(f"  palette   {meta.palette}")
+    typer.echo(f"  workspace {meta.workspace}")
+    typer.echo(f"\n`ag2-assistant run` and `ag2-assistant chat -p {meta.id}` will use it.")
+
+
+@profiles_app.command("list")
+def profiles_list(
+    show_all: bool = typer.Option(
+        False, "--all", help="Include archived profiles (hidden by default)."
+    ),
+) -> None:
+    """List registered profiles (active default marked with *)."""
+    from assistant import profiles
+
+    metas = profiles.list_profiles(include_archived=show_all)
+    if not metas:
+        typer.echo("(no profiles yet — create one with 'ag2-assistant profiles create <name>')")
+        return
+
+    active = profiles.load_registry().get("active_default")
+    header = f"{'':1} {'id':16} {'name':20} {'palette':8} workspace"
+    typer.echo(header)
+    for meta in metas:
+        mark = "*" if meta.id == active else " "
+        name = meta.name + (" (archived)" if meta.archived else "")
+        typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.palette:8} {meta.workspace}")
+
+
+perms_app = typer.Typer(help="Manage folder access permissions (per-profile).")
 app.add_typer(perms_app, name="permissions")
+
+_PROFILE_OPT = typer.Option(
+    None, "--profile", "-p", help="Profile id whose permissions to manage (default: active)."
+)
+
+
+def _permissions_store(profile: str | None):
+    """The PermissionStore for the resolved profile's dir (§4.7)."""
+    from assistant.permissions import PermissionStore
+
+    return PermissionStore(_resolve_profile_config(profile).data_dir / "permissions.json")
 
 
 @perms_app.command("list")
-def permissions_list() -> None:
+def permissions_list(profile: str | None = _PROFILE_OPT) -> None:
     """List granted and blocked folders."""
-    from assistant.permissions import PermissionStore
-
-    store = PermissionStore()
+    store = _permissions_store(profile)
     granted = store.granted_folders()
     blocked = store.blocked_folders()
     typer.echo("Allowed folders:")
@@ -175,38 +328,42 @@ def permissions_list() -> None:
 
 
 @perms_app.command("allow")
-def permissions_allow(folder: str = typer.Argument(help="Folder path to allow.")) -> None:
+def permissions_allow(
+    folder: str = typer.Argument(help="Folder path to allow."),
+    profile: str | None = _PROFILE_OPT,
+) -> None:
     """Permanently allow access to a folder."""
-    from assistant.permissions import PermissionStore
-
-    PermissionStore().grant(folder)
+    _permissions_store(profile).grant(folder)
     typer.echo(f"Allowed: {folder}")
 
 
 @perms_app.command("revoke")
-def permissions_revoke(folder: str = typer.Argument(help="Folder path to revoke.")) -> None:
+def permissions_revoke(
+    folder: str = typer.Argument(help="Folder path to revoke."),
+    profile: str | None = _PROFILE_OPT,
+) -> None:
     """Revoke a previously granted folder."""
-    from assistant.permissions import PermissionStore
-
-    ok = PermissionStore().revoke(folder)
+    ok = _permissions_store(profile).revoke(folder)
     typer.echo(f"Revoked: {folder}" if ok else f"Not in allow list: {folder}")
 
 
 @perms_app.command("block")
-def permissions_block(folder: str = typer.Argument(help="Folder path to block.")) -> None:
+def permissions_block(
+    folder: str = typer.Argument(help="Folder path to block."),
+    profile: str | None = _PROFILE_OPT,
+) -> None:
     """Permanently block a folder (the agent will never be allowed to access it)."""
-    from assistant.permissions import PermissionStore
-
-    PermissionStore().block(folder)
+    _permissions_store(profile).block(folder)
     typer.echo(f"Blocked: {folder}")
 
 
 @perms_app.command("unblock")
-def permissions_unblock(folder: str = typer.Argument(help="Folder path to unblock.")) -> None:
+def permissions_unblock(
+    folder: str = typer.Argument(help="Folder path to unblock."),
+    profile: str | None = _PROFILE_OPT,
+) -> None:
     """Remove a folder from the block list."""
-    from assistant.permissions import PermissionStore
-
-    ok = PermissionStore().unblock(folder)
+    ok = _permissions_store(profile).unblock(folder)
     typer.echo(f"Unblocked: {folder}" if ok else f"Not in block list: {folder}")
 
 
@@ -265,16 +422,19 @@ def gateway(
     port: int = typer.Option(8800, help="Port to bind."),
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
-    """Start the AG2 Assistant gateway (REST + WebSocket API for UI clients)."""
+    """Start the AG2 Assistant gateway (REST + WebSocket API for UI clients).
+
+    Serves every unarchived profile under ``/api/p/{pid}/…`` (create_app owns the
+    ProfileManager lifecycle). Equivalent to ``run`` for the REST surface."""
     import uvicorn
 
     from assistant.gateway.app import create_app
+    from assistant.gateway.profile_manager import ProfileManager
 
     typer.echo(f"AG2 Assistant gateway starting on http://{host}:{port}")
     typer.echo(f"  Web UI  http://{host}:{port}/")
-    typer.echo(f"  POST    http://{host}:{port}/api/message")
-    typer.echo(f"  WS      ws://{host}:{port}/api/stream")
-    uvicorn.run(create_app(memory=memory), host=host, port=port)
+    typer.echo(f"  API     http://{host}:{port}/api/p/{{pid}}/…")
+    uvicorn.run(create_app(ProfileManager(memory=memory)), host=host, port=port)
 
 
 @app.command()
@@ -291,7 +451,7 @@ def telegram(
         gateway, tasks = build_gateway(memory=memory, platform="telegram")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("telegram")
         await channel.start(gateway)
@@ -324,7 +484,7 @@ def discord(
         gateway, tasks = build_gateway(memory=memory, platform="discord")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("discord")
         await channel.start(gateway)
@@ -356,7 +516,7 @@ def slack(
         gateway, tasks = build_gateway(memory=memory, platform="slack")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
-        # tools only; the scheduler runs in `ag2assistant run`, not per channel
+        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("slack")
         await channel.start(gateway)
@@ -384,64 +544,48 @@ def run(
         None, help="Execution sandbox: 'local' or 'docker'. Overrides AG2ASSISTANT_SANDBOX."
     ),
 ) -> None:
-    """Run everything in one process — REST/WS gateway + every channel whose
-    token is configured (Telegram/Discord/Slack), all sharing one agent."""
+    """Run everything in one process — the ProfileManager boots every unarchived
+    profile (each with its own gateway, scheduler, and enabled channels), and the
+    REST/WS API serves every profile under ``/api/p/{pid}/…``. The manager is built
+    here and handed to ``create_app``, which owns its lifecycle (started in the app
+    lifespan). Zero profiles is a legal state — the SPA shell + global routes serve,
+    and ``/api/p/*`` 404s until the first profile is created (§3.5)."""
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
     import uvicorn
 
-    from assistant.channels import get_channel
     from assistant.gateway.app import create_app
-    from assistant.gateway.core import build_gateway
+    from assistant.gateway.profile_manager import ProfileManager
 
-    async def main() -> None:
-        gateway, tasks = build_gateway(memory=memory, platform="multi")
-        await gateway.start()
-        tasks.set_emitter(gateway.emit_event)
-        await tasks.start()  # task tools + scheduler, shared by channels and the web UI
+    manager = ProfileManager(memory=memory)
 
-        channels = []
-        if os.environ.get("TELEGRAM_BOT_TOKEN"):
-            channels.append(("telegram", get_channel("telegram")))
-        if os.environ.get("DISCORD_BOT_TOKEN"):
-            channels.append(("discord", get_channel("discord")))
-        if os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_APP_TOKEN"):
-            channels.append(("slack", get_channel("slack")))
-
-        for name, ch in channels:
-            await ch.start(gateway)
-            typer.echo(f"  channel: {name}")
-
-        server = None
-        server_task = None
-        if rest:
-            config = uvicorn.Config(
-                create_app(gateway=gateway, task_service=tasks),
-                host=host,
-                port=port,
-                log_level="warning",
-            )
-            server = uvicorn.Server(config)
-            server_task = asyncio.create_task(server.serve())
-            typer.echo(f"  Web UI + REST/WS: http://{host}:{port}/")
-
-        typer.echo("AG2 Assistant is running. Press Ctrl+C to stop.")
-        try:
-            if server_task is not None:
-                await server_task
-            else:
+    if not rest:
+        # Headless: run the manager directly (boot profiles + channels + schedulers),
+        # no HTTP surface. Same lifecycle create_app would drive, minus the server.
+        async def headless() -> None:
+            await manager.start()
+            for runtime in manager.runtimes():
+                for platform in getattr(runtime, "channels", []):
+                    typer.echo(f"  channel: {getattr(platform, 'platform', '?')} ({runtime.pid})")
+            typer.echo("AG2 Assistant is running (no REST). Press Ctrl+C to stop.")
+            try:
                 await asyncio.Event().wait()
-        finally:
-            for _, ch in channels:
-                await ch.stop()
-            if server is not None:
-                server.should_exit = True
-            await tasks.close()
-            await gateway.close()
+            finally:
+                await manager.close()
 
+        try:
+            asyncio.run(headless())
+        except KeyboardInterrupt:
+            typer.echo("\nStopped.")
+        return
+
+    # REST path: create_app starts/stops the manager in its lifespan; uvicorn runs it.
+    app = create_app(manager)
+    typer.echo(f"  Web UI + REST/WS: http://{host}:{port}/")
+    typer.echo("AG2 Assistant is running. Press Ctrl+C to stop.")
     try:
-        asyncio.run(main())
+        uvicorn.run(app, host=host, port=port, log_level="warning")
     except KeyboardInterrupt:
         typer.echo("\nStopped.")
 
@@ -451,7 +595,7 @@ def version() -> None:
     """Show AG2 Assistant version."""
     from assistant import __version__
 
-    typer.echo(f"ag2assistant {__version__}")
+    typer.echo(f"ag2-assistant {__version__}")
 
 
 if __name__ == "__main__":

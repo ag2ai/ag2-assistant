@@ -16,6 +16,7 @@ stream, never crossing histories.
 import asyncio
 import contextlib
 import json
+from collections.abc import Callable
 from datetime import datetime
 from urllib.parse import quote
 
@@ -30,83 +31,12 @@ def _conversation_events() -> tuple:
     """Event types a voice client renders itself as spoken transcript (so they are
     NOT re-forwarded as structured events during voice delegation). Imported lazily
     so a missing optional event type can't break module import."""
-    from autogen.beta.events import ModelMessageChunk, ModelRequest, ModelResponse
+    from ag2.events import ModelMessageChunk, ModelRequest, ModelResponse
 
     return (ModelRequest, ModelMessageChunk, ModelResponse)
 
 
 _CONVERSATION_EVENTS = _conversation_events()
-
-
-def sanitize_history(events: list) -> list:
-    """Repair a loaded event history before resume so the provider doesn't reject it.
-
-    INTERIM guard: AG2 compaction can cut mid tool-call/result cycle, leaving a
-    half-cycle at the head whose issuing ModelResponse was dropped. Gemini then
-    400s ("function call/response must be adjacent") on resume. We (1) strip the
-    orphaned leading tool/usage remnants that appear before the first real model
-    turn (the broken cycle), and (2) defensively drop any other orphaned tool
-    result. Remove once the AG2 compaction/mapper fix is pinned.
-    """
-    if not events:
-        return events
-    try:
-        from autogen.beta.events import (
-            ModelRequest,
-            ModelResponse,
-            ToolCallEvent,
-            ToolCallsEvent,
-            ToolResultEvent,
-            ToolResultsEvent,
-            UsageEvent,
-        )
-    except Exception:
-        return events
-
-    tool_types = (ToolCallEvent, ToolCallsEvent, ToolResultEvent, ToolResultsEvent, UsageEvent)
-    # Before the first USER turn we keep only non-conversational events (e.g.
-    # CompactionSummary); model/tool/result/usage events there are remnants of a
-    # turn whose user start was compacted away — and Gemini requires the contents
-    # to begin at a user turn (or after a function response).
-    drop_in_lead = (ModelResponse,) + tool_types
-
-    # 1) Require the conversation to begin at a user turn (ModelRequest). Drop any
-    #    leading model/tool remnants before it; keep a leading CompactionSummary.
-    first_user = next((i for i, e in enumerate(events) if isinstance(e, ModelRequest)), None)
-    if first_user is None:
-        stripped = [e for e in events if not isinstance(e, drop_in_lead)]
-    else:
-        lead = [e for e in events[:first_user] if not isinstance(e, drop_in_lead)]
-        stripped = lead + list(events[first_user:])
-
-    # 2) Defensive: drop any tool result whose call id isn't present anywhere.
-    call_ids: set[str] = set()
-    for e in stripped:
-        tc = getattr(e, "tool_calls", None)
-        for c in getattr(tc, "calls", None) or []:
-            if getattr(c, "id", None):
-                call_ids.add(c.id)
-        if isinstance(e, ToolCallsEvent):
-            for c in e.calls or []:
-                if getattr(c, "id", None):
-                    call_ids.add(c.id)
-        if isinstance(e, ToolCallEvent) and getattr(e, "id", None):
-            call_ids.add(e.id)
-
-    def _results(e):
-        if isinstance(e, ToolResultsEvent):
-            return list(getattr(e, "results", []) or [])
-        if isinstance(e, ToolResultEvent):
-            return [e]
-        return []
-
-    out = []
-    for e in stripped:
-        items = _results(e)
-        if items and not all(getattr(r, "parent_id", None) in call_ids for r in items):
-            continue
-        out.append(e)
-    return out
 
 
 class Gateway:
@@ -120,6 +50,7 @@ class Gateway:
         onboard: bool = True,
         persist: bool = True,
         task_service=None,
+        config_factory: Callable[[], Config] | None = None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -127,6 +58,11 @@ class Gateway:
         self._onboard = onboard
         self._persist = persist
         self._tasks = task_service  # gives the universal agent its system tools
+        # How reload() re-resolves config. For a profile runtime this re-reads that
+        # profile's registry entry + settings on every call (§4.1), so workspace/model
+        # edits are picked up; for bare construction it defaults to load_config (the
+        # global root config, profile-agnostic).
+        self._config_factory = config_factory or load_config
         self._onboarding_done = False
         self._agent = None
         self._permissions = None
@@ -138,7 +74,14 @@ class Gateway:
         self._locks: dict[str, asyncio.Lock] = {}
         from assistant.usage import UsageLedger
 
-        self._usage = UsageLedger()  # daily token/cost tally for the activity HUD
+        # Per-profile daily token/cost tally for the activity HUD.
+        self._usage = UsageLedger(self._config.data_dir / "usage.json")
+
+    @property
+    def config(self) -> Config:
+        """The gateway's live config — re-resolved on ``reload()`` (so a profile
+        runtime's workspace/model edits are reflected here after a reload)."""
+        return self._config
 
     def usage_today(self) -> dict:
         """Today's token + estimated-cost totals (for the cost & activity HUD)."""
@@ -149,12 +92,17 @@ class Gateway:
         everything) + compaction. Used by start() and reload()."""
         extra_tools = None
         if self._tasks is not None:
+            from assistant.settings import Settings
             from assistant.system_tools import build_system_tools
 
             # create/schedule come from the system tools, so we don't also wire
             # start_task/schedule_task here (that duplicated names). `platform` lets
             # those tools note (on channels) that follow-up questions go to the web app.
-            extra_tools = build_system_tools(self._tasks, chats=self, platform=self._platform)
+            # The voice get/set tools read/write THIS profile's settings.
+            settings = Settings(self._config.data_dir / "settings.json")
+            extra_tools = build_system_tools(
+                self._tasks, settings, chats=self, platform=self._platform
+            )
         return create_agent(
             self._config,
             memory=self._memory,
@@ -173,11 +121,12 @@ class Gateway:
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
         self._agent = self._make_agent()
-        self._permissions = PermissionStore()
+        # Per-profile persistent grant store (config.data_dir is the profile dir).
+        self._permissions = PermissionStore(self._config.data_dir / "permissions.json")
 
         if self._persist:
-            from autogen.beta.knowledge import SqliteKnowledgeStore
-            from autogen.beta.knowledge.log import EventLogWriter
+            from ag2.knowledge import SqliteKnowledgeStore
+            from ag2.knowledge.log import EventLogWriter
 
             self._config.data_dir.mkdir(parents=True, exist_ok=True)
             self._event_store = SqliteKnowledgeStore(str(self._config.data_dir / "sessions.db"))
@@ -193,10 +142,11 @@ class Gateway:
         work doesn't keep using stale keys. Voice needs no reload (built per session
         from env)."""
         from assistant import secrets
-        from assistant.config import load_config
 
         secrets.load_into_env()
-        self._config = load_config()
+        # Re-resolve via the injected factory (a profile runtime's factory re-reads
+        # the profile's registry entry + settings; the default is load_config).
+        self._config = self._config_factory()
         if self._agent is not None:
             self._agent = self._make_agent()
         if self._tasks is not None and hasattr(self._tasks, "reload"):
@@ -219,7 +169,7 @@ class Gateway:
         """Emit an event onto a session's stream from outside an agent turn (the
         pattern AG2's own SoundDeviceRecorder uses). It reaches any live bridge
         subscriber and is persisted so it survives reload. Best-effort."""
-        from autogen.beta.context import ConversationContext
+        from ag2.context import ConversationContext
 
         stream = await self.stream_for(session_id)
         try:
@@ -240,7 +190,7 @@ class Gateway:
 
     async def _get_stream(self, session_id: str):
         """Return the session's live Stream, hydrating from disk on first use."""
-        from autogen.beta.stream import MemoryStream
+        from ag2.stream import MemoryStream
 
         stream = self._streams.get(session_id)
         if stream is None:
@@ -248,7 +198,7 @@ class Gateway:
             self._streams[session_id] = stream
             if self._writer is not None and session_id not in self._loaded:
                 try:
-                    events = sanitize_history(await self._writer.load(session_id))
+                    events = await self._writer.load(session_id)
                     if events:
                         await stream.history.replace(events)
                 except Exception as exc:
@@ -293,6 +243,12 @@ class Gateway:
 
         async with self._session_lock(session_id):
             stream = await self._get_stream(session_id)
+            # Persist a transcript stub the instant we accept the message, so the
+            # session shows up in list_sessions() *during* a long agentic turn — not
+            # only after it completes. Without this, a chat in flight lives solely in
+            # the web page's local state and vanishes on a profile switch (full-page
+            # nav). The completed-turn write below stays the authority (§_persist_turn).
+            await self._ensure_transcript_stub(session_id, text)
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             a2ui_runtime = None
             try:
@@ -347,7 +303,7 @@ class Gateway:
     def _watch_usage(self, stream):
         """Subscribe to this turn's UsageEvents; returns (sub_id, collected list).
         Finalized by _record_usage when the turn ends."""
-        from autogen.beta.events import UsageEvent
+        from ag2.events import UsageEvent
 
         collected: list = []
 
@@ -451,6 +407,7 @@ class Gateway:
         agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
+        from assistant.settings import Settings
         from assistant.system_tools import format_task
         from assistant.voice import build_voice_agent
 
@@ -511,6 +468,7 @@ class Gateway:
         assistant_tools = [n for n in assistant_tools if n]
         return build_voice_agent(
             self._config,
+            Settings(self._config.data_dir / "settings.json"),
             self._tasks,
             delegate,
             voice=voice,
@@ -552,6 +510,34 @@ class Gateway:
     def _transcript_path(self, session_id: str) -> str:
         return f"{_TRANSCRIPT_PREFIX}{quote(session_id, safe='')}.json"
 
+    async def _ensure_transcript_stub(self, session_id, user_text) -> None:
+        """Write a minimal transcript doc as soon as a user message is accepted, so
+        the session is listable *during* the turn (not only after it completes).
+
+        Only writes when there is NO doc yet (a brand-new session's first turn) — a
+        later turn's session is already listed, and its stub would be indistinguishable
+        from a lone pending user message, so we leave the existing doc untouched. The
+        completing turn's ``_append_transcript`` fills in the agent reply in place.
+        Called under the session lock, so it never races the completion write. Best-
+        effort: a persistence hiccup here must not fail the user's turn."""
+        if self._writer is None or self._event_store is None:
+            return
+        path = self._transcript_path(session_id)
+        try:
+            if await self._event_store.exists(path):
+                return  # session already listed — nothing to stub
+            doc = {
+                "session_id": session_id,
+                "messages": [{"role": "user", "text": user_text}],
+                "updated": datetime.now().astimezone().isoformat(),
+                "title": None,  # named after the first exchange completes
+            }
+            await self._event_store.write(path, json.dumps(doc))
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("transcript stub write", exc, session_id=session_id)
+
     async def _append_transcript(self, session_id, user_text, reply_text) -> None:
         path = self._transcript_path(session_id)
         doc = {"session_id": session_id, "messages": [], "updated": ""}
@@ -563,8 +549,19 @@ class Gateway:
 
                 log_suppressed("existing transcript read", exc, session_id=session_id)
         doc["session_id"] = session_id
-        doc["messages"].append({"role": "user", "text": user_text})
-        doc["messages"].append({"role": "agent", "text": reply_text})
+        msgs = doc.get("messages", [])
+        # If a stub for THIS turn is present (a trailing lone user message with the
+        # same text, no agent reply), complete it in place rather than re-appending —
+        # otherwise the user message would be duplicated. Any other tail means this is
+        # a genuinely new turn, so append the full user+agent pair as before.
+        if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("text") == user_text:
+            doc["messages"] = [*msgs, {"role": "agent", "text": reply_text}]
+        else:
+            doc["messages"] = [
+                *msgs,
+                {"role": "user", "text": user_text},
+                {"role": "agent", "text": reply_text},
+            ]
         doc["updated"] = datetime.now().astimezone().isoformat()
         await self._event_store.write(path, json.dumps(doc))
         # After the FIRST complete exchange, name the chat once (async, non-blocking —
@@ -633,8 +630,11 @@ class Gateway:
                 {
                     "session_id": doc.get("session_id", ""),
                     "updated": doc.get("updated", ""),
-                    "title": doc.get("title", ""),  # LLM-named after the first exchange
+                    # LLM-named after the first exchange; None on an in-flight stub —
+                    # normalise to "" so the drawer falls back to the preview cleanly.
+                    "title": doc.get("title") or "",
                     "preview": first_user[:80],
+                    # Completed exchanges only; a lone in-flight user message is 0 turns.
                     "turns": len(msgs) // 2,
                 }
             )
@@ -642,15 +642,20 @@ class Gateway:
         return out
 
     async def _maybe_onboard(self, asker) -> None:
-        """Run first-run onboarding once, via the asker that made this request."""
+        """Run first-run onboarding once, via the asker that made this request.
+
+        The interview seeds the UNIVERSAL "who the user is" memory (identity facts),
+        so it gates on the shared ``root_dir/user.db`` and runs once per install (the
+        first chat in whichever profile), not once per profile."""
         if self._onboarding_done or not self._onboard or not self._memory or asker is None:
             return
         self._onboarding_done = True  # set first: never double-prompt, even on error
         from assistant.onboarding import needs_onboarding, run_onboarding
 
+        user_store_path = self._config.root_dir / "user.db"  # shared universal memory
         try:
-            if await needs_onboarding():
-                await run_onboarding(asker)
+            if await needs_onboarding(user_store_path):
+                await run_onboarding(asker, user_store_path)
         except Exception as exc:
             from assistant.observability import log_suppressed
 
@@ -697,16 +702,27 @@ def build_gateway(
     memory: bool = True,
     platform: str = "gateway",
     persist: bool = True,
+    config_factory: Callable[[], Config] | None = None,
 ) -> "tuple[Gateway, object]":
     """Canonical construction: a Gateway wired to its TaskService, so the universal
     agent gets the task system tools (create/schedule/query). Used by the web app and
     every channel command. Returns ``(gateway, task_service)``; the caller starts both
-    and wires ``task_service.set_emitter(gateway.emit_event)``."""
+    and wires ``task_service.set_emitter(gateway.emit_event)``.
+
+    ``config_factory`` (optional) is threaded into both the Gateway and TaskService so
+    their ``reload()`` re-resolves config the same way — a profile runtime passes one
+    that re-reads that profile's registry + settings (§4.1); when omitted both fall
+    back to ``load_config`` (the profile-agnostic root config)."""
     from assistant.gateway.tasks_service import TaskService
 
     config = config or load_config()
-    tasks = TaskService(config=config)
+    tasks = TaskService(config=config, config_factory=config_factory)
     gateway = Gateway(
-        config=config, memory=memory, platform=platform, persist=persist, task_service=tasks
+        config=config,
+        memory=memory,
+        platform=platform,
+        persist=persist,
+        task_service=tasks,
+        config_factory=config_factory,
     )
     return gateway, tasks

@@ -5,7 +5,7 @@ human-approval middleware, so e.g. sending an email always shows a HITL approval
 card first and is denied if there's no one to ask.
 
 All Google API calls are lazy and run in a thread (the client is blocking). The
-agent only gets these tools when the user is signed in (`ag2assistant google login`).
+agent only gets these tools when the user is signed in (`ag2-assistant google login`).
 """
 
 import asyncio
@@ -13,7 +13,7 @@ import base64
 from email.mime.text import MIMEText
 from typing import Annotated
 
-from autogen.beta import tool
+from ag2 import tool
 from pydantic import Field
 
 from assistant.integrations.google_auth import build_service

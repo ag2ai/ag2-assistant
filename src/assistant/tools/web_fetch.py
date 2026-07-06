@@ -3,7 +3,7 @@
 Uses httpx for fetching and BeautifulSoup for content extraction.
 """
 
-from autogen.beta import tool
+from ag2 import tool
 
 
 def web_fetch(url: str, max_chars: int = 10000) -> str:

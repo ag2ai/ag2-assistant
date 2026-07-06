@@ -6,7 +6,7 @@ native AG2 events. If these break, history/replay break.
 """
 
 import pytest
-from autogen.beta.knowledge.log import import_event_class
+from ag2.knowledge.log import import_event_class
 
 from assistant.events import (
     A2UISurface,
@@ -59,7 +59,7 @@ def test_custom_event_round_trips_through_wire(event):
 
 
 def test_audio_events_flagged_binary_others_not():
-    from autogen.beta.events.voice import SynthesizedAudioEvent
+    from ag2.events.voice import SynthesizedAudioEvent
 
     assert is_binary_event(SynthesizedAudioEvent(b"\x00\x01"))
     assert not is_binary_event(TaskCreated("task-1"))

@@ -1,8 +1,8 @@
 """Tests for building AG2 multimodal inputs from chat attachments, and for the
 gateway threading them into the agent turn."""
 
-from autogen.beta import ImageInput
-from autogen.beta.events import BinaryType, TextInput
+from ag2 import ImageInput
+from ag2.events import BinaryType, TextInput
 
 from assistant.attachments import build_input
 

@@ -186,18 +186,21 @@ async def test_submit_request_runs_intake_and_inquiries(tmp_path):
 # ---- REST surface ----
 
 
-def test_task_rest_endpoints(monkeypatch, tmp_path):
+def _runtime_tasks(client, pid):
+    """The started profile runtime's TaskService (for seeding through the store)."""
+    return client.app.state.profiles.get(pid).tasks
+
+
+def test_task_rest_endpoints(monkeypatch):
     from fastapi.testclient import TestClient
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
+    from tests.conftest import api, make_profile_app, use_fake_agent
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
-    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    use_fake_agent(monkeypatch, lambda *a, **k: object())
+    app, pid = make_profile_app()
     with TestClient(app) as client:
         # seed a task directly through the started service
-        svc = app.state.tasks
+        svc = _runtime_tasks(client, pid)
 
         async def _seed():
             t = await svc.store.create("seeded task", objective="obj")
@@ -205,23 +208,26 @@ def test_task_rest_endpoints(monkeypatch, tmp_path):
             i = await svc.inquiries.create("Confirm?", task_id=t.id, options=["Yes", "No"])
             return t.id, i.id
 
-        task_id, inq_id = asyncio.get_event_loop().run_until_complete(_seed())
+        task_id, inq_id = asyncio.run(_seed())
 
-        tasks = client.get("/api/tasks").json()["tasks"]
+        tasks = client.get(api(pid, "/tasks")).json()["tasks"]
         assert any(t["id"] == task_id for t in tasks)
 
-        detail = client.get(f"/api/tasks/{task_id}").json()["task"]
+        detail = client.get(api(pid, f"/tasks/{task_id}")).json()["task"]
         assert detail["objective"] == "obj"
-        assert client.get("/api/tasks/nope").status_code == 404
+        assert client.get(api(pid, "/tasks/nope")).status_code == 404
 
-        pend = client.get("/api/inquiries/pending").json()["pending"]
+        pend = client.get(api(pid, "/inquiries/pending")).json()["pending"]
         assert any(p["id"] == inq_id for p in pend)
 
-        ok = client.post(f"/api/inquiries/{inq_id}/answer", json={"answer": "Yes"})
+        ok = client.post(api(pid, f"/inquiries/{inq_id}/answer"), json={"answer": "Yes"})
         assert ok.json()["ok"] is True
-        assert client.post("/api/inquiries/missing/answer", json={"answer": "x"}).status_code == 404
+        assert (
+            client.post(api(pid, "/inquiries/missing/answer"), json={"answer": "x"}).status_code
+            == 404
+        )
 
-        assert client.post(f"/api/tasks/{task_id}/cancel").json()["ok"] is True
+        assert client.post(api(pid, f"/tasks/{task_id}/cancel")).json()["ok"] is True
 
 
 async def test_archive_hides_from_drawer_and_filters_listing(tmp_path):
@@ -260,47 +266,51 @@ async def test_archive_hides_from_drawer_and_filters_listing(tmp_path):
     assert a.id in {t["id"] for t in await svc.list_tasks()}  # still visible
 
 
-def test_archive_and_all_rest_endpoints(monkeypatch, tmp_path):
+def test_archive_and_all_rest_endpoints(monkeypatch):
     from fastapi.testclient import TestClient
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
+    from tests.conftest import api, make_profile_app, use_fake_agent
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
-    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    use_fake_agent(monkeypatch, lambda *a, **k: object())
+    app, pid = make_profile_app()
     with TestClient(app) as client:
-        svc = app.state.tasks
+        svc = _runtime_tasks(client, pid)
 
         async def _seed():
             done = await svc.store.create("t1", status=TaskStatus.COMPLETED)  # terminal
             active = await svc.store.create("t2")  # pending
             return done.id, active.id
 
-        tid, active_id = asyncio.get_event_loop().run_until_complete(_seed())
+        tid, active_id = asyncio.run(_seed())
 
-        # /api/tasks/all must not be captured as a task id
-        assert client.get("/api/tasks/all").status_code == 200
-        assert any(t["id"] == tid for t in client.get("/api/tasks/all").json()["tasks"])
+        # /tasks/all must not be captured as a task id
+        assert client.get(api(pid, "/tasks/all")).status_code == 200
+        assert any(t["id"] == tid for t in client.get(api(pid, "/tasks/all")).json()["tasks"])
 
         # a finished task archives fine
-        assert client.post(f"/api/tasks/{tid}/archive").json() == {"ok": True, "archived": True}
+        assert client.post(api(pid, f"/tasks/{tid}/archive")).json() == {
+            "ok": True,
+            "archived": True,
+        }
         assert all(
-            t["id"] != tid for t in client.get("/api/tasks").json()["tasks"]
+            t["id"] != tid for t in client.get(api(pid, "/tasks")).json()["tasks"]
         )  # gone from drawer
         assert any(
-            t["id"] == tid for t in client.get("/api/tasks/all?status=archived").json()["tasks"]
+            t["id"] == tid
+            for t in client.get(api(pid, "/tasks/all?status=archived")).json()["tasks"]
         )
         # unarchive
         assert (
-            client.post(f"/api/tasks/{tid}/archive", json={"archived": False}).json()["archived"]
+            client.post(api(pid, f"/tasks/{tid}/archive"), json={"archived": False}).json()[
+                "archived"
+            ]
             is False
         )
-        assert any(t["id"] == tid for t in client.get("/api/tasks").json()["tasks"])
+        assert any(t["id"] == tid for t in client.get(api(pid, "/tasks")).json()["tasks"])
 
         # an active task is rejected (409), stays visible
-        assert client.post(f"/api/tasks/{active_id}/archive").status_code == 409
-        assert any(t["id"] == active_id for t in client.get("/api/tasks").json()["tasks"])
+        assert client.post(api(pid, f"/tasks/{active_id}/archive")).status_code == 409
+        assert any(t["id"] == active_id for t in client.get(api(pid, "/tasks")).json()["tasks"])
 
 
 async def test_schedule_task_creates_scheduled(tmp_path):
@@ -427,18 +437,16 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
     assert datetime.fromisoformat(tmpl.scheduled_for) > datetime.now().astimezone()
 
 
-def test_schedule_rest_endpoint(monkeypatch, tmp_path):
+def test_schedule_rest_endpoint(monkeypatch):
     from fastapi.testclient import TestClient
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
+    from tests.conftest import api, make_profile_app, use_fake_agent
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: object())
-    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    use_fake_agent(monkeypatch, lambda *a, **k: object())
+    app, pid = make_profile_app()
     with TestClient(app) as client:
         r = client.post(
-            "/api/tasks/schedule",
+            api(pid, "/tasks/schedule"),
             json={
                 "text": "weekly report",
                 "when": "2030-06-01T09:00:00",
@@ -446,7 +454,7 @@ def test_schedule_rest_endpoint(monkeypatch, tmp_path):
             },
         )
         tid = r.json()["id"]
-        detail = client.get(f"/api/tasks/{tid}").json()["task"]
+        detail = client.get(api(pid, f"/tasks/{tid}")).json()["task"]
         assert detail["status"] == "scheduled"
         assert detail["scheduled_for"].startswith("2030-06-01T09:00:00")
         assert detail["recurrence"] == "weekly"
@@ -483,14 +491,12 @@ async def test_chat_routes_to_control_agent(tmp_path):
     assert await svc.chat("missing", "hi") is None
 
 
-def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch, tmp_path):
+def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch):
     """The task page talks to the SAME gateway agent, given the task as surface
     context (id + snapshot) — not a separate controller."""
     from fastapi.testclient import TestClient
 
-    import assistant.gateway.app as app_mod
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
+    from tests.conftest import api, make_profile_app, use_fake_agent
 
     seen = {}
 
@@ -498,23 +504,21 @@ def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch, tmp_path)
         body = "on it"
 
     class _Agent:  # the one universal gateway agent
+        tools = []
+
         async def ask(self, *msg, stream=None, prompt=None, **k):
             seen["prompt"] = prompt
             seen["session"] = getattr(stream, "id", None)
             return _Reply()
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _Agent())
-    app = app_mod.create_app(config=Config(data_dir=tmp_path), memory=False, persist=False)
+    use_fake_agent(monkeypatch, lambda *a, **k: _Agent())
+    app, pid = make_profile_app()
     with TestClient(app) as client:
-        svc = app.state.tasks
-        task_id = (
-            asyncio.get_event_loop()
-            .run_until_complete(svc.store.create("seeded", objective="do it"))
-            .id
-        )
+        svc = _runtime_tasks(client, pid)
+        task_id = asyncio.run(svc.store.create("seeded", objective="do it")).id
 
-        r = client.post(f"/api/tasks/{task_id}/chat", json={"text": "what's the status?"})
+        r = client.post(api(pid, f"/tasks/{task_id}/chat"), json={"text": "what's the status?"})
         assert r.json()["reply"] == "on it"
         assert seen["session"] == f"task:{task_id}"  # per-task stream
         assert any(task_id in p for p in seen["prompt"])  # task surface injected
-        assert client.post("/api/tasks/nope/chat", json={"text": "x"}).status_code == 404
+        assert client.post(api(pid, "/tasks/nope/chat"), json={"text": "x"}).status_code == 404

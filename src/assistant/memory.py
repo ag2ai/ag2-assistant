@@ -13,15 +13,23 @@ The profile tracks four dimensions:
 
 Each observation is tagged with the platform it was seen on (cli, telegram,
 discord, ...) so the single global profile still carries channel context.
+
+There are TWO memory layers:
+  - Per-profile (``profiles/<id>/profile.db``): persona preferences, learned
+    passively by the aggregator and via the `remember` tool (scope="profile").
+  - Universal (``root_dir/user.db``): "who the user is" — identity facts true
+    across every persona. Shared by all profiles, NEVER passively aggregated;
+    curated only by the `remember` tool (scope="universal"), onboarding, and
+    manual edits. See ``read_universal`` / ``write_universal`` at the bottom.
 """
 
 from pathlib import Path
 
-from autogen.beta import KnowledgeConfig
-from autogen.beta.aggregate import AggregateTrigger, WorkingMemoryAggregate
-from autogen.beta.config.gemini import GeminiConfig
-from autogen.beta.knowledge import SqliteKnowledgeStore
-from autogen.beta.policies import ConversationPolicy, WorkingMemoryPolicy
+from ag2 import KnowledgeConfig
+from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
+from ag2.config import ModelConfig
+from ag2.knowledge import SqliteKnowledgeStore
+from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
 
 # Path inside the knowledge store where the rolling profile lives.
 PROFILE_PATH = "/memory/working.md"
@@ -99,10 +107,10 @@ def _remove_bullets(doc: str, removals) -> str:
 
 
 async def record_preference(
+    store_path: Path,
     note: str = "",
     category: str = "how",
     remove=(),
-    store_path: Path | None = None,
 ) -> str:
     """Apply a learned preference to the profile: first delete any directly-conflicting
     bullets (`remove`, matched verbatim & marker-insensitive), then append `note` under
@@ -127,13 +135,13 @@ async def record_preference(
     return doc
 
 
-async def remember_note(note: str, category: str = "how", store_path: Path | None = None) -> str:
+async def remember_note(store_path: Path, note: str, category: str = "how") -> str:
     """Immediately save an explicit user preference/fact to the learned profile
     (append-only). Used by the agent's `remember` tool and as the feedback learner's
     fallback. The aggregator later reorganises/dedupes on its cadence. Returns the
     updated profile document.
     """
-    return await record_preference(note, category, store_path=store_path)
+    return await record_preference(store_path, note, category)
 
 
 def build_profile_prompt(platform: str) -> str:
@@ -188,27 +196,34 @@ New conversation:
 Return the updated profile document only (headings and bullets, no commentary)."""
 
 
-def default_store_path() -> Path:
-    """Default on-disk location for the profile store."""
-    return Path.home() / ".ag2assistant" / "profile.db"
-
-
-def build_profile_store(store_path: Path | None = None) -> SqliteKnowledgeStore:
+def build_profile_store(store_path: Path) -> SqliteKnowledgeStore:
     """Open the SQLite profile store, creating its parent directory."""
-    if store_path is None:
-        store_path = default_store_path()
+    store_path = Path(store_path)
     store_path.parent.mkdir(parents=True, exist_ok=True)
     return SqliteKnowledgeStore(str(store_path))
+
+
+def _default_aggregate_config() -> ModelConfig:
+    """Fallback config for aggregation/compaction LLM calls when the caller
+    didn't pass one: the user's configured provider, on its cheap aggregate
+    model when one is known (falling back to their main model). Imported
+    lazily — agent.py imports this module at load time."""
+    from assistant.agent import cheap_model, model_config
+    from assistant.config import load_config
+
+    config = load_config()
+    return model_config(config, cheap_model(config))
 
 
 def build_knowledge_config(
     platform: str = "cli",
     store_path: Path | None = None,
-    aggregate_config: GeminiConfig | None = None,
+    aggregate_config: ModelConfig | None = None,
     store=None,
     every_n_turns: int = 4,
     on_end: bool = False,
     compact: bool = False,
+    compact_max_tokens: int = 20_000,
 ) -> KnowledgeConfig:
     """Build a KnowledgeConfig that passively learns and persists the user profile.
 
@@ -223,6 +238,9 @@ def build_knowledge_config(
         on_end: Also distil when a conversation ends. Use for single-shot runs
             (CLI) so their one turn is still captured; leave off for long sessions
             to avoid an aggregation call per turn.
+        compact: Bound a long conversation's context by summarising the oldest
+            events (an LLM call on the cheap model) when the stream grows large.
+        compact_max_tokens: Stream size (approx. tokens) that triggers compaction.
 
     Returns:
         A KnowledgeConfig wiring a SQLite store + working-memory aggregation.
@@ -231,22 +249,15 @@ def build_knowledge_config(
         store = build_profile_store(store_path)
 
     if aggregate_config is None:
-        import os
-
-        aggregate_config = GeminiConfig(
-            model="gemini-3.5-flash",
-            api_key=os.environ.get("GEMINI_API_KEY", ""),
-        )
+        aggregate_config = _default_aggregate_config()
 
     compact_kwargs: dict = {}
     if compact:
-        # Keep a long-running conversation's context bounded by summarising the
-        # oldest events (on the cheap model) when the stream grows large.
-        from autogen.beta.compact import CompactTrigger, SummarizeCompact
+        from ag2.compact import CompactTrigger, SummarizeCompact
 
         compact_kwargs = {
             "compact": SummarizeCompact(target=60, config=aggregate_config),
-            "compact_trigger": CompactTrigger(max_tokens=24_000),
+            "compact_trigger": CompactTrigger(max_tokens=compact_max_tokens),
         }
 
     return KnowledgeConfig(
@@ -263,6 +274,30 @@ def build_knowledge_config(
     )
 
 
+def build_compaction_config(
+    aggregate_config: ModelConfig | None = None,
+    max_tokens: int = 20_000,
+) -> KnowledgeConfig:
+    """Compaction-only harness wiring for agents that run without profile memory
+    (task subagents). Bounds a long run's context by summarising the oldest
+    events (an LLM call on the cheap model) once the stream crosses `max_tokens`.
+    Backed by an ephemeral in-memory store — nothing persists, no knowledge tool,
+    no event log; the KnowledgeConfig exists purely to carry the compactor."""
+    from ag2.compact import CompactTrigger, SummarizeCompact
+    from ag2.knowledge import MemoryKnowledgeStore
+
+    if aggregate_config is None:
+        aggregate_config = _default_aggregate_config()
+
+    return KnowledgeConfig(
+        store=MemoryKnowledgeStore(),
+        expose_tool=False,
+        write_event_log=False,
+        compact=SummarizeCompact(target=60, config=aggregate_config),
+        compact_trigger=CompactTrigger(max_tokens=max_tokens),
+    )
+
+
 def profile_assembly() -> list:
     """Assembly policies that inject the learned profile into each conversation."""
     return [
@@ -271,17 +306,16 @@ def profile_assembly() -> list:
     ]
 
 
-async def write_profile(text: str, store_path: Path | None = None) -> None:
+async def write_profile(text: str, store_path: Path) -> None:
     """Overwrite the learned user profile (a user edit via the GUI). The passive
     aggregator treats this as the new base it merges future conversation into."""
     store = build_profile_store(store_path)
     await store.write(PROFILE_PATH, text or "")
 
 
-async def read_profile(store_path: Path | None = None) -> str:
+async def read_profile(store_path: Path) -> str:
     """Read the learned user profile, or empty string if none exists yet."""
-    if store_path is None:
-        store_path = default_store_path()
+    store_path = Path(store_path)
     if not store_path.exists():
         return ""
     store = SqliteKnowledgeStore(str(store_path))
@@ -290,10 +324,35 @@ async def read_profile(store_path: Path | None = None) -> str:
     return await store.read(PROFILE_PATH)
 
 
-async def clear_profile(store_path: Path | None = None) -> bool:
+def read_profile_sync(store_path: Path) -> str:
+    """Synchronously read the profile document from a SqliteKnowledgeStore file, or
+    "" if the file/row is absent. A read-only, connection-free stdlib sqlite3 query
+    (same ``entries(path, content, …)`` schema the store uses) so the per-turn,
+    synchronous prompt builders can inject the universal document without spinning up
+    the async store. Never raises on a missing/locked/corrupt DB — returns ""."""
+    import sqlite3
+
+    store_path = Path(store_path)
+    if not store_path.exists():
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{store_path}?mode=ro", uri=True)
+        try:
+            cur = conn.execute("SELECT content FROM entries WHERE path = ?", (PROFILE_PATH,))
+            row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+    if not row:
+        return ""
+    content = row[0]
+    return content.decode("utf-8") if isinstance(content, bytes | bytearray) else str(content)
+
+
+async def clear_profile(store_path: Path) -> bool:
     """Delete the learned user profile. Returns True if something was removed."""
-    if store_path is None:
-        store_path = default_store_path()
+    store_path = Path(store_path)
     if not store_path.exists():
         return False
     store = SqliteKnowledgeStore(str(store_path))
@@ -301,3 +360,28 @@ async def clear_profile(store_path: Path | None = None) -> bool:
         return False
     await store.delete(PROFILE_PATH)
     return True
+
+
+# --- Universal ("who the user is") memory layer ----------------------------- #
+#
+# A second, install-wide document shared by EVERY profile — identity facts that
+# are true in any context (name, location, timezone, family, health constraints,
+# writing voice). It reuses the same SqliteKnowledgeStore mechanics as the
+# per-profile profile.db (build_profile_store / PROFILE_PATH), just at a
+# different path: config.root_dir / "user.db". Unlike the per-profile store it is
+# NEVER touched by the passive aggregator; it is curated, written only by the
+# `remember` tool (scope="universal"), the onboarding interview, and manual edits
+# via the API/UI. read_profile / write_profile already take an explicit path, so
+# they serve this layer too — these thin wrappers just name the intent.
+
+
+async def read_universal(user_store_path: Path) -> str:
+    """Read the shared "who the user is" document (config.root_dir/user.db), or
+    empty string if none exists yet."""
+    return await read_profile(user_store_path)
+
+
+async def write_universal(text: str, user_store_path: Path) -> None:
+    """Overwrite the shared "who the user is" document (a user edit via the GUI,
+    or the onboarding seed)."""
+    await write_profile(text, user_store_path)

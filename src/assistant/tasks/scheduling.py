@@ -107,7 +107,9 @@ def _parse_dt(iso: str | None) -> datetime | None:
         dt = datetime.fromisoformat(iso)
     except (ValueError, TypeError):
         return None
-    return dt.astimezone() if dt.tzinfo else dt.astimezone()
+    # Honour an explicit timezone as-is (so schedules don't drift by server tz);
+    # only naive strings are assumed to be in the local timezone.
+    return dt if dt.tzinfo else dt.astimezone()
 
 
 def is_due(scheduled_for: str | None, now: datetime) -> bool:
