@@ -57,6 +57,12 @@
 .settings .keyrow { display: flex; align-items: center; gap: 8px; }
 .settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
 .settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
+/* Focus-area pill toggles — same vocabulary as onboarding (lib/focuses.js). */
+.settings .focuspills { display: flex; flex-wrap: wrap; gap: 7px; }
+.settings .focuspill { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.settings .focuspill:hover { border-color: var(--accent); }
+.settings .focuspill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.settings .focuspill:disabled { opacity: .6; cursor: default; }
 /* Secondary action buttons (Save / Change voice / Cancel task / Close …) —
    bordered "greyed" pill: soft radius, icon + label, accent on hover. Shared by
    modal and task-panel actions so every secondary button reads the same. */
@@ -73,6 +79,9 @@
 
 /* Memory editor */
 .modal.memory { width: min(720px, 92vw); height: min(88vh, 940px); }
+.memory .msection { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.memory .msection h3 { margin: 0; font-size: 13px; font-weight: var(--fw-medium); color: var(--ink); }
+.memory .msection .small { margin: 0; font-size: 12px; }
 .memory textarea { flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; font-size: 13px; line-height: 1.5; background: var(--bg); color: var(--ink); resize: none; }
 .memory .mfoot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .memory .okmsg { color: #3ba55d; font-size: 13px; }

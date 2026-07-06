@@ -67,10 +67,10 @@ def agent(
             if asker is not None and memory:
                 from assistant.onboarding import needs_onboarding, run_onboarding
 
-                store_path = config.data_dir / "profile.db"
-                if await needs_onboarding(store_path):
+                user_store_path = config.root_dir / "user.db"  # shared universal memory
+                if await needs_onboarding(user_store_path):
                     typer.echo("First time here — a few quick questions (all skippable):")
-                    await run_onboarding(asker, store_path)
+                    await run_onboarding(asker, user_store_path)
             return await ask(message, config, memory=memory, platform=platform, asker=asker)
         finally:
             if asker is not None:
@@ -86,21 +86,22 @@ def onboard(
         None, "--profile", "-p", help="Profile id to onboard (default: the active default)."
     ),
 ) -> None:
-    """Run the first-run onboarding interview (name, location, hours, style)."""
+    """Run the first-run onboarding interview (name, location, hours, style).
+
+    Seeds the UNIVERSAL "who the user is" memory (``root_dir/user.db``), shared by
+    every profile — so this is install-wide, not per-profile."""
     from assistant.hitl import DesktopAsker
     from assistant.onboarding import needs_onboarding, run_onboarding
 
-    store_path = _resolve_profile_config(profile).data_dir / "profile.db"
+    user_store_path = _resolve_profile_config(profile).root_dir / "user.db"
 
     async def run() -> None:
-        if not force and not await needs_onboarding(store_path):
-            typer.echo(
-                "Already onboarded (this profile has a learned profile). Use --force to redo."
-            )
+        if not force and not await needs_onboarding(user_store_path):
+            typer.echo("Already onboarded (the universal profile exists). Use --force to redo.")
             return
         asker = DesktopAsker()
         try:
-            answers = await run_onboarding(asker, store_path)
+            answers = await run_onboarding(asker, user_store_path)
         finally:
             await asker.aclose()
         if answers:

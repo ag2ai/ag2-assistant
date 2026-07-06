@@ -134,6 +134,22 @@ async def test_read_and_clear_profile_roundtrip(tmp_path):
     assert await clear_profile(store_path=store_path) is False
 
 
+async def test_universal_roundtrip_and_sync_read(tmp_path):
+    """write_universal persists to user.db; read_universal reads it back; the
+    synchronous read_profile_sync (used by the per-turn prompt builders) sees the
+    same content, and returns '' for a missing DB."""
+    from assistant.memory import read_profile_sync, read_universal, write_universal
+
+    user_db = tmp_path / "user.db"
+    assert read_profile_sync(user_db) == ""  # missing file → empty, no raise
+    assert await read_universal(user_db) == ""
+
+    doc = "# User profile\n- Name: TestUser"
+    await write_universal(doc, user_db)
+    assert await read_universal(user_db) == doc
+    assert read_profile_sync(user_db) == doc  # sync path matches the async store read
+
+
 @pytest.mark.integration
 async def test_profile_learned_after_conversation(tmp_path):
     """End-to-end: a conversation should produce a persisted profile in this

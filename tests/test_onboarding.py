@@ -20,11 +20,11 @@ class ScriptedAsker:
 
 @pytest.fixture
 def isolate(tmp_path):
-    """Per-profile store + env paths in a tmp dir. There is no marker file — an
-    empty profile store is the only onboarding gate."""
-    store_path = tmp_path / "profile.db"
+    """Universal store (root/user.db) + env paths in a tmp dir. There is no marker
+    file — an empty universal store is the only (install-wide) onboarding gate."""
+    user_store_path = tmp_path / "user.db"
     env_path = tmp_path / ".env"
-    return store_path, env_path
+    return user_store_path, env_path
 
 
 def test_build_profile_renders_sections():
@@ -50,21 +50,23 @@ def test_build_profile_empty_when_all_skipped():
 
 
 async def test_needs_onboarding_true_when_no_profile(isolate):
-    store_path, _ = isolate
-    assert await onboarding.needs_onboarding(store_path) is True
+    user_store_path, _ = isolate
+    assert await onboarding.needs_onboarding(user_store_path) is True
 
 
 async def test_needs_onboarding_false_when_profile_seeded(isolate):
-    store_path, _ = isolate
-    store = build_profile_store(store_path)
+    user_store_path, _ = isolate
+    store = build_profile_store(user_store_path)
     await store.write(PROFILE_PATH, "## How they like things done\n- Existing fact.\n")
-    assert await onboarding.needs_onboarding(store_path) is False
+    assert await onboarding.needs_onboarding(user_store_path) is False
 
 
 async def test_run_onboarding_seeds_profile_and_env(isolate):
-    store_path, env_path = isolate
+    user_store_path, env_path = isolate
     asker = ScriptedAsker(["Ada", "London, United Kingdom", "9am–6pm", "Short & direct"])
-    answers = await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
+    answers = await onboarding.run_onboarding(
+        asker, user_store_path=user_store_path, env_path=env_path
+    )
     assert answers == {
         "name": "Ada",
         "location": "London, United Kingdom",
@@ -72,39 +74,43 @@ async def test_run_onboarding_seeds_profile_and_env(isolate):
         "style": "Short & direct",
     }
     # profile persisted
-    store = build_profile_store(store_path)
+    store = build_profile_store(user_store_path)
     profile = await store.read(PROFILE_PATH)
     assert "Name: Ada" in profile
     # location persisted to .env
     assert "AG2ASSISTANT_LOCATION=London, United Kingdom" in env_path.read_text()
     # the seeded profile means we won't ask again (no marker file exists)
-    assert await onboarding.needs_onboarding(store_path) is False
+    assert await onboarding.needs_onboarding(user_store_path) is False
 
 
 async def test_run_onboarding_all_skipped_leaves_profile_empty(isolate):
-    store_path, env_path = isolate
+    user_store_path, env_path = isolate
     asker = ScriptedAsker(["skip", "skip", "skip", "No preference"])
-    answers = await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
+    answers = await onboarding.run_onboarding(
+        asker, user_store_path=user_store_path, env_path=env_path
+    )
     assert answers == {}
     assert not env_path.exists()  # nothing to persist
     # nothing seeded → the gate is still open (would re-ask on first chat)
-    assert await onboarding.needs_onboarding(store_path) is True
+    assert await onboarding.needs_onboarding(user_store_path) is True
 
 
 async def test_run_onboarding_partial(isolate):
-    store_path, env_path = isolate
+    user_store_path, env_path = isolate
     asker = ScriptedAsker(["", "Melbourne", "skip", "Detailed & thorough"])
-    answers = await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
+    answers = await onboarding.run_onboarding(
+        asker, user_store_path=user_store_path, env_path=env_path
+    )
     assert answers == {"location": "Melbourne", "style": "Detailed & thorough"}
     assert "AG2ASSISTANT_LOCATION=Melbourne" in env_path.read_text()
 
 
 async def test_run_onboarding_preserves_existing_profile(isolate):
-    store_path, env_path = isolate
-    store = build_profile_store(store_path)
+    user_store_path, env_path = isolate
+    store = build_profile_store(user_store_path)
     await store.write(PROFILE_PATH, "## How they like things done\n- Existing fact.\n")
     asker = ScriptedAsker(["Ada", "skip", "skip", "No preference"])
-    await onboarding.run_onboarding(asker, store_path=store_path, env_path=env_path)
-    profile = await build_profile_store(store_path).read(PROFILE_PATH)
+    await onboarding.run_onboarding(asker, user_store_path=user_store_path, env_path=env_path)
+    profile = await build_profile_store(user_store_path).read(PROFILE_PATH)
     assert "Name: Ada" in profile
     assert "Existing fact." in profile  # not clobbered

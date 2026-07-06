@@ -14,6 +14,7 @@ Route map:
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
     POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
     POST /api/onboarded                      -> set the install-level onboarding flag
+    GET/POST /api/memory                     -> universal "who the user is" doc (shared root/user.db)
     GET  /api/profiles                       -> {profiles, active_default, onboarded} (§3.5 contract)
     POST /api/profiles                       -> create {name, palette, workspace?}; boots live
     POST /api/profiles/{pid}                 -> rename / palette / workspace (workspace reloads runtime)
@@ -32,8 +33,8 @@ Route map:
     GET  inquiries/pending, POST inquiries/{id}/answer
     GET  hitl/pending
     WS   stream, WS voice; GET voice/voices, POST voice/select, POST voice/preview
-    GET/POST settings, settings/mcp*, settings/project-folder, settings/llm, settings/voice_provider
-    GET/POST memory
+    GET/POST settings, settings/mcp*, settings/project-folder, settings/focuses, settings/llm, settings/voice_provider
+    GET/POST memory                          -> THIS profile's persona memory (profiles/<id>/profile.db)
     GET  files, GET/DELETE files/raw
     GET  usage
 """
@@ -155,6 +156,10 @@ class OnboardedRequest(BaseModel):
 
 class ProjectFolderRequest(BaseModel):
     path: str
+
+
+class FocusesRequest(BaseModel):
+    focuses: list[str] = []
 
 
 class VoiceRequest(BaseModel):
@@ -445,6 +450,32 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         from assistant import profiles as profiles_mod
 
         profiles_mod.set_onboarded(req.value)
+        return {"ok": True}
+
+    # ---- Universal memory: the shared "who the user is" doc (root/user.db) ----
+
+    def _user_store_path() -> Path:
+        """The install-wide universal memory DB — the SAME file every profile's agent
+        reads (``root_dir/user.db``). Profile-agnostic, so resolved from the root config."""
+        from assistant.config import load_config
+
+        return load_config().root_dir / "user.db"
+
+    @app.get("/api/memory")
+    async def get_universal_memory() -> dict:
+        """Read the shared universal "who the user is" document (identity facts injected
+        into EVERY profile's context). Mirrors the per-profile GET /api/p/{pid}/memory."""
+        from assistant.memory import read_universal
+
+        return {"text": await read_universal(_user_store_path())}
+
+    @app.post("/api/memory")
+    async def set_universal_memory(req: MemoryRequest) -> dict:
+        """Replace the shared universal document (a user edit from any profile's Settings →
+        Memory). Read fresh per turn, so all profiles' agents pick it up next turn."""
+        from assistant.memory import write_universal
+
+        await write_universal(req.text, _user_store_path())
         return {"ok": True}
 
     # ---- Profile management (global) ----
@@ -920,6 +951,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
             "project_folder": settings.get_project_folder(),  # repo-files MCP root
+            "focuses": settings.get_focuses(),  # per-profile persona focus areas
             "fs": {  # start roots for the folder picker
                 "home": str(Path.home()),
                 "cwd": str(Path.cwd()),
@@ -1020,6 +1052,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         await manager.reload(runtime.pid)  # new turns get the repo-files tools
         return {"ok": True, "project_folder": folder}
 
+    @p.post("/settings/focuses")
+    async def set_focuses(
+        req: FocusesRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Persist this profile's focus areas (a persona attribute injected into the
+        agent's context), then reload so the reference-swapped agent picks up the new
+        context line on its next turn."""
+        settings = _runtime_settings(runtime)
+        focuses = settings.set_focuses(req.focuses)
+        await manager.reload(runtime.pid)  # context change → next turn gets the line
+        return {"ok": True, "focuses": focuses}
+
     @p.post("/settings/llm")
     async def set_settings_llm(
         req: LlmRequest, runtime: ProfileRuntime = Depends(get_runtime)
@@ -1051,7 +1095,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return Response(status_code=400)
         return {"ok": True}
 
-    # ---- Memory: view + edit the learned user profile ----
+    # ---- Memory: view + edit THIS profile's persona memory (profile.db) ----
+    # (The shared universal "who the user is" doc is the global GET/POST /api/memory.)
 
     @p.get("/memory")
     async def get_memory(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:

@@ -9,6 +9,7 @@
   import Profiles from './Profiles.svelte'
   import Channels from './Channels.svelte'
   import FolderPicker from './FolderPicker.svelte'
+  import { FOCUS } from '../lib/focuses.js'
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
   // API-key rows. github is a stored token (skills registry), NOT a model provider,
@@ -34,6 +35,14 @@
 
   function openFolderEdit() { folderSel = s?.project_folder || ''; editFolder = true }
   const saveFolder = () => run(() => api.setProjectFolder(folderSel).then(() => { editFolder = false }))
+
+  // Focus areas — a per-profile persona attribute (settings.json → agent context).
+  // Toggling a pill persists immediately for the ACTIVE profile.
+  const toggleFocus = (id) => {
+    const cur = s?.focuses || []
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    run(() => api.setFocuses(next))
+  }
 
   async function load() {
     try {
@@ -116,6 +125,16 @@
           <button class="open" disabled={busy || !folderSel} onclick={saveFolder}>Save folder</button>
         </div>
       {/if}
+
+      <div class="setsec">Focus areas</div>
+      <div class="focuspills">
+        {#each FOCUS as f}
+          <button class="focuspill" class:on={(s.focuses || []).includes(f.id)} disabled={busy} onclick={() => toggleFocus(f.id)}>
+            <Icon name={f.icon} size={13} /> {f.label}
+          </button>
+        {/each}
+      </div>
+      <p class="muted" style="font-size:12px;margin:2px 0 0">What this profile is for — shapes how the assistant helps.</p>
 
       <div class="setsec">API keys <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
       {#each KEY_ROWS as k}

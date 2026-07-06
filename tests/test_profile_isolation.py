@@ -76,15 +76,20 @@ def test_chat_sessions_isolated(monkeypatch):
 
 def test_remember_tool_isolated(monkeypatch):
     """Invoke the built memory tool the way agent.py wires it (build_memory_tool over
-    A's store path). A's profile.db grows; B's memory endpoint stays empty."""
+    A's profile + universal store paths). A profile-scoped note lands in A's profile.db;
+    B's memory endpoint stays empty."""
     from assistant.agent import build_memory_tool
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
-        a_store = client.app.state.profiles.get(a).config.data_dir / "profile.db"
+        a_cfg = client.app.state.profiles.get(a).config
+        a_store = a_cfg.data_dir / "profile.db"
+        user_store = a_cfg.root_dir / "user.db"
 
-        remember = build_memory_tool(a_store)
-        asyncio.run(_run_tool(remember, note="A likes terse answers", category="how"))
+        remember = build_memory_tool(a_store, user_store)
+        asyncio.run(
+            _run_tool(remember, note="A likes terse answers", category="how", scope="profile")
+        )
 
         assert a_store.exists()  # A's memory db written
         a_mem = client.get(api(a, "/memory")).json()["text"]
@@ -92,6 +97,62 @@ def test_remember_tool_isolated(monkeypatch):
 
         # B is untouched: no profile.db, empty memory endpoint
         assert not (profiles.profile_dir(b) / "profile.db").exists()
+        assert client.get(api(b, "/memory")).json()["text"] == ""
+        # a profile-scoped note must NOT have leaked into the shared universal layer
+        assert client.get("/api/memory").json()["text"] == ""
+
+
+def test_remember_tool_universal_scope_shared(monkeypatch):
+    """A remember(scope="universal") writes the shared root/user.db — readable via the
+    GLOBAL /api/memory and injected into BOTH profiles' contexts. A remember(scope=
+    "profile") stays in that one profile's profile.db and is NOT visible universally."""
+    from assistant.agent import build_memory_tool, universal_memory_guidance
+
+    with _two_profile_client(monkeypatch) as client:
+        a, b = _boot_two(client)
+        a_cfg = client.app.state.profiles.get(a).config
+        b_cfg = client.app.state.profiles.get(b).config
+        user_store = a_cfg.root_dir / "user.db"
+
+        # A saves an identity fact universally, and a persona note to itself.
+        remember_a = build_memory_tool(a_cfg.data_dir / "profile.db", user_store)
+        asyncio.run(
+            _run_tool(remember_a, note="Name is TestUser", category="how", scope="universal")
+        )
+        asyncio.run(
+            _run_tool(remember_a, note="A prefers bullet points", category="how", scope="profile")
+        )
+
+        # Universal note is on the shared store and readable via the GLOBAL route
+        assert (user_store).exists()
+        assert "Name is TestUser" in client.get("/api/memory").json()["text"]
+
+        # Both profiles inject the universal doc into their per-turn context
+        a_ctx = universal_memory_guidance(a_cfg)
+        b_ctx = universal_memory_guidance(b_cfg)
+        assert "Name is TestUser" in a_ctx
+        assert "Name is TestUser" in b_ctx
+        assert "shared across all profiles" in a_ctx.lower() or "shared across" in a_ctx
+
+        # The persona note is NOT in the universal layer, nor in B's context
+        assert "A prefers bullet points" not in client.get("/api/memory").json()["text"]
+        assert "A prefers bullet points" not in b_ctx
+        # B's own profile memory is still empty (the persona note stayed in A)
+        assert client.get(api(b, "/memory")).json()["text"] == ""
+
+
+def test_global_memory_api_roundtrip_shared(monkeypatch):
+    """POST /api/memory (global) then GET /api/memory returns the same doc — and the
+    doc is the SAME whether the caller was 'in' profile A or B (it's install-wide)."""
+    with _two_profile_client(monkeypatch) as client:
+        a, b = _boot_two(client)
+
+        marker = "# User profile\n- Name: TestUser"
+        assert client.post("/api/memory", json={"text": marker}).status_code == 200
+        assert client.get("/api/memory").json()["text"] == marker
+
+        # per-profile persona memory is a DIFFERENT store — still empty for both
+        assert client.get(api(a, "/memory")).json()["text"] == ""
         assert client.get(api(b, "/memory")).json()["text"] == ""
 
 

@@ -1,11 +1,14 @@
-"""First-run onboarding — a short, skippable interview that seeds the profile.
+"""First-run onboarding — a short, skippable interview that seeds the UNIVERSAL
+"who the user is" memory.
 
-When AG2 Assistant has no learned profile yet, it asks a handful of questions (name,
-location, working hours, preferred answer style) through the same pluggable HITL
-`Asker` used everywhere else — so it works identically on the desktop popup or in
-Telegram/Discord/Slack. The answers seed the persistent profile and the
-`AG2ASSISTANT_LOCATION` config, so the agent starts out knowing the basics instead of
-having to learn them slowly.
+When AG2 Assistant has no universal profile yet, it asks a handful of questions
+(name, location, working hours, preferred answer style) through the same pluggable
+HITL `Asker` used everywhere else — so it works identically on the desktop popup or
+in Telegram/Discord/Slack. Its answers are identity facts (true in any persona), so
+they seed the shared universal store (``root_dir/user.db``) plus the
+`AG2ASSISTANT_LOCATION` config — not a per-profile store. The gate is therefore
+install-wide: the interview runs ONCE (the first chat in whichever profile), not
+once per profile, since every profile reads the same universal document.
 
 Every question is skippable (type "skip", or pick "No preference").
 """
@@ -73,13 +76,14 @@ def _skipped(answer: str | None) -> bool:
     return answer is None or answer.strip().lower() in _SKIP_WORDS
 
 
-async def needs_onboarding(store_path: Path) -> bool:
-    """True if THIS profile has no learned profile yet (its `profile.db` is empty).
+async def needs_onboarding(user_store_path: Path) -> bool:
+    """True if the install has no universal profile yet (its `user.db` is empty).
 
-    Per-profile: the interview seeds a profile's learned memory, so every new
-    persona gets it on first chat. There is no marker file — the profile store
-    being empty is the only gate."""
-    profile = await read_profile(store_path)
+    Install-wide: the interview seeds the shared "who the user is" memory, so it
+    runs once (the first chat in whichever profile) — every profile reads the same
+    universal document. There is no marker file; the universal store being empty is
+    the only gate. `user_store_path` is ``config.root_dir / "user.db"``."""
+    profile = await read_profile(user_store_path)
     return not profile.strip()
 
 
@@ -138,13 +142,15 @@ def build_profile(answers: dict[str, str]) -> str:
 
 async def run_onboarding(
     asker: Asker,
-    store_path: Path,
+    user_store_path: Path,
     env_path: Path | None = None,
 ) -> dict[str, str]:
-    """Ask the onboarding questions and seed the profile + location config.
+    """Ask the onboarding questions and seed the UNIVERSAL profile + location config.
 
-    Returns the (non-skipped) answers. Writes to the given profile store; there is
-    no marker file — an empty `profile.db` is the only gate (`needs_onboarding`).
+    Returns the (non-skipped) answers. Writes to the shared universal store
+    (``config.root_dir / "user.db"``, passed as `user_store_path`) since the answers
+    are identity facts true across every persona; there is no marker file — an empty
+    `user.db` is the only gate (`needs_onboarding`).
     """
     answers: dict[str, str] = {}
     for step in STEPS:
@@ -160,11 +166,11 @@ async def run_onboarding(
 
     profile_md = build_profile(answers)
     if profile_md:
-        store = build_profile_store(store_path)
+        store = build_profile_store(user_store_path)
         existing = ""
         if await store.exists(PROFILE_PATH):
             existing = (await store.read(PROFILE_PATH)).strip()
-        # Don't clobber a real learned profile; append seeded facts above it.
+        # Don't clobber an existing universal doc; append seeded facts above it.
         merged = profile_md if not existing else profile_md + "\n" + existing
         await store.write(PROFILE_PATH, merged)
 

@@ -538,16 +538,20 @@ class Gateway:
         return out
 
     async def _maybe_onboard(self, asker) -> None:
-        """Run first-run onboarding once, via the asker that made this request."""
+        """Run first-run onboarding once, via the asker that made this request.
+
+        The interview seeds the UNIVERSAL "who the user is" memory (identity facts),
+        so it gates on the shared ``root_dir/user.db`` and runs once per install (the
+        first chat in whichever profile), not once per profile."""
         if self._onboarding_done or not self._onboard or not self._memory or asker is None:
             return
         self._onboarding_done = True  # set first: never double-prompt, even on error
         from assistant.onboarding import needs_onboarding, run_onboarding
 
-        store_path = self._config.data_dir / "profile.db"  # this profile's learned memory
+        user_store_path = self._config.root_dir / "user.db"  # shared universal memory
         try:
-            if await needs_onboarding(store_path):
-                await run_onboarding(asker, store_path)
+            if await needs_onboarding(user_store_path):
+                await run_onboarding(asker, user_store_path)
         except Exception as exc:
             from assistant.observability import log_suppressed
 

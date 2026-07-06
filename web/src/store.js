@@ -71,9 +71,10 @@ export const ag2View = persisted('ag2View', false)
 // set via api.setOnboarded() at the END of the onboarding flow (§5.5).
 export const onboardingOpen = writable(false)
 
-// Local user profile seeded by onboarding: name + focus areas. Greets the user and
-// could tailor suggestions. Kept on-device (mirrors keys/model in Settings).
-export const profile = persisted('ag2-profile', { name: '', focuses: [] })
+// Local user display name seeded by onboarding — greets the user. Kept on-device
+// (per-profile focus areas moved server-side into each profile's settings.json,
+// where they're injected into the agent's context).
+export const profile = persisted('ag2-profile', { name: '' })
 
 // Transient toast/notice: { text } when shown, null when hidden. Used by the
 // archived-profile recovery flow (§4.9) — a brief message before the client

@@ -120,6 +120,31 @@ def test_two_profiles_settings_are_isolated(tmp_path):
     assert [s["name"] for s in b.list_mcp_servers()] == []
 
 
+def test_focuses_roundtrip_and_normalisation(settings):
+    # Fresh install: no focuses until chosen.
+    assert settings.get_focuses() == []
+    # Client sends lowercase slugs; order preserved, returned as stored.
+    assert settings.set_focuses(["research", "coding"]) == ["research", "coding"]
+    assert settings.get_focuses() == ["research", "coding"]
+    # Normalises case, trims, dedups; drops junk (spaces / long strings).
+    stored = settings.set_focuses(["Writing", " data ", "writing", "not a slug!", "coding"])
+    assert stored == ["writing", "data", "coding"]
+    assert settings.get_focuses() == ["writing", "data", "coding"]
+    # A comma-string is accepted too.
+    assert settings.set_focuses("images, research") == ["images", "research"]
+    # Clearing resets to [].
+    assert settings.set_focuses([]) == []
+    assert settings.get_focuses() == []
+
+
+def test_focuses_are_per_profile(tmp_path):
+    a = Settings(tmp_path / "a" / "settings.json")
+    b = Settings(tmp_path / "b" / "settings.json")
+    a.set_focuses(["research"])
+    assert a.get_focuses() == ["research"]
+    assert b.get_focuses() == []  # untouched → default
+
+
 def test_project_folder_roundtrips(settings):
     # Fresh install: no project folder until chosen.
     assert settings.get_project_folder() == ""

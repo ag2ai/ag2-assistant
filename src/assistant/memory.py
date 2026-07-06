@@ -13,6 +13,14 @@ The profile tracks four dimensions:
 
 Each observation is tagged with the platform it was seen on (cli, telegram,
 discord, ...) so the single global profile still carries channel context.
+
+There are TWO memory layers:
+  - Per-profile (``profiles/<id>/profile.db``): persona preferences, learned
+    passively by the aggregator and via the `remember` tool (scope="profile").
+  - Universal (``root_dir/user.db``): "who the user is" — identity facts true
+    across every persona. Shared by all profiles, NEVER passively aggregated;
+    curated only by the `remember` tool (scope="universal"), onboarding, and
+    manual edits. See ``read_universal`` / ``write_universal`` at the bottom.
 """
 
 from pathlib import Path
@@ -316,6 +324,32 @@ async def read_profile(store_path: Path) -> str:
     return await store.read(PROFILE_PATH)
 
 
+def read_profile_sync(store_path: Path) -> str:
+    """Synchronously read the profile document from a SqliteKnowledgeStore file, or
+    "" if the file/row is absent. A read-only, connection-free stdlib sqlite3 query
+    (same ``entries(path, content, …)`` schema the store uses) so the per-turn,
+    synchronous prompt builders can inject the universal document without spinning up
+    the async store. Never raises on a missing/locked/corrupt DB — returns ""."""
+    import sqlite3
+
+    store_path = Path(store_path)
+    if not store_path.exists():
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{store_path}?mode=ro", uri=True)
+        try:
+            cur = conn.execute("SELECT content FROM entries WHERE path = ?", (PROFILE_PATH,))
+            row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+    if not row:
+        return ""
+    content = row[0]
+    return content.decode("utf-8") if isinstance(content, bytes | bytearray) else str(content)
+
+
 async def clear_profile(store_path: Path) -> bool:
     """Delete the learned user profile. Returns True if something was removed."""
     store_path = Path(store_path)
@@ -326,3 +360,28 @@ async def clear_profile(store_path: Path) -> bool:
         return False
     await store.delete(PROFILE_PATH)
     return True
+
+
+# --- Universal ("who the user is") memory layer ----------------------------- #
+#
+# A second, install-wide document shared by EVERY profile — identity facts that
+# are true in any context (name, location, timezone, family, health constraints,
+# writing voice). It reuses the same SqliteKnowledgeStore mechanics as the
+# per-profile profile.db (build_profile_store / PROFILE_PATH), just at a
+# different path: config.root_dir / "user.db". Unlike the per-profile store it is
+# NEVER touched by the passive aggregator; it is curated, written only by the
+# `remember` tool (scope="universal"), the onboarding interview, and manual edits
+# via the API/UI. read_profile / write_profile already take an explicit path, so
+# they serve this layer too — these thin wrappers just name the intent.
+
+
+async def read_universal(user_store_path: Path) -> str:
+    """Read the shared "who the user is" document (config.root_dir/user.db), or
+    empty string if none exists yet."""
+    return await read_profile(user_store_path)
+
+
+async def write_universal(text: str, user_store_path: Path) -> None:
+    """Overwrite the shared "who the user is" document (a user edit via the GUI,
+    or the onboarding seed)."""
+    await write_profile(text, user_store_path)

@@ -40,6 +40,13 @@ export function api(path) {
   return `/api/p/${encodeURIComponent(_activeId)}${path}`
 }
 
+// Explicit-pid scoped URL: pidApi('work', '/settings/focuses') ->
+// '/api/p/work/settings/focuses'. Used by flows (onboarding's per-profile setup)
+// that must target a SPECIFIC profile rather than whichever one is active.
+export function pidApi(pid, path) {
+  return `/api/p/${encodeURIComponent(pid)}${path}`
+}
+
 // Global (unprefixed) URL: globalApi('/profiles') -> '/api/profiles'.
 export function globalApi(path) {
   return `/api${path}`

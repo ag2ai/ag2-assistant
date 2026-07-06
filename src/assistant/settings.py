@@ -29,6 +29,7 @@ from assistant import voice_providers
 
 _MCP_KEY = "mcp_servers"
 _MCP_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_FOCUS_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
 class Settings:
@@ -104,6 +105,23 @@ class Settings:
         data = self._read()
         data["project_folder"] = path or ""
         self._write(data)
+
+    # --- focuses (per-profile persona attribute) ---
+
+    def get_focuses(self) -> list[str]:
+        """The user's chosen focus areas for THIS profile (lowercase slugs the
+        client sends, e.g. ``["research", "coding"]``). Empty list if unset."""
+        return _focus_list(self._read().get("focuses"))
+
+    def set_focuses(self, focuses) -> list[str]:
+        """Persist the focus areas for this profile. Accepts a list of short strings
+        (or a comma-string); normalised to lowercase slugs, deduped, order kept.
+        Returns the stored list."""
+        clean = _focus_list(focuses)
+        data = self._read()
+        data["focuses"] = clean
+        self._write(data)
+        return clean
 
     # --- MCP servers ---
 
@@ -191,6 +209,20 @@ def _list_value(value) -> list[str]:
     if isinstance(value, list):
         return [str(v).strip() for v in value if str(v).strip()]
     return []
+
+
+def _focus_list(value) -> list[str]:
+    """Normalise focus areas to short lowercase slugs (dedup, keep order).
+
+    Accepts a list or a comma-string. Each entry must be a short slug
+    (``[a-z0-9_-]``, ≤32 chars) — anything else is dropped, so the persona line
+    can never carry junk. Capped at 12 to keep the injected prompt line small."""
+    out: list[str] = []
+    for raw in _list_value(value):
+        slug = str(raw).strip().lower()
+        if _FOCUS_RE.fullmatch(slug) and slug not in out:
+            out.append(slug)
+    return out[:12]
 
 
 def split_args(value) -> list[str]:

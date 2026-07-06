@@ -2,19 +2,25 @@
   // First-run welcome: a warm multi-step flow. Now install-level (§5.5): one flow
   // can create SEVERAL profiles. Steps: Welcome (name) → Connect (global provider
   // keys + model) → Profiles (the multi-profile creation LOOP, ProfileForm reused
-  // from the "+" chip modal so they can't drift) → Project (per-profile folder) →
-  // Personalize → Ready. POST /api/onboarded fires once, at flow completion.
+  // from the "+" chip modal so they can't drift) → Set up (ONE page PER created
+  // profile: its project folder + its focus areas, both skippable) → Ready. POST
+  // /api/onboarded fires once, at flow completion.
+  //
+  // Focus areas are a PER-PROFILE persona attribute persisted server-side (each
+  // profile's settings.json → injected into that profile's agent context), not a
+  // browser-local field. Theme is global (its control lives on Ready); the display
+  // name stays browser-local.
   //
   // Two entry modes:
   //   • overlay ($onboardingOpen, at least one profile exists) — "Re-run setup".
   //   • fresh install (fresh=true, zero profiles) — this flow IS the zero-profile
   //     state (App.svelte boot === 'create'); the Profiles step must create ≥1
   //     profile before Continue, and on finish we navigate into the first one.
-  import { onMount } from 'svelte'
   import { onboardingOpen, profile, profiles } from '../store.js'
   import { api } from '../transport/api.js'
-  import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
+  import { setActiveProfileId } from '../lib/profile.js'
   import { PALETTES, setPalette } from '../design/palette.js'
+  import { FOCUS, focusLabel } from '../lib/focuses.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
   import FolderPicker from './FolderPicker.svelte'
@@ -26,7 +32,8 @@
   //   of the overlay). onComplete(firstPid?) — App adopts profiles + navigates.
   let { fresh = false, onComplete = null } = $props()
 
-  const STEPS = ['Welcome', 'Connect', 'Profiles', 'Project', 'Personalize', 'Ready']
+  const STEPS = ['Welcome', 'Connect', 'Profiles', 'Set up', 'Ready']
+  const SETUP_STEP = 3
   const FEATURES = [
     { icon: 'zap', title: 'Powered by AG2', desc: 'A universal agent runtime — the open-source framework behind every reply.' },
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
@@ -36,14 +43,6 @@
     { label: 'Gemini · gemini-3.5-flash', provider: 'gemini', model: 'gemini-3.5-flash' },
     { label: 'OpenAI · gpt-5', provider: 'openai', model: 'gpt-5' },
     { label: 'Anthropic · claude-opus-4', provider: 'anthropic', model: 'claude-opus-4' },
-  ]
-  const FOCUS = [
-    { id: 'research', label: 'Research', icon: 'search' },
-    { id: 'coding', label: 'Coding', icon: 'code' },
-    { id: 'scheduling', label: 'Scheduling', icon: 'clock' },
-    { id: 'writing', label: 'Writing', icon: 'file-text' },
-    { id: 'data', label: 'Data & reports', icon: 'list' },
-    { id: 'images', label: 'Images', icon: 'image' },
   ]
   const KEY_FIELDS = [
     { id: 'gemini', label: 'Gemini', hint: 'recommended' },
@@ -56,54 +55,90 @@
   let keys = $state({ gemini: '', openai: '', anthropic: '' })
   let modelLabel = $state(MODELS[0].label)
   let name = $state($profile.name || '')
-  let focuses = $state($profile.focuses?.length ? [...$profile.focuses] : ['research', 'coding'])
-  let folder = $state('')
-  let fsRoots = $state({})
   let busy = $state(false)
+  let fsRoots = $state({})
 
   // Profiles created during THIS flow. Starts from whatever the server already has
   // (re-run mode); fresh install starts empty. Palettes already used are removed
   // from the ProfileForm swatches (§5.5).
   let created = $state([...($profiles.list || [])])
-  // addingMore: after the first profile is saved, the loop shows a summary + the
-  // "Add another / Continue" choice; clicking "Add another" re-shows the form.
   let showForm = $state(true)
   const claimedPalettes = $derived(created.map((p) => p.palette))
   const allPalettesUsed = $derived(claimedPalettes.length >= PALETTES.length)
 
-  // Settings (fs roots + current project folder) are PROFILE-SCOPED, so we can
-  // only fetch them once an active profile exists — on a fresh install there is
-  // none until the Profiles step creates one. Fetch lazily (re-run mode already
-  // has an active profile; fresh mode fetches right after the first is created).
-  let settingsLoaded = false
-  async function loadSettings() {
-    if (settingsLoaded || !getActiveProfileId()) return
-    settingsLoaded = true
+  // Per-profile "Set up" step: iterate `created`, one page each. `setupIdx` is the
+  // current profile; `chosen` accumulates {folder, focuses} keyed by pid for the
+  // Ready summary and to seed the picker when revisiting. Both saves target THAT
+  // profile's pid via api.forProfile(pid) — never the active one.
+  let setupIdx = $state(0)
+  let chosen = $state({}) // pid -> { folder: '', focuses: [] }
+  let folder = $state('') // folder chosen on the current setup page
+  let focuses = $state([]) // focuses chosen on the current setup page
+  const setupProfile = $derived(created[setupIdx] || null)
+
+  // Load the fs roots (for the folder picker) once — they're install-wide, so any
+  // profile's GET settings works. Fetched when we first reach the Set up step.
+  async function loadFsRoots(pid) {
+    if (Object.keys(fsRoots).length || !pid) return
     try {
-      const s = await api.settings()
+      const s = await api.forProfile(pid).settings()
       fsRoots = s.fs || {}
-      if (s.project_folder) folder = s.project_folder
     } catch {}
   }
-  onMount(loadSettings)
 
-  const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
-  // Gate per step: Connect needs a key; Profiles needs ≥1 created; Project a folder.
-  const canNext = $derived(
-    (step !== 1 || hasKey) &&
-    (step !== 2 || created.length > 0) &&
-    (step !== 3 || !!folder)
-  )
+  // Enter the setup page for profile `i`: hydrate the pickers from anything already
+  // chosen for it (so Back doesn't lose work) and ensure fs roots are loaded.
+  function enterSetup(i) {
+    setupIdx = i
+    const p = created[i]
+    const prior = (p && chosen[p.id]) || {}
+    folder = prior.folder || ''
+    focuses = prior.focuses ? [...prior.focuses] : []
+    loadFsRoots(p?.id)
+  }
+
   const toggleFocus = (id) =>
     (focuses = focuses.includes(id) ? focuses.filter((x) => x !== id) : [...focuses, id])
 
-  const next = () => (step = Math.min(step + 1, STEPS.length - 1))
-  const back = () => (step = Math.max(step - 1, 0))
+  const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
+  // Gate per step: Connect needs a key; Profiles needs ≥1 created. The Set up step
+  // is fully skippable, so it never gates Continue.
+  const canNext = $derived((step !== 1 || hasKey) && (step !== 2 || created.length > 0))
+
+  const back = () => {
+    if (step === SETUP_STEP && setupIdx > 0) { enterSetup(setupIdx - 1); return }
+    step = Math.max(step - 1, 0)
+  }
   const startFromWelcome = () => next()
 
+  function next() {
+    // Leaving Profiles → begin the per-profile setup loop at the first profile.
+    if (step === 2) { step = SETUP_STEP; enterSetup(0); return }
+    step = Math.min(step + 1, STEPS.length - 1)
+  }
+
+  // Save the current setup page to ITS profile's pid, then move on. `skip` avoids
+  // firing saves (Skip button). Saves are best-effort + only when there's a value
+  // to persist (folder chosen / focuses non-empty).
+  async function commitSetup(skip = false) {
+    const p = setupProfile
+    if (p) {
+      chosen = { ...chosen, [p.id]: { folder, focuses: [...focuses] } }
+      if (!skip) {
+        const scoped = api.forProfile(p.id)
+        if (folder) { try { await scoped.setProjectFolder(folder) } catch {} }
+        // Always send focuses when the user engaged the page: an empty list clears
+        // any prior selection. Only skip when Skip was pressed.
+        try { await scoped.setFocuses(focuses) } catch {}
+      }
+    }
+    if (setupIdx < created.length - 1) enterSetup(setupIdx + 1)
+    else step = STEPS.length - 1 // → Ready
+  }
+
   // Create one profile live (POST /api/profiles boots the runtime). On the first
-  // one we also adopt it as the active profile so subsequent per-profile settings
-  // (model, folder) target it, and reflect its palette immediately.
+  // one we also adopt it as the active profile so it's the one App boots into, and
+  // reflect its palette immediately.
   async function createProfile({ name: pname, palette, workspace }) {
     const res = await api.createProfile(pname, palette, workspace) // throws → inline error
     const p = res.profile
@@ -113,15 +148,15 @@
     if (first) {
       setActiveProfileId(p.id)
       if (p.palette) setPalette(p.palette)
-      loadSettings() // now that a profile exists, its settings are reachable
     }
     showForm = false // → summary + "Add another / Continue"
   }
 
   const addAnother = () => { showForm = true }
 
-  // Persist global keys + per-profile model/folder (targeting the active profile),
-  // set the install-level onboarded flag ONCE, then enter the app.
+  // Persist global keys + the assistant model (targeting the active/first profile),
+  // set the install-level onboarded flag ONCE, then enter the app. Per-profile
+  // folders + focuses were already saved on the Set up pages.
   async function finish() {
     busy = true
     try {
@@ -130,10 +165,9 @@
       }
       const m = MODELS.find((x) => x.label === modelLabel)
       if (m) { try { await api.setLlm(m.provider, m.model) } catch {} }
-      if (folder) { try { await api.setProjectFolder(folder) } catch {} }
       try { await api.setOnboarded() } catch {} // install-level flag (§4.2/§5.5)
     } finally {
-      $profile = { name: name.trim(), focuses }
+      $profile = { name: name.trim() }
       $onboardingOpen = false
       busy = false
       // Fresh install: hand the first profile back to App to boot into it.
@@ -248,28 +282,34 @@
               </div>
             {/if}
 
-          {:else if step === 3}
-            <h2>Give the assistant your project</h2>
-            <p class="lead">Pick a folder it can <b>read</b> — your code repo, notes, anything you'll ask about. Read-only: it can browse and search, never write or delete. Applies to <b>{created[0]?.name || 'your profile'}</b>; you can set folders per profile in Settings.</p>
-            <FolderPicker roots={fsRoots} start={fsRoots.cwd} bind:selected={folder} />
-
-          {:else if step === 4}
-            <h2>{name.trim() ? `Make it yours, ${name.trim()}` : 'Make it yours'}</h2>
-            <p class="lead">A couple of touches so the assistant feels like home.</p>
-            <div class="onb-field">
-              <div class="onb-flabel"><span>What can I help with?</span><span class="hint">pick any that fit</span></div>
-              <div class="onb-pills">
-                {#each FOCUS as f}
-                  <button class="onb-pill" class:on={focuses.includes(f.id)} onclick={() => toggleFocus(f.id)}>
-                    <Icon name={f.icon} size={14} /> {f.label}
-                  </button>
-                {/each}
+          {:else if step === SETUP_STEP}
+            {#if setupProfile}
+              <div class="onb-setuphead">
+                <span class="onb-setupdot" style="--dot:{paletteHex(setupProfile.palette)}"></span>
+                <h2>Set up {setupProfile.name}</h2>
+                {#if created.length > 1}<span class="onb-setupprog">{setupIdx + 1} of {created.length}</span>{/if}
               </div>
-            </div>
-            <div class="onb-field">
-              <div class="onb-flabel"><span>Appearance</span></div>
-              <Appearance />
-            </div>
+              <p class="lead">Give this profile a project folder and tell it what you'll use it for. Both are optional — you can change them anytime in Settings.</p>
+
+              <div class="onb-field">
+                <div class="onb-flabel"><span>Project folder</span><span class="hint">read-only — it can browse & search, never write</span></div>
+                <FolderPicker roots={fsRoots} start={folder || fsRoots.cwd} bind:selected={folder} />
+              </div>
+
+              <div class="onb-field">
+                <div class="onb-flabel"><span>What can I help with?</span><span class="hint">pick any that fit</span></div>
+                <div class="onb-pills">
+                  {#each FOCUS as f}
+                    <button class="onb-pill" class:on={focuses.includes(f.id)} onclick={() => toggleFocus(f.id)}>
+                      <Icon name={f.icon} size={14} /> {f.label}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <h2>Set up your profiles</h2>
+              <p class="lead">No profiles to set up. Go back and create one first.</p>
+            {/if}
 
           {:else}
             <div class="onb-readyhead">
@@ -280,10 +320,26 @@
               </div>
             </div>
             <div class="onb-summary">
-              <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="users" size={16} /></span><span class="onb-sumkey">Profiles</span><span class="onb-sumval">{created.map((p) => p.name).join(', ') || 'none'}</span></div>
               <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">Model</span><span class="onb-sumval">{modelLabel}</span></div>
-              {#if folder}<div class="onb-sumrow"><span class="onb-sumicon"><Icon name="folder" size={16} /></span><span class="onb-sumkey">Folder</span><span class="onb-sumval">{folder}</span></div>{/if}
-              <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="sparkles" size={16} /></span><span class="onb-sumkey">Focus</span><span class="onb-sumval cap">{focuses.length ? focuses.join(', ') : 'Anything you need'}</span></div>
+            </div>
+            <!-- Per-profile summary: name, palette dot, folder-or-—, focuses-or-—. -->
+            <div class="onb-summary">
+              {#each created as p (p.id)}
+                {@const c = chosen[p.id] || {}}
+                <div class="onb-profrow">
+                  <span class="onb-profdot" style="--dot:{paletteHex(p.palette)}"></span>
+                  <span class="onb-profname">{p.name}</span>
+                  <span class="onb-profmeta">
+                    <span class="onb-profmetaitem"><Icon name="folder" size={13} /> {c.folder || '—'}</span>
+                    <span class="onb-profmetaitem cap"><Icon name="sparkles" size={13} /> {c.focuses?.length ? c.focuses.map(focusLabel).join(', ') : '—'}</span>
+                  </span>
+                </div>
+              {/each}
+            </div>
+            <!-- Theme is GLOBAL (shared by every profile), so it lives here, not per-profile. -->
+            <div class="onb-field">
+              <div class="onb-flabel"><span>Appearance</span><span class="hint">shared across all profiles</span></div>
+              <Appearance />
             </div>
             <div class="onb-tip">
               <Icon name="zap" size={14} /><span>Every action runs on the AG2 Stream — toggle <b>AG2 view</b> anytime to watch it live.</span>
@@ -299,8 +355,13 @@
         <div class="onb-navright">
           {#if step === 1 && !hasKey}<span class="hint">Add a key to continue</span>{/if}
           {#if step === 2 && !created.length}<span class="hint">Create a profile to continue</span>{/if}
-          {#if step === 3 && !folder}<span class="hint">Choose a folder to continue</span>{/if}
-          {#if step < STEPS.length - 1}
+          {#if step === SETUP_STEP}
+            <!-- Per-profile setup: Skip (no save) or advance (save + next profile / Ready). -->
+            <button class="onb-btn ghost" disabled={busy} onclick={() => commitSetup(true)}>Skip</button>
+            <button class="onb-btn primary" disabled={busy || !setupProfile} onclick={() => commitSetup(false)}>
+              {setupIdx < created.length - 1 ? 'Next profile' : 'Continue'} <Icon name="chevron-right" size={16} />
+            </button>
+          {:else if step < STEPS.length - 1}
             <button class="onb-btn primary" disabled={!canNext} onclick={next}>Continue <Icon name="chevron-right" size={16} /></button>
           {:else}
             <button class="onb-btn primary" disabled={busy} onclick={finish}>Start using AG2 Assistant <Icon name="send" size={15} /></button>
@@ -434,6 +495,25 @@
   .onb-sumkey { width: 64px; flex: none; font-size: var(--text-sm); color: var(--text-muted); }
   .onb-sumval { flex: 1; font-size: var(--text-sm); color: var(--text); }
   .onb-sumval.cap { text-transform: capitalize; }
+
+  /* Per-profile setup header + the per-profile Ready summary rows */
+  .onb-setuphead { display: flex; align-items: center; gap: 10px; }
+  .onb-setupdot { width: 12px; height: 12px; flex: none; border-radius: var(--radius-pill); background: var(--dot, var(--accent)); }
+  .onb-setupprog {
+    margin-left: auto; font-size: var(--text-xs); font-weight: var(--fw-semibold);
+    color: var(--text-muted); background: var(--surface-sunk);
+    border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 10px;
+  }
+  .onb-profrow { display: flex; align-items: flex-start; gap: 10px; }
+  .onb-profdot { width: 10px; height: 10px; margin-top: 4px; flex: none; border-radius: var(--radius-pill); background: var(--dot, var(--accent)); }
+  .onb-profname { width: 96px; flex: none; font-size: var(--text-sm); font-weight: var(--fw-semibold); }
+  .onb-profmeta { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .onb-profmetaitem {
+    display: flex; align-items: center; gap: 6px; font-size: var(--text-sm);
+    color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .onb-profmetaitem.cap { text-transform: capitalize; }
+  .onb-profmetaitem :global(svg) { color: var(--accent); flex: none; }
   .onb-tip { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--text-muted); }
   .onb-tip b { color: var(--text); }
 

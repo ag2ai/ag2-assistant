@@ -286,6 +286,51 @@ def test_project_folder_endpoint_seeds_readonly_repo_files(tmp_path, monkeypatch
         assert bad.status_code == 400
 
 
+def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
+    """POST settings/focuses persists the (normalised) focuses, surfaces them in GET
+    settings, and reference-swap reloads the runtime so the context line takes effect."""
+    from fastapi.testclient import TestClient
+
+    from assistant.gateway.app import create_app
+    from assistant.gateway.profile_manager import ProfileManager
+    from assistant.profiles import create_profile, profile_dir
+
+    use_fake_agent(monkeypatch)
+    meta = create_profile("Work", "teal")
+    profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    manager = ProfileManager(memory=False, persist=False)
+    app = create_app(manager)
+    with TestClient(app) as client:
+        pid = meta.id
+        assert client.get(api(pid, "/settings")).json()["focuses"] == []
+
+        reloaded: list[str] = []
+        orig = manager.reload
+
+        async def spy(p):
+            reloaded.append(p)
+            return await orig(p)
+
+        monkeypatch.setattr(manager, "reload", spy)
+
+        # client sends lowercase slugs; junk is dropped, order kept
+        resp = client.post(
+            api(pid, "/settings/focuses"),
+            json={"focuses": ["Coding", "research", "not a slug!"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "focuses": ["coding", "research"]}
+        assert reloaded == [pid]  # context change → runtime reloaded
+
+        assert client.get(api(pid, "/settings")).json()["focuses"] == ["coding", "research"]
+
+        # clearing persists too
+        assert (
+            client.post(api(pid, "/settings/focuses"), json={"focuses": []}).json()["focuses"] == []
+        )
+        assert client.get(api(pid, "/settings")).json()["focuses"] == []
+
+
 def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
