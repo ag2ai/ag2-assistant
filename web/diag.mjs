@@ -52,7 +52,13 @@ global.fetch = async (url) => {
   } else if (path.includes('/tasks')) {
     body = { tasks: [] }
   } else if (path.includes('/usage')) {
-    body = { total: 0, date: '2026-07-06', by_model: {} }
+    // Global roll-up shape: {profiles:[{pid,name,...usage_today()}], total}.
+    body = {
+      profiles: [
+        { pid: 'diagprof', name: 'Diag', date: '2026-07-06', prompt: 0, completion: 0, total: 0, cost: 0, priced: false, by_model: {} },
+      ],
+      total: { prompt: 0, completion: 0, total: 0, cost: 0, priced: false },
+    }
   } else if (path.includes('/inquiries') || path.includes('/hitl')) {
     body = { pending: [] }
   }

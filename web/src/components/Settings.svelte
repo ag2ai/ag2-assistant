@@ -170,7 +170,7 @@
       <div class="setsec">AG2</div>
       <button class="setrow" onclick={openPoweredBy}>
         <span class="sk"><Icon name="zap" size={15} /> Powered by AG2</span>
-        <span class="sv">the AG2 Beta primitives behind this app</span>
+        <span class="sv">the AG2 primitives behind this app</span>
         <span class="sgo">View →</span>
       </button>
       <label class="setcheck">

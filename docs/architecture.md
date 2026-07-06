@@ -11,7 +11,7 @@ flow, and on-disk state. Companion diagram: [`architecture.svg`](architecture.sv
 
 ## 1. Overview
 
-AG2 Assistant is a personal AI-assistant platform built on **AG2 Beta**
+AG2 Assistant is a personal AI-assistant platform built on **AG2**
 (`ag2`). The backend is Python (FastAPI); the primary client is a Svelte
 web app served by the gateway. The same backend also speaks to messaging channels
 (Telegram/Discord/Slack), a realtime voice client, and a CLI — all sharing **one

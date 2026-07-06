@@ -40,6 +40,10 @@ export const api = {
   archiveProfile: (pid, newDefault) =>
     j('DELETE', G('/profiles/' + encodeURIComponent(pid)), newDefault ? { new_default: newDefault } : {}),
   status: () => j('GET', G('/status')),
+  // Install-wide token/cost roll-up across all profiles: {profiles:[{pid,name,...}],
+  // total}. The HUD derives the active profile's numbers from `profiles` and appends
+  // the `total` only when more than one profile exists (one request, not two).
+  usageAll: () => j('GET', G('/usage')),
   setKey: (provider, value) => j('POST', G('/secrets/key'), { provider, value }),
   setOnboarded: (value = true) => j('POST', G('/onboarded'), { value }),
   listDirs: (path = '') => j('GET', G('/fs/list?path=' + encodeURIComponent(path))),

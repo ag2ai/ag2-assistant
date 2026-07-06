@@ -77,7 +77,7 @@ def _subagent_archetype(caps: list[str]) -> tuple[str, str]:
 
 
 async def _run_visible_subagent(config, task, caps, prompt: str, skills: bool, asker, manager):
-    """Run a named AG2 Beta subagent and forward its lifecycle events."""
+    """Run a named AG2 subagent and forward its lifecycle events."""
     from ag2.context import ConversationContext
     from ag2.stream import MemoryStream
     from ag2.tools.subagents.run_task import run_task

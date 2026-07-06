@@ -34,7 +34,7 @@ class LLMConfig(BaseModel):
     provider: str = "gemini"  # gemini | anthropic | openai
     model: str = "gemini-3.5-flash"
     api_key_env: str = "GEMINI_API_KEY"
-    # AG2 Beta emits ModelMessageChunk events only when provider configs opt into
+    # AG2 emits ModelMessageChunk events only when provider configs opt into
     # streaming. The web/task UI is built to consume those chunks live.
     streaming: bool = True
     # Optional cheaper model for the passive memory-aggregation pass. None → reuse

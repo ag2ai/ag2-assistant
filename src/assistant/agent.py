@@ -1,4 +1,4 @@
-"""AG2 Assistant agent built on AG2 Beta."""
+"""AG2 Assistant agent built on AG2."""
 
 import os
 from datetime import datetime

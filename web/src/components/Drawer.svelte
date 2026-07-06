@@ -60,7 +60,9 @@
     location.assign('/app/' + res.profile.id + '/')
   }
 
-  let usage = $state(null)   // today's token/cost totals for the activity HUD
+  let usageAll = $state(null) // install-wide roll-up {profiles:[{pid,name,...}], total}
+  // The active profile's own totals, derived from the roll-up (one request, not two).
+  const usage = $derived((usageAll?.profiles || []).find((p) => p.pid === $profiles.activeId) || null)
   let statusById = $state({}) // pid -> {busy, running_tasks} from GET /api/status
   // A chip's activity dot: true when that profile has tasks running right now.
   const isBusy = (pid) => (statusById[pid]?.running_tasks || 0) > 0
@@ -73,7 +75,9 @@
       $sessions = [...$sessions.filter((s) => !ids.has(s.session_id)), ...server]
     } catch {}
     try { $tasks = await api.tasksAll('all') } catch {}
-    try { usage = await api.usage() } catch {}
+    // One global roll-up serves both the active profile's line and the install-wide
+    // "all" total; the per-profile /usage route stays for API users.
+    try { usageAll = await api.usageAll() } catch {}
     // Piggyback per-profile activity on the same 5s cycle (§5.4 activity badges).
     // /api/status is global (all profiles) — index it by pid for the chips.
     try {
@@ -84,18 +88,37 @@
 
   const fmtTok = (n) =>
     !n ? '0' : n < 1000 ? String(Math.round(n)) : `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
-  // Cost is an estimate (~) and only shown when the model(s) used had known pricing.
+  // "12.3k tok · ~$0.0456" for a usage-shaped {total, cost, priced}. Cost is an
+  // estimate (~) and only shown when the contributing model(s) had known pricing.
+  const fmtUsage = (u) => {
+    const tok = `${fmtTok(u.total)} tok`
+    return u.priced ? `${tok} · ~$${u.cost.toFixed(u.cost < 1 ? 3 : 2)}` : tok
+  }
+  // >1 profile → the install-wide roll-up is meaningful; a single profile's "all"
+  // would just repeat its own line, so it's suppressed.
+  const multiProfile = $derived((usageAll?.profiles || []).length > 1)
   const usageLabel = $derived.by(() => {
     if (!usage || !usage.total) return ''
-    const tok = `${fmtTok(usage.total)} tok`
-    return usage.priced ? `${tok} · ~$${usage.cost.toFixed(usage.cost < 1 ? 3 : 2)}` : tok
+    let label = fmtUsage(usage)
+    // Append the install-wide total only when more than one profile exists.
+    if (multiProfile && usageAll?.total?.total) label += ` · all: ${fmtUsage(usageAll.total)}`
+    return label
   })
   const usageTitle = $derived.by(() => {
     if (!usage) return ''
     const models = Object.keys(usage.by_model || {}).join(', ')
-    return `Today (${usage.date}): ${fmtTok(usage.prompt)} in / ${fmtTok(usage.completion)} out`
+    let title = `Today (${usage.date}): ${fmtTok(usage.prompt)} in / ${fmtTok(usage.completion)} out`
       + (usage.priced ? ` · ~$${(usage.cost || 0).toFixed(4)} (estimate)` : ' · cost: no price set')
       + (models ? `\nmodels: ${models}` : '')
+    // Per-profile breakdown line ("Work: … · Personal: …") when more than one exists.
+    if (multiProfile) {
+      const breakdown = (usageAll.profiles || [])
+        .filter((p) => p.total)
+        .map((p) => `${p.name}: ${fmtUsage(p)}`)
+        .join(' · ')
+      if (breakdown) title += `\nall profiles — ${breakdown}`
+    }
+    return title
   })
   onMount(() => {
     refresh()

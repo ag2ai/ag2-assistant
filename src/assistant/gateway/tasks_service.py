@@ -153,7 +153,7 @@ class TaskService:
             )
 
     async def _emit_task_event(self, task_id: str, event) -> None:
-        """Forward raw AG2 Beta subagent events onto the durable task stream."""
+        """Forward raw AG2 subagent events onto the durable task stream."""
         if self._emit is None:
             return
         try:

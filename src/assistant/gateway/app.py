@@ -11,6 +11,7 @@ Route map:
   Global (unprefixed):
     GET  /api/health                         -> process status (first running runtime)
     GET  /api/status                         -> [{pid, busy, running_tasks}] activity badges
+    GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
     POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
     POST /api/onboarded                      -> set the install-level onboarding flag
     GET  /api/profiles                       -> {profiles, active_default, onboarded} (§3.5 contract)
@@ -377,6 +378,37 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if runtime is None or runtime.gateway is None:
             return {"status": "ok", "profiles": 0}
         return runtime.gateway.status()
+
+    @app.get("/api/usage")
+    async def usage() -> dict:
+        """Install-wide token/cost roll-up across ALL running profiles (for the HUD's
+        "all profiles" total). ``profiles`` is one ``usage_today()`` snapshot per
+        running runtime (with its ``pid``/``name``); ``total`` sums the numeric fields.
+
+        ``total.priced`` is true only when EVERY contributing profile is priced — an
+        unpriced profile means its tokens carry no cost, so the summed ``cost`` is an
+        underestimate and the flag says so (matching the per-profile flag semantics and
+        the HUD's "no price set" fallback). Archived profiles aren't running, so they're
+        naturally excluded. Zero profiles → empty list + a zeroed total.
+        """
+        rows = []
+        total = {"prompt": 0.0, "completion": 0.0, "total": 0.0, "cost": 0.0}
+        all_priced = True
+        any_profile = False
+        for runtime in manager.runtimes():
+            if runtime.gateway is None:
+                continue
+            any_profile = True
+            today = runtime.gateway.usage_today()
+            rows.append({"pid": runtime.pid, "name": runtime.meta.name, **today})
+            for k in total:
+                total[k] += today.get(k) or 0
+            if not today.get("priced"):
+                all_priced = False
+        # Zero profiles (or none priced) → not priced. With profiles present, priced iff
+        # every one is priced (an unpriced profile makes the summed cost incomplete).
+        total["priced"] = bool(any_profile and all_priced)
+        return {"profiles": rows, "total": total}
 
     @app.get("/api/status")
     async def status() -> list[dict]:

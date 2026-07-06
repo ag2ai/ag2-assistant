@@ -28,7 +28,7 @@
 
   const STEPS = ['Welcome', 'Connect', 'Profiles', 'Project', 'Personalize', 'Ready']
   const FEATURES = [
-    { icon: 'zap', title: 'Powered by AG2 Beta', desc: 'A universal agent runtime — the open-source framework behind every reply.' },
+    { icon: 'zap', title: 'Powered by AG2', desc: 'A universal agent runtime — the open-source framework behind every reply.' },
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
     { icon: 'brain', title: 'Remembers what matters', desc: 'Builds a private memory of your preferences so it gets more helpful over time.' },
   ]
