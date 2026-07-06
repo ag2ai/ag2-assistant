@@ -56,6 +56,81 @@ async def test_executor_exception_fails_task(tmp_path):
     assert got.status == TaskStatus.FAILED and "boom" in got.error
 
 
+async def test_crashed_attempt_then_success_completes(tmp_path):
+    """A crashed attempt consumes ONE attempt (not task death); the loop retries
+    and a later clean run that produces the deliverable completes the task."""
+    store = _store(tmp_path)
+    t = await store.create("write note")
+    d = await store.add_deliverable(t.id, "note.md")
+    attempts = 0
+
+    async def executor(task_id, mgr, asker):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient boom")  # first attempt crashes
+        await store.set_deliverable_status(task_id, d["id"], DeliverableStatus.PRODUCED)
+
+    mgr = TaskManager(store, executor)
+    await mgr.submit(t.id)
+    await mgr.wait(t.id)
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.COMPLETED
+    assert attempts == 2  # crash burned attempt 1; attempt 2 succeeded
+
+
+async def test_all_attempts_crash_fails_with_crash_message(tmp_path):
+    """When every attempt crashes, the task ends FAILED with a crash-flavoured
+    message (distinct from a verification-rejection 'not met'), naming the last
+    crash — and only after MAX_ATTEMPTS tries."""
+    store = _store(tmp_path)
+    t = await store.create("write note")
+    await store.add_deliverable(t.id, "note.md")
+    attempts = 0
+
+    async def executor(task_id, mgr, asker):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError(f"boom {attempts}")
+
+    mgr = TaskManager(store, executor)
+    await mgr.submit(t.id)
+    await mgr.wait(t.id)
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.FAILED
+    assert attempts == TaskManager.MAX_ATTEMPTS
+    assert "crashed" in got.error  # crash flavour, not "deliverables not met"
+    assert "boom 3" in got.error  # the LAST crash is named
+    # crash note reached the pending deliverable so the next attempt's prompt saw it
+    assert any("crashed" in (dl.get("notes") or "") for dl in got.deliverables)
+
+
+async def test_mixed_rejection_and_crash_consumes_attempts(tmp_path):
+    """A rejection (clean run, deliverable left pending) and a crash each consume
+    one attempt; exhausting them fails the task. A final clean-but-rejecting run
+    yields the plain 'not met' message (last attempt didn't crash)."""
+    store = _store(tmp_path)
+    t = await store.create("write note")
+    await store.add_deliverable(t.id, "note.md")
+    attempts = 0
+
+    async def executor(task_id, mgr, asker):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise RuntimeError("boom mid")  # a crash in the middle
+        return  # clean run that leaves the deliverable pending (a rejection)
+
+    mgr = TaskManager(store, executor)
+    await mgr.submit(t.id)
+    await mgr.wait(t.id)
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.FAILED
+    assert attempts == TaskManager.MAX_ATTEMPTS  # both flavours consumed attempts
+    # last attempt (3) ran clean without producing → verification-rejection message
+    assert "deliverables not met" in got.error
+
+
 async def test_manager_forwards_raw_ag2_events(tmp_path):
     from ag2.events import TaskStarted
 
