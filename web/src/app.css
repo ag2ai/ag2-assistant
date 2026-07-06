@@ -22,7 +22,10 @@
 }
 #app { height: 100vh; }
 
-.app { display: grid; grid-template-columns: 270px 1fr; height: 100vh; }
+/* minmax(0,1fr) pins the single row to the viewport height: without it the row
+   auto-sizes to the tallest column (a long chat), the whole document scrolls,
+   and the drawer buttons / composer / modals drift out of position. */
+.app { display: grid; grid-template-columns: 270px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; }
 .drawer { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 .main { display: flex; flex-direction: column; min-width: 0; }
 

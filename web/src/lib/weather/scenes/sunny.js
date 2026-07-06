@@ -1,13 +1,13 @@
 // Sunny banner scene. Ported from the standalone prototype to the engine
 // contract: build(ctx) -> { scene, camera, frame, render, dispose }. Steady preset.
-// The plasma surface, aura and temperature glyphs are TSL node shaders (MaterialX
+// The plasma surface and temperature glyphs are TSL node shaders (MaterialX
 // fractal noise for the boil), particles ride PointsNodeMaterial, and a real WebGPU
 // bloom post-process pass gives genuine emissive glow.
 
 import * as THREE from 'three/webgpu'
 import {
-  uniform, time, positionLocal, positionWorld, normalView,
-  vec3, float, mix, smoothstep, max, attribute,
+  uniform, time, positionLocal, normalView,
+  vec3, float, mix, smoothstep, max,
   mx_fractal_noise_float, pass,
 } from 'three/tsl'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
@@ -35,7 +35,7 @@ export async function build(ctx) {
   scene.add(root)
 
   const temperatureGroup = new THREE.Group()
-  temperatureGroup.position.set(2.62, -0.32, 0.18)
+  temperatureGroup.position.set(-2.62, -0.32, 0.18) // temperature reads on the LEFT; sun rides right
   scene.add(temperatureGroup)
 
   // ---------------------------------------------------------------- sun surface (TSL plasma)
@@ -47,9 +47,11 @@ export async function build(ctx) {
   const sunHeat = smoothstep(0.26, 1.0, cell.mul(0.72).add(boil.mul(0.62)).add(edge.mul(0.38)))
   const flame = cell.mul(0.55).add(boil.mul(0.45)) // 0..1 turbulent mask, animated
 
-  let sunColor = mix(vec3(1.0, 0.22, 0.02), vec3(1.0, 0.62, 0.09), smoothstep(0.15, 0.68, sunHeat))
-  sunColor = mix(sunColor, vec3(1.0, 0.82, 0.42), smoothstep(0.72, 1.08, boil)) // dimmer, less white-hot core
-  sunColor = sunColor.add(edge.mul(vec3(1.0, 0.42, 0.07)).mul(uIntensity.mul(0.32).add(0.5)))
+  // warm golden-yellow plasma (was red→orange); keep a little amber in the shadows
+  // for depth but the ball should read yellow, not fiery
+  let sunColor = mix(vec3(1.0, 0.52, 0.08), vec3(1.0, 0.78, 0.16), smoothstep(0.15, 0.68, sunHeat))
+  sunColor = mix(sunColor, vec3(1.0, 0.9, 0.46), smoothstep(0.72, 1.08, boil)) // bright yellow core
+  sunColor = sunColor.add(edge.mul(vec3(1.0, 0.66, 0.14)).mul(uIntensity.mul(0.32).add(0.5)))
   sunColor = sunColor.mul(uIntensity.mul(0.16).add(0.82)) // overall brightness down
 
   const sunMaterial = new THREE.MeshBasicNodeMaterial()
@@ -62,22 +64,6 @@ export async function build(ctx) {
   const sun = new THREE.Mesh(new THREE.SphereGeometry(1.18, 96, 64), sunMaterial)
   root.add(sun)
 
-  // ---------------------------------------------------------------- aura shell (backside rim glow)
-  const auraWave = positionWorld.y.mul(7.0).add(time.mul(2.2)).sin().mul(0.5).add(0.5)
-    .mul(positionWorld.x.mul(5.0).sub(time.mul(1.4)).sin().mul(0.5).add(0.5))
-  const auraRim = normalView.z.abs().oneMinus().pow(1.45)
-
-  const auraMaterial = new THREE.MeshBasicNodeMaterial()
-  auraMaterial.transparent = true
-  auraMaterial.depthWrite = false
-  auraMaterial.side = THREE.BackSide
-  auraMaterial.blending = THREE.AdditiveBlending
-  auraMaterial.colorNode = mix(vec3(1.0, 0.28, 0.02), vec3(1.0, 0.92, 0.42), auraWave)
-  auraMaterial.opacityNode = auraRim.mul(auraWave.mul(0.22).add(0.18)).mul(uIntensity)
-  const aura = new THREE.Mesh(new THREE.SphereGeometry(1.64, 96, 64), auraMaterial)
-  root.add(aura)
-
-  // ---------------------------------------------------------------- particle layers
   // soft round falloff from the point sprite coord, scaled by a per-layer opacity uniform
   function makePointsMaterial(opacity, colorNode) {
     const m = new THREE.PointsNodeMaterial()
@@ -92,35 +78,6 @@ export async function build(ctx) {
     m.userData.opacity = o
     return m
   }
-
-  function makeParticleLayer(count, radiusMin, radiusMax, colorA, colorB, size, opacity, upwardBias) {
-    const geometry = new THREE.BufferGeometry()
-    const positions = new Float32Array(count * 3)
-    const colors = new Float32Array(count * 3)
-    const seeds = []
-    for (let i = 0; i < count; i += 1) {
-      const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5 + upwardBias, Math.random() - 0.5).normalize()
-      const radius = radiusMin + Math.random() * (radiusMax - radiusMin)
-      positions[i * 3] = dir.x * radius
-      positions[i * 3 + 1] = dir.y * radius
-      positions[i * 3 + 2] = dir.z * radius
-      const color = colorA.clone().lerp(colorB, Math.random())
-      colors[i * 3] = color.r
-      colors[i * 3 + 1] = color.g
-      colors[i * 3 + 2] = color.b
-      seeds.push({ dir, baseRadius: radius, phase: Math.random() * Math.PI * 2, speed: 0.35 + Math.random() * 1.2, curl: Math.random() * Math.PI * 2 })
-    }
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-    const material = makePointsMaterial(opacity, attribute('color', 'vec3'))
-    material.size = size
-    material.sizeAttenuation = true
-    const points = new THREE.Points(geometry, material)
-    return { geometry, material, points, seeds }
-  }
-
-  const corona = makeParticleLayer(460, 1.18, 1.95, new THREE.Color(0xff4b08), new THREE.Color(0xfff0a8), 0.11, 0.6, 0.08)
-  root.add(corona.points)
 
   // rising heat shimmer
   const heatGeometry = new THREE.BufferGeometry()
@@ -158,16 +115,18 @@ export async function build(ctx) {
   const temperatureMaterial = new THREE.MeshBasicNodeMaterial()
   temperatureMaterial.colorNode = tColor
 
+  // unit-size glyphs, left edge at x=0 and vertically centred; frame() scales the
+  // group so the number is exactly half the panel height regardless of aspect
   const geometry = new TextGeometry(tempText, {
-    font, size: 0.82, depth: 0.12, curveSegments: 16,
+    font, size: 1, depth: 0.14, curveSegments: 16,
     bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.018, bevelSegments: 5,
   })
   geometry.computeBoundingBox()
-  const box = geometry.boundingBox
-  geometry.translate(-(box.max.x - box.min.x) / 2, -(box.max.y - box.min.y) / 2, 0)
+  const bb = geometry.boundingBox
+  geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
+  const glyphH = bb.max.y - bb.min.y // measured for exact half-panel scaling
+  const glyphW = bb.max.x - bb.min.x // measured for centring in the free left region
   const text = new THREE.Mesh(geometry, temperatureMaterial)
-  text.rotation.y = -0.18
-  text.rotation.x = 0.03
   temperatureGroup.add(text)
 
   // ---------------------------------------------------------------- interaction (steady preset baked)
@@ -182,30 +141,11 @@ export async function build(ctx) {
   const bloomPass = bloom(scenePassColor, 0.62, 0.55, 0.32) // strength, radius, threshold
   postProcessing.outputNode = scenePassColor.add(bloomPass)
 
-  function animateLayer(layer, t, turbulence, buoyancy) {
-    const p = layer.geometry.attributes.position.array
-    layer.seeds.forEach((seed, i) => {
-      const curl = seed.curl + t * seed.speed
-      const pulse = Math.sin(t * (1.7 + seed.speed) + seed.phase) * 0.13
-      const radius = seed.baseRadius * (1 + pulse * intensity)
-      const tx = Math.sin(curl * 1.7 + seed.phase) * turbulence
-      const ty = Math.cos(curl * 1.3) * turbulence + buoyancy * Math.sin(t * seed.speed + seed.phase)
-      const tz = Math.sin(curl * 1.1 - seed.phase) * turbulence * 0.55
-      p[i * 3] = seed.dir.x * radius + tx
-      p[i * 3 + 1] = seed.dir.y * radius + ty
-      p[i * 3 + 2] = seed.dir.z * radius + tz
-    })
-    layer.geometry.attributes.position.needsUpdate = true
-  }
-
   function frame(t) {
     intensity += (targetIntensity - intensity) * 0.035
     const stormPulse = mode === 'storm' ? 0.28 * Math.sin(t * 5.8) + 0.18 * Math.sin(t * 9.6) : 0
     const live = Math.max(0.72, intensity + stormPulse)
     uIntensity.value = live
-
-    animateLayer(corona, t, 0.16 * live, 0.08 * live)
-    corona.material.userData.opacity.value = 0.38 + live * 0.17
 
     const hp = heatGeometry.attributes.position.array
     heatSeeds.forEach((seed, i) => {
@@ -217,21 +157,40 @@ export async function build(ctx) {
     heatGeometry.attributes.position.needsUpdate = true
     heatMaterial.userData.opacity.value = 0.06 + live * 0.055
 
-    // movement: sun sway + spin, counter-spinning aura, temperature bob
-    root.rotation.y = Math.sin(t * 0.24) * 0.32
-    root.rotation.z = Math.sin(t * 0.18) * 0.055
-    root.position.x = Math.sin(t * 0.31) * 0.12
-    root.position.y = -0.08 + Math.sin(t * 0.5) * 0.06 // gentle rise/fall
-    sun.rotation.y = t * 0.16
-    aura.rotation.y = -t * 0.12
-    temperatureGroup.position.y = -0.32 + Math.sin(t * 0.85) * 0.05
-    temperatureGroup.position.x = 2.62 + Math.sin(t * 0.4) * 0.06
-    temperatureGroup.rotation.y = Math.sin(t * 0.22) * 0.08
+    // camera first (sun + temperature are pinned to it, so they stay frame-steady
+    // while the drift gives the background a little parallax life)
+    camera.position.x = Math.sin(t * 0.13) * 0.12
+    camera.position.y = 0.15 + Math.sin(t * 0.17) * 0.05
+    camera.lookAt(camera.position.x, -0.05, 0)
 
-    // ambient camera drift so the whole scene has parallax life
-    camera.position.x = Math.sin(t * 0.13) * 0.28
-    camera.position.y = 0.15 + Math.sin(t * 0.17) * 0.12
-    camera.lookAt(0, -0.05, 0)
+    // framing, computed from the live camera so the crop holds at any panel aspect.
+    // camera.zoom is read here (not at build) because the engine applies its zoom
+    // knob after build() returns.
+    const k = Math.tan((camera.fov * Math.PI) / 360) / camera.zoom
+    const halfH0 = k * camera.position.z // view half-height at the sun's plane (z=0)
+    const halfW0 = halfH0 * camera.aspect
+
+    // sun: a huge plasma disc pinned past the top-right corner — the frame crops it
+    const SUN_SCALE = 5.2
+    const sunR = 1.18 * SUN_SCALE
+    root.scale.setScalar(SUN_SCALE)
+    root.position.x = camera.position.x + halfW0 * 0.98
+    root.position.y = halfH0 * 1.15 + Math.sin(t * 0.5) * 0.08 // slow bob = its "small movement"
+    root.rotation.y = Math.sin(t * 0.24) * 0.1
+    root.rotation.z = Math.sin(t * 0.18) * 0.03
+    sun.rotation.y = t * 0.16
+
+    // temperature: vertically centred, half the panel height, and horizontally
+    // centred in the free region between the left frame edge and the sun's
+    // visible left boundary (its disc edge at mid-height)
+    const halfHT = k * (camera.position.z - temperatureGroup.position.z)
+    const scaleT = halfHT / glyphH
+    const dy = root.position.y + 0.05 // sun centre vs the view's vertical centre
+    const sunLeft = root.position.x - Math.sqrt(Math.max(sunR * sunR - dy * dy, 0))
+    const leftEdge = camera.position.x - halfHT * camera.aspect
+    temperatureGroup.scale.setScalar(scaleT)
+    temperatureGroup.position.x = (leftEdge + sunLeft) / 2 - (glyphW * scaleT) / 2
+    temperatureGroup.position.y = -0.05 // the camera's lookAt height = vertical centre
   }
 
   const render = () => postProcessing.render()

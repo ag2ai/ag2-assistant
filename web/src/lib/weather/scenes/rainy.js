@@ -22,7 +22,9 @@ export async function build(ctx) {
   const RAIN_FRAC = 0.78
   const RAIN_SPEED = 1.0
   const RAIN_OPACITY = 0.46
-  const WIND = 0.12
+  // negative = falls toward the LEFT, matching the streaks' lean (the lean below
+  // tilts them top-right → bottom-left, slope 0.16 per unit of fall)
+  const WIND = -0.16
   const DROP_RATE = 1.4
 
   const uRainFrac = uniform(RAIN_FRAC)
@@ -55,7 +57,9 @@ export async function build(ctx) {
   rainMat.transparent = true
   rainMat.depthWrite = false
   const idf = float(instanceIndex)
-  const rx = hash11(idf.add(0.5)).sub(0.5).mul(10.4)
+  // rain occupies the right side only (x > 0) and extends past the frame so the
+  // panel crops it — the left stays clear for the temperature
+  const rx = hash11(idf.add(0.5)).mul(10.3).add(0.3)
   const rz = hash11(idf.add(1.7)).sub(0.5).mul(3.2).add(0.6)
   const speed = hash11(idf.add(2.3)).mul(3.0).add(6.0)
   const phase = hash11(idf.add(3.9)).mul(100.0)
@@ -96,7 +100,7 @@ export async function build(ctx) {
 
   // wet temperature
   const temperatureGroup = new THREE.Group()
-  temperatureGroup.position.set(2.2, 0.1, 1.1)
+  temperatureGroup.position.set(-2.2, 0.1, 1.1) // temperature reads on the LEFT
   scene.add(temperatureGroup)
 
   const tFace = max(normalView.z, 0.0)
@@ -105,47 +109,46 @@ export async function build(ctx) {
   const drops = rippleField(q, 2.8, 1.2, 0.1, uDropRate.mul(1.6), float(300.0)).mul(step(0.25, tFace))
   const rivulet = mx_fractal_noise_float(vec3(q.x.mul(9.0), q.y.mul(1.1).add(time.mul(0.55)), 0.0), 3).mul(0.5).add(0.5)
   const rivStreak = smoothstep(0.6, 0.95, rivulet).mul(tFace).mul(0.5)
-  let tColor = vec3(0.24, 0.28, 0.34)
-  tColor = mix(tColor, vec3(0.72, 0.82, 0.94), tFres)
+  // light glyph so it reads against the dark rain sky; fresnel rim + drops sparkle
+  let tColor = vec3(0.78, 0.85, 0.94)
+  tColor = mix(tColor, vec3(0.95, 0.98, 1.0), tFres)
   tColor = tColor.add(drops.mul(vec3(1.0, 1.06, 1.15)).mul(1.6))
   tColor = tColor.add(rivStreak.mul(vec3(0.4, 0.48, 0.58)))
   const temperatureMaterial = new THREE.MeshBasicNodeMaterial()
   temperatureMaterial.colorNode = tColor
 
+  // unit-size glyphs, left edge at x=0 and vertically centred; frame() scales the
+  // group so the number is exactly half the panel height. Face-on, no skew.
   const geometry = new TextGeometry(tempText, {
-    font, size: 1.0, depth: 0.2, curveSegments: 14,
-    bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.024, bevelSegments: 4,
+    font, size: 1, depth: 0.14, curveSegments: 14,
+    bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.018, bevelSegments: 4,
   })
   geometry.computeBoundingBox()
-  const box = geometry.boundingBox
-  geometry.translate(-(box.max.x - box.min.x) / 2, -(box.max.y - box.min.y) / 2, 0)
+  const bb = geometry.boundingBox
+  geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
+  const glyphH = bb.max.y - bb.min.y
+  const glyphW = bb.max.x - bb.min.x
   const text = new THREE.Mesh(geometry, temperatureMaterial)
-  text.rotation.y = -0.14
-  text.rotation.x = 0.04
   temperatureGroup.add(text)
 
-  // puddle
-  const puddle = new THREE.Mesh(new THREE.PlaneGeometry(20, 9), new THREE.MeshBasicNodeMaterial())
-  puddle.rotation.x = -Math.PI / 2
-  puddle.position.set(0, -1.7, 0.5)
-  puddle.material.transparent = true
-  puddle.material.depthWrite = false
-  {
-    const pq = positionLocal.xy.mul(0.32)
-    const rings = rippleField(pq, 6.0, 3.0, 0.0, uDropRate.mul(2.2), float(650.0)).mul(1.4)
-    const depthFade = smoothstep(-4.0, 2.0, positionLocal.y)
-    const base = mix(uSkyBottom, uSkyTop, depthFade).mul(0.4)
-    puddle.material.colorNode = base.add(rings.mul(vec3(0.6, 0.68, 0.8)))
-    puddle.material.opacityNode = depthFade.mul(0.85).add(0.1)
-  }
-  scene.add(puddle)
-
   function frame(t) {
-    temperatureGroup.position.y = 0.1 + Math.sin(t * 0.7) * 0.03
-    temperatureGroup.rotation.y = Math.sin(t * 0.2) * 0.05
-    camera.position.x = Math.sin(t * 0.07) * 0.22
-    camera.position.y = 0.1 + Math.sin(t * 0.1) * 0.05
-    camera.lookAt(0, -0.1, 0)
+    // the rain keeps falling (in-shader); gentle camera drift for a little life.
+    // lookAt tracks camera.x so the drift is a pure translation.
+    camera.position.x = Math.sin(t * 0.07) * 0.14
+    camera.position.y = 0.1 + Math.sin(t * 0.1) * 0.04
+    camera.lookAt(camera.position.x, -0.1, 0)
+
+    // temperature: vertically centred, half the panel height, and horizontally
+    // centred in the dry region between the left frame edge and where the rain
+    // begins (x≈0.3). Pinned to the camera so it stays steady; camera.zoom read
+    // at frame time — the engine applies its zoom knob after build() returns.
+    const k = Math.tan((camera.fov * Math.PI) / 360) / camera.zoom
+    const halfHT = k * (camera.position.z - temperatureGroup.position.z)
+    const scaleT = halfHT / glyphH
+    const leftEdge = camera.position.x - halfHT * camera.aspect
+    temperatureGroup.scale.setScalar(scaleT)
+    temperatureGroup.position.x = (leftEdge + 0.3) / 2 - (glyphW * scaleT) / 2
+    temperatureGroup.position.y = -0.1
   }
 
   return { scene, camera, frame }

@@ -28,7 +28,8 @@ export async function build(ctx) {
   const RAIN_FRAC = 0.85
   const RAIN_SPEED = 1.35
   const RAIN_OPACITY = 0.55
-  const WIND = 0.12
+  // negative = falls toward the LEFT, matching the streaks' lean below
+  const WIND = -0.16
   const DROP_RATE = 2.2
   let strikeMin = 2.4
   let strikeRange = 3.0
@@ -69,7 +70,9 @@ export async function build(ctx) {
   {
     const cuv = uv()
     const n = mx_fractal_noise_float(vec3(cuv.x.mul(4.2).add(time.mul(0.04)), cuv.y.mul(2.6), time.mul(0.02)), 5).mul(0.5).add(0.5)
-    const dens = smoothstep(0.34, 0.86, n).mul(smoothstep(0.0, 0.42, cuv.y))
+    // storm mass rides the right of the panel — density thins toward the left so
+    // the temperature region stays clear
+    const dens = smoothstep(0.34, 0.86, n).mul(smoothstep(0.0, 0.42, cuv.y)).mul(smoothstep(0.28, 0.55, cuv.x))
     const dark = mix(vec3(0.04, 0.05, 0.07), vec3(0.13, 0.14, 0.17), n)
     ceil.material.colorNode = dark.add(uFlash.mul(vec3(0.55, 0.6, 0.78))) // lit from within by lightning
     ceil.material.opacityNode = dens.mul(0.97)
@@ -86,7 +89,9 @@ export async function build(ctx) {
   rainMat.depthWrite = false
 
   const idf = float(instanceIndex)
-  const rx = hash11(idf.add(0.5)).sub(0.5).mul(10.4)
+  // rain occupies the right side only (x > 0) and extends past the frame so the
+  // panel crops it — the left stays clear for the temperature
+  const rx = hash11(idf.add(0.5)).mul(10.3).add(0.3)
   const rz = hash11(idf.add(1.7)).sub(0.5).mul(3.2).add(0.6)
   const speed = hash11(idf.add(2.3)).mul(3.0).add(7.0)
   const phase = hash11(idf.add(3.9)).mul(100.0)
@@ -144,33 +149,19 @@ export async function build(ctx) {
   const temperatureMaterial = new THREE.MeshBasicNodeMaterial()
   temperatureMaterial.colorNode = tColor
 
+  // unit-size glyphs, left edge at x=0 and vertically centred; frame() scales the
+  // group so the number is exactly half the panel height. Face-on, no skew.
   const geometry = new TextGeometry(tempText, {
-    font, size: 1.0, depth: 0.2, curveSegments: 16,
-    bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.024, bevelSegments: 5,
+    font, size: 1, depth: 0.14, curveSegments: 16,
+    bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.018, bevelSegments: 5,
   })
   geometry.computeBoundingBox()
-  const box = geometry.boundingBox
-  geometry.translate(-(box.max.x - box.min.x) / 2, -(box.max.y - box.min.y) / 2, 0)
+  const bb = geometry.boundingBox
+  geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
+  const glyphH = bb.max.y - bb.min.y
+  const glyphW = bb.max.x - bb.min.x
   const text = new THREE.Mesh(geometry, temperatureMaterial)
-  text.rotation.y = -0.14
-  text.rotation.x = 0.04
   temperatureGroup.add(text)
-
-  // puddle
-  const puddle = new THREE.Mesh(new THREE.PlaneGeometry(20, 9), new THREE.MeshBasicNodeMaterial())
-  puddle.rotation.x = -Math.PI / 2
-  puddle.position.set(0, -1.7, 0.5)
-  puddle.material.transparent = true
-  puddle.material.depthWrite = false
-  {
-    const pq = positionLocal.xy.mul(0.32)
-    const rings = rippleField(pq, 6.0, 3.0, 0.0, uDropRate.mul(2.2), float(650.0)).mul(1.4)
-    const depthFade = smoothstep(-4.0, 2.0, positionLocal.y)
-    const base = mix(uSkyBottom, uSkyTop, depthFade).mul(0.4)
-    puddle.material.colorNode = base.add(rings.mul(vec3(0.6, 0.68, 0.8))).add(uFlash.mul(vec3(0.45, 0.5, 0.65)))
-    puddle.material.opacityNode = depthFade.mul(0.85).add(0.1)
-  }
-  scene.add(puddle)
 
   // lightning bolt
   const boltMat = new THREE.MeshBasicNodeMaterial()
@@ -197,7 +188,8 @@ export async function build(ctx) {
   }
 
   function regenBolt() {
-    const mainPts = jaggedPath(-3 + Math.random() * 6, 3.5, 8, 4.0, 0.95)
+    // strikes come down on the right side, under the storm mass
+    const mainPts = jaggedPath(1.2 + Math.random() * 4.5, 3.5, 8, 4.0, 0.95)
     const geos = [new THREE.TubeGeometry(new THREE.CatmullRomCurve3(mainPts), 50, 0.034, 6, false)]
     // a fork branching off a mid vertex
     const bp = mainPts[3 + Math.floor(Math.random() * 3)]
@@ -239,11 +231,21 @@ export async function build(ctx) {
     uFlash.value = Math.min(1, flash * flashScale)
     uBolt.value = Math.min(1, Math.max(spike(age, 0, 22), 0.55 * spike(age, 0.05, 26)))
 
-    temperatureGroup.position.y = 0.1 + Math.sin(t * 0.7) * 0.03
-    temperatureGroup.rotation.y = Math.sin(t * 0.2) * 0.05
-    camera.position.x = Math.sin(t * 0.07) * 0.2
-    camera.position.y = 0.1 + Math.sin(t * 0.1) * 0.05
-    camera.lookAt(0, -0.1, 0)
+    // gentle camera drift; lookAt tracks camera.x so the drift is pure translation
+    camera.position.x = Math.sin(t * 0.07) * 0.14
+    camera.position.y = 0.1 + Math.sin(t * 0.1) * 0.04
+    camera.lookAt(camera.position.x, -0.1, 0)
+
+    // temperature: vertically centred, half the panel height, steady, centred in
+    // the dry region left of the rain (x≈0.3). camera.zoom read at frame time —
+    // the engine applies its zoom knob after build() returns.
+    const k = Math.tan((camera.fov * Math.PI) / 360) / camera.zoom
+    const halfHT = k * (camera.position.z - temperatureGroup.position.z)
+    const scaleT = halfHT / glyphH
+    const leftEdge = camera.position.x - halfHT * camera.aspect
+    temperatureGroup.scale.setScalar(scaleT)
+    temperatureGroup.position.x = (leftEdge + 0.3) / 2 - (glyphW * scaleT) / 2
+    temperatureGroup.position.y = -0.1
   }
 
   const render = () => postProcessing.render()

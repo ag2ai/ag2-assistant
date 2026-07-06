@@ -31,7 +31,9 @@ export async function build(ctx) {
   const TEXT_SHADOW = 0x6e7880
 
   // ---------------------------------------------------------------- uniforms
-  const uCoverage = uniform(COVERAGE)     // higher = less cloud (erosion threshold)
+  // higher = less cloud (erosion threshold); jittered per build so some clouds
+  // come out denser, some wispier
+  const uCoverage = uniform(COVERAGE + (Math.random() - 0.5) * 0.08)
   const uSunDir = uniform(new THREE.Vector3(-0.6, 0.55, 0.4).normalize())
   const uLight = uniform(new THREE.Color(LIGHT))
   const uShadow = uniform(new THREE.Color(SHADOW))
@@ -51,7 +53,7 @@ export async function build(ctx) {
   camera.position.set(0, 0.24, 8.6)
 
   const temperatureGroup = new THREE.Group()
-  temperatureGroup.position.set(2.88, -0.28, 1.35) // in front of the cloud volume so it reads cleanly
+  temperatureGroup.position.set(-2.88, -0.28, 1.35) // LEFT of the cloud volume; cloud rides right
   scene.add(temperatureGroup)
 
   // ---------------------------------------------------------------- sky gradient
@@ -66,14 +68,24 @@ export async function build(ctx) {
   scene.add(sky)
 
   // ---------------------------------------------------------------- cloud volume (raymarch)
+  // Big volume: taller than the view (crops top/bottom) and long enough that the
+  // right lobe is decisively cropped by the frame. The cloud stays at world x=0
+  // (its position is baked into the shader); frame() pans the CAMERA left instead,
+  // which slides the cloud to the right edge at any panel aspect.
   const BOX_CENTER = new THREE.Vector3(0, 0.05, -0.4)
-  const BOX_HALF = new THREE.Vector3(3.4, 1.55, 1.5)
+  const BOX_HALF = new THREE.Vector3(5.6, 2.6, 1.6)
   const bmin = vec3(BOX_CENTER.x - BOX_HALF.x, BOX_CENTER.y - BOX_HALF.y, BOX_CENTER.z - BOX_HALF.z)
   const bmax = vec3(BOX_CENTER.x + BOX_HALF.x, BOX_CENTER.y + BOX_HALF.y, BOX_CENTER.z + BOX_HALF.z)
 
+  // Random per-build seed: offsets the noise domain so every mount of the panel
+  // carves a different cloud. The ellipsoid envelope below still guarantees the
+  // composition (fat middle, full height, cropped right lobe) — only the billow
+  // placement varies.
+  const seed = vec3(Math.random() * 200 - 100, Math.random() * 200 - 100, Math.random() * 200 - 100)
+
   // density at a world point: fbm shaped into a horizontal cloud layer, wind-drifted
   const densityAt = Fn(([p]) => {
-    const wind = vec3(time.mul(0.05), time.mul(0.01), time.mul(-0.02))
+    const wind = vec3(time.mul(0.05), time.mul(0.01), time.mul(-0.02)).add(seed)
     // broad continuous mass + rounded billowy erosion → full but still puffy
     const base = mx_fractal_noise_float(p.mul(0.42).add(wind), 4).mul(0.5).add(0.5) // 0..1 broad shape
     const detail = mx_fractal_noise_float(p.mul(1.25).add(wind.mul(1.7)), 5).abs()  // billow detail
@@ -150,45 +162,51 @@ export async function build(ctx) {
   scene.add(cloudVolume)
 
   // ---------------------------------------------------------------- temperature text
-  // solid bright number with subtle facing shading for 3D form — kept constant
-  // (not preset-tinted) so it reads against bright cumulus and dark storm alike
+  // dark slate number with a subtle facing lift for 3D form — reads cleanly against
+  // the pale sky/cloud without needing an outline
   const tFace = max(normalView.z, 0.0)
   const temperatureMaterial = new THREE.MeshBasicNodeMaterial()
-  temperatureMaterial.colorNode = mix(vec3(0.78, 0.82, 0.86), vec3(1.0, 1.0, 1.0), tFace)
+  temperatureMaterial.colorNode = mix(vec3(0.14, 0.18, 0.24), vec3(0.26, 0.32, 0.4), tFace)
 
+  // unit-size glyphs, left edge at x=0 and vertically centred; frame() scales the
+  // group so the number is exactly half the panel height. No outline, no skew —
+  // the dark glyph reads on its own against the pale sky.
   const geometry = new TextGeometry(tempText, {
-    font, size: 0.92, depth: 0.16, curveSegments: 16,
-    bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.02, bevelSegments: 5,
+    font, size: 1, depth: 0.14, curveSegments: 16,
+    bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.018, bevelSegments: 5,
   })
   geometry.computeBoundingBox()
-  const box = geometry.boundingBox
-  geometry.translate(-(box.max.x - box.min.x) / 2, -(box.max.y - box.min.y) / 2, 0)
-
-  // dark inverted-hull outline behind the glyphs so the number pops on any cloud
-  const outlineMaterial = new THREE.MeshBasicNodeMaterial()
-  outlineMaterial.colorNode = vec3(0.12, 0.14, 0.16)
-  outlineMaterial.side = THREE.BackSide
-  const outline = new THREE.Mesh(geometry, outlineMaterial)
-  outline.rotation.set(0.03, -0.16, 0)
-  outline.scale.setScalar(1.09)
-  outline.position.z = -0.04
-  outline.renderOrder = 999
-  temperatureGroup.add(outline)
-
+  const bb = geometry.boundingBox
+  geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
+  const glyphH = bb.max.y - bb.min.y
+  const glyphW = bb.max.x - bb.min.x
   const text = new THREE.Mesh(geometry, temperatureMaterial)
-  text.rotation.y = -0.16
-  text.rotation.x = 0.03
   text.renderOrder = 1000
   temperatureGroup.add(text)
 
   function frame(t) {
-    temperatureGroup.position.y = -0.3 + Math.sin(t * 0.72) * 0.03
-    temperatureGroup.position.x = 2.88 + Math.sin(t * 0.4) * 0.05
-    temperatureGroup.rotation.y = -0.0 + Math.sin(t * 0.18) * 0.05
-    // gentle camera drift for parallax through the volume
-    camera.position.x = Math.sin(t * 0.08) * 0.3
-    camera.position.y = 0.24 + Math.sin(t * 0.11) * 0.06
-    camera.lookAt(0, 0.0, -0.4)
+    // camera.zoom is read here (not at build) because the engine applies its zoom
+    // knob after build() returns.
+    const k = Math.tan((camera.fov * Math.PI) / 360) / camera.zoom
+
+    // pan the camera so the cloud (world x=0) rides the right edge and is cropped
+    // by the frame; a tiny sway is the cloud's "small movement" (plus in-shader wind)
+    const halfWc = k * (camera.position.z - BOX_CENTER.z) * camera.aspect
+    const cx = 2.4 - halfWc + Math.sin(t * 0.08) * 0.15
+    camera.position.x = cx
+    camera.position.y = 0.24 + Math.sin(t * 0.11) * 0.05
+    camera.lookAt(cx, 0.0, BOX_CENTER.z)
+
+    // temperature: vertically centred, half the panel height, and horizontally
+    // centred in the free region between the left frame edge and the cloud's
+    // visible left extent (the ellipsoid envelope fades before its ±halfx tips)
+    const halfHT = k * (camera.position.z - temperatureGroup.position.z)
+    const scaleT = halfHT / glyphH
+    const cloudLeft = -BOX_HALF.x * 0.85
+    const leftEdge = cx - halfHT * camera.aspect
+    temperatureGroup.scale.setScalar(scaleT)
+    temperatureGroup.position.x = (leftEdge + cloudLeft) / 2 - (glyphW * scaleT) / 2
+    temperatureGroup.position.y = 0
   }
 
   return { scene, camera, frame }

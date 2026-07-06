@@ -5,8 +5,8 @@
 //   2. blur the scene pass (downsampled gaussian)
 //   3. composite mix(sharp, blurred, densityFogFactor(viewZ))
 // The blur of bright haze bleeding around dark silhouettes *is* the scattering;
-// pixels deeper in the fog get the blurred version. The temperature number
-// rides forward/back on Z, so it naturally dissolves into the haze as it recedes.
+// pixels deeper in the fog get the blurred version. The temperature is a dark
+// silhouette in the left clearing, softly hazed by the same pass at its depth.
 
 import * as THREE from 'three/webgpu'
 import { densityFogFactor, mix, pass, reference, uniform, vec2 } from 'three/tsl'
@@ -19,8 +19,6 @@ const FOG_COLOR = 0xc6cace // bright cool haze; background matches so trunks rea
 // shallow preset (the default the prototype starts with), baked in
 const FOG_DENSITY = 0.085
 const SCATTERING = 1.6
-const TEXT_TRAVEL = 1.4
-const TEXT_BASE = -1.2
 
 export async function build(ctx) {
   const { renderer, font, temperatureText } = ctx
@@ -74,8 +72,9 @@ export async function build(ctx) {
     for (let j = 0; j < rows; j += 1) {
       const x = (i - cols / 2) * spacing + (Math.random() - 0.5) * spacing * 0.7
       const z = j * spacing - rows * spacing + 2.4 + (Math.random() - 0.5) * spacing * 0.7
-      // carve a clearing for the temperature number
-      if (x > 0.6 && x < 5.2 && z > -4.5 && z < 1.5) continue
+      // carve a clearing on the LEFT for the temperature number; the forest
+      // masses to the right and gets cropped by the frame
+      if (x < -0.5 && z > -5.5) continue
       const v = Math.floor(Math.random() * variants.length)
       dummy.position.set(x, 0, z)
       const scale = 0.85 + Math.random() * 0.4
@@ -94,8 +93,8 @@ export async function build(ctx) {
     scene.add(mesh)
   })
 
-  // a couple of dominant near trunks to anchor depth on the left
-  ;[[-1.4, 3.6, 1.2, 1.1], [-3.2, 1.8, 1.0, 0.3]].forEach(([x, z, s, ry]) => {
+  // a couple of dominant near trunks to anchor depth on the right
+  ;[[1.8, 3.6, 1.2, 1.1], [3.6, 1.8, 1.0, 0.3]].forEach(([x, z, s, ry]) => {
     const hero = new THREE.Mesh(variants[variants.length - 1], material)
     hero.position.set(x, 0, z)
     hero.rotation.y = ry
@@ -106,41 +105,26 @@ export async function build(ctx) {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600).rotateX(-Math.PI / 2), material)
   scene.add(ground)
 
-  // --- temperature number through the haze ---
+  // --- temperature number in the haze ---
+  // A dark silhouette like the pines — it belongs to the scene's own language and
+  // needs no outline against the pale fog. Slightly fogged/blurred by the
+  // scattering pass at its depth, which reads as atmosphere. Unit-size glyphs,
+  // left edge at x=0 and vertically centred; frame() scales to half panel height.
   const textGroup = new THREE.Group()
-  textGroup.position.set(2.7, 1.55, 0)
+  textGroup.position.set(-4.5, 1.57, 2.0)
 
   const geometry = new TextGeometry(tempText, {
-    font,
-    size: 1.15,
-    depth: 0.22,
-    curveSegments: 14,
-    bevelEnabled: true,
-    bevelThickness: 0.03,
-    bevelSize: 0.022,
-    bevelSegments: 4,
+    font, size: 1, depth: 0.14, curveSegments: 14,
+    bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.018, bevelSegments: 4,
   })
   geometry.computeBoundingBox()
-  const box = geometry.boundingBox
-  geometry.translate(-(box.max.x - box.min.x) / 2, -(box.max.y - box.min.y) / 2, 0)
+  const bb = geometry.boundingBox
+  geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
+  const glyphH = bb.max.y - bb.min.y
+  const glyphW = bb.max.x - bb.min.x
 
-  // black inverted-hull outline: a slightly larger copy drawn back-faces-only,
-  // sitting just behind the white glyphs so only a dark rim shows — gives the
-  // number a crisp edge against the pale fog
-  const outlineMaterial = new THREE.MeshBasicNodeMaterial({ color: 0x0a0d0e, side: THREE.BackSide })
-  const outline = new THREE.Mesh(geometry, outlineMaterial)
-  outline.rotation.y = -0.12
-  outline.scale.setScalar(1.07)
-  outline.position.z = -0.03
-  outline.renderOrder = 0
-  textGroup.add(outline)
-
-  // bright, unlit number — the scattering pass blurs + fogs it into the haze
-  // automatically as it travels back in Z
-  const textMaterial = new THREE.MeshBasicNodeMaterial({ color: 0xf4f7f7 })
+  const textMaterial = new THREE.MeshBasicNodeMaterial({ color: 0x111416 })
   const text = new THREE.Mesh(geometry, textMaterial)
-  text.rotation.y = -0.12
-  text.renderOrder = 1
   textGroup.add(text)
 
   scene.add(textGroup)
@@ -161,20 +145,23 @@ export async function build(ctx) {
   renderPipeline.outputNode = mix(scenePassColor, sceneColorBlurred, fogFactor)
 
   function frame(t) {
-    // float forward/back through the fog: near + clear -> deep + dissolved, on a
-    // slow eased cycle, with a gentle lateral + vertical drift so it truly "floats"
-    const cycle = Math.sin(t * 0.45) * 0.5 + 0.5 // 0..1, eased
-    textGroup.position.z = TEXT_BASE + cycle * TEXT_TRAVEL
-    textGroup.position.x = 2.7 + Math.sin(t * 0.33) * 0.18
-    textGroup.position.y = 1.55 + Math.sin(t * 0.6) * 0.12
-    textGroup.rotation.y = -0.12 + Math.sin(t * 0.22) * 0.06
-    textGroup.rotation.x = Math.sin(t * 0.27) * 0.03
+    // slow lateral pan so the pines drift through the haze; lookAt tracks
+    // camera.x (pure translation) and z stays fixed so the steady temperature
+    // doesn't breathe with a dolly
+    camera.position.x = 0.4 + Math.sin(t * 0.08) * 0.4
+    camera.position.y = 1.62 + Math.sin(t * 0.11) * 0.05
+    camera.lookAt(camera.position.x - 0.1, 1.5, -6)
 
-    // slow lateral pan + breathing dolly so the pines drift through the haze
-    camera.position.x = 0.4 + Math.sin(t * 0.08) * 0.55
-    camera.position.y = 1.62 + Math.sin(t * 0.11) * 0.07
-    camera.position.z = 8 + Math.sin(t * 0.05) * 0.7
-    camera.lookAt(0.3 + Math.sin(t * 0.06) * 0.2, 1.5, -6)
+    // temperature: vertically centred on the view, half the panel height, steady,
+    // centred in the clearing between the left frame edge and the forest (x≈-0.5).
+    // camera.zoom read at frame time — the engine applies its zoom after build().
+    const k = Math.tan((camera.fov * Math.PI) / 360) / camera.zoom
+    const halfHT = k * (camera.position.z - textGroup.position.z)
+    const scaleT = halfHT / glyphH
+    const leftEdge = camera.position.x - halfHT * camera.aspect
+    textGroup.scale.setScalar(scaleT)
+    textGroup.position.x = (leftEdge - 0.5) / 2 - (glyphW * scaleT) / 2
+    textGroup.position.y = 1.57 // the view centre height at the glyph's depth
   }
 
   const render = () => renderPipeline.render()

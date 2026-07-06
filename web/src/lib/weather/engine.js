@@ -53,6 +53,14 @@ export async function createBanner(canvas, condition, opts = {}) {
   const camera = built.camera
   const renderFrame = built.render || (() => renderer.render(built.scene, camera))
 
+  // Composition knob: telephoto magnification about the view centre (crops the
+  // scene edges). Scenes read camera.zoom in their frame() to compute framing.
+  const zoom = Number(opts.zoom) || 1
+  if (zoom !== 1 && camera.isPerspectiveCamera) {
+    camera.zoom *= zoom
+    camera.updateProjectionMatrix()
+  }
+
   let disposed = false
   function fit() {
     const w = Math.max(1, Math.round(canvas.clientWidth || canvas.width || 1))

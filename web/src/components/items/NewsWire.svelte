@@ -141,6 +141,9 @@
   .lead h2 a { color: inherit; text-decoration: none; }
   .lead h2 a:hover { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
   .deck { margin: 10px 0 0; max-width: 48ch; font-size: 13.5px; line-height: 1.5; color: var(--ink-2); }
+  /* No figure → single column, so let the deck fill the full width like the
+     headline and why-it-matters instead of stopping at the readability cap. */
+  .lead.nofig .deck { max-width: none; }
   .why { margin-top: 12px; padding-left: 12px; border-left: 2px solid var(--accent); font-size: 12.5px; line-height: 1.5; color: var(--ink); }
   .why b { font-family: var(--code); font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--accent-d); display: block; margin-bottom: 2px; }
   .byline { margin-top: 13px; font-family: var(--code); font-size: 10.5px; color: var(--ink-3); letter-spacing: .02em; }

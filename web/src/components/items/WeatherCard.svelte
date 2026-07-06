@@ -44,7 +44,7 @@
 
   <div class="hero">
     {#key condition}
-      <WeatherBanner {condition} temperatureText={tempText} flush />
+      <WeatherBanner {condition} temperatureText={tempText} zoom={1.3} flush />
     {/key}
   </div>
 
@@ -72,7 +72,20 @@
 <style>
   /* Shell (container, masthead, footer) is shared in broadsheet.css (.bs/.bs-*).
      Only weather-specific body styles live here. */
-  .hero { position: relative; border-top: 1.5px solid var(--ink); border-bottom: 1px solid var(--rule); z-index: 1; }
+  /* Bold pill: temperature (in-scene) reads left, the zoomed weather glyph rides
+     right, cropped by the rounded border — echoes the reference weather chips. */
+  .hero {
+    position: relative;
+    aspect-ratio: 16 / 5;
+    max-height: 220px;
+    /* aspect-ratio + max-height can transfer a narrower width to the box; auto
+       inline margins keep the pill horizontally centred when that happens */
+    margin: 4px auto 14px;
+    border: 2.5px solid var(--ink);
+    border-radius: 16px;
+    overflow: hidden;
+    z-index: 1;
+  }
   .deck { margin: 0 0 14px; max-width: 60ch; font-size: 13.5px; line-height: 1.5; color: var(--ink-2); }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); border-top: 1.5px solid var(--ink); border-left: 1px solid var(--rule); }

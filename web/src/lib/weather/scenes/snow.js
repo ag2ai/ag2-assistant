@@ -60,7 +60,9 @@ export async function build(ctx) {
   snowMat.depthWrite = false
 
   const idf = float(instanceIndex)
-  const fx = hash11(idf.add(0.5)).sub(0.5).mul(11.0)
+  // snow occupies the right side only (x > 0) and extends past the frame so the
+  // panel crops it — the left stays clear for the temperature
+  const fx = hash11(idf.add(0.5)).mul(10.5).add(0.3)
   const fz = hash11(idf.add(1.7)).sub(0.5).mul(3.4).add(0.4)
   const size = hash11(idf.add(2.1)).pow(2.0).mul(0.08).add(0.024) // mostly small, a few large (depth)
   const speed = hash11(idf.add(2.3)).mul(0.35).add(0.4)            // slow, varied descent
@@ -102,37 +104,19 @@ export async function build(ctx) {
   const temperatureMaterial = new THREE.MeshBasicNodeMaterial()
   temperatureMaterial.colorNode = tColor
 
+  // unit-size glyphs, left edge at x=0 and vertically centred; frame() scales the
+  // group so the number is exactly half the panel height. Face-on, no skew.
   const geometry = new TextGeometry(tempText, {
-    font, size: 1.0, depth: 0.2, curveSegments: 16,
-    bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.028, bevelSegments: 5,
+    font, size: 1, depth: 0.14, curveSegments: 16,
+    bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.018, bevelSegments: 5,
   })
   geometry.computeBoundingBox()
-  const box = geometry.boundingBox
-  geometry.translate(-(box.max.x - box.min.x) / 2, -(box.max.y - box.min.y) / 2, 0)
+  const bb = geometry.boundingBox
+  geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
+  const glyphH = bb.max.y - bb.min.y
+  const glyphW = bb.max.x - bb.min.x
   const text = new THREE.Mesh(geometry, temperatureMaterial)
-  text.rotation.y = -0.14
-  text.rotation.x = 0.03
   temperatureGroup.add(text)
-
-  // snow drift (ground)
-  const drift = new THREE.Mesh(new THREE.PlaneGeometry(20, 9), new THREE.MeshBasicNodeMaterial())
-  drift.rotation.x = -Math.PI / 2
-  drift.position.set(0, -1.65, 0.5)
-  drift.material.transparent = true
-  drift.material.depthWrite = false
-  {
-    const pq = positionLocal.xy
-    const bump = mx_fractal_noise_float(vec3(pq.x.mul(0.5), pq.y.mul(0.5), 0.0), 3).mul(0.5).add(0.5)
-    const depthFade = smoothstep(-4.5, 1.5, positionLocal.y)
-    // faint twinkle: a sparse grid of cells that flash on staggered cycles
-    const cell = pq.mul(7.0).floor()
-    const tw = hash11(cell.x.add(cell.y.mul(31.7)).add(time.mul(2.0).floor()))
-    const sparkle = step(0.992, tw).mul(0.6)
-    const base = mix(vec3(0.80, 0.85, 0.9), vec3(0.97, 0.99, 1.0), bump)
-    drift.material.colorNode = base.add(sparkle)
-    drift.material.opacityNode = depthFade.mul(0.95)
-  }
-  scene.add(drift)
 
   let startT = null
 
@@ -140,11 +124,24 @@ export async function build(ctx) {
     if (startT === null) startT = t
     // snow builds up on the number, then holds
     uSnowAccum.value = Math.min(1, Math.max(0, (t - startT) / buildSeconds))
-    temperatureGroup.position.y = -0.05 + Math.sin(t * 0.6) * 0.025
-    temperatureGroup.rotation.y = Math.sin(t * 0.18) * 0.05
-    camera.position.x = Math.sin(t * 0.06) * 0.2
-    camera.position.y = 0.1 + Math.sin(t * 0.09) * 0.05
-    camera.lookAt(0, -0.05, 0)
+
+    // gentle camera drift for a little life; lookAt tracks camera.x so the drift
+    // is a pure translation
+    camera.position.x = Math.sin(t * 0.06) * 0.14
+    camera.position.y = 0.1 + Math.sin(t * 0.09) * 0.04
+    camera.lookAt(camera.position.x, -0.05, 0)
+
+    // temperature: vertically centred, half the panel height, and horizontally
+    // centred in the clear region between the left frame edge and where the
+    // snowfall begins (x≈0.3). Pinned to the camera so it stays steady;
+    // camera.zoom read at frame time — the engine applies its zoom after build().
+    const k = Math.tan((camera.fov * Math.PI) / 360) / camera.zoom
+    const halfHT = k * (camera.position.z - temperatureGroup.position.z)
+    const scaleT = halfHT / glyphH
+    const leftEdge = camera.position.x - halfHT * camera.aspect
+    temperatureGroup.scale.setScalar(scaleT)
+    temperatureGroup.position.x = (leftEdge + 0.3) / 2 - (glyphW * scaleT) / 2
+    temperatureGroup.position.y = -0.05
   }
 
   return { scene, camera, frame }

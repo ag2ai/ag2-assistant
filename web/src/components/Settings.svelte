@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations } from '../store.js'
   import { api } from '../transport/api.js'
   import { getActiveProfileId } from '../lib/profile.js'
   import { chime } from '../lib/chime.js'
@@ -10,6 +10,13 @@
   import Channels from './Channels.svelte'
   import FolderPicker from './FolderPicker.svelte'
   import { FOCUS } from '../lib/focuses.js'
+
+  // App-wide animation tiers (per-device; see store.animations)
+  const FX_MODES = [
+    { id: 'off', label: 'Off', hint: 'static content' },
+    { id: 'basic', label: 'Basic', hint: 'light animation' },
+    { id: 'high', label: 'High', hint: 'full 3D scenes' },
+  ]
 
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
   // API-key rows. github is a stored token (skills registry), NOT a model provider,
@@ -102,6 +109,15 @@
     <div class="setscroll">
       <div class="setsec">Appearance</div>
       <Appearance />
+      <div class="setsec">Animations</div>
+      <div class="focuspills">
+        {#each FX_MODES as m}
+          <button class="focuspill" class:on={$animations === m.id} onclick={() => ($animations = m.id)}>
+            {m.label} <span style="opacity:.6;font-weight:400">· {m.hint}</span>
+          </button>
+        {/each}
+      </div>
+      <p class="muted" style="font-size:12px;margin:2px 0 0">How animated content (weather panels and more) renders on this device — High drives the GPU; Basic and Off are easy on it.</p>
       <button class="setrow" onclick={reRunSetup}>
         <span class="sk"><Icon name="sparkles" size={15} /> Re-run setup</span>
         <span class="sv">replay the first-run welcome & onboarding</span>
