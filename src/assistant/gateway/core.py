@@ -327,7 +327,7 @@ class Gateway:
             self._usage.record(self._config.llm.model, prompt, completion, total or None)
 
     def _watch_a2ui(self, stream):
-        from autogen.beta.a2ui import A2UIMessageEvent
+        from ag2.a2ui import A2UIMessageEvent
 
         collected: list = []
 
@@ -346,7 +346,7 @@ class Gateway:
         _, messages = handle
         if not messages:
             return
-        from autogen.beta.context import ConversationContext
+        from ag2.context import ConversationContext
 
         from assistant.a2ui import durable_surfaces_from_messages
         from assistant.observability import log_suppressed

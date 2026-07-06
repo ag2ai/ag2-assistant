@@ -418,7 +418,7 @@ def runtime():
     so A2UIMessageEvent is emitted on the normal session stream.
     """
 
-    from autogen.beta.a2ui._runtime import _A2UIRuntime
+    from ag2.a2ui._runtime import _A2UIRuntime
 
     return _A2UIRuntime(
         protocol_version="v1.0",

@@ -15,7 +15,7 @@ import json
 from datetime import datetime, timezone
 from urllib.parse import quote as urlquote
 
-from autogen.beta import tool
+from ag2 import tool
 
 _CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=5m"
 _SEARCH = "https://query1.finance.yahoo.com/v1/finance/search?q={q}&quotesCount=1&newsCount=0"

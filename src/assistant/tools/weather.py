@@ -9,7 +9,7 @@ so the agent never has to web-search for weather or guess the banner condition.
 import json
 from urllib.parse import quote
 
-from autogen.beta import tool
+from ag2 import tool
 
 from assistant.a2ui import WEATHER_CONDITIONS
 
