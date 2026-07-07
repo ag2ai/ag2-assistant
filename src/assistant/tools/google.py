@@ -196,7 +196,16 @@ async def calendar_list_events(
     lines = []
     for e in events:
         start = e.get("start", {}).get("dateTime") or e.get("start", {}).get("date", "")
-        lines.append(f"- {start} — {e.get('summary','(no title)')} [{e.get('id','')}]")
+        end = e.get("end", {}).get("dateTime") or e.get("end", {}).get("date", "")
+        all_day = "dateTime" not in e.get("start", {})
+        span = f"{start} (all day)" if all_day else f"{start} → {end}"
+        loc = f" @ {e['location']}" if e.get("location") else ""
+        join = e.get("hangoutLink") or ""
+        join = f" join={join}" if join else ""
+        link = f" link={e['htmlLink']}" if e.get("htmlLink") else ""
+        lines.append(
+            f"- {span} — {e.get('summary', '(no title)')}{loc}{join}{link} [{e.get('id', '')}]"
+        )
     return "Events:\n" + "\n".join(lines)
 
 

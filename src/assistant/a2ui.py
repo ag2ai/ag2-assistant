@@ -281,6 +281,27 @@ def assistant_catalog() -> dict:
             "additionalProperties": False,
         },
     }
+    event_array = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "start": {"type": "string", "description": "e.g. '8:15 AM'. Omit for all-day."},
+                "end": {"type": "string", "description": "e.g. '8:45 AM'."},
+                "location": {"type": "string"},
+                "allDay": {"type": "boolean"},
+                "next": {
+                    "type": "boolean",
+                    "description": "True on the single next upcoming event.",
+                },
+                "url": {"type": "string", "description": "The event's link= URL from the tool."},
+                "joinUrl": {"type": "string", "description": "The join= meeting URL, if any."},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    }
     task_array = {
         "type": "array",
         "items": {
@@ -445,6 +466,20 @@ def assistant_catalog() -> dict:
                 },
                 ["title", "items"],
             ),
+            "AgendaCard": _component_schema(
+                "AgendaCard",
+                "Calendar agenda for one day (gather real events via calendar_list_events first).",
+                {
+                    "title": {"type": "string", "description": "e.g. 'Today'."},
+                    "date": {"type": "string", "description": "Human date, e.g. 'Tue 8 July'."},
+                    "events": event_array,
+                    "note": {
+                        "type": "string",
+                        "description": "One honest line, e.g. 'Free after 3 PM.'",
+                    },
+                },
+                ["title", "events"],
+            ),
             "TaskProgress": _component_schema(
                 "TaskProgress",
                 "Status board for existing scheduled/background tasks (gather real state via list_tasks/get_task first).",
@@ -501,6 +536,7 @@ Intent mapping:
 - Latest news, headlines, or recent developments -> NewsDigest.
 - Stocks, shares, ETFs, funds, indices, crypto, or market prices -> call get_quotes(symbols, title), then render a MarketBoard from the returned quotes (first quote = the lead).
 - Restaurants, cafes, bars, open-now, lunch, dinner -> RestaurantFinder.
+- Calendar, agenda, schedule, "what's on today/tomorrow" -> call calendar_list_events with the day's time window, then AgendaCard (mark the single next upcoming event with next:true).
 - Creating, scheduling, or planning a new task -> TaskPlan.
 - Reviewing existing tasks ("how are my tasks going?", task status/history) -> call list_tasks (and get_task for detail), then TaskProgress.
 - Multi-step operational work -> Checklist.
@@ -525,6 +561,10 @@ summary, and a one-line `why`; later stories just need title/source/published/su
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
 Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
+
+Agenda — user asks "What's on today?" (call calendar_list_events first; times in the user's timezone):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"AgendaCard","title":"Today","date":"Tue 8 July","events":[{"title":"Home","allDay":true},{"title":"Sync on Merlin EKS","start":"8:15 AM","end":"8:45 AM","next":true,"url":"https://www.google.com/calendar/event?eid=...","joinUrl":"https://meet.google.com/abc-defg-hij"},{"title":"1:1 with Sam","start":"2:00 PM","end":"2:30 PM","location":"Meet"}],"note":"Free after 2:30 PM."}]}}
 
 Task status — user asks "How are my tasks going?" (call list_tasks/get_task first, then mirror the real state):
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}

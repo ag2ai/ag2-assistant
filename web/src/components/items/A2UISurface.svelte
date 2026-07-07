@@ -6,6 +6,7 @@
   import MarketBoard from './MarketBoard.svelte'
   import DecisionMatrix from './DecisionMatrix.svelte'
   import TaskProgress from './TaskProgress.svelte'
+  import AgendaCard from './AgendaCard.svelte'
 
   let { item } = $props()
   const data = $derived(item.data || {})
@@ -20,6 +21,7 @@
       : type === 'marketboard' ? 'trending-up'
       : type === 'decisionmatrix' ? 'check'
       : type === 'taskprogress' ? 'clock'
+      : type === 'agendacard' ? 'clock'
       : type === 'restaurantfinder' ? 'search'
       : 'sparkles'
   )
@@ -31,6 +33,7 @@
       : type === 'marketboard' ? 'Markets'
       : type === 'decisionmatrix' ? 'Decision'
       : type === 'taskprogress' ? 'Task status'
+      : type === 'agendacard' ? 'Agenda'
       : type === 'restaurantfinder' ? 'Places'
       : 'A2UI'
   )
@@ -49,7 +52,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'restaurantfinder', 'checklist'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'restaurantfinder', 'checklist'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -68,6 +71,8 @@
   <DecisionMatrix {data} />
 {:else if type === 'taskprogress' && list(data.tasks).length}
   <TaskProgress {data} />
+{:else if type === 'agendacard'}
+  <AgendaCard {data} />
 {:else}
 <div class="a2ui">
   <div class="a2ui-head">

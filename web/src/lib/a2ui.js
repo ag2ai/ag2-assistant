@@ -12,6 +12,7 @@ function itemTitle(kind, data = {}) {
   if (k === 'weatherpanel') return 'Weather view'
   if (k === 'decisionmatrix') return data.topic || 'Decision'
   if (k === 'taskprogress') return data.title || 'Task status'
+  if (k === 'agendacard') return data.title || 'Agenda'
   if (k === 'newsdigest') return 'News digest'
   if (k === 'restaurantfinder') return 'Open places'
   if (k === 'taskplan') return 'Task setup'
