@@ -9,6 +9,7 @@ import pytest
 from ag2.knowledge.log import import_event_class
 
 from assistant.events import (
+    A2UISurface,
     DeliverableProduced,
     InquiryAnswered,
     InquiryRaised,
@@ -31,6 +32,13 @@ _SAMPLES = [
         kind="question",
     ),
     InquiryAnswered("inq-1", answer="Sydney"),
+    A2UISurface(
+        "surface-1",
+        title="Weather",
+        intent="weather",
+        component={"component": "WeatherPanel"},
+        data={"location": "Sydney"},
+    ),
 ]
 
 

@@ -4,6 +4,7 @@
 
 import { cardFor } from './lib/toolcards.js'
 import { fmtDateTime } from './lib/time.js'
+import { applyA2UIMessage } from './lib/a2ui.js'
 
 const tail = (s) => (s || '').split('.').pop()
 let _seq = 0
@@ -137,10 +138,11 @@ export function foldEvent(items, wire) {
       const msg = d.message && d.message.content
       const calls = (d.tool_calls && d.tool_calls.calls) || []
       const cur = items[items.length - 1]
+      const streaming = [...items].reverse().find((it) => it.kind === 'agent' && it.streaming)
       if (msg) {
-        if (cur && cur.kind === 'agent' && cur.streaming) {
-          cur.text = msg
-          cur.streaming = false
+        if (streaming) {
+          streaming.text = msg
+          streaming.streaming = false
         } else {
           items.push({ id: nid(), kind: 'agent', text: msg })
         }
@@ -149,10 +151,10 @@ export function foldEvent(items, wire) {
         // a reply. Render a placeholder so the thread doesn't hang on "…" forever
         // (isBusy needs a finalized agent item to clear). Intermediate tool-calling
         // responses (calls.length > 0) are skipped — the turn isn't over.
-        if (cur && cur.kind === 'agent' && cur.streaming) {
-          cur.text = '_(no reply)_'
-          cur.streaming = false
-          cur.empty = true
+        if (streaming) {
+          streaming.text = '_(no reply)_'
+          streaming.streaming = false
+          streaming.empty = true
         } else {
           items.push({ id: nid(), kind: 'agent', text: '_(no reply)_', empty: true })
         }
@@ -198,6 +200,29 @@ export function foldEvent(items, wire) {
     case 'ImageGenerated':
       items.push({ id: nid(), kind: 'genimage', path: d.path, prompt: d.prompt })
       break
+    case 'A2UISurface':
+      {
+        let item = items.find((i) => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+        if (!item) {
+          item = { id: nid(), kind: 'a2ui' }
+          items.push(item)
+        }
+        Object.assign(item, {
+          version: d.version,
+          catalogId: d.catalog_id,
+          surfaceId: d.surface_id,
+          title: d.title,
+          intent: d.intent,
+          component: d.component || {},
+          components: (d.component && d.component._components) || d.components || [],
+          data: d.data || {},
+        })
+      }
+      break
+    case 'A2UIMessageEvent': {
+      applyA2UIMessage(items, d.message || d)
+      break
+    }
     case 'Attachment':
       items.push({ id: nid(), kind: 'attachment', path: d.path, name: d.name })
       break

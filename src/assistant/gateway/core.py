@@ -250,8 +250,41 @@ class Gateway:
             # nav). The completed-turn write below stays the authority (§_persist_turn).
             await self._ensure_transcript_stub(session_id, text)
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
-            ask_coro = self._agent.ask(*msg, stream=stream, prompt=prompt, **extra)
+            a2ui_runtime = None
+            try:
+                from assistant.a2ui import runtime as a2ui_runtime_factory
+
+                a2ui_runtime = a2ui_runtime_factory()
+                prompt = [
+                    *prompt,
+                    a2ui_runtime.system_prompt_section,
+                    a2ui_runtime.capabilities_prompt(None),
+                ]
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("a2ui runtime setup", exc, session_id=session_id)
+            if a2ui_runtime is not None:
+                from assistant.a2ui import tolerant_a2ui_middleware
+
+                # Append a fallback that recovers surfaces when the model omits the
+                # <a2ui-json> wrapper (fires only when the runtime's own extraction
+                # can't — the two are mutually exclusive per response).
+                middleware = (
+                    *a2ui_runtime.middleware_factories(),
+                    tolerant_a2ui_middleware(a2ui_runtime.parser),
+                )
+            else:
+                middleware = ()
+            ask_coro = self._agent.ask(
+                *msg,
+                stream=stream,
+                prompt=prompt,
+                middleware=middleware,
+                **extra,
+            )
             usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
+            a2ui_handle = self._watch_a2ui(stream)
             try:
                 try:
                     if on_event is None:
@@ -271,9 +304,11 @@ class Gateway:
                         stream=stream,
                     )
                     raise
+                await self._emit_a2ui_surfaces(stream, a2ui_handle)
                 await self._persist_turn(session_id, stream, text, reply.body)
                 return reply.body
             finally:
+                self._unwatch_a2ui(stream, a2ui_handle)
                 self._record_usage(stream, usage_handle)  # always tally, even on error
 
     def _watch_usage(self, stream):
@@ -301,6 +336,38 @@ class Gateway:
         total = sum(u.total_tokens or 0 for u in collected)
         with contextlib.suppress(Exception):
             self._usage.record(self._config.llm.model, prompt, completion, total or None)
+
+    def _watch_a2ui(self, stream):
+        from ag2.a2ui import A2UIMessageEvent
+
+        collected: list = []
+
+        async def collect(event):  # event injected positionally by the stream
+            if isinstance(event, A2UIMessageEvent):
+                collected.append(event.message)
+
+        return stream.subscribe(collect), collected
+
+    def _unwatch_a2ui(self, stream, handle) -> None:
+        sub_id, _ = handle
+        with contextlib.suppress(Exception):
+            stream.unsubscribe(sub_id)
+
+    async def _emit_a2ui_surfaces(self, stream, handle) -> None:
+        _, messages = handle
+        if not messages:
+            return
+        from ag2.context import ConversationContext
+
+        from assistant.a2ui import durable_surfaces_from_messages
+        from assistant.observability import log_suppressed
+
+        context = ConversationContext(stream=stream)
+        for surface in durable_surfaces_from_messages(messages):
+            try:
+                await context.send(surface)
+            except Exception as exc:
+                log_suppressed("a2ui durable surface emit", exc, surface_id=surface.surface_id)
 
     async def _ask_forwarding_events(self, stream, ask_coro, on_event):
         """Run a turn, forwarding the agent's structured events raw to `on_event`.
@@ -617,8 +684,11 @@ class Gateway:
         }
         out: dict = {"dependencies": deps}
         if asker is not None:
-            from assistant.hitl import build_hitl_hook
+            from assistant.hitl import Asker, build_hitl_hook
 
+            # ask_user pulls the turn's asker from dependencies so the model can
+            # pose option-carrying Questions (context.input is string-only).
+            deps[Asker] = asker
             out["hitl_hook"] = build_hitl_hook(asker)
         return out
 

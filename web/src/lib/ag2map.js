@@ -16,6 +16,7 @@ export const SUBSYSTEMS = {
   HITL: { color: '#e0b400', blurb: 'AG2 human-in-the-loop (context.input / hitl_hook)' },
   Observer: { color: '#c2410c', blurb: 'AG2 observers — alerts & halts' },
   Voice: { color: '#16a3a3', blurb: 'AG2 LiveAgent — realtime voice' },
+  A2UI: { color: '#d8552f', blurb: 'A2UI declarative generative UI surfaces' },
   Usage: { color: '#888', blurb: 'AG2 token usage accounting' },
   Stream: { color: '#888', blurb: 'AG2 Stream lifecycle' },
 }
@@ -33,6 +34,7 @@ const EVENT_SUB = {
   UsageEvent: 'Usage',
   RecordedAudioEvent: 'Voice', SynthesizedAudioEvent: 'Voice',
   TranscriptionChunkEvent: 'Voice', TranscriptionCompletedEvent: 'Voice',
+  A2UIMessageEvent: 'A2UI', A2UIClientEvent: 'A2UI', A2UIValidationFailedEvent: 'A2UI',
 }
 
 // App-defined events (assistant.events.*) — our concepts, but they ride the AG2
@@ -41,6 +43,7 @@ const APP_EVENT_SUB = {
   TaskCreated: 'Subagent', TaskScheduled: 'Subagent', DeliverableProduced: 'Subagent',
   InquiryRaised: 'HITL', InquiryAnswered: 'HITL', SubagentTrace: 'Subagent',
   FeedbackGiven: 'Memory', // 👍/👎 feeds the learned memory profile
+  A2UISurface: 'A2UI',
 }
 
 
@@ -62,6 +65,7 @@ const ITEM_AG2 = {
   inquiry: { sub: 'HITL', label: 'HumanInputRequest / InquiryRaised', layer: 'ag2' },
   taskcard: { sub: 'Subagent', label: 'TaskCreated (app event on AG2 stream)', layer: 'app' },
   deliverable: { sub: 'Subagent', label: 'DeliverableProduced (app event)', layer: 'app' },
+  a2ui: { sub: 'A2UI', label: 'A2UI surface', layer: 'app' },
   note: { sub: 'Stream', label: 'lifecycle note', layer: 'app' },
 }
 export const itemAg2 = (kind) => ITEM_AG2[kind] || null
@@ -76,6 +80,7 @@ export const PRIMITIVES = [
   { sub: 'Subagent', name: 'subagents.run_task', what: 'Background task work runs as named AG2 subagents (visible, nested)', layer: 'ag2' },
   { sub: 'HITL', name: 'context.input / hitl_hook', what: 'Mid-turn questions & permission gates (durable inquiries ride the stream)', layer: 'ag2' },
   { sub: 'Voice', name: 'LiveAgent', what: 'Realtime voice (Gemini Live / OpenAI realtime), delegating heavy work to the universal agent', layer: 'ag2' },
+  { sub: 'A2UI', name: 'autogen.beta.a2ui', what: 'Agent-authored declarative UI messages rendered by the chat/task surface', layer: 'ag2' },
   { sub: 'Observer', name: 'LoopDetector / TokenMonitor / custom', what: 'Stuck-turn guards emitting ObserverAlerts on the stream', layer: 'ag2' },
   { sub: 'Tool', name: 'extensions.docker.DockerEnvironment', what: 'Official AG2 container backend for the code/shell sandbox', layer: 'ag2' },
   { sub: 'Model', name: 'response_schema', what: 'Typed task planning & deliverable verification', layer: 'ag2' },

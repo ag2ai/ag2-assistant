@@ -64,6 +64,15 @@ export const soundOnInput = persisted('soundOnInput', false)
 // adds per-item provenance tags. A deliberate demo mode. Off by default.
 export const ag2View = persisted('ag2View', false)
 
+// App-wide animation quality (per-device — the GPU cost is local). Any rich
+// surface should honour it; weather panels are the first consumer:
+//   'off'   — static content only (weather: emoji glyph, pure HTML), zero GPU
+//   'basic' — simple CSS/SVG animation, compositor-cheap (default: kind to GPUs;
+//             High is an explicit opt-in from Settings)
+//   'high'  — full WebGPU 3D scenes (volumetrics, bloom); consumers fall back
+//             to 'basic' on browsers without WebGPU
+export const animations = persisted('animations', 'basic')
+
 // First-run onboarding overlay open/closed. Opened automatically on first launch
 // when this install hasn't completed/dismissed it and no provider key is stored
 // (see App.svelte), or via Settings → "Re-run setup". The install-level "have we

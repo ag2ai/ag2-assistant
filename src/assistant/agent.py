@@ -132,6 +132,10 @@ BEHAVIOR_GUIDANCE = (
     "the open web → the search tool; the user's Gmail/Calendar/Drive → the Google "
     "tools. You CANNOT watch video or audio — if asked about a YouTube/video link, "
     "say so and offer to fetch the page or work from a transcript they provide.\n"
+    "Before improvising a task with general web searches, check the <available_skills> "
+    "catalog: when a request matches a skill's description, load and follow that skill — "
+    "it's the curated, efficient path (one structured call beats many guesswork "
+    "searches). Use open-web search only when no skill fits.\n"
     "The shell and code-execution tools are ONLY for when the user explicitly "
     "asks you to run a command, execute code, or work with local files. NEVER use "
     "them to 'look around', orient yourself, explore the filesystem (e.g. `ls`), "
@@ -496,6 +500,12 @@ def create_agent(
             sandbox=config.tools.sandbox,
         )
     }
+    if asker is not None:
+        # The ask_user tool pulls the turn's asker from dependencies so the model
+        # can pose option-carrying Questions (context.input is string-only).
+        from assistant.hitl import Asker
+
+        dependencies[Asker] = asker
 
     hitl_hook = None
     if asker is not None:

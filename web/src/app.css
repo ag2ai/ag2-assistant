@@ -22,7 +22,10 @@
 }
 #app { height: 100vh; }
 
-.app { display: grid; grid-template-columns: 270px 1fr; height: 100vh; }
+/* minmax(0,1fr) pins the single row to the viewport height: without it the row
+   auto-sizes to the tallest column (a long chat), the whole document scrolls,
+   and the drawer buttons / composer / modals drift out of position. */
+.app { display: grid; grid-template-columns: 270px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; }
 .drawer { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 .main { display: flex; flex-direction: column; min-width: 0; }
 
@@ -153,6 +156,45 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .note { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 .note.withicon { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .note.alert { color: var(--ag2-observer); }
+
+.a2ui { max-width: min(80%, 620px); margin: 8px 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, var(--accent) 6%), var(--panel)); border-radius: 8px; padding: 14px; box-shadow: 0 10px 28px rgba(0,0,0,.055); }
+.a2ui-head { display: flex; align-items: center; gap: 9px; min-width: 0; margin-bottom: 12px; }
+.a2ui-mark { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius-sm); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); }
+.a2ui-headtext { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.a2ui-eyebrow { font-size: 10.5px; line-height: 1.1; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.a2ui-title { font-size: 14px; line-height: 1.2; font-weight: var(--fw-semibold); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a2ui-catalog { margin-left: auto; flex: none; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-pill); padding: 2px 8px; font-size: 10.5px; color: var(--muted); }
+.a2ui-main { font-size: 14.5px; font-weight: var(--fw-semibold); line-height: 1.35; color: var(--ink); overflow-wrap: anywhere; }
+.a2ui-sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
+.a2ui-weather-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.a2ui-weather-glyph { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: none; border-radius: var(--radius-sm); color: #9a5b00; background: #fff2c7; border: 1px solid #f1d58c; }
+.a2ui-meta, .a2ui-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.a2ui-meta span, .a2ui-pills span { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-pill); padding: 3px 9px; font-size: 11.5px; color: var(--muted); }
+.a2ui-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.a2ui-cols section, .a2ui-cell { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; }
+.a2ui-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
+.a2ui-row { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.35; margin: 6px 0; color: var(--ink); overflow-wrap: anywhere; }
+.a2ui-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.a2ui-cell { font-size: 12.5px; line-height: 1.35; }
+.a2ui-basic-col { display: flex; flex-direction: column; gap: 10px; }
+.a2ui-basic-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+.a2ui-basic-card { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; }
+.a2ui-text { font-size: 12.5px; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
+.a2ui-divider { height: 1px; background: var(--line); margin: 2px 0; }
+.a2ui-list { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
+.a2ui-story { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); background: var(--code); border-radius: 8px; padding: 8px 9px; min-width: 0; }
+.a2ui-story > span { flex: none; display: inline-flex; width: 15px; justify-content: center; color: var(--muted); margin-top: 2px; }
+.a2ui-story div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.a2ui-story strong { font-size: 12.5px; color: var(--ink); overflow-wrap: anywhere; }
+.a2ui-story small { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.a2ui-details { min-width: 0; }
+.a2ui-details summary { cursor: pointer; list-style-position: inside; padding-left: 0; }
+.a2ui-details summary::marker { color: var(--muted); font-size: 11px; }
+.a2ui-details p { margin: 6px 0 2px; color: var(--ink); font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .a2ui { max-width: 100%; }
+  .a2ui-cols, .a2ui-grid, .a2ui-basic-row { grid-template-columns: 1fr; }
+}
 
 /* Subtle "when produced" stamp on task-thread items — projects the AG2 event's
    created_at (Unix time on the wire, persisted, replay-safe). */

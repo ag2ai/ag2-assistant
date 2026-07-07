@@ -62,6 +62,23 @@ class ImageGenerated(AssistantEvent):
     media_type: str = "image/png"
 
 
+class A2UISurface(AssistantEvent):
+    """A declarative A2UI surface for the web client to render inline.
+
+    This is the assistant app's stable envelope around upstream A2UI messages:
+    once ``autogen.beta.a2ui`` is available locally, validated A2UI message
+    events can be projected into this shape without changing the Svelte renderer.
+    """
+
+    surface_id: str = Field(kw_only=False)
+    catalog_id: str = "https://ag2.ai/assistant/a2ui/catalog.json"
+    version: str = "v1.0"
+    component: dict = Field(default_factory=dict)
+    data: dict = Field(default_factory=dict)
+    title: str = ""
+    intent: str = ""
+
+
 class SubagentTrace(AssistantEvent):
     """One inner event from a subagent's own run, forwarded onto the parent task
     stream so the GUI nests it under the subagent card — live, persistent (rides

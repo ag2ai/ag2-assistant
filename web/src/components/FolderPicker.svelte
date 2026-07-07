@@ -1,12 +1,14 @@
 <script>
   // Server-driven folder browser — the gateway lists subdirectories (a browser can't hand
-  // a local server a native picker's path). Navigate into folders, go up, jump to a root,
-  // then "Use this folder" to confirm. `selected` (bindable) is the confirmed absolute path.
+  // a local server a native picker's path). Navigate into folders, go up, jump to a root.
+  // Two commit modes: pass `onUse` for a single primary button that applies the folder you're
+  // viewing in one click (Settings); otherwise `selected` (bindable) is set on confirm and the
+  // host owns the commit (Onboarding's stepped flow). `busy` shows a saving state for onUse.
   import { onMount } from 'svelte'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
 
-  let { roots = {}, start = '', selected = $bindable('') } = $props()
+  let { roots = {}, start = '', selected = $bindable(''), onUse = null, busy = false } = $props()
 
   let current = $state('')
   let dirs = $state([])
@@ -50,7 +52,13 @@
       {/each}
     {/if}
   </div>
-  <button class="fp-use" class:on={!!current && selected === current} disabled={!current} onclick={() => (selected = current)}>
-    {#if !!current && selected === current}<Icon name="check" size={15} /> Selected this folder{:else}Use this folder{/if}
-  </button>
+  {#if onUse}
+    <button class="fp-use on" disabled={!current || busy} onclick={() => onUse(current)}>
+      {#if busy}Saving…{:else}<Icon name="check" size={15} /> Use this folder{/if}
+    </button>
+  {:else}
+    <button class="fp-use" class:on={!!current && selected === current} disabled={!current} onclick={() => (selected = current)}>
+      {#if !!current && selected === current}<Icon name="check" size={15} /> Selected this folder{:else}Use this folder{/if}
+    </button>
+  {/if}
 </div>

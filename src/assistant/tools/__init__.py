@@ -30,6 +30,8 @@ from ag2.tools import (
 
 from assistant.tools.approval import require_command_approval
 from assistant.tools.files import read_file
+from assistant.tools.finance import get_quotes
+from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch, web_fetch_tool
 
 # Providers that allow the native server-side WebFetchTool alongside function tools.
@@ -83,9 +85,19 @@ def build_agent_tools(
     want = (lambda c: True) if capabilities is None else (lambda c: c in capabilities)
     tools: list = []
 
+    if capabilities is None:
+        # Chat only: option-carrying user questions via the durable HITL channel
+        # (tasks keep their scoped toolsets and their own inquiry path). Degrades
+        # to a no-op message when the turn has no asker.
+        from assistant.tools.ask import ask_user
+
+        tools.append(ask_user)
+
     if want("web"):
         tools.append(DuckDuckSearchTool(max_results=5))
         tools.append(WebFetchTool() if provider in _NATIVE_WEB_FETCH_PROVIDERS else web_fetch_tool)
+        tools.append(get_weather)  # deterministic weather → WeatherPanel, not a search spray
+        tools.append(get_quotes)  # deterministic global quotes → MarketBoard, not a search spray
 
     if want("code"):
         use_docker = False
@@ -219,6 +231,8 @@ __all__ = [
     "available_capabilities",
     "CAPABILITIES",
     "read_file",
+    "get_weather",
+    "get_quotes",
     "web_fetch",
     "web_fetch_tool",
 ]
