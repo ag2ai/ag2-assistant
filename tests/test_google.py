@@ -78,6 +78,40 @@ def test_build_google_tools_names():
     ]
 
 
+def test_drive_read_decodes_text_and_extracts_pdf_but_never_raw_binary():
+    """Binary Drive content must never reach the model as mojibake: text mimes
+    decode, PDFs get real text extraction, and anything else binary gets an
+    honest 'can't read this' message (the regression was a PDF decoded raw,
+    poisoning the chat with garbage)."""
+    import io
+
+    from pypdf import PdfWriter
+
+    from assistant.tools.google import _decode_drive_content
+
+    # text/* and textual application mimes decode as UTF-8
+    assert _decode_drive_content("notes.txt", "text/plain", b"hello") == "hello"
+    assert _decode_drive_content("d.json", "application/json", b'{"a": 1}') == '{"a": 1}'
+
+    # a real PDF with no text (blank page) → honest message, raw bytes never leak
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)
+    buf = io.BytesIO()
+    w.write(buf)
+    out = _decode_drive_content("bye-laws.pdf", "application/pdf", buf.getvalue())
+    assert "%PDF" not in out
+    assert "no extractable text" in out
+
+    # a corrupt "PDF" (extraction raises) → same honest path, no crash
+    out = _decode_drive_content("broken.pdf", "application/pdf", b"%PDF-1.4 not really")
+    assert "no extractable text" in out
+
+    # arbitrary binary → honest message naming the mime, raw bytes never decoded
+    out = _decode_drive_content("photo.jpg", "image/jpeg", b"\xff\xd8\xff\xe0garbage")
+    assert "binary file" in out and "image/jpeg" in out
+    assert "garbage" not in out
+
+
 def test_write_tools_are_gated_reads_are_not():
     tools = {t.name: t for t in build_google_tools()}
     # sends / writes carry the approval middleware; reads/searches don't
