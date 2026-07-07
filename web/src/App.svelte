@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles } from './store.js'
+  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setPalette } from './design/palette.js'
@@ -159,7 +159,10 @@
 {:else if boot === 'create'}
   <Onboarding fresh={true} onComplete={onFreshOnboarded} />
 {:else}
-  <div class="app" class:ag2={showInspector}>
+  <!-- data-animations lets any component's CSS gate its motion on the app-wide
+       tier (see store.animations) without importing the store — same
+       attribute-driven pattern as theming. -->
+  <div class="app" class:ag2={showInspector} data-animations={$animations}>
     <Drawer />
     <div class="main">
       <Hitl />

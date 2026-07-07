@@ -151,6 +151,8 @@
   .figure { position: relative; align-self: stretch; min-height: 190px; border: 1px solid var(--rule-2); overflow: hidden; background: var(--paper-2); }
   .figure img { width: 100%; height: 100%; object-fit: cover; display: block; filter: saturate(.92) contrast(1.02); animation: kenburns 20s ease-in-out infinite alternate; }
   @keyframes kenburns { from { transform: scale(1.06); } to { transform: scale(1.16) translate(-2.5%, -2%); } }
+  /* Animations = Off: no perpetual Ken Burns (app-wide tier attribute on .app) */
+  :global([data-animations='off']) .figure img { animation: none; transform: scale(1.06); }
   .figure figcaption { position: absolute; left: 0; bottom: 0; margin: 0; padding: 4px 9px; background: var(--ink); color: var(--paper); font-family: var(--code); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; }
 
   .more-label { margin: 15px 0 0; font-family: var(--code); font-size: 9.5px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); }

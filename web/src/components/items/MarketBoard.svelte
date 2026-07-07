@@ -106,7 +106,7 @@
             {#if leadSpark}
               <svg class="spark-lg {up(lead) ? 'up' : 'down'}" viewBox="0 0 300 120" preserveAspectRatio="none">
                 <path d={leadSpark.area} class="area" />
-                <path d={leadSpark.line} class="ln" />
+                <path d={leadSpark.line} class="ln" pathLength="1" />
                 <circle cx={leadSpark.endX} cy={leadSpark.endY} r="3" class="end" />
               </svg>
             {/if}
@@ -136,7 +136,7 @@
             <div class="ch {up(q) ? 'up' : 'down'}"><span class="arrow">{arrow(q)}</span><span>{pct(q)}</span></div>
             {#if s}
               <svg class="spark-sm {up(q) ? 'up' : 'down'}" viewBox="0 0 78 30" preserveAspectRatio="none">
-                <path d={s.line} class="ln" />
+                <path d={s.line} class="ln" pathLength="1" />
                 <circle cx={s.endX} cy={s.endY} r="2.2" class="end" />
               </svg>
             {:else}<span class="spark-sm"></span>{/if}
@@ -181,9 +181,19 @@
 
   .lead-chart { align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
   .spark-lg { width: 100%; height: 120px; display: block; }
-  .ln { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-  .area { fill: currentColor; opacity: .14; stroke: none; }
-  .end { fill: currentColor; }
+  /* One-shot draw-in on mount (pathLength=1 normalises the dash to 0..1): the
+     line traces left→right, then the area + end dot fade in. Presentation only —
+     one-and-done, implies nothing about the data being live. */
+  .ln { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: spark-draw .7s cubic-bezier(.3, .6, .3, 1) .1s forwards; }
+  .area { fill: currentColor; opacity: 0; stroke: none; animation: spark-area .45s ease-out .55s forwards; }
+  .end { fill: currentColor; opacity: 0; animation: spark-end .25s ease-out .75s forwards; }
+  @keyframes spark-draw { to { stroke-dashoffset: 0; } }
+  @keyframes spark-area { to { opacity: .14; } }
+  @keyframes spark-end { to { opacity: 1; } }
+  /* Animations = Off: render the finished chart, no motion */
+  :global([data-animations='off']) .ln { animation: none; stroke-dashoffset: 0; }
+  :global([data-animations='off']) .area { animation: none; opacity: .14; }
+  :global([data-animations='off']) .end { animation: none; opacity: 1; }
   .range { font-family: var(--code); font-size: 10px; color: var(--ink-3); }
   .range-bar { position: relative; height: 4px; margin: 7px 0 5px; background: var(--rule); border-radius: 2px; }
   .range-fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--ink-3); opacity: .35; border-radius: 2px; }

@@ -67,6 +67,12 @@
   100% { box-shadow: 0 0 0 0 rgba(var(--bs-glow), 0); }
 }
 
+/* Animations = Off: freeze the perpetual motion (marquee + pulsing dot) — these
+   run forever and keep the compositor awake. Gated on the app-wide tier
+   (data-animations on .app; see store.animations). */
+[data-animations='off'] .bs-track { animation: none; }
+[data-animations='off'] .bs-dot { animation: none; }
+
 /* ---- body + footer ---- */
 .bs-body { padding: 16px 20px 18px; }
 .bs-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 10px; border-top: 1.5px solid var(--ink); font-family: var(--code); font-size: 10px; color: var(--ink-3); letter-spacing: .03em; }
