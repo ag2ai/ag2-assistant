@@ -513,13 +513,26 @@ pip install "ag2-assistant[google]"
 ```
 
 1. In [Google Cloud Console](https://console.cloud.google.com): create a project
-   and **enable** the Gmail API, Google Calendar API, and Google Drive API.
-2. Configure the **OAuth consent screen** (External), set the **App name** (this is
-   what you'll see on the consent screen at sign-in — call it whatever you like), and
-   add yourself as a **Test user**.
-3. **Credentials → Create OAuth client ID → Desktop app**, download the JSON, and
-   save it to `~/.ag2assistant/google_credentials.json`.
-4. Sign in (opens a browser once):
+   and **enable** the Gmail API, Google Calendar API, and Google Drive API
+   (APIs & Services → Library).
+2. Configure the **OAuth consent screen** (called *Google Auth Platform →
+   Branding/Audience* in newer consoles). Set the **App name** to whatever you
+   like, then pick the user type:
+   - **Workspace account** (e.g. `you@yourcompany.com`): choose **Internal** —
+     no verification, no warning screens, tokens don't expire early.
+     *Recommended whenever available.*
+   - **Personal @gmail.com**: choose **External** and add yourself as a
+     **Test user**. Google's limits for Testing apps on these scopes apply:
+     an *"unverified app"* warning at sign-in (click **Advanced → Continue**)
+     and **refresh tokens that expire every 7 days**, so you'll re-consent weekly.
+3. **Credentials → Create OAuth client ID → Desktop app**, and click
+   **Download JSON** on the confirmation dialog — newer consoles offer the
+   download **only at creation time** (an existing client's secret can't be
+   viewed again; you'd have to add a new secret and assemble the JSON by hand).
+4. Sign in — easiest from the web app: **Settings → Google → Manage**, paste the
+   JSON file's contents, **Save credentials**, then **Connect** and approve in
+   the popup. Or via the CLI (save the file to
+   `~/.ag2assistant/google_credentials.json` first):
 
 ```bash
 ag2-assistant google login      # → "Signed in to Google as you@gmail.com."
@@ -528,11 +541,9 @@ ag2-assistant google status     # show configured / signed-in state
 ag2-assistant google logout     # remove the stored token
 ```
 
-The token is cached at `~/.ag2assistant/google_token.json` (owner-only) and refreshed automatically.
-
-> Because it's your own unpublished app, Google shows an **"unverified app"** warning
-> at sign-in — click **Advanced → Continue** (expected: it's your own OAuth client and
-> you're an approved test user).
+The token is cached at `~/.ag2assistant/google_token.json` (owner-only) and refreshed
+automatically. Connecting or disconnecting takes effect on the agent's next turn —
+no restart needed.
 
 **From the web UI instead.** The gateway's web client has a **Google** button:
 it shows the connection status, lets you **upload the OAuth client JSON** (so you

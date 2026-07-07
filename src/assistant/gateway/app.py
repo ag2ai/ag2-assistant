@@ -728,13 +728,23 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             email = await asyncio.to_thread(google_auth.complete_login, flow, code)
         except Exception as exc:
             return HTMLResponse(_page("Sign-in failed", str(exc)))
+        # Google tools are gated on has_token() at agent build time — reference-swap
+        # reload every runtime so Gmail/Calendar/Drive attach on the next turn.
+        for runtime in list(manager.runtimes()):
+            with contextlib.suppress(Exception):
+                await manager.reload(runtime.pid)
         return HTMLResponse(_page("Connected ✓", f"AG2 Assistant is now connected to {email}."))
 
     @app.post("/api/google/logout")
     async def google_logout() -> dict:
         from assistant.integrations import google_auth
 
-        return {"ok": google_auth.logout()}
+        ok = google_auth.logout()
+        # Drop the Google tools from every runtime immediately (same gate, reversed).
+        for runtime in list(manager.runtimes()):
+            with contextlib.suppress(Exception):
+                await manager.reload(runtime.pid)
+        return {"ok": ok}
 
     @app.get("/api/fs/list")
     async def fs_list(path: str = "") -> dict:

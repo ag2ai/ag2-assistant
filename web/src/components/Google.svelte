@@ -42,8 +42,16 @@
     <p>Connected as <b>{st.email || 'your account'}</b>. AG2 Assistant can use Gmail, Calendar and Drive.</p>
     <button class="open" onclick={logout}>Disconnect</button>
   {:else if !st.configured}
-    <p>Paste your Google OAuth <b>client</b> JSON to enable Google integration.</p>
-    <textarea bind:value={creds} placeholder={'{ "web": { "client_id": "…", "client_secret": "…", … } }'}></textarea>
+    <p>Google integration is <b>bring-your-own</b>: you create a free OAuth client in
+    your own Google Cloud, and credentials stay on this machine.</p>
+    <ol class="gsteps">
+      <li>In <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer">Google Cloud Console</a>, create a project and <b>enable</b> the Gmail, Google Calendar and Google Drive APIs.</li>
+      <li>OAuth consent screen: pick <b>Internal</b> on a Workspace account (best — no warnings, no token expiry), or <b>External</b> + add yourself as a test user on a personal account (re-consent every 7 days).</li>
+      <li>Credentials → Create OAuth client ID → <b>Desktop app</b> → <b>Download JSON</b> on the confirmation dialog (it's only offered at creation).</li>
+      <li>Paste the JSON file's contents below.</li>
+    </ol>
+    <p class="muted" style="font-size:12px">Full guide: docs/usage.md → “Google (Gmail / Calendar / Drive)”.</p>
+    <textarea bind:value={creds} placeholder={'{ "installed": { "client_id": "…", "client_secret": "…", … } }'}></textarea>
     <button class="open" onclick={saveCreds}>Save credentials</button>
   {:else}
     <p>{connecting ? 'Waiting for Google — complete consent in the opened tab…' : 'Connect your Google account.'}</p>

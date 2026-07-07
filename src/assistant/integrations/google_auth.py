@@ -10,9 +10,16 @@ ag2-assistant[google]`); everything here imports them lazily so the rest of AG2 
 without them.
 """
 
+import os
 from pathlib import Path
 
 from assistant.config import data_dir
+
+# We request least-privilege scopes but pass include_granted_scopes, so Google may
+# return a SUPERSET (the union with scopes this user already granted the project).
+# oauthlib treats any mismatch as an error ("Scope has changed"); relax it — a
+# broader grant back from Google is not a failure.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 # Least-privilege scopes for exactly what the tools do:
 #   gmail.readonly — search + read mail

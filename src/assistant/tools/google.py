@@ -60,6 +60,7 @@ async def gmail_search(
                     "subject": hdrs.get("Subject", ""),
                     "date": hdrs.get("Date", ""),
                     "snippet": full.get("snippet", ""),
+                    "unread": "UNREAD" in (full.get("labelIds") or []),
                 }
             )
         return out
@@ -71,7 +72,9 @@ async def gmail_search(
     if not results:
         return f"No messages matched {query!r}."
     lines = [
-        f"- [{r['id']}] {r['from']} — {r['subject']} ({r['date']})\n  {r['snippet']}"
+        f"- [{r['id']}] {r['from']} — {r['subject']} ({r['date']})"
+        f"{' [unread]' if r['unread'] else ''}\n  {r['snippet']}\n"
+        f"  link=https://mail.google.com/mail/u/0/#all/{r['id']}"
         for r in results
     ]
     return "Messages:\n" + "\n".join(lines)
@@ -196,7 +199,16 @@ async def calendar_list_events(
     lines = []
     for e in events:
         start = e.get("start", {}).get("dateTime") or e.get("start", {}).get("date", "")
-        lines.append(f"- {start} — {e.get('summary','(no title)')} [{e.get('id','')}]")
+        end = e.get("end", {}).get("dateTime") or e.get("end", {}).get("date", "")
+        all_day = "dateTime" not in e.get("start", {})
+        span = f"{start} (all day)" if all_day else f"{start} → {end}"
+        loc = f" @ {e['location']}" if e.get("location") else ""
+        join = e.get("hangoutLink") or ""
+        join = f" join={join}" if join else ""
+        link = f" link={e['htmlLink']}" if e.get("htmlLink") else ""
+        lines.append(
+            f"- {span} — {e.get('summary', '(no title)')}{loc}{join}{link} [{e.get('id', '')}]"
+        )
     return "Events:\n" + "\n".join(lines)
 
 

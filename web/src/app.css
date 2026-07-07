@@ -385,6 +385,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modal h2 { margin: 0; }
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
 .modal .muted { color: var(--muted); }
+/* Google modal setup steps */
+.gsteps { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; color: var(--ink); }
+.gsteps a { color: var(--accent); }
+
 .modal-close { display: inline-flex; align-items: center; gap: 6px; align-self: flex-end; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 14px; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .modal-close:hover { border-color: var(--accent); color: var(--accent); }
 
