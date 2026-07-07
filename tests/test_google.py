@@ -85,7 +85,8 @@ def test_drive_read_decodes_text_and_extracts_pdf_but_never_raw_binary():
     poisoning the chat with garbage)."""
     import io
 
-    from pypdf import PdfWriter
+    pypdf = pytest.importorskip("pypdf")  # google extra; CI installs it
+    PdfWriter = pypdf.PdfWriter
 
     from assistant.tools.google import _decode_drive_content
 
