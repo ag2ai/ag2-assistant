@@ -16,7 +16,6 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install package
-        # google extra included so the Drive tool tests (PDF extraction) run in CI
         run: pip install -e ".[dev,google]"
       - name: Unit tests
         run: pytest -m "not integration" -q
