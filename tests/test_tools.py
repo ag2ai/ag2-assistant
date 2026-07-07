@@ -226,6 +226,70 @@ async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes(monkeypatch)
 
     assert result.name == proxy.name
     assert calls == [("read_file", {"path": "x"})]
+    await toolkit.aclose()  # stop the persistent-session runner task
+
+
+async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
+    """One server process serves discovery AND every tool call (stateful servers
+    like a browser need this), then closes after the idle window so nothing
+    leaks when an agent reload drops the toolkit reference."""
+    import asyncio
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from ag2 import ToolResult
+    from ag2.context import ConversationContext
+    from ag2.events import ToolCallEvent
+    from ag2.stream import MemoryStream
+    from ag2.tools import MCPStdioServerConfig
+
+    import assistant.tools.mcp as mcp_mod
+    from assistant.tools.mcp import NamespacedMCPToolkit
+
+    opened, closed = [], []
+
+    class _Session:
+        async def list_tools(self):
+            return SimpleNamespace(
+                tools=[SimpleNamespace(name="navigate", description="", inputSchema={})]
+            )
+
+        async def call_tool(self, name, args):
+            return SimpleNamespace(isError=False, content=[])
+
+    @asynccontextmanager
+    async def fake_session(config):
+        opened.append(config)
+        try:
+            yield _Session()
+        finally:
+            closed.append(config)
+
+    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
+    monkeypatch.setattr(mcp_mod, "mcp_session", fake_session)
+    monkeypatch.setattr(mcp_mod, "extract_content", lambda result: ToolResult("ok"))
+
+    toolkit = NamespacedMCPToolkit(MCPStdioServerConfig(command="mcp", server_label="browser"))
+    context = ConversationContext(stream=MemoryStream())
+    await toolkit.schemas(context)
+    proxy = next(t for t in toolkit.tools if t.name == "browser_navigate")
+    for i in range(3):
+        await proxy(ToolCallEvent(id=f"c{i}", name=proxy.name, arguments="{}"), context)
+
+    # discovery + three calls all rode ONE session (== one server process)
+    assert len(opened) == 1 and not closed
+
+    # idle expiry closes the process without any explicit dispose (the runner
+    # re-reads the shrunk window within its ≤1s wait cap)
+    monkeypatch.setattr(mcp_mod, "_IDLE_CLOSE_S", 0.05)
+    await asyncio.sleep(1.3)
+    assert closed == opened
+
+    # a later call transparently reopens a fresh session
+    await proxy(ToolCallEvent(id="again", name=proxy.name, arguments="{}"), context)
+    assert len(opened) == 2
+    await toolkit.aclose()
+    assert len(closed) == 2
 
 
 def test_files_capability_wires_workspace_toolkit(tmp_path):

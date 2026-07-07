@@ -69,7 +69,9 @@ process.on('uncaughtException', (e) => { console.error('UNCAUGHT:', e && (e.stac
 process.on('unhandledRejection', (e) => { console.error('UNHANDLED:', e && (e.stack || e)); process.exit(3) })
 
 const dir = new URL('../src/assistant/gateway/static/app/assets/', import.meta.url)
-const js = readdirSync(dir).find((f) => f.endsWith('.js'))
+// The entry chunk is index-*.js; the lazy weather chunks import 'three' from a
+// CDN importmap that node can't resolve, so never pick those.
+const js = readdirSync(dir).find((f) => f.startsWith('index-') && f.endsWith('.js'))
 console.log('loading bundle:', js)
 await import(new URL(js, dir).href)
 console.log('MOUNTED OK. #app length =', w.document.getElementById('app').innerHTML.length)
