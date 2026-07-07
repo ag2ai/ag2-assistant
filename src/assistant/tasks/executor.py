@@ -329,6 +329,32 @@ def make_task_executor(config, skills: bool = True):
             f"Deliverable(s) to produce now:\n{wanted}"
         )
 
+        # Recurring-run history: if this task belongs to a recurring template, append a
+        # trust-framed recap of the last-N prior runs so it builds on them instead of
+        # repeating (see tasks/history.py). Fully best-effort — prior_runs_brief is
+        # time-boxed and error-swallowing, and a non-recurring task / no prior runs
+        # leaves the prompt byte-identical. Injected into the context/user prompt, never
+        # the system prompt, under an explicit untrusted-recap frame.
+        try:
+            from assistant.tasks import history
+
+            template_id = await history.template_id_for(store, task)
+            if template_id:
+                template = await store.get(template_id)
+                brief = await history.prior_runs_brief(
+                    store,
+                    history.episodic_store_for(config, template_id),
+                    template_id,
+                    task,
+                    history.history_limit(config, template),
+                )
+                if brief:
+                    prompt = f"{prompt}\n\n{brief}"
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("prior-run history injection", exc, task_id=task_id)
+
         await manager.progress(task_id, f"working on {len(pending)} deliverable(s)")
 
         # Final-attempt escalation: give the last shot the stronger (main) model.
