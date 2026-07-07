@@ -99,8 +99,28 @@
 .settings .mcpbad { color: #d8552f; }
 .settings .mcpform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .settings .mcpform input, .settings .mcpform textarea { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
-.settings .mcpform textarea { grid-column: 1 / -1; min-height: 74px; font-family: var(--mono); font-size: 12px; }
+.settings .mcpform textarea { grid-column: 1 / -1; min-height: 74px; font-family: var(--mono); font-size: 12px; resize: none; }
 .settings .mcpform button { justify-self: start; }
+/* Quick-add catalog: card per curated server; added ones show a check and go inert. */
+.settings .mcpcat { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.settings .mcpcatcard { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; cursor: pointer; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 8px 11px; font: inherit; transition: border-color var(--dur-fast) var(--ease-out); }
+.settings .mcpcatcard:hover:not(:disabled) { border-color: var(--accent); }
+.settings .mcpcatcard.openinputs { border-color: var(--accent); }
+.settings .mcpcatcard.added { opacity: .55; cursor: default; }
+.settings .mcpcatcard.added .mcpcathead { color: var(--accent); }
+.settings .mcpcathead { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.settings .mcpcatblurb { font-size: 11.5px; color: var(--muted); }
+.settings .mcpinputs { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.settings .mcpinputs .kp { width: auto; min-width: 78px; }
+/* Smart paste box + parsed-draft preview rows */
+/* No native resize handle — the box auto-grows to its content (JS) instead.
+   flex: none matters: as a .setscroll flex item the default flex-shrink would
+   squash any explicit height straight back to min-height. */
+.settings .mcppaste { flex: none; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-family: var(--mono); font-size: 12px; min-height: 58px; max-height: 240px; overflow-y: auto; resize: none; background: var(--bg); color: var(--ink); }
+.settings .mcpdraft { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--accent); border-radius: 10px; padding: 9px 10px; }
+.settings .mcpdraft .kp { width: auto; min-width: 60px; }
+.settings .mcpdraft .mcpenvkey { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.settings .mcpcmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }

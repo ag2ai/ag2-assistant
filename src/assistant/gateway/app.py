@@ -1013,7 +1013,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return {"ok": False, "error": "MCP server is disabled"}
         toolkit = tools[0]
         context = ConversationContext(stream=MemoryStream())
-        schemas = await toolkit.schemas(context)
+        try:
+            schemas = await toolkit.schemas(context)
+        finally:
+            # This throwaway toolkit's persistent session would otherwise hold the
+            # server process alive until idle expiry.
+            await toolkit.aclose()
         return {
             "ok": True,
             "tools": [

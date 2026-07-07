@@ -1,15 +1,22 @@
-"""Namespaced MCP tool adapters.
+"""Namespaced MCP tool adapters with persistent sessions.
 
 AG2's native ``MCPToolkit`` intentionally exposes MCP server tools as ordinary
 function tools with their raw names. That is ideal for a single isolated server,
 but a personal assistant combines native tools and multiple MCP servers, where
 generic MCP names like ``read_file`` or ``search`` can collide. This module keeps
-AG2's MCP session/content handling while presenting stable namespaced tool names
-to the model.
+AG2's MCP content handling while presenting stable namespaced tool names to the
+model.
+
+It also diverges from AG2's per-call session model: the stock toolkit spawns a
+fresh server process around every tool call, which breaks stateful servers
+(Playwright MCP's browser closes with the process after each call). Each toolkit
+here holds one idle-expiring persistent session shared by all its tools — see
+``_PersistentSession``.
 """
 
 import asyncio
 import re
+import time
 from collections.abc import Iterable
 from contextlib import AsyncExitStack, ExitStack
 
@@ -31,6 +38,105 @@ from assistant.tools._mcp_compat import (
 )
 
 _NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
+
+# How long a server may sit unused before its process is closed. Long enough to
+# span the tool calls of one agent turn (and a think between turns), short enough
+# that orphaned toolkits after an agent reload self-clean without a dispose hook.
+_IDLE_CLOSE_S = 300.0
+
+
+class _PersistentSession:
+    """One long-lived MCP client session per server, shared across tool calls.
+
+    AG2's stock MCP tools open a fresh session — i.e. spawn a fresh server
+    process — around every call. Stateless servers don't care, but stateful ones
+    break: Playwright MCP opens a browser that dies with the process the moment
+    a call returns, so navigate → click can never work. This keeps ONE session
+    open, closing it after _IDLE_CLOSE_S of inactivity.
+
+    The session context manager is entered AND exited inside a dedicated runner
+    task: anyio's stdio transport requires both to happen in the same task.
+    Callers just await the shared session and invoke tools on it.
+    """
+
+    __slots__ = ("_config", "_lock", "_task", "_ready", "_close", "_last_used")
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._task: asyncio.Task | None = None
+        self._ready: asyncio.Future | None = None
+        self._close: asyncio.Event | None = None
+        self._last_used = 0.0
+
+    def _touch(self) -> None:
+        self._last_used = time.monotonic()
+
+    async def _run(self, resolved, ready: asyncio.Future) -> None:
+        try:
+            async with mcp_session(resolved) as session:
+                ready.set_result(session)
+                while True:  # idle-expire, or exit promptly when aclose() asks
+                    remaining = _IDLE_CLOSE_S - (time.monotonic() - self._last_used)
+                    if remaining <= 0:
+                        return
+                    try:
+                        # Cap each wait so a changed idle window is re-read ≤1s later.
+                        await asyncio.wait_for(self._close.wait(), min(remaining, 1.0))
+                        return
+                    except TimeoutError:
+                        continue
+        except Exception as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+
+    async def _session(self, resolved):
+        async with self._lock:
+            if self._task is None or self._task.done():
+                self._close = asyncio.Event()
+                self._ready = asyncio.get_running_loop().create_future()
+                self._touch()
+                self._task = asyncio.create_task(self._run(resolved, self._ready))
+            self._touch()
+            ready = self._ready
+        try:
+            return await asyncio.shield(ready)
+        except Exception:
+            async with self._lock:
+                if self._ready is ready:  # failed to open — let the next call retry
+                    self._task = None
+            raise
+
+    async def call_tool(self, resolved, name: str, arguments):
+        """Call a tool on the shared session, reopening once if it went stale
+        (idle-closed a moment ago, or the server process died)."""
+        for attempt in (1, 2):
+            session = await self._session(resolved)
+            try:
+                result = await session.call_tool(name, arguments)
+                self._touch()
+                return result
+            except Exception:
+                await self.aclose()
+                if attempt == 2:
+                    raise
+
+    async def list_tools(self, resolved):
+        session = await self._session(resolved)
+        result = await session.list_tools()
+        self._touch()
+        return result
+
+    async def aclose(self) -> None:
+        """Close the session (and its server process) now. Safe to call anytime."""
+        async with self._lock:
+            task, self._task = self._task, None
+            if task is None or task.done():
+                return
+            self._close.set()
+        try:
+            await asyncio.wait_for(task, 10)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
 
 
 def tool_prefix(server_name: str) -> str:
@@ -73,7 +179,7 @@ def build_mcp_tools(servers: Iterable[dict]) -> list[Tool]:
 class NamespacedMCPToolkit(Toolkit):
     """Expose one MCP server as namespaced AG2 function tools."""
 
-    __slots__ = ("config", "_discovered", "_discover_lock")
+    __slots__ = ("config", "_discovered", "_discover_lock", "_psession")
 
     def __init__(
         self,
@@ -84,12 +190,17 @@ class NamespacedMCPToolkit(Toolkit):
         self.config = config
         self._discovered = False
         self._discover_lock = asyncio.Lock()
+        self._psession = _PersistentSession()  # shared by discovery + all proxies
         label = config.server_label if isinstance(config.server_label, str) else ""
         super().__init__(name=label or "mcp_toolkit", middleware=middleware)
 
     async def schemas(self, context: Context):
         await self._discover_tools(context)
         return await super().schemas(context)
+
+    async def aclose(self) -> None:
+        """Close the server session/process now (idle expiry handles it otherwise)."""
+        await self._psession.aclose()
 
     async def _discover_tools(self, context: Context) -> None:
         if self._discovered:
@@ -100,8 +211,7 @@ class NamespacedMCPToolkit(Toolkit):
                 return
 
             resolved = resolve_config(self.config, context)
-            async with mcp_session(resolved) as session:
-                raw_tools = (await session.list_tools()).tools
+            raw_tools = (await self._psession.list_tools(resolved)).tools
 
             allowed = resolved.allowed_tools
             blocked = set(resolved.blocked_tools or [])
@@ -115,6 +225,7 @@ class NamespacedMCPToolkit(Toolkit):
                     config=self.config,
                     server_name=server_name,
                     raw_tool=raw,
+                    psession=self._psession,
                     middleware=self._middleware,
                 )
                 self._tools[proxy.name] = proxy
@@ -123,17 +234,19 @@ class NamespacedMCPToolkit(Toolkit):
 
 
 class _NamespacedMCPProxyTool(Tool):
-    __slots__ = ("name", "raw_name", "schema", "_config", "_middleware")
+    __slots__ = ("name", "raw_name", "schema", "_config", "_middleware", "_psession")
 
     def __init__(
         self,
         config: AnyMCPConfig,
         server_name: str,
         raw_tool: MCPTool,
+        psession: _PersistentSession,
         middleware: tuple[ToolMiddleware, ...] = (),
     ) -> None:
         self._config = config
         self._middleware = middleware
+        self._psession = psession
         self.raw_name = raw_tool.name
         self.name = namespaced_tool_name(server_name, raw_tool.name)
         self.schema = FunctionToolSchema(
@@ -176,8 +289,9 @@ class _NamespacedMCPProxyTool(Tool):
     ) -> ToolResultEvent | ToolErrorEvent:
         try:
             resolved = resolve_config(self._config, context)
-            async with mcp_session(resolved) as session:
-                result = await session.call_tool(self.raw_name, event.serialized_arguments)
+            result = await self._psession.call_tool(
+                resolved, self.raw_name, event.serialized_arguments
+            )
         except Exception as exc:
             return ToolErrorEvent.from_call(event, error=exc)
 
