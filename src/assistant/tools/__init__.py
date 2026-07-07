@@ -85,6 +85,14 @@ def build_agent_tools(
     want = (lambda c: True) if capabilities is None else (lambda c: c in capabilities)
     tools: list = []
 
+    if capabilities is None:
+        # Chat only: option-carrying user questions via the durable HITL channel
+        # (tasks keep their scoped toolsets and their own inquiry path). Degrades
+        # to a no-op message when the turn has no asker.
+        from assistant.tools.ask import ask_user
+
+        tools.append(ask_user)
+
     if want("web"):
         tools.append(DuckDuckSearchTool(max_results=5))
         tools.append(WebFetchTool() if provider in _NATIVE_WEB_FETCH_PROVIDERS else web_fetch_tool)

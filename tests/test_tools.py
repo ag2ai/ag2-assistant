@@ -21,7 +21,8 @@ def test_build_agent_tools_has_core_capabilities():
     assert "web_fetch" in names
     assert "get_weather" in names
     assert "get_quotes" in names
-    assert len(tools) == 7
+    assert "ask_user" in names  # chat-only: option-carrying HITL questions
+    assert len(tools) == 8
 
 
 def test_build_agent_tools_gemini_uses_fallback_fetch():

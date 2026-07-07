@@ -61,7 +61,10 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert "Intent mapping:" in prompt
     assert "Weather or forecast -> call get_weather" in prompt
     assert "render a WeatherPanel" in prompt
-    assert "Creating, scheduling, tracking, or planning tasks -> TaskPlan" in prompt
+    assert "Creating, scheduling, or planning a new task -> TaskPlan" in prompt
+    assert "then TaskProgress" in prompt
+    assert "DecisionMatrix" in prompt
+    assert "recommending between options -> DecisionMatrix" in prompt
     assert "Use Divider for section separation when useful" in prompt
     assert "Do not call tools to discover A2UI components" in prompt
     assert 'Do not describe or print "corrected A2UI components"' in prompt

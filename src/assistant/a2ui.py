@@ -242,6 +242,84 @@ def assistant_catalog() -> dict:
             "additionalProperties": False,
         },
     }
+    option_array = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Option name, e.g. 'MacBook Air 13'."},
+                "tagline": {
+                    "type": "string",
+                    "description": "One-line positioning, e.g. 'Lightest + longest battery'.",
+                },
+                "price": {
+                    "type": "string",
+                    "description": "Cost label if relevant, e.g. '$1,499'.",
+                },
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    }
+    criterion_array = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string", "description": "Criterion, e.g. 'Battery life'."},
+                "values": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "One short value per option, in the same order as `options`.",
+                },
+                "best": {
+                    "type": "string",
+                    "description": "Name of the option that wins this criterion — only when one clearly does.",
+                },
+            },
+            "required": ["label", "values"],
+            "additionalProperties": False,
+        },
+    }
+    task_array = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The task id from list_tasks — links the row to the task page.",
+                },
+                "title": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "description": "One of: active, scheduled, completed, stopped, failed.",
+                },
+                "schedule": {"type": "string", "description": "e.g. 'daily 07:00' or 'one-off'."},
+                "nextRun": {"type": "string", "description": "e.g. 'Wed 07:00'."},
+                "objective": {"type": "string"},
+                "progress": {"type": "string", "description": "Latest progress message."},
+                "deliverables": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "description": "done, pending, or failed.",
+                            },
+                        },
+                        "required": ["description", "status"],
+                        "additionalProperties": False,
+                    },
+                },
+                "error": {"type": "string", "description": "Only when the task is failing."},
+            },
+            "required": ["title", "status"],
+            "additionalProperties": False,
+        },
+    }
     quote_array = {
         "type": "array",
         "items": {
@@ -367,6 +445,39 @@ def assistant_catalog() -> dict:
                 },
                 ["title", "items"],
             ),
+            "TaskProgress": _component_schema(
+                "TaskProgress",
+                "Status board for existing scheduled/background tasks (gather real state via list_tasks/get_task first).",
+                {
+                    "title": {"type": "string", "description": "Board heading, e.g. 'Your tasks'."},
+                    "tasks": task_array,
+                },
+                ["title", "tasks"],
+            ),
+            "DecisionMatrix": _component_schema(
+                "DecisionMatrix",
+                "Side-by-side decision matrix comparing 2-4 options against criteria, with a verdict.",
+                {
+                    "topic": {
+                        "type": "string",
+                        "description": "The decision being made, e.g. 'Travel laptop'.",
+                    },
+                    "options": option_array,
+                    "criteria": criterion_array,
+                    "recommended": {
+                        "type": "string",
+                        "description": "Name of the recommended option; must match an option name.",
+                    },
+                    "verdict": {
+                        "type": "string",
+                        "description": (
+                            "One or two sentences: why the recommendation wins, and when "
+                            "to pick another option instead."
+                        ),
+                    },
+                },
+                ["topic", "options", "criteria"],
+            ),
             "AnswerBrief": _component_schema(
                 "AnswerBrief",
                 "Structured brief for comparisons, recommendations, tradeoffs, or research summaries.",
@@ -390,9 +501,11 @@ Intent mapping:
 - Latest news, headlines, or recent developments -> NewsDigest.
 - Stocks, shares, ETFs, funds, indices, crypto, or market prices -> call get_quotes(symbols, title), then render a MarketBoard from the returned quotes (first quote = the lead).
 - Restaurants, cafes, bars, open-now, lunch, dinner -> RestaurantFinder.
-- Creating, scheduling, tracking, or planning tasks -> TaskPlan.
+- Creating, scheduling, or planning a new task -> TaskPlan.
+- Reviewing existing tasks ("how are my tasks going?", task status/history) -> call list_tasks (and get_task for detail), then TaskProgress.
 - Multi-step operational work -> Checklist.
-- Comparisons, recommendations, tradeoffs, or research summaries -> AnswerBrief.
+- Comparing concrete alternatives or recommending between options -> DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
+- Research summaries or briefs without competing options -> AnswerBrief.
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
 Always emit createSurface followed by updateComponents for the same surfaceId. Use catalog id https://ag2.ai/assistant/a2ui/catalog.json and root id "root".
@@ -412,6 +525,15 @@ summary, and a one-line `why`; later stories just need title/source/published/su
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
 Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
+
+Task status — user asks "How are my tasks going?" (call list_tasks/get_task first, then mirror the real state):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"TaskProgress","title":"Your scheduled tasks","tasks":[{"id":"t_a1b2c3","title":"Daily AI news briefing","status":"active","schedule":"daily 07:00","nextRun":"Wed 07:00","progress":"Delivered today's briefing","deliverables":[{"description":"Morning digest","status":"done"}]},{"id":"t_d4e5f6","title":"Weekly competitor scan","status":"failed","schedule":"Mondays 09:00","error":"Search quota exhausted on last run"}]}]}}
+
+Decision — user asks "Should I get the MacBook Air or the ThinkPad X1 for travel?"
+(values align by index with options; mark `best` only where one option clearly wins):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"DecisionMatrix","topic":"Travel laptop","options":[{"name":"MacBook Air 13","tagline":"Longest battery in class","price":"$1,499"},{"name":"ThinkPad X1 Carbon","tagline":"Best keyboard + ports","price":"$1,649"}],"criteria":[{"label":"Weight","values":["1.24 kg","1.09 kg"],"best":"ThinkPad X1 Carbon"},{"label":"Battery (real-world)","values":["~15 h","~10 h"],"best":"MacBook Air 13"},{"label":"Ports","values":["2× USB-C","2× USB-C · 2× USB-A · HDMI"],"best":"ThinkPad X1 Carbon"},{"label":"Keyboard","values":["Good","Excellent"],"best":"ThinkPad X1 Carbon"}],"recommended":"MacBook Air 13","verdict":"The Air wins on battery and weight-adjusted value for travel; pick the X1 Carbon if you need USB-A/HDMI without dongles or type all day."}]}}
 
 Markets — user asks "How are the tech stocks doing?" (call get_quotes first, then copy
 its quotes straight in; the first quote is the lead. Keep each quote's `spark`, `currency`,

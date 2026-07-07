@@ -500,6 +500,12 @@ def create_agent(
             sandbox=config.tools.sandbox,
         )
     }
+    if asker is not None:
+        # The ask_user tool pulls the turn's asker from dependencies so the model
+        # can pose option-carrying Questions (context.input is string-only).
+        from assistant.hitl import Asker
+
+        dependencies[Asker] = asker
 
     hitl_hook = None
     if asker is not None:

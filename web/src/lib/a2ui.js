@@ -10,6 +10,8 @@ function componentKind(component = {}) {
 function itemTitle(kind, data = {}) {
   const k = String(kind || '').toLowerCase()
   if (k === 'weatherpanel') return 'Weather view'
+  if (k === 'decisionmatrix') return data.topic || 'Decision'
+  if (k === 'taskprogress') return data.title || 'Task status'
   if (k === 'newsdigest') return 'News digest'
   if (k === 'restaurantfinder') return 'Open places'
   if (k === 'taskplan') return 'Task setup'

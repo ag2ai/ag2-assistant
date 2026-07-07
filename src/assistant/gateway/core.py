@@ -684,8 +684,11 @@ class Gateway:
         }
         out: dict = {"dependencies": deps}
         if asker is not None:
-            from assistant.hitl import build_hitl_hook
+            from assistant.hitl import Asker, build_hitl_hook
 
+            # ask_user pulls the turn's asker from dependencies so the model can
+            # pose option-carrying Questions (context.input is string-only).
+            deps[Asker] = asker
             out["hitl_hook"] = build_hitl_hook(asker)
         return out
 
