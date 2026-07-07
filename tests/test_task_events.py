@@ -87,9 +87,12 @@ async def test_deliverable_produced_emits_event(tmp_path):
     from assistant.events import DeliverableProduced
 
     svc, emitted = await _started(tmp_path)
-    await svc._manager.deliverable_produced("task-9", "dlv-1", "the report", "RBA held rates…")
+    await svc._manager.deliverable_produced(
+        "task-9", "dlv-1", "the report", "RBA held rates…", path="deliverables/the-report.md"
+    )
     dp = [e for sid, e in emitted if isinstance(e, DeliverableProduced)]
     assert dp and dp[0].deliverable_id == "dlv-1" and dp[0].description == "the report"
+    assert dp[0].path == "deliverables/the-report.md"
     assert ("task:task-9", dp[0]) in emitted
     await svc.close()
 
@@ -195,6 +198,56 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
     assert traces[0].subagent_id == "task-1:worker"
     assert traces[0].inner["type"].split(".")[-1] == "TaskStarted"
     assert traces[0].inner["data"]["agent_name"] == "researcher"
+
+
+async def test_visible_subagent_surfaces_generated_image_bare(monkeypatch):
+    """An ImageGenerated event from a task subagent is user-facing output, not a
+    trace — it rides the task stream BARE (never wrapped in SubagentTrace), so the
+    GUI renders the same inline thumbnail + viewer as a chat-generated image."""
+    from types import SimpleNamespace
+
+    import ag2.tools.subagents.run_task as run_task_mod
+
+    import assistant.agent as agent_mod
+    from assistant.config import Config
+    from assistant.events import ImageGenerated, SubagentTrace
+    from assistant.tasks.executor import _run_visible_subagent
+
+    events = []
+
+    class _Agent:
+        name = "worker"
+        _hitl_hook = None
+
+    class _Manager:
+        async def emit_event(self, task_id, event):
+            events.append((task_id, event))
+
+    async def fake_run_task(
+        agent, objective, *, parent_context, context="", stream=None, task_id=None, **kw
+    ):
+        from ag2.context import ConversationContext
+
+        ev = ImageGenerated("images/sunrise.jpg", prompt="a sunrise", media_type="image/jpeg")
+        await stream.send(ev, ConversationContext(stream=stream))
+        return SimpleNamespace(completed=True, result="done", error=None, stream=stream)
+
+    monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
+    monkeypatch.setattr(
+        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True: ["prompt"]
+    )
+    monkeypatch.setattr(run_task_mod, "run_task", fake_run_task)
+
+    task = SimpleNamespace(id="task-1", title="make an image", parent_id=None)
+    result = await _run_visible_subagent(Config(), task, [], "ctx", True, object(), _Manager())
+
+    assert result.completed
+    images = [(tid, e) for tid, e in events if isinstance(e, ImageGenerated)]
+    assert len(images) == 1
+    tid, img = images[0]
+    assert tid == "task-1"  # on the parent task stream, not the subagent's
+    assert img.path == "images/sunrise.jpg" and img.prompt == "a sunrise"
+    assert not [e for _, e in events if isinstance(e, SubagentTrace)]
 
 
 async def test_chat_inquiry_surfaces_on_its_session_stream(tmp_path):

@@ -133,6 +133,13 @@ async def _run_visible_subagent(
         await manager.emit_event(task.id, event)
 
     async def forward_inner(event) -> None:
+        # A generated image is user-facing OUTPUT, not an execution trace — emit it
+        # bare on the task stream so the GUI renders the inline thumbnail (with the
+        # click-to-open viewer) exactly as it does in chat, instead of burying it
+        # inside the collapsed subagent card.
+        if type(event).__name__ == "ImageGenerated":
+            await manager.emit_event(task.id, event)
+            return
         # Allowlist only what the GUI renders + nested-subagent lifecycle. Skips the
         # prompt echo, token chunks, HITL (durable path), and bookkeeping — so a
         # subagent's run doesn't re-persist the task stream per token.
@@ -394,6 +401,7 @@ def make_task_executor(config, skills: bool = True):
                     d["id"],
                     d.get("description", ""),
                     output[:240].replace("\n", " "),
+                    path=asset.get("path", ""),
                 )
             else:
                 await store.set_deliverable_status(
