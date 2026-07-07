@@ -11,6 +11,16 @@ import { foldEvent, isBusy } from './project.js'
 let client = null
 let panelTimer = null
 
+// Replay de-dup: the server replays the FULL history on every (re)connect, then
+// sends a `ready` marker. The socket auto-reconnects on any drop (restart, sleep,
+// network blip), so without care a reconnect re-folds the whole history onto the
+// existing items → a duplicated timeline. We fold each connect's replay into a
+// throwaway buffer and atomically swap it into `items` on `ready`; live events
+// (after `ready`) fold straight into `items`. On reconnect the visible items stay
+// put until the rebuilt-identical buffer swaps in — no flash, no duplicates.
+let _replaying = false
+let _replayBuf = []
+
 // ---- voice ----
 export const voice = writable({ active: false, status: 'off' })
 let voiceCtl = null
@@ -34,12 +44,28 @@ function _inspect(ev) {
 export function openThread(kind, id) {
   closeThread()
   _suppressStream = false       // a fresh thread always folds its stream
+  _replaying = true; _replayBuf = []   // first connect's replay buffers until `ready`
   const session = kind === 'task' ? 'task:' + id : id
   thread.set({ id, kind, session, items: [], busy: false })
   inspectorEvents.set([])       // fresh inspector buffer per thread
 
   client = new StreamClient(session, {
-    onEvent: (ev) => { _inspect(ev); if (_suppressStream) return; thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } }) },
+    // Each (re)connect re-replays the full history: buffer it afresh so a reconnect
+    // rebuilds rather than double-folds onto the live items.
+    onOpen: () => { _replaying = true; _replayBuf = [] },
+    onEvent: (ev) => {
+      _inspect(ev)
+      if (_suppressStream) return
+      if (_replaying) { foldEvent(_replayBuf, ev); return }   // replay → buffer, don't render half-built
+      thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } })
+    },
+    // Replay complete → atomically adopt the freshly-rebuilt buffer as the timeline.
+    onReady: () => {
+      if (!_replaying) return
+      _replaying = false
+      const items = _replayBuf; _replayBuf = []
+      thread.update((t) => ({ ...t, items, busy: isBusy(items) }))
+    },
     onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
     onError: (m) => thread.update((t) => {
       t.items.push({ id: Date.now(), kind: 'note', icon: 'x', text: m.message || 'error', alert: true })
