@@ -42,6 +42,7 @@ class DeliverableProduced(AssistantEvent):
     deliverable_id: str = ""
     description: str = ""
     preview: str = ""  # short preview; full asset fetched via REST
+    path: str = ""  # workspace-relative file the deliverable was saved as ("" if none)
 
 
 class Attachment(AssistantEvent):

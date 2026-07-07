@@ -126,7 +126,9 @@ class TaskService:
 
                 log_suppressed("task lifecycle event emit", exc, task_id=task_id, status=status)
 
-    async def _emit_deliverable(self, task_id, deliverable_id, description, preview="") -> None:
+    async def _emit_deliverable(
+        self, task_id, deliverable_id, description, preview="", path=""
+    ) -> None:
         """A produced deliverable → DeliverableProduced on the task's stream."""
         if self._emit is None:
             return
@@ -140,6 +142,7 @@ class TaskService:
                     deliverable_id=deliverable_id,
                     description=description,
                     preview=preview,
+                    path=path,
                 ),
             )
         except Exception as exc:
@@ -559,11 +562,25 @@ class TaskService:
         return True, ""
 
     async def get_task(self, task_id: str) -> dict | None:
-        """Full task detail with its subtree, deliverables (incl. assets), progress."""
+        """Full task detail with its subtree, deliverables (incl. assets), progress.
+        A recurring template also lists the runs spawned from it (newest first), so
+        its page shows what each occurrence actually did instead of a dead end."""
         t = await self._store.get(task_id)
         if t is None:
             return None
-        return await self._node(t, include_assets=True)
+        node = await self._node(t, include_assets=True)
+        runs = [r for r in await self._store.list_all() if getattr(r, "run_of", None) == task_id]
+        runs.sort(key=lambda r: r.created_at or "", reverse=True)
+        node["runs"] = [
+            {
+                "id": r.id,
+                "status": r.status,
+                "created_at": r.created_at,
+                "ended_at": getattr(r, "ended_at", None),
+            }
+            for r in runs
+        ]
+        return node
 
     async def cancel(self, task_id: str, reason: str = "cancelled by user") -> bool:
         """Cancel a task and its whole subtree (also releases pending inquiries)."""

@@ -355,6 +355,30 @@ async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
     assert datetime.fromisoformat(tmpl.scheduled_for) > datetime.now().astimezone()
 
 
+async def test_template_detail_lists_its_runs(tmp_path):
+    """A recurring template's detail includes the runs spawned from it (newest
+    first), so its page links to what each occurrence actually did."""
+
+    async def executor(task_id, mgr, asker):
+        pass
+
+    svc = _service(tmp_path, executor)
+    svc._run_in_bg = lambda tid, ch, clarify=True: None
+    tid = await svc.schedule_task("daily digest", when="2020-01-01T09:00:00", recurrence="daily")
+    await svc._fire(tid)  # occurrence 1
+    await svc._fire(tid)  # occurrence 2
+
+    detail = await svc.get_task(tid)
+    runs = detail["runs"]
+    assert len(runs) == 2
+    assert all(r["id"] != tid for r in runs)
+    assert runs[0]["created_at"] >= runs[1]["created_at"]  # newest first
+    # a run's own detail carries the back-pointer (and no runs of its own)
+    run_detail = await svc.get_task(runs[0]["id"])
+    assert run_detail["run_of"] == tid
+    assert run_detail["runs"] == []
+
+
 async def test_scheduled_runs_skip_clarification(tmp_path, monkeypatch):
     """An unattended scheduled run plans WITHOUT asking clarifying questions (no
     one to answer), so it never gets abandoned — intake is called with asker=None."""

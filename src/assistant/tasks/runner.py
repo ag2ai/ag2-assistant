@@ -270,12 +270,12 @@ class TaskManager:
                 )
 
     async def deliverable_produced(
-        self, task_id: str, deliverable_id: str, description: str, preview: str = ""
+        self, task_id: str, deliverable_id: str, description: str, preview: str = "", path: str = ""
     ) -> None:
         """Called by the executor when a deliverable is produced; notifies the hook."""
         if self._on_deliverable is not None:
             try:
-                res = self._on_deliverable(task_id, deliverable_id, description, preview)
+                res = self._on_deliverable(task_id, deliverable_id, description, preview, path)
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as exc:

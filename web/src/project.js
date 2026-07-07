@@ -195,7 +195,7 @@ export function foldEvent(items, wire) {
         items.push({ id: nid(), kind: 'note', icon: 'zap', text: d.message, alert: true })
       break
     case 'DeliverableProduced':
-      items.push({ id: nid(), kind: 'deliverable', taskId: d.task_id, deliverableId: d.deliverable_id, description: d.description, preview: d.preview })
+      items.push({ id: nid(), kind: 'deliverable', taskId: d.task_id, deliverableId: d.deliverable_id, description: d.description, preview: d.preview, path: d.path })
       break
     case 'ImageGenerated':
       items.push({ id: nid(), kind: 'genimage', path: d.path, prompt: d.prompt })

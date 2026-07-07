@@ -356,6 +356,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .panel .taskerror { display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; padding: 9px 11px; font-size: var(--text-sm); line-height: var(--leading-snug); color: var(--ag2-observer); background: color-mix(in srgb, var(--ag2-observer) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ag2-observer) 28%, transparent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 .panel .taskerror strong { font-weight: var(--fw-semibold); }
 .panel .child { border-left: 2px solid var(--line); padding-left: 10px; margin: 6px 0; }
+.panel .runlink { background: none; border: none; padding: 0; color: var(--accent, #d8552f); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 .hitl { border-bottom: 1px solid var(--line); background: var(--panel); padding: 10px 20px; max-height: 40vh; overflow-y: auto; }
 .hitlhead { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; margin-bottom: 6px; }

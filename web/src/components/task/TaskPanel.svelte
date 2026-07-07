@@ -51,7 +51,12 @@
     {#if $taskPanel.scheduled_for}
       <div class="note" style="text-align:left;margin:6px 0;display:inline-flex;align-items:center;gap:6px"><Icon name="clock" size={13} /> {fmtDateTime($taskPanel.scheduled_for)}{$taskPanel.recurrence ? ' · repeats ' + $taskPanel.recurrence : ' (one-off)'}</div>
     {/if}
-    {#if $taskPanel.run_of}<div class="note" style="text-align:left;display:inline-flex;align-items:center;gap:6px"><Icon name="zap" size={13} /> One run of a recurring task.</div>{/if}
+    {#if $taskPanel.run_of}
+      <div class="note" style="text-align:left;display:inline-flex;align-items:center;gap:6px">
+        <Icon name="zap" size={13} /> One run of a
+        <button class="runlink" onclick={() => go('/t/' + $taskPanel.run_of)}>recurring task</button>
+      </div>
+    {/if}
 
     {#if $taskPanel.status === 'failed' && $taskPanel.error}
       <div class="taskerror"><Icon name="x" size={13} /> <span><strong>Failed:</strong> {$taskPanel.error}</span></div>
@@ -63,6 +68,18 @@
     {#each ($taskPanel.children || []) as c}
       <div class="child"><span class="badge">{c.status}</span> {c.title}</div>
     {/each}
+
+    <!-- Occurrences spawned from this recurring template (newest first) — each run
+         is its own task, so link to where its output actually lives. -->
+    {#if ($taskPanel.runs || []).length}
+      <div class="ptitle" style="margin-top:12px">Runs</div>
+      {#each $taskPanel.runs as r (r.id)}
+        <div class="child">
+          <span class="badge">{r.status}</span>
+          <button class="runlink" onclick={() => go('/t/' + r.id)}>{fmtStamp(r.created_at)}</button>
+        </div>
+      {/each}
+    {/if}
 
     <div style="margin-top:10px;display:flex;gap:8px">
       {#if !TERMINAL.includes($taskPanel.status)}

@@ -23,11 +23,23 @@
     } catch { /* fall back to the teaser */ }
     $viewer = { title: item.description, text }
   }
+
+  // The deliverable was also persisted as a workspace file — link it (open in the
+  // viewer by file type; the viewer header offers the download).
+  const fileName = $derived((item.path || '').split('/').pop())
+  const openFile = () => ($viewer = { title: item.description, name: fileName, path: item.path })
 </script>
 
 <div class="deliv">
   <div class="d"><Icon name="check" size={13} /> Deliverable produced — {item.description}{#if item.at}<span class="itemtime">{fmtStamp(item.at)}</span>{/if}</div>
   {#if teaser}<div class="dprev">{teaser}…</div>{/if}
+  {#if item.path}
+    <div class="toolcard">
+      <span class="tcicon"><Icon name="file-text" size={15} /></span>
+      <button class="tclink" onclick={openFile} title={item.path}>{fileName}</button>
+      <a class="tcdl" href={api.fileUrl(item.path, true)} title="Download {fileName}" aria-label="Download {fileName}"><Icon name="download" size={15} /></a>
+    </div>
+  {/if}
   {#if item.taskId}<button class="viewbtn" onclick={openFull}>View full →</button>{/if}
   {#if item.deliverableId}
     <div class="itemfb"><Feedback targetKind="deliverable" targetId={item.deliverableId} content={(item.description || '') + '\n' + (item.preview || '')} {request} current={item.feedback} /></div>
