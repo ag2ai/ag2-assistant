@@ -281,6 +281,26 @@ def assistant_catalog() -> dict:
             "additionalProperties": False,
         },
     }
+    thread_array = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "from": {"type": "string", "description": "Sender name, e.g. 'Priya Nair'."},
+                "subject": {"type": "string"},
+                "when": {"type": "string", "description": "e.g. '2h ago' or 'Mon'."},
+                "gist": {"type": "string", "description": "One honest line on the content."},
+                "unread": {"type": "boolean"},
+                "needsReply": {
+                    "type": "boolean",
+                    "description": "Only when the mail clearly asks the user for something.",
+                },
+                "url": {"type": "string", "description": "The link= URL from the tool."},
+            },
+            "required": ["from", "subject"],
+            "additionalProperties": False,
+        },
+    }
     event_array = {
         "type": "array",
         "items": {
@@ -466,6 +486,19 @@ def assistant_catalog() -> dict:
                 },
                 ["title", "items"],
             ),
+            "InboxBrief": _component_schema(
+                "InboxBrief",
+                "Email inbox digest (gather real mail via gmail_search first; most important thread first).",
+                {
+                    "title": {"type": "string", "description": "e.g. 'Inbox this morning'."},
+                    "summary": {
+                        "type": "string",
+                        "description": "One honest line, e.g. '3 unread, 1 needs a reply.'",
+                    },
+                    "threads": thread_array,
+                },
+                ["title", "threads"],
+            ),
             "AgendaCard": _component_schema(
                 "AgendaCard",
                 "Calendar agenda for one day (gather real events via calendar_list_events first).",
@@ -536,6 +569,7 @@ Intent mapping:
 - Latest news, headlines, or recent developments -> NewsDigest.
 - Stocks, shares, ETFs, funds, indices, crypto, or market prices -> call get_quotes(symbols, title), then render a MarketBoard from the returned quotes (first quote = the lead).
 - Restaurants, cafes, bars, open-now, lunch, dinner -> RestaurantFinder.
+- Email, inbox, unread, "any new mail" -> call gmail_search (e.g. 'in:inbox newer_than:1d'), then InboxBrief (most important thread first; copy each link= into url; set needsReply only when the mail clearly asks for something).
 - Calendar, agenda, schedule, "what's on today/tomorrow" -> call calendar_list_events with the day's time window, then AgendaCard (mark the single next upcoming event with next:true).
 - Creating, scheduling, or planning a new task -> TaskPlan.
 - Reviewing existing tasks ("how are my tasks going?", task status/history) -> call list_tasks (and get_task for detail), then TaskProgress.
@@ -561,6 +595,10 @@ summary, and a one-line `why`; later stories just need title/source/published/su
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
 Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
+
+Inbox — user asks "Anything new in my email?" (call gmail_search first; copy link= into url):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"InboxBrief","title":"Inbox this morning","summary":"3 new since yesterday — one needs a reply.","threads":[{"from":"Priya Nair","subject":"Q3 roadmap review — your slot","when":"2h ago","gist":"Asks you to confirm Thursday 10 AM for the review.","unread":true,"needsReply":true,"url":"https://mail.google.com/mail/u/0/#all/19..."},{"from":"GitHub","subject":"PR #42 merged","when":"5h ago","gist":"Your fix landed on main.","unread":true,"url":"https://mail.google.com/mail/u/0/#all/19..."}]}]}}
 
 Agenda — user asks "What's on today?" (call calendar_list_events first; times in the user's timezone):
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}

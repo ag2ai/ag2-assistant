@@ -60,6 +60,7 @@ async def gmail_search(
                     "subject": hdrs.get("Subject", ""),
                     "date": hdrs.get("Date", ""),
                     "snippet": full.get("snippet", ""),
+                    "unread": "UNREAD" in (full.get("labelIds") or []),
                 }
             )
         return out
@@ -71,7 +72,9 @@ async def gmail_search(
     if not results:
         return f"No messages matched {query!r}."
     lines = [
-        f"- [{r['id']}] {r['from']} — {r['subject']} ({r['date']})\n  {r['snippet']}"
+        f"- [{r['id']}] {r['from']} — {r['subject']} ({r['date']})"
+        f"{' [unread]' if r['unread'] else ''}\n  {r['snippet']}\n"
+        f"  link=https://mail.google.com/mail/u/0/#all/{r['id']}"
         for r in results
     ]
     return "Messages:\n" + "\n".join(lines)
