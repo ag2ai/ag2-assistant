@@ -283,13 +283,53 @@ def _extract_drive_id(value: str) -> str:
     return value.strip()
 
 
+# Non-Google mime types we can safely decode as text (plus any text/*).
+_TEXTUAL_MIMES = frozenset(
+    {"application/json", "application/xml", "application/csv", "application/x-yaml"}
+)
+
+
+def _pdf_text(data: bytes) -> str | None:
+    """Extract a PDF's text, or None if it has no extractable text (e.g. scanned)."""
+    import io
+
+    from pypdf import PdfReader
+
+    pages = [(page.extract_text() or "").strip() for page in PdfReader(io.BytesIO(data)).pages]
+    return "\n\n".join(p for p in pages if p) or None
+
+
+def _decode_drive_content(name: str, mime: str, data: bytes) -> str:
+    """Turn downloaded Drive bytes into model-safe text. Binary formats are never
+    decoded raw (mojibake poisons the conversation) — PDFs get real text
+    extraction; anything else binary gets an honest 'can't read this' message."""
+    if mime == "application/pdf":
+        try:
+            text = _pdf_text(data)
+        except Exception:
+            text = None
+        if text is None:
+            return (
+                f"{name} is a PDF with no extractable text (likely scanned images) — "
+                "it can't be read as text."
+            )
+        return text
+    if mime.startswith("text/") or mime in _TEXTUAL_MIMES:
+        return data.decode("utf-8", "replace")
+    return (
+        f"{name} is a binary file ({mime}) — it can't be read as text. "
+        "Tell the user what it is and suggest they open it in Google Drive."
+    )
+
+
 @tool
 async def drive_read(
     file_id: Annotated[
         str, Field(description="The Drive file id (from drive_search) or a Docs/Sheets/Drive URL.")
     ],
 ) -> str:
-    """Read a Google Drive file's text content (Docs/Sheets are exported as text).
+    """Read a Google Drive file's text content (Docs/Sheets are exported as text,
+    PDF text is extracted; other binary formats are reported, not decoded).
 
     Accepts a file id or a full Google Docs/Sheets/Drive link.
     """
@@ -298,14 +338,16 @@ async def drive_read(
     def _run():
         svc = _svc("drive", "v3")
         meta = svc.files().get(fileId=fid, fields="name, mimeType").execute()
-        mime = meta.get("mimeType", "")
+        name, mime = meta.get("name", fid), meta.get("mimeType", "")
         if mime.startswith("application/vnd.google-apps"):
             export_as = "text/csv" if "spreadsheet" in mime else "text/plain"
             data = svc.files().export(fileId=fid, mimeType=export_as).execute()
+            text = data.decode("utf-8", "replace") if isinstance(data, bytes) else str(data)
         else:
             data = svc.files().get_media(fileId=fid).execute()
-        text = data.decode("utf-8", "replace") if isinstance(data, bytes) else str(data)
-        return meta.get("name", fid), text[:50_000]
+            data = data if isinstance(data, bytes) else str(data).encode()
+            text = _decode_drive_content(name, mime, data)
+        return name, text[:50_000]
 
     try:
         name, text = await asyncio.to_thread(_run)
