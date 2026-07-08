@@ -1,0 +1,34 @@
+# AG2 Assistant — pull-and-run compose file.
+#
+# Quick start:
+#   1. cp .env.example .env   # then put your GEMINI_API_KEY in it (optional —
+#                             #   you can also paste the key in the web onboarding)
+#   2. docker compose up
+#   3. open http://localhost:8800/
+#
+# State (config, sessions, memory, tasks) and generated files persist in the
+# named volumes below, so restarts and image upgrades keep your data.
+
+services:
+  ag2-assistant:
+    # Build the image locally from the Dockerfile in this directory.
+    build: .
+    image: ag2-assistant:latest
+    container_name: ag2-assistant
+    restart: unless-stopped
+    ports:
+      - "8800:8800"
+    env_file:
+      - .env
+    volumes:
+      - ag2_state:/root/.ag2assistant
+      - ag2_workspace:/workspace
+      # OPTIONAL — enables the full Docker-backed code-execution sandbox by
+      # letting the assistant drive your host's Docker daemon. Without it, code
+      # runs locally inside this container (the container is the isolation
+      # boundary). Uncomment to opt in:
+      # - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  ag2_state:
+  ag2_workspace:

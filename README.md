@@ -30,6 +30,51 @@ Then open **http://localhost:8800/** and complete the first-run onboarding: choo
 
 To serve the API/UI without any messaging channels, use `ag2-assistant gateway` instead of `run`.
 
+## Run with Docker
+
+Prefer not to install Python and dependencies? Build and run the whole app —
+web UI, gateway, and channels — in one self-contained container.
+
+### Option A — docker compose (recommended)
+
+```bash
+cp .env.example .env          # optional: add GEMINI_API_KEY (or paste it in onboarding)
+docker compose up             # builds the image, then open http://localhost:8800/
+```
+
+State and generated files live in named volumes, so restarts and rebuilds keep
+your data.
+
+### Option B — docker build + run
+
+```bash
+docker build -t ag2-assistant .
+
+docker run -d --name ag2-assistant \
+  -p 8800:8800 \
+  -e GEMINI_API_KEY=your-key \
+  -v ag2_state:/root/.ag2assistant \
+  -v ag2_workspace:/workspace \
+  ag2-assistant
+```
+
+Then open **http://localhost:8800/** and complete onboarding.
+
+### Code-execution sandbox (optional)
+
+The assistant can run untrusted code inside Docker. To enable the full
+Docker-backed sandbox, give the container access to your host's Docker daemon by
+adding a socket mount:
+
+```bash
+# docker run: add
+  -v /var/run/docker.sock:/var/run/docker.sock
+# docker compose: uncomment the docker.sock line under volumes:
+```
+
+Without it, code runs locally inside the container (the container itself is the
+isolation boundary) — everything else works unchanged.
+
 ## The web app
 
 The primary interface is the Svelte web UI served at `/` (→ `/app`). It includes:
