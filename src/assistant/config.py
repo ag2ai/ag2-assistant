@@ -28,6 +28,15 @@ _DATA_DIR_NAME = ".ag2assistant"
 _ENV_PREFIX = "AG2ASSISTANT_"
 
 
+def _default_root() -> Path:
+    """The install root, honoring AG2ASSISTANT_DATA_DIR. Used by BOTH the layered
+    Config defaults and the standalone secrets/settings resolvers below so the two
+    never diverge (a container mounts persistent state at a fixed path via this env)."""
+    if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
+        return Path(v).expanduser()
+    return Path.home() / _DATA_DIR_NAME
+
+
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
@@ -106,12 +115,12 @@ class Config(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     # The install root: holds only global files (profiles.json, secrets.json,
     # pricing.json, log) and the profiles/ tree. Stays fixed across with_profile().
-    root_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME)
+    root_dir: Path = Field(default_factory=_default_root)
     # Profile-owned data dir. Equals root_dir for the base config; with_profile()
     # repoints it at root_dir/profiles/<id>.
-    data_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME)
+    data_dir: Path = Field(default_factory=_default_root)
     # Where installed skills live (SKILL.md packages).
-    skills_dir: Path = Field(default_factory=lambda: Path.home() / _DATA_DIR_NAME / "skills")
+    skills_dir: Path = Field(default_factory=lambda: _default_root() / "skills")
     # The agent's working file space — a real, visible folder it can read/write via
     # AG2's FilesystemToolkit (confined to here). Configurable via AG2ASSISTANT_WORKSPACE.
     workspace_dir: Path = Field(default_factory=lambda: Path.home() / "Documents" / "AG2 Assistant")
@@ -129,13 +138,16 @@ class Config(BaseModel):
 
 def default_config_path() -> Path:
     """Where AG2 Assistant looks for a JSON config file."""
-    return Path.home() / _DATA_DIR_NAME / "config.json"
+    return _default_root() / "config.json"
 
 
 def data_dir() -> Path:
     """Resolve the data directory WITHOUT the full config layering, so the secrets /
     settings stores can locate their files without recursing back into load_config()
-    (which itself consults settings)."""
+    (which itself consults settings). AG2ASSISTANT_DATA_DIR wins (highest precedence,
+    matching _apply_env_overrides); then a config.json data_dir; then the default root."""
+    if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
+        return Path(v).expanduser()
     p = default_config_path()
     if p.exists():
         try:
@@ -144,7 +156,7 @@ def data_dir() -> Path:
                 return Path(d)
         except Exception:
             pass
-    return Path.home() / _DATA_DIR_NAME
+    return _default_root()
 
 
 def _apply_env_overrides(cfg: Config) -> None:
@@ -184,6 +196,14 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.agent.location = v
     if v := env("AG2ASSISTANT_WORKSPACE"):
         cfg.workspace_dir = Path(v).expanduser()
+    if v := env("AG2ASSISTANT_DATA_DIR"):
+        # Redirect the whole install root (global files + profiles/ tree). Mirrors the
+        # default layout so with_profile() keeps repointing data_dir/skills_dir under it.
+        # Primarily for containers, which mount persistent state at a fixed path.
+        root = Path(v).expanduser()
+        cfg.root_dir = root
+        cfg.data_dir = root
+        cfg.skills_dir = root / "skills"
     if v := env("AG2ASSISTANT_SANDBOX"):
         cfg.tools.sandbox = v
     if v := env("AG2ASSISTANT_DOCKER_IMAGE"):

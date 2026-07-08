@@ -10,6 +10,8 @@ AG2 Assistant is a web app (with optional messaging-channel and CLI front-ends) 
 
 ### 1. Install
 
+Clone for a development checkout:
+
 ```bash
 git clone https://github.com/ag2ai/ag2-assistant.git
 cd ag2-assistant
@@ -17,6 +19,14 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
+
+Or just install the CLI globally, no clone (installed from git — not yet on PyPI):
+
+```bash
+uv tool install "git+https://github.com/ag2ai/ag2-assistant.git"   # or: pipx install "git+https://github.com/ag2ai/ag2-assistant.git"
+```
+
+Prefer to run it as an always-on container? See [Deployment](#deployment).
 
 ### 2. Run
 
@@ -65,6 +75,33 @@ ag2-assistant agent "What's the current AG2 version? Search the web."
 ag2-assistant agent "Calculate the first 20 Fibonacci numbers"
 ag2-assistant agent "Compare FastAPI vs Flask. Search the web for current benchmarks."
 ```
+
+## Deployment
+
+The Quick Start above is the developer setup. For other ways to run it — see
+[docs/deployment.md](docs/deployment.md) for the full guide:
+
+| Tier | For | How |
+|------|-----|-----|
+| **Contributor** | hacking on the code | `git clone` + `pip install -e ".[dev]"` |
+| **CLI user** | running locally, no clone | `uv tool install "git+https://github.com/ag2ai/ag2-assistant.git"` |
+| **Self-hosted** | an always-on instance | `docker compose up -d` |
+| **PyPI** | `pip install ag2-assistant` | not yet (blocked on AG2's PyPI release; targeted for 1.0) |
+
+### Docker (self-hosted)
+
+```bash
+cp .env.example .env         # add a provider key (e.g. GEMINI_API_KEY) — optional
+docker compose up -d         # build + run; open http://localhost:8800/
+```
+
+State and the agent's file workspace persist in named volumes. Tagged releases also publish
+a prebuilt image to `ghcr.io/ag2ai/ag2-assistant`. Code execution runs in-container by
+default (no host Docker socket); see [docs/deployment.md](docs/deployment.md) for the
+docker-out-of-docker option and channel setup.
+
+> The gateway has no built-in auth. Only expose port 8800 beyond localhost behind a reverse
+> proxy that handles TLS and authentication.
 
 ## Running Tests
 
@@ -125,6 +162,7 @@ State lives under `~/.ag2assistant/` (settings, sessions, memory, tasks); genera
 
 - [Architecture](docs/architecture.md) — full system design: services, agents, endpoints, event model, data flow ([diagram](docs/architecture.svg))
 - [Usage Guide](docs/usage.md) — CLI commands, configuration, channels
+- [Deployment](docs/deployment.md) — install tiers, Docker/Compose, self-hosting
 
 ## License
 

@@ -59,6 +59,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
+from assistant import __version__
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
     ProfileManager,
@@ -317,7 +318,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         finally:
             await manager.close()
 
-    app = FastAPI(title="AG2 Assistant Gateway", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AG2 Assistant Gateway", version=__version__, lifespan=lifespan)
     app.state.profiles = manager
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
 
@@ -537,6 +538,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             ],
             "active_default": reg.get("active_default"),
             "onboarded": bool(reg.get("onboarded")),
+            # App version rides the boot payload so the UI needn't make a second request.
+            "version": __version__,
         }
 
     @app.post("/api/profiles")
