@@ -69,7 +69,7 @@ Show the installed version.
 
 ```bash
 ag2-assistant version
-# ag2-assistant 0.1.0
+# ag2-assistant 0.5.0
 ```
 
 ### `ag2-assistant gateway`

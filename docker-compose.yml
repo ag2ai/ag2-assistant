@@ -1,0 +1,47 @@
+# AG2 Assistant — self-hosted deployment.
+#
+#   cp .env.example .env      # add GEMINI_API_KEY (or another provider key)
+#   docker compose up -d      # build + run; open http://localhost:8800/
+#
+# Or pull the prebuilt image instead of building: comment out `build:` and set
+#   image: ghcr.io/ag2ai/ag2-assistant:latest
+#
+# NOTE: the gateway has no auth of its own. Publish 8800 only on a trusted network,
+# or put it behind a reverse proxy that terminates TLS and handles authentication.
+services:
+  ag2-assistant:
+    build: .
+    image: ghcr.io/ag2ai/ag2-assistant:latest
+    ports:
+      - "8800:8800"
+    # Provider keys and channel tokens (GEMINI_API_KEY, OPENAI_API_KEY,
+    # TELEGRAM_BOT_TOKEN, ...). Optional: keys can also be set via onboarding/Settings
+    # and persist in the data volume, so booting without a .env is fine.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # In-container code execution — the container is the sandbox (see the
+      # docker-out-of-docker block below to change this).
+      AG2ASSISTANT_SANDBOX: local
+    volumes:
+      # Persistent state: secrets, profiles, config, memory, tasks.
+      - ag2_data:/data
+      # The agent's readable/writable file workspace (generated images, outputs).
+      - ag2_workspace:/workspace
+    restart: unless-stopped
+
+    # --- Optional: docker-out-of-docker code execution -----------------------
+    # Let the agent spawn real sibling sandbox containers instead of running code
+    # in-process. Stronger per-run isolation, but mounting the host Docker socket
+    # grants this container control of the host Docker daemon — enable only if you
+    # accept that. Replace the `environment` block above with AG2ASSISTANT_SANDBOX:
+    # docker and uncomment:
+    # volumes:
+    #   - ag2_data:/data
+    #   - ag2_workspace:/workspace
+    #   - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  ag2_data:
+  ag2_workspace:
