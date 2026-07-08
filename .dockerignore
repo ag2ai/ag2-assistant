@@ -24,5 +24,3 @@ LOCAL_PATHS.md
 Dockerfile
 .dockerignore
 docker-compose.yml
-
-uv.lock

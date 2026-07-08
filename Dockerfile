@@ -24,17 +24,20 @@ RUN apt-get update \
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
     UV_PYTHON_DOWNLOADS=0 \
-    UV_LINK_MODE=copy
-
-# `uv venv` does NOT install pip/setuptools — the venv is minimal from the start.
-RUN uv venv /opt/venv
+    UV_LINK_MODE=copy \
+    # `uv sync` targets this env instead of the default .venv, so we can copy it
+    # wholesale into the runtime stage.
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
 WORKDIR /app
 COPY . .
 
-# Project + optional Google integration (Gmail/Calendar/Drive). Channels
-# (Telegram/Discord/Slack) and voice are already in the base deps.
-RUN uv pip install ".[google]"
+# Reproducible install from the committed uv.lock: exact pinned versions, no
+# re-resolution. --no-editable installs the project as a wheel (nothing depends on
+# the /app source at runtime); --extra google adds Gmail/Calendar/Drive. Channels
+# (Telegram/Discord/Slack) and voice are already in the base deps. `uv sync`
+# creates /opt/venv with no pip/setuptools — minimal from the start.
+RUN uv sync --frozen --no-editable --extra google
 
 # Slim the venv (~280MB saved) — all removals verified safe by booting the image:
 #   1. Vertex AI / Google Cloud SDK: ag2[gemini] declares google-cloud-aiplatform
