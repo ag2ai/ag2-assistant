@@ -1,0 +1,26 @@
+# Keep the build context small and the image clean. The SPA bundle under
+# src/assistant/gateway/static/app is committed and IS needed — don't exclude it.
+.git
+.github
+.venv
+**/__pycache__
+*.pyc
+*.egg-info
+build
+dist
+.pytest_cache
+.ruff_cache
+node_modules
+# web/ is the SPA *source*; the built bundle is committed under src/ and is what the
+# gateway serves, so the source tree isn't needed in the image.
+web
+tests
+docs
+.env
+.env*
+*.env
+.DS_Store
+LOCAL_PATHS.md
+Dockerfile
+.dockerignore
+docker-compose.yml

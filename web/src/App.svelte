@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations } from './store.js'
+  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setPalette } from './design/palette.js'
@@ -42,6 +42,7 @@
       const reg = await api.profiles()
       const list = reg.profiles || []
       registryOnboarded = !!reg.onboarded
+      $appVersion = reg.version || ''
       $profiles = { list, activeId: null }
       if (!list.length) { boot = 'create'; return }
       resolveActive(list, reg.active_default)
