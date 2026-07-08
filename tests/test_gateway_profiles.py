@@ -240,9 +240,10 @@ def test_status_aggregate_shape(monkeypatch):
         rows = client.get("/api/status").json()
         assert {r["pid"] for r in rows} == {"work", "personal"}
         for r in rows:
-            assert set(r) == {"pid", "busy", "running_tasks"}
+            assert set(r) == {"pid", "busy", "running_tasks", "unseen_done"}
             assert r["busy"] is True
             assert r["running_tasks"] == 0
+            assert r["unseen_done"] == 0
 
 
 # --- /api/usage install-wide roll-up ---

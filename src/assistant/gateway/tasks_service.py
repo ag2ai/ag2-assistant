@@ -959,12 +959,20 @@ class TaskService:
         }
 
     async def mark_seen(self, task_id: str) -> bool:
-        """Record that the user has opened this task/run (clears its unread highlight).
-        Idempotent — only writes the first time. Persists via the task store."""
+        """Record that the user has seen a *finished* task/run (clears its unread
+        highlight and the chip's unread-results dot).
+
+        Only stamps ``seen_at`` once the task is terminal: opening a task while it's
+        still running is a progress peek, not seeing the result. Stamping on a peek
+        would pre-empt the unread indicator that should fire when the task later
+        completes (the reason a task could finish with no dot). Because peeks never
+        write, ``seen_at`` is set iff the user opened the task after it finished, so
+        the unread test stays a simple ``terminal && seen_at is None``.
+        Idempotent — writes once, on the first open after finishing."""
         t = await self._store.get(task_id)
         if t is None:
             return False
-        if getattr(t, "seen_at", None) is None:
+        if t.is_terminal and getattr(t, "seen_at", None) is None:
             from datetime import datetime
 
             await self._store.update(task_id, seen_at=datetime.now().astimezone().isoformat())
