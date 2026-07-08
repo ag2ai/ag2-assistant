@@ -226,11 +226,7 @@ class Scheduler:
         now = now or datetime.now().astimezone()
         fired = []
         for t in await self._store.list_all():
-            if (
-                t.status == TaskStatus.SCHEDULED
-                and not getattr(t, "archived", False)  # archived = put away, don't fire
-                and is_due(t.scheduled_for, now)
-            ):
+            if t.status == TaskStatus.SCHEDULED and is_due(t.scheduled_for, now):
                 await self._fire(t.id)
                 fired.append(t.id)
         return fired

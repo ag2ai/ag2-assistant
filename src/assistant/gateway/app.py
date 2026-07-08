@@ -148,10 +148,6 @@ class ScheduleRequest(BaseModel):
     recurrence: str | None = None
 
 
-class ArchiveRequest(BaseModel):
-    archived: bool = True
-
-
 class OnboardedRequest(BaseModel):
     value: bool = True
 
@@ -821,6 +817,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "messages": await runtime.gateway.transcript(session_id),
         }
 
+    @p.delete("/sessions/{session_id}")
+    async def delete_session(
+        session_id: str, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Permanently delete a chat (transcript + full event log). Irreversible."""
+        removed = await runtime.gateway.delete_session(session_id)
+        if not removed:
+            return Response(status_code=404)
+        return {"ok": True}
+
     # ---- Message ----
 
     @p.post("/message", response_model=MessageResponse)
@@ -894,25 +900,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         ok = await runtime.tasks.mark_seen(task_id)
         return {"ok": ok}
 
-    @p.post("/tasks/{task_id}/archive")
-    async def archive_task(
-        task_id: str,
-        req: ArchiveRequest | None = None,
-        runtime: ProfileRuntime = Depends(get_runtime),
-    ):
-        archived = True if req is None else req.archived
-        ok, reason = await runtime.tasks.set_archived(task_id, archived)
-        if ok:
-            return {"ok": True, "archived": archived}
-        if reason == "notfound":
+    @p.delete("/tasks/{task_id}")
+    async def delete_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Permanently delete a task + its whole subtree, plus each one's chat/event
+        stream. Cancels an in-flight run first. Irreversible."""
+        ok, ids = await runtime.tasks.delete(task_id)
+        if not ok:
             return Response(status_code=404)
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "Only finished tasks can be archived — cancel it first to stop it.",
-            },
-            status_code=409,
-        )
+        # Purge the per-task chat/event streams (task pages use session "task:<id>").
+        for tid in ids:
+            with contextlib.suppress(Exception):
+                await runtime.gateway.delete_session(f"task:{tid}")
+        return {"ok": True, "deleted": ids}
 
     @p.post("/tasks/{task_id}/chat")
     async def task_chat(
