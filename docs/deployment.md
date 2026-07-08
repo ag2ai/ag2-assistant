@@ -6,7 +6,7 @@ you want to run it.
 
 | Tier | For | How |
 |------|-----|-----|
-| [Contributor](#contributor-clone--editable) | hacking on the code | clone + `pip install -e ".[dev]"` |
+| [Contributor](#contributor-clone--editable) | developing the code | clone + `pip install -e ".[dev]"` |
 | [CLI user](#cli-user-pipx--uv-tool) | running it locally without cloning | `uv tool install` / `pipx install` from git |
 | [Self-hosted](#self-hosted-docker) | an always-on instance / server | Docker + Compose |
 | [PyPI](#pypi-later) | `pip install ag2-assistant` | not yet — see below |
