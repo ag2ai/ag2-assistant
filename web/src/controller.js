@@ -74,8 +74,8 @@ export function openThread(kind, id) {
   }).connect()
 
   if (kind === 'task') {
-    api.markSeen(id).catch(() => {})   // opening a run clears its unread highlight in the nav
-    loadPanel(id)
+    _markedSeen = false          // arm the "mark seen once finished" latch for this task
+    loadPanel(id)                // also marks it seen if it's already/becomes terminal
     panelTimer = setInterval(() => loadPanel(id), 3000)
   } else {
     taskPanel.set(null)
@@ -180,6 +180,19 @@ export function stopVoice() {
   if (voiceCtl) voiceCtl.stop()   // → onState('off') → _voiceEnded (teardown + reload)
 }
 
+const _TERMINAL_TASK = new Set(['completed', 'failed', 'cancelled'])
+let _markedSeen = false   // per-viewed-task latch: mark seen once, only after it finishes
+
 async function loadPanel(id) {
-  try { taskPanel.set(await api.task(id)) } catch { /* keep last */ }
+  let panel
+  try { panel = await api.task(id) } catch { return /* keep last panel on error */ }
+  taskPanel.set(panel)
+  // Clear the unread indicator once the task is finished — whether it was already
+  // done when opened or completed while the user watched. Peeking at a still-running
+  // task deliberately does NOT mark it seen, so its dot still fires when it finishes
+  // if the user has navigated away. Latched so we call markSeen at most once.
+  if (!_markedSeen && panel && _TERMINAL_TASK.has(panel.status)) {
+    _markedSeen = true
+    api.markSeen(id).catch(() => {})
+  }
 }

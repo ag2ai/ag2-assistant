@@ -394,12 +394,12 @@
   .chip.add:hover { color: var(--accent); border-color: var(--accent); }
   .mono { pointer-events: none; }
   /* unread-results dot: a small badge in the chip's top-right when the profile has
-     finished tasks the user hasn't opened yet. Uses --accent to match the nav's
-     per-row unread markers (.drow .dot / .unreadcount). */
+     finished tasks the user hasn't opened yet. A fixed amber attention color (not the
+     palette --accent) so it reads as "new" and stays legible on every profile tint. */
   .actdot {
     position: absolute; top: -1px; right: -1px;
     width: 8px; height: 8px; border-radius: var(--radius-pill);
-    background: var(--accent);
+    background: var(--warning);
     border: 1.5px solid var(--surface);
   }
   .actdot.inmenu { position: static; margin-left: auto; border-color: var(--surface); }
