@@ -10,7 +10,7 @@ the ``get_runtime`` dependency; unknown → 404, archived → 410.
 Route map:
   Global (unprefixed):
     GET  /api/health                         -> process status (first running runtime)
-    GET  /api/status                         -> [{pid, busy, running_tasks}] activity badges
+    GET  /api/status                         -> [{pid, busy, running_tasks, unseen_done}] activity badges
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
     POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
     POST /api/onboarded                      -> set the install-level onboarding flag
@@ -283,18 +283,35 @@ def _chat_asker(runtime: ProfileRuntime, session_id: str):
     return DurableAsker(NullAsker(), inquiries, session=session_id)
 
 
-async def _running_tasks(runtime: ProfileRuntime) -> int:
-    """Count of RUNNING top-level+subtree tasks (cheap store scan) for activity badges."""
+async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
+    """Per-profile activity for the chip badges, from a single store scan.
+
+    Returns ``(running, unseen_done)``:
+      * ``running``     — RUNNING tasks (top-level + subtree); kept for API back-compat.
+      * ``unseen_done`` — finished, not-yet-opened root tasks (non-archived): the count
+        behind the chip's "unread results" dot. Mirrors the nav's per-row unread marker
+        (``isUnread`` = terminal status && not seen), rolled up to the profile.
+    """
     tasks = runtime.tasks
     store = getattr(tasks, "store", None) if tasks is not None else None
     if store is None:
-        return 0
+        return 0, 0
     try:
         from assistant.tasks import TaskStatus
 
-        return sum(1 for t in await store.list_all() if t.status == TaskStatus.RUNNING)
+        rows = await store.list_all()
+        running = sum(1 for t in rows if t.status == TaskStatus.RUNNING)
+        unseen_done = sum(
+            1
+            for t in rows
+            if t.parent_id is None
+            and not getattr(t, "archived", False)
+            and t.status in TaskStatus.TERMINAL
+            and getattr(t, "seen_at", None) is None
+        )
+        return running, unseen_done
     except Exception:
-        return 0
+        return 0, 0
 
 
 def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
@@ -430,15 +447,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.get("/api/status")
     async def status() -> list[dict]:
         """Per-profile activity for badges: busy = agent alive, running_tasks = count
-        of RUNNING tasks. Aggregated over the running runtimes."""
+        of RUNNING tasks, unseen_done = finished-but-not-yet-opened root tasks (the
+        chip's unread-results dot). Aggregated over the running runtimes."""
         out = []
         for runtime in manager.runtimes():
             gw_status = runtime.gateway.status() if runtime.gateway is not None else {}
+            running, unseen_done = await _activity(runtime)
             out.append(
                 {
                     "pid": runtime.pid,
                     "busy": gw_status.get("status") == "ok",
-                    "running_tasks": await _running_tasks(runtime),
+                    "running_tasks": running,
+                    "unseen_done": unseen_done,
                 }
             )
         return out

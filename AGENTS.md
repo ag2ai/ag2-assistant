@@ -1,6 +1,6 @@
 # AG2 Assistant
 
-An open-source personal AI assistant built with [AG2](https://github.com/ag2ai/ag2)'s Beta framework (the `ag2` package), in Python.
+An open-source personal AI assistant built with [AG2](https://github.com/ag2ai/ag2)'s framework (the `ag2` package), in Python.
 
 ## Development
 

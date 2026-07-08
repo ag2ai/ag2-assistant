@@ -102,6 +102,13 @@ class Task:
     run_of: str | None = None  # template id, set on a recurring task's per-occurrence run
     seen_at: str | None = None  # when the user opened this task/run (drives unread highlight)
 
+    # run-history (see docs/task-run-history-plan.md): `summary` is this run's own
+    # distilled digest of what it delivered (an enrichment cache; the durable record
+    # stays the deliverables). `history_runs` optionally overrides the config default
+    # for how many prior runs of this template feed the next run's context.
+    summary: str = ""
+    history_runs: int | None = None
+
     @property
     def is_terminal(self) -> bool:
         return self.status in TaskStatus.TERMINAL

@@ -3,8 +3,6 @@
 // created_at / started_at / ended_at). One place so the drawer, task panel, and
 // thread items read the same.
 
-const _plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`
-
 // Normalize to a Date. Numbers are AG2 `created_at` (Unix seconds); strings are
 // ISO 8601. Returns null when missing/unparseable.
 export function toDate(v) {
@@ -76,19 +74,22 @@ export function fmtWhen(v) {
 
 // Relative future until a scheduled time — "Next in 3 mins" / "Due now". Recomputed
 // on each drawer refresh so it ticks down.
+// Compact "time until next run" for the task list — e.g. "in 2h", "in 5m",
+// "in 3d". The verbose "Next in …" wording was repetitive down the list; the
+// full next-run date still lives in the row's tooltip.
 export function fmtNextIn(v) {
   const d = toDate(v)
   if (!d) return ''
   const ms = d.getTime() - Date.now()
-  if (ms <= 0) return 'Due now'
+  if (ms <= 0) return 'now'
   const mins = Math.round(ms / 60000)
-  if (mins < 1) return 'Next in <1 min'
-  if (mins < 60) return `Next in ${_plural(mins, 'min')}`
+  if (mins < 1) return 'in <1m'
+  if (mins < 60) return `in ${mins}m`
   const hours = Math.round(mins / 60)
-  if (hours < 24) return `Next in ${_plural(hours, 'hour')}`
+  if (hours < 24) return `in ${hours}h`
   const days = Math.round(hours / 24)
-  if (days < 7) return `Next in ${_plural(days, 'day')}`
+  if (days < 7) return `in ${days}d`
   const weeks = Math.round(days / 7)
-  if (weeks < 5) return `Next in ${_plural(weeks, 'week')}`
-  return `Next in ${_plural(Math.round(days / 30), 'month')}`
+  if (weeks < 5) return `in ${weeks}w`
+  return `in ${Math.round(days / 30)}mo`
 }

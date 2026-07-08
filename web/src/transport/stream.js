@@ -5,10 +5,14 @@
 import { api as P, onProfileGone } from '../lib/profile.js'
 
 export class StreamClient {
-  constructor(sessionId, { onEvent, onReady, onTurnEnd, onError } = {}) {
+  constructor(sessionId, { onEvent, onReady, onOpen, onTurnEnd, onError } = {}) {
     this.sessionId = sessionId
     this.onEvent = onEvent || (() => {})
     this.onReady = onReady || (() => {})
+    // Fires on every (re)connect, BEFORE the server's replay events arrive. The
+    // server replays the full history on each connect, so the caller uses this to
+    // start a fresh replay buffer and avoid double-folding on reconnect.
+    this.onOpen = onOpen || (() => {})
     this.onTurnEnd = onTurnEnd || (() => {})
     this.onError = onError || (() => {})
     this.ws = null
@@ -20,7 +24,7 @@ export class StreamClient {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${proto}://${location.host}${P('/stream?session=' + encodeURIComponent(this.sessionId))}`
     this.ws = new WebSocket(url)
-    this.ws.onopen = () => { const q = this._queue; this._queue = []; q.forEach((o) => this._raw(o)) }
+    this.ws.onopen = () => { this.onOpen(); const q = this._queue; this._queue = []; q.forEach((o) => this._raw(o)) }
     this.ws.onmessage = (e) => {
       let m
       try { m = JSON.parse(e.data) } catch { return }

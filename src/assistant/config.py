@@ -106,6 +106,19 @@ class MemoryConfig(BaseModel):
     compact_max_tokens: int = 20_000
 
 
+class TasksConfig(BaseModel):
+    """Recurring-task run-history knobs (see docs/task-run-history-plan.md)."""
+
+    # How many prior completed runs of a template feed the next run's context.
+    history_runs: int = 3
+    # Bounded background digest pipeline: worker count, max backlog before a
+    # completion's digest is dropped (safe — the run still shows via its stub),
+    # and the per-digest wall-clock cap.
+    digest_concurrency: int = 2
+    digest_queue_max: int = 64
+    digest_timeout_s: int = 30
+
+
 class Config(BaseModel):
     """Root AG2 Assistant configuration (built-in defaults; see `load_config`)."""
 
@@ -113,6 +126,7 @@ class Config(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    tasks: TasksConfig = Field(default_factory=TasksConfig)
     # The install root: holds only global files (profiles.json, secrets.json,
     # pricing.json, log) and the profiles/ tree. Stays fixed across with_profile().
     root_dir: Path = Field(default_factory=_default_root)
@@ -220,6 +234,17 @@ def _apply_env_overrides(cfg: Config) -> None:
             cfg.memory.compact_max_tokens = int(v)
         except ValueError:
             pass
+    for env_name, field in (
+        ("AG2ASSISTANT_TASKS_HISTORY_RUNS", "history_runs"),
+        ("AG2ASSISTANT_TASKS_DIGEST_CONCURRENCY", "digest_concurrency"),
+        ("AG2ASSISTANT_TASKS_DIGEST_QUEUE_MAX", "digest_queue_max"),
+        ("AG2ASSISTANT_TASKS_DIGEST_TIMEOUT", "digest_timeout_s"),
+    ):
+        if v := env(env_name):
+            try:
+                setattr(cfg.tasks, field, int(v))
+            except ValueError:
+                pass
 
 
 def load_config(path: Path | None = None) -> Config:

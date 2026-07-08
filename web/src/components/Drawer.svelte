@@ -63,9 +63,11 @@
   let usageAll = $state(null) // install-wide roll-up {profiles:[{pid,name,...}], total}
   // The active profile's own totals, derived from the roll-up (one request, not two).
   const usage = $derived((usageAll?.profiles || []).find((p) => p.pid === $profiles.activeId) || null)
-  let statusById = $state({}) // pid -> {busy, running_tasks} from GET /api/status
-  // A chip's activity dot: true when that profile has tasks running right now.
-  const isBusy = (pid) => (statusById[pid]?.running_tasks || 0) > 0
+  let statusById = $state({}) // pid -> {busy, running_tasks, unseen_done} from GET /api/status
+  // A chip's dot: true when that profile has finished tasks the user hasn't opened
+  // yet (rolls up the nav's per-row unread marker to the profile). Clears on the
+  // next 5s poll once the run is opened (markSeen).
+  const hasUnseen = (pid) => (statusById[pid]?.unseen_done || 0) > 0
 
   async function refresh() {
     try {
@@ -153,14 +155,6 @@
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   const isUnread = (t) => TERMINAL.has(t.status) && !t.seen  // a finished result not yet opened
 
-  const RECENT = 5
-  let expanded = $state(new Set())   // template ids showing all their runs
-  function toggle(id) {
-    const n = new Set(expanded)
-    n.has(id) ? n.delete(id) : n.add(id)
-    expanded = n
-  }
-
   // Top-level ordering: what's active now first, then upcoming scheduled tasks by
   // soonest next run, then finished (completed/failed/cancelled) at the bottom.
   function taskRank(t) {
@@ -199,12 +193,15 @@
       })
   })
 
-  // recent N runs, but always include unread ones even past the cap
-  function visibleRuns(g) {
-    if (expanded.has(g.task.id)) return g.runs
-    const recent = g.runs.slice(0, RECENT)
-    return [...recent, ...g.runs.slice(RECENT).filter(isUnread)]
-  }
+  // A caught-up recurring task collapses to just its header (title + recurrence +
+  // next run) — the seen ✓ history is noise once read, and the full run list is
+  // always available in the task's detail panel. So in the sidebar we only keep
+  // runs that still want attention: an unread result, a run still in flight, or
+  // whichever run is open right now (opening a run marks it seen; without this it
+  // would vanish from under its parent the instant you clicked it).
+  const needsAttention = (r, openId) =>
+    isUnread(r) || !TERMINAL.has(r.status) || r.id === openId
+  const visibleRuns = (g, openId) => g.runs.filter((r) => needsAttention(r, openId))
 
 </script>
 
@@ -231,13 +228,13 @@
             onclick={() => (isActive ? null : switchTo(p.id))}
           >
             <span class="mono">{initial(p)}</span>
-            {#if isBusy(p.id)}<span class="actdot" title="running tasks"></span>{/if}
+            {#if hasUnseen(p.id)}<span class="actdot" title="unread results"></span>{/if}
           </button>
         {/each}
 
         {#if overflow.length}
           {@const overflowActive = overflow.some((p) => p.id === active.id)}
-          {@const overflowBusy = overflow.some((p) => isBusy(p.id))}
+          {@const overflowUnseen = overflow.some((p) => hasUnseen(p.id))}
           <button
             class="chip more"
             class:active={overflowActive}
@@ -247,7 +244,7 @@
             onclick={() => (pickerOpen = !pickerOpen)}
           >
             <span class="mono">+{overflow.length}</span>
-            {#if overflowBusy}<span class="actdot" title="running tasks"></span>{/if}
+            {#if overflowUnseen}<span class="actdot" title="unread results"></span>{/if}
           </button>
         {/if}
 
@@ -273,7 +270,7 @@
             >
               <span class="profdot" style="--dot:{paletteHex(p.palette)}"></span>
               <span class="profname">{p.name}</span>
-              {#if isBusy(p.id)}<span class="actdot inmenu" title="running tasks"></span>{/if}
+              {#if hasUnseen(p.id)}<span class="actdot inmenu" title="unread results"></span>{/if}
               {#if isActive}<Icon name="check" size={13} />{/if}
             </button>
           {/each}
@@ -310,6 +307,8 @@
       {#if !groups.length}<div class="none">No tasks yet.</div>{/if}
       {#each groups as g (g.task.id)}
         {@const nextIn = g.task.status === 'scheduled' ? fmtNextIn(g.task.scheduled_for) : ''}
+        {@const openId = $route.name === 'task' ? $route.id : null}
+        {@const shownRuns = visibleRuns(g, openId)}
         <div class="drow ttask" class:on={$route.name === 'task' && $route.id === g.task.id}
              class:unseen={!g.runs.length && isUnread(g.task)} onclick={() => openTask(g.task.id)}>
           <div class="tline1">
@@ -319,12 +318,12 @@
           </div>
           {#if g.task.recurrence || nextIn}
             <div class="tmeta">
-              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}"><Icon name="clock" size={11} /> {g.task.recurrence}</span>{/if}
+              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}">{g.task.recurrence}</span>{/if}
               {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
             </div>
           {/if}
         </div>
-        {#each visibleRuns(g) as r (r.id)}
+        {#each shownRuns as r (r.id)}
           <div class="drow child trow" class:on={$route.name === 'task' && $route.id === r.id}
                class:unseen={isUnread(r)} onclick={() => openTask(r.id)}>
             <span class="statusicon {r.status}" title={stat(r.status).label}><Icon name={stat(r.status).icon} size={13} /></span>
@@ -332,11 +331,6 @@
             {#if isUnread(r)}<span class="dot" title="unread"></span>{/if}
           </div>
         {/each}
-        {#if g.runs.length > visibleRuns(g).length}
-          <button class="showall" onclick={() => toggle(g.task.id)}>… show all {g.runs.length}</button>
-        {:else if expanded.has(g.task.id) && g.runs.length > RECENT}
-          <button class="showall" onclick={() => toggle(g.task.id)}>show fewer</button>
-        {/if}
       {/each}
     {/if}
   </div>
@@ -391,11 +385,13 @@
   .chip.add { color: var(--muted); border-style: dashed; border-color: var(--line); background: var(--surface); }
   .chip.add:hover { color: var(--accent); border-color: var(--accent); }
   .mono { pointer-events: none; }
-  /* activity dot: a small badge in the chip's top-right when tasks are running */
+  /* unread-results dot: a small badge in the chip's top-right when the profile has
+     finished tasks the user hasn't opened yet. A fixed amber attention color (not the
+     palette --accent) so it reads as "new" and stays legible on every profile tint. */
   .actdot {
     position: absolute; top: -1px; right: -1px;
     width: 8px; height: 8px; border-radius: var(--radius-pill);
-    background: var(--success, #2f8c44);
+    background: var(--warning);
     border: 1.5px solid var(--surface);
   }
   .actdot.inmenu { position: static; margin-left: auto; border-color: var(--surface); }

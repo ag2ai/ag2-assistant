@@ -69,6 +69,14 @@ class TaskService:
         self._scheduler = None
         self._scheduler_lock = None
         self._bg: set[asyncio.Task] = set()
+        # Bounded background pipeline that distils each completed recurring run into a
+        # cached digest (see tasks/history.py). A queue + fixed worker pool caps
+        # concurrency so a burst of completions can't fan out unbounded LLM calls;
+        # overflow is dropped (safe — the run still shows via its stub). `_digest_inflight`
+        # coalesces duplicate enqueues (completion vs. backfill) of the same run.
+        self._digest_q: asyncio.Queue | None = None
+        self._digest_workers: list[asyncio.Task] = []
+        self._digest_inflight: set[str] = set()
         self._control_agents: dict = {}  # task_id -> (agent, stream) for task chat
         # Async (session_id, event) -> None, wired by the gateway. Lets a task's
         # lifecycle ride the AG2 stream so the GUI renders it as events. None → off.
@@ -83,6 +91,10 @@ class TaskService:
         emit it onto the task's stream (``task:<id>``). Reuses AG2-native events;
         intermediate statuses (pending/planning) carry no event — the GUI reads
         those from the task panel."""
+        # Record run history first — independent of the GUI emitter, so headless /
+        # cron runs still build history. Only *enqueues* (never awaits the digest),
+        # so it can't delay completion or the TaskCompleted event.
+        await self._maybe_enqueue_digest(task_id, status)
         if self._emit is None:
             return
         from ag2.events import (
@@ -125,6 +137,129 @@ class TaskService:
                 from assistant.observability import log_suppressed
 
                 log_suppressed("task lifecycle event emit", exc, task_id=task_id, status=status)
+
+    # --- recurring-run history: bounded, best-effort digest pipeline ------------ #
+
+    def _enqueue_digest(self, run_id: str) -> None:
+        """Queue a completed occurrence-root run for digesting. Non-blocking; on a full
+        queue it drops with a warning (safe — the run still shows via its stub)."""
+        if self._digest_q is None or run_id in self._digest_inflight:
+            return
+        try:
+            self._digest_q.put_nowait(run_id)
+            self._digest_inflight.add(run_id)
+        except asyncio.QueueFull:
+            import logging
+
+            logging.getLogger("ag2assistant.tasks").warning(
+                "digest queue full; skipping digest for %s (stub still used)", run_id
+            )
+
+    async def _maybe_enqueue_digest(self, task_id: str, status: str) -> None:
+        """Enqueue a digest when an occurrence root completes (parent_id None + run_of)."""
+        from assistant.tasks import TaskStatus
+
+        if status != TaskStatus.COMPLETED or self._digest_q is None:
+            return
+        try:
+            t = await self._store.get(task_id)
+        except Exception:
+            return
+        if t is not None and t.parent_id is None and getattr(t, "run_of", None):
+            self._enqueue_digest(task_id)
+
+    async def _run_outputs(self, run) -> list[str]:
+        """Verified deliverable contents for a run + its descendants (for the digest)."""
+        outs: list[str] = []
+        try:
+            tasks = [run] + await self._store.descendants(run.id)
+        except Exception:
+            tasks = [run]
+        for t in tasks:
+            for d in getattr(t, "deliverables", None) or []:
+                content = (d.get("asset") or {}).get("content")
+                if content:
+                    outs.append(content)
+        return outs
+
+    async def _record_history(self, run_id: str) -> None:
+        """Distil one completed run into its per-template digest cache. Best-effort."""
+        from assistant.tasks import history
+
+        run = await self._store.get(run_id)
+        template_id = getattr(run, "run_of", None) if run is not None else None
+        if run is None or not template_id:
+            return
+        km = history.episodic_store_for(self._config, template_id)
+        outputs = await self._run_outputs(run)
+        await history.record_run_digest(self._config, km, run, outputs)
+
+    async def _digest_worker(self) -> None:
+        """Pull run ids and digest them, one at a time per worker, each time-boxed."""
+        import logging
+
+        assert self._digest_q is not None
+        while True:
+            run_id = await self._digest_q.get()
+            try:
+                await asyncio.wait_for(
+                    self._record_history(run_id),
+                    timeout=self._config.tasks.digest_timeout_s,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (asyncio.TimeoutError, TimeoutError):
+                logging.getLogger("ag2assistant.tasks").warning(
+                    "digest timed out for %s (stub still used)", run_id
+                )
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("digest worker", exc, task_id=run_id)
+            finally:
+                self._digest_inflight.discard(run_id)
+                self._digest_q.task_done()
+
+    async def _backfill_missing_digests(self) -> None:
+        """Regenerate digests for completed occurrence roots whose episode is missing
+        (dropped/cancelled by a prior shutdown), so a thin recap self-heals. Bounded:
+        recent window per template, enqueued on the same overflow-safe queue."""
+        from collections import defaultdict
+
+        from assistant.tasks import TaskStatus, history
+
+        # Wait before the first scan so startup never races other store users — same
+        # rationale as Scheduler's delayed first tick (a TaskStore op on this loop
+        # while another loop holds the shared lock deadlocks cross-loop).
+        try:
+            await asyncio.sleep(self._scheduler_interval)
+        except asyncio.CancelledError:
+            return
+        try:
+            all_tasks = await self._store.list_all()
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("digest backfill scan", exc)
+            return
+        by_template: dict[str, list] = defaultdict(list)
+        for t in all_tasks:
+            if (
+                t.parent_id is None
+                and getattr(t, "run_of", None)
+                and t.status == TaskStatus.COMPLETED
+            ):
+                by_template[t.run_of].append(t)
+        window = max(1, self._config.tasks.history_runs) * 3
+        for template_id, runs in by_template.items():
+            runs.sort(key=history.run_instant)  # oldest-first
+            km = history.episodic_store_for(self._config, template_id)
+            for r in runs[-window:]:
+                if r.id in self._digest_inflight:
+                    continue
+                if await history.has_episode(km, r):
+                    continue
+                self._enqueue_digest(r.id)
 
     async def _emit_deliverable(
         self, task_id, deliverable_id, description, preview="", path=""
@@ -236,6 +371,14 @@ class TaskService:
                 on_event=self._emit_task_event,  # nested AG2 events → task stream
                 on_deliverable=self._emit_deliverable,  # → DeliverableProduced
             )
+        # Bounded digest workers run in every process that completes tasks (a task's
+        # completion fires _emit_status in the process that ran it).
+        if self._digest_q is None:
+            self._digest_q = asyncio.Queue(maxsize=self._config.tasks.digest_queue_max)
+            self._digest_workers = [
+                asyncio.create_task(self._digest_worker())
+                for _ in range(max(1, self._config.tasks.digest_concurrency))
+            ]
         if scheduler and self._scheduler is None:
             from assistant.scheduler_lock import SchedulerLock
             from assistant.tasks.scheduling import Scheduler
@@ -247,6 +390,11 @@ class TaskService:
                     self._store, self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+                # Backfill digests missing from a prior shutdown/drop — only in the
+                # single scheduler-owning process, to avoid cross-process double work.
+                bf = asyncio.create_task(self._backfill_missing_digests())
+                self._bg.add(bf)
+                bf.add_done_callback(self._bg.discard)
             else:
                 import logging
 
@@ -811,12 +959,20 @@ class TaskService:
         }
 
     async def mark_seen(self, task_id: str) -> bool:
-        """Record that the user has opened this task/run (clears its unread highlight).
-        Idempotent — only writes the first time. Persists via the task store."""
+        """Record that the user has seen a *finished* task/run (clears its unread
+        highlight and the chip's unread-results dot).
+
+        Only stamps ``seen_at`` once the task is terminal: opening a task while it's
+        still running is a progress peek, not seeing the result. Stamping on a peek
+        would pre-empt the unread indicator that should fire when the task later
+        completes (the reason a task could finish with no dot). Because peeks never
+        write, ``seen_at`` is set iff the user opened the task after it finished, so
+        the unread test stays a simple ``terminal && seen_at is None``.
+        Idempotent — writes once, on the first open after finishing."""
         t = await self._store.get(task_id)
         if t is None:
             return False
-        if getattr(t, "seen_at", None) is None:
+        if t.is_terminal and getattr(t, "seen_at", None) is None:
             from datetime import datetime
 
             await self._store.update(task_id, seen_at=datetime.now().astimezone().isoformat())
@@ -856,3 +1012,8 @@ class TaskService:
         for bg in list(self._bg):
             bg.cancel()
         self._bg.clear()
+        for w in self._digest_workers:
+            w.cancel()
+        self._digest_workers = []
+        self._digest_q = None
+        self._digest_inflight.clear()
