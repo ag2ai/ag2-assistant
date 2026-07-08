@@ -327,12 +327,16 @@ class TaskService:
                         kind=inquiry.kind,
                     ),
                 )
-            elif kind == InquiryStatus.ANSWERED:
+            elif kind in InquiryStatus.TERMINAL:
+                # Every terminal transition (answered / expired / cancelled) retires
+                # the card — a timed-out or cancelled prompt must stop rendering live
+                # buttons, so we surface the resolution, not only real answers.
                 await self._emit(
                     sid,
                     InquiryAnswered(
                         inquiry.id,
                         answer=getattr(inquiry, "answer", "") or "",
+                        status=kind,
                     ),
                 )
         except Exception as exc:

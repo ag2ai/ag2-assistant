@@ -312,6 +312,25 @@ async def test_inquiry_raised_then_answered_emit(tmp_path):
     await svc.inquiries.answer(inq.id, "Sydney")
     answered = [e for _, e in emitted if isinstance(e, InquiryAnswered)]
     assert answered and answered[0].inquiry_id == inq.id and answered[0].answer == "Sydney"
+    assert answered[0].status == "answered"
+    await svc.close()
+
+
+async def test_inquiry_expire_and_cancel_emit_resolution(tmp_path):
+    """Expiry and task-cancel are terminal resolutions too — each must emit an
+    InquiryAnswered carrying its status, so the GUI can retire the card instead of
+    leaving live-looking buttons that answer nothing (the stranded-permission bug)."""
+    from assistant.events import InquiryAnswered
+
+    svc, emitted = await _started(tmp_path)
+    exp = await svc.inquiries.create("Run it?", task_id="task-e", kind="permission")
+    await svc.inquiries.expire(exp.id)
+    can = await svc.inquiries.create("Run it?", task_id="task-c", kind="permission")
+    await svc.inquiries.cancel(can.id)
+
+    res = {e.inquiry_id: e for _, e in emitted if isinstance(e, InquiryAnswered)}
+    assert res[exp.id].status == "expired" and res[exp.id].answer == ""
+    assert res[can.id].status == "cancelled"
     await svc.close()
 
 
