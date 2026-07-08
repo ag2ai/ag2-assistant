@@ -166,4 +166,4 @@ State lives under `~/.ag2assistant/` (settings, sessions, memory, tasks); genera
 
 ## License
 
-[Apache License 2.0](LICENSE) — matching [AG2](https://github.com/ag2ai/ag2).
+[Apache License 2.0](LICENSE)
