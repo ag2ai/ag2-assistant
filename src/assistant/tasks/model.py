@@ -98,9 +98,15 @@ class Task:
     hitl_channel: str | None = None  # where to ask (override; default=origin)
 
     stream_id: str | None = None  # per-task event-log id
-    archived: bool = False  # hidden from the default Tasks view
     run_of: str | None = None  # template id, set on a recurring task's per-occurrence run
     seen_at: str | None = None  # when the user opened this task/run (drives unread highlight)
+
+    # run-history (see docs/task-run-history-plan.md): `summary` is this run's own
+    # distilled digest of what it delivered (an enrichment cache; the durable record
+    # stays the deliverables). `history_runs` optionally overrides the config default
+    # for how many prior runs of this template feed the next run's context.
+    summary: str = ""
+    history_runs: int | None = None
 
     @property
     def is_terminal(self) -> bool:

@@ -110,10 +110,18 @@ class InquiryRaised(AssistantEvent):
 
 
 class InquiryAnswered(AssistantEvent):
-    """A durable inquiry was answered — resolves the matching HITL item."""
+    """A durable inquiry reached a terminal state — resolves the matching HITL item.
+
+    Emitted for every resolution, not just a real answer: ``status`` is one of
+    "answered" | "expired" (timed out unanswered) | "cancelled" (owning task ended)
+    so the GUI can retire a stranded permission/question card and say *how* it
+    resolved instead of leaving live-looking buttons that do nothing. ``answer`` is
+    the chosen text for "answered", empty otherwise.
+    """
 
     inquiry_id: str = Field(kw_only=False)
     answer: str = ""
+    status: str = "answered"
 
 
 class FeedbackGiven(AssistantEvent):

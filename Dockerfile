@@ -1,52 +1,47 @@
 # syntax=docker/dockerfile:1
 
-# AG2 Assistant — single distributable image (web UI + gateway + channels).
+# AG2 Assistant — self-hosted image (web UI + gateway + channels).
 #
-# Two stages, Python-only: the Svelte SPA is already built and committed under
-# src/assistant/gateway/static/app/ and ships with the package, so no Node stage
-# is needed. The builder resolves/installs everything into a self-contained
-# virtualenv with uv; the slim runtime just copies that venv and adds the Docker
-# CLI (client only) for the optional code-execution sandbox.
+# Two stages, Python-only: the Svelte SPA bundle is committed under
+# src/assistant/gateway/static/app and ships via package-data, so there's no Node
+# stage. The builder resolves/installs into a venv with uv; the slim runtime copies
+# that venv, adds the Docker CLI (for the optional docker-out-of-docker sandbox),
+# and runs as a non-root user.
 
 # ---------------------------------------------------------------------------
-# Stage 1: builder — slim base + git (needed: ag2 is a git+https dependency, and
-# uv shells out to git to clone it) + the uv installer.
+# Stage 1: builder — slim base + git (ag2 is a git+https dependency, uv shells out
+# to git to clone it) + the uv installer.
 # ---------------------------------------------------------------------------
 FROM python:3.14-slim AS builder
 
 # uv (fast resolver/installer) — copied from its official image.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# git is required to fetch the ag2 git+https dependency.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
-    # Use the base image's 3.14 interpreter, don't let uv fetch its own.
     UV_PYTHON_DOWNLOADS=0 \
     UV_LINK_MODE=copy
 
-# Isolated venv we copy wholesale into the runtime stage. `uv venv` does NOT
-# install pip/setuptools into it — the venv is minimal from the start.
+# `uv venv` does NOT install pip/setuptools — the venv is minimal from the start.
 RUN uv venv /opt/venv
 
 WORKDIR /app
 COPY . .
 
-# Install the project plus the optional Google integration (Gmail/Calendar/Drive).
-# Channels (Telegram/Discord/Slack) and voice are already in the base deps.
+# Project + optional Google integration (Gmail/Calendar/Drive). Channels
+# (Telegram/Discord/Slack) and voice are already in the base deps.
 RUN uv pip install ".[google]"
 
-# Slim the venv (~350MB saved) — all removals are verified safe for this app:
+# Slim the venv (~280MB saved) — all removals verified safe by booting the image:
 #   1. Vertex AI / Google Cloud SDK: ag2[gemini] declares google-cloud-aiplatform
-#      but never imports it — the Gemini path runs through google-genai. Drop it
-#      and its heavy transitive deps (bigquery, storage, ...).
+#      but never imports it — the Gemini path runs through google-genai.
 #   2. Bundled API discovery docs: google-api-python-client ships ~580 service
 #      descriptors (~99MB); the app only build()s gmail/calendar/drive. Keep those
-#      plus auth (oauth2/people); build() falls back to a network fetch for any
-#      other service, so pruning them never crashes.
+#      + auth (oauth2/people); build() falls back to a network fetch otherwise.
 #   3. All *.pyc / __pycache__ — regenerated at runtime, not needed in the image.
 RUN uv pip uninstall \
         google-cloud-aiplatform google-cloud-bigquery google-cloud-storage \
@@ -63,13 +58,14 @@ RUN uv pip uninstall \
     && find /opt/venv -name '*.pyo' -delete
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime — slim base, no git, no build tools, no Node.
+# Stage 2: runtime — slim base, no git, no build tools, no Node. Non-root.
 # ---------------------------------------------------------------------------
 FROM python:3.14-slim AS runtime
 
-# Docker CLI (client only, no daemon) so the assistant can drive a Docker daemon
-# when the host's /var/run/docker.sock is bind-mounted. Without that mount,
-# `docker info` fails and docker_available() falls back to local execution.
+# Docker CLI (client only, no daemon): lets AG2ASSISTANT_SANDBOX=docker actually
+# engage when the host's /var/run/docker.sock is bind-mounted — docker_available()
+# checks for the `docker` binary. Without the mount it stays False and code runs
+# in the in-container "local" sandbox.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
     && install -m 0755 -d /etc/apt/keyrings \
@@ -86,23 +82,31 @@ RUN apt-get update \
 # Bring in the fully-built virtualenv from the builder.
 COPY --from=builder /opt/venv /opt/venv
 
+# Non-root runtime user. Named volumes mounted onto /data and /workspace inherit
+# this ownership from the image, so the app can write to them.
+RUN useradd --create-home --uid 10001 app
+
 ENV PATH="/opt/venv/bin:$PATH" \
-    HOME=/root \
-    # Relocate the workspace onto a mountable volume (state dir ~/.ag2assistant
-    # has no env override and lives under HOME=/root).
+    PYTHONUNBUFFERED=1 \
+    # Persistent state (secrets, profiles, config, memory, tasks) and the agent's
+    # file workspace — mounted as volumes in compose so they survive `docker rm`.
+    AG2ASSISTANT_DATA_DIR=/data \
     AG2ASSISTANT_WORKSPACE=/workspace \
-    PYTHONUNBUFFERED=1
+    # In-container code execution by default (no host Docker socket). Override to
+    # "docker" only when the socket is mounted (docker-out-of-docker).
+    AG2ASSISTANT_SANDBOX=local
 
-# Persist state and generated files across restarts / image upgrades.
-VOLUME ["/root/.ag2assistant", "/workspace"]
-RUN mkdir -p /root/.ag2assistant /workspace
+RUN mkdir -p /data /workspace && chown -R app:app /data /workspace
+VOLUME ["/data", "/workspace"]
 
+USER app
 EXPOSE 8800
 
-# Liveness: the gateway's health endpoint (uses stdlib, no extra tools).
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+# Liveness: the gateway's own health endpoint. Pure stdlib — no curl needed.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8800/api/health', timeout=4).status==200 else 1)"
 
-# Gateway + web UI + any configured channels, bound to all interfaces so the
-# published port is reachable from the host.
-CMD ["ag2-assistant", "run", "--host", "0.0.0.0", "--port", "8800"]
+# `gateway` serves the API + web UI without messaging channels; override the CMD
+# with `run` (and channel tokens) to also start Telegram/Discord/Slack.
+ENTRYPOINT ["ag2-assistant"]
+CMD ["gateway", "--host", "0.0.0.0", "--port", "8800"]

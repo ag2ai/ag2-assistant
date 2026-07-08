@@ -230,43 +230,31 @@ def test_task_rest_endpoints(monkeypatch):
         assert client.post(api(pid, f"/tasks/{task_id}/cancel")).json()["ok"] is True
 
 
-async def test_archive_hides_from_drawer_and_filters_listing(tmp_path):
+async def test_delete_removes_task_and_subtree(tmp_path):
     async def executor(task_id, mgr, asker):
         pass
 
     svc = _service(tmp_path, executor)
-    a = await svc.store.create("active one")  # pending
-    done = await svc.store.create("done one", status=TaskStatus.COMPLETED)
-    old = await svc.store.create("to archive", status=TaskStatus.COMPLETED)
+    root = await svc.store.create("root")
+    child = await svc.store.create("child", parent_id=root.id)
+    keep = await svc.store.create("keep me")
 
-    # archive one (completed → terminal → allowed); missing → not ok
-    ok, _ = await svc.set_archived(old.id)
-    assert ok
-    ok, _ = await svc.set_archived("missing")
-    assert not ok
+    # delete returns the whole removed subtree; records are gone from the store
+    ok, ids = await svc.delete(root.id)
+    assert ok and set(ids) == {root.id, child.id}
+    assert await svc.store.get(root.id) is None
+    assert await svc.store.get(child.id) is None
 
-    drawer_ids = {t["id"] for t in await svc.list_tasks()}
-    assert old.id not in drawer_ids  # archived hidden from the drawer
-    assert {a.id, done.id} <= drawer_ids
+    # sibling is untouched and still listed
+    assert keep.id in {t["id"] for t in await svc.list_tasks()}
+    assert keep.id in {t["id"] for t in await svc.list_all()}
 
-    all_ids = {t["id"] for t in await svc.list_all()}
-    assert all_ids == {a.id, done.id}  # 'all' excludes archived too
-
-    archived = await svc.list_all(status="archived")
-    assert [t["id"] for t in archived] == [old.id] and archived[0]["archived"] is True
-
-    active = await svc.list_all(status="active")
-    assert {t["id"] for t in active} == {a.id}
-    completed = await svc.list_all(status="completed")
-    assert {t["id"] for t in completed} == {done.id}
-
-    # an active (pending) task can't be archived — cancel it instead
-    ok, reason = await svc.set_archived(a.id)
-    assert not ok and reason == "active"
-    assert a.id in {t["id"] for t in await svc.list_tasks()}  # still visible
+    # deleting a missing task is a no-op
+    ok, ids = await svc.delete("missing")
+    assert not ok and ids == []
 
 
-def test_archive_and_all_rest_endpoints(monkeypatch):
+def test_delete_and_all_rest_endpoints(monkeypatch):
     from fastapi.testclient import TestClient
 
     from tests.conftest import api, make_profile_app, use_fake_agent
@@ -277,40 +265,26 @@ def test_archive_and_all_rest_endpoints(monkeypatch):
         svc = _runtime_tasks(client, pid)
 
         async def _seed():
-            done = await svc.store.create("t1", status=TaskStatus.COMPLETED)  # terminal
-            active = await svc.store.create("t2")  # pending
-            return done.id, active.id
+            root = await svc.store.create("t1", status=TaskStatus.COMPLETED)
+            child = await svc.store.create("t1-sub", parent_id=root.id)
+            keep = await svc.store.create("t2")
+            return root.id, child.id, keep.id
 
-        tid, active_id = asyncio.run(_seed())
+        tid, subid, keep_id = asyncio.run(_seed())
 
-        # /tasks/all must not be captured as a task id
+        # /tasks/all must not be captured as a task id (route ordering guard)
         assert client.get(api(pid, "/tasks/all")).status_code == 200
         assert any(t["id"] == tid for t in client.get(api(pid, "/tasks/all")).json()["tasks"])
 
-        # a finished task archives fine
-        assert client.post(api(pid, f"/tasks/{tid}/archive")).json() == {
-            "ok": True,
-            "archived": True,
-        }
-        assert all(
-            t["id"] != tid for t in client.get(api(pid, "/tasks")).json()["tasks"]
-        )  # gone from drawer
-        assert any(
-            t["id"] == tid
-            for t in client.get(api(pid, "/tasks/all?status=archived")).json()["tasks"]
-        )
-        # unarchive
-        assert (
-            client.post(api(pid, f"/tasks/{tid}/archive"), json={"archived": False}).json()[
-                "archived"
-            ]
-            is False
-        )
-        assert any(t["id"] == tid for t in client.get(api(pid, "/tasks")).json()["tasks"])
+        # delete removes the task AND its subtree, everywhere
+        r = client.delete(api(pid, f"/tasks/{tid}"))
+        assert r.status_code == 200 and set(r.json()["deleted"]) == {tid, subid}
+        assert all(t["id"] != tid for t in client.get(api(pid, "/tasks")).json()["tasks"])
+        assert all(t["id"] != tid for t in client.get(api(pid, "/tasks/all")).json()["tasks"])
 
-        # an active task is rejected (409), stays visible
-        assert client.post(api(pid, f"/tasks/{active_id}/archive")).status_code == 409
-        assert any(t["id"] == active_id for t in client.get(api(pid, "/tasks")).json()["tasks"])
+        # unrelated task survives; deleting a missing task → 404
+        assert any(t["id"] == keep_id for t in client.get(api(pid, "/tasks")).json()["tasks"])
+        assert client.delete(api(pid, "/tasks/missing")).status_code == 404
 
 
 async def test_schedule_task_creates_scheduled(tmp_path):

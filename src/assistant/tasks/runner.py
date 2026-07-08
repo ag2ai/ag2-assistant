@@ -167,6 +167,16 @@ class TaskManager:
                                 task_id, f"attempt {attempts} crashed: {last_crash}"
                             )
                             await self._note_crash(task_id, attempts, last_crash)
+                    # Fail fast on a hard permission wall: if the attempt left
+                    # deliverables unmet AND a required command's permission was
+                    # denied or timed out, retrying only gets denied again — so
+                    # settle FAILED now with a legible reason instead of burning
+                    # every attempt (and, on a scheduled run, wedging until a
+                    # manual cancel — the incident that started this).
+                    blocked = await self._permission_block_reason(task_id)
+                    if blocked and (await self.store.get(task_id)).pending_deliverables():
+                        await self._mark(task_id, TaskStatus.FAILED, error=blocked)
+                        return
                     continue  # re-check (may have produced deliverables / added subtasks)
 
                 # 3) Settle: complete iff deliverables satisfied + subtasks done. A
@@ -184,6 +194,12 @@ class TaskManager:
                 return
         except asyncio.CancelledError:
             await self._mark(task_id, TaskStatus.CANCELLED)
+            # Teardown/shutdown cancels the run task directly (bypassing cancel()),
+            # so retire any prompt still blocking on it — otherwise it's stranded
+            # PENDING and the GUI shows a dead, un-answerable permission card.
+            if self._inquiry_store is not None:
+                with contextlib.suppress(Exception):
+                    await self._inquiry_store.cancel_for_task(task_id)
             raise
         except Exception as exc:  # the runner mechanics themselves blew up
             await self._mark(task_id, TaskStatus.FAILED, error=str(exc))
@@ -221,6 +237,46 @@ class TaskManager:
                 from assistant.observability import log_suppressed
 
                 log_suppressed("crash note write", exc, task_id=task_id)
+
+    async def _permission_block_reason(self, task_id: str) -> str | None:
+        """A legible failure reason iff this run hit a permission wall it can't pass.
+
+        The durable inquiry log IS the signal: a permission prompt that resolved
+        ``expired`` (timed out → auto-denied) or ``answered`` with "Deny" means a
+        required command was refused. Re-asking would only be refused again, so the
+        runner uses this to fail fast with a reason a human can act on, rather than
+        leaving the task stuck. Returns None when nothing was denied.
+        """
+        if self._inquiry_store is None:
+            return None
+        from assistant.hitl.inquiry import InquiryStatus
+        from assistant.permissions import DENY
+
+        denied = [
+            i
+            for i in await self._inquiry_store.list_all()
+            if i.task_id == task_id
+            and i.kind == "permission"
+            and (
+                i.status == InquiryStatus.EXPIRED
+                or (i.status == InquiryStatus.ANSWERED and (i.answer or "") == DENY)
+            )
+        ]
+        if not denied:
+            return None
+        expired = sum(1 for i in denied if i.status == InquiryStatus.EXPIRED)
+        if expired == len(denied):
+            how = "timed out unanswered"
+        elif expired:
+            how = "was denied or timed out"
+        else:
+            how = "was denied"
+        n = len(denied)
+        return (
+            f"blocked — permission to run a required command {how} "
+            f"({n} prompt{'s' if n != 1 else ''}); the task can't complete without it. "
+            "Run it again and approve the prompt, or grant the command in Settings."
+        )
 
     def _failure_reason(self, task, attempts: int, last_crash: str, children) -> str:
         """Distinguish a crash-flavoured failure from a verification rejection."""

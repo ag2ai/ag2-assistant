@@ -10,7 +10,7 @@ the ``get_runtime`` dependency; unknown → 404, archived → 410.
 Route map:
   Global (unprefixed):
     GET  /api/health                         -> process status (first running runtime)
-    GET  /api/status                         -> [{pid, busy, running_tasks}] activity badges
+    GET  /api/status                         -> [{pid, busy, running_tasks, unseen_done}] activity badges
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
     POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
     POST /api/onboarded                      -> set the install-level onboarding flag
@@ -59,6 +59,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
+from assistant import __version__
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
     ProfileManager,
@@ -145,10 +146,6 @@ class ScheduleRequest(BaseModel):
     text: str
     when: str  # ISO 8601 datetime
     recurrence: str | None = None
-
-
-class ArchiveRequest(BaseModel):
-    archived: bool = True
 
 
 class OnboardedRequest(BaseModel):
@@ -282,18 +279,35 @@ def _chat_asker(runtime: ProfileRuntime, session_id: str):
     return DurableAsker(NullAsker(), inquiries, session=session_id)
 
 
-async def _running_tasks(runtime: ProfileRuntime) -> int:
-    """Count of RUNNING top-level+subtree tasks (cheap store scan) for activity badges."""
+async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
+    """Per-profile activity for the chip badges, from a single store scan.
+
+    Returns ``(running, unseen_done)``:
+      * ``running``     — RUNNING tasks (top-level + subtree); kept for API back-compat.
+      * ``unseen_done`` — finished, not-yet-opened root tasks (non-archived): the count
+        behind the chip's "unread results" dot. Mirrors the nav's per-row unread marker
+        (``isUnread`` = terminal status && not seen), rolled up to the profile.
+    """
     tasks = runtime.tasks
     store = getattr(tasks, "store", None) if tasks is not None else None
     if store is None:
-        return 0
+        return 0, 0
     try:
         from assistant.tasks import TaskStatus
 
-        return sum(1 for t in await store.list_all() if t.status == TaskStatus.RUNNING)
+        rows = await store.list_all()
+        running = sum(1 for t in rows if t.status == TaskStatus.RUNNING)
+        unseen_done = sum(
+            1
+            for t in rows
+            if t.parent_id is None
+            and not getattr(t, "archived", False)
+            and t.status in TaskStatus.TERMINAL
+            and getattr(t, "seen_at", None) is None
+        )
+        return running, unseen_done
     except Exception:
-        return 0
+        return 0, 0
 
 
 def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
@@ -317,7 +331,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         finally:
             await manager.close()
 
-    app = FastAPI(title="AG2 Assistant Gateway", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AG2 Assistant Gateway", version=__version__, lifespan=lifespan)
     app.state.profiles = manager
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
 
@@ -429,15 +443,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.get("/api/status")
     async def status() -> list[dict]:
         """Per-profile activity for badges: busy = agent alive, running_tasks = count
-        of RUNNING tasks. Aggregated over the running runtimes."""
+        of RUNNING tasks, unseen_done = finished-but-not-yet-opened root tasks (the
+        chip's unread-results dot). Aggregated over the running runtimes."""
         out = []
         for runtime in manager.runtimes():
             gw_status = runtime.gateway.status() if runtime.gateway is not None else {}
+            running, unseen_done = await _activity(runtime)
             out.append(
                 {
                     "pid": runtime.pid,
                     "busy": gw_status.get("status") == "ok",
-                    "running_tasks": await _running_tasks(runtime),
+                    "running_tasks": running,
+                    "unseen_done": unseen_done,
                 }
             )
         return out
@@ -537,6 +554,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             ],
             "active_default": reg.get("active_default"),
             "onboarded": bool(reg.get("onboarded")),
+            # App version rides the boot payload so the UI needn't make a second request.
+            "version": __version__,
         }
 
     @app.post("/api/profiles")
@@ -798,6 +817,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "messages": await runtime.gateway.transcript(session_id),
         }
 
+    @p.delete("/sessions/{session_id}")
+    async def delete_session(
+        session_id: str, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Permanently delete a chat (transcript + full event log). Irreversible."""
+        removed = await runtime.gateway.delete_session(session_id)
+        if not removed:
+            return Response(status_code=404)
+        return {"ok": True}
+
     # ---- Message ----
 
     @p.post("/message", response_model=MessageResponse)
@@ -871,25 +900,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         ok = await runtime.tasks.mark_seen(task_id)
         return {"ok": ok}
 
-    @p.post("/tasks/{task_id}/archive")
-    async def archive_task(
-        task_id: str,
-        req: ArchiveRequest | None = None,
-        runtime: ProfileRuntime = Depends(get_runtime),
-    ):
-        archived = True if req is None else req.archived
-        ok, reason = await runtime.tasks.set_archived(task_id, archived)
-        if ok:
-            return {"ok": True, "archived": archived}
-        if reason == "notfound":
+    @p.delete("/tasks/{task_id}")
+    async def delete_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Permanently delete a task + its whole subtree, plus each one's chat/event
+        stream. Cancels an in-flight run first. Irreversible."""
+        ok, ids = await runtime.tasks.delete(task_id)
+        if not ok:
             return Response(status_code=404)
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "Only finished tasks can be archived — cancel it first to stop it.",
-            },
-            status_code=409,
-        )
+        # Purge the per-task chat/event streams (task pages use session "task:<id>").
+        for tid in ids:
+            with contextlib.suppress(Exception):
+                await runtime.gateway.delete_session(f"task:{tid}")
+        return {"ok": True, "deleted": ids}
 
     @p.post("/tasks/{task_id}/chat")
     async def task_chat(

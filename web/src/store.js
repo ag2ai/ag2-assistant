@@ -40,6 +40,10 @@ export const memoryOpen = writable(false)
 // "Powered by AG2" architecture-map modal open/closed.
 export const poweredByOpen = writable(false)
 
+// App version, seeded from the GET /api/profiles boot payload. Shown in the
+// "Powered by AG2" modal footer. Empty until boot completes.
+export const appVersion = writable('')
+
 // Files browser modal (the agent's working file space) open/closed.
 export const filesOpen = writable(false)
 

@@ -3,7 +3,7 @@
 These are retrieval + action tools over the whole system (tasks, chats, durable
 HITL questions), so the one agent you talk to anywhere can answer "what tasks do
 I have?" or "what did we discuss in that chat?" without holding all that context,
-and can act — create/schedule/edit/cancel/archive/run tasks, answer questions.
+and can act — create/schedule/edit/cancel/delete/run tasks, answer questions.
 
 They wrap the existing `TaskService` (tasks + inquiries) and, optionally, a chats
 provider (the gateway, for conversation history). Each tool returns a concise
@@ -249,18 +249,13 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         return await tasks.cancel_target(task_id, subtask)
 
     @tool
-    async def archive_task(
+    async def delete_task(
         task_id: Annotated[str, Field(description="The task id.")],
     ) -> str:
-        """Archive a FINISHED task (hide it). Active tasks can't be archived — cancel them instead."""
-        ok, reason = await tasks.set_archived(task_id, True)
-        if ok:
-            return "Archived."
-        return (
-            "Can't archive an active task — cancel it first."
-            if reason == "active"
-            else "Task not found."
-        )
+        """Permanently delete a task and its subtree (cancels it first if running).
+        Irreversible — the record, subtasks, and chat/event streams are removed."""
+        ok, ids = await tasks.delete(task_id)
+        return f"Deleted {len(ids)} task(s)." if ok else "Task not found."
 
     @tool
     async def run_task_now(
@@ -324,7 +319,7 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         set_deliverables,
         set_task_objective,
         cancel_task,
-        archive_task,
+        delete_task,
         run_task_now,
         list_open_questions,
         answer_question,

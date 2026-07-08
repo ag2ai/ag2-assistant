@@ -27,8 +27,15 @@ def _app(monkeypatch, **kw):
 def test_profiles_zero_state_contract(monkeypatch):
     """GET /api/profiles on a fresh install: {[], null, false}; /api/p/* 404s."""
     with TestClient(_app(monkeypatch)) as client:
+        from assistant import __version__
+
         body = client.get("/api/profiles").json()
-        assert body == {"profiles": [], "active_default": None, "onboarded": False}
+        assert body == {
+            "profiles": [],
+            "active_default": None,
+            "onboarded": False,
+            "version": __version__,
+        }
         # health still serves (SPA shell + global routes live with zero profiles)
         assert client.get("/api/health").json()["status"] == "ok"
         # nothing to serve under the profile prefix
@@ -240,9 +247,10 @@ def test_status_aggregate_shape(monkeypatch):
         rows = client.get("/api/status").json()
         assert {r["pid"] for r in rows} == {"work", "personal"}
         for r in rows:
-            assert set(r) == {"pid", "busy", "running_tasks"}
+            assert set(r) == {"pid", "busy", "running_tasks", "unseen_done"}
             assert r["busy"] is True
             assert r["running_tasks"] == 0
+            assert r["unseen_done"] == 0
 
 
 # --- /api/usage install-wide roll-up ---
