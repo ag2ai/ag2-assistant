@@ -63,9 +63,11 @@
   let usageAll = $state(null) // install-wide roll-up {profiles:[{pid,name,...}], total}
   // The active profile's own totals, derived from the roll-up (one request, not two).
   const usage = $derived((usageAll?.profiles || []).find((p) => p.pid === $profiles.activeId) || null)
-  let statusById = $state({}) // pid -> {busy, running_tasks} from GET /api/status
-  // A chip's activity dot: true when that profile has tasks running right now.
-  const isBusy = (pid) => (statusById[pid]?.running_tasks || 0) > 0
+  let statusById = $state({}) // pid -> {busy, running_tasks, unseen_done} from GET /api/status
+  // A chip's dot: true when that profile has finished tasks the user hasn't opened
+  // yet (rolls up the nav's per-row unread marker to the profile). Clears on the
+  // next 5s poll once the run is opened (markSeen).
+  const hasUnseen = (pid) => (statusById[pid]?.unseen_done || 0) > 0
 
   async function refresh() {
     try {
@@ -231,13 +233,13 @@
             onclick={() => (isActive ? null : switchTo(p.id))}
           >
             <span class="mono">{initial(p)}</span>
-            {#if isBusy(p.id)}<span class="actdot" title="running tasks"></span>{/if}
+            {#if hasUnseen(p.id)}<span class="actdot" title="unread results"></span>{/if}
           </button>
         {/each}
 
         {#if overflow.length}
           {@const overflowActive = overflow.some((p) => p.id === active.id)}
-          {@const overflowBusy = overflow.some((p) => isBusy(p.id))}
+          {@const overflowUnseen = overflow.some((p) => hasUnseen(p.id))}
           <button
             class="chip more"
             class:active={overflowActive}
@@ -247,7 +249,7 @@
             onclick={() => (pickerOpen = !pickerOpen)}
           >
             <span class="mono">+{overflow.length}</span>
-            {#if overflowBusy}<span class="actdot" title="running tasks"></span>{/if}
+            {#if overflowUnseen}<span class="actdot" title="unread results"></span>{/if}
           </button>
         {/if}
 
@@ -273,7 +275,7 @@
             >
               <span class="profdot" style="--dot:{paletteHex(p.palette)}"></span>
               <span class="profname">{p.name}</span>
-              {#if isBusy(p.id)}<span class="actdot inmenu" title="running tasks"></span>{/if}
+              {#if hasUnseen(p.id)}<span class="actdot inmenu" title="unread results"></span>{/if}
               {#if isActive}<Icon name="check" size={13} />{/if}
             </button>
           {/each}
@@ -391,11 +393,13 @@
   .chip.add { color: var(--muted); border-style: dashed; border-color: var(--line); background: var(--surface); }
   .chip.add:hover { color: var(--accent); border-color: var(--accent); }
   .mono { pointer-events: none; }
-  /* activity dot: a small badge in the chip's top-right when tasks are running */
+  /* unread-results dot: a small badge in the chip's top-right when the profile has
+     finished tasks the user hasn't opened yet. Uses --accent to match the nav's
+     per-row unread markers (.drow .dot / .unreadcount). */
   .actdot {
     position: absolute; top: -1px; right: -1px;
     width: 8px; height: 8px; border-radius: var(--radius-pill);
-    background: var(--success, #2f8c44);
+    background: var(--accent);
     border: 1.5px solid var(--surface);
   }
   .actdot.inmenu { position: static; margin-left: auto; border-color: var(--surface); }
