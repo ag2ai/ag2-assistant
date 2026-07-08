@@ -79,6 +79,11 @@
 .modal .open:hover, .panel .open:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .modal .open:active, .panel .open:active { background: var(--code); }
 .modal .open:disabled, .panel .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
+/* Destructive action (e.g. Delete task) + its inline confirm. */
+.modal .open.danger, .panel .open.danger { border-color: color-mix(in srgb, #d8552f 55%, var(--line)); color: #d8552f; background: none; }
+.modal .open.danger:hover, .panel .open.danger:hover { border-color: #d8552f; color: #fff; background: #d8552f; }
+.panel .delconfirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.panel .delconfirm .confirm { color: #d8552f; font-size: 13px; }
 
 /* Memory editor */
 .modal.memory { width: min(720px, 92vw); height: min(88vh, 940px); }

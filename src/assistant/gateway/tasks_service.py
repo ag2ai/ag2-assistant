@@ -644,13 +644,12 @@ class TaskService:
     _STOPPED = {"failed", "cancelled"}
 
     async def list_tasks(self) -> list[dict]:
-        """Active/recent top-level tasks for the drawer (archived excluded), each
-        carrying any pending inquiries in its subtree. Needs-input first, then
-        newest."""
+        """Active/recent top-level tasks for the drawer, each carrying any pending
+        inquiries in its subtree. Needs-input first, then newest."""
         # One store scan; children/descendants come from the in-memory map (O(N)).
         all_tasks = await self._store.list_all()
         kids_map = self._children_map(all_tasks)
-        roots = [t for t in all_tasks if t.parent_id is None and not getattr(t, "archived", False)]
+        roots = [t for t in all_tasks if t.parent_id is None]
 
         by_task: dict[str, list] = {}
         for inq in await self._inquiries.list_pending():
@@ -677,41 +676,39 @@ class TaskService:
 
     async def list_all(self, status: str | None = None) -> list[dict]:
         """The full task history for the listing page, newest first. `status` filters:
-        active / completed / stopped / archived; None or 'all' = everything not archived."""
+        active / completed / stopped; None or 'all' = everything."""
         # One store scan; child counts come from the in-memory map (O(N)).
         all_tasks = await self._store.list_all()
         kids_map = self._children_map(all_tasks)
         roots = [t for t in all_tasks if t.parent_id is None]
         out = []
         for t in roots:
-            archived = bool(getattr(t, "archived", False))
-            if status == "archived":
-                if not archived:
-                    continue
-            elif archived:
-                continue  # archived hidden from every other view
-            elif status == "active" and t.status not in self._ACTIVE:
+            if status == "active" and t.status not in self._ACTIVE:
                 continue
             elif status == "completed" and t.status != "completed":
                 continue
             elif status == "stopped" and t.status not in self._STOPPED:
                 continue
-            s = await self._summary(t, kids_map)
-            s["archived"] = archived
-            out.append(s)
+            out.append(await self._summary(t, kids_map))
         out.sort(key=lambda s: s["created_at"], reverse=True)
         return out
 
-    async def set_archived(self, task_id: str, archived: bool = True) -> tuple[bool, str]:
-        """Archive a finished task (or unarchive any). Returns (ok, reason). Active
-        tasks can't be archived — cancel them instead. reason: '' | 'notfound' | 'active'."""
+    async def delete(self, task_id: str) -> tuple[bool, list[str]]:
+        """Permanently delete a task and its whole subtree. If it's still running,
+        cancel it and let the run settle first so the runner can't rewrite a record
+        we're removing. Returns (ok, [deleted task ids]) — the caller purges each
+        task's chat/event stream too. Irreversible; the GUI gates it behind a confirm.
+        """
         t = await self._store.get(task_id)
         if t is None:
-            return False, "notfound"
-        if archived and not t.is_terminal:
-            return False, "active"  # only finished tasks can be archived
-        await self._store.update(task_id, archived=archived)
-        return True, ""
+            return False, []
+        ids = [task_id] + [d.id for d in await self._store.descendants(task_id)]
+        if self._manager is not None and self._manager.is_running(task_id):
+            await self._manager.cancel(task_id, reason="deleted")
+            await self._manager.wait(task_id)  # settle before we remove the records
+        for tid in ids:
+            await self._store.delete(tid)
+        return True, ids
 
     async def get_task(self, task_id: str) -> dict | None:
         """Full task detail with its subtree, deliverables (incl. assets), progress.
@@ -994,7 +991,6 @@ class TaskService:
             "started_at": getattr(t, "started_at", None),
             "ended_at": getattr(t, "ended_at", None),
             "capabilities": t.capabilities or [],
-            "archived": bool(getattr(t, "archived", False)),
             "scheduled_for": t.scheduled_for,
             "recurrence": t.recurrence,
             "run_of": getattr(t, "run_of", None),

@@ -652,6 +652,32 @@ class Gateway:
         out.sort(key=lambda s: s["updated"], reverse=True)
         return out
 
+    async def delete_session(self, session_id: str) -> bool:
+        """Permanently delete a chat: its display transcript AND its full AG2 event
+        log (main + any dropped segments), then evict the in-memory stream so a stale
+        copy can't re-persist it. Irreversible by design — the GUI gates it behind a
+        confirm. Returns True if anything was removed.
+        """
+        if self._event_store is None:
+            return False
+        from ag2.knowledge.constants import LOG_PREFIX
+
+        async with self._session_lock(session_id):
+            removed = False
+            paths = [self._transcript_path(session_id), f"{LOG_PREFIX}{session_id}.jsonl"]
+            # dropped-turn segments are "<sid>.dropped-N.jsonl" under LOG_PREFIX
+            for entry in await self._event_store.list(LOG_PREFIX):
+                if entry.startswith(f"{session_id}.dropped-") and entry.endswith(".jsonl"):
+                    paths.append(f"{LOG_PREFIX}{entry}")
+            for path in paths:
+                if await self._event_store.exists(path):
+                    await self._event_store.delete(path)
+                    removed = True
+            self._streams.pop(session_id, None)
+            self._loaded.discard(session_id)
+        self._locks.pop(session_id, None)
+        return removed
+
     async def _maybe_onboard(self, asker) -> None:
         """Run first-run onboarding once, via the asker that made this request.
 

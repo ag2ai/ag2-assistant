@@ -101,14 +101,6 @@ async def test_scheduler_tick_fires_due_only(tmp_path):
     )
     await store.create("not scheduled")  # pending, ignored
 
-    # archived scheduled tasks are put away — they don't fire
-    await store.create(
-        "archived due",
-        status=TaskStatus.SCHEDULED,
-        scheduled_for=(now - timedelta(minutes=5)).isoformat(),
-        archived=True,
-    )
-
     fired = []
 
     async def fire(tid):

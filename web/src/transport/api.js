@@ -72,11 +72,12 @@ export const api = {
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
   sessions: () => j('GET', P('/sessions')).then((d) => d.sessions || []),
+  deleteSession: (id) => j('DELETE', P('/sessions/' + encodeURIComponent(id))),
   tasksAll: (status) => j('GET', P('/tasks/all' + (status && status !== 'all' ? '?status=' + status : ''))).then((d) => d.tasks || []),
   task: (id) => j('GET', P('/tasks/' + id)).then((d) => d.task),
   cancelTask: (id) => j('POST', P(`/tasks/${id}/cancel`)),
   markSeen: (id) => j('POST', P(`/tasks/${id}/seen`)),
-  archiveTask: (id, archived = true) => j('POST', P(`/tasks/${id}/archive`), { archived }),
+  deleteTask: (id) => j('DELETE', P(`/tasks/${encodeURIComponent(id)}`)),
   inquiries: () => j('GET', P('/inquiries/pending')).then((d) => d.pending || []),
   answerInquiry: (id, answer) => j('POST', P(`/inquiries/${encodeURIComponent(id)}/answer`), { answer }),
   // Chat-turn permission prompts (run_code/shell/file) live in the HitlServer, a

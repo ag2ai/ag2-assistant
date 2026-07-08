@@ -46,7 +46,7 @@ def test_tool_set_covers_retrieval_and_actions(tmp_path):
         "add_deliverable",
         "set_task_objective",
         "cancel_task",
-        "archive_task",
+        "delete_task",
         "run_task_now",
         "list_open_questions",
         "answer_question",

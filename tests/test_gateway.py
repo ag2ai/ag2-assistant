@@ -158,6 +158,41 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     assert s1["preview"] == "hello there"
 
 
+async def test_delete_session_removes_transcript_and_event_log(tmp_path, monkeypatch):
+    """Deleting a chat drops BOTH artifacts — the display transcript AND the AG2
+    event log — so it neither lists nor resumes, even on a fresh Gateway."""
+    from ag2.knowledge.constants import LOG_PREFIX
+
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
+    from assistant.gateway.core import Gateway
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
+
+    gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await gw.start()
+    await gw.send_message("keep me", session_id="keep")
+    await gw.send_message("delete me", session_id="gone")
+    # both artifacts exist before delete
+    assert await gw._event_store.exists(gw._transcript_path("gone"))
+    assert await gw._event_store.exists(f"{LOG_PREFIX}gone.jsonl")
+
+    assert await gw.delete_session("gone") is True
+    assert await gw.delete_session("gone") is False  # idempotent: nothing left to remove
+
+    # gone from the list; both on-disk artifacts removed; other session untouched
+    assert {s["session_id"] for s in await gw.list_sessions()} == {"keep"}
+    assert not await gw._event_store.exists(gw._transcript_path("gone"))
+    assert not await gw._event_store.exists(f"{LOG_PREFIX}gone.jsonl")
+    await gw.close()
+
+    # a fresh Gateway over the same data dir does not resurrect it
+    gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await gw2.start()
+    assert {s["session_id"] for s in await gw2.list_sessions()} == {"keep"}
+    assert await gw2.transcript("gone") == []
+
+
 # --- in-flight session stub (bug: a chat mid-turn must be listable so it survives
 #     a profile switch, which is a full-page nav that discards local page state) ---
 

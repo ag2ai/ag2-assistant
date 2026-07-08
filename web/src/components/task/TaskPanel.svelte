@@ -1,12 +1,14 @@
 <script>
   import { taskPanel } from '../../store.js'
   import { api } from '../../transport/api.js'
-  import { go } from '../../router.js'
+  import { go, newChatId } from '../../router.js'
   import Icon from '../Icon.svelte'
   import { fmtStamp, fmtDateTime } from '../../lib/time.js'
 
   const TERMINAL = ['completed', 'failed', 'cancelled']
   let rerunning = $state(false)
+  let confirmDel = $state(false)
+  let deleting = $state(false)
 
   // When this run executed — uses the task's server timestamps (ISO), which
   // survive replay. A run is one execution window, so this answers "when was all
@@ -26,8 +28,17 @@
   async function cancel() {
     if ($taskPanel) { await api.cancelTask($taskPanel.id); }
   }
-  async function archive() {
-    if ($taskPanel) { await api.archiveTask($taskPanel.id, !$taskPanel.archived) }
+  // Permanent delete: removes the task, its subtree, and their chat/event streams.
+  // Cancels an in-flight run first (server-side). The task is gone, so leave the page.
+  async function del() {
+    if (!$taskPanel || deleting) return
+    deleting = true
+    try {
+      await api.deleteTask($taskPanel.id)
+      go('/c/' + newChatId())
+    } catch {
+      deleting = false
+    }
   }
   // Re-run a finished task from a clean start — runs as a fresh occurrence and
   // navigates to it (the original failed/finished run stays as history).
@@ -81,15 +92,21 @@
       {/each}
     {/if}
 
-    <div style="margin-top:10px;display:flex;gap:8px">
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
       {#if !TERMINAL.includes($taskPanel.status)}
         <button class="open" onclick={cancel}><Icon name="x" size={14} /> Cancel task</button>
       {/if}
       {#if TERMINAL.includes($taskPanel.status)}
         <button class="open" disabled={rerunning} onclick={rerun}><Icon name="rotate-cw" size={14} /> {rerunning ? 'Starting…' : 'Run again'}</button>
       {/if}
-      {#if $taskPanel.archived || TERMINAL.includes($taskPanel.status)}
-        <button class="open" onclick={archive}><Icon name="folder" size={14} /> {$taskPanel.archived ? 'Unarchive' : 'Archive'}</button>
+      {#if confirmDel}
+        <span class="delconfirm">
+          <span class="confirm">Delete permanently?</span>
+          <button class="open danger" disabled={deleting} onclick={del}>{deleting ? 'Deleting…' : 'Yes, delete'}</button>
+          <button class="open" disabled={deleting} onclick={() => (confirmDel = false)}>Cancel</button>
+        </span>
+      {:else}
+        <button class="open danger" onclick={() => (confirmDel = true)}><Icon name="trash" size={14} /> Delete</button>
       {/if}
     </div>
   </div>

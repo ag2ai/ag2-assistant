@@ -138,6 +138,22 @@
   const openTask = (id) => go('/t/' + id)
   const newChat = () => go('/c/' + newChatId())
 
+  // Chat delete: a hover-revealed trash on the row swaps to an inline "Delete? yes/no"
+  // confirm (mirrors the Files modal). Permanent — the backend drops the transcript
+  // AND the full event log. If the open chat is the one deleted, hop to a fresh chat.
+  let confirmChat = $state('') // session_id awaiting delete confirmation
+  let busyChat = $state('') // session_id currently being deleted
+  async function delChat(id) {
+    busyChat = id
+    try {
+      await api.deleteSession(id)
+      $sessions = $sessions.filter((s) => s.session_id !== id)
+      if ($route.name === 'chat' && $route.id === id) go('/c/' + newChatId())
+    } catch {}
+    busyChat = ''
+    confirmChat = ''
+  }
+
   // status → Lucide icon name + tooltip label. Colored per-status via the
   // .statusicon CSS classes; replaces the old emoji/unicode glyphs.
   const STATUS = {
@@ -299,8 +315,19 @@
     {#if $drawerTab === 'chats'}
       {#if !$sessions.length}<div class="none">No conversations yet.</div>{/if}
       {#each $sessions as s (s.session_id)}
-        <div class="drow" class:on={$route.name === 'chat' && $route.id === s.session_id} onclick={() => openChat(s.session_id)}>
-          <div title={s.preview || ''}>{s.title || s.preview || s.session_id}</div>
+        <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.session_id} onclick={() => openChat(s.session_id)}>
+          <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.session_id}</div>
+          {#if confirmChat === s.session_id}
+            <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+              <span class="confirm">Delete?</span>
+              <button class="linkbtn danger" disabled={busyChat === s.session_id}
+                onclick={(e) => { e.stopPropagation(); delChat(s.session_id) }}>{busyChat === s.session_id ? '…' : 'yes'}</button>
+              <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>no</button>
+            </span>
+          {:else}
+            <button class="rowdel" title="Delete chat" aria-label="Delete chat"
+              onclick={(e) => { e.stopPropagation(); confirmChat = s.session_id }}><Icon name="trash" size={13} /></button>
+          {/if}
         </div>
       {/each}
     {:else}
@@ -434,4 +461,19 @@
   /* Create-profile modal: uses the global .modal shell; just a lead line here. */
   .profcreate { width: min(460px, 92vw); }
   .pc-lead { font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-normal); margin: -2px 0 6px; }
+
+  /* Chat row: title + a hover-revealed trash that swaps to an inline "Delete?"
+     confirm (same idiom as the Files modal). Delete is permanent. */
+  .chatrow { display: flex; align-items: center; gap: 8px; }
+  .clabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rowdel { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .12s, color .12s; }
+  .chatrow:hover .rowdel, .chatrow:focus-within .rowdel { opacity: .55; }
+  .rowdel:hover { opacity: 1; color: #d8552f; }
+  .rowconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; }
+  .rowconfirm .confirm { color: #d8552f; font-size: 12px; }
+  .rowconfirm .linkbtn { border: none; background: none; font: inherit; font-size: 12px; cursor: pointer; padding: 0; color: var(--accent); }
+  .rowconfirm .linkbtn:hover { text-decoration: underline; }
+  .rowconfirm .linkbtn.danger { color: var(--muted); }
+  .rowconfirm .linkbtn.danger:hover { color: #d8552f; }
+  .rowconfirm .linkbtn.danger:disabled { cursor: default; opacity: .6; }
 </style>
