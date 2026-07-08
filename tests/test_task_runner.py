@@ -216,6 +216,109 @@ async def test_cancel_stops_running_task_immediately(tmp_path):
     assert got.error == "user stop"
 
 
+async def test_teardown_cancel_resolves_pending_inquiries(tmp_path):
+    """A run cancelled by teardown (its asyncio task cancelled directly, NOT via
+    mgr.cancel) must still retire the prompt blocking on it — otherwise it's left
+    PENDING forever and the GUI shows a dead permission card."""
+    from assistant.hitl import InquiryStore
+
+    store = _store(tmp_path)
+    inquiries = InquiryStore(path=tmp_path / "inquiries.db")
+    t = await store.create("needs permission")
+    raised = asyncio.Event()
+
+    async def executor(task_id, mgr, asker):
+        await inquiries.create("Run it?", task_id=task_id, kind="permission")
+        raised.set()
+        await asyncio.Event().wait()  # block on the prompt until torn down
+
+    mgr = TaskManager(store, executor, inquiry_store=inquiries)
+    await mgr.submit(t.id)
+    await raised.wait()
+    assert await inquiries.list_pending(t.id)  # prompt is genuinely pending
+
+    mgr._running[t.id].cancel()  # simulate shutdown/teardown, bypassing mgr.cancel
+    await mgr.wait(t.id)
+
+    assert (await store.get(t.id)).status == TaskStatus.CANCELLED
+    assert not await inquiries.list_pending(t.id)  # the prompt was retired, not stranded
+
+
+async def test_fails_fast_on_denied_permission(tmp_path):
+    """A run whose deliverable is blocked by a denied/expired permission settles
+    FAILED after ONE attempt (not MAX_ATTEMPTS) with a legible, actionable reason —
+    re-asking would only be denied again."""
+    from assistant.hitl import InquiryStore
+    from assistant.permissions import DENY
+
+    store = _store(tmp_path)
+    inquiries = InquiryStore(path=tmp_path / "inquiries.db")
+    t = await store.create("run the script")
+    await store.add_deliverable(t.id, "report.md")  # needs the denied command
+    attempts = 0
+
+    async def executor(task_id, mgr, asker):
+        nonlocal attempts
+        attempts += 1
+        # Model the permission wall: a permission prompt resolves to Deny this run.
+        inq = await inquiries.create("Allow run_code?", task_id=task_id, kind="permission")
+        await inquiries.answer(inq.id, DENY)
+        # deliverable stays pending (command was refused)
+
+    mgr = TaskManager(store, executor, inquiry_store=inquiries)
+    await mgr.submit(t.id)
+    await mgr.wait(t.id)
+
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.FAILED
+    assert attempts == 1, f"should fail fast, not retry — ran {attempts} attempts"
+    assert "permission" in got.error and "was denied" in got.error
+
+
+async def test_expired_permission_also_fails_fast(tmp_path):
+    """Timed-out (expired) permission prompts are a wall too, reported as such."""
+    from assistant.hitl import InquiryStore
+
+    store = _store(tmp_path)
+    inquiries = InquiryStore(path=tmp_path / "inquiries.db")
+    t = await store.create("run the script")
+    await store.add_deliverable(t.id, "report.md")
+
+    async def executor(task_id, mgr, asker):
+        inq = await inquiries.create("Allow run_code?", task_id=task_id, kind="permission")
+        await inquiries.expire(inq.id)
+
+    mgr = TaskManager(store, executor, inquiry_store=inquiries)
+    await mgr.submit(t.id)
+    await mgr.wait(t.id)
+
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.FAILED
+    assert "timed out" in got.error
+
+
+async def test_denied_permission_does_not_fail_if_worked_around(tmp_path):
+    """A denial only fails the task when it actually blocks a deliverable. If the
+    agent produced the deliverable anyway (found another path), it still COMPLETES."""
+    from assistant.hitl import InquiryStore
+    from assistant.permissions import DENY
+
+    store = _store(tmp_path)
+    inquiries = InquiryStore(path=tmp_path / "inquiries.db")
+    t = await store.create("run the script")
+    d = await store.add_deliverable(t.id, "report.md")
+
+    async def executor(task_id, mgr, asker):
+        inq = await inquiries.create("Allow run_code?", task_id=task_id, kind="permission")
+        await inquiries.answer(inq.id, DENY)
+        await store.set_deliverable_status(task_id, d["id"], DeliverableStatus.PRODUCED)
+
+    mgr = TaskManager(store, executor, inquiry_store=inquiries)
+    await mgr.submit(t.id)
+    await mgr.wait(t.id)
+    assert (await store.get(t.id)).status == TaskStatus.COMPLETED
+
+
 async def test_cancel_cascades_to_subtasks(tmp_path):
     store = _store(tmp_path)
     root = await store.create("root")

@@ -3,38 +3,75 @@
   // Not an A2UI surface: the question IS the inquiry (restart-proof, answerable
   // from any channel); this card is just its projection, styled to sit alongside
   // the editorial A2UI surfaces. Options render as tappable chips; free-text
-  // stays available. Answered cards keep the chosen chip highlighted.
+  // stays available. A retired card keeps the chosen chip highlighted (if answered)
+  // and says HOW it resolved — answered / expired / cancelled — with its buttons
+  // disabled, so a timed-out or task-ended prompt never leaves dead live controls.
   import { answer } from '../../controller.js'
+  import { taskPanel } from '../../store.js'
+  const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   let { item } = $props()
   let text = $state('')
+  let showDetail = $state(false)
   function pick(opt) { answer(item.inquiryId, opt) }
   function submit() { if (text.trim()) { answer(item.inquiryId, text.trim()); text = '' } }
+
+  // A card is retired once its inquiry resolves OR its owning task reaches a
+  // terminal state (belt-and-suspenders: catches prompts stranded before the
+  // resolution event existed — answering them is a server-side no-op anyway).
+  let onTerminalTask = $derived(!!$taskPanel && TERMINAL.has($taskPanel.status))
+  let retired = $derived(!!item.resolved || onTerminalTask)
+  // How it resolved: explicit resolution wins; a real answer implies "answered";
+  // otherwise a retired-by-terminal-task prompt was simply never answered.
+  let state = $derived(
+    item.resolution || (item.resolved ? 'answered' : retired ? 'unanswered' : null)
+  )
+  const LABEL = {
+    answered: 'You answered',
+    expired: 'Expired · not answered in time',
+    cancelled: 'Cancelled · task ended',
+    unanswered: 'Not answered',
+  }
+  let header = $derived(
+    state ? LABEL[state]
+      : item.qkind === 'permission' ? 'Permission · needs your call'
+      : 'Needs your answer'
+  )
+  let answered = $derived(state === 'answered' && !!item.answer)
 </script>
 
-<div class="choice" class:resolved={item.resolved}>
+<div class="choice" class:resolved={retired} class:unanswered={retired && !answered}>
   <div class="ck">
     <span class="cdot"></span>
-    {item.qkind === 'permission' ? 'Permission · needs your call' : item.resolved ? 'You answered' : 'Needs your answer'}
+    {header}
   </div>
   <div class="cq">{item.question}</div>
-  {#if item.detail}<pre class="cdetail" title="Details">{item.detail}</pre>{/if}
+  {#if item.detail}
+    {#if retired}
+      <button class="detail-toggle" onclick={() => (showDetail = !showDetail)}>
+        {showDetail ? 'Hide details' : 'Show details'}
+      </button>
+      {#if showDetail}<pre class="cdetail" title="Details">{item.detail}</pre>{/if}
+    {:else}
+      <pre class="cdetail" title="Details">{item.detail}</pre>
+    {/if}
+  {/if}
   {#if item.options && item.options.length}
     <div class="copts">
       {#each item.options as o}
         <button
           class="chip"
-          class:picked={item.resolved && item.answer === o}
-          disabled={item.resolved}
+          class:picked={answered && item.answer === o}
+          disabled={retired}
           onclick={() => pick(o)}
         >{o}</button>
       {/each}
     </div>
-    {#if item.resolved && !item.options.includes(item.answer)}
+    {#if answered && !item.options.includes(item.answer)}
       <div class="cans">→ {item.answer}</div>
     {/if}
-  {:else if item.resolved}
+  {:else if answered}
     <div class="cans">→ {item.answer}</div>
-  {:else}
+  {:else if !retired}
     <input bind:value={text} placeholder="Your answer…" onkeydown={(e) => e.key === 'Enter' && submit()} />
   {/if}
 </div>
@@ -50,9 +87,16 @@
   }
   .choice.resolved { border-color: var(--line); background: transparent; }
   .choice.resolved .cdot { animation: none; opacity: .4; }
+  /* An expired/cancelled/unanswered prompt reads as a muted, dimmed record — it
+     asked for something it never got, so it shouldn't look like a done deal. */
+  .choice.unanswered { opacity: .72; }
+  .choice.unanswered .cdot { background: var(--muted); }
 
   .ck { display: flex; align-items: center; gap: 7px; font-family: var(--code, ui-monospace, monospace); font-size: 9.5px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
   .choice.resolved .ck { color: var(--muted); }
+
+  .detail-toggle { margin-top: 9px; padding: 0; background: none; border: none; color: var(--muted); font-family: var(--code, ui-monospace, monospace); font-size: 11px; letter-spacing: .04em; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .detail-toggle:hover { color: var(--ink); }
   .cdot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: choice-pulse 1.6s infinite; }
   @keyframes choice-pulse {
     0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }

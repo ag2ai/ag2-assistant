@@ -231,7 +231,9 @@ export function foldEvent(items, wire) {
       break
     case 'InquiryAnswered': {
       const it = items.find((i) => i.kind === 'inquiry' && i.inquiryId === d.inquiry_id)
-      if (it) { it.resolved = true; it.answer = d.answer }
+      // `status` distinguishes a real answer from a timed-out (expired) or
+      // task-cancelled prompt, so the card can retire its live buttons and say why.
+      if (it) { it.resolved = true; it.answer = d.answer; it.resolution = d.status || 'answered' }
       break
     }
     case 'FeedbackGiven': {
