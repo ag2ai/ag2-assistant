@@ -155,14 +155,6 @@
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   const isUnread = (t) => TERMINAL.has(t.status) && !t.seen  // a finished result not yet opened
 
-  const RECENT = 5
-  let expanded = $state(new Set())   // template ids showing all their runs
-  function toggle(id) {
-    const n = new Set(expanded)
-    n.has(id) ? n.delete(id) : n.add(id)
-    expanded = n
-  }
-
   // Top-level ordering: what's active now first, then upcoming scheduled tasks by
   // soonest next run, then finished (completed/failed/cancelled) at the bottom.
   function taskRank(t) {
@@ -201,12 +193,15 @@
       })
   })
 
-  // recent N runs, but always include unread ones even past the cap
-  function visibleRuns(g) {
-    if (expanded.has(g.task.id)) return g.runs
-    const recent = g.runs.slice(0, RECENT)
-    return [...recent, ...g.runs.slice(RECENT).filter(isUnread)]
-  }
+  // A caught-up recurring task collapses to just its header (title + recurrence +
+  // next run) — the seen ✓ history is noise once read, and the full run list is
+  // always available in the task's detail panel. So in the sidebar we only keep
+  // runs that still want attention: an unread result, a run still in flight, or
+  // whichever run is open right now (opening a run marks it seen; without this it
+  // would vanish from under its parent the instant you clicked it).
+  const needsAttention = (r, openId) =>
+    isUnread(r) || !TERMINAL.has(r.status) || r.id === openId
+  const visibleRuns = (g, openId) => g.runs.filter((r) => needsAttention(r, openId))
 
 </script>
 
@@ -312,6 +307,8 @@
       {#if !groups.length}<div class="none">No tasks yet.</div>{/if}
       {#each groups as g (g.task.id)}
         {@const nextIn = g.task.status === 'scheduled' ? fmtNextIn(g.task.scheduled_for) : ''}
+        {@const openId = $route.name === 'task' ? $route.id : null}
+        {@const shownRuns = visibleRuns(g, openId)}
         <div class="drow ttask" class:on={$route.name === 'task' && $route.id === g.task.id}
              class:unseen={!g.runs.length && isUnread(g.task)} onclick={() => openTask(g.task.id)}>
           <div class="tline1">
@@ -321,12 +318,12 @@
           </div>
           {#if g.task.recurrence || nextIn}
             <div class="tmeta">
-              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}"><Icon name="clock" size={11} /> {g.task.recurrence}</span>{/if}
+              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}">{g.task.recurrence}</span>{/if}
               {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
             </div>
           {/if}
         </div>
-        {#each visibleRuns(g) as r (r.id)}
+        {#each shownRuns as r (r.id)}
           <div class="drow child trow" class:on={$route.name === 'task' && $route.id === r.id}
                class:unseen={isUnread(r)} onclick={() => openTask(r.id)}>
             <span class="statusicon {r.status}" title={stat(r.status).label}><Icon name={stat(r.status).icon} size={13} /></span>
@@ -334,11 +331,6 @@
             {#if isUnread(r)}<span class="dot" title="unread"></span>{/if}
           </div>
         {/each}
-        {#if g.runs.length > visibleRuns(g).length}
-          <button class="showall" onclick={() => toggle(g.task.id)}>… show all {g.runs.length}</button>
-        {:else if expanded.has(g.task.id) && g.runs.length > RECENT}
-          <button class="showall" onclick={() => toggle(g.task.id)}>show fewer</button>
-        {/if}
       {/each}
     {/if}
   </div>
