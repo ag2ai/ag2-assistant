@@ -231,6 +231,8 @@ def test_model_config_subscription_routes_to_backend(monkeypatch):
     assert mc.base_url == codex_auth.BACKEND_BASE
     assert mc.api_key == "ACCESS"  # SDK sends this as Authorization: Bearer
     assert mc.default_headers["chatgpt-account-id"] == "acc"
+    # ChatGPT backend requires store=false (rejects server-side response storage).
+    assert mc.store is False
 
 
 def test_model_config_api_key_mode_unchanged(monkeypatch):

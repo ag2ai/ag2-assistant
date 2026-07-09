@@ -106,7 +106,7 @@ def test_settings_llm_subscription_persists_when_signed_in(profile_app):
     codex_auth._store_tokens({"access_token": "A", "refresh_token": "R", "expires_in": 3600})
     r = client.post(
         f"/api/p/{pid}/settings/llm",
-        json={"provider": "openai", "model": "gpt-5-codex", "auth_mode": "subscription"},
+        json={"provider": "openai", "model": "gpt-5.5", "auth_mode": "subscription"},
     )
     assert r.status_code == 200 and r.json()["ok"] is True
     # Reflected in GET /settings.

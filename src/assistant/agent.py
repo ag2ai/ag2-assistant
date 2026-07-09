@@ -64,6 +64,9 @@ def model_config(config: Config, model: str | None = None):
                 base_url=codex_auth.BACKEND_BASE,
                 default_headers=codex_auth.default_headers(creds),
                 streaming=config.llm.streaming,
+                # The ChatGPT backend rejects server-side response storage
+                # ("Store must be set to false"); the Codex CLI sends store=false too.
+                store=False,
             )
         return OpenAIResponsesConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider == "ollama":

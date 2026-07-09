@@ -67,9 +67,9 @@
   // ChatGPT-subscription sign-in (optional alternative to an API key). Unofficial —
   // see the Codex modal. Loaded on mount; the connect flow mirrors Codex.svelte.
   const SUB_MODEL = {
-    label: 'OpenAI · gpt-5-codex (ChatGPT subscription)',
+    label: 'OpenAI · gpt-5.5 (ChatGPT subscription)',
     provider: 'openai',
-    model: 'gpt-5-codex',
+    model: 'gpt-5.5',
     auth: 'subscription',
   }
   let codex = $state(null)

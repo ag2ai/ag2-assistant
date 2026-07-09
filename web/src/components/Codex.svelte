@@ -9,7 +9,7 @@
 
   let st = $state(null)          // /api/codex/status
   let assistant = $state(null)   // s.assistant {provider, model, auth_mode}
-  let model = $state('gpt-5-codex')
+  let model = $state('gpt-5.5')
   let connecting = $state(false)
   let pendingState = $state('')  // OAuth flow state (for the headless paste path)
   let manualCode = $state('')
@@ -62,7 +62,7 @@
   // Point the assistant at the ChatGPT subscription (provider=openai, subscription).
   async function useSubscription() {
     err = ''; busy = true
-    try { await api.setLlm('openai', model.trim() || 'gpt-5-codex', 'subscription'); await refresh() }
+    try { await api.setLlm('openai', model.trim() || 'gpt-5.5', 'subscription'); await refresh() }
     catch (e) { err = String(e.message || e) }
     busy = false
   }
@@ -100,7 +100,7 @@
     {:else}
       <p class="muted" style="font-size:13px">Now switch the assistant to use it:</p>
       <div class="keyrow">
-        <input type="text" placeholder="model, e.g. gpt-5-codex" bind:value={model} />
+        <input type="text" placeholder="model, e.g. gpt-5.5 (or gpt-5.4, gpt-5.4-mini)" bind:value={model} />
         <button class="open" disabled={busy} onclick={useSubscription}>Use subscription</button>
       </div>
     {/if}
