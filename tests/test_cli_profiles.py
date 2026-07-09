@@ -147,12 +147,6 @@ def test_profile_show_zero_profiles_exits_with_guidance():
     assert "create one first" in result.output
 
 
-def test_permissions_list_zero_profiles_exits_with_guidance():
-    result = runner.invoke(app, ["permissions", "list"])
-    assert result.exit_code == 1
-    assert "create one first" in result.output
-
-
 def test_unknown_profile_exits_with_guidance():
     runner.invoke(app, ["profiles", "create", "Work"])
     result = runner.invoke(app, ["profile", "show", "-p", "ghost"])
@@ -212,24 +206,57 @@ def test_profile_show_defaults_to_active():
     assert "WORK-MEMORY" in result.output
 
 
-def test_permissions_isolation_between_profiles():
-    runner.invoke(app, ["profiles", "create", "Work"])
-    runner.invoke(app, ["profiles", "create", "Personal"])
+def test_permissions_are_global_and_need_no_profile():
+    """Permissions are install-wide now: `permissions` commands take no --profile,
+    work with zero profiles, and a grant lands in the shared root store."""
+    from assistant.config import load_config
 
-    allow = runner.invoke(app, ["permissions", "allow", "/tmp/work-repo", "-p", "work"])
+    # zero profiles: list still works (no §3.5 guidance, no exit 1)
+    empty = runner.invoke(app, ["permissions", "list"])
+    assert empty.exit_code == 0, empty.output
+    assert "Allowed folders:" in empty.output
+    assert "Allowed commands:" in empty.output
+
+    allow = runner.invoke(app, ["permissions", "allow", "/tmp/work-repo"])
     assert allow.exit_code == 0, allow.output
+    cmd = runner.invoke(app, ["permissions", "allow-command", "run_shell_command(git *)"])
+    assert cmd.exit_code == 0, cmd.output
 
-    work_list = runner.invoke(app, ["permissions", "list", "-p", "work"])
-    assert "/tmp/work-repo" in work_list.output
+    listed = runner.invoke(app, ["permissions", "list"])
+    assert "/tmp/work-repo" in listed.output
+    assert "run_shell_command(git *)" in listed.output
 
-    personal_list = runner.invoke(app, ["permissions", "list", "-p", "personal"])
-    assert "/tmp/work-repo" not in personal_list.output
+    # persisted to the shared root store, not a per-profile dir
+    assert (load_config().root_dir / "permissions.json").exists()
 
-    # and each profile has its own permissions.json (or none) — not the root
-    from assistant import profiles
+    # revoke-command hit then miss
+    hit = runner.invoke(app, ["permissions", "revoke-command", "run_shell_command(git *)"])
+    assert hit.exit_code == 0 and "Revoked command" in hit.output
+    miss = runner.invoke(app, ["permissions", "revoke-command", "run_shell_command(git *)"])
+    assert "Not in allow list" in miss.output
 
-    assert (profiles.profile_dir("work") / "permissions.json").exists()
-    assert not (profiles.profile_dir("personal") / "permissions.json").exists()
+
+def test_permissions_allow_command_rejects_garbage():
+    result = runner.invoke(app, ["permissions", "allow-command", "has spaces"])
+    assert result.exit_code == 1
+    assert "Cannot allow" in result.output
+
+
+def test_permissions_allow_command_rejects_bare_exec_tools():
+    # A blanket grant on an arbitrary-execution tool would authorise everything
+    # forever — the CLI must refuse shell (per-prefix only) and host code (per-run
+    # approval only) alike.
+    for tool in ("run_shell_command", "run_shell_local"):
+        result = runner.invoke(app, ["permissions", "allow-command", tool])
+        assert result.exit_code == 1, result.output
+        assert "prefix rule" in result.output
+    for tool in ("run_code", "run_code_local"):
+        result = runner.invoke(app, ["permissions", "allow-command", tool])
+        assert result.exit_code == 1, result.output
+        assert "arbitrary code" in result.output
+    listing = runner.invoke(app, ["permissions", "list"])
+    for tool in ("run_shell_command", "run_code"):
+        assert tool not in listing.output
 
 
 if __name__ == "__main__":  # pragma: no cover

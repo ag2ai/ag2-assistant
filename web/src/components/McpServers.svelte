@@ -224,7 +224,7 @@
 
 <!-- 3. manual form -->
 {#if !showManual}
-  <button class="linkbtn" style="justify-self:start" onclick={() => (showManual = true)}>Add manually →</button>
+  <button class="open" style="justify-self:start" onclick={() => (showManual = true)}>Add manually</button>
 {:else}
   <div class="mcpform">
     <input placeholder="name, e.g. github" bind:value={manual.name} />

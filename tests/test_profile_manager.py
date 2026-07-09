@@ -91,6 +91,20 @@ def test_migration_moves_files_and_writes_registry():
     assert migrate_if_needed() is False
 
 
+def test_migration_leaves_global_permissions_at_root():
+    # permissions.json is the INSTALL-WIDE store now — it can legitimately exist at
+    # the root before profiles/ does (e.g. a CLI grant on a fresh install). Migration
+    # must not relocate it into profiles/default/ (that would orphan global grants).
+    from assistant.gateway.migration import migrate_if_needed
+
+    root = _root()
+    _seed_legacy(root, extra={"permissions.json": json.dumps({"folders": ["/tmp/x"]})})
+
+    assert migrate_if_needed() is True
+    assert (root / "permissions.json").exists()
+    assert not (root / "profiles" / "default" / "permissions.json").exists()
+
+
 def test_migration_onboarded_from_marker_only():
     from assistant import profiles
     from assistant.gateway.migration import migrate_if_needed

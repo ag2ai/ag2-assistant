@@ -15,14 +15,16 @@ from assistant.config import load_config
 from assistant.observability import profile_logger
 
 # Legacy per-profile items that live at the root pre-migration and move into the
-# default profile dir. Dirs and files alike.
+# default profile dir. Dirs and files alike. NOTE: permissions.json is deliberately
+# absent — it is the install-wide global store now, and it can legitimately exist at
+# the root before profiles/ does (CLI grant on a fresh install); moving it would
+# orphan the global grants.
 _LEGACY_ITEMS = (
     "settings.json",
     "sessions.db",
     "tasks.db",
     "inquiries.db",
     "profile.db",
-    "permissions.json",
     "usage.json",
     "skills",
     "debug",

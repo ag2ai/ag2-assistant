@@ -229,6 +229,19 @@ class ProfileArchiveRequest(BaseModel):
     new_default: str | None = None
 
 
+class PermissionFolderRequest(BaseModel):
+    path: str
+
+
+class PermissionCommandAddRequest(BaseModel):
+    tool: str
+    prefix: str | None = None  # shell command prefix (e.g. "git"), or null for whole-tool
+
+
+class PermissionCommandDeleteRequest(BaseModel):
+    rule: str  # canonical rule string, e.g. "run_shell_command(git *)" or "run_code"
+
+
 class _HitlDispatcher:
     """Global HITL registry facade over every runtime's per-profile HITL registry.
 
@@ -527,6 +540,100 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return {"ok": True, "seeded": False, "reason": "exists"}
         await write_universal(doc, path)
         return {"ok": True, "seeded": True}
+
+    # ---- Permissions (global, install-wide: one store shared by every profile) ----
+
+    def _permissions_store():
+        """A fresh PermissionStore over the install-wide file. mtime self-refresh
+        means live turns pick up any change on their next query — no manager.reload()."""
+        from assistant.config import load_config
+        from assistant.permissions import PermissionStore
+
+        return PermissionStore(load_config().root_dir / "permissions.json")
+
+    def _permissions_snapshot(store) -> dict:
+        return {
+            "folders": store.granted_folders(),
+            "blocked": store.blocked_folders(),
+            "commands": store.granted_commands(),
+        }
+
+    @app.get("/api/permissions")
+    async def get_permissions() -> dict:
+        """The full install-wide permission state (folders + blocked + command rules)."""
+        return _permissions_snapshot(_permissions_store())
+
+    @app.post("/api/permissions/folders")
+    async def grant_permission_folder(req: PermissionFolderRequest):
+        """Grant a folder. Returns the full snapshot (client never needs a second GET)."""
+        if not req.path.strip():
+            return JSONResponse({"error": "path is required"}, status_code=400)
+        store = _permissions_store()
+        store.grant(req.path)
+        return {"ok": True, **_permissions_snapshot(store)}
+
+    @app.delete("/api/permissions/folders")
+    async def revoke_permission_folder(req: PermissionFolderRequest):
+        """Revoke a granted folder. 404 if it wasn't granted."""
+        if not req.path.strip():
+            return JSONResponse({"error": "path is required"}, status_code=400)
+        store = _permissions_store()
+        if not store.revoke(req.path):
+            return JSONResponse({"error": f"not granted: {req.path}"}, status_code=404)
+        return {"ok": True, **_permissions_snapshot(store)}
+
+    @app.post("/api/permissions/blocked")
+    async def block_permission_folder(req: PermissionFolderRequest):
+        """Block a folder (also removes any conflicting grant)."""
+        if not req.path.strip():
+            return JSONResponse({"error": "path is required"}, status_code=400)
+        store = _permissions_store()
+        store.block(req.path)
+        return {"ok": True, **_permissions_snapshot(store)}
+
+    @app.delete("/api/permissions/blocked")
+    async def unblock_permission_folder(req: PermissionFolderRequest):
+        """Unblock a folder. 404 if it wasn't blocked."""
+        if not req.path.strip():
+            return JSONResponse({"error": "path is required"}, status_code=400)
+        store = _permissions_store()
+        if not store.unblock(req.path):
+            return JSONResponse({"error": f"not blocked: {req.path}"}, status_code=404)
+        return {"ok": True, **_permissions_snapshot(store)}
+
+    @app.post("/api/permissions/commands")
+    async def grant_permission_command(req: PermissionCommandAddRequest):
+        """Grant a command rule. The rule string is built SERVER-SIDE via command_rule()
+        so the frontend can't produce malformed syntax; a prefix that the matcher would
+        never honour (fails the shell_prefix charset) is rejected 400 rather than minting
+        a dead rule."""
+        from assistant.permissions import command_rule, shell_prefix
+
+        if not req.tool.strip():
+            return JSONResponse({"error": "tool is required"}, status_code=400)
+        prefix = req.prefix.strip() if req.prefix else None
+        if prefix and shell_prefix(prefix) != prefix:
+            return JSONResponse(
+                {"error": f"invalid command prefix: {req.prefix!r}"}, status_code=400
+            )
+        store = _permissions_store()
+        try:
+            # grant_command re-parses the built rule (a tool name with spaces/parens
+            # fails) and refuses bare grants on shell tools — both are 400s, not 500s.
+            store.grant_command(command_rule(req.tool.strip(), prefix))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, **_permissions_snapshot(store)}
+
+    @app.delete("/api/permissions/commands")
+    async def revoke_permission_command(req: PermissionCommandDeleteRequest):
+        """Revoke a command rule by its canonical string. 404 if absent."""
+        if not req.rule.strip():
+            return JSONResponse({"error": "rule is required"}, status_code=400)
+        store = _permissions_store()
+        if not store.revoke_command(req.rule):
+            return JSONResponse({"error": f"not granted: {req.rule}"}, status_code=404)
+        return {"ok": True, **_permissions_snapshot(store)}
 
     # ---- Profile management (global) ----
 

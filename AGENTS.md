@@ -58,6 +58,13 @@ Ruff owns formatting and import order — line length 100, double quotes, rule s
   backward-compat fallbacks.
 - **Surface config, don't guess it.** Prefer exposing a choice in onboarding or
   Settings over silent auto-detection or a hardcoded magic default.
+- **Actions are buttons, never arrow text.** A clickable action in the UI must be
+  a real, visually-distinct button (e.g. the `.open` pill) — never a bare text
+  affordance, and never a label decorated with `→` ("Add manually →",
+  "Change →"). Don't embed the action as trailing text inside an info row or
+  text box; place the button beside it (see `.setrowwrap` in `web/src/app.css`).
+  Arrows are fine in comments and in *data* displays (step indicators, answered
+  prompts) — the rule is about action affordances.
 
 ## Repository layout
 

@@ -491,11 +491,11 @@ def create_agent(
 
     # One injected authority for all permission decisions (knows the sandbox mode
     # so prompts can say where a command actually runs — host vs container). Backed
-    # by THIS profile's persistent grant store so an allow in one profile isn't
-    # pre-authorised in another.
+    # by the install-wide persistent grant store (root_dir) so a grant is global —
+    # allowing a folder/command in one profile pre-authorises it everywhere.
     dependencies: dict = {
         PermissionManager: PermissionManager(
-            PermissionStore(config.data_dir / "permissions.json"),
+            PermissionStore(config.root_dir / "permissions.json"),
             asker=asker,
             sandbox=config.tools.sandbox,
         )
