@@ -71,6 +71,12 @@ export const api = {
   setIdentity: (fields) => j('POST', G('/identity'), fields),
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
+  // Cheap subsystem health for the status dot: {overall, checks:[{id,label,state,detail,…}]}.
+  // Distinct from the GLOBAL /api/health (Docker liveness). MCP is listed here but
+  // probed on demand via healthMcpServer — this route never spawns a server. A 404/410
+  // here means the profile is genuinely gone, so it rides j()'s recovery like the
+  // other scoped polls.
+  health: () => j('GET', P('/health')),
   sessions: () => j('GET', P('/sessions')).then((d) => d.sessions || []),
   deleteSession: (id) => j('DELETE', P('/sessions/' + encodeURIComponent(id))),
   tasksAll: (status) => j('GET', P('/tasks/all' + (status && status !== 'all' ? '?status=' + status : ''))).then((d) => d.tasks || []),

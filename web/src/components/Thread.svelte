@@ -7,6 +7,7 @@
   import TaskPanel from './task/TaskPanel.svelte'
   import Icon from './Icon.svelte'
   import ThemeToggle from './ThemeToggle.svelte'
+  import SystemHealth from './SystemHealth.svelte'
 
   let scroller
   const tail = $derived($thread.items[$thread.items.length - 1])
@@ -29,6 +30,7 @@
   </span>
   {#if $thread.kind === 'task' && $taskPanel}<span class="badge">{$taskPanel.status}</span>{/if}
   <div class="hactions">
+    <SystemHealth />
     <ThemeToggle />
     <button class="ag2toggle" class:on={$ag2View} class:ag2-glow={$ag2View} onclick={() => ($ag2View = !$ag2View)}
             title="AG2 view — reveal the live AG2 events powering the UI"><Icon name="code" size={14} /> AG2</button>
