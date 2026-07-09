@@ -170,7 +170,7 @@ export function foldEvent(items, wire) {
       items.push({ id: nid(), kind: 'taskcard', taskId: d.task_id, title: d.title, scheduled: d.kind === 'scheduled' })
       break
     case 'TaskScheduled':
-      items.push({ id: nid(), kind: 'note', icon: 'clock', text: `Scheduled for ${fmtDateTime(d.scheduled_for)}${d.recurrence ? ' · repeats ' + d.recurrence : ''}` })
+      items.push({ id: nid(), kind: 'note', icon: 'clock', text: `Scheduled for ${fmtDateTime(d.scheduled_for)}${d.recurrence ? ' · ' + (d.recurrence_desc || 'repeats ' + d.recurrence) : ''}` })
       break
     case 'TaskStarted':
     case 'TaskCompleted':

@@ -1,5 +1,7 @@
 """Task-control tools — modify one task from a conversation (add/cancel/edit)."""
 
+from datetime import datetime
+
 from assistant.tasks import TaskManager, TaskStatus, TaskStore
 from assistant.tasks.control import (
     build_task_tools,
@@ -36,10 +38,10 @@ async def test_render_task_includes_schedule(tmp_path):
         "digest",
         status=TaskStatus.SCHEDULED,
         scheduled_for="2026-06-18T08:00:00",
-        recurrence="daily",
+        recurrence="0 8 * * *",
     )
     text = await render_task(store, t.id)
-    assert "2026-06-18T08:00:00" in text and "repeats daily" in text
+    assert "2026-06-18T08:00:00" in text and "repeats 0 8 * * *" in text
     # a one-off shows it's not recurring
     t2 = await store.create(
         "once", status=TaskStatus.SCHEDULED, scheduled_for="2026-06-18T08:00:00"
@@ -107,7 +109,7 @@ async def test_editing_a_scheduled_task_does_not_run_it(tmp_path):
         "daily digest",
         status=TaskStatus.SCHEDULED,
         scheduled_for="2030-01-01T05:00:00",
-        recurrence="weekdays",
+        recurrence="0 5 * * 1-5",
     )
 
     await do_add_subtask(store, mgr, t.id, "Extra research")
@@ -127,17 +129,19 @@ async def test_reschedule_changes_time_and_repeat(tmp_path):
         "digest",
         status=TaskStatus.SCHEDULED,
         scheduled_for="2026-01-01T09:00:00",
-        recurrence="daily",
+        recurrence="0 9 * * *",
     )
-    # change the repeat
-    msg = await do_reschedule(store, t.id, recurrence="weekly")
+    # change the repeat without a time → re-arms onto the new cron's next match
+    msg = await do_reschedule(store, t.id, recurrence="0 9 * * 1")
     got = await store.get(t.id)
-    assert got.recurrence == "weekly" and got.status == TaskStatus.SCHEDULED
-    assert "weekly" in msg
-    # change the time, keeping the repeat
+    assert got.recurrence == "0 9 * * 1" and got.status == TaskStatus.SCHEDULED
+    armed = datetime.fromisoformat(got.scheduled_for)
+    assert armed > datetime.now().astimezone() and armed.weekday() == 0 and armed.hour == 9
+    assert "0 9 * * 1" in msg and "Monday" in msg  # cron echoed with its description
+    # change the time, keeping the repeat (explicit time = one-off override)
     await do_reschedule(store, t.id, when="2026-02-02T08:00:00")
     got = await store.get(t.id)
-    assert got.scheduled_for == "2026-02-02T08:00:00" and got.recurrence == "weekly"
+    assert got.scheduled_for == "2026-02-02T08:00:00" and got.recurrence == "0 9 * * 1"
     # turn off repeating → one-off
     await do_reschedule(store, t.id, recurrence="off")
     assert (await store.get(t.id)).recurrence is None
@@ -148,7 +152,11 @@ async def test_reschedule_changes_time_and_repeat(tmp_path):
 async def test_reschedule_needs_a_time(tmp_path):
     store = _store(tmp_path)
     t = await store.create("no time yet")  # no scheduled_for
-    assert "give me a time" in (await do_reschedule(store, t.id, recurrence="daily")).lower()
+    assert "give me a time" in (await do_reschedule(store, t.id, recurrence="off")).lower()
+    # ...but a cron repeat alone is enough: it arms to the cron's next match
+    await do_reschedule(store, t.id, recurrence="@daily")
+    got = await store.get(t.id)
+    assert got.status == TaskStatus.SCHEDULED and got.scheduled_for is not None
 
 
 async def test_build_task_tools_exposes_the_set(tmp_path):

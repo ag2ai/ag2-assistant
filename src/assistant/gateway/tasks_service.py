@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 from assistant.config import Config, load_config
 from assistant.hitl import NullAsker
+from assistant.tasks.scheduling import describe_cron
 
 _CONTROL_PROMPT = (
     "You manage ONE task for the user. When they ask for a change — add or cancel "
@@ -502,13 +503,12 @@ class TaskService:
         Clarification + planning happen NOW (while the user is here), so the plan
         is baked into the task; the deterministic Scheduler then just *executes*
         that plan at each occurrence — no run-time questions."""
-        from datetime import datetime
-
         from assistant.tasks import TaskStatus
         from assistant.tasks.scheduling import first_occurrence
 
-        # for day-of-week recurrences (e.g. weekdays), start on the next matching day
-        first = first_occurrence(recurrence, when, datetime.now().astimezone())
+        # recurring tasks snap to the first cron match (e.g. weekday-only crons
+        # scheduled on a Saturday start Monday)
+        first = first_occurrence(recurrence, when)
         if first is not None:
             when = first.isoformat()
         task = await self._store.create(
@@ -529,6 +529,7 @@ class TaskService:
                         task.id,
                         scheduled_for=when,
                         recurrence=recurrence or "",
+                        recurrence_desc=describe_cron(recurrence) or "",
                     ),
                 )
             except Exception as exc:
@@ -634,7 +635,7 @@ class TaskService:
                 await self._manager.submit(run.id, asker=_ParkingAsker())  # execute the plan
             else:  # never planned (e.g. abandoned intake) → best-effort, no questions
                 self._run_in_bg(run.id, channel, clarify=False)
-            nxt = next_occurrence(t.recurrence, t.scheduled_for, now)
+            nxt = next_occurrence(t.recurrence, now)
             if nxt is not None:
                 await self._store.update(task_id, scheduled_for=nxt.isoformat())
             else:  # unparseable recurrence → fire once
@@ -962,6 +963,7 @@ class TaskService:
             "last_progress": progress[-1]["message"] if progress else None,
             "scheduled_for": t.scheduled_for,
             "recurrence": t.recurrence,
+            "recurrence_desc": describe_cron(t.recurrence),
             "run_of": getattr(t, "run_of", None),
             "seen": getattr(t, "seen_at", None) is not None,
         }
@@ -1000,6 +1002,7 @@ class TaskService:
             "capabilities": t.capabilities or [],
             "scheduled_for": t.scheduled_for,
             "recurrence": t.recurrence,
+            "recurrence_desc": describe_cron(t.recurrence),
             "run_of": getattr(t, "run_of", None),
             "intake": t.intake or {},
             "progress": t.progress or [],
