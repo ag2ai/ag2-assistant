@@ -876,3 +876,65 @@ async def test_identity_document_endpoint_parity():
     )
     cli_doc = await build_profile_store(cli_store).read(PROFILE_PATH)
     assert endpoint_doc == cli_doc
+
+
+# ---- System health endpoint (the status-dot source, GET /health) ---------------
+
+
+def _fake_key_status(*, present: bool):
+    """A secrets.status() stand-in: all three providers set (or not), plus ollama."""
+    flag = {"set": present, "hint": "…key" if present else ""}
+    return {
+        "openai": dict(flag),
+        "gemini": dict(flag),
+        "anthropic": dict(flag),
+        "ollama": {"set": False, "base_url": "http://localhost:11434"},
+    }
+
+
+def test_profile_health_ok_and_down(profile_app, monkeypatch):
+    """The cheap health aggregate: healthy when the agent is up and the configured
+    provider has a key; 'down' (agent can't run) when the key is missing. The dot
+    reads `overall`; the panel reads `checks`."""
+    import assistant.secrets as secrets
+
+    client, pid = profile_app
+
+    # Provider key present + faked agent alive → all core signals green.
+    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
+    body = client.get(api(pid, "/health")).json()
+    assert body["overall"] == "ok"
+    ids = {c["id"] for c in body["checks"]}
+    assert ids == {"agent", "provider", "mcp", "channels", "google", "scheduler"}
+    agent = next(c for c in body["checks"] if c["id"] == "agent")
+    assert agent["state"] == "ok"
+    # MCP is config-only here (no probe, no servers configured) → informational/off.
+    mcp = next(c for c in body["checks"] if c["id"] == "mcp")
+    assert mcp["state"] in ("off", "info") and mcp["servers"] == []
+
+    # Drop the provider key → the configured provider (gemini) has no key → down.
+    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=False))
+    body = client.get(api(pid, "/health")).json()
+    assert body["overall"] == "down"
+    provider = next(c for c in body["checks"] if c["id"] == "provider")
+    assert provider["state"] == "down"
+
+
+def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
+    """A messaging channel bound to this profile that failed to start (start error
+    recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
+    import assistant.profiles as profiles_mod
+    import assistant.secrets as secrets
+
+    client, pid = profile_app
+
+    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
+    # Bind discord to this profile and record a start error on the live manager.
+    monkeypatch.setattr(profiles_mod, "channel_bindings", lambda: {"discord": pid})
+    client.app.state.profiles.channel_errors["discord"] = "invalid bot token"
+
+    body = client.get(api(pid, "/health")).json()
+    assert body["overall"] == "warn"
+    channels = next(c for c in body["checks"] if c["id"] == "channels")
+    assert channels["state"] == "warn"
+    assert any(it["platform"] == "discord" and it["error"] for it in channels["items"])

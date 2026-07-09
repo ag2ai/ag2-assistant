@@ -1024,6 +1024,138 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             },
         }
 
+    @p.get("/health")
+    async def profile_health(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Cheap, at-a-glance health of this profile's subsystems — the source for
+        the UI's status dot. Presence/liveness signals ONLY: no MCP subprocess
+        spawns, no provider pings, so it's cheap enough to poll on a short cycle.
+        MCP servers are listed (config only) and probed on demand by the client via
+        ``/settings/mcp/{name}/health``.
+
+        ``overall`` rolls up the *core* signals: ``down`` if the agent isn't alive or
+        the configured provider has no key (the agent can't run); ``warn`` if a
+        channel bound to this profile failed to start; else ``ok``. Google and the
+        scheduler are informational and never move ``overall``.
+        """
+        from assistant import profiles as profiles_mod
+        from assistant.integrations import google_auth
+
+        checks: list[dict] = []
+
+        # Assistant agent — liveness (agent object built + not closed).
+        gw = runtime.gateway.status() if runtime.gateway is not None else {"status": "stopped"}
+        agent_ok = gw.get("status") == "ok"
+        checks.append(
+            {
+                "id": "agent",
+                "label": "Assistant",
+                "state": "ok" if agent_ok else "down",
+                "detail": f"model {gw.get('model')}" if agent_ok else "not running",
+            }
+        )
+
+        # LLM provider — the configured provider must have a usable key.
+        provider = runtime.config.llm.provider
+        key_set = _available_providers().get(provider, False)
+        checks.append(
+            {
+                "id": "provider",
+                "label": "LLM key",
+                "state": "ok" if key_set else "down",
+                "detail": f"{provider} · {'key set' if key_set else 'no key'}",
+            }
+        )
+
+        # MCP servers — config only; the client probes each on panel open.
+        mcp_servers = _runtime_settings(runtime).list_mcp_servers()
+        enabled = [s for s in mcp_servers if s.get("enabled", True)]
+        checks.append(
+            {
+                "id": "mcp",
+                "label": "MCP servers",
+                "state": "info" if mcp_servers else "off",
+                "detail": (
+                    f"{len(enabled)} configured"
+                    if enabled
+                    else ("all disabled" if mcp_servers else "none configured")
+                ),
+                "servers": [
+                    {"name": s["name"], "enabled": s.get("enabled", True)} for s in mcp_servers
+                ],
+            }
+        )
+
+        # Messaging channels bound to THIS profile (start-time active/error).
+        items = []
+        for platform, bound_pid in profiles_mod.channel_bindings().items():
+            if bound_pid != runtime.pid:
+                continue
+            entry = _channel_entry(platform, bound_pid)
+            items.append(
+                {
+                    "platform": platform,
+                    "active": entry["active"],
+                    "error": entry["error"],
+                    "token_present": entry["token_present"],
+                }
+            )
+        ch_error = any(it["error"] for it in items)
+        checks.append(
+            {
+                "id": "channels",
+                "label": "Messaging",
+                "state": "off" if not items else ("warn" if ch_error else "ok"),
+                # Surface the ACTUAL failure reason (e.g. "Improper token…"), not a
+                # generic "error" — the panel shows this, so it must say what to fix.
+                "detail": (
+                    ", ".join(
+                        (it["error"] or f"{it['platform']} active")
+                        if (it["error"] or it["active"])
+                        else f"{it['platform']} idle"
+                        for it in items
+                    )
+                    or "none bound"
+                ),
+                "items": items,
+            }
+        )
+
+        # Google — informational (file-presence: configured / signed in).
+        signed_in = google_auth.has_token()
+        email = google_auth.account_email()
+        checks.append(
+            {
+                "id": "google",
+                "label": "Google",
+                "state": "info" if signed_in else "off",
+                "detail": (
+                    (f"signed in as {email}" if email else "signed in")
+                    if signed_in
+                    else (
+                        "configured — not signed in"
+                        if google_auth.is_configured()
+                        else "not connected"
+                    )
+                ),
+            }
+        )
+
+        # Task scheduler — informational; single-leader across processes.
+        sched_running = bool(getattr(runtime.tasks, "scheduler_running", False))
+        checks.append(
+            {
+                "id": "scheduler",
+                "label": "Task scheduler",
+                "state": "ok",
+                "detail": "running" if sched_running else "running in another process",
+            }
+        )
+
+        core_down = any(c["state"] == "down" for c in checks if c["id"] in ("agent", "provider"))
+        core_warn = any(c["state"] == "warn" for c in checks if c["id"] == "channels")
+        overall = "down" if core_down else ("warn" if core_warn else "ok")
+        return {"overall": overall, "checks": checks}
+
     async def _mcp_health(server: dict) -> dict:
         from ag2.context import ConversationContext
         from ag2.stream import MemoryStream

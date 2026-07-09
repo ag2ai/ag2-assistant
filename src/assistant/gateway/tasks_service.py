@@ -82,6 +82,13 @@ class TaskService:
         # lifecycle ride the AG2 stream so the GUI renders it as events. None → off.
         self._emit = None
 
+    @property
+    def scheduler_running(self) -> bool:
+        """True when THIS process owns the singleton scheduler (won the flock).
+        Other processes run without one — the scheduler is single-leader, so a
+        False here means "scheduling happens, just in another process", not down."""
+        return self._scheduler is not None
+
     def set_emitter(self, emitter) -> None:
         """Wire an async ``(session_id, event)`` emitter (the gateway's)."""
         self._emit = emitter
