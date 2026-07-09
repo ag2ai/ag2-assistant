@@ -3,7 +3,7 @@
    ------------------------------------------------------------
    A distinct "printed page" identity shared by the A2UI
    broadsheet surfaces (NewsWire, WeatherCard, MarketBoard):
-   Fraunces serif, JetBrains Mono wire, vermillion/green ink.
+   Fraunces serif, JetBrains Mono wire, vermilion/green ink.
 
    Deliberately INDEPENDENT of the [data-palette] accent — the
    broadsheet keeps its own editorial colour voice regardless of
@@ -12,7 +12,7 @@
    "night edition" aligned to the app's sand-900/950 dark family
    ("warm espresso, not cold black").
 
-   Vermillion (--ed-accent*) = alerts / market down.
+   Vermilion (--ed-accent*) = alerts / market down.
    Green     (--ed-up*)      = market up.
    The *-d step is the higher-contrast emphasis shade for text:
    darker than the base on light paper, BRIGHTER on dark paper.
@@ -25,7 +25,7 @@
   --ed-ink:      #18140d;
   --ed-ink-2:    #4f4636;
   --ed-ink-3:    #8a7f6b;
-  --ed-accent:   #c5402a;   /* vermillion */
+  --ed-accent:   #c5402a;   /* vermilion */
   --ed-accent-d: #972c1a;   /* emphasis text (darker on cream) */
   --ed-up:       #2f6b46;   /* editorial green */
   --ed-up-d:     #234f34;   /* emphasis text (darker on cream) */
@@ -45,7 +45,7 @@
   --ed-ink:      #efe7d6;
   --ed-ink-2:    #c6bba7;
   --ed-ink-3:    #8d8270;
-  --ed-accent:   #e2674e;   /* vermillion, lifted for dark */
+  --ed-accent:   #e2674e;   /* vermilion, lifted for dark */
   --ed-accent-d: #f0876f;   /* emphasis text (brighter on espresso) */
   --ed-up:       #5cb87e;   /* green, lifted for dark */
   --ed-up-d:     #82d49f;   /* emphasis text (brighter on espresso) */
