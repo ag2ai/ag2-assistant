@@ -20,7 +20,7 @@ from assistant.gateway.wire import is_binary_event, to_wire
 
 _SAMPLES = [
     TaskCreated("task-1", title="Weather report", kind="scheduled"),
-    TaskScheduled("task-1", scheduled_for="2026-06-18T08:00:00+10:00", recurrence="daily"),
+    TaskScheduled("task-1", scheduled_for="2026-06-18T08:00:00+10:00", recurrence="0 8 * * *"),
     DeliverableProduced(
         "task-1", deliverable_id="dlv-9", description="report", preview="RBA held rates…"
     ),

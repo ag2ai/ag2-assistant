@@ -175,7 +175,7 @@ CAPABILITY_GUIDANCE = (
     "- Chat and use your tools (web search/fetch, code, local files, and the user's "
     "Google when connected) to answer or act directly for small things.\n"
     "- Run background TASKS for substantial or multi-step work: create them, schedule "
-    "them (one-off or recurring — daily/weekly/weekdays/'mon,wed,fri'), inspect and "
+    "them (one-off or recurring — standard 5-field cron, e.g. '0 9 * * 1-5'), inspect and "
     "edit them (add subtasks or deliverables, change the objective), reschedule, run "
     "now, cancel, or archive.\n"
     "- Look things up with your system tools instead of needing them in context: list/"

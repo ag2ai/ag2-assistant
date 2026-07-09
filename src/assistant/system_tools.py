@@ -152,19 +152,23 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         recurrence: Annotated[
             str,
             Field(
-                description="Repeat: daily/hourly/weekly, 'every N units', 'weekdays', 'weekends', 'mon,wed,fri', or empty."
+                description="Repeat as standard 5-field cron (minute hour day-of-month "
+                "month day-of-week), e.g. '0 9 * * *' = daily 09:00, '0 4-14 * * 1-5' = "
+                "hourly 04:00–14:00 weekdays, '30 8 * * 6,0' = weekends 08:30; or "
+                "@hourly/@daily/@weekly/@monthly; or empty for one-off."
             ),
         ] = "",
         context: Context = None,
     ) -> str:
         """Schedule a task to run later, optionally recurring."""
-        from assistant.tasks.scheduling import validate_schedule
+        from assistant.tasks.scheduling import describe_cron, validate_schedule
 
         if err := validate_schedule(when, recurrence, require_when=True):
             return err  # correctable: the agent sees this and retries with a valid value
         tid = await tasks.schedule_task(request, when, recurrence or None)
         await _emit_task_card(context, tid, request, "scheduled")  # event-stream card
-        sched = f"Scheduled task {tid} for {when}{' (' + recurrence + ')' if recurrence else ''}."
+        rep = f" (repeats {recurrence}: {describe_cron(recurrence)})" if recurrence else ""
+        sched = f"Scheduled task {tid} for {when}{rep}."
         return sched + note
 
     @tool
@@ -173,7 +177,9 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         when: Annotated[str, Field(description="New ISO datetime, or empty to keep.")] = "",
         recurrence: Annotated[
             str,
-            Field(description="New repeat (see schedule_task), 'off' to stop, or empty to keep."),
+            Field(
+                description="New repeat as 5-field cron (see schedule_task), 'off' to stop, or empty to keep."
+            ),
         ] = "",
     ) -> str:
         """Change when a task runs and/or how it repeats."""

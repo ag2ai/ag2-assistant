@@ -24,6 +24,8 @@ dependencies = [
     # httpx + beautifulsoup4 power the custom web_fetch fallback (non-Anthropic providers)
     "httpx>=0.28.0",
     "beautifulsoup4>=4.12.0",
+    "cronsim>=2.7",
+    "cron-descriptor>=1.4",
     # gateway facade
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",

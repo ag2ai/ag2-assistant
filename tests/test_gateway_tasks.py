@@ -292,10 +292,12 @@ async def test_schedule_task_creates_scheduled(tmp_path):
         pass
 
     svc = _service(tmp_path, executor)
-    tid = await svc.schedule_task("nightly digest", when="2030-01-01T09:00:00", recurrence="daily")
+    tid = await svc.schedule_task(
+        "nightly digest", when="2030-01-01T09:00:00", recurrence="0 9 * * *"
+    )
     t = await svc.store.get(tid)
     assert t.status == TaskStatus.SCHEDULED
-    assert t.scheduled_for.startswith("2030-01-01T09:00:00") and t.recurrence == "daily"
+    assert t.scheduled_for.startswith("2030-01-01T09:00:00") and t.recurrence == "0 9 * * *"
 
 
 async def test_fire_one_shot_runs_the_task(tmp_path):
@@ -320,7 +322,9 @@ async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
     svc = _service(tmp_path, executor)
     ran = []
     svc._run_in_bg = lambda tid, ch, clarify=True: ran.append(tid)
-    tid = await svc.schedule_task("daily digest", when="2020-01-01T09:00:00", recurrence="daily")
+    tid = await svc.schedule_task(
+        "daily digest", when="2020-01-01T09:00:00", recurrence="0 9 * * *"
+    )
     await svc._fire(tid)
 
     assert ran and ran[0] != tid  # a fresh run was spawned, not the template
@@ -338,7 +342,9 @@ async def test_template_detail_lists_its_runs(tmp_path):
 
     svc = _service(tmp_path, executor)
     svc._run_in_bg = lambda tid, ch, clarify=True: None
-    tid = await svc.schedule_task("daily digest", when="2020-01-01T09:00:00", recurrence="daily")
+    tid = await svc.schedule_task(
+        "daily digest", when="2020-01-01T09:00:00", recurrence="0 9 * * *"
+    )
     await svc._fire(tid)  # occurrence 1
     await svc._fire(tid)  # occurrence 2
 
@@ -407,7 +413,7 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
 
     svc = _service(tmp_path, executor, planner=_Planner())
     past = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
-    tid = await svc.schedule_task("daily ai digest", when=past, recurrence="daily")
+    tid = await svc.schedule_task("daily ai digest", when=past, recurrence="0 9 * * *")
 
     for _ in range(400):  # wait for schedule-time planning to bake the deliverable
         t = await svc.store.get(tid)
@@ -448,14 +454,14 @@ def test_schedule_rest_endpoint(monkeypatch):
             json={
                 "text": "weekly report",
                 "when": "2030-06-01T09:00:00",
-                "recurrence": "weekly",
+                "recurrence": "0 9 * * 6",  # 2030-06-01 is a Saturday
             },
         )
         tid = r.json()["id"]
         detail = client.get(api(pid, f"/tasks/{tid}")).json()["task"]
         assert detail["status"] == "scheduled"
         assert detail["scheduled_for"].startswith("2030-06-01T09:00:00")
-        assert detail["recurrence"] == "weekly"
+        assert detail["recurrence"] == "0 9 * * 6"
 
 
 async def test_chat_routes_to_control_agent(tmp_path):

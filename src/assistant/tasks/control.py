@@ -125,33 +125,39 @@ async def do_set_deliverables(store, manager, task_id, descriptions) -> str:
 
 async def do_reschedule(store, task_id, when="", recurrence="") -> str:
     """Change a task's run time and/or repeat; (re-)arms it as SCHEDULED."""
+    from datetime import datetime
+
     from assistant.tasks.model import TaskStatus
-    from assistant.tasks.scheduling import parse_recurrence
+    from assistant.tasks.scheduling import describe_cron, next_occurrence, normalize_cron
 
     t = await store.get(task_id)
     if t is None:
         return "Task not found."
     fields: dict = {}
     if when:
-        fields["scheduled_for"] = when
+        fields["scheduled_for"] = when  # explicit time wins (one-off override of the cron)
     rec = (recurrence or "").strip().lower()
     if rec in ("off", "none", "stop", "no", "once", "one-off"):
         fields["recurrence"] = None
     elif rec:
-        if parse_recurrence(rec) is None:
+        if normalize_cron(rec) is None:
             return (
-                f"I don't understand the repeat '{recurrence}'. Try daily, weekly, "
-                "hourly, or 'every 2 days'."
+                f"I don't understand the repeat '{recurrence}'. Use standard 5-field "
+                "cron, e.g. '0 9 * * *' (daily 09:00) or '0 4-14 * * 1-5' (hourly "
+                "04:00–14:00 weekdays), or @hourly/@daily/@weekly."
             )
         fields["recurrence"] = rec
+        if not when:  # repeat changed without a time → re-arm onto the new cron
+            fields["scheduled_for"] = next_occurrence(rec, datetime.now().astimezone()).isoformat()
     if not fields:
         return "Tell me the new time and/or how it should repeat."
-    if not (when or t.scheduled_for):
+    if not (fields.get("scheduled_for") or t.scheduled_for):
         return "Give me a time to run it (there's no current scheduled time)."
     fields["status"] = TaskStatus.SCHEDULED
     await store.update(task_id, **fields)
     cur = await store.get(task_id)
-    rep = f"repeats {cur.recurrence}" if cur.recurrence else "one-off"
+    desc = describe_cron(cur.recurrence)
+    rep = f"repeats {cur.recurrence} ({desc})" if cur.recurrence else "one-off"
     return f"Rescheduled: next run {cur.scheduled_for} · {rep}."
 
 
@@ -241,9 +247,10 @@ def build_task_tools(store, manager, task_id: str) -> list:
         recurrence: Annotated[
             str,
             Field(
-                description="New repeat: daily / hourly / weekly / 'every N "
-                "minutes/hours/days/weeks', or specific days like 'weekdays', "
-                "'weekends', 'mon,wed,fri'; or 'off' to stop repeating. Empty = keep current."
+                description="New repeat as standard 5-field cron (minute hour "
+                "day-of-month month day-of-week), e.g. '0 9 * * *' = daily 09:00, "
+                "'0 4-14 * * 1-5' = hourly 04:00–14:00 weekdays; or @hourly/@daily/"
+                "@weekly; or 'off' to stop repeating. Empty = keep current."
             ),
         ] = "",
     ) -> str:

@@ -32,7 +32,8 @@ class TaskScheduled(AssistantEvent):
 
     task_id: str = Field(kw_only=False)
     scheduled_for: str = ""  # ISO 8601
-    recurrence: str = ""  # "" for one-off
+    recurrence: str = ""  # 5-field cron; "" for one-off
+    recurrence_desc: str = ""  # human-readable cron description ("" for one-off)
 
 
 class DeliverableProduced(AssistantEvent):
