@@ -11,13 +11,26 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: detect-private-key
+      # Land changes through PRs, not direct commits to main.
+      - id: no-commit-to-branch
+        args: [--branch, main]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+    rev: v0.15.18
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]
 
   - repo: local
     hooks:

@@ -37,7 +37,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
-    "ruff>=0.8.0",
+    "ruff>=0.15.18,<0.16",  # pinned line; matches .pre-commit-config.yaml + the CI lint gate
     "pre-commit>=4.0.0",
 ]
 # Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
@@ -73,6 +73,14 @@ ignore = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.codespell]
+# The generated SPA bundle and lockfiles are machine-written — never spell-check them.
+skip = "*.lock,*package-lock.json,src/assistant/gateway/static/app/*,.venv,node_modules"
+# Not typos: `ans` (answer var), `hsi` (Hang Seng Index ticker), `protext` (a
+# camelCase identifier), `vermillion` (a design-token color name), plus valid
+# hyphenations/spellings. Extend this list when codespell flags a real term.
+ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,vermillion,protext"
 
 [tool.setuptools.packages.find]
 where = ["src"]
