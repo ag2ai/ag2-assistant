@@ -121,8 +121,9 @@ class Gateway:
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
         self._agent = self._make_agent()
-        # Per-profile persistent grant store (config.data_dir is the profile dir).
-        self._permissions = PermissionStore(self._config.data_dir / "permissions.json")
+        # Install-wide persistent grant store (config.root_dir holds global files) —
+        # grants are global, not per-profile.
+        self._permissions = PermissionStore(self._config.root_dir / "permissions.json")
 
         if self._persist:
             from ag2.knowledge import SqliteKnowledgeStore
