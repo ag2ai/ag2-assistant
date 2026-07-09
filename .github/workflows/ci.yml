@@ -6,6 +6,23 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install ruff
+        # Pinned to match .pre-commit-config.yaml so local and CI formatting agree.
+        run: pip install ruff==0.15.18
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+
   test:
     name: Python tests
     runs-on: ubuntu-latest
