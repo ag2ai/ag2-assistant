@@ -1073,7 +1073,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             {
                 "id": "mcp",
                 "label": "MCP servers",
-                "state": "info" if mcp_servers else "off",
+                "state": "ok" if enabled else "off",
                 "detail": (
                     f"{len(enabled)} configured"
                     if enabled
@@ -1127,7 +1127,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             {
                 "id": "google",
                 "label": "Google",
-                "state": "info" if signed_in else "off",
+                "state": "ok" if signed_in else "off",
                 "detail": (
                     (f"signed in as {email}" if email else "signed in")
                     if signed_in
