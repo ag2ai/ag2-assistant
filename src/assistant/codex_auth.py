@@ -221,6 +221,27 @@ def _store_tokens(tokens: dict) -> Creds:
     return Creds(access_token=access, account_id=data["account_id"])
 
 
+def extract_auth_code(raw: str) -> str:
+    """Normalize a pasted value into the bare OAuth ``code``.
+
+    The headless/Docker fallback asks the user to copy the value out of the browser
+    after OpenAI redirects. Depending on where they copy from, that value is either
+    the bare code OR the whole redirect URL — including the "this site can't be
+    reached" page, whose address bar still holds
+    ``http://localhost:1455/auth/callback?code=...&state=...``. Accept both: if it
+    looks like a URL (or a bare ``code=...&...`` query), pull out the ``code`` param;
+    otherwise return it stripped as-is."""
+    import urllib.parse
+
+    raw = (raw or "").strip()
+    if "code=" in raw:
+        query = urllib.parse.urlsplit(raw).query or raw
+        code = (urllib.parse.parse_qs(query).get("code") or [""])[0]
+        if code:
+            return code
+    return raw
+
+
 def exchange_code(code: str, verifier: str) -> Creds:
     """Exchange an authorization code for tokens and store them."""
     try:

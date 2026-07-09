@@ -832,8 +832,11 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse(
                 {"ok": False, "error": "unknown or expired sign-in"}, status_code=400
             )
+        # Accept either the bare code or the whole redirect URL the user copied out
+        # of the browser's address bar (even off the "connection refused" page).
+        code = codex_auth.extract_auth_code(payload.code)
         try:
-            await asyncio.to_thread(codex_auth.exchange_code, payload.code.strip(), verifier)
+            await asyncio.to_thread(codex_auth.exchange_code, code, verifier)
         except codex_auth.CodexAuthError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         await _reload_all_runtimes()

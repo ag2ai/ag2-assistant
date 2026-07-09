@@ -112,13 +112,18 @@
 
     {#if connecting}
       <p class="muted" style="font-size:12px;margin-top:10px">
-        Didn't get redirected (headless / remote)?
+        Running in Docker or on a remote host, or the tab shows
+        <b>"localhost refused to connect"</b>? That's expected — the redirect points at
+        <code>localhost:1455</code> inside the container.
         <button class="linkbtn" onclick={() => (showManual = !showManual)}>Paste the code manually</button>
       </p>
       {#if showManual}
-        <p class="muted" style="font-size:12px">After signing in, copy the <code>code</code> value from the redirect URL and paste it here:</p>
+        <p class="muted" style="font-size:12px">
+          After signing in, copy the <b>whole address</b> from the browser's URL bar
+          (even on the error page) — or just the <code>code</code> value from it — and paste it here:
+        </p>
         <div class="keyrow">
-          <input type="text" placeholder="code" bind:value={manualCode} />
+          <input type="text" placeholder="http://localhost:1455/auth/callback?code=… (or just the code)" bind:value={manualCode} />
           <button class="open" disabled={busy} onclick={submitCode}>Submit</button>
         </div>
       {/if}

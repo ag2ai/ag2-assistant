@@ -49,6 +49,27 @@ def test_authorize_url_has_required_params():
         assert part in url, part
 
 
+# --- pasted-value normalization (Docker/headless fallback) ------------------ #
+
+
+def test_extract_auth_code_bare_code():
+    assert codex_auth.extract_auth_code("  abc123  ") == "abc123"
+
+
+def test_extract_auth_code_from_full_redirect_url():
+    url = "http://localhost:1455/auth/callback?code=THE_CODE&state=xyz"
+    assert codex_auth.extract_auth_code(url) == "THE_CODE"
+
+
+def test_extract_auth_code_from_bare_query_string():
+    assert codex_auth.extract_auth_code("code=THE_CODE&state=xyz") == "THE_CODE"
+
+
+def test_extract_auth_code_empty():
+    assert codex_auth.extract_auth_code("") == ""
+    assert codex_auth.extract_auth_code(None) == ""
+
+
 # --- account id extraction from JWT claims (three-level fallback) ----------- #
 
 
