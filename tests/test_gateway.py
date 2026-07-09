@@ -908,9 +908,9 @@ def test_profile_health_ok_and_down(profile_app, monkeypatch):
     assert ids == {"agent", "provider", "mcp", "channels", "google", "scheduler"}
     agent = next(c for c in body["checks"] if c["id"] == "agent")
     assert agent["state"] == "ok"
-    # MCP is config-only here (no probe, no servers configured) → informational/off.
+    # MCP is config-only here (no probe, no servers configured) → off.
     mcp = next(c for c in body["checks"] if c["id"] == "mcp")
-    assert mcp["state"] in ("off", "info") and mcp["servers"] == []
+    assert mcp["state"] == "off" and mcp["servers"] == []
 
     # Drop the provider key → the configured provider (gemini) has no key → down.
     monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=False))

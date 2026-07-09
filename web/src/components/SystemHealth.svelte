@@ -27,7 +27,7 @@
   // Worst of the cheap overall and any probed-down MCP server. A down MCP server
   // escalates the dot to amber (MCP is auxiliary — never red); before any probe it
   // doesn't affect the dot at all.
-  const RANK = { ok: 0, info: 0, off: 0, warn: 1, down: 2 }
+  const RANK = { ok: 0, off: 0, warn: 1, down: 2 }
   const effective = $derived.by(() => {
     let s = data?.overall || 'ok'
     // Only count MCP results for servers that STILL exist. The `mcp` probe cache
@@ -174,7 +174,6 @@
   .state-ok   { --sh-color: var(--success); }
   .state-warn { --sh-color: var(--warning); }
   .state-down { --sh-color: var(--danger); }
-  .state-info { --sh-color: var(--accent); }
   .state-off  { --sh-color: var(--line); }
 
   /* A gentle pulse while healthy so it reads as "live", not a static ornament. */
