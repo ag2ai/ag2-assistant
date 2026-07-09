@@ -183,6 +183,14 @@ class KeyRequest(BaseModel):
 class LlmRequest(BaseModel):
     provider: str
     model: str = ""
+    auth_mode: str = ""  # OpenAI only: "api_key" | "subscription" (empty = leave as-is)
+
+
+class CodexCodeRequest(BaseModel):
+    """Headless ChatGPT-subscription sign-in: a pasted auth code + its flow state."""
+
+    state: str
+    code: str
 
 
 class VoiceProviderRequest(BaseModel):
@@ -334,6 +342,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     app = FastAPI(title="AG2 Assistant Gateway", version=__version__, lifespan=lifespan)
     app.state.profiles = manager
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
+    app.state.codex_flows = {}  # state token -> PKCE verifier (ChatGPT-subscription login)
 
     @app.middleware("http")
     async def _origin_guard(request: Request, call_next):
@@ -765,6 +774,79 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 await manager.reload(runtime.pid)
         return {"ok": ok}
 
+    # ---- OpenAI ChatGPT-subscription OAuth ("Sign in with ChatGPT") ----
+    # Unofficial / gray-area vs OpenAI ToS — see assistant.codex_auth. The flow is a
+    # loopback (localhost:1455) OAuth; the gateway is local + single-user, so it can
+    # run the callback capture itself. Headless setups paste the code via /submit.
+
+    async def _reload_all_runtimes() -> None:
+        for runtime in list(manager.runtimes()):
+            with contextlib.suppress(Exception):
+                await manager.reload(runtime.pid)
+
+    @app.get("/api/codex/status")
+    async def codex_status() -> dict:
+        from assistant import codex_auth
+
+        return codex_auth.status()
+
+    @app.post("/api/codex/login_url")
+    async def codex_login_url() -> dict:
+        """Begin a ChatGPT sign-in: return the consent URL for the UI to open, and
+        start a background loopback listener (localhost:1455) that completes the flow
+        when OpenAI redirects back. The UI polls GET /api/codex/status."""
+        from assistant import codex_auth
+
+        verifier, challenge = codex_auth.generate_pkce()
+        import secrets as _secrets
+
+        state = _secrets.token_urlsafe(24)
+        app.state.codex_flows[state] = verifier
+        url = codex_auth.build_authorize_url(challenge, state)
+
+        async def _complete() -> None:
+            try:
+                code = await asyncio.to_thread(codex_auth._capture_code, state)
+            except Exception:
+                return  # loopback failed/timed out — leave the flow for /submit (headless)
+            if app.state.codex_flows.pop(state, None) is None:
+                return  # already completed via /submit
+            try:
+                await asyncio.to_thread(codex_auth.exchange_code, code, verifier)
+            except Exception:
+                return
+            await _reload_all_runtimes()
+
+        asyncio.create_task(_complete())
+        return {"ok": True, "auth_url": url, "state": state}
+
+    @app.post("/api/codex/submit")
+    async def codex_submit(payload: CodexCodeRequest) -> dict:
+        """Headless fallback: exchange a manually pasted auth code for the flow's
+        pending PKCE verifier. Used when the loopback callback can't reach the box
+        (e.g. Docker/remote) — the user copies the ``code`` from the redirect URL."""
+        from assistant import codex_auth
+
+        verifier = app.state.codex_flows.pop(payload.state, None)
+        if verifier is None:
+            return JSONResponse(
+                {"ok": False, "error": "unknown or expired sign-in"}, status_code=400
+            )
+        try:
+            await asyncio.to_thread(codex_auth.exchange_code, payload.code.strip(), verifier)
+        except codex_auth.CodexAuthError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        await _reload_all_runtimes()
+        return {"ok": True}
+
+    @app.post("/api/codex/logout")
+    async def codex_logout() -> dict:
+        from assistant import codex_auth
+
+        ok = codex_auth.logout()
+        await _reload_all_runtimes()
+        return {"ok": ok}
+
     @app.get("/api/fs/list")
     async def fs_list(path: str = "") -> dict:
         """List immediate subdirectories of a host path — drives the folder picker. The
@@ -1005,14 +1087,19 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @p.get("/settings")
     async def get_settings(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        from assistant import secrets
+        from assistant import codex_auth, secrets
 
         cfg = runtime.config
         settings = _runtime_settings(runtime)
         return {
             "keys": secrets.status(),  # per-provider {set, hint} — never raw
             "available": _available_providers(),
-            "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
+            "assistant": {
+                "provider": cfg.llm.provider,
+                "model": cfg.llm.model,
+                "auth_mode": cfg.llm.auth_mode,
+            },
+            "codex": codex_auth.status(),  # ChatGPT-subscription sign-in state
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
             "project_folder": settings.get_project_folder(),  # repo-files MCP root
@@ -1139,7 +1226,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         req: LlmRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
         provider = req.provider.lower()
-        if not _available_providers().get(provider):
+        auth_mode = (req.auth_mode or "").lower() or None
+        # OpenAI in subscription mode is "available" when signed in with ChatGPT —
+        # it needs no API key. Every other case falls back to the key/deps check.
+        subscription = provider == "openai" and auth_mode == "subscription"
+        if subscription:
+            from assistant import codex_auth
+
+            if not codex_auth.is_signed_in():
+                return JSONResponse(
+                    {"ok": False, "error": "Sign in with ChatGPT first."}, status_code=409
+                )
+        elif not _available_providers().get(provider):
             hint = (
                 "Install with `pip install ag2[ollama]`."
                 if provider == "ollama"
@@ -1148,7 +1246,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse(
                 {"ok": False, "error": f"{provider} isn't available. {hint}"}, status_code=409
             )
-        _runtime_settings(runtime).set_llm(provider=provider, model=req.model or None)
+        _runtime_settings(runtime).set_llm(
+            provider=provider, model=req.model or None, auth_mode=auth_mode
+        )
         await manager.reload(runtime.pid)
         return {"ok": True}
 

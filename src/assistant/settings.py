@@ -80,14 +80,22 @@ class Settings:
         v = self._read().get("llm")
         return v if isinstance(v, dict) else {}
 
-    def set_llm(self, provider: str | None = None, model: str | None = None) -> None:
-        """Persist the assistant provider and/or model (only the given fields)."""
+    def set_llm(
+        self,
+        provider: str | None = None,
+        model: str | None = None,
+        auth_mode: str | None = None,
+    ) -> None:
+        """Persist the assistant provider, model, and/or OpenAI auth_mode (only the
+        given fields). ``auth_mode`` is "api_key" | "subscription" (OpenAI only)."""
         data = self._read()
         llm = data.get("llm") if isinstance(data.get("llm"), dict) else {}
         if provider:
             llm["provider"] = provider
         if model:
             llm["model"] = model
+        if auth_mode:
+            llm["auth_mode"] = auth_mode
         data["llm"] = llm
         self._write(data)
 

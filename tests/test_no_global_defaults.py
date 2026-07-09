@@ -26,6 +26,7 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "assistant"
 _ALLOWLIST = {
     "config.py",  # root resolution itself
     "secrets.py",  # global secrets.json
+    "codex_auth.py",  # global ChatGPT-subscription tokens (account-level, like google_auth)
     "profiles.py",  # the registry + default-workspace seed
     "usage.py",  # pricing read ONLY (asserted below)
     "integrations/google_auth.py",  # global OAuth files (routed via data_dir())

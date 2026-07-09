@@ -101,10 +101,14 @@ def _overlay_settings_llm(cfg: Config) -> None:
     llm = Settings(cfg.data_dir / "settings.json").get_llm()
     provider = llm.get("provider")
     model = llm.get("model")
+    auth_mode = llm.get("auth_mode")
     if provider and not os.environ.get(_LLM_ENV["provider"]):
         cfg.llm.provider = provider
     if model and not os.environ.get(_LLM_ENV["model"]):
         cfg.llm.model = model
+    # OpenAI subscription toggle (env AG2ASSISTANT_OPENAI_AUTH_MODE still wins).
+    if auth_mode and not os.environ.get("AG2ASSISTANT_OPENAI_AUTH_MODE"):
+        cfg.llm.auth_mode = auth_mode
 
 
 class ProfileRuntime:

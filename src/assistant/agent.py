@@ -46,6 +46,25 @@ def model_config(config: Config, model: str | None = None):
         # image_generation tool). Drop-in for the old Chat Completions OpenAIConfig.
         from ag2.config import OpenAIResponsesConfig
 
+        if config.llm.auth_mode == "subscription":
+            # "Sign in with ChatGPT": route requests through the ChatGPT backend on
+            # the user's Codex/ChatGPT subscription instead of a pay-per-token key.
+            # The OAuth access token rides as api_key (SDK → Authorization: Bearer);
+            # the account id + Codex headers go via default_headers. See codex_auth
+            # (unofficial / gray-area vs OpenAI ToS). ensure_fresh refreshes the token.
+            from assistant import codex_auth
+
+            # best-effort (never raises) — building the agent must not 500 a reload
+            # when the token can't be refreshed; the turn then fails with the real
+            # OpenAI error (e.g. unsupported_country) instead.
+            creds = codex_auth.creds_best_effort()
+            return OpenAIResponsesConfig(
+                model=model,
+                api_key=creds.access_token,
+                base_url=codex_auth.BACKEND_BASE,
+                default_headers=codex_auth.default_headers(creds),
+                streaming=config.llm.streaming,
+            )
         return OpenAIResponsesConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
     if provider == "ollama":
         from ag2.config import OllamaConfig

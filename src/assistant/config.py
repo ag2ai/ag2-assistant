@@ -40,9 +40,16 @@ def _default_root() -> Path:
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
-    provider: str = "gemini"  # gemini | anthropic | openai
+    provider: str = "gemini"  # gemini | anthropic | openai | ollama
     model: str = "gemini-3.5-flash"
     api_key_env: str = "GEMINI_API_KEY"
+    # How the OpenAI provider authenticates:
+    #   "api_key"      — pay-per-token via OPENAI_API_KEY (default, unchanged path)
+    #   "subscription" — Sign in with ChatGPT (OAuth); routes through the ChatGPT
+    #                    backend on the user's Codex/ChatGPT subscription. See
+    #                    assistant.codex_auth (unofficial / gray-area vs OpenAI ToS).
+    # Ignored for non-OpenAI providers (env: AG2ASSISTANT_OPENAI_AUTH_MODE).
+    auth_mode: str = "api_key"
     # AG2 emits ModelMessageChunk events only when provider configs opt into
     # streaming. The web/task UI is built to consume those chunks live.
     streaming: bool = True
@@ -182,6 +189,8 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.llm.model = v
     if v := env("AG2ASSISTANT_API_KEY_ENV"):
         cfg.llm.api_key_env = v
+    if v := env("AG2ASSISTANT_OPENAI_AUTH_MODE"):
+        cfg.llm.auth_mode = v.strip().lower()
     if v := env("AG2ASSISTANT_STREAMING"):
         cfg.llm.streaming = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := env("AG2ASSISTANT_AGGREGATE_MODEL"):

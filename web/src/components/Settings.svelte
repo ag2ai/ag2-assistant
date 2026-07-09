@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations } from '../store.js'
+  import { settingsOpen, voicePickerOpen, googleOpen, codexOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations } from '../store.js'
   import { api } from '../transport/api.js'
   import { getActiveProfileId } from '../lib/profile.js'
   import { chime } from '../lib/chime.js'
@@ -81,6 +81,7 @@
   const close = () => ($settingsOpen = false)
   const openVoice = () => { $settingsOpen = false; $voicePickerOpen = true }
   const openGoogle = () => { $settingsOpen = false; $googleOpen = true }
+  const openCodex = () => { $settingsOpen = false; $codexOpen = true }
   const openMemory = () => { $settingsOpen = false; $memoryOpen = true }
   const openPoweredBy = () => { $settingsOpen = false; $poweredByOpen = true }
   const reRunSetup = () => { $settingsOpen = false; $onboardingOpen = true }
@@ -164,6 +165,17 @@
         <input type="text" placeholder="model, e.g. gemini-3.5-flash" bind:value={model} />
         <button class="open" disabled={busy} onclick={() => saveLlm(s.assistant.provider)}>Save</button>
       </div>
+
+      <div class="setsec">OpenAI subscription <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
+      <button class="setrow" onclick={openCodex}>
+        <span class="sk"><Icon name="sparkles" size={15} /> Sign in with ChatGPT</span>
+        <span class="sv">{s.codex?.signed_in
+          ? (s.assistant.auth_mode === 'subscription' && s.assistant.provider === 'openai'
+              ? 'Active · using your ChatGPT/Codex subscription'
+              : 'Signed in · not yet in use')
+          : 'Use your ChatGPT/Codex subscription instead of an API key (unofficial)'}</span>
+        <span class="sgo">Manage →</span>
+      </button>
 
       <div class="setsec">Voice</div>
       {#if VOICE_PROVIDERS.some((p) => s.available[p])}

@@ -65,6 +65,9 @@ class Gateway:
         self._config_factory = config_factory or load_config
         self._onboarding_done = False
         self._agent = None
+        # Last ChatGPT-subscription access token baked into the agent, so a pre-turn
+        # refresh only rebuilds the (cached) agent when the token actually rotated.
+        self._codex_token: str | None = None
         self._permissions = None
         self._event_store = None
         self._writer = None
@@ -110,6 +113,28 @@ class Gateway:
             extra_tools=extra_tools,
             compact=self._memory,
         )
+
+    async def _ensure_subscription_fresh(self) -> None:
+        """When OpenAI runs in ChatGPT-subscription mode, refresh the OAuth access
+        token before a turn and rebuild the cached agent iff the token rotated.
+
+        The token is baked into the agent at build time; OAuth access tokens are
+        short-lived, so a long-lived cached agent would go stale. The common case
+        (token still valid) is cheap: no refresh, no rebuild. Best-effort — a
+        refresh failure surfaces as a normal turn error with a re-login hint."""
+        cfg = self._config
+        if cfg.llm.provider.lower() != "openai" or cfg.llm.auth_mode != "subscription":
+            return
+        from assistant import codex_auth
+
+        try:
+            creds = await asyncio.to_thread(codex_auth.ensure_fresh)
+        except codex_auth.CodexAuthError:
+            return  # let the turn fail with model_config's own clear error
+        if creds.access_token != self._codex_token:
+            self._codex_token = creds.access_token
+            if self._agent is not None:
+                self._agent = self._make_agent()
 
     async def start(self) -> None:
         """Create the shared agent and (optionally) the on-disk session store."""
@@ -237,6 +262,7 @@ class Gateway:
             raise RuntimeError("Gateway not started")
 
         await self._maybe_onboard(asker)
+        await self._ensure_subscription_fresh()
 
         extra = self._ask_kwargs(asker)
         msg = [text, *(attachments or [])]

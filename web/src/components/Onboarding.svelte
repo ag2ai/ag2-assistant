@@ -16,6 +16,7 @@
   //   • fresh install (fresh=true, zero profiles) — this flow IS the zero-profile
   //     state (App.svelte boot === 'create'); the Profiles step must create ≥1
   //     profile before Continue, and on finish we navigate into the first one.
+  import { onMount, onDestroy } from 'svelte'
   import { onboardingOpen, profile, profiles } from '../store.js'
   import { api } from '../transport/api.js'
   import { setActiveProfileId } from '../lib/profile.js'
@@ -63,6 +64,53 @@
   let busy = $state(false)
   let fsRoots = $state({})
 
+  // ChatGPT-subscription sign-in (optional alternative to an API key). Unofficial —
+  // see the Codex modal. Loaded on mount; the connect flow mirrors Codex.svelte.
+  const SUB_MODEL = {
+    label: 'OpenAI · gpt-5-codex (ChatGPT subscription)',
+    provider: 'openai',
+    model: 'gpt-5-codex',
+    auth: 'subscription',
+  }
+  let codex = $state(null)
+  let codexConnecting = $state(false)
+  let codexState = $state('')
+  let codexCode = $state('')
+  let codexShowManual = $state(false)
+  let codexPoll = null
+  const allModels = $derived(codex?.signed_in ? [...MODELS, SUB_MODEL] : MODELS)
+
+  onMount(async () => { try { codex = await api.codexStatus() } catch {} })
+  onDestroy(() => { if (codexPoll) clearInterval(codexPoll) })
+
+  async function connectCodex() {
+    try {
+      const r = await api.codexLoginUrl()
+      if (!r.ok || !r.auth_url) return
+      codexState = r.state
+      window.open(r.auth_url, '_blank')
+      codexConnecting = true
+      codexPoll = setInterval(async () => {
+        const s = await api.codexStatus()
+        if (s.signed_in) {
+          clearInterval(codexPoll); codexPoll = null; codexConnecting = false; codex = s
+          modelLabel = SUB_MODEL.label // pick it automatically once signed in
+        }
+      }, 2000)
+    } catch {}
+  }
+
+  async function submitCodexCode() {
+    if (!codexCode.trim() || !codexState) return
+    try {
+      await api.codexSubmit(codexState, codexCode.trim())
+      codexCode = ''; codexShowManual = false; codexConnecting = false
+      if (codexPoll) { clearInterval(codexPoll); codexPoll = null }
+      codex = await api.codexStatus()
+      if (codex.signed_in) modelLabel = SUB_MODEL.label
+    } catch {}
+  }
+
   // Profiles created during THIS flow. Starts from whatever the server already has
   // (re-run mode); fresh install starts empty. Palettes already used are removed
   // from the ProfileForm swatches (§5.5).
@@ -106,10 +154,12 @@
     (focuses = focuses.includes(id) ? focuses.filter((x) => x !== id) : [...focuses, id])
 
   const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
-  // Gate per step: Connect needs a key; Profiles needs ≥1 created. The Set up step
-  // is fully skippable, so it never gates Continue.
+  // Connect is satisfied by a provider key OR a ChatGPT-subscription sign-in.
+  const canConnect = $derived(hasKey || !!codex?.signed_in)
+  // Gate per step: Connect needs a key/sign-in; Profiles needs ≥1 created. The Set up
+  // step is fully skippable, so it never gates Continue.
   const canNext = $derived(
-    (step !== CONNECT_STEP || hasKey) && (step !== PROFILES_STEP || created.length > 0)
+    (step !== CONNECT_STEP || canConnect) && (step !== PROFILES_STEP || created.length > 0)
   )
 
   const back = () => {
@@ -170,8 +220,8 @@
       for (const [prov, val] of Object.entries(keys)) {
         if (val.trim()) { try { await api.setKey(prov, val.trim()) } catch {} }
       }
-      const m = MODELS.find((x) => x.label === modelLabel)
-      if (m) { try { await api.setLlm(m.provider, m.model) } catch {} }
+      const m = allModels.find((x) => x.label === modelLabel)
+      if (m) { try { await api.setLlm(m.provider, m.model, m.auth) } catch {} }
       // Seed the universal "who the user is" doc from the About-you answers (name from
       // Welcome). Posted once, at completion, so Back-navigation revisions are captured.
       // Seed-only server-side: skips an all-empty payload and never clobbers an existing
@@ -282,10 +332,40 @@
                 </div>
               </div>
             {/each}
+
+            <!-- Or: use a ChatGPT/Codex subscription instead of an API key (unofficial). -->
+            <div class="onb-field">
+              <div class="onb-flabel"><span>Or use your ChatGPT subscription</span><span class="hint">no API key · unofficial</span></div>
+              {#if codex?.signed_in}
+                <div class="onb-input" style="cursor:default">
+                  <Icon name="check" size={15} />
+                  <span style="flex:1;font-size:var(--text-sm)">Signed in with ChatGPT{codex.account_id ? ' · ' + codex.account_id : ''}</span>
+                </div>
+              {:else}
+                <button class="onb-pill" onclick={connectCodex}>
+                  <Icon name="sparkles" size={14} /> {codexConnecting ? 'Waiting for ChatGPT…' : 'Sign in with ChatGPT'}
+                </button>
+                {#if codexConnecting}
+                  <p class="hint" style="margin-top:2px">
+                    Complete sign-in in the opened tab.
+                    Headless? <button class="onb-btn ghost" style="padding:0 4px" onclick={() => (codexShowManual = !codexShowManual)}>paste the code</button>
+                  </p>
+                  {#if codexShowManual}
+                    <div class="onb-input">
+                      <Icon name="settings" size={15} />
+                      <input placeholder="paste the code from the redirect URL" bind:value={codexCode} />
+                    </div>
+                    <button class="onb-pill" onclick={submitCodexCode}>Submit code</button>
+                  {/if}
+                {/if}
+                <p class="hint" style="margin-top:2px">Runs on your ChatGPT Plus/Pro quota. OpenAI doesn't officially support this — your account could be rate-limited.</p>
+              {/if}
+            </div>
+
             <div class="onb-field">
               <div class="onb-flabel"><span>Assistant model</span></div>
               <div class="onb-pills">
-                {#each MODELS as m}
+                {#each allModels as m}
                   <button class="onb-pill" class:on={modelLabel === m.label} onclick={() => (modelLabel = m.label)}>{m.label}</button>
                 {/each}
               </div>
@@ -391,7 +471,7 @@
       <div class="onb-nav">
         <button class="onb-btn ghost" onclick={back}><Icon name="chevron-left" size={16} /> Back</button>
         <div class="onb-navright">
-          {#if step === CONNECT_STEP && !hasKey}<span class="hint">Add a key to continue</span>{/if}
+          {#if step === CONNECT_STEP && !canConnect}<span class="hint">Add a key or sign in with ChatGPT to continue</span>{/if}
           {#if step === PROFILES_STEP && !created.length}<span class="hint">Create a profile to continue</span>{/if}
           {#if step === SETUP_STEP}
             <!-- Per-profile setup: Skip (no save) or advance (save + next profile / Ready). -->
