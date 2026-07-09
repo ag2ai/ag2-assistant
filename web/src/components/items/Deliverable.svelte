@@ -40,7 +40,7 @@
       <a class="tcdl" href={api.fileUrl(item.path, true)} title="Download {fileName}" aria-label="Download {fileName}"><Icon name="download" size={15} /></a>
     </div>
   {/if}
-  {#if item.taskId}<button class="viewbtn" onclick={openFull}>View full →</button>{/if}
+  {#if item.taskId}<button class="viewbtn" onclick={openFull}>View full</button>{/if}
   {#if item.deliverableId}
     <div class="itemfb"><Feedback targetKind="deliverable" targetId={item.deliverableId} content={(item.description || '') + '\n' + (item.preview || '')} {request} current={item.feedback} /></div>
   {/if}

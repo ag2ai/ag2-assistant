@@ -156,7 +156,7 @@ async def _run_visible_subagent(
             stream=parent_stream,
             dependencies={
                 PermissionManager: PermissionManager(
-                    PermissionStore(config.data_dir / "permissions.json"),
+                    PermissionStore(config.root_dir / "permissions.json"),
                     asker=asker,
                     sandbox=config.tools.sandbox,
                 )

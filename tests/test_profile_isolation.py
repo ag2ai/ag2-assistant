@@ -249,24 +249,33 @@ def test_skills_dir_isolated(monkeypatch):
         assert not (b_cfg.skills_dir / "SKILL.md").exists()
 
 
-# --- f. permissions: grant in A only; B's store + file untouched ---
+# --- f. permissions: now GLOBAL — a grant is install-wide, visible to every profile ---
 
 
-def test_permissions_isolated(monkeypatch):
+def test_permissions_are_global(monkeypatch):
+    """Permissions moved from per-profile to a single install-wide store at
+    config.root_dir/permissions.json — a grant made against one runtime's store is
+    visible to the other, and no per-profile permissions.json is ever created."""
     from assistant.permissions import PermissionStore
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
-        a_perm = profiles.profile_dir(a) / "permissions.json"
-        b_perm = profiles.profile_dir(b) / "permissions.json"
+        a_cfg = client.app.state.profiles.get(a).config
+        b_cfg = client.app.state.profiles.get(b).config
 
-        PermissionStore(a_perm).grant("/tmp/work-repo")
+        # both runtimes point at the SAME file, under the shared root (not a profile dir)
+        root_perm = a_cfg.root_dir / "permissions.json"
+        assert b_cfg.root_dir / "permissions.json" == root_perm
+        assert a_cfg.data_dir != b_cfg.data_dir  # profiles are still isolated elsewhere
 
-        assert a_perm.exists()
-        assert PermissionStore(a_perm).is_allowed("/tmp/work-repo") is True
-        # B's store does not have the grant, and B has no permissions.json at all
-        assert not b_perm.exists()
-        assert PermissionStore(b_perm).is_allowed("/tmp/work-repo") is False
+        PermissionStore(root_perm).grant("/tmp/work-repo")
+
+        # visible via BOTH profiles' gateway stores (they share the file)
+        assert client.app.state.profiles.get(a).gateway._permissions.is_allowed("/tmp/work-repo")
+        assert client.app.state.profiles.get(b).gateway._permissions.is_allowed("/tmp/work-repo")
+        # and no per-profile file was created
+        assert not (profiles.profile_dir(a) / "permissions.json").exists()
+        assert not (profiles.profile_dir(b) / "permissions.json").exists()
 
 
 # --- g. MCP: POST A/settings/mcp; A lists it, B doesn't; A's agent tools include it ---

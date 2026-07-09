@@ -48,12 +48,31 @@
 .settingsbtn { display: inline-flex; align-items: center; gap: 7px; width: 100%; text-align: left; font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 8px 11px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .settingsbtn:hover { border-color: var(--accent); color: var(--accent); }
 
-.settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 11px 13px; cursor: pointer; }
-.settings .setrow:hover { border-color: var(--accent); }
+/* Info row + a REAL action button beside it (design rule: actions are buttons,
+   never trailing "text →" affordances inside the box — see AGENTS.md). */
+.settings .setrowwrap { display: flex; align-items: center; gap: 8px; }
+.settings .setrowwrap .setrow { flex: 1; min-width: 0; }
+.settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 11px 13px; }
 .settings .setrow .sk { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; flex: none; }
 .settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.settings .setrow .sgo { color: var(--accent); font-size: 12px; flex: none; }
-.settings .setscroll { display: flex; flex-direction: column; gap: 8px; max-height: 64vh; overflow-y: auto; }
+/* Paged Settings: fixed-size modal, sidebar nav on the left, scrolling page on the
+   right. .setscroll keeps its flex-column (page children — incl. .mcppaste — rely
+   on it) but now flexes to fill .setbody instead of capping at 64vh. */
+.modal.settings { width: min(860px, 94vw); height: min(86vh, 780px); }
+.settings .setbody { display: flex; flex-direction: row; gap: 16px; flex: 1; min-height: 0; }
+.settings .setnav { display: flex; flex-direction: column; gap: 2px; flex: none; width: 170px; padding-right: 16px; border-right: 1px solid var(--line); overflow-y: auto; }
+.settings .setnavbtn { display: block; width: 100%; text-align: left; border: none; background: none; color: var(--ink); font: inherit; font-size: 13px; border-radius: var(--radius-sm); padding: 8px 11px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.settings .setnavbtn:hover { background: var(--surface-hover); }
+.settings .setnavbtn.on { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-semibold); }
+.settings .setscroll { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; overflow-y: auto; }
+/* Narrow: nav becomes a horizontal, scrollable tab strip above the page. */
+@media (max-width: 720px) {
+  .settings .setbody { flex-direction: column; gap: 12px; }
+  .settings .setnav { flex-direction: row; width: auto; padding-right: 0; padding-bottom: 8px; border-right: none; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; }
+  /* width:auto overrides the sidebar's width:100% — without it each tab fills the
+     whole strip and only one is visible at a time. */
+  .settings .setnavbtn { flex: none; width: auto; white-space: nowrap; }
+}
 .settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
 /* Marks a section that applies to the whole install, not the titled profile. */
 .settings .setsec .setwide { font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }

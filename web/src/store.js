@@ -37,6 +37,12 @@ export const settingsOpen = writable(false)
 // Memory viewer/editor modal open/closed.
 export const memoryOpen = writable(false)
 
+// Which Settings page is shown when the modal opens: one of the PAGES ids defined
+// in Settings.svelte ('general'|'profiles'|'model'|'tools'|'integrations'|'advanced').
+// Lets callers deep-link into a page (e.g. settingsPage.set('tools'); settingsOpen.set(true)).
+// Settings seeds its local `page` from this on mount (validated) and writes it back on nav click.
+export const settingsPage = writable('general')
+
 // "Powered by AG2" architecture-map modal open/closed.
 export const poweredByOpen = writable(false)
 
