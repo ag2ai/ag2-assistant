@@ -170,8 +170,19 @@
       for (const [prov, val] of Object.entries(keys)) {
         if (val.trim()) { try { await api.setKey(prov, val.trim()) } catch {} }
       }
+      // Create the chosen model as the active LLM configuration (OpenAI defaults to
+      // the Responses API). Best-effort like the key writes above.
       const m = MODELS.find((x) => x.label === modelLabel)
-      if (m) { try { await api.setLlm(m.provider, m.model) } catch {} }
+      if (m) {
+        try {
+          await api.saveLlmConfig({
+            name: m.label,
+            type: m.provider === 'openai' ? 'openai_responses' : m.provider,
+            model: m.model,
+            activate: true,
+          })
+        } catch {}
+      }
       // Seed the universal "who the user is" doc from the About-you answers (name from
       // Welcome). Posted once, at completion, so Back-navigation revisions are captured.
       // Seed-only server-side: skips an all-empty payload and never clobbers an existing

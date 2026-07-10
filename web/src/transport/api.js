@@ -45,6 +45,26 @@ export const api = {
   // the `total` only when more than one profile exists (one request, not two).
   usageAll: () => j('GET', G('/usage')),
   setKey: (provider, value) => j('POST', G('/secrets/key'), { provider, value }),
+  // Named LLM configurations — install-wide list + active selection (LLM is common
+  // across profiles). All GLOBAL. llmConfigs() → {configs:[entry + {key:{set,hint},
+  // active}], active:id|null, env_override:{provider?,model?}|null}. saveLlmConfig
+  // posts to /llm-configs (create) or /llm-configs/{id} (update, when cfg.id set);
+  // the id is stripped from the body. api_key is WRITE-ONLY: null=unchanged,
+  // ""=clear, string=set — the payload never echoes a raw key. Values validated by
+  // a server-side dry-construct → 400 {error} surfaced by j() as Error(msg).
+  llmConfigs: () => j('GET', G('/llm-configs')),
+  saveLlmConfig: (cfg) => {
+    const { id, ...body } = cfg
+    return j('POST', G('/llm-configs' + (id ? '/' + encodeURIComponent(id) : '')), body)
+  },
+  deleteLlmConfig: (id) => j('DELETE', G('/llm-configs/' + encodeURIComponent(id))),
+  useLlmConfig: (id) => j('POST', G('/llm-configs/' + encodeURIComponent(id) + '/use')),
+  // Real PONG round-trip against the config's resolved runtime key → {ok, reply,
+  // latency_ms}; a 502 {ok:false,error} throws via j() (surface the message inline).
+  testLlmConfig: (id) => j('POST', G('/llm-configs/' + encodeURIComponent(id) + '/test')),
+  // Test an UNSAVED editor draft (nothing persisted; a blank api_key falls back to
+  // the stored key when cfg.id is set).
+  testLlmConfigDraft: (cfg) => j('POST', G('/llm-configs/test'), cfg),
   setOnboarded: (value = true) => j('POST', G('/onboarded'), { value }),
   listDirs: (path = '') => j('GET', G('/fs/list?path=' + encodeURIComponent(path))),
   googleStatus: () => j('GET', G('/google/status')),
@@ -106,7 +126,6 @@ export const api = {
   answerHitl: (id, answer) => j('POST', `/hitl/${encodeURIComponent(id)}/answer`, { answer }),
   voices: () => j('GET', P('/voice/voices')),
   settings: () => j('GET', P('/settings')),
-  setLlm: (provider, model) => j('POST', P('/settings/llm'), { provider, model }),
   setProjectFolder: (path) => j('POST', P('/settings/project-folder'), { path }),
   // Focus areas are a per-profile persona attribute (settings.json → injected into
   // the agent's context). Active-profile setter (Settings modal).
