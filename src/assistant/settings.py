@@ -1,8 +1,9 @@
 """User-adjustable settings persisted to a profile's ``settings.json``.
 
-Per-profile persistence for things toggled live from the GUI / tools: the LLM
-provider/model choice, the realtime voice (per provider), the persisted voice
-provider, the project folder, and the MCP server list. Kept separate from
+Per-profile persistence for things toggled live from the GUI / tools: the realtime
+voice (per provider), the persisted voice provider, the project folder, focus areas,
+and the MCP server list. (The LLM provider/model is NOT here — it's the install-wide
+named ``llm_configs`` store now, common across profiles.) Kept separate from
 `config` (env/file/defaults, read-only at runtime) because these are changed at
 runtime and must persist across restarts.
 
@@ -72,24 +73,6 @@ class Settings:
         data["voice_provider"] = provider
         self._write(data)
         return True
-
-    # --- llm ---
-
-    def get_llm(self) -> dict:
-        """The UI-selected assistant {provider, model} (or {}). Layered over config."""
-        v = self._read().get("llm")
-        return v if isinstance(v, dict) else {}
-
-    def set_llm(self, provider: str | None = None, model: str | None = None) -> None:
-        """Persist the assistant provider and/or model (only the given fields)."""
-        data = self._read()
-        llm = data.get("llm") if isinstance(data.get("llm"), dict) else {}
-        if provider:
-            llm["provider"] = provider
-        if model:
-            llm["model"] = model
-        data["llm"] = llm
-        self._write(data)
 
     # --- project folder ---
 

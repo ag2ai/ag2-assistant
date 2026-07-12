@@ -17,19 +17,14 @@ from collections.abc import Callable, Iterator
 from assistant import profiles
 from assistant.config import Config, load_config
 from assistant.gateway.core import Gateway, build_gateway
-from assistant.gateway.migration import migrate_if_needed
+from assistant.gateway.migration import migrate_if_needed, migrate_llm_configs
 from assistant.observability import setup_logging
 from assistant.profiles import ProfileMeta
-from assistant.settings import Settings
 
 # Platform → env vars that must ALL be present for its channel to run. Canonical
 # home is ``profiles`` (dependency-light, so both this module and the secrets store
 # import it without a cycle); re-exported here under the name existing code uses.
 _CHANNEL_TOKENS = profiles.CHANNEL_TOKEN_ENVS
-
-# LLM keys that, when set explicitly via env, win over a profile's settings.json
-# overlay (env keeps its stronger precedence, §4.1). Maps the config field to its env.
-_LLM_ENV = {"provider": "AG2ASSISTANT_LLM_PROVIDER", "model": "AG2ASSISTANT_MODEL"}
 
 
 def _scrub_tokens(msg: str, envs: tuple[str, ...]) -> str:
@@ -54,11 +49,11 @@ def config_factory(pid: str) -> Callable[[], Config]:
     """Return a callable that resolves the derived config for profile ``pid`` fresh on
     every call (§4.1).
 
-    On EACH call it: ``load_config()`` (root config, no settings overlay) → re-reads
-    the profile's ``ProfileMeta`` from the registry (never a captured snapshot, so
-    workspace edits are picked up) → ``with_profile(meta)`` → overlays that profile's
-    ``settings.json`` llm provider/model, SKIPPING any key set explicitly via env
-    (env wins).
+    On EACH call it: ``load_config()`` (which already derives the install-wide active
+    ``llm_configs`` entry onto ``cfg.llm``) → re-reads the profile's ``ProfileMeta``
+    from the registry (never a captured snapshot, so workspace edits are picked up) →
+    ``with_profile(meta)``. The LLM is common across profiles now, so there is no
+    per-profile settings overlay — a config change reloads every runtime.
     """
 
     def resolve() -> Config:
@@ -66,9 +61,7 @@ def config_factory(pid: str) -> Callable[[], Config]:
         meta = profiles.get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
-        cfg = cfg.with_profile(meta)
-        _overlay_settings_llm(cfg)
-        return cfg
+        return cfg.with_profile(meta)
 
     return resolve
 
@@ -93,18 +86,6 @@ def resolve_active_profile(pid: str | None = None) -> tuple[str, Config, Callabl
         raise ArchivedProfile(pid)
     factory = config_factory(pid)
     return pid, factory(), factory
-
-
-def _overlay_settings_llm(cfg: Config) -> None:
-    """Layer this profile's settings.json {provider, model} onto ``cfg.llm`` in place,
-    skipping any key explicitly set via env (env wins — checked against os.environ)."""
-    llm = Settings(cfg.data_dir / "settings.json").get_llm()
-    provider = llm.get("provider")
-    model = llm.get("model")
-    if provider and not os.environ.get(_LLM_ENV["provider"]):
-        cfg.llm.provider = provider
-    if model and not os.environ.get(_LLM_ENV["model"]):
-        cfg.llm.model = model
 
 
 class ProfileRuntime:
@@ -224,6 +205,9 @@ class ProfileManager:
         """
         setup_logging(load_config())
         migrate_if_needed()
+        # One-time: fold legacy config.json llm + each profile's settings llm/llm_options
+        # into the install-wide named-config store (idempotent — skipped if it exists).
+        migrate_llm_configs()
         for meta in profiles.list_profiles(include_archived=False):
             await self._boot(meta)
         await self._start_bound_channels()

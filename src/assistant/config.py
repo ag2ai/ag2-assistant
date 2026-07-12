@@ -50,6 +50,14 @@ class LLMConfig(BaseModel):
     # the main model. Aggregation is a background summarisation, so a smaller/
     # cheaper model is usually fine and saves cost on long sessions.
     aggregate_model: str | None = None
+    # Per-provider advanced options, keyed by provider name; each entry is extra
+    # constructor kwargs for that provider's AG2 config, merged in last (so they
+    # can also override model/api_key/streaming). This is how the OpenAI and
+    # Anthropic clients reach OpenAI-API-compatible servers (llama.cpp, vLLM,
+    # LM Studio, LiteLLM): {"openai": {"base_url": "http://host:8080/v1"}}.
+    # A config.json value is the install-wide base; each profile's
+    # Settings → Model & Keys → Advanced overlays its own entries on top.
+    provider_options: dict[str, dict] = Field(default_factory=dict)
     # Hard wall-clock ceiling on a single LLM call. Provider SDKs sometimes hang a
     # streaming request indefinitely (no error, no timeout) — a stuck turn then sits
     # "running" forever. The per-call timeout middleware wraps each call and raises
@@ -261,5 +269,15 @@ def load_config(path: Path | None = None) -> Config:
     # profiles/ tree and global files live under this root. Profile derivation is via
     # Config.with_profile(); load_config() itself is profile-agnostic.
     cfg.root_dir = cfg.data_dir
+    # Derive the active named LLM configuration onto the flat cfg.llm fields
+    # (provider/model/provider_options) so model_config & friends stay untouched.
+    # Lazy import breaks the cycle (llm_configs imports config.data_dir); a malformed
+    # store is swallowed like a malformed config.json — the flat defaults then apply.
+    try:
+        from assistant import llm_configs
+
+        llm_configs.apply_active(cfg)
+    except Exception:
+        pass
     _apply_env_overrides(cfg)  # explicit AG2ASSISTANT_* env still wins last
     return cfg

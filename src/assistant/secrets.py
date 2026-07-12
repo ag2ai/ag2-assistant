@@ -32,6 +32,14 @@ DEFAULT_OLLAMA_BASE = "http://localhost:11434"
 # so they don't collide with provider fields.
 _CHANNELS_FIELD = "channels"
 
+# Per-config LLM keys (one secret per named ``llm_configs`` entry). UNLIKE provider
+# keys and channel tokens, these are NEVER loaded into os.environ: the key belongs to
+# one specific configuration, not a whole provider, so it must not leak into the
+# provider-wide env slot every other config would read. It flows only through
+# ``llm_configs.entry_options`` → the in-memory ``provider_options`` for that one
+# config. Stored under an ``llm_keys`` sub-map keyed by config id, mirroring channels.
+_LLM_KEYS_FIELD = "llm_keys"
+
 
 def _path():
     return data_dir() / "secrets.json"
@@ -109,6 +117,52 @@ def _saved_channel_tokens(data: dict) -> dict:
     """The ``channels`` sub-map from the store (empty dict if absent/malformed)."""
     chans = data.get(_CHANNELS_FIELD)
     return chans if isinstance(chans, dict) else {}
+
+
+def set_config_key(cid: str, value: str) -> bool:
+    """Set or clear (empty value) the API key for one named LLM config, keyed by its
+    config id. Returns False for a blank id. Mirrors ``set_channel_token`` on disk (an
+    ``llm_keys`` sub-map) but — deliberately — does NOT touch os.environ: a per-config
+    key must reach only that config's ``provider_options`` (via ``entry_options``),
+    never the provider-wide env var shared by every other config."""
+    cid = (cid or "").strip()
+    if not cid:
+        return False
+    value = (value or "").strip()
+    data = _read()
+    keys = data.get(_LLM_KEYS_FIELD)
+    if not isinstance(keys, dict):
+        keys = {}
+    if value:
+        keys[cid] = value
+    else:
+        keys.pop(cid, None)
+    if keys:
+        data[_LLM_KEYS_FIELD] = keys
+    else:
+        data.pop(_LLM_KEYS_FIELD, None)
+    _write(data)
+    return True
+
+
+def _saved_config_keys(data: dict) -> dict:
+    """The ``llm_keys`` sub-map from the store (empty dict if absent/malformed)."""
+    keys = data.get(_LLM_KEYS_FIELD)
+    return keys if isinstance(keys, dict) else {}
+
+
+def config_key(cid: str) -> str:
+    """The raw API key for one named LLM config (empty string if unset). In-process
+    only — used by ``llm_configs.entry_options`` to inject the key into that config's
+    provider kwargs; never returned by any endpoint."""
+    return _saved_config_keys(_read()).get((cid or "").strip(), "") or ""
+
+
+def config_key_hint(cid: str) -> dict:
+    """Presence + a last-4 hint for one config's key (never the raw value), for the
+    Settings UI. Shape mirrors ``status()`` entries: ``{"set": bool, "hint": str}``."""
+    v = config_key(cid)
+    return {"set": bool(v), "hint": ("…" + v[-4:]) if v else ""}
 
 
 def load_into_env() -> None:

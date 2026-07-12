@@ -26,24 +26,48 @@ DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-lite-image"
 
 
 def _image_agent(config):
-    """A one-shot image-capable Agent for the active provider, or None if it can't
-    generate images. Built directly (not via model_config) to avoid an import cycle."""
+    """A one-shot image-capable Agent, or None if none is available.
+
+    Resolves a target from the install-wide named-config store: the active config when
+    it's image-capable, else the first capable one (``llm_configs.image_entry()``), with
+    that entry's own per-config key (falling back to the provider's env key). When the
+    store is empty, falls back to today's behaviour — the flat ``config.llm.provider``
+    with the provider's env key. Built directly (not via model_config) to sidestep an
+    import cycle."""
+    from assistant import llm_configs, secrets
     from assistant.secrets import KEY_ENV
 
-    provider = (config.llm.provider or "gemini").lower()
-    if provider in ("gemini", "google", ""):
+    cid = None
+    if llm_configs.list_configs():
+        entry = llm_configs.image_entry()
+        if entry is None:
+            return None  # store configured, but no image-capable config in it
+        provider = llm_configs.PROVIDER_OF[entry["type"]]
+        model = entry["model"]
+        cid = entry["id"]
+    else:
+        provider = (config.llm.provider or "gemini").lower()
+        if provider in ("google", ""):
+            provider = "gemini"
+        model = config.llm.model
+
+    def _key(name: str) -> str:
+        # Prefer the resolved entry's own secret; fall back to the provider env key.
+        return (secrets.config_key(cid) if cid else "") or os.environ.get(KEY_ENV.get(name, ""), "")
+
+    if provider == "gemini":
         from ag2.config.gemini import GeminiConfig
 
-        key = os.environ.get(KEY_ENV.get("gemini", ""), "")
-        model = os.environ.get("AG2ASSISTANT_IMAGE_MODEL") or DEFAULT_GEMINI_IMAGE_MODEL
-        cfg = GeminiConfig(model=model, api_key=key, response_modalities=["TEXT", "IMAGE"])
+        image_model = os.environ.get("AG2ASSISTANT_IMAGE_MODEL") or DEFAULT_GEMINI_IMAGE_MODEL
+        cfg = GeminiConfig(
+            model=image_model, api_key=_key("gemini"), response_modalities=["TEXT", "IMAGE"]
+        )
         return Agent("imager", config=cfg)
     if provider == "openai":
         from ag2.config import OpenAIResponsesConfig
         from ag2.tools import ImageGenerationTool
 
-        key = os.environ.get(KEY_ENV.get("openai", ""), "")
-        cfg = OpenAIResponsesConfig(model=config.llm.model, api_key=key)
+        cfg = OpenAIResponsesConfig(model=model, api_key=_key("openai"))
         return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
     return None  # anthropic / ollama: no image generation
 
@@ -83,8 +107,9 @@ def build_image_tool(config, workspace_dir):
         agent = _image_agent(config)
         if agent is None:
             return (
-                "Image generation isn't available for the current model provider "
-                f"({config.llm.provider}). Switch to Gemini or OpenAI to generate images."
+                "Image generation isn't available — none of the configured models can "
+                "generate images. Add a Gemini or OpenAI configuration in "
+                "Settings → Models to enable it."
             )
 
         parts: list = [prompt]

@@ -8,7 +8,8 @@
   import { createSettingsContext } from './settings/context.svelte.js'
   import GeneralPage from './settings/GeneralPage.svelte'
   import ProfilesPage from './settings/ProfilesPage.svelte'
-  import ModelKeysPage from './settings/ModelKeysPage.svelte'
+  import ModelsPage from './settings/ModelsPage.svelte'
+  import VoicePage from './settings/VoicePage.svelte'
   import ToolsPage from './settings/ToolsPage.svelte'
   import IntegrationsPage from './settings/IntegrationsPage.svelte'
   import AdvancedPage from './settings/AdvancedPage.svelte'
@@ -16,7 +17,8 @@
   const PAGES = [
     { id: 'general', label: 'General', comp: GeneralPage },
     { id: 'profiles', label: 'Profiles', comp: ProfilesPage },
-    { id: 'model', label: 'Model & Keys', comp: ModelKeysPage },
+    { id: 'models', label: 'Models', comp: ModelsPage },
+    { id: 'voice', label: 'Voice', comp: VoicePage },
     { id: 'tools', label: 'Tools & Permissions', comp: ToolsPage },
     { id: 'integrations', label: 'Integrations', comp: IntegrationsPage },
     { id: 'advanced', label: 'Advanced', comp: AdvancedPage },

@@ -156,54 +156,40 @@ def test_global_memory_api_roundtrip_shared(monkeypatch):
         assert client.get(api(b, "/memory")).json()["text"] == ""
 
 
-# --- c. settings: A/settings/llm updates A only; reload keeps A's data_dir ---
+# --- c. settings: A/settings/focuses updates A only; reload keeps A's data_dir ---
 
 
-def test_settings_llm_isolated_and_reload_keeps_paths(monkeypatch):
-    """POST A/settings/llm updates A's settings.json and reloads A's runtime; B is
-    untouched. Regression for the load_config() bug: after the reload A's runtime
-    config still resolves A's data_dir (paths didn't revert to root/B) and reflects
-    the new model."""
+def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
+    """POST A/settings/focuses updates A's settings.json and reloads A's runtime; B is
+    untouched. (The LLM is install-wide now, so focuses is the per-profile setting that
+    exercises the same reload path.) Regression for the load_config() bug: after the
+    reload A's runtime config still resolves A's data_dir (paths didn't revert to
+    root/B) and reflects the new setting."""
     from assistant.settings import Settings
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
 
-        # make anthropic "available" so the endpoint doesn't 409 (the nested
-        # _available_providers reads secrets.status)
-        import assistant.secrets as secrets_mod
-
-        orig_status = secrets_mod.status()
-        patched = dict(orig_status)
-        patched["anthropic"] = {**patched.get("anthropic", {}), "set": True}
-        monkeypatch.setattr(secrets_mod, "status", lambda: patched)
-
         a_runtime = client.app.state.profiles.get(a)
         a_data_dir = a_runtime.config.data_dir
 
-        r = client.post(
-            api(a, "/settings/llm"), json={"provider": "anthropic", "model": "claude-z"}
-        )
+        r = client.post(api(a, "/settings/focuses"), json={"focuses": ["research", "coding"]})
         assert r.status_code == 200, r.text
 
-        # A's settings.json updated; B's has no llm block
-        assert Settings(profiles.profile_dir(a) / "settings.json").get_llm() == {
-            "provider": "anthropic",
-            "model": "claude-z",
-        }
-        assert Settings(profiles.profile_dir(b) / "settings.json").get_llm() == {}
+        # A's settings.json updated; B's has no focuses
+        assert Settings(profiles.profile_dir(a) / "settings.json").get_focuses() == [
+            "research",
+            "coding",
+        ]
+        assert Settings(profiles.profile_dir(b) / "settings.json").get_focuses() == []
 
         # regression: after reload A's config still points at A's data_dir (not root/B)
         assert a_runtime.config.data_dir == a_data_dir
         assert a_runtime.config.data_dir == profiles.profile_dir(a)
-        # and reflects the new model
-        assert a_runtime.config.llm.model == "claude-z"
-        assert a_runtime.config.llm.provider == "anthropic"
 
         # B's runtime config untouched
         b_runtime = client.app.state.profiles.get(b)
         assert b_runtime.config.data_dir == profiles.profile_dir(b)
-        assert b_runtime.config.llm.model != "claude-z"
 
 
 # --- d. usage: recording a turn's usage in A writes A/usage.json only ---

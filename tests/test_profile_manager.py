@@ -332,36 +332,43 @@ def test_config_factory_picks_up_workspace_edit():
     assert str(factory().workspace_dir) == "/tmp/ws-two"
 
 
-def test_config_factory_overlays_settings_llm():
-    from assistant import profiles
+def test_config_factory_derives_active_llm_config(monkeypatch):
+    """The LLM is install-wide now: config_factory doesn't overlay per-profile
+    settings — it just carries whatever load_config() derived from the active named
+    LLM config (common across every profile)."""
+    from assistant import llm_configs, profiles
     from assistant.gateway.profile_manager import config_factory
-    from assistant.settings import Settings
 
+    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
     meta = profiles.create_profile("Work", "teal")
-    data_dir = meta_dir = profiles.profile_dir(meta.id)
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    Settings(data_dir / "settings.json").set_llm(provider="anthropic", model="claude-x")
+    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
 
+    # No store yet → flat gemini defaults.
+    assert config_factory(meta.id)().llm.provider == "gemini"
+
+    # Activate an install-wide anthropic config → every profile's factory sees it.
+    entry = llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "claude-x"})
+    llm_configs.set_active(entry["id"])
     cfg = config_factory(meta.id)()
     assert cfg.llm.provider == "anthropic"
     assert cfg.llm.model == "claude-x"
 
 
-def test_config_factory_env_wins_over_settings(monkeypatch):
-    from assistant import profiles
+def test_config_factory_env_wins_over_active_config(monkeypatch):
+    from assistant import llm_configs, profiles
     from assistant.gateway.profile_manager import config_factory
-    from assistant.settings import Settings
 
     meta = profiles.create_profile("Work", "teal")
-    d = profiles.profile_dir(meta.id)
-    d.mkdir(parents=True, exist_ok=True)
-    Settings(d / "settings.json").set_llm(provider="anthropic", model="claude-x")
+    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    entry = llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "claude-x"})
+    llm_configs.set_active(entry["id"])
 
     monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "gemini")
-    # model has no env override → still taken from settings
+    # model has no env override → still taken from the active config
     cfg = config_factory(meta.id)()
     assert cfg.llm.provider == "gemini"  # env wins
-    assert cfg.llm.model == "claude-x"  # settings still applied
+    assert cfg.llm.model == "claude-x"  # active config still applied
 
 
 def test_config_factory_unknown_profile_raises():
