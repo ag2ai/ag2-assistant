@@ -8,6 +8,7 @@
   import TaskProgress from './TaskProgress.svelte'
   import AgendaCard from './AgendaCard.svelte'
   import InboxBrief from './InboxBrief.svelte'
+  import CodingSession from './CodingSession.svelte'
 
   let { item } = $props()
   const data = $derived(item.data || {})
@@ -55,7 +56,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'checklist'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'checklist', 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -78,6 +79,8 @@
   <AgendaCard {data} />
 {:else if type === 'inboxbrief' && list(data.threads).length}
   <InboxBrief {data} />
+{:else if type === 'codingsession'}
+  <CodingSession {data} />
 {:else}
 <div class="a2ui">
   <div class="a2ui-head">

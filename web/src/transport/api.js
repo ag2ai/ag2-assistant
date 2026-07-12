@@ -40,6 +40,10 @@ export const api = {
   archiveProfile: (pid, newDefault) =>
     j('DELETE', G('/profiles/' + encodeURIComponent(pid)), newDefault ? { new_default: newDefault } : {}),
   status: () => j('GET', G('/status')),
+  // Read-only status of the CLI coding agents (Settings → Tools). {mode:'local'|
+  // 'bridge', bridge, connected, agents:[{name,label,available}], error?}. In
+  // Docker with AG2ASSISTANT_ACP_BRIDGE set this reflects the host bridge.
+  codingAgents: () => j('GET', G('/coding/agents')),
   // Install-wide token/cost roll-up across all profiles: {profiles:[{pid,name,...}],
   // total}. The HUD derives the active profile's numbers from `profiles` and appends
   // the `total` only when more than one profile exists (one request, not two).

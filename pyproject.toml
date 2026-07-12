@@ -15,7 +15,7 @@ dependencies = [
     # version floor, so the minimum is enforced by keeping main, whose version is
     # 1.0.0b0+). ddgs powers the native DuckDuckSearchTool, openai the OpenAI voice
     # provider.
-    "ag2[gemini,ddgs,openai,docker] @ git+https://github.com/ag2ai/ag2.git@main",
+    "ag2[gemini,ddgs,openai,docker,acp] @ git+https://github.com/ag2ai/ag2.git@main",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
