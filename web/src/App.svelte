@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setPalette } from './design/palette.js'
@@ -11,6 +11,7 @@
   import Thread from './components/Thread.svelte'
   import Hitl from './components/Hitl.svelte'
   import Google from './components/Google.svelte'
+  import Codex from './components/Codex.svelte'
   import VoicePicker from './components/VoicePicker.svelte'
   import Viewer from './components/Viewer.svelte'
   import Settings from './components/Settings.svelte'
@@ -115,7 +116,7 @@
   // message box must not switch profiles).
   function anyModalOpen() {
     return $settingsOpen || $memoryOpen || $poweredByOpen || $filesOpen
-      || $googleOpen || $voicePickerOpen || !!$viewer || $onboardingOpen
+      || $googleOpen || $codexOpen || $voicePickerOpen || !!$viewer || $onboardingOpen
   }
   function editableFocused() {
     const el = document.activeElement
@@ -179,6 +180,7 @@
     {#if $poweredByOpen}<PoweredBy />{/if}
     {#if $filesOpen}<Files />{/if}
     {#if $googleOpen}<Google />{/if}
+    {#if $codexOpen}<Codex />{/if}
     {#if $voicePickerOpen}<VoicePicker />{/if}
     {#if $viewer}<Viewer />{/if}
     {#if $onboardingOpen}<Onboarding />{/if}

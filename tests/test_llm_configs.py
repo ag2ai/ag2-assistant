@@ -292,6 +292,104 @@ def test_migration_noop_on_fresh_install():
     assert not llm_configs._path().exists()  # store not created → flat defaults apply
 
 
+# ---- openai_subscription type (ChatGPT sign-in) -------------------------------
+
+
+def test_subscription_in_types_and_provider():
+    assert "openai_subscription" in llm_configs.TYPES
+    assert llm_configs.PROVIDER_OF["openai_subscription"] == "openai"
+
+
+def test_subscription_clean_entry_strips_endpoint_fields():
+    # base_url/host are meaningless for subscription — codex_auth owns the endpoint,
+    # so a stale/typo'd value must never survive into the stored entry.
+    e = llm_configs.save_config(
+        {
+            "name": "Sub",
+            "type": "openai_subscription",
+            "model": "gpt-5.5",
+            "base_url": "http://sneaky/v1",
+            "host": "http://sneaky",
+        }
+    )
+    assert e["base_url"] == ""
+    assert e["host"] == ""
+
+
+def test_subscription_entry_options_returns_only_options():
+    # No api/base_url/key derivation — model_config routes off cfg.llm.auth_mode and
+    # ignores provider_options for this type, so the entry's own options pass through.
+    e = llm_configs.save_config(
+        {
+            "name": "Sub",
+            "type": "openai_subscription",
+            "model": "gpt-5.5",
+            "options": {"temperature": 0.3},
+        }
+    )
+    assert llm_configs.entry_options(e) == {"temperature": 0.3}
+
+
+def test_subscription_apply_active_sets_and_resets_auth_mode():
+    from assistant.config import Config
+
+    sub = llm_configs.save_config(
+        {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"}
+    )
+    other = llm_configs.save_config({"name": "G", "type": "gemini", "model": "gm"})
+
+    cfg = Config()
+    llm_configs.set_active(sub["id"])
+    llm_configs.apply_active(cfg)
+    assert cfg.llm.provider == "openai"
+    assert cfg.llm.auth_mode == "subscription"
+
+    # Switching back to a normal config MUST reset auth_mode — else it stays sticky
+    # and a plain-OpenAI/Gemini config would wrongly route through the ChatGPT backend.
+    llm_configs.set_active(other["id"])
+    llm_configs.apply_active(cfg)
+    assert cfg.llm.provider == "gemini"
+    assert cfg.llm.auth_mode == "api_key"
+
+
+def test_subscription_usable_and_key_source_track_sign_in(monkeypatch):
+    from assistant import codex_auth
+
+    e = llm_configs.save_config({"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"})
+    assert llm_configs.key_source(e) == "subscription"  # never key-based
+
+    monkeypatch.setattr(codex_auth, "is_signed_in", lambda: False)
+    assert llm_configs.usable(e) is False  # signed out → not usable
+    monkeypatch.setattr(codex_auth, "is_signed_in", lambda: True)
+    assert llm_configs.usable(e) is True  # signed in → usable
+
+
+def test_subscription_usable_never_raises(monkeypatch):
+    # A missing/broken codex_auth must read as "not signed in", never propagate into
+    # the health/usable path.
+    from assistant import codex_auth
+
+    def _boom():
+        raise RuntimeError("codex_auth exploded")
+
+    monkeypatch.setattr(codex_auth, "is_signed_in", _boom)
+    e = llm_configs.save_config({"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"})
+    assert llm_configs.usable(e) is False
+
+
+def test_subscription_excluded_from_image_entry(monkeypatch):
+    from assistant import codex_auth
+
+    monkeypatch.setattr(codex_auth, "is_signed_in", lambda: True)
+    sub = llm_configs.save_config(
+        {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"}
+    )
+    llm_configs.set_active(sub["id"])
+    # Even active + signed in, the ChatGPT backend may not serve the image tool, so
+    # subscription configs are never chosen for image generation.
+    assert llm_configs.image_entry() is None
+
+
 # ---- key_source: which key a call would actually send ---------------------------
 
 

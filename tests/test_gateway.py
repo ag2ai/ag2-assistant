@@ -1171,3 +1171,67 @@ def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
     r = client.post("/api/llm-configs/test", json={"name": "X", "type": "nope", "model": "m"})
     assert r.status_code == 400
     assert "type must be one of" in r.json()["error"]
+
+
+def test_llm_config_subscription_entry_view_signed_in(profile_app, monkeypatch):
+    """An openai_subscription config's row/chip need the live ChatGPT sign-in state and
+    a 'subscription' key_source so the UI can label it honestly without a 2nd fetch.
+    Endpoint fields are stripped for this type (codex_auth owns the endpoint)."""
+    from assistant import codex_auth
+
+    client, pid = profile_app
+    entry = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "Sub",
+            "type": "openai_subscription",
+            "model": "gpt-5.5",
+            "base_url": "http://sneaky/v1",  # must be ignored/stripped
+            "activate": True,
+        },
+    ).json()["config"]
+    assert entry["key_source"] == "subscription"
+    assert entry["base_url"] == ""
+
+    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": True, "account_id": "acc"})
+    assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is True
+
+    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": False})
+    assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is False
+
+
+def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monkeypatch):
+    """Testing a subscription draft flows through model_config's subscription branch:
+    the probe carries auth_mode=subscription, so the built client points at the ChatGPT
+    backend with the codex token and server-side storage disabled."""
+    import ag2
+
+    from assistant import codex_auth
+
+    client, pid = profile_app
+    monkeypatch.setattr(
+        codex_auth,
+        "creds_best_effort",
+        lambda: codex_auth.Creds(access_token="TOK", account_id="acc"),
+    )
+
+    captured = {}
+
+    class _OkAgent:
+        def __init__(self, name, config=None, **k):
+            captured["config"] = config
+
+        async def ask(self, *a, **k):
+            return FakeReply("PONG")
+
+    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    r = client.post(
+        "/api/llm-configs/test",
+        json={"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"},
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+    cfg = captured["config"]
+    assert type(cfg).__name__ == "OpenAIResponsesConfig"
+    assert cfg.base_url == codex_auth.BACKEND_BASE
+    assert cfg.api_key == "TOK"
+    assert cfg.store is False

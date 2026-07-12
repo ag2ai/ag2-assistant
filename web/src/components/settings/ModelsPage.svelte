@@ -17,11 +17,12 @@
   import ollamaLogo from '../../assets/ollama.svg'
 
   const LOGO = {
-    openai: openaiLogo, openai_responses: openaiLogo,
+    openai: openaiLogo, openai_responses: openaiLogo, openai_subscription: openaiLogo,
     anthropic: anthropicLogo, gemini: geminiLogo, ollama: ollamaLogo,
   }
   const TYPE_LABEL = {
     openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
+    openai_subscription: 'OpenAI · ChatGPT subscription',
     anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
   }
   // One-click starting points. Picking a card opens the editor prefilled — the
@@ -30,6 +31,12 @@
     { name: 'Gemini', type: 'gemini', model: 'gemini-3.5-flash', blurb: 'Google Gemini' },
     { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.2', blurb: 'Responses API' },
     { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.2', blurb: 'Chat Completions API' },
+    {
+      name: 'OpenAI · ChatGPT subscription',
+      card: 'OpenAI · Sign in with ChatGPT',
+      type: 'openai_subscription', model: 'gpt-5.6-terra',
+      blurb: 'Use your ChatGPT/Codex subscription instead of an API key — unofficial, may break OpenAI ToS',
+    },
     { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude' },
     { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Local Ollama' },
     {
@@ -110,6 +117,8 @@
   // still works via the shared env key, and a base_url config needs none at all.
   // Hints already carry the "…" ellipsis (e.g. "…abcd").
   function keyChip(c) {
+    if (c.key_source === 'subscription')
+      return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
     if (c.key_source === 'config') return 'own key ' + (c.key?.hint || '')
     if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
     if (c.key_source === 'not_needed') return 'no key needed'
@@ -140,7 +149,7 @@
       </div>
       <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
-        <span class="llmkey" class:warn={c.key_source === 'none'}>{keyChip(c)}</span>
+        <span class="llmkey" class:warn={c.key_source === 'none' || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
         {#if tests[c.id]}
           {#if tests[c.id].testing}
             <span class="llmtest">testing…</span>
