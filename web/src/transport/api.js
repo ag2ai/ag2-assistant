@@ -71,6 +71,14 @@ export const api = {
   googleLoginUrl: () => j('POST', G('/google/login_url')),
   googleCredentials: (content) => j('POST', G('/google/credentials'), { content }),
   googleLogout: () => j('POST', G('/google/logout')),
+  // OpenAI ChatGPT/Codex subscription ("Sign in with ChatGPT"). Unofficial — the
+  // gateway runs a loopback OAuth on localhost:1455; headless users paste the code
+  // to /codex/submit with the flow `state` returned by codexLoginUrl(). GLOBAL
+  // routes (account-level, shared across profiles — like Google).
+  codexStatus: () => j('GET', G('/codex/status')),
+  codexLoginUrl: () => j('POST', G('/codex/login_url')),
+  codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
+  codexLogout: () => j('POST', G('/codex/logout')),
   // Messaging channels are install-level: a platform binds to exactly one profile
   // (or is disabled). Both routes are GLOBAL. channels() → {telegram|discord|slack:
   // {profile:pid|null, token_present, active, error}}. channelBind returns the one

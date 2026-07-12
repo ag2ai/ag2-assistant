@@ -26,7 +26,7 @@
 import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api.js'
 import {
-  settingsOpen, voicePickerOpen, googleOpen, memoryOpen, poweredByOpen, onboardingOpen,
+  settingsOpen, voicePickerOpen, googleOpen, codexOpen, memoryOpen, poweredByOpen, onboardingOpen,
 } from '../../store.js'
 
 const KEY = Symbol('settings')
@@ -64,6 +64,7 @@ export function createSettingsContext() {
   ctx.close = () => settingsOpen.set(false)
   ctx.openVoice = () => { settingsOpen.set(false); voicePickerOpen.set(true) }
   ctx.openGoogle = () => { settingsOpen.set(false); googleOpen.set(true) }
+  ctx.openCodex = () => { settingsOpen.set(false); codexOpen.set(true) }
   ctx.openMemory = () => { settingsOpen.set(false); memoryOpen.set(true) }
   ctx.openPoweredBy = () => { settingsOpen.set(false); poweredByOpen.set(true) }
   ctx.reRunSetup = () => { settingsOpen.set(false); onboardingOpen.set(true) }

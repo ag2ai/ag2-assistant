@@ -14,6 +14,16 @@ services:
     image: ghcr.io/ag2ai/ag2-assistant:latest
     ports:
       - "8800:8800"
+      # ChatGPT ("Sign in with ChatGPT") OAuth loopback callback. The sign-in flow
+      # redirects your browser to http://localhost:1455/auth/callback, which the
+      # gateway serves from *inside* the container — so the port must be published
+      # for the automatic one-click flow to complete. The redirect URI is fixed to
+      # localhost:1455 (it's the Codex CLI's registered OAuth client), so this port
+      # is not configurable. Only needed when the browser runs on THIS host; for a
+      # remote deployment use the "paste the code manually" fallback in the UI.
+      # NOTE: while this container is up it holds host:1455, so `codex login` on the
+      # host can't bind 1455 in the meantime.
+      - "1455:1455"
     # Provider keys and channel tokens (GEMINI_API_KEY, OPENAI_API_KEY,
     # TELEGRAM_BOT_TOKEN, ...). Optional: keys can also be set via onboarding/Settings
     # and persist in the data volume, so booting without a .env is fine.

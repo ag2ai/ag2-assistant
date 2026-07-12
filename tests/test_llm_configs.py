@@ -176,21 +176,24 @@ def test_usable_by_type_key_and_base_url(monkeypatch):
     assert llm_configs.usable(gem) is True  # per-config key makes it usable
 
 
-def test_image_entry_prefers_active_then_first_capable():
+def test_image_entry_follows_active_only():
+    """Images run on the SELECTED configuration or not at all — no fallback hunting
+    through the list (switching models must never silently reroute images)."""
     olm = llm_configs.save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
     compat = llm_configs.save_config(
         {"name": "B", "type": "openai", "model": "m", "base_url": "http://h/v1"}
     )
     gem = llm_configs.save_config({"name": "G", "type": "gemini", "model": "gm"})
 
-    # active is a non-image-capable config → falls to the first capable (gemini)
+    # active can't generate images → images unavailable, even with gemini in the list
     llm_configs.set_active(compat["id"])
-    assert llm_configs.image_entry()["id"] == gem["id"]
+    assert llm_configs.image_entry() is None
 
     # active is image-capable → used directly
     llm_configs.set_active(gem["id"])
     assert llm_configs.image_entry()["id"] == gem["id"]
     assert olm["type"] == "ollama"  # (kept as a non-capable config in the list)
+    assert llm_configs.image_capable(gem) and not llm_configs.image_capable(compat)
 
 
 def test_image_entry_none_when_no_capable():
@@ -290,6 +293,108 @@ def test_migration_noop_on_fresh_install():
     assert migrate_llm_configs() is False
     assert llm_configs.list_configs() == []
     assert not llm_configs._path().exists()  # store not created → flat defaults apply
+
+
+# ---- openai_subscription type (ChatGPT sign-in) -------------------------------
+
+
+def test_subscription_in_types_and_provider():
+    assert "openai_subscription" in llm_configs.TYPES
+    assert llm_configs.PROVIDER_OF["openai_subscription"] == "openai"
+
+
+def test_subscription_clean_entry_strips_endpoint_fields():
+    # base_url/host are meaningless for subscription — codex_auth owns the endpoint,
+    # so a stale/typo'd value must never survive into the stored entry.
+    e = llm_configs.save_config(
+        {
+            "name": "Sub",
+            "type": "openai_subscription",
+            "model": "gpt-5.5",
+            "base_url": "http://sneaky/v1",
+            "host": "http://sneaky",
+        }
+    )
+    assert e["base_url"] == ""
+    assert e["host"] == ""
+
+
+def test_subscription_strips_endpoint_fields_and_options():
+    # Subscription entries carry no endpoint fields OR advanced options: base_url and
+    # the bearer token come from codex_auth, and the ChatGPT backend rejects every
+    # tunable parameter (probed live — "Unsupported parameter"), so _clean_entry
+    # strips options rather than persist values that only break calls.
+    e = llm_configs.save_config(
+        {
+            "name": "Sub",
+            "type": "openai_subscription",
+            "model": "gpt-5.6-luna",
+            "base_url": "http://stale/v1",
+            "options": {"temperature": 0.3},
+        }
+    )
+    assert e["base_url"] == "" and e["options"] == {}
+    assert llm_configs.entry_options(e) == {}
+
+
+def test_subscription_apply_active_sets_and_resets_auth_mode():
+    from assistant.config import Config
+
+    sub = llm_configs.save_config(
+        {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"}
+    )
+    other = llm_configs.save_config({"name": "G", "type": "gemini", "model": "gm"})
+
+    cfg = Config()
+    llm_configs.set_active(sub["id"])
+    llm_configs.apply_active(cfg)
+    assert cfg.llm.provider == "openai"
+    assert cfg.llm.auth_mode == "subscription"
+
+    # Switching back to a normal config MUST reset auth_mode — else it stays sticky
+    # and a plain-OpenAI/Gemini config would wrongly route through the ChatGPT backend.
+    llm_configs.set_active(other["id"])
+    llm_configs.apply_active(cfg)
+    assert cfg.llm.provider == "gemini"
+    assert cfg.llm.auth_mode == "api_key"
+
+
+def test_subscription_usable_and_key_source_track_sign_in(monkeypatch):
+    from assistant import codex_auth
+
+    e = llm_configs.save_config({"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"})
+    assert llm_configs.key_source(e) == "subscription"  # never key-based
+
+    monkeypatch.setattr(codex_auth, "is_signed_in", lambda: False)
+    assert llm_configs.usable(e) is False  # signed out → not usable
+    monkeypatch.setattr(codex_auth, "is_signed_in", lambda: True)
+    assert llm_configs.usable(e) is True  # signed in → usable
+
+
+def test_subscription_usable_never_raises(monkeypatch):
+    # A missing/broken codex_auth must read as "not signed in", never propagate into
+    # the health/usable path.
+    from assistant import codex_auth
+
+    def _boom():
+        raise RuntimeError("codex_auth exploded")
+
+    monkeypatch.setattr(codex_auth, "is_signed_in", _boom)
+    e = llm_configs.save_config({"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"})
+    assert llm_configs.usable(e) is False
+
+
+def test_subscription_is_image_capable(monkeypatch):
+    from assistant import codex_auth
+
+    monkeypatch.setattr(codex_auth, "is_signed_in", lambda: True)
+    sub = llm_configs.save_config(
+        {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.6-luna"}
+    )
+    llm_configs.set_active(sub["id"])
+    # The ChatGPT backend runs the native image tool (verified live), so an active
+    # subscription config powers image generation like Gemini/OpenAI do.
+    assert llm_configs.image_entry()["id"] == sub["id"]
 
 
 # ---- key_source: which key a call would actually send ---------------------------

@@ -22,11 +22,13 @@
   const TYPES = [
     { id: 'openai_responses', label: 'OpenAI · Responses' },
     { id: 'openai', label: 'OpenAI · Chat Completions' },
+    { id: 'openai_subscription', label: 'OpenAI · ChatGPT subscription' },
     { id: 'anthropic', label: 'Anthropic' },
     { id: 'gemini', label: 'Gemini' },
     { id: 'ollama', label: 'Ollama' },
   ]
   // base_url applies to openai/openai_responses/anthropic; host to ollama only.
+  // Subscription mode has no endpoint or key fields — both come from codex_auth.
   const usesBaseUrl = (t) => t === 'openai' || t === 'openai_responses' || t === 'anthropic'
 
   // Capture the prop's initial values once (this form is freshly mounted per open,
@@ -43,6 +45,9 @@
       // Seed the key draft from a template's suggested api_key (e.g. "not-needed"
       // for a local server); an existing config never ships its key → empty.
       apiKey: config.api_key || '',
+      // Editing a saved subscription config carries the entry view's signed_in seed;
+      // a template pick has none (the $effect below refetches live for this type).
+      signedIn: !!config.signed_in,
       hasOptions,
       advText: hasOptions ? JSON.stringify(config.options, null, 2) : '',
     }
@@ -63,6 +68,16 @@
   let testing = $state(false)
   let testResult = $state(null)   // {ok, reply, latency_ms} | {ok:false, error} | null
 
+  // ChatGPT-subscription sign-in state, for the openai_subscription form variant.
+  // Seeded from the entry view's signed_in (editing a saved subscription config);
+  // a template pick has no seed, so refetch live whenever this type is selected.
+  let codexSignedIn = $state(init.signedIn)
+  $effect(() => {
+    if (type === 'openai_subscription') {
+      api.codexStatus().then((s) => { codexSignedIn = !!s.signed_in }).catch(() => {})
+    }
+  })
+
   const hasKey = $derived(!!config.key?.set)
   const keyPlaceholder = $derived(hasKey ? '•••• ' + (config.key.hint || '') : 'paste key')
 
@@ -74,6 +89,8 @@
   const ENV_OF = { openai: 'OPENAI_API_KEY', openai_responses: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY' }
   const PROV_OF = { openai: 'openai', openai_responses: 'openai', anthropic: 'anthropic', gemini: 'gemini' }
   const keyUsage = $derived.by(() => {
+    if (type === 'openai_subscription')
+      return 'Requests use your ChatGPT/Codex subscription — no API key is involved.'
     if (type === 'ollama') return 'Ollama is local — no API key is used.'
     const env = ENV_OF[type]
     const shared = ctx?.s?.keys?.[PROV_OF[type]]
@@ -113,12 +130,14 @@
     }
   }
 
-  async function save() {
+  // useNow forces activation on top of the parent's default (first-ever config /
+  // re-saving the active one) — the "Save & Use" button's one-click path.
+  async function save(useNow = false) {
     const payload = buildPayload()
     if (!payload) return
     busy = true
     try {
-      await api.saveLlmConfig({ ...payload, activate })
+      await api.saveLlmConfig({ ...payload, activate: activate || useNow })
       onSaved()
     } catch (e) { err = String(e.message || e) }
     busy = false
@@ -167,25 +186,45 @@
     </div>
   {/if}
 
-  <div class="llmfield">
-    <label for="lf-key">API key {#if hasKey && !cleared}<span class="llmhint">leave blank to keep the current key</span>{/if}</label>
-    <div class="llmkeyfield">
-      <input id="lf-key" type="password" bind:value={apiKey} placeholder={keyPlaceholder} />
-      {#if hasKey && !cleared}<button class="linkbtn" onclick={clearKey}>Clear key</button>{/if}
+  {#if type === 'openai_subscription'}
+    <div class="llmfield">
+      <!-- A heading, NOT a <label>: a label bound to the button would forward hover
+           and clicks to it (browsers propagate :hover/activation to the labeled
+           control), which reads as the button lighting up from across the row. -->
+      <span class="llmlabel">Sign in</span>
+      <span class="llmhint">Signs requests with your ChatGPT/Codex subscription instead of an API key — unofficial, may break OpenAI's Terms of Service.</span>
+      <div class="llmkeyfield">
+        <button class="open" onclick={() => ctx.openCodex()}>Sign in with ChatGPT</button>
+        <span class="llmtest" class:ok={codexSignedIn} class:bad={!codexSignedIn}>{codexSignedIn ? 'Signed in' : 'Not signed in'}</span>
+      </div>
+      <span class="llmhint">{keyUsage}</span>
     </div>
-    {#if cleared}<span class="llmhint">Key will be cleared on save.</span>{/if}
-    <span class="llmhint">{keyUsage}</span>
-  </div>
+  {:else}
+    <div class="llmfield">
+      <label for="lf-key">API key {#if hasKey && !cleared}<span class="llmhint">leave blank to keep the current key</span>{/if}</label>
+      <div class="llmkeyfield">
+        <input id="lf-key" type="password" bind:value={apiKey} placeholder={keyPlaceholder} />
+        {#if hasKey && !cleared}<button class="linkbtn" onclick={clearKey}>Clear key</button>{/if}
+      </div>
+      {#if cleared}<span class="llmhint">Key will be cleared on save.</span>{/if}
+      <span class="llmhint">{keyUsage}</span>
+    </div>
+  {/if}
 
-  <div class="llmfield">
-    <button class="linkbtn advtoggle" onclick={() => (advOpen = !advOpen)}>{advOpen ? '▾' : '▸'} Advanced (JSON)</button>
-    {#if advOpen}
-      <textarea
-        class="llmadv" bind:value={advText} spellcheck="false"
-        placeholder={'Extra AG2 provider-config settings as a JSON object, e.g.\n{\n  "temperature": 0.7\n}'}
-      ></textarea>
-    {/if}
-  </div>
+  <!-- No Advanced JSON for subscription configs: the ChatGPT backend rejects every
+       tunable parameter (probed live — temperature/top_p/max_output_tokens all
+       "Unsupported parameter"), and the save path strips options for this type. -->
+  {#if type !== 'openai_subscription'}
+    <div class="llmfield">
+      <button class="linkbtn advtoggle" onclick={() => (advOpen = !advOpen)}>{advOpen ? '▾' : '▸'} Advanced (JSON)</button>
+      {#if advOpen}
+        <textarea
+          class="llmadv" bind:value={advText} spellcheck="false"
+          placeholder={'Extra AG2 provider-config settings as a JSON object, e.g.\n{\n  "temperature": 0.7\n}'}
+        ></textarea>
+      {/if}
+    </div>
+  {/if}
 
   {#if err}<p class="muted" style="color:#d8552f;font-size:13px;margin:0">{err}</p>{/if}
   <div class="keyrow" style="justify-content:flex-end">
@@ -198,6 +237,11 @@
     {/if}
     <button class="open" disabled={busy || testing || !model.trim()} onclick={testDraft}>Test</button>
     <button class="linkbtn" disabled={busy} onclick={onCancel}>Cancel</button>
-    <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={save}>{busy ? 'Saving…' : 'Save'}</button>
+    <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={() => save()}>{busy ? 'Saving…' : 'Save'}</button>
+    <!-- One-click "save and make it the active model" — hidden when the save would
+         activate anyway (first config, or re-saving the already-active one). -->
+    {#if !activate}
+      <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={() => save(true)}>Save &amp; Use</button>
+    {/if}
   </div>
 </div>

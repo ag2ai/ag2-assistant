@@ -42,18 +42,35 @@ from assistant.config import data_dir
 # The supported configuration types. ``openai`` = Chat Completions API, the surface
 # OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) implement reliably;
 # ``openai_responses`` = OpenAI's Responses API (their preferred surface, also enables
-# the native image-generation tool). The rest map 1:1 to a provider.
-TYPES = ("openai", "openai_responses", "anthropic", "gemini", "ollama")
+# the native image-generation tool); ``openai_subscription`` = "Sign in with ChatGPT",
+# reaching the ChatGPT backend on the user's Codex/ChatGPT subscription (no API key,
+# no endpoint — both come from ``codex_auth`` at call time). The rest map 1:1 to a
+# provider.
+TYPES = ("openai", "openai_responses", "openai_subscription", "anthropic", "gemini", "ollama")
 
-# type → the ``cfg.llm.provider`` it derives to (both OpenAI surfaces are provider
-# "openai"; ``model_config`` picks the API from the injected ``api`` option).
+# type → the ``cfg.llm.provider`` it derives to (all three OpenAI surfaces are provider
+# "openai"; ``model_config`` picks the API from the injected ``api`` option, or the
+# subscription branch off ``cfg.llm.auth_mode``).
 PROVIDER_OF = {
     "openai": "openai",
     "openai_responses": "openai",
+    "openai_subscription": "openai",
     "anthropic": "anthropic",
     "gemini": "gemini",
     "ollama": "ollama",
 }
+
+
+def _subscription_signed_in() -> bool:
+    """Whether ChatGPT-subscription sign-in is currently active. Lazy + guarded: a
+    missing or broken ``codex_auth`` module must never raise into the usable()/health
+    path, so any import or call failure reads as "not signed in"."""
+    try:
+        from assistant import codex_auth
+
+        return bool(codex_auth.is_signed_in())
+    except Exception:
+        return False
 
 
 def _path():
@@ -105,14 +122,20 @@ def _clean_entry(raw: dict) -> dict:
     options = raw.get("options") or {}
     if not isinstance(options, dict):
         raise ValueError("options must be a JSON object")
+    # Subscription mode has no endpoint fields — the base_url and bearer token both
+    # come from codex_auth. Force them empty so a stale/typo'd value can't ride along.
+    # Advanced options are stripped too: the ChatGPT backend rejects every sampling
+    # parameter we probed live (temperature, top_p, max_output_tokens → "Unsupported
+    # parameter"), so a stored option only breaks calls; the form hides the editor.
+    is_subscription = ctype == "openai_subscription"
     entry = {
         "id": str(raw.get("id") or "").strip(),
         "name": name,
         "type": ctype,
         "model": model,
-        "base_url": str(raw.get("base_url") or "").strip(),
-        "host": str(raw.get("host") or "").strip(),
-        "options": options,
+        "base_url": "" if is_subscription else str(raw.get("base_url") or "").strip(),
+        "host": "" if is_subscription else str(raw.get("host") or "").strip(),
+        "options": {} if is_subscription else options,
     }
     if not entry["id"]:
         entry.pop("id")
@@ -204,6 +227,11 @@ def entry_options(entry: dict) -> dict:
     key (e.g. MiniMax) take it via the per-config key field."""
     opts = dict(entry.get("options") or {})
     ctype = entry.get("type")
+    if ctype == "openai_subscription":
+        # model_config routes this type through codex_auth off cfg.llm.auth_mode and
+        # ignores provider_options entirely — so no api/base_url/key derivation here;
+        # return only the entry's own free-form options untouched.
+        return opts
     if ctype == "openai":
         opts["api"] = "chat"
     elif ctype == "openai_responses":
@@ -234,6 +262,11 @@ def apply_active(cfg) -> None:
     cfg.llm.provider = provider
     cfg.llm.model = entry["model"]
     cfg.llm.provider_options[provider] = entry_options(entry)
+    # OpenAI auth mode is a property of the active entry's type. Set it on EVERY
+    # apply (not just the subscription branch) so switching back to a normal OpenAI
+    # config resets it to key auth. The AG2ASSISTANT_OPENAI_AUTH_MODE env override
+    # still wins last (applied after apply_active in load_config).
+    cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
 
 
 def usable(entry: dict) -> bool:
@@ -242,6 +275,9 @@ def usable(entry: dict) -> bool:
     server) needs no real provider key. Otherwise a per-config key OR the provider's
     env key must be present."""
     ctype = entry.get("type")
+    if ctype == "openai_subscription":
+        # No API key at all — usable exactly when ChatGPT sign-in is live.
+        return _subscription_signed_in()
     if ctype == "ollama":
         return True
     if entry.get("base_url"):
@@ -260,8 +296,12 @@ def key_source(entry: dict) -> str:
       placeholder is sent; see :func:`entry_options` — the shared key never is).
     - ``"shared"`` — no key of its own; the provider's shared/env key (``KEY_ENV``)
       is what ``model_config``'s fallback will send to the provider's own endpoint.
+    - ``"subscription"`` — ChatGPT sign-in (``openai_subscription``); no API key at
+      all, the bearer token rides from ``codex_auth``.
     - ``"none"`` — nothing available; the config can't run (mirrors :func:`usable`).
     """
+    if entry.get("type") == "openai_subscription":
+        return "subscription"
     if secrets.config_key(entry.get("id") or ""):
         return "config"
     if entry.get("type") == "ollama" or entry.get("base_url"):
@@ -272,21 +312,23 @@ def key_source(entry: dict) -> str:
     return "none"
 
 
+def image_capable(entry: dict) -> bool:
+    """Whether image generation works on this configuration's type.
+
+    ``gemini`` (image-output modality), ``openai_responses`` and plain ``openai``
+    without a ``base_url`` (the native image tool needs a real OpenAI endpoint — a
+    compat server won't serve it), and ``openai_subscription`` (the ChatGPT backend
+    runs the image tool too — verified live; AG2 captures the streamed image)."""
+    t = entry.get("type")
+    if t in ("gemini", "openai_responses", "openai_subscription"):
+        return True
+    return t == "openai" and not entry.get("base_url")
+
+
 def image_entry() -> dict | None:
-    """The configuration to use for image generation, or None when none can.
-
-    Image-capable types: ``gemini``, ``openai_responses``, and plain ``openai`` only
-    when it targets real OpenAI (no ``base_url`` — a compat server won't serve OpenAI's
-    image model). Prefers the active config when it's capable, else the first capable
-    one in the list."""
-
-    def capable(e: dict) -> bool:
-        t = e.get("type")
-        if t in ("gemini", "openai_responses"):
-            return True
-        return t == "openai" and not e.get("base_url")
-
+    """The configuration image generation runs on: the ACTIVE one, iff it is
+    image-capable — otherwise None (the tool reports images unavailable). No
+    fallback hunting through the list: images follow the selected configuration,
+    so switching models never silently routes images somewhere else."""
     active = active_config()
-    if active and capable(active):
-        return active
-    return next((e for e in list_configs() if capable(e)), None)
+    return active if active and image_capable(active) else None
