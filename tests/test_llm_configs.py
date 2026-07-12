@@ -316,18 +316,22 @@ def test_subscription_clean_entry_strips_endpoint_fields():
     assert e["host"] == ""
 
 
-def test_subscription_entry_options_returns_only_options():
-    # No api/base_url/key derivation — model_config routes off cfg.llm.auth_mode and
-    # ignores provider_options for this type, so the entry's own options pass through.
+def test_subscription_strips_endpoint_fields_and_options():
+    # Subscription entries carry no endpoint fields OR advanced options: base_url and
+    # the bearer token come from codex_auth, and the ChatGPT backend rejects every
+    # tunable parameter (probed live — "Unsupported parameter"), so _clean_entry
+    # strips options rather than persist values that only break calls.
     e = llm_configs.save_config(
         {
             "name": "Sub",
             "type": "openai_subscription",
-            "model": "gpt-5.5",
+            "model": "gpt-5.6-luna",
+            "base_url": "http://stale/v1",
             "options": {"temperature": 0.3},
         }
     )
-    assert llm_configs.entry_options(e) == {"temperature": 0.3}
+    assert e["base_url"] == "" and e["options"] == {}
+    assert llm_configs.entry_options(e) == {}
 
 
 def test_subscription_apply_active_sets_and_resets_auth_mode():

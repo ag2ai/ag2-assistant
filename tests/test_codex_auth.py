@@ -231,7 +231,41 @@ def test_model_config_subscription_routes_to_backend(monkeypatch):
     assert mc.base_url == codex_auth.BACKEND_BASE
     assert mc.api_key == "ACCESS"  # SDK sends this as Authorization: Bearer
     assert mc.default_headers["chatgpt-account-id"] == "acc"
-    # ChatGPT backend requires store=false (rejects server-side response storage).
+    # ChatGPT backend requires store=false (rejects server-side response storage)
+    # and streaming (rejects non-streaming requests) — both forced, both its rules.
+    assert mc.store is False
+    assert mc.streaming is True
+
+
+def test_model_config_subscription_merges_advanced_options(monkeypatch):
+    """The Advanced (JSON) options of a subscription config still apply — but the
+    fields the subscription owns (endpoint, token, headers, streaming, store) are
+    forced AFTER the merge, so options can neither redirect the endpoint nor leak
+    a key; our "api" surface switch is dropped as meaningless here."""
+    codex_auth._store_tokens(
+        {
+            "access_token": "ACCESS",
+            "refresh_token": "R",
+            "id_token": _fake_jwt({"chatgpt_account_id": "acc"}),
+            "expires_in": 3600,
+        }
+    )
+    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("AG2ASSISTANT_OPENAI_AUTH_MODE", "subscription")
+    cfg = load_config()
+    cfg.llm.provider_options["openai"] = {
+        "max_output_tokens": 2048,  # a real option → passes through
+        "api": "chat",  # our surface switch → dropped
+        "base_url": "http://evil/v1",  # forced back to the ChatGPT backend
+        "api_key": "sk-injected",  # forced back to the OAuth token
+        "streaming": False,  # forced back on (backend requires it)
+        "store": True,  # forced back off (backend rejects it)
+    }
+    mc = agent.model_config(cfg)
+    assert mc.max_output_tokens == 2048
+    assert mc.base_url == codex_auth.BACKEND_BASE
+    assert mc.api_key == "ACCESS"
+    assert mc.streaming is True
     assert mc.store is False
 
 

@@ -57,8 +57,6 @@ def model_config(config: Config, model: str | None = None):
             # The OAuth access token rides as api_key (SDK → Authorization: Bearer);
             # the account id + Codex headers go via default_headers. See codex_auth
             # (unofficial / gray-area vs OpenAI ToS). ensure_fresh refreshes the token.
-            # The subscription config owns base_url/api_key/headers outright — entry
-            # provider_options are not merged here (they'd only be endpoint noise).
             from ag2.config import OpenAIResponsesConfig
 
             from assistant import codex_auth
@@ -67,19 +65,24 @@ def model_config(config: Config, model: str | None = None):
             # when the token can't be refreshed; the turn then fails with the real
             # OpenAI error (e.g. unsupported_country) instead.
             creds = codex_auth.creds_best_effort()
+            # Advanced options (temperature, max_output_tokens, ...) merge first;
+            # everything the subscription OWNS is forced afterwards, so options can
+            # neither point elsewhere nor leak a key: the endpoint/token/headers are
+            # the backend's contract, streaming is REQUIRED by it ("Stream must be
+            # set to true") and response storage rejected ("Store must be set to
+            # false") — both found live; the Codex CLI sends the same. "api" is our
+            # own surface switch and meaningless here.
+            sub_opts = {k: v for k, v in opts.items() if k != "api"}
             return OpenAIResponsesConfig(
-                model=model,
-                api_key=creds.access_token,
-                base_url=codex_auth.BACKEND_BASE,
-                default_headers=codex_auth.default_headers(creds),
-                # The ChatGPT backend REQUIRES streaming ("Stream must be set to
-                # true", found live via the config Test button) and rejects
-                # server-side response storage ("Store must be set to false");
-                # the Codex CLI sends stream=true/store=false too. Both are the
-                # backend's rules, not preferences — so config.llm.streaming is
-                # deliberately ignored here.
-                streaming=True,
-                store=False,
+                **{
+                    **sub_opts,
+                    "model": model,
+                    "api_key": creds.access_token,
+                    "base_url": codex_auth.BACKEND_BASE,
+                    "default_headers": codex_auth.default_headers(creds),
+                    "streaming": True,
+                    "store": False,
+                }
             )
         # OpenAI's Responses API (their preferred surface; also enables the native
         # image_generation tool). A custom base_url flips the default to the Chat

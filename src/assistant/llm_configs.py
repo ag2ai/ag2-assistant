@@ -124,6 +124,9 @@ def _clean_entry(raw: dict) -> dict:
         raise ValueError("options must be a JSON object")
     # Subscription mode has no endpoint fields — the base_url and bearer token both
     # come from codex_auth. Force them empty so a stale/typo'd value can't ride along.
+    # Advanced options are stripped too: the ChatGPT backend rejects every sampling
+    # parameter we probed live (temperature, top_p, max_output_tokens → "Unsupported
+    # parameter"), so a stored option only breaks calls; the form hides the editor.
     is_subscription = ctype == "openai_subscription"
     entry = {
         "id": str(raw.get("id") or "").strip(),
@@ -132,7 +135,7 @@ def _clean_entry(raw: dict) -> dict:
         "model": model,
         "base_url": "" if is_subscription else str(raw.get("base_url") or "").strip(),
         "host": "" if is_subscription else str(raw.get("host") or "").strip(),
-        "options": options,
+        "options": {} if is_subscription else options,
     }
     if not entry["id"]:
         entry.pop("id")

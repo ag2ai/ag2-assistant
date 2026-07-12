@@ -90,7 +90,7 @@
   const PROV_OF = { openai: 'openai', openai_responses: 'openai', anthropic: 'anthropic', gemini: 'gemini' }
   const keyUsage = $derived.by(() => {
     if (type === 'openai_subscription')
-      return 'Requests ride your ChatGPT/Codex subscription — no API key is involved.'
+      return 'Requests use your ChatGPT/Codex subscription — no API key is involved.'
     if (type === 'ollama') return 'Ollama is local — no API key is used.'
     const env = ENV_OF[type]
     const shared = ctx?.s?.keys?.[PROV_OF[type]]
@@ -209,15 +209,20 @@
     </div>
   {/if}
 
-  <div class="llmfield">
-    <button class="linkbtn advtoggle" onclick={() => (advOpen = !advOpen)}>{advOpen ? '▾' : '▸'} Advanced (JSON)</button>
-    {#if advOpen}
-      <textarea
-        class="llmadv" bind:value={advText} spellcheck="false"
-        placeholder={'Extra AG2 provider-config settings as a JSON object, e.g.\n{\n  "temperature": 0.7\n}'}
-      ></textarea>
-    {/if}
-  </div>
+  <!-- No Advanced JSON for subscription configs: the ChatGPT backend rejects every
+       tunable parameter (probed live — temperature/top_p/max_output_tokens all
+       "Unsupported parameter"), and the save path strips options for this type. -->
+  {#if type !== 'openai_subscription'}
+    <div class="llmfield">
+      <button class="linkbtn advtoggle" onclick={() => (advOpen = !advOpen)}>{advOpen ? '▾' : '▸'} Advanced (JSON)</button>
+      {#if advOpen}
+        <textarea
+          class="llmadv" bind:value={advText} spellcheck="false"
+          placeholder={'Extra AG2 provider-config settings as a JSON object, e.g.\n{\n  "temperature": 0.7\n}'}
+        ></textarea>
+      {/if}
+    </div>
+  {/if}
 
   {#if err}<p class="muted" style="color:#d8552f;font-size:13px;margin:0">{err}</p>{/if}
   <div class="keyrow" style="justify-content:flex-end">
