@@ -64,7 +64,11 @@ export function createSettingsContext() {
   ctx.close = () => settingsOpen.set(false)
   ctx.openVoice = () => { settingsOpen.set(false); voicePickerOpen.set(true) }
   ctx.openGoogle = () => { settingsOpen.set(false); googleOpen.set(true) }
-  ctx.openCodex = () => { settingsOpen.set(false); codexOpen.set(true) }
+  // Codex is the ONE opener that does NOT close Settings: it's launched from the
+  // half-filled LLM config form, and unmounting Settings would throw that draft
+  // away. It stacks over Settings (.modal.over) and closing it reveals the form
+  // again, with its signed-in state refreshed.
+  ctx.openCodex = () => codexOpen.set(true)
   ctx.openMemory = () => { settingsOpen.set(false); memoryOpen.set(true) }
   ctx.openPoweredBy = () => { settingsOpen.set(false); poweredByOpen.set(true) }
   ctx.reRunSetup = () => { settingsOpen.set(false); onboardingOpen.set(true) }
