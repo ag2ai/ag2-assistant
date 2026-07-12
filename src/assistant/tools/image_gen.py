@@ -28,20 +28,22 @@ DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-lite-image"
 def _image_agent(config):
     """A one-shot image-capable Agent, or None if none is available.
 
-    Resolves a target from the install-wide named-config store: the active config when
-    it's image-capable, else the first capable one (``llm_configs.image_entry()``), with
-    that entry's own per-config key (falling back to the provider's env key). When the
-    store is empty, falls back to today's behaviour — the flat ``config.llm.provider``
-    with the provider's env key. Built directly (not via model_config) to sidestep an
-    import cycle."""
+    Images follow the SELECTED configuration: the active entry runs them iff its type
+    is image-capable (``llm_configs.image_entry()``), with its own per-config key
+    (falling back to the provider's env key). No fallback hunting through the list —
+    switching the active model never silently routes images through another config.
+    When the store is empty, falls back to the flat ``config.llm.provider`` with the
+    provider's env key. Built directly (not via model_config) to sidestep an import
+    cycle."""
     from assistant import llm_configs, secrets
     from assistant.secrets import KEY_ENV
 
     cid = None
+    entry = None
     if llm_configs.list_configs():
         entry = llm_configs.image_entry()
         if entry is None:
-            return None  # store configured, but no image-capable config in it
+            return None  # the ACTIVE config can't generate images
         provider = llm_configs.PROVIDER_OF[entry["type"]]
         model = entry["model"]
         cid = entry["id"]
@@ -54,6 +56,27 @@ def _image_agent(config):
     def _key(name: str) -> str:
         # Prefer the resolved entry's own secret; fall back to the provider env key.
         return (secrets.config_key(cid) if cid else "") or os.environ.get(KEY_ENV.get(name, ""), "")
+
+    if entry is not None and entry["type"] == "openai_subscription":
+        # ChatGPT subscription: the backend runs the native image tool too (verified
+        # live — AG2 captures the streamed image on reply.files). Same construction
+        # rules as model_config's subscription branch: token as bearer, Codex headers,
+        # streaming forced on, storage forced off.
+        from ag2.config import OpenAIResponsesConfig
+        from ag2.tools import ImageGenerationTool
+
+        from assistant import codex_auth
+
+        creds = codex_auth.creds_best_effort()
+        cfg = OpenAIResponsesConfig(
+            model=model,
+            api_key=creds.access_token,
+            base_url=codex_auth.BACKEND_BASE,
+            default_headers=codex_auth.default_headers(creds),
+            streaming=True,
+            store=False,
+        )
+        return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
 
     if provider == "gemini":
         from ag2.config.gemini import GeminiConfig
@@ -107,9 +130,9 @@ def build_image_tool(config, workspace_dir):
         agent = _image_agent(config)
         if agent is None:
             return (
-                "Image generation isn't available — none of the configured models can "
-                "generate images. Add a Gemini or OpenAI configuration in "
-                "Settings → Models to enable it."
+                "Image generation isn't available on the selected model configuration. "
+                "Switch the active configuration in Settings → Models to one that can "
+                "generate images (Gemini, OpenAI, or the ChatGPT subscription)."
             )
 
         parts: list = [prompt]

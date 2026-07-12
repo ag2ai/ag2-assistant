@@ -150,6 +150,9 @@
       <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
+        <!-- Images follow the ACTIVE config: capable types advertise the chip, and on
+             the active row it reads as "image generation enabled" (✓). -->
+        {#if c.images}<span class="llmkey">images{c.active ? ' ✓' : ''}</span>{/if}
         {#if tests[c.id]}
           {#if tests[c.id].testing}
             <span class="llmtest">testing…</span>

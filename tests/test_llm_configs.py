@@ -176,21 +176,24 @@ def test_usable_by_type_key_and_base_url(monkeypatch):
     assert llm_configs.usable(gem) is True  # per-config key makes it usable
 
 
-def test_image_entry_prefers_active_then_first_capable():
+def test_image_entry_follows_active_only():
+    """Images run on the SELECTED configuration or not at all — no fallback hunting
+    through the list (switching models must never silently reroute images)."""
     olm = llm_configs.save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
     compat = llm_configs.save_config(
         {"name": "B", "type": "openai", "model": "m", "base_url": "http://h/v1"}
     )
     gem = llm_configs.save_config({"name": "G", "type": "gemini", "model": "gm"})
 
-    # active is a non-image-capable config → falls to the first capable (gemini)
+    # active can't generate images → images unavailable, even with gemini in the list
     llm_configs.set_active(compat["id"])
-    assert llm_configs.image_entry()["id"] == gem["id"]
+    assert llm_configs.image_entry() is None
 
     # active is image-capable → used directly
     llm_configs.set_active(gem["id"])
     assert llm_configs.image_entry()["id"] == gem["id"]
     assert olm["type"] == "ollama"  # (kept as a non-capable config in the list)
+    assert llm_configs.image_capable(gem) and not llm_configs.image_capable(compat)
 
 
 def test_image_entry_none_when_no_capable():
@@ -381,17 +384,17 @@ def test_subscription_usable_never_raises(monkeypatch):
     assert llm_configs.usable(e) is False
 
 
-def test_subscription_excluded_from_image_entry(monkeypatch):
+def test_subscription_is_image_capable(monkeypatch):
     from assistant import codex_auth
 
     monkeypatch.setattr(codex_auth, "is_signed_in", lambda: True)
     sub = llm_configs.save_config(
-        {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"}
+        {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.6-luna"}
     )
     llm_configs.set_active(sub["id"])
-    # Even active + signed in, the ChatGPT backend may not serve the image tool, so
-    # subscription configs are never chosen for image generation.
-    assert llm_configs.image_entry() is None
+    # The ChatGPT backend runs the native image tool (verified live), so an active
+    # subscription config powers image generation like Gemini/OpenAI do.
+    assert llm_configs.image_entry()["id"] == sub["id"]
 
 
 # ---- key_source: which key a call would actually send ---------------------------

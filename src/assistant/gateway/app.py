@@ -547,6 +547,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "key_source": llm_configs.key_source(
                 entry
             ),  # config | shared | not_needed | none | subscription
+            "images": llm_configs.image_capable(entry),  # drives the row's "images" chip
             "shared_key": {
                 "env": KEY_ENV.get(provider, ""),
                 "set": bool(shared.get("set")),

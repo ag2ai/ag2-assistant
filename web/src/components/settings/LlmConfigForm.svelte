@@ -130,12 +130,14 @@
     }
   }
 
-  async function save() {
+  // useNow forces activation on top of the parent's default (first-ever config /
+  // re-saving the active one) — the "Save & Use" button's one-click path.
+  async function save(useNow = false) {
     const payload = buildPayload()
     if (!payload) return
     busy = true
     try {
-      await api.saveLlmConfig({ ...payload, activate })
+      await api.saveLlmConfig({ ...payload, activate: activate || useNow })
       onSaved()
     } catch (e) { err = String(e.message || e) }
     busy = false
@@ -235,6 +237,11 @@
     {/if}
     <button class="open" disabled={busy || testing || !model.trim()} onclick={testDraft}>Test</button>
     <button class="linkbtn" disabled={busy} onclick={onCancel}>Cancel</button>
-    <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={save}>{busy ? 'Saving…' : 'Save'}</button>
+    <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={() => save()}>{busy ? 'Saving…' : 'Save'}</button>
+    <!-- One-click "save and make it the active model" — hidden when the save would
+         activate anyway (first config, or re-saving the already-active one). -->
+    {#if !activate}
+      <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={() => save(true)}>Save &amp; Use</button>
+    {/if}
   </div>
 </div>

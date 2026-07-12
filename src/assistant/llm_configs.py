@@ -312,23 +312,23 @@ def key_source(entry: dict) -> str:
     return "none"
 
 
+def image_capable(entry: dict) -> bool:
+    """Whether image generation works on this configuration's type.
+
+    ``gemini`` (image-output modality), ``openai_responses`` and plain ``openai``
+    without a ``base_url`` (the native image tool needs a real OpenAI endpoint — a
+    compat server won't serve it), and ``openai_subscription`` (the ChatGPT backend
+    runs the image tool too — verified live; AG2 captures the streamed image)."""
+    t = entry.get("type")
+    if t in ("gemini", "openai_responses", "openai_subscription"):
+        return True
+    return t == "openai" and not entry.get("base_url")
+
+
 def image_entry() -> dict | None:
-    """The configuration to use for image generation, or None when none can.
-
-    Image-capable types: ``gemini``, ``openai_responses``, and plain ``openai`` only
-    when it targets real OpenAI (no ``base_url`` — a compat server won't serve OpenAI's
-    image model). Prefers the active config when it's capable, else the first capable
-    one in the list."""
-
-    def capable(e: dict) -> bool:
-        t = e.get("type")
-        # openai_subscription is deliberately excluded: the ChatGPT backend may not
-        # serve the image-generation tool, so never route images through it.
-        if t in ("gemini", "openai_responses"):
-            return True
-        return t == "openai" and not e.get("base_url")
-
+    """The configuration image generation runs on: the ACTIVE one, iff it is
+    image-capable — otherwise None (the tool reports images unavailable). No
+    fallback hunting through the list: images follow the selected configuration,
+    so switching models never silently routes images somewhere else."""
     active = active_config()
-    if active and capable(active):
-        return active
-    return next((e for e in list_configs() if capable(e)), None)
+    return active if active and image_capable(active) else None
