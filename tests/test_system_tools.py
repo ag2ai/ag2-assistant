@@ -86,13 +86,13 @@ async def test_format_task_is_concise(tmp_path):
         objective="plan a trip",
         status=TaskStatus.SCHEDULED,
         scheduled_for="2030-01-01T09:00:00",
-        recurrence="weekdays",
+        recurrence="0 9 * * 1-5",
     )
     await svc.store.add_deliverable(t.id, "itinerary")
     await svc.store.add_subtask(t.id, "book flights", reopen_parent=False)
     node = await svc.get_task(t.id)
     text = format_task(node)
-    assert "Trip" in text and "scheduled" in text and "weekdays" in text
+    assert "Trip" in text and "scheduled" in text and "0 9 * * 1-5" in text
     assert "itinerary" in text and "book flights" in text
 
 
@@ -128,7 +128,7 @@ async def test_run_now_on_scheduled_keeps_schedule(tmp_path):
         "digest",
         status=TaskStatus.SCHEDULED,
         scheduled_for="2030-01-01T09:00:00",
-        recurrence="weekdays",
+        recurrence="0 9 * * 1-5",
     )
     msg = await svc.run_now(t.id)
     assert "now" in msg.lower()

@@ -15,14 +15,16 @@ from assistant.config import load_config
 from assistant.observability import profile_logger
 
 # Legacy per-profile items that live at the root pre-migration and move into the
-# default profile dir. Dirs and files alike.
+# default profile dir. Dirs and files alike. NOTE: permissions.json is deliberately
+# absent — it is the install-wide global store now, and it can legitimately exist at
+# the root before profiles/ does (CLI grant on a fresh install); moving it would
+# orphan the global grants.
 _LEGACY_ITEMS = (
     "settings.json",
     "sessions.db",
     "tasks.db",
     "inquiries.db",
     "profile.db",
-    "permissions.json",
     "usage.json",
     "skills",
     "debug",
@@ -142,3 +144,159 @@ def _bind_channels(pid: str) -> None:
     for platform, envs in _CHANNEL_TOKENS.items():
         if all(os.environ.get(e) for e in envs):
             profiles.bind_channel(platform, pid)
+
+
+def _entry_from_llm(name: str, provider: str, model: str, options: dict) -> dict | None:
+    """Synthesise one named-config entry from a legacy flat ``(provider, model,
+    options)`` triple, lifting ``base_url``/``host`` out of ``options`` into
+    first-class fields and picking the right ``type``. Returns None when there's no
+    model to point at (an empty/degenerate source)."""
+    provider = (provider or "").lower()
+    model = (model or "").strip()
+    if not model:
+        return None
+    opts = dict(options or {})
+    base_url = str(opts.pop("base_url", "") or "").strip()
+    host = str(opts.pop("host", "") or "").strip()
+    api = str(opts.pop("api", "") or "").lower()
+    if provider == "openai":
+        # A base_url (compat server) or an explicit api:"chat" → Chat Completions;
+        # otherwise OpenAI's Responses API (the pre-store default for bare openai).
+        ctype = "openai" if (base_url or api == "chat") else "openai_responses"
+    elif provider in ("anthropic", "gemini", "ollama"):
+        ctype = provider
+    else:
+        return None
+    return {
+        "name": name,
+        "type": ctype,
+        "model": model,
+        "base_url": base_url,
+        "host": host,
+        "options": opts,
+    }
+
+
+def _dedup_key(entry: dict) -> tuple:
+    """Identity of a synthesised entry for de-duplication (name is display-only)."""
+    import json
+
+    return (
+        entry["type"],
+        entry["model"],
+        entry["base_url"],
+        entry["host"],
+        json.dumps(entry["options"], sort_keys=True),
+    )
+
+
+def _strip_profile_llm(settings_file: Path) -> None:
+    """Remove the now-migrated ``llm`` / ``llm_options`` keys from a profile's
+    settings.json (their home is the install-wide store now). Best-effort."""
+    if not settings_file.exists():
+        return
+    try:
+        data = json.loads(settings_file.read_text())
+    except Exception:
+        return
+    if not isinstance(data, dict) or not ({"llm", "llm_options"} & set(data)):
+        return
+    data.pop("llm", None)
+    data.pop("llm_options", None)
+    settings_file.write_text(json.dumps(data, indent=2))
+
+
+def migrate_llm_configs() -> bool:
+    """Fold the legacy LLM selection into the install-wide named-config store (§ named
+    LLM configs). Idempotent — a no-op once ``llm_configs.json`` exists.
+
+    Sources, in order: an explicit ``llm`` block in the root ``config.json`` (the
+    install default), then each profile's ``settings.json`` ``llm`` {provider, model} +
+    ``llm_options`` {provider: kwargs} (its per-profile override). Each becomes one
+    entry (deduped); the active entry is the one derived from the active-default
+    profile (falling back to the root default, then the first entry). Finally the
+    ``llm``/``llm_options`` keys are stripped from every profile settings file.
+
+    A genuinely fresh install carries none of these, so nothing is written and the
+    store stays empty — the flat gemini defaults then apply exactly as before.
+    Dev-quality: best-effort, tolerant of missing/malformed data.
+    """
+    from assistant import llm_configs
+    from assistant.config import default_config_path
+
+    if llm_configs._path().exists():
+        return False  # already migrated (or a fresh install that will write on first save)
+
+    cfg = load_config()  # flat defaults ← config.json ← env (store is empty here)
+    root_provider = cfg.llm.provider
+    root_model = cfg.llm.model
+
+    entries: list[dict] = []
+    seen: set = set()
+
+    def _add(entry: dict | None) -> tuple | None:
+        if entry is None:
+            return None
+        key = _dedup_key(entry)
+        if key not in seen:
+            seen.add(key)
+            entries.append(entry)
+        return key
+
+    # 1) Root config.json default — ONLY when it carries an explicit llm block (a fresh
+    # install with no config.json contributes nothing, keeping the store empty).
+    root_key: tuple | None = None
+    cfg_path = default_config_path()
+    if cfg_path.exists():
+        try:
+            has_llm = isinstance(json.loads(cfg_path.read_text()).get("llm"), dict)
+        except Exception:
+            has_llm = False
+        if has_llm:
+            root_opts = dict(cfg.llm.provider_options.get(root_provider) or {})
+            root_key = _add(_entry_from_llm("Default", root_provider, root_model, root_opts))
+
+    # 2) Each profile's settings.json llm/llm_options → an entry named after the profile.
+    active_pid = profiles.load_registry().get("active_default")
+    active_key: tuple | None = None
+    for meta in profiles.list_profiles(include_archived=True):
+        settings_file = profiles.profile_dir(meta.id) / "settings.json"
+        try:
+            data = json.loads(settings_file.read_text())
+        except Exception:
+            data = {}
+        llm = data.get("llm") if isinstance(data.get("llm"), dict) else {}
+        llm_options = data.get("llm_options") if isinstance(data.get("llm_options"), dict) else {}
+        if not (llm or llm_options):
+            if meta.id == active_pid:
+                active_key = root_key  # this profile just used the root default
+            continue
+        provider = llm.get("provider") or root_provider
+        model = llm.get("model") or root_model
+        opts = dict(llm_options.get(provider) or {})
+        key = _add(_entry_from_llm(meta.name, provider, model, opts))
+        if meta.id == active_pid:
+            active_key = key
+
+    if not entries:
+        return False  # nothing worth migrating (no legacy LLM state anywhere)
+
+    # Persist the entries (minting ids) and mark the active one — the active-default
+    # profile's entry, else the root default, else the first entry.
+    target = active_key or root_key or _dedup_key(entries[0])
+    active_id: str | None = None
+    for entry in entries:
+        saved = llm_configs.save_config(entry)
+        if active_id is None and _dedup_key(saved) == target:
+            active_id = saved["id"]
+    if active_id:
+        llm_configs.set_active(active_id)
+
+    # Strip the legacy keys from every profile settings file (the store owns them now).
+    for meta in profiles.list_profiles(include_archived=True):
+        _strip_profile_llm(profiles.profile_dir(meta.id) / "settings.json")
+
+    profile_logger("default").info(
+        "migration: wrote %d llm config(s), active=%s", len(entries), active_id
+    )
+    return True

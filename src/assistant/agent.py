@@ -31,29 +31,87 @@ def model_config(config: Config, model: str | None = None):
     `model` overrides `config.llm.model` (used for the cheaper aggregation pass).
     The API key is read from os.environ by the provider's conventional var (filled
     from the secrets store at startup / on reload), not the fixed api_key_env field.
+
+    `config.llm.provider_options[provider]` (Settings → Model & Keys → Advanced, or
+    config.json) is merged into the provider config's kwargs LAST, so any of its
+    constructor settings — base_url, temperature, timeout, even api_key — can be
+    set or overridden. A base_url is what points the OpenAI/Anthropic clients at
+    OpenAI-API-compatible servers (llama.cpp, vLLM, LM Studio, LiteLLM).
     """
     from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 
     model = model or config.llm.model
     provider = config.llm.provider.lower()
     api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
+    opts = dict(config.llm.provider_options.get(provider) or {})
     if provider == "anthropic":
         from ag2.config import AnthropicConfig
 
-        return AnthropicConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
+        return AnthropicConfig(
+            **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
+        )
     if provider == "openai":
-        # OpenAI's Responses API (their preferred surface; also enables the native
-        # image_generation tool). Drop-in for the old Chat Completions OpenAIConfig.
-        from ag2.config import OpenAIResponsesConfig
+        if config.llm.auth_mode == "subscription":
+            # "Sign in with ChatGPT": route requests through the ChatGPT backend on
+            # the user's Codex/ChatGPT subscription instead of a pay-per-token key.
+            # The OAuth access token rides as api_key (SDK → Authorization: Bearer);
+            # the account id + Codex headers go via default_headers. See codex_auth
+            # (unofficial / gray-area vs OpenAI ToS). ensure_fresh refreshes the token.
+            from ag2.config import OpenAIResponsesConfig
 
-        return OpenAIResponsesConfig(model=model, api_key=api_key, streaming=config.llm.streaming)
+            from assistant import codex_auth
+
+            # best-effort (never raises) — building the agent must not 500 a reload
+            # when the token can't be refreshed; the turn then fails with the real
+            # OpenAI error (e.g. unsupported_country) instead.
+            creds = codex_auth.creds_best_effort()
+            # Advanced options (temperature, max_output_tokens, ...) merge first;
+            # everything the subscription OWNS is forced afterwards, so options can
+            # neither point elsewhere nor leak a key: the endpoint/token/headers are
+            # the backend's contract, streaming is REQUIRED by it ("Stream must be
+            # set to true") and response storage rejected ("Store must be set to
+            # false") — both found live; the Codex CLI sends the same. "api" is our
+            # own surface switch and meaningless here.
+            sub_opts = {k: v for k, v in opts.items() if k != "api"}
+            return OpenAIResponsesConfig(
+                **{
+                    **sub_opts,
+                    "model": model,
+                    "api_key": creds.access_token,
+                    "base_url": codex_auth.BACKEND_BASE,
+                    "default_headers": codex_auth.default_headers(creds),
+                    "streaming": True,
+                    "store": False,
+                }
+            )
+        # OpenAI's Responses API (their preferred surface; also enables the native
+        # image_generation tool). A custom base_url flips the default to the Chat
+        # Completions API instead: OpenAI-compatible servers (llama.cpp, vLLM,
+        # LM Studio) implement /v1/chat/completions far more reliably than
+        # /v1/responses. Pin either with "api": "responses" | "chat" in the options.
+        api = str(opts.pop("api", "") or "").lower()
+        if not api:
+            api = "chat" if opts.get("base_url") else "responses"
+        if api not in ("responses", "chat", "chat_completions"):
+            raise ValueError(f'openai option "api" must be "responses" or "chat", not {api!r}')
+        kwargs = {"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
+        if api == "responses":
+            from ag2.config import OpenAIResponsesConfig
+
+            return OpenAIResponsesConfig(**kwargs)
+        from ag2.config import OpenAIConfig
+
+        return OpenAIConfig(**kwargs)
     if provider == "ollama":
         from ag2.config import OllamaConfig
 
         return OllamaConfig(
-            model=model,
-            host=os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
-            streaming=config.llm.streaming,
+            **{
+                "model": model,
+                "host": os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
+                "streaming": config.llm.streaming,
+                **opts,
+            }
         )
     from ag2.config.gemini import GeminiConfig
 
@@ -61,16 +119,29 @@ def model_config(config: Config, model: str | None = None):
     # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
     # this must cover reasoning plus the full report text.
     return GeminiConfig(
-        model=model,
-        api_key=api_key,
-        max_output_tokens=32768,
-        streaming=config.llm.streaming,
+        **{
+            "model": model,
+            "api_key": api_key,
+            "max_output_tokens": 32768,
+            "streaming": config.llm.streaming,
+            **opts,
+        }
     )
+
+
+def _default_aggregate_model(config: Config) -> str | None:
+    """The provider's cheap-tier default for background work — suppressed when the
+    provider is pointed at a custom base_url (an OpenAI-compatible server won't
+    serve OpenAI's model names; reuse the main model instead, like Ollama)."""
+    provider = config.llm.provider.lower()
+    if (config.llm.provider_options.get(provider) or {}).get("base_url"):
+        return None
+    return _DEFAULT_AGGREGATE_MODEL.get(provider)
 
 
 def cheap_model(config: Config) -> str | None:
     """A faster/cheaper model for bulk work (research subtasks, verification)."""
-    return config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(config.llm.provider.lower())
+    return config.llm.aggregate_model or _default_aggregate_model(config)
 
 
 def bundled_skills_dir():
@@ -175,7 +246,7 @@ CAPABILITY_GUIDANCE = (
     "- Chat and use your tools (web search/fetch, code, local files, and the user's "
     "Google when connected) to answer or act directly for small things.\n"
     "- Run background TASKS for substantial or multi-step work: create them, schedule "
-    "them (one-off or recurring — daily/weekly/weekdays/'mon,wed,fri'), inspect and "
+    "them (one-off or recurring — standard 5-field cron, e.g. '0 9 * * 1-5'), inspect and "
     "edit them (add subtasks or deliverables, change the objective), reschedule, run "
     "now, cancel, or archive.\n"
     "- Look things up with your system tools instead of needing them in context: list/"
@@ -437,9 +508,7 @@ def create_agent(
     # Profile aggregation and stream compaction are both just summarisation, so
     # run them on a cheaper model when one is configured (or a sensible
     # per-provider default). Falls back to the main model if neither applies.
-    agg_model = config.llm.aggregate_model or _DEFAULT_AGGREGATE_MODEL.get(
-        config.llm.provider.lower()
-    )
+    agg_model = config.llm.aggregate_model or _default_aggregate_model(config)
     agg_config = model_config(config, agg_model) if agg_model else llm_config
     if memory:
         knowledge = build_knowledge_config(
@@ -491,11 +560,11 @@ def create_agent(
 
     # One injected authority for all permission decisions (knows the sandbox mode
     # so prompts can say where a command actually runs — host vs container). Backed
-    # by THIS profile's persistent grant store so an allow in one profile isn't
-    # pre-authorised in another.
+    # by the install-wide persistent grant store (root_dir) so a grant is global —
+    # allowing a folder/command in one profile pre-authorises it everywhere.
     dependencies: dict = {
         PermissionManager: PermissionManager(
-            PermissionStore(config.data_dir / "permissions.json"),
+            PermissionStore(config.root_dir / "permissions.json"),
             asker=asker,
             sandbox=config.tools.sandbox,
         )

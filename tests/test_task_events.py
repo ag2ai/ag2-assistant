@@ -75,11 +75,11 @@ async def test_failed_run_emits_task_failed(tmp_path):
 async def test_schedule_emits_task_scheduled(tmp_path):
     svc, emitted = await _started(tmp_path)
     tid = await svc.schedule_task(
-        "daily digest", when="2030-01-01T09:00:00+10:00", recurrence="daily"
+        "daily digest", when="2030-01-01T09:00:00+10:00", recurrence="0 9 * * *"
     )
     sched = [e for _, e in emitted if isinstance(e, TaskScheduled)]
     assert sched and sched[0].task_id == tid
-    assert sched[0].recurrence == "daily"
+    assert sched[0].recurrence == "0 9 * * *"
     await svc.close()
 
 

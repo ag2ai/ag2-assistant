@@ -1,222 +1,68 @@
 <script>
+  // Settings — thin shell. Owns the modal chrome, the sidebar nav, and the page
+  // switch; all section markup lives in the six settings/*Page.svelte components,
+  // which share one reactive $state context (settings/context.svelte.js).
   import { onMount } from 'svelte'
-  import { settingsOpen, voicePickerOpen, googleOpen, soundOnInput, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations } from '../store.js'
-  import { api } from '../transport/api.js'
+  import { settingsPage, profiles } from '../store.js'
   import { getActiveProfileId } from '../lib/profile.js'
-  import { chime } from '../lib/chime.js'
-  import Icon from './Icon.svelte'
-  import Appearance from './Appearance.svelte'
-  import Profiles from './Profiles.svelte'
-  import Channels from './Channels.svelte'
-  import McpServers from './McpServers.svelte'
-  import FolderPicker from './FolderPicker.svelte'
-  import { FOCUS } from '../lib/focuses.js'
+  import { createSettingsContext } from './settings/context.svelte.js'
+  import GeneralPage from './settings/GeneralPage.svelte'
+  import ProfilesPage from './settings/ProfilesPage.svelte'
+  import ModelsPage from './settings/ModelsPage.svelte'
+  import VoicePage from './settings/VoicePage.svelte'
+  import ToolsPage from './settings/ToolsPage.svelte'
+  import IntegrationsPage from './settings/IntegrationsPage.svelte'
+  import AdvancedPage from './settings/AdvancedPage.svelte'
 
-  // App-wide animation tiers (per-device; see store.animations)
-  const FX_MODES = [
-    { id: 'off', label: 'Off', hint: 'static content' },
-    { id: 'basic', label: 'Basic', hint: 'light animation' },
-    { id: 'high', label: 'High', hint: 'full 3D scenes' },
+  const PAGES = [
+    { id: 'general', label: 'General', comp: GeneralPage },
+    { id: 'profiles', label: 'Profiles', comp: ProfilesPage },
+    { id: 'models', label: 'Models', comp: ModelsPage },
+    { id: 'voice', label: 'Voice', comp: VoicePage },
+    { id: 'tools', label: 'Tools & Permissions', comp: ToolsPage },
+    { id: 'integrations', label: 'Integrations', comp: IntegrationsPage },
+    { id: 'advanced', label: 'Advanced', comp: AdvancedPage },
   ]
 
-  const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' }
-  // API-key rows. github is a stored token (skills registry), NOT a model provider,
-  // so it lives here but never in the assistant/voice provider dropdowns.
-  const KEY_ROWS = [
-    { id: 'openai', label: 'OpenAI', ph: 'paste key' },
-    { id: 'gemini', label: 'Gemini', ph: 'paste key' },
-    { id: 'anthropic', label: 'Anthropic', ph: 'paste key' },
-    { id: 'github', label: 'GitHub', ph: 'optional — raises skills-registry rate limit' },
-  ]
-  const VOICE_PROVIDERS = ['gemini', 'openai']
+  // Must run synchronously at init — setContext requires it (see context header).
+  const ctx = createSettingsContext()
 
-  let s = $state(null)            // GET /api/settings payload
-  let google = $state(null)
-  let drafts = $state({})         // provider -> input value
-  let model = $state('')
-  let err = $state('')
-  let busy = $state(false)
-  let editFolder = $state(false)   // project-folder picker expanded?
+  // Seed the page from the deep-link store; validate against PAGES, fallback 'general'.
+  let page = $state(PAGES.some((p) => p.id === $settingsPage) ? $settingsPage : 'general')
+  function go(id) { page = id; settingsPage.set(id) }
 
-  function openFolderEdit() { editFolder = true }
-  // one-click commit: the folder you're viewing in the picker applies immediately
-  const commitFolder = (path) => run(() => api.setProjectFolder(path).then(() => { editFolder = false }))
+  // Svelte 5 renders a capitalized component-valued variable directly as <Active />.
+  const Active = $derived((PAGES.find((p) => p.id === page) || PAGES[0]).comp)
 
-  // Focus areas — a per-profile persona attribute (settings.json → agent context).
-  // Toggling a pill persists immediately for the ACTIVE profile.
-  const toggleFocus = (id) => {
-    const cur = s?.focuses || []
-    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
-    run(() => api.setFocuses(next))
-  }
-
-  async function load() {
-    try {
-      s = await api.settings()
-      model = s.assistant.model || ''
-      drafts = { ollama: s.keys.ollama?.base_url || '' }
-    } catch (e) { err = String(e.message || e) }
-    try { google = await api.googleStatus() } catch {}
-  }
-  onMount(load)
-
-  async function run(fn) {
-    err = ''; busy = true
-    try { await fn(); await load() } catch (e) { err = String(e.message || e) }
-    busy = false
-  }
-  const saveKey = (p) => run(() => api.setKey(p, drafts[p] || '').then(() => { drafts[p] = '' }))
-  const clearKey = (p) => run(() => api.setKey(p, ''))
-  const saveOllama = () => run(() => api.setKey('ollama', drafts.ollama || ''))
-  const saveLlm = (p) => run(() => api.setLlm(p, model))
-  const saveVoiceProvider = (p) => run(() => api.setVoiceProvider(p))
-
-  // Settings values (model, voice, MCP, project folder) are per-profile — title
-  // the modal so it's clear which profile you're configuring (§5.4).
+  // Title the modal with the active profile — settings (model, MCP, folder, …) are
+  // per-profile, so it's clear which one you're configuring (§5.4).
   const activeName = $derived.by(() => {
     const id = $profiles.activeId || getActiveProfileId()
     return ($profiles.list || []).find((p) => p.id === id)?.name || ''
   })
 
-  const close = () => ($settingsOpen = false)
-  const openVoice = () => { $settingsOpen = false; $voicePickerOpen = true }
-  const openGoogle = () => { $settingsOpen = false; $googleOpen = true }
-  const openMemory = () => { $settingsOpen = false; $memoryOpen = true }
-  const openPoweredBy = () => { $settingsOpen = false; $poweredByOpen = true }
-  const reRunSetup = () => { $settingsOpen = false; $onboardingOpen = true }
+  onMount(ctx.load)
 </script>
 
-<div class="modal-backdrop" onclick={close}></div>
+<div class="modal-backdrop" onclick={ctx.close}></div>
 <div class="modal settings">
   <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>
-  {#if err}<p class="muted" style="color:#d8552f">{err}</p>{/if}
+  {#if ctx.err}<p class="muted" style="color:#d8552f">{ctx.err}</p>{/if}
 
-  {#if !s}
+  {#if !ctx.s}
     <p class="muted">Loading…</p>
   {:else}
-    <div class="setscroll">
-      <div class="setsec">Appearance</div>
-      <Appearance />
-      <div class="setsec">Animations</div>
-      <div class="focuspills">
-        {#each FX_MODES as m}
-          <button class="focuspill" class:on={$animations === m.id} onclick={() => ($animations = m.id)}>
-            {m.label} <span style="opacity:.6;font-weight:400">· {m.hint}</span>
-          </button>
+    <div class="setbody">
+      <nav class="setnav">
+        {#each PAGES as p}
+          <button class="setnavbtn" class:on={page === p.id} onclick={() => go(p.id)}>{p.label}</button>
         {/each}
+      </nav>
+      <div class="setscroll">
+        <Active />
       </div>
-      <p class="muted" style="font-size:12px;margin:2px 0 0">How animated content (weather panels and more) renders on this device — High drives the GPU; Basic and Off are easy on it.</p>
-      <button class="setrow" onclick={reRunSetup}>
-        <span class="sk"><Icon name="sparkles" size={15} /> Re-run setup</span>
-        <span class="sv">replay the first-run welcome & onboarding</span>
-        <span class="sgo">Open →</span>
-      </button>
-
-      <div class="setsec">Profiles</div>
-      <Profiles />
-
-      <div class="setsec">Project folder</div>
-      {#if !editFolder}
-        <button class="setrow" onclick={openFolderEdit}>
-          <span class="sk"><Icon name="folder" size={15} /> {s.project_folder ? 'Folder' : 'Choose a folder'}</span>
-          <span class="sv">{s.project_folder || 'the assistant can read this folder (read-only)'}</span>
-          <span class="sgo">Change →</span>
-        </button>
-      {:else}
-        <FolderPicker roots={s.fs || {}} start={s.project_folder || (s.fs && s.fs.cwd) || ''} {busy} onUse={commitFolder} />
-        <div class="keyrow" style="justify-content:flex-end">
-          <button class="linkbtn" onclick={() => (editFolder = false)}>Cancel</button>
-        </div>
-      {/if}
-
-      <div class="setsec">Focus areas</div>
-      <div class="focuspills">
-        {#each FOCUS as f}
-          <button class="focuspill" class:on={(s.focuses || []).includes(f.id)} disabled={busy} onclick={() => toggleFocus(f.id)}>
-            <Icon name={f.icon} size={13} /> {f.label}
-          </button>
-        {/each}
-      </div>
-      <p class="muted" style="font-size:12px;margin:2px 0 0">What this profile is for — shapes how the assistant helps.</p>
-
-      <div class="setsec">API keys <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
-      {#each KEY_ROWS as k}
-        <div class="keyrow">
-          <span class="kp">{k.label}</span>
-          <input type="password" placeholder={s.keys[k.id]?.set ? '•••• ' + s.keys[k.id].hint : k.ph} bind:value={drafts[k.id]} />
-          <button class="open" disabled={busy} onclick={() => saveKey(k.id)}>Save</button>
-          {#if s.keys[k.id]?.set}<button class="linkbtn" disabled={busy} onclick={() => clearKey(k.id)}>Clear</button>{/if}
-        </div>
-      {/each}
-      <div class="keyrow">
-        <span class="kp">Ollama</span>
-        <input type="text" placeholder="http://localhost:11434" bind:value={drafts.ollama} />
-        <button class="open" disabled={busy} onclick={saveOllama}>Save</button>
-      </div>
-
-      <div class="setsec">Assistant model</div>
-      <div class="keyrow">
-        <select bind:value={s.assistant.provider}>
-          {#each Object.keys(PROVIDER_LABEL) as p}
-            <option value={p} disabled={!s.available[p]}>{PROVIDER_LABEL[p]}{s.available[p] ? '' : ' (no key)'}</option>
-          {/each}
-        </select>
-        <input type="text" placeholder="model, e.g. gemini-3.5-flash" bind:value={model} />
-        <button class="open" disabled={busy} onclick={() => saveLlm(s.assistant.provider)}>Save</button>
-      </div>
-
-      <div class="setsec">Voice</div>
-      {#if VOICE_PROVIDERS.some((p) => s.available[p])}
-        <div class="keyrow">
-          <select value={s.voice_provider} onchange={(e) => saveVoiceProvider(e.target.value)}>
-            {#each VOICE_PROVIDERS as p}
-              <option value={p} disabled={!s.available[p]}>{PROVIDER_LABEL[p]}{s.available[p] ? '' : ' (no key)'}</option>
-            {/each}
-          </select>
-          <button class="open" onclick={openVoice}>Change voice →</button>
-        </div>
-      {:else}
-        <p class="muted" style="font-size:13px">Add an OpenAI or Gemini key above to enable voice.</p>
-      {/if}
-
-      <div class="setsec">Channels <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
-      <Channels />
-
-      <div class="setsec">Memory</div>
-      <button class="setrow" onclick={openMemory}>
-        <span class="sk"><Icon name="brain" size={15} /> Memory</span>
-        <span class="sv">what the assistant has learned about you</span>
-        <span class="sgo">View & edit →</span>
-      </button>
-
-      <div class="setsec">AG2</div>
-      <button class="setrow" onclick={openPoweredBy}>
-        <span class="sk"><Icon name="zap" size={15} /> Powered by AG2</span>
-        <span class="sv">the AG2 primitives behind this app</span>
-        <span class="sgo">View →</span>
-      </button>
-      <label class="setcheck">
-        <input type="checkbox" bind:checked={$ag2View} />
-        AG2 view — reveal live AG2 events + per-item provenance
-      </label>
-
-      <div class="setsec">Notifications</div>
-      <label class="setcheck">
-        <input type="checkbox" bind:checked={$soundOnInput} onchange={(e) => e.target.checked && chime()} />
-        Play a sound when the assistant needs my input
-      </label>
-
-      <div class="setsec">MCP servers</div>
-      <McpServers />
-
-      <div class="setsec">Google</div>
-      <button class="setrow" onclick={openGoogle}>
-        <span class="sk">Google</span>
-        <span class="sv">{google == null ? '…' : google.signed_in ? ('Connected · ' + (google.email || 'account')) : 'Not connected'}</span>
-        <span class="sgo">Manage →</span>
-      </button>
     </div>
   {/if}
 
-  <button class="modal-close" onclick={close}>Close</button>
+  <button class="modal-close" onclick={ctx.close}>Close</button>
 </div>

@@ -86,8 +86,7 @@ def _require_libs():
         from google_auth_oauthlib.flow import InstalledAppFlow
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise ImportError(
-            "Google integration needs extra deps. Install with: "
-            'pip install "ag2-assistant[google]"'
+            'Google integration needs extra deps. Install with: pip install "ag2-assistant[google]"'
         ) from exc
     return Credentials, Request, InstalledAppFlow
 

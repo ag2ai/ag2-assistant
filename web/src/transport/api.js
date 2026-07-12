@@ -45,12 +45,40 @@ export const api = {
   // the `total` only when more than one profile exists (one request, not two).
   usageAll: () => j('GET', G('/usage')),
   setKey: (provider, value) => j('POST', G('/secrets/key'), { provider, value }),
+  // Named LLM configurations — install-wide list + active selection (LLM is common
+  // across profiles). All GLOBAL. llmConfigs() → {configs:[entry + {key:{set,hint},
+  // active}], active:id|null, env_override:{provider?,model?}|null}. saveLlmConfig
+  // posts to /llm-configs (create) or /llm-configs/{id} (update, when cfg.id set);
+  // the id is stripped from the body. api_key is WRITE-ONLY: null=unchanged,
+  // ""=clear, string=set — the payload never echoes a raw key. Values validated by
+  // a server-side dry-construct → 400 {error} surfaced by j() as Error(msg).
+  llmConfigs: () => j('GET', G('/llm-configs')),
+  saveLlmConfig: (cfg) => {
+    const { id, ...body } = cfg
+    return j('POST', G('/llm-configs' + (id ? '/' + encodeURIComponent(id) : '')), body)
+  },
+  deleteLlmConfig: (id) => j('DELETE', G('/llm-configs/' + encodeURIComponent(id))),
+  useLlmConfig: (id) => j('POST', G('/llm-configs/' + encodeURIComponent(id) + '/use')),
+  // Real PONG round-trip against the config's resolved runtime key → {ok, reply,
+  // latency_ms}; a 502 {ok:false,error} throws via j() (surface the message inline).
+  testLlmConfig: (id) => j('POST', G('/llm-configs/' + encodeURIComponent(id) + '/test')),
+  // Test an UNSAVED editor draft (nothing persisted; a blank api_key falls back to
+  // the stored key when cfg.id is set).
+  testLlmConfigDraft: (cfg) => j('POST', G('/llm-configs/test'), cfg),
   setOnboarded: (value = true) => j('POST', G('/onboarded'), { value }),
   listDirs: (path = '') => j('GET', G('/fs/list?path=' + encodeURIComponent(path))),
   googleStatus: () => j('GET', G('/google/status')),
   googleLoginUrl: () => j('POST', G('/google/login_url')),
   googleCredentials: (content) => j('POST', G('/google/credentials'), { content }),
   googleLogout: () => j('POST', G('/google/logout')),
+  // OpenAI ChatGPT/Codex subscription ("Sign in with ChatGPT"). Unofficial — the
+  // gateway runs a loopback OAuth on localhost:1455; headless users paste the code
+  // to /codex/submit with the flow `state` returned by codexLoginUrl(). GLOBAL
+  // routes (account-level, shared across profiles — like Google).
+  codexStatus: () => j('GET', G('/codex/status')),
+  codexLoginUrl: () => j('POST', G('/codex/login_url')),
+  codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
+  codexLogout: () => j('POST', G('/codex/logout')),
   // Messaging channels are install-level: a platform binds to exactly one profile
   // (or is disabled). Both routes are GLOBAL. channels() → {telegram|discord|slack:
   // {profile:pid|null, token_present, active, error}}. channelBind returns the one
@@ -69,8 +97,26 @@ export const api = {
   // Seed the universal doc from web-onboarding identity answers (all optional).
   // Seed-only: the server refuses to clobber an existing doc → {ok, seeded}.
   setIdentity: (fields) => j('POST', G('/identity'), fields),
+  // Persistent, install-wide permission grants (folders + shell/tool command rules).
+  // GLOBAL routes; every mutation returns the full snapshot {ok, folders, blocked,
+  // commands} so the client never needs a follow-up GET (McpServers contract).
+  // Bodies (not URL segments): paths contain '/', command rules contain '( * )'.
+  // DELETE-with-body is supported by j() (precedent: archiveProfile).
+  permissions:   () => j('GET', G('/permissions')),
+  grantFolder:   (path) => j('POST', G('/permissions/folders'), { path }),
+  revokeFolder:  (path) => j('DELETE', G('/permissions/folders'), { path }),
+  blockFolder:   (path) => j('POST', G('/permissions/blocked'), { path }),
+  unblockFolder: (path) => j('DELETE', G('/permissions/blocked'), { path }),
+  grantCommand:  (tool, prefix) => j('POST', G('/permissions/commands'), { tool, prefix }),
+  revokeCommand: (rule) => j('DELETE', G('/permissions/commands'), { rule }),
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
+  // Cheap subsystem health for the status dot: {overall, checks:[{id,label,state,detail,…}]}.
+  // Distinct from the GLOBAL /api/health (Docker liveness). MCP is listed here but
+  // probed on demand via healthMcpServer — this route never spawns a server. A 404/410
+  // here means the profile is genuinely gone, so it rides j()'s recovery like the
+  // other scoped polls.
+  health: () => j('GET', P('/health')),
   sessions: () => j('GET', P('/sessions')).then((d) => d.sessions || []),
   deleteSession: (id) => j('DELETE', P('/sessions/' + encodeURIComponent(id))),
   tasksAll: (status) => j('GET', P('/tasks/all' + (status && status !== 'all' ? '?status=' + status : ''))).then((d) => d.tasks || []),
@@ -88,7 +134,6 @@ export const api = {
   answerHitl: (id, answer) => j('POST', `/hitl/${encodeURIComponent(id)}/answer`, { answer }),
   voices: () => j('GET', P('/voice/voices')),
   settings: () => j('GET', P('/settings')),
-  setLlm: (provider, model) => j('POST', P('/settings/llm'), { provider, model }),
   setProjectFolder: (path) => j('POST', P('/settings/project-folder'), { path }),
   // Focus areas are a per-profile persona attribute (settings.json → injected into
   // the agent's context). Active-profile setter (Settings modal).

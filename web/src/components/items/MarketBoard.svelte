@@ -2,7 +2,7 @@
   // "The Exchange" — editorial broadsheet rendering of a MarketBoard A2UI surface.
   // Shares the day/night editorial language with NewsWire/WeatherCard
   // (tokens/editorial.css, theme-aware via [data-theme]). First quote = the lead;
-  // the rest form a ruled movers table. Vermillion = down, editorial green = up.
+  // the rest form a ruled movers table. Vermilion = down, editorial green = up.
   let { data = {} } = $props()
 
   const quotes = $derived((Array.isArray(data.quotes) ? data.quotes : []).filter(Boolean))

@@ -164,6 +164,13 @@ State lives under `~/.ag2assistant/` (settings, sessions, memory, tasks); genera
 - [Usage Guide](docs/usage.md) — CLI commands, configuration, channels
 - [Deployment](docs/deployment.md) — install tiers, Docker/Compose, self-hosting
 
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) to get set up
+and [AGENTS.md](AGENTS.md) for the development guidelines. To report a security
+issue, follow [.github/SECURITY.md](.github/SECURITY.md) (please don't open a
+public issue).
+
 ## License
 
 [Apache License 2.0](LICENSE)

@@ -48,12 +48,31 @@
 .settingsbtn { display: inline-flex; align-items: center; gap: 7px; width: 100%; text-align: left; font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 8px 11px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .settingsbtn:hover { border-color: var(--accent); color: var(--accent); }
 
-.settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 11px 13px; cursor: pointer; }
-.settings .setrow:hover { border-color: var(--accent); }
+/* Info row + a REAL action button beside it (design rule: actions are buttons,
+   never trailing "text →" affordances inside the box — see AGENTS.md). */
+.settings .setrowwrap { display: flex; align-items: center; gap: 8px; }
+.settings .setrowwrap .setrow { flex: 1; min-width: 0; }
+.settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 11px 13px; }
 .settings .setrow .sk { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; flex: none; }
 .settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.settings .setrow .sgo { color: var(--accent); font-size: 12px; flex: none; }
-.settings .setscroll { display: flex; flex-direction: column; gap: 8px; max-height: 64vh; overflow-y: auto; }
+/* Paged Settings: fixed-size modal, sidebar nav on the left, scrolling page on the
+   right. .setscroll keeps its flex-column (page children — incl. .mcppaste — rely
+   on it) but now flexes to fill .setbody instead of capping at 64vh. */
+.modal.settings { width: min(860px, 94vw); height: min(86vh, 780px); }
+.settings .setbody { display: flex; flex-direction: row; gap: 16px; flex: 1; min-height: 0; }
+.settings .setnav { display: flex; flex-direction: column; gap: 2px; flex: none; width: 170px; padding-right: 16px; border-right: 1px solid var(--line); overflow-y: auto; }
+.settings .setnavbtn { display: block; width: 100%; text-align: left; border: none; background: none; color: var(--ink); font: inherit; font-size: 13px; border-radius: var(--radius-sm); padding: 8px 11px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.settings .setnavbtn:hover { background: var(--surface-hover); }
+.settings .setnavbtn.on { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-semibold); }
+.settings .setscroll { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; overflow-y: auto; }
+/* Narrow: nav becomes a horizontal, scrollable tab strip above the page. */
+@media (max-width: 720px) {
+  .settings .setbody { flex-direction: column; gap: 12px; }
+  .settings .setnav { flex-direction: row; width: auto; padding-right: 0; padding-bottom: 8px; border-right: none; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; }
+  /* width:auto overrides the sidebar's width:100% — without it each tab fills the
+     whole strip and only one is visible at a time. */
+  .settings .setnavbtn { flex: none; width: auto; white-space: nowrap; }
+}
 .settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
 /* Marks a section that applies to the whole install, not the titled profile. */
 .settings .setsec .setwide { font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
@@ -95,6 +114,13 @@
 .memory .okmsg { color: #3ba55d; font-size: 13px; }
 .settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
 .settings .linkbtn:hover { color: #d8552f; }
+/* Disabled linkbtns must LOOK disabled too (Edit/Delete on LLM rows grey out while
+   the editor is open) — without this they only lose their click, not their look. */
+.settings .linkbtn:disabled { opacity: .4; cursor: default; }
+.settings .linkbtn:disabled:hover { color: var(--muted); }
+/* "Advanced ●" per-provider config button when options are set for that provider */
+.settings .linkbtn.advset { color: var(--accent); }
+.settings .linkbtn.advset:hover { color: var(--accent); }
 .settings .setcheck { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; padding: 2px 0; }
 .settings .setcheck input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .settings .mcprow { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
@@ -126,13 +152,46 @@
 .settings .mcpdraft .kp { width: auto; min-width: 60px; }
 .settings .mcpdraft .mcpenvkey { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
 .settings .mcpcmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+/* ── Models page (named LLM configs) ─────────────────────────────────────────
+   Config rows reuse the .mcprow card shape; templates reuse the .mcpcat grid.
+   Only the row-internal bits (logo, name/sub, key chip, active badge, test
+   status) and the inline form add new classes, in the existing naming style. */
+/* Env-override banner: the active config is shadowed by env vars until they unset. */
+.settings .llmenv { font-size: 12.5px; color: var(--ink); background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 11px; }
+.settings .llmrow { display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.settings .llmrow.active { border-color: var(--accent); }
+.settings .llmlogo { width: 20px; height: 20px; flex: none; opacity: .85; object-fit: contain; }
+.settings .llmlogo.sm { width: 16px; height: 16px; }
+.settings .llmmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings .llmname { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.settings .llmbadge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; }
+.settings .llmsub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.settings .llmkey { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--surface-sunk); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; }
+.settings .llmkey.warn { color: #d8552f; border-color: color-mix(in srgb, #d8552f 45%, var(--line)); }
+/* Per-row Test status — the McpServers health-map vocabulary (grey → green/red). */
+.settings .llmtest { font-size: 12px; color: var(--muted); }
+.settings .llmtest.ok { color: #3ba55d; }
+.settings .llmtest.bad { color: #d8552f; }
+/* Inline config form (create/edit) — stacked label + field, in a sunk card. */
+.settings .llmform { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface-sunk); }
+.settings .llmfield { display: flex; flex-direction: column; gap: 5px; }
+.settings .llmfield > label, .settings .llmfield > .llmlabel { font-size: 12px; font-weight: 600; color: var(--muted); }
+.settings .llmfield input, .settings .llmfield select { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
+.settings .llmfield input:focus, .settings .llmfield select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.settings .llmhint { font-size: 11px; font-weight: 400; color: var(--muted); }
+.settings .llmkeyfield { display: flex; align-items: center; gap: 6px; }
+.settings .llmkeyfield input { flex: 1; }
+.settings .advtoggle { align-self: flex-start; color: var(--accent); }
+.settings .advtoggle:hover { color: var(--accent); }
+.settings .llmadv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; min-height: 82px; resize: vertical; background: var(--bg); color: var(--ink); }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
 .drow.on { background: var(--code); }
 .drow .sub { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; gap: 6px; }
 .tag { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 1px 7px; border-radius: var(--radius-pill); border: 1px solid var(--line); }
-.tag.sched { color: color-mix(in srgb, var(--accent) 68%, #000); border: none; padding: 0; }
+.tag.sched { color: color-mix(in srgb, var(--accent) 72%, var(--text)); border: none; padding: 0; font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* task rows: status icon + title (+ recurrence / unread badges) */
 .drow.trow { display: flex; align-items: center; gap: 8px; }
@@ -408,6 +467,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 }
 .modal h2 { margin: 0; }
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
+/* A dialog opened from INSIDE another modal (e.g. Settings → Advanced provider
+   config) stacks above it — base modal is z 20/21. */
+.modal-backdrop.over { z-index: 29; }
+.modal.over { z-index: 30; }
 .modal .muted { color: var(--muted); }
 /* Google modal setup steps */
 .gsteps { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; color: var(--ink); }

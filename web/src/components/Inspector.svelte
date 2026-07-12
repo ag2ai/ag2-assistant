@@ -20,7 +20,7 @@
 <aside class="inspector ag2-slide-left">
   <div class="insp-head">
     <span class="insp-title">AG2 events</span>
-    <button class="linklike" onclick={() => ($poweredByOpen = true)}>Powered by AG2 →</button>
+    <button class="linklike" onclick={() => ($poweredByOpen = true)}>Powered by AG2</button>
     <button class="insp-x" title="Hide AG2 view" aria-label="Hide AG2 view" onclick={() => ($ag2View = false)}><Icon name="x" size={16} /></button>
   </div>
   <div class="insp-sub">

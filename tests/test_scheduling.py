@@ -1,14 +1,15 @@
-"""Task scheduling — recurrence parsing + the deterministic poll loop."""
+"""Task scheduling — cron recurrence parsing + the deterministic poll loop."""
 
 from datetime import datetime, timedelta
 
 from assistant.tasks import TaskStatus, TaskStore
 from assistant.tasks.scheduling import (
     Scheduler,
+    describe_cron,
     first_occurrence,
     is_due,
     next_occurrence,
-    parse_recurrence,
+    normalize_cron,
     validate_schedule,
 )
 
@@ -16,35 +17,41 @@ from assistant.tasks.scheduling import (
 def test_validate_schedule_accepts_valid_and_rejects_malformed():
     good = "2030-01-01T09:00:00+10:00"
     # valid combinations
-    assert validate_schedule(good, "daily", require_when=True) is None
-    assert validate_schedule(good, "weekdays", require_when=True) is None
+    assert validate_schedule(good, "0 9 * * *", require_when=True) is None
+    assert validate_schedule(good, "0 4-14 * * 1-5", require_when=True) is None
+    assert validate_schedule(good, "@daily", require_when=True) is None
     assert validate_schedule(good, "", require_when=True) is None  # one-off
     assert validate_schedule("", "off") is None  # reschedule: stop repeating, keep time
     assert validate_schedule("", "") is None  # reschedule: keep both
     # malformed when / missing required when / malformed recurrence → correctable error
     assert "date/time" in (validate_schedule("banana", "", require_when=True) or "")
     assert "required" in (validate_schedule("", "", require_when=True) or "")
-    assert "recurrence" in (validate_schedule(good, "every blue moon", require_when=True) or "")
+    assert "cron" in (validate_schedule(good, "every blue moon", require_when=True) or "")
+    assert "cron" in (validate_schedule(good, "daily", require_when=True) or "")  # old grammar
+    assert "cron" in (validate_schedule(good, "99 * * * *", require_when=True) or "")
 
 
-def test_parse_recurrence_intervals():
-    assert parse_recurrence("daily") == {"kind": "interval", "delta": timedelta(days=1)}
-    assert parse_recurrence("Hourly")["delta"] == timedelta(hours=1)
-    assert parse_recurrence("every 30 minutes")["delta"] == timedelta(minutes=30)
-    assert parse_recurrence("every 2 hours")["delta"] == timedelta(hours=2)
-    assert parse_recurrence("every week")["delta"] == timedelta(weeks=1)
-    assert parse_recurrence("") is None
-    assert parse_recurrence(None) is None
-    assert parse_recurrence("whenever") is None
-    assert parse_recurrence("fortnightly") is None
+def test_normalize_cron():
+    assert normalize_cron("0 9 * * *") == "0 9 * * *"
+    assert normalize_cron("@hourly") == "0 * * * *"
+    assert normalize_cron("@Daily") == "0 0 * * *"
+    assert normalize_cron("@weekly") == "0 0 * * 0"
+    assert normalize_cron("") is None
+    assert normalize_cron(None) is None
+    assert normalize_cron("hourly") is None  # bare names are not cron
+    assert normalize_cron("0 4-14 * *") is None  # wrong field count
+    assert normalize_cron("99 * * * *") is None  # bad minute
 
 
-def test_parse_recurrence_days():
-    assert parse_recurrence("weekdays") == {"kind": "days", "days": frozenset({0, 1, 2, 3, 4})}
-    assert parse_recurrence("weekends")["days"] == frozenset({5, 6})
-    assert parse_recurrence("mon,wed,fri")["days"] == frozenset({0, 2, 4})
-    assert parse_recurrence("every monday and friday")["days"] == frozenset({0, 4})
-    assert parse_recurrence("tuesdays")["days"] == frozenset({1})
+def test_describe_cron():
+    # minute-0 + hour-range gets its cadence restored (cron-descriptor omits it)
+    assert (
+        describe_cron("0 4-14 * * 1-5")
+        == "Every hour, between 04:00 and 14:59, Monday through Friday"
+    )
+    assert describe_cron("30 4 * * *") == "At 04:30"
+    assert describe_cron("@hourly") == "Every hour"
+    assert describe_cron("nonsense") is None
 
 
 def test_is_due():
@@ -55,34 +62,35 @@ def test_is_due():
     assert is_due("not-a-date", now) is False
 
 
-def test_next_occurrence_skips_missed_slots():
-    now = datetime.now().astimezone()
-    anchor = (now - timedelta(days=3, hours=-9)).isoformat()  # a few days ago
-    nxt = next_occurrence("daily", anchor, now)
-    assert nxt is not None and nxt > now
-    # it lands on a whole-day multiple from the anchor (time-of-day preserved)
-    assert (nxt - datetime.fromisoformat(anchor)) % timedelta(days=1) == timedelta(0)
-    assert next_occurrence(None, anchor, now) is None  # not recurring
+def test_next_occurrence_respects_window_and_days():
+    # Thursday 2026-07-09 19:30 → hourly-weekday-window cron skips to Friday 04:00
+    now = datetime.fromisoformat("2026-07-09T19:30:00+10:00")
+    nxt = next_occurrence("0 4-14 * * 1-5", now)
+    assert nxt.isoformat() == "2026-07-10T04:00:00+10:00"
+    # inside the window it's simply the next hour
+    inside = datetime.fromisoformat("2026-07-10T05:10:00+10:00")
+    assert next_occurrence("0 4-14 * * 1-5", inside).isoformat() == "2026-07-10T06:00:00+10:00"
+    # Friday 14:00 fired → next is Monday 04:00 (weekend skipped)
+    fri_last = datetime.fromisoformat("2026-07-10T14:00:00+10:00")
+    assert next_occurrence("0 4-14 * * 1-5", fri_last).isoformat() == "2026-07-13T04:00:00+10:00"
+    assert next_occurrence(None, now) is None  # not recurring
+    assert next_occurrence("banana", now) is None
 
 
-def test_weekday_recurrence_skips_weekends():
-    # Friday 2026-06-19 05:00 → next weekday occurrence is Monday 2026-06-22 05:00
-    fri_5am = "2026-06-19T05:00:00+10:00"
-    now = datetime.fromisoformat("2026-06-19T06:00:00+10:00")  # just after Fri 5am
-    nxt = next_occurrence("weekdays", fri_5am, now)
-    assert nxt.weekday() == 0 and nxt.hour == 5  # Monday 05:00, weekend skipped
-    assert nxt.date().isoformat() == "2026-06-22"
-
-
-def test_first_occurrence_snaps_to_matching_weekday():
-    # scheduling 'weekdays 05:00' on a Saturday should start Monday
-    sat = datetime.fromisoformat("2026-06-20T09:00:00+10:00")  # Saturday
-    first = first_occurrence("weekdays", "2026-06-20T05:00:00+10:00", sat)
-    assert first.weekday() == 0 and first.hour == 5  # Monday 05:00
-    # intervals are honoured as-is
+def test_first_occurrence_snaps_to_cron():
+    # scheduling a weekday cron with a Saturday `when` starts Monday
+    first = first_occurrence("0 5 * * 1-5", "2026-07-11T05:00:00+10:00")  # a Saturday
+    assert first.weekday() == 0 and first.hour == 5
+    assert first.date().isoformat() == "2026-07-13"
+    # a `when` exactly on a cron match is honoured as the first occurrence
+    first = first_occurrence("0 4-14 * * 1-5", "2026-07-10T04:00:00+10:00")
+    assert first.isoformat() == "2026-07-10T04:00:00+10:00"
+    # `when` is a not-before floor for the cron
+    first = first_occurrence("@hourly", "2030-01-01T09:30:00+10:00")
+    assert first.isoformat() == "2030-01-01T10:00:00+10:00"
+    # one-offs are honoured as-is
     assert (
-        first_occurrence("daily", "2026-06-20T05:00:00+10:00", sat).isoformat()
-        == "2026-06-20T05:00:00+10:00"
+        first_occurrence("", "2026-07-11T05:00:00+10:00").isoformat() == "2026-07-11T05:00:00+10:00"
     )
 
 

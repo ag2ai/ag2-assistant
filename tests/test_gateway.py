@@ -876,3 +876,362 @@ async def test_identity_document_endpoint_parity():
     )
     cli_doc = await build_profile_store(cli_store).read(PROFILE_PATH)
     assert endpoint_doc == cli_doc
+
+
+# ---- System health endpoint (the status-dot source, GET /health) ---------------
+
+
+def _fake_key_status(*, present: bool):
+    """A secrets.status() stand-in: all three providers set (or not), plus ollama."""
+    flag = {"set": present, "hint": "…key" if present else ""}
+    return {
+        "openai": dict(flag),
+        "gemini": dict(flag),
+        "anthropic": dict(flag),
+        "ollama": {"set": False, "base_url": "http://localhost:11434"},
+    }
+
+
+def test_profile_health_ok_and_down(profile_app, monkeypatch):
+    """The cheap health aggregate: healthy when the agent is up and the configured
+    provider has a key; 'down' (agent can't run) when the key is missing. The dot
+    reads `overall`; the panel reads `checks`."""
+    import assistant.secrets as secrets
+
+    client, pid = profile_app
+
+    # Provider key present + faked agent alive → all core signals green.
+    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
+    body = client.get(api(pid, "/health")).json()
+    assert body["overall"] == "ok"
+    ids = {c["id"] for c in body["checks"]}
+    assert ids == {"agent", "provider", "mcp", "channels", "google", "scheduler"}
+    agent = next(c for c in body["checks"] if c["id"] == "agent")
+    assert agent["state"] == "ok"
+    # MCP is config-only here (no probe, no servers configured) → off.
+    mcp = next(c for c in body["checks"] if c["id"] == "mcp")
+    assert mcp["state"] == "off" and mcp["servers"] == []
+
+    # Drop the provider key → the configured provider (gemini) has no key → down.
+    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=False))
+    body = client.get(api(pid, "/health")).json()
+    assert body["overall"] == "down"
+    provider = next(c for c in body["checks"] if c["id"] == "provider")
+    assert provider["state"] == "down"
+
+
+def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
+    """A messaging channel bound to this profile that failed to start (start error
+    recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
+    import assistant.profiles as profiles_mod
+    import assistant.secrets as secrets
+
+    client, pid = profile_app
+
+    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
+    # Bind discord to this profile and record a start error on the live manager.
+    monkeypatch.setattr(profiles_mod, "channel_bindings", lambda: {"discord": pid})
+    client.app.state.profiles.channel_errors["discord"] = "invalid bot token"
+
+    body = client.get(api(pid, "/health")).json()
+    assert body["overall"] == "warn"
+    channels = next(c for c in body["checks"] if c["id"] == "channels")
+    assert channels["state"] == "warn"
+    assert any(it["platform"] == "discord" and it["error"] for it in channels["items"])
+
+
+# ---- Named LLM configurations (global /api/llm-configs) ------------------------
+
+
+def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
+    """Create/update/use/delete named configs; the raw per-config key is never echoed
+    (only a set/hint), and a config's secret is cleaned up on delete."""
+    from assistant import secrets
+
+    client, pid = profile_app
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    # empty install
+    r = client.get("/api/llm-configs").json()
+    assert r == {"configs": [], "active": None, "env_override": None}
+
+    # create a local-server config with a secret key + activate
+    r = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "Local",
+            "type": "openai",
+            "model": "gemma-4",
+            "base_url": "http://192.168.0.55:8080/v1",
+            "api_key": "sk-secret-1234",
+            "activate": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    cid = body["config"]["id"]
+    assert body["ok"] is True and body["active"] == cid
+    # raw key never echoed — only the set/hint summary
+    assert body["config"]["key"] == {"set": True, "hint": "…1234"}
+    assert "sk-secret-1234" not in r.text
+
+    g = client.get("/api/llm-configs").json()
+    assert g["active"] == cid
+    assert g["configs"][0]["base_url"] == "http://192.168.0.55:8080/v1"
+    assert g["configs"][0]["key"] == {"set": True, "hint": "…1234"}
+    assert "sk-secret-1234" not in client.get("/api/llm-configs").text
+    # the honest key labels: its own key wins; the shared env slot is reported too
+    entry = g["configs"][0]
+    assert entry["key_source"] == "config"
+    assert entry["shared_key"]["env"] == "OPENAI_API_KEY"
+    assert entry["shared_key"]["set"] is False  # env cleared above
+
+    # update leaving api_key None → key unchanged, model changed
+    r = client.post(
+        f"/api/llm-configs/{cid}",
+        json={
+            "name": "Local",
+            "type": "openai",
+            "model": "gemma-5",
+            "base_url": "http://192.168.0.55:8080/v1",
+        },
+    )
+    assert r.status_code == 200
+    g = client.get("/api/llm-configs").json()
+    assert g["configs"][0]["model"] == "gemma-5"
+    assert g["configs"][0]["key"]["set"] is True  # untouched
+
+    # delete-active → 409
+    assert client.delete(f"/api/llm-configs/{cid}").status_code == 409
+
+    # add a second, switch to it, then the first is deletable
+    r2 = client.post("/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"})
+    cid2 = r2.json()["config"]["id"]
+    assert client.post(f"/api/llm-configs/{cid2}/use").status_code == 200
+    assert client.get("/api/llm-configs").json()["active"] == cid2
+
+    assert client.delete(f"/api/llm-configs/{cid}").status_code == 200
+    assert secrets.config_key(cid) == ""  # secret cleaned up
+
+    # unknown ids → 404
+    assert client.post("/api/llm-configs/c_ghost/use").status_code == 404
+    assert client.delete("/api/llm-configs/c_ghost").status_code == 404
+    assert (
+        client.post(
+            "/api/llm-configs/c_ghost", json={"name": "x", "type": "gemini", "model": "m"}
+        ).status_code
+        == 404
+    )
+
+
+def test_llm_config_dry_construct_rejects_bad_options(profile_app):
+    """A typo'd advanced kwarg fails the dry-construct (400 + the constructor's
+    message) and nothing is persisted."""
+    client, pid = profile_app
+    r = client.post(
+        "/api/llm-configs",
+        json={"name": "Bad", "type": "openai", "model": "m", "options": {"bogus_kwarg": 1}},
+    )
+    assert r.status_code == 400
+    assert "bogus_kwarg" in r.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []  # not saved
+
+
+def test_llm_config_env_override_surfaced(profile_app, monkeypatch):
+    """When AG2ASSISTANT_MODEL / _LLM_PROVIDER is set (they pin the model in
+    load_config), GET reports it so the UI can show the 'pinned by env' banner."""
+    client, pid = profile_app
+    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("AG2ASSISTANT_MODEL", "gpt-x")
+    assert client.get("/api/llm-configs").json()["env_override"] == {
+        "provider": "openai",
+        "model": "gpt-x",
+    }
+
+
+def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
+    """The /test endpoint runs a real PONG round-trip (agent faked here): a reply →
+    {ok, reply, latency_ms}; any exception or a timeout → 502 {ok:false, error}."""
+    import ag2
+
+    from assistant.gateway import app as app_mod
+
+    client, pid = profile_app
+    entry = client.post(
+        "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
+    ).json()["config"]
+
+    class _OkAgent:
+        def __init__(self, *a, **k):
+            pass
+
+        async def ask(self, *a, **k):
+            return FakeReply("PONG")
+
+    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    r = client.post(f"/api/llm-configs/{entry['id']}/test")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["reply"] == "PONG"
+    assert isinstance(body["latency_ms"], int)
+
+    class _BoomAgent:
+        def __init__(self, *a, **k):
+            pass
+
+        async def ask(self, *a, **k):
+            raise RuntimeError("nope-boom")
+
+    monkeypatch.setattr(ag2, "Agent", _BoomAgent)
+    r = client.post(f"/api/llm-configs/{entry['id']}/test")
+    assert r.status_code == 502
+    assert "nope-boom" in r.json()["error"]
+
+    # a wedged call trips the (monkeypatched-tiny) timeout → 502
+    class _HangAgent:
+        def __init__(self, *a, **k):
+            pass
+
+        async def ask(self, *a, **k):
+            await asyncio.sleep(0.5)
+            return FakeReply("late")
+
+    monkeypatch.setattr(ag2, "Agent", _HangAgent)
+    monkeypatch.setattr(app_mod, "_LLM_TEST_TIMEOUT_S", 0.01)
+    r = client.post(f"/api/llm-configs/{entry['id']}/test")
+    assert r.status_code == 502
+
+    # unknown id → 404
+    assert client.post("/api/llm-configs/c_ghost/test").status_code == 404
+
+
+def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
+    """POST /api/llm-configs/test pings an UNSAVED editor draft: nothing persisted,
+    a typed api_key is used for the call, a blank one falls back to the stored key
+    of the config named by ``id``, and validation errors come back as 400 (the
+    literal "test" segment must not be captured by the /{cid} update route)."""
+    import ag2
+
+    from assistant import llm_configs
+
+    client, pid = profile_app
+
+    captured = {}
+
+    class _OkAgent:
+        def __init__(self, name, config=None, **k):
+            captured["config"] = config
+
+        async def ask(self, *a, **k):
+            return FakeReply("PONG")
+
+    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+
+    # pure draft (no id): tested and NOT saved
+    r = client.post(
+        "/api/llm-configs/test",
+        json={
+            "name": "Draft",
+            "type": "openai",
+            "model": "gemma-4",
+            "base_url": "http://h:8080/v1",
+            "api_key": "sk-draft-key-1",
+        },
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert llm_configs.list_configs() == []  # nothing persisted
+    assert getattr(captured["config"], "api_key", None) == "sk-draft-key-1"  # draft key used
+
+    # editing an existing config with a stored key: blank draft key falls back to it
+    entry = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "E",
+            "type": "openai",
+            "model": "m",
+            "base_url": "http://h/v1",
+            "api_key": "sk-stored-key-2",
+        },
+    ).json()["config"]
+    r = client.post(
+        "/api/llm-configs/test",
+        json={
+            "id": entry["id"],
+            "name": "E",
+            "type": "openai",
+            "model": "m",
+            "base_url": "http://h/v1",
+        },
+    )
+    assert r.status_code == 200
+    assert getattr(captured["config"], "api_key", None) == "sk-stored-key-2"
+
+    # a bad draft (unknown type) → 400 with the validator's message, not a 404 from
+    # the update route misparsing "test" as a config id
+    r = client.post("/api/llm-configs/test", json={"name": "X", "type": "nope", "model": "m"})
+    assert r.status_code == 400
+    assert "type must be one of" in r.json()["error"]
+
+
+def test_llm_config_subscription_entry_view_signed_in(profile_app, monkeypatch):
+    """An openai_subscription config's row/chip need the live ChatGPT sign-in state and
+    a 'subscription' key_source so the UI can label it honestly without a 2nd fetch.
+    Endpoint fields are stripped for this type (codex_auth owns the endpoint)."""
+    from assistant import codex_auth
+
+    client, pid = profile_app
+    entry = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "Sub",
+            "type": "openai_subscription",
+            "model": "gpt-5.5",
+            "base_url": "http://sneaky/v1",  # must be ignored/stripped
+            "activate": True,
+        },
+    ).json()["config"]
+    assert entry["key_source"] == "subscription"
+    assert entry["base_url"] == ""
+
+    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": True, "account_id": "acc"})
+    assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is True
+
+    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": False})
+    assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is False
+
+
+def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monkeypatch):
+    """Testing a subscription draft flows through model_config's subscription branch:
+    the probe carries auth_mode=subscription, so the built client points at the ChatGPT
+    backend with the codex token and server-side storage disabled."""
+    import ag2
+
+    from assistant import codex_auth
+
+    client, pid = profile_app
+    monkeypatch.setattr(
+        codex_auth,
+        "creds_best_effort",
+        lambda: codex_auth.Creds(access_token="TOK", account_id="acc"),
+    )
+
+    captured = {}
+
+    class _OkAgent:
+        def __init__(self, name, config=None, **k):
+            captured["config"] = config
+
+        async def ask(self, *a, **k):
+            return FakeReply("PONG")
+
+    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    r = client.post(
+        "/api/llm-configs/test",
+        json={"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"},
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+    cfg = captured["config"]
+    assert type(cfg).__name__ == "OpenAIResponsesConfig"
+    assert cfg.base_url == codex_auth.BACKEND_BASE
+    assert cfg.api_key == "TOK"
+    assert cfg.store is False

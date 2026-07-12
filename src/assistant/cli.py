@@ -300,71 +300,105 @@ def profiles_list(
         typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.palette:8} {meta.workspace}")
 
 
-perms_app = typer.Typer(help="Manage folder access permissions (per-profile).")
+perms_app = typer.Typer(help="Manage folder + command permissions (install-wide).")
 app.add_typer(perms_app, name="permissions")
 
-_PROFILE_OPT = typer.Option(
-    None, "--profile", "-p", help="Profile id whose permissions to manage (default: active)."
-)
 
+def _permissions_store():
+    """The single install-wide PermissionStore (config.root_dir/permissions.json).
 
-def _permissions_store(profile: str | None):
-    """The PermissionStore for the resolved profile's dir (§4.7)."""
+    Grants are global now — one store, not per-profile — so these commands work even
+    with zero profiles (no profile resolution needed)."""
+    from assistant.config import load_config
     from assistant.permissions import PermissionStore
 
-    return PermissionStore(_resolve_profile_config(profile).data_dir / "permissions.json")
+    return PermissionStore(load_config().root_dir / "permissions.json")
 
 
 @perms_app.command("list")
-def permissions_list(profile: str | None = _PROFILE_OPT) -> None:
-    """List granted and blocked folders."""
-    store = _permissions_store(profile)
+def permissions_list() -> None:
+    """List granted/blocked folders and allowed commands."""
+    store = _permissions_store()
     granted = store.granted_folders()
     blocked = store.blocked_folders()
+    commands = store.granted_commands()
     typer.echo("Allowed folders:")
     typer.echo("\n".join(f"  ✓ {g}" for g in granted) or "  (none)")
     typer.echo("\nBlocked folders:")
     typer.echo("\n".join(f"  ✗ {b}" for b in blocked) or "  (none)")
+    typer.echo("\nAllowed commands:")
+    typer.echo("\n".join(f"  ✓ {c}" for c in commands) or "  (none)")
 
 
 @perms_app.command("allow")
-def permissions_allow(
-    folder: str = typer.Argument(help="Folder path to allow."),
-    profile: str | None = _PROFILE_OPT,
-) -> None:
+def permissions_allow(folder: str = typer.Argument(help="Folder path to allow.")) -> None:
     """Permanently allow access to a folder."""
-    _permissions_store(profile).grant(folder)
+    _permissions_store().grant(folder)
     typer.echo(f"Allowed: {folder}")
 
 
 @perms_app.command("revoke")
-def permissions_revoke(
-    folder: str = typer.Argument(help="Folder path to revoke."),
-    profile: str | None = _PROFILE_OPT,
-) -> None:
+def permissions_revoke(folder: str = typer.Argument(help="Folder path to revoke.")) -> None:
     """Revoke a previously granted folder."""
-    ok = _permissions_store(profile).revoke(folder)
+    ok = _permissions_store().revoke(folder)
     typer.echo(f"Revoked: {folder}" if ok else f"Not in allow list: {folder}")
 
 
 @perms_app.command("block")
-def permissions_block(
-    folder: str = typer.Argument(help="Folder path to block."),
-    profile: str | None = _PROFILE_OPT,
-) -> None:
+def permissions_block(folder: str = typer.Argument(help="Folder path to block.")) -> None:
     """Permanently block a folder (the agent will never be allowed to access it)."""
-    _permissions_store(profile).block(folder)
+    _permissions_store().block(folder)
     typer.echo(f"Blocked: {folder}")
 
 
 @perms_app.command("unblock")
-def permissions_unblock(
-    folder: str = typer.Argument(help="Folder path to unblock."),
-    profile: str | None = _PROFILE_OPT,
-) -> None:
+def permissions_unblock(folder: str = typer.Argument(help="Folder path to unblock.")) -> None:
     """Remove a folder from the block list."""
-    ok = _permissions_store(profile).unblock(folder)
+    ok = _permissions_store().unblock(folder)
     typer.echo(f"Unblocked: {folder}" if ok else f"Not in block list: {folder}")
+
+
+@perms_app.command("allow-command")
+def permissions_allow_command(
+    rule: str = typer.Argument(
+        help="Command rule: a bare tool (e.g. 'gmail_send') or a shell prefix rule "
+        "(e.g. 'run_shell_command(git *)')."
+    ),
+) -> None:
+    """Permanently allow a tool/command rule."""
+    from assistant.permissions import command_rule, parse_command_rule
+
+    try:
+        tool, prefix = parse_command_rule(rule)
+        canonical = command_rule(tool, prefix)
+        # grant_command also rejects bare grants on shell tools (per-prefix only).
+        _permissions_store().grant_command(canonical)
+    except ValueError as exc:
+        typer.echo(
+            f"Cannot allow {rule!r}: {exc}. Use a bare tool name (gmail_send) or "
+            "'tool(prefix *)' (e.g. \"run_shell_command(git *)\")."
+        )
+        raise typer.Exit(1)
+    typer.echo(f"Allowed command: {canonical}")
+
+
+@perms_app.command("revoke-command")
+def permissions_revoke_command(
+    rule: str = typer.Argument(help="Command rule to revoke (as shown by 'list')."),
+) -> None:
+    """Revoke a previously allowed command rule."""
+    from assistant.permissions import command_rule, parse_command_rule
+
+    try:
+        canonical = command_rule(*parse_command_rule(rule))
+    except ValueError:
+        typer.echo(
+            f"Not a valid rule: {rule!r}. Use a bare tool name (gmail_send) or "
+            "'tool(prefix *)' (e.g. \"run_shell_command(git *)\")."
+        )
+        raise typer.Exit(1)
+    ok = _permissions_store().revoke_command(canonical)
+    typer.echo(f"Revoked command: {canonical}" if ok else f"Not in allow list: {canonical}")
 
 
 google_app = typer.Typer(help="Manage the Google (Gmail/Calendar/Drive) integration.")
@@ -596,6 +630,70 @@ def version() -> None:
     from assistant import __version__
 
     typer.echo(f"ag2-assistant {__version__}")
+
+
+# --- ChatGPT-subscription auth ("Sign in with ChatGPT") --------------------- #
+
+auth_app = typer.Typer(name="auth", help="Sign in with a ChatGPT/Codex subscription (OpenAI).")
+app.add_typer(auth_app, name="auth")
+
+
+@auth_app.command("login")
+def auth_login(
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Print the URL and paste the code (headless)."
+    ),
+) -> None:
+    """Sign in with ChatGPT to run the assistant on your Codex/ChatGPT subscription.
+
+    Unofficial and likely against OpenAI's Terms of Service — your account could be
+    restricted. To use it, also set the provider to OpenAI in subscription mode:
+    `AG2ASSISTANT_LLM_PROVIDER=openai AG2ASSISTANT_OPENAI_AUTH_MODE=subscription`.
+    """
+    from assistant import codex_auth
+
+    typer.echo("⚠️  Unofficial — this uses your ChatGPT subscription in a way OpenAI")
+    typer.echo("   does not officially support; your account could be rate-limited.\n")
+    try:
+        if no_browser:
+            verifier, challenge = codex_auth.generate_pkce()
+            import secrets as _secrets
+
+            state = _secrets.token_urlsafe(24)
+            url = codex_auth.build_authorize_url(challenge, state)
+            typer.echo("Open this URL, sign in, then paste the `code` from the redirect URL:\n")
+            typer.echo(url + "\n")
+            code = typer.prompt("code").strip()
+            codex_auth.exchange_code(code, verifier)
+        else:
+            typer.echo("Opening your browser to sign in with ChatGPT…")
+            codex_auth.run_local_login()
+    except codex_auth.CodexAuthError as exc:
+        typer.echo(f"Sign-in failed: {exc}")
+        raise typer.Exit(1) from None
+    st = codex_auth.status()
+    acct = st.get("account_id") or "unknown account"
+    typer.echo(f"Signed in ✓ ({acct})")
+
+
+@auth_app.command("logout")
+def auth_logout() -> None:
+    """Remove the stored ChatGPT-subscription tokens."""
+    from assistant import codex_auth
+
+    typer.echo("Signed out." if codex_auth.logout() else "Not signed in.")
+
+
+@auth_app.command("status")
+def auth_status() -> None:
+    """Show whether you're signed in with ChatGPT."""
+    from assistant import codex_auth
+
+    st = codex_auth.status()
+    if st.get("signed_in"):
+        typer.echo(f"Signed in ✓ (account: {st.get('account_id') or 'unknown'})")
+    else:
+        typer.echo("Not signed in. Run `ag2-assistant auth login`.")
 
 
 if __name__ == "__main__":

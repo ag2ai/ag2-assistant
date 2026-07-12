@@ -26,6 +26,8 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "assistant"
 _ALLOWLIST = {
     "config.py",  # root resolution itself
     "secrets.py",  # global secrets.json
+    "llm_configs.py",  # install-wide named LLM configs (llm_configs.json), like secrets
+    "codex_auth.py",  # global ChatGPT-subscription tokens (account-level, like google_auth)
     "profiles.py",  # the registry + default-workspace seed
     "usage.py",  # pricing read ONLY (asserted below)
     "integrations/google_auth.py",  # global OAuth files (routed via data_dir())
@@ -75,9 +77,9 @@ def test_usage_data_dir_is_pricing_only():
     usage_hits = [(ln, txt) for rel, ln, txt in _iter_hits() if rel == "usage.py"]
     assert usage_hits, "expected usage.py to read pricing.json via data_dir()"
     for _ln, txt in usage_hits:
-        assert (
-            "pricing" in txt
-        ), f"usage.py data_dir() hit is not the pricing read (profile-owned leak?): {txt}"
+        assert "pricing" in txt, (
+            f"usage.py data_dir() hit is not the pricing read (profile-owned leak?): {txt}"
+        )
 
 
 def test_google_auth_uses_data_dir_not_path_home():
@@ -86,9 +88,9 @@ def test_google_auth_uses_data_dir_not_path_home():
     rel = "integrations/google_auth.py"
     hits = [txt for r, _ln, txt in _iter_hits() if r == rel]
     assert hits, "expected google_auth.py to locate its OAuth files via data_dir()"
-    assert all(
-        "Path.home()" not in txt for txt in hits
-    ), "google_auth.py must locate OAuth files via data_dir(), not Path.home()"
+    assert all("Path.home()" not in txt for txt in hits), (
+        "google_auth.py must locate OAuth files via data_dir(), not Path.home()"
+    )
 
 
 def test_settings_importers_pass_paths():

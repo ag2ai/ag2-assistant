@@ -10,6 +10,18 @@
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
 
+  // Compact form of a cron description for the narrow schedule tag: abbreviate
+  // day names and collapse "Every hour, between X and Y" → "Hourly X–Y"
+  // ("Every hour, between 04:00 and 14:59, Monday through Friday" →
+  // "Hourly 04:00–14:59, Mon–Fri"). Full text stays in the tooltip alongside
+  // the raw cron.
+  const DAY_ABBR = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun' }
+  const shortSched = (desc) => (desc || '')
+    .replace(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/g, (d) => DAY_ABBR[d])
+    .replace(/\bEvery hour, between (\S+) and (\S+)/, 'Hourly $1–$2')
+    .replace(/\b[Bb]etween (\S+) and (\S+)/, '$1–$2')
+    .replace(/ through /g, '–')
+
   // Profile switcher chips (§5.4). A row of palette-tinted monogram chips at the
   // top of the Drawer: the active profile filled, others outlined; click switches
   // (full-page nav — App.svelte's boot makes the URL pid the persisted choice and
@@ -345,7 +357,7 @@
           </div>
           {#if g.task.recurrence || nextIn}
             <div class="tmeta">
-              {#if g.task.recurrence}<span class="tag sched" title="repeats {g.task.recurrence}">{g.task.recurrence}</span>{/if}
+              {#if g.task.recurrence}<span class="tag sched" title="{g.task.recurrence}{g.task.recurrence_desc ? ' — ' + g.task.recurrence_desc : ''}">{shortSched(g.task.recurrence_desc) || g.task.recurrence}</span>{/if}
               {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
             </div>
           {/if}

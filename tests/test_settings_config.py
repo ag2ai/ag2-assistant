@@ -39,16 +39,21 @@ def test_ollama_base_url(monkeypatch, tmp_path):
 
 
 def test_load_config_no_longer_overlays_settings(monkeypatch, tmp_path):
-    """The UI-settings LLM overlay moved out of load_config() into the per-profile
-    config_factory (spec §4.1). load_config() is now profile-agnostic: defaults ←
-    config.json ← env only, no settings.json overlay."""
+    """A per-profile settings.json llm block is NOT consulted by load_config() — the
+    assistant model is the install-wide named-config store now. load_config() derives
+    only defaults ← config.json ← active llm config ← env; with no store it stays on
+    the flat gemini defaults, ignoring any legacy settings.json llm block."""
+    import json
+
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
     from assistant.config import data_dir, load_config
-    from assistant.settings import Settings
 
-    Settings(data_dir() / "settings.json").set_llm(provider="anthropic", model="claude-x")
+    # A stray legacy llm block written straight into a settings.json is ignored.
+    settings_file = data_dir() / "settings.json"
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(json.dumps({"llm": {"provider": "anthropic", "model": "claude-x"}}))
     cfg = load_config()
     assert cfg.llm.provider == "gemini"  # default, settings NOT overlaid
     assert cfg.llm.model.startswith("gemini")
@@ -82,3 +87,52 @@ def test_model_config_key_env_by_provider(monkeypatch, tmp_path):
     cfg.llm.model = "gpt-x"
     mc = model_config(cfg)
     assert getattr(mc, "api_key", None) == "sk-openai-test"  # picked OPENAI_API_KEY by provider
+
+
+def test_model_config_provider_options_openai_compatible(monkeypatch, tmp_path):
+    """base_url in the openai advanced options points the client at an
+    OpenAI-compatible server AND defaults to the Chat Completions API (those
+    servers rarely implement /v1/responses); "api": "responses" pins it back."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    from assistant.agent import model_config
+    from assistant.config import Config
+
+    cfg = Config()
+    cfg.llm.provider = "openai"
+    cfg.llm.model = "gemma-4-31B-it-qat"
+    cfg.llm.provider_options = {"openai": {"base_url": "http://192.168.0.55:8080/v1"}}
+    mc = model_config(cfg)
+    assert type(mc).__name__ == "OpenAIConfig"  # chat completions for compat servers
+    assert mc.base_url == "http://192.168.0.55:8080/v1"
+    assert mc.model == "gemma-4-31B-it-qat"
+
+    cfg.llm.provider_options["openai"]["api"] = "responses"
+    mc2 = model_config(cfg)
+    assert type(mc2).__name__ == "OpenAIResponsesConfig"
+    assert mc2.base_url == "http://192.168.0.55:8080/v1"
+
+    cfg.llm.provider_options["openai"]["api"] = "grpc"  # unknown surface → clear error
+    with pytest.raises(ValueError):
+        model_config(cfg)
+
+    # a typo'd kwarg raises at construction (what the endpoint's dry-run catches)
+    cfg.llm.provider_options["openai"] = {"bogus_kwarg": 1}
+    with pytest.raises(TypeError):
+        model_config(cfg)
+
+
+def test_provider_options_suppress_default_aggregate_model(monkeypatch, tmp_path):
+    """With a custom base_url the cheap-tier default (an OpenAI model name) would
+    not exist on the server — fall back to the main model, like Ollama does."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from assistant.agent import cheap_model
+    from assistant.config import Config
+
+    cfg = Config()
+    cfg.llm.provider = "openai"
+    assert cheap_model(cfg) == "gpt-5-mini"  # normal OpenAI keeps the cheap default
+    cfg.llm.provider_options = {"openai": {"base_url": "http://192.168.0.55:8080/v1"}}
+    assert cheap_model(cfg) is None  # custom server → reuse the main model
+    cfg.llm.aggregate_model = "explicit-model"
+    assert cheap_model(cfg) == "explicit-model"  # explicit choice always wins

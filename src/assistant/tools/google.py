@@ -110,8 +110,8 @@ async def gmail_read(
     except Exception as exc:
         return f"Could not read message {message_id}: {exc}"
     return (
-        f"From: {hdrs.get('From','')}\nTo: {hdrs.get('To','')}\n"
-        f"Date: {hdrs.get('Date','')}\nSubject: {hdrs.get('Subject','')}\n\n{body.strip()}"
+        f"From: {hdrs.get('From', '')}\nTo: {hdrs.get('To', '')}\n"
+        f"Date: {hdrs.get('Date', '')}\nSubject: {hdrs.get('Subject', '')}\n\n{body.strip()}"
     )
 
 

@@ -60,7 +60,7 @@
     {#if $taskPanel.objective}<div>{$taskPanel.objective}</div>{/if}
     {#if runTime}<div class="tasktime"><Icon name="clock" size={13} /> {runTime}</div>{/if}
     {#if $taskPanel.scheduled_for}
-      <div class="note" style="text-align:left;margin:6px 0;display:inline-flex;align-items:center;gap:6px"><Icon name="clock" size={13} /> {fmtDateTime($taskPanel.scheduled_for)}{$taskPanel.recurrence ? ' · repeats ' + $taskPanel.recurrence : ' (one-off)'}</div>
+      <div class="note" style="text-align:left;margin:6px 0;display:inline-flex;align-items:center;gap:6px" title={$taskPanel.recurrence ? 'repeats ' + $taskPanel.recurrence : ''}><Icon name="clock" size={13} /> {fmtDateTime($taskPanel.scheduled_for)}{$taskPanel.recurrence ? ' · ' + ($taskPanel.recurrence_desc || 'repeats ' + $taskPanel.recurrence) : ' (one-off)'}</div>
     {/if}
     {#if $taskPanel.run_of}
       <div class="note" style="text-align:left;display:inline-flex;align-items:center;gap:6px">

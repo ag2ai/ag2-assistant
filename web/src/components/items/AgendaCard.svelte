@@ -55,7 +55,7 @@
                 {#if safeUrl(e.url)}<a href={safeUrl(e.url)} target="_blank" rel="noopener noreferrer">{e.title}</a>{:else}{e.title}{/if}
               </div>
               {#if e.location}<div class="eloc">{e.location}</div>{/if}
-              {#if safeUrl(e.joinUrl)}<a class="join" href={safeUrl(e.joinUrl)} target="_blank" rel="noopener noreferrer">Join meeting →</a>{/if}
+              {#if safeUrl(e.joinUrl)}<a class="join" href={safeUrl(e.joinUrl)} target="_blank" rel="noopener noreferrer">Join meeting</a>{/if}
             </div>
           </div>
         {/each}
