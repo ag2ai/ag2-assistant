@@ -14,16 +14,21 @@ services:
     image: ghcr.io/ag2ai/ag2-assistant:latest
     ports:
       - "8800:8800"
-      # ChatGPT ("Sign in with ChatGPT") OAuth loopback callback. The sign-in flow
-      # redirects your browser to http://localhost:1455/auth/callback, which the
-      # gateway serves from *inside* the container — so the port must be published
-      # for the automatic one-click flow to complete. The redirect URI is fixed to
-      # localhost:1455 (it's the Codex CLI's registered OAuth client), so this port
-      # is not configurable. Only needed when the browser runs on THIS host; for a
-      # remote deployment use the "paste the code manually" fallback in the UI.
-      # NOTE: while this container is up it holds host:1455, so `codex login` on the
-      # host can't bind 1455 in the meantime.
-      - "1455:1455"
+      # Port 1455 (the "Sign in with ChatGPT" OAuth callback) is deliberately NOT
+      # published. The browser redirect to localhost:1455 will dead-end with
+      # "localhost refused to connect" — that is EXPECTED, and the sign-in modal
+      # says so: click "Paste the code manually", paste the URL from the dead tab's
+      # address bar (or just its `code=` value), and the flow completes. The token
+      # then persists in /data and refreshes itself, so this is a one-time step.
+      #
+      # We don't publish 1455 because it would be held for the entire life of the
+      # container just to serve a one-off login — and while held it silently BREAKS
+      # ChatGPT sign-in in other tools (Codex CLI, the VS Code extension), which
+      # share OpenAI's OAuth client and its hardcoded localhost:1455 redirect. The
+      # failure isn't a clean "port in use": Docker also publishes on the IPv6
+      # wildcard and `localhost` resolves to ::1 first on macOS, so the other tool's
+      # callback is swallowed by this container while it waits for a redirect that
+      # never arrives.
     # Provider keys and channel tokens (GEMINI_API_KEY, OPENAI_API_KEY,
     # TELEGRAM_BOT_TOKEN, ...). Optional: keys can also be set via onboarding/Settings
     # and persist in the data volume, so booting without a .env is fine.
@@ -45,12 +50,26 @@ services:
     # Let the agent spawn real sibling sandbox containers instead of running code
     # in-process. Stronger per-run isolation, but mounting the host Docker socket
     # grants this container control of the host Docker daemon — enable only if you
-    # accept that. Replace the `environment` block above with AG2ASSISTANT_SANDBOX:
-    # docker and uncomment:
-    # volumes:
-    #   - ag2_data:/data
-    #   - ag2_workspace:/workspace
-    #   - /var/run/docker.sock:/var/run/docker.sock
+    # accept that.
+    #
+    # To enable, make three edits ABOVE (don't add a second `environment:` or
+    # `volumes:` key — YAML rejects duplicates):
+    #
+    #   1. environment: set AG2ASSISTANT_SANDBOX: docker
+    #   2. volumes:     add  - /var/run/docker.sock:/var/run/docker.sock
+    #   3. add the `group_add:` key below, uncommented.
+    #
+    # group_add is REQUIRED. The container runs as non-root (uid 10001), but the
+    # socket is owned by root and group-readable only — so without this the app
+    # user gets EACCES, `docker info` fails, docker_available() returns False, and
+    # the assistant SILENTLY falls back to the local sandbox (a log warning is the
+    # only clue). Set it to the GID that owns /var/run/docker.sock on YOUR host:
+    #
+    #   Linux:          stat -c '%g' /var/run/docker.sock   # the `docker` group, often 999
+    #   Docker Desktop: 0                                   # socket is root:root
+    #
+    # group_add:
+    #   - "999"
 
 volumes:
   ag2_data:

@@ -14,8 +14,10 @@
 # ---------------------------------------------------------------------------
 FROM python:3.14-slim AS builder
 
-# uv (fast resolver/installer) — copied from its official image.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# uv (fast resolver/installer) — copied from its official image. Pinned: an
+# unpinned `:latest` would silently change the resolver between builds, which
+# defeats the point of installing from a committed lockfile.
+COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /bin/
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
@@ -67,20 +69,14 @@ FROM python:3.14-slim AS runtime
 
 # Docker CLI (client only, no daemon): lets AG2ASSISTANT_SANDBOX=docker actually
 # engage when the host's /var/run/docker.sock is bind-mounted — docker_available()
-# checks for the `docker` binary. Without the mount it stays False and code runs
-# in the in-container "local" sandbox.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
-    && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg \
-        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && chmod a+r /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-        > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli \
-    && apt-get purge -y --auto-remove gnupg \
-    && rm -rf /var/lib/apt/lists/*
+# runs `docker info`. Without the mount it stays False and code runs in the
+# in-container "local" sandbox.
+#
+# Copied from the official pinned image rather than installed from Docker's apt
+# repo: it's a single static Go binary, so this needs no keyring, no gnupg, and
+# no curl in the runtime image, and the version is pinned rather than "whatever
+# the repo serves today".
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Bring in the fully-built virtualenv from the builder.
 COPY --from=builder /opt/venv /opt/venv

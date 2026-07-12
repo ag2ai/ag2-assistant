@@ -9,6 +9,7 @@
   // keeps the existing key (placeholder shows the hint), Clear sends "".
   import { untrack } from 'svelte'
   import { api } from '../../transport/api.js'
+  import { codexOpen } from '../../store.js'
   import { getSettings } from './context.svelte.js'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
@@ -71,9 +72,12 @@
   // ChatGPT-subscription sign-in state, for the openai_subscription form variant.
   // Seeded from the entry view's signed_in (editing a saved subscription config);
   // a template pick has no seed, so refetch live whenever this type is selected.
+  // Reading $codexOpen makes this re-run when the sign-in modal closes, so the
+  // "Signed in" chip below reflects a sign-in that just happened on top of this form.
   let codexSignedIn = $state(init.signedIn)
   $effect(() => {
-    if (type === 'openai_subscription') {
+    const modalOpen = $codexOpen
+    if (type === 'openai_subscription' && !modalOpen) {
       api.codexStatus().then((s) => { codexSignedIn = !!s.signed_in }).catch(() => {})
     }
   })

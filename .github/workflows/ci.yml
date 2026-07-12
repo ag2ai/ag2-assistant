@@ -23,6 +23,21 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+  lockfile:
+    name: uv.lock is in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.28" # matches the pin in Dockerfile
+      # The Dockerfile installs with `uv sync --frozen`, which HARD-FAILS when
+      # uv.lock disagrees with pyproject.toml. Without this gate, any PR that adds
+      # or bumps a dependency without re-running `uv lock` merges green and then
+      # breaks the Docker build on main. Fix: run `uv lock` and commit uv.lock.
+      - name: Verify uv.lock matches pyproject.toml
+        run: uv lock --check
+
   test:
     name: Python tests
     runs-on: ubuntu-latest
