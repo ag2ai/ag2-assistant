@@ -45,6 +45,7 @@ To serve the API/UI without any messaging channels, use `ag2-assistant gateway` 
 The primary interface is the Svelte web UI served at `/` (→ `/app`). It includes:
 
 - **Chat** — multi-turn conversations with live, streamed agent events (tool calls, code runs, web searches) rendered inline.
+- **Steer or stop a turn while it runs** — send a message mid-turn and the agent folds it into the work it's already doing or hit **Stop** to end the turn — keeping whatever it produced up to that point, so the conversation carries on with that context.
 - **Tasks** — one-shot and recurring scheduled tasks with deliverables, timestamps, re-run, and cancel/archive.
 - **Image generation** — generated images are saved to the shared workspace and shown as clickable inline thumbnails.
 - **Memory** — the assistant passively learns your preferences; 👍/👎 feedback (with a reason) feeds a memory-aware learner that dedupes and prunes conflicting notes.
