@@ -10,8 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import FakeRunMixin
 
-class _FakeAgent:
+
+class _FakeAgent(FakeRunMixin):
     """Minimal deterministic agent (no LLM)."""
 
     def __init__(self):

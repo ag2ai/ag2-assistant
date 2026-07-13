@@ -5,10 +5,14 @@
 import { api as P, onProfileGone } from '../lib/profile.js'
 
 export class StreamClient {
-  constructor(sessionId, { onEvent, onReady, onOpen, onTurnEnd, onError } = {}) {
+  constructor(sessionId, { onEvent, onReady, onOpen, onTurnEnd, onQueued, onError } = {}) {
     this.sessionId = sessionId
     this.onEvent = onEvent || (() => {})
     this.onReady = onReady || (() => {})
+    // The server fed this message to the turn already running. It won't come back as an
+    // event until the agent drains its inbox (a tool round away), so this is our cue to
+    // show it as queued in the meantime.
+    this.onQueued = onQueued || (() => {})
     // Fires on every (re)connect, BEFORE the server's replay events arrive. The
     // server replays the full history on each connect, so the caller uses this to
     // start a fresh replay buffer and avoid double-folding on reconnect.
@@ -31,6 +35,7 @@ export class StreamClient {
       if (m.event) this.onEvent(m.event)
       else if (m.type === 'ready') this.onReady(m)
       else if (m.type === 'turn_end') this.onTurnEnd(m)
+      else if (m.type === 'queued') this.onQueued(m)
       else if (m.type === 'error') this.onError(m)
     }
     this.ws.onclose = (e) => {
@@ -54,7 +59,10 @@ export class StreamClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this._raw(obj)
     else this._queue.push(obj)
   }
+  // A turn sent while one is already running is fed to it server-side (the agent
+  // picks it up at its next step) — same frame either way.
   send(text, attachments) { this._send({ text, attachments }) }
+  cancel() { this._send({ type: 'cancel' }) }
   answer(id, answer) { this._send({ type: 'answer', id, answer }) }
   feedback(payload) { this._send({ type: 'feedback', ...payload }) }
   close() { this._closed = true; try { this.ws && this.ws.close() } catch {} }

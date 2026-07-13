@@ -5,6 +5,7 @@ from ag2 import ImageInput
 from ag2.events import BinaryType, TextInput
 
 from assistant.attachments import build_input
+from tests.conftest import FakeRunMixin
 
 
 def _kind(inp):
@@ -58,7 +59,7 @@ class _CapturingReply:
         return _CapturingReply(msg)
 
 
-class _CapturingAgent:
+class _CapturingAgent(FakeRunMixin):
     def __init__(self):
         self.captured = None
 

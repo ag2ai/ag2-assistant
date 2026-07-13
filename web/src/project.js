@@ -50,6 +50,7 @@ function prettyToolName(name) {
 export function isBusy(items) {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
+    if (it.ends) return false          // a stopped turn ends here — never "thinking" on replay
     if (it.kind === 'agent' && !it.streaming) return false
     if (it.kind === 'user') return true
   }
@@ -113,6 +114,14 @@ function upsertSubagent(items, type, d) {
   if (type === 'TaskCancelled') item.error = d.reason || 'cancelled'
 }
 
+// A message the server fed to the running turn. AG2 won't echo it until the turn drains
+// its inbox — which can be a whole tool round away — so show it now, marked queued, and
+// let the drained event resolve it (see the ModelRequest case).
+export function queueMessage(items, text) {
+  if (text) items.push({ id: nid(), kind: 'user', text, queued: true })
+  return items
+}
+
 // Mutates and returns `items`. `wire` is {type, data}.
 export function foldEvent(items, wire) {
   const t = tail(wire.type)
@@ -120,9 +129,19 @@ export function foldEvent(items, wire) {
   const before = items.length
 
   switch (t) {
-    case 'ModelRequest': {
+    // DrainedModelRequest is what a message fed to a running turn comes back as (AG2
+    // re-emits the inbox it drained). It IS a ModelRequest — same bubble, and it lands
+    // where the agent actually picked it up, mid-turn.
+    case 'ModelRequest':
+    case 'DrainedModelRequest': {
       const text = joinText(d.parts)
-      if (text) items.push({ id: nid(), kind: 'user', text })
+      if (!text) break
+      // If we were showing this as queued, the agent has now picked it up: resolve that
+      // bubble in place rather than pushing a duplicate. (Replay never has queued items —
+      // they're live-only, so history stays purely what the server recorded.)
+      const queued = items.find((i) => i.queued && i.text === text)
+      if (queued) queued.queued = false
+      else items.push({ id: nid(), kind: 'user', text })
       break
     }
     case 'ModelMessageChunk': {
@@ -234,6 +253,15 @@ export function foldEvent(items, wire) {
       // `status` distinguishes a real answer from a timed-out (expired) or
       // task-cancelled prompt, so the card can retire its live buttons and say why.
       if (it) { it.resolved = true; it.answer = d.answer; it.resolution = d.status || 'answered' }
+      break
+    }
+    case 'TurnCancelled': {
+      // The user stopped the turn. Whatever it produced stays (tool chips, partial
+      // text); finalize a mid-stream bubble so it reads as what was said before the
+      // stop, and mark the turn ended (`ends` → isBusy stops here on replay too).
+      const cur = items[items.length - 1]
+      if (cur && cur.kind === 'agent' && cur.streaming) cur.streaming = false
+      items.push({ id: nid(), kind: 'note', icon: 'x', text: d.reason || 'Stopped', ends: true })
       break
     }
     case 'FeedbackGiven': {

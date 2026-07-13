@@ -1,5 +1,7 @@
 """Shared test fixtures."""
 
+import asyncio
+
 import pytest
 
 
@@ -10,7 +12,61 @@ class FakeReply:
         self.body = body
 
 
-class FakeAgent:
+class FakeRun:
+    """Stand-in for AG2's ``AgentRun`` — the turn handle the gateway drives.
+
+    Mirrors the contract the gateway relies on: ``result()`` is driven by a task the
+    caller can cancel (cancelling the await cancels the turn), ``enqueue`` appends to
+    the *stream's* inbox (that's where AG2 keeps it, which is why a fed message is
+    drained by the running turn), and the scope cancels a still-running turn on exit.
+    The turn itself is whatever the fake agent's ``ask`` does.
+    """
+
+    def __init__(self, agent, msg, kwargs):
+        self._agent = agent
+        self._msg = msg
+        self._kwargs = kwargs
+        self._task = None
+        self.stream = kwargs.get("stream")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+        return False
+
+    def _ensure(self):
+        if self._task is None:
+            self._task = asyncio.ensure_future(self._agent.ask(*self._msg, **self._kwargs))
+        return self._task
+
+    def start(self) -> None:
+        self._ensure()
+
+    def enqueue(self, *content) -> None:
+        if self.stream is not None:
+            self.stream.enqueue(*content)
+
+    async def result(self):
+        task = self._ensure()
+        try:
+            return await task
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+
+
+class FakeRunMixin:
+    """Gives an ``ask``-only fake agent the ``run()`` surface the gateway drives, so a
+    fake still only has to define ``ask`` (AG2's ``ask`` is likewise ``run`` + result)."""
+
+    def run(self, *msg, **kwargs) -> FakeRun:
+        return FakeRun(self, msg, kwargs)
+
+
+class FakeAgent(FakeRunMixin):
     """Deterministic fake agent: echo[N] proves per-session continuity; empty tools."""
 
     def __init__(self):
