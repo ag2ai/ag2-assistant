@@ -406,9 +406,9 @@ def assistant_catalog() -> dict:
         "catalogId": CATALOG_ID,
         "instructions": (
             "Use one focused custom component as the root component when the answer "
-            "benefits from structure: weather, latest news, restaurants, tasks, "
-            "checklists, comparisons, or compact research briefs. For mixed answers, "
-            "compose multiple components with the basic A2UI layout components."
+            "benefits from structure. Each component below describes what it is for — "
+            "choose by the shape of the answer, not by a fixed list of topics. For "
+            "mixed answers, compose several with the basic A2UI layout components."
         ),
         "components": {
             "WeatherPanel": _component_schema(
@@ -488,7 +488,7 @@ def assistant_catalog() -> dict:
             ),
             "InboxBrief": _component_schema(
                 "InboxBrief",
-                "Email inbox digest (gather real mail via gmail_search first; most important thread first).",
+                "Email inbox digest, built from the user's real mail (most important thread first).",
                 {
                     "title": {"type": "string", "description": "e.g. 'Inbox this morning'."},
                     "summary": {
@@ -501,7 +501,7 @@ def assistant_catalog() -> dict:
             ),
             "AgendaCard": _component_schema(
                 "AgendaCard",
-                "Calendar agenda for one day (gather real events via calendar_list_events first).",
+                "Calendar agenda for one day, built from the user's real events.",
                 {
                     "title": {"type": "string", "description": "e.g. 'Today'."},
                     "date": {"type": "string", "description": "Human date, e.g. 'Tue 8 July'."},
@@ -515,7 +515,7 @@ def assistant_catalog() -> dict:
             ),
             "TaskProgress": _component_schema(
                 "TaskProgress",
-                "Status board for existing scheduled/background tasks (gather real state via list_tasks/get_task first).",
+                "Status board built from the real state of existing scheduled/background tasks.",
                 {
                     "title": {"type": "string", "description": "Board heading, e.g. 'Your tasks'."},
                     "tasks": task_array,
@@ -559,26 +559,28 @@ def assistant_catalog() -> dict:
     }
 
 
-CATALOG_RULES = """
+_CATALOG_RULES_TEMPLATE = """
 Prefer an A2UI surface when it would make the answer easier to scan; users do not need to ask for A2UI explicitly.
 Lead with a brief 1-2 sentence prose orientation, then make the A2UI surface the canonical structured view. The surface IS the answer — do NOT also restate its contents in prose (don't list the stories, rows, items, or details in text as well); that duplication is unwanted.
 Every component is fully defined by the schema and the worked examples below — gather the real data the user asked for (e.g. the actual weather), then populate the matching component and emit it directly.
 
-Intent mapping:
-- Weather or forecast -> call get_weather(location), then render a WeatherPanel using the returned condition + rows.
-- Latest news, headlines, or recent developments -> NewsDigest.
-- Stocks, shares, ETFs, funds, indices, crypto, or market prices -> call get_quotes(symbols, title), then render a MarketBoard from the returned quotes (first quote = the lead).
-- Restaurants, cafes, bars, open-now, lunch, dinner -> RestaurantFinder.
-- Email, inbox, unread, "any new mail" -> call gmail_search (e.g. 'in:inbox newer_than:1d'), then InboxBrief (most important thread first; copy each link= into url; set needsReply only when the mail clearly asks for something).
-- Calendar, agenda, schedule, "what's on today/tomorrow" -> call calendar_list_events with the day's time window, then AgendaCard (mark the single next upcoming event with next:true).
-- Creating, scheduling, or planning a new task -> TaskPlan.
-- Reviewing existing tasks ("how are my tasks going?", task status/history) -> call list_tasks (and get_task for detail), then TaskProgress.
-- Multi-step operational work -> Checklist.
-- Comparing concrete alternatives or recommending between options -> DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
-- Research summaries or briefs without competing options -> AnswerBrief.
+Gather the real data with your tools BEFORE you render — each tool's own description says what it covers. Never populate a component from memory, and never invent a value to fill a field: leave it out instead.
+
+When an answer matches one of these, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone. These are the common matches, not the whole catalog: when another component fits an answer better, render that one instead.
+- Weather or forecast -> render a WeatherPanel from the weather data you gathered.
+- Latest news, headlines, or recent developments -> render a NewsDigest.
+- Stocks, shares, ETFs, funds, indices, crypto, or market prices -> render a MarketBoard from the quote data you gathered (first quote = the lead).
+- Restaurants, cafes, bars, open-now, lunch, dinner -> render a RestaurantFinder.
+- Email, inbox, unread, "any new mail" -> render an InboxBrief from the real mail (most important thread first; copy each link into url; set needsReply only when the mail clearly asks for something).
+- Calendar, agenda, schedule, "what's on today/tomorrow" -> render an AgendaCard from the real events (mark the single next upcoming event with next:true).
+- Creating, scheduling, or planning a new task -> render a TaskPlan.
+- Reviewing existing tasks ("how are my tasks going?", task status/history) -> render a TaskProgress from the real task state.
+- Multi-step operational work -> render a Checklist.
+- Comparing concrete alternatives or recommending between options -> render a DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
+- Research summaries or briefs without competing options -> render an AnswerBrief.
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
-Always emit createSurface followed by updateComponents for the same surfaceId. Use catalog id https://ag2.ai/assistant/a2ui/catalog.json and root id "root".
+Always emit createSurface followed by updateComponents for the same surfaceId. Use catalog id __CATALOG_ID__ and root id "root".
 Do not call tools to discover A2UI components or catalog contracts; use the schema and rules already provided in this prompt.
 Do not describe or print "corrected A2UI components"; emit valid A2UI messages directly.
 User-facing prose must describe the answer, not A2UI mechanics; never mention schemas, validation, properties, components, or corrected/updated UI.
@@ -587,38 +589,42 @@ Keep surfaces concise, factual, and consistent with the prose. Put fuller NewsDi
 Worked examples (gather real data first, then emit exactly this shape):
 
 Weather — user asks "What's the weather in Vienna?":
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"WeatherPanel","location":"Vienna, Austria","condition":"sunny","rows":[{"label":"Temperature","value":"24°C (feels 22°C)"},{"label":"Wind","value":"12 km/h NW"},{"label":"Humidity","value":"45%"}]}]}}
 
 News — user asks "Latest F1 news" (the first story is the lead: give it a category, a
 summary, and a one-line `why`; later stories just need title/source/published/summary):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
 Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
 
-Inbox — user asks "Anything new in my email?" (call gmail_search first; copy link= into url):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+Inbox — user asks "Anything new in my email?" (fetch the real mail first; copy each link into url):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"InboxBrief","title":"Inbox this morning","summary":"3 new since yesterday — one needs a reply.","threads":[{"from":"Priya Nair","subject":"Q3 roadmap review — your slot","when":"2h ago","gist":"Asks you to confirm Thursday 10 AM for the review.","unread":true,"needsReply":true,"url":"https://mail.google.com/mail/u/0/#all/19..."},{"from":"GitHub","subject":"PR #42 merged","when":"5h ago","gist":"Your fix landed on main.","unread":true,"url":"https://mail.google.com/mail/u/0/#all/19..."}]}]}}
 
-Agenda — user asks "What's on today?" (call calendar_list_events first; times in the user's timezone):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+Agenda — user asks "What's on today?" (fetch the real events first; times in the user's timezone):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"AgendaCard","title":"Today","date":"Tue 8 July","events":[{"title":"Home","allDay":true},{"title":"Sync on Merlin EKS","start":"8:15 AM","end":"8:45 AM","next":true,"url":"https://www.google.com/calendar/event?eid=...","joinUrl":"https://meet.google.com/abc-defg-hij"},{"title":"1:1 with Sam","start":"2:00 PM","end":"2:30 PM","location":"Meet"}],"note":"Free after 2:30 PM."}]}}
 
-Task status — user asks "How are my tasks going?" (call list_tasks/get_task first, then mirror the real state):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+Task status — user asks "How are my tasks going?" (read the real task state first, then mirror it):
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"TaskProgress","title":"Your scheduled tasks","tasks":[{"id":"t_a1b2c3","title":"Daily AI news briefing","status":"active","schedule":"daily 07:00","nextRun":"Wed 07:00","progress":"Delivered today's briefing","deliverables":[{"description":"Morning digest","status":"done"}]},{"id":"t_d4e5f6","title":"Weekly competitor scan","status":"failed","schedule":"Mondays 09:00","error":"Search quota exhausted on last run"}]}]}}
 
 Decision — user asks "Should I get the MacBook Air or the ThinkPad X1 for travel?"
 (values align by index with options; mark `best` only where one option clearly wins):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"DecisionMatrix","topic":"Travel laptop","options":[{"name":"MacBook Air 13","tagline":"Longest battery in class","price":"$1,499"},{"name":"ThinkPad X1 Carbon","tagline":"Best keyboard + ports","price":"$1,649"}],"criteria":[{"label":"Weight","values":["1.24 kg","1.09 kg"],"best":"ThinkPad X1 Carbon"},{"label":"Battery (real-world)","values":["~15 h","~10 h"],"best":"MacBook Air 13"},{"label":"Ports","values":["2× USB-C","2× USB-C · 2× USB-A · HDMI"],"best":"ThinkPad X1 Carbon"},{"label":"Keyboard","values":["Good","Excellent"],"best":"ThinkPad X1 Carbon"}],"recommended":"MacBook Air 13","verdict":"The Air wins on battery and weight-adjusted value for travel; pick the X1 Carbon if you need USB-A/HDMI without dongles or type all day."}]}}
 
 Markets — user asks "How are the tech stocks doing?" (call get_quotes first, then copy
 its quotes straight in; the first quote is the lead. Keep each quote's `spark`, `currency`,
 and numeric `price`/`change`/`changePercent` exactly as returned):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}}
+{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"MarketBoard","title":"Technology","currency":"USD","status":"open","asOf":"2026-06-29T18:17:30+00:00","source":"Yahoo Finance","quotes":[{"symbol":"NVDA","name":"NVIDIA Corporation","price":193.99,"change":1.46,"changePercent":0.76,"currency":"USD","exchange":"NasdaqGS","dayLow":190.1,"dayHigh":195.2,"spark":[12,30,22,45,38,60,55,72,64,80,70,88,76,92,84,100],"state":"open"},{"symbol":"AAPL","name":"Apple Inc.","price":281.51,"change":-2.27,"changePercent":-0.8,"currency":"USD","exchange":"NasdaqGS","spark":[100,82,90,60,66,48,40,20],"state":"open"}]}]}}
 """
+
+# The catalog id is a constant, not a literal repeated through the prompt: keep the
+# rules and every worked example pointing at whatever CATALOG_ID currently is.
+CATALOG_RULES = _CATALOG_RULES_TEMPLATE.replace("__CATALOG_ID__", CATALOG_ID)
 
 
 @lru_cache(maxsize=1)
@@ -642,8 +648,8 @@ def runtime():
         validation_retries=1,
         system_message=(
             "You can generate rich A2UI interfaces for the AG2 Assistant web UI. "
-            "Prefer using A2UI components whenever they make answers easier to scan, "
-            "especially for weather, news, restaurants, tasks, comparisons, and multi-step work. "
+            "Prefer an A2UI component whenever structure makes an answer easier to "
+            "scan than prose would; the catalog describes what each one is for. "
             "Users do not need to mention A2UI for you to use it."
         ),
     )
