@@ -22,8 +22,9 @@ from pydantic import BaseModel
 from assistant.tasks.model import DeliverableStatus
 
 _MAX_ASSET_CHARS = 50_000
-_MAX_VERIFY_CHARS = 12_000
-_MAX_CHILD_CONTEXT = 12_000
+# The verifier judges whether a deliverable is FINISHED, so > max
+_MAX_VERIFY_CHARS = 200_000
+_MAX_CHILD_CONTEXT = 50_000
 
 # Inner subagent events worth nesting under its card: its responses, the tools it
 # calls, any deliverables, and a nested subagent's own lifecycle (→ recursion).
