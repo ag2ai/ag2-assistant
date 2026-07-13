@@ -89,3 +89,40 @@ def test_build_result_fahrenheit():
     assert labels["Temperature"] == "54°F (feels 50°F)"
     assert labels["Wind"] == "15 mph"
     assert r["condition"] == "sunny"
+
+
+def _hourly(*slots):
+    """slots: (time, chanceofrain, precipMM) triples → a j1 `hourly` list."""
+    return [
+        {"time": t, "chanceofrain": str(c), "precipMM": str(p), "weatherDesc": [{"value": "x"}]}
+        for t, c, p in slots
+    ]
+
+
+def _labels(payload):
+    return {row["label"]: row["value"] for row in build_result(payload, "London")["rows"]}
+
+
+def test_rain_row_absent_when_no_hourly_slots():
+    assert "Rain" not in _labels(_payload(113, "Sunny"))
+
+
+def test_rain_row_reports_dry_day_with_peak_chance():
+    p = _payload(113, "Sunny")
+    p["weather"][0]["hourly"] = _hourly(("0", 5, 0.0), ("300", 6, 0.0), ("600", 4, 0.0))
+    assert _labels(p)["Rain"] == "None expected · 6% peak"
+
+
+def test_rain_row_reports_window_and_total_for_wet_day():
+    p = _payload(296, "Light rain")
+    # Two adjacent wet slots (3pm, 6pm) merge into one window running to 9pm.
+    p["weather"][0]["hourly"] = _hourly(
+        ("0", 5, 0.0), ("900", 10, 0.0), ("1500", 70, 1.2), ("1800", 55, 0.8)
+    )
+    assert _labels(p)["Rain"] == "70% peak · 3pm–9pm · ~2.0mm"
+
+
+def test_rain_row_splits_non_adjacent_windows():
+    p = _payload(296, "Light rain")
+    p["weather"][0]["hourly"] = _hourly(("0", 60, 0.5), ("900", 10, 0.0), ("1800", 80, 1.0))
+    assert _labels(p)["Rain"] == "80% peak · 12am–3am, 6pm–9pm · ~1.5mm"

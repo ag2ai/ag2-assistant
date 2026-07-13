@@ -8,7 +8,7 @@ the symbols it wants; a plain name (or a slightly-off ticker) falls back to
 Yahoo's search endpoint, so "ASX 200" or "Toyota" still resolve.
 
 The returned JSON drops straight into a MarketBoard (title + quotes), so the
-agent never has to web-search for prices. The FIRST quote is the lead/featured.
+agent does not have to guess prices. The FIRST quote is the lead/featured.
 """
 
 import json
@@ -178,8 +178,9 @@ def _fetch_one(client, item: str):
 def get_quotes(symbols: str, title: str = "") -> str:
     """Get live market quotes for stocks, ETFs, indices, or crypto across global exchanges.
 
-    Use this for ANY markets/stocks/shares/ETFs/funds/indices/crypto request — it is the
-    fast, reliable path, so do not web-search for prices. Pass the Yahoo symbols you want
+    Start here for any markets/stocks/shares/ETFs/funds/indices/crypto request — it is
+    the fast, reliable path for prices. Search the web for anything it does not cover
+    (news, analysis, fundamentals). Pass the Yahoo symbols you want
     (US tickers like AAPL; suffixed international tickers like BHP.AX, 7203.T, VOD.L;
     indices like ^AXJO, ^FTSE, ^GDAXI, ^N225, ^HSI, 000001.SS; crypto like BTC-USD).
     Plain names ("ASX 200", "Toyota") are resolved via search if a symbol misses.

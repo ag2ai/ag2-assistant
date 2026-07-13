@@ -1,9 +1,9 @@
 """Weather tool — one deterministic call for current weather + a short forecast,
 already mapped to the A2UI WeatherPanel `condition` enum.
 
-Source: wttr.in (?format=j2), the same provider the bundled `weather` skill uses.
+Source: wttr.in (?format=j1), the same provider the bundled `weather` skill uses.
 The returned JSON drops straight into a WeatherPanel (location + condition + rows),
-so the agent never has to web-search for weather or guess the banner condition.
+so the agent does not have to guess the banner condition.
 """
 
 import json
@@ -96,6 +96,54 @@ def _area_label(data: dict, fallback: str) -> str:
         return fallback
 
 
+def _hour_label(slot_time) -> str:
+    """Format a wttr.in hourly `time` ("0", "300", … "2100") as "12am" / "3pm"."""
+    try:
+        hour = int(slot_time) // 100
+    except (TypeError, ValueError):
+        return "?"
+    suffix = "am" if hour < 12 else "pm"
+    display = hour % 12 or 12
+    return f"{display}{suffix}"
+
+
+def _rain_row(today: dict) -> dict | None:
+    """Build the Rain row from today's 3-hourly slots: peak chance, plus the windows
+    where rain is likely (>= 40% chance or any forecast precipitation)."""
+    slots = []
+    for h in today.get("hourly") or []:
+        try:
+            chance = int(h.get("chanceofrain", 0))
+            precip = float(h.get("precipMM", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        slots.append((h.get("time"), chance, precip))
+    if not slots:
+        return None
+
+    peak = max(chance for _, chance, _ in slots)
+    wet = [(t, c, p) for t, c, p in slots if c >= 40 or p > 0]
+    if not wet:
+        return {"label": "Rain", "value": f"None expected · {peak}% peak"}
+
+    # Each slot covers the 3 hours that follow it; merge adjacent wet slots into windows.
+    windows, start, prev = [], wet[0][0], wet[0][0]
+    for t, _, _ in wet[1:]:
+        if int(t) - int(prev) == 300:
+            prev = t
+            continue
+        windows.append((start, prev))
+        start = prev = t
+    windows.append((start, prev))
+
+    spans = ", ".join(f"{_hour_label(a)}–{_hour_label(str(int(b) + 300))}" for a, b in windows)
+    total = sum(p for _, _, p in slots)
+    value = f"{peak}% peak · {spans}"
+    if total > 0:
+        value += f" · ~{total:.1f}mm"
+    return {"label": "Rain", "value": value}
+
+
 def build_result(data: dict, location: str, units: str = "celsius") -> dict:
     """Turn a parsed wttr.in j2 payload into WeatherPanel-ready fields.
 
@@ -132,6 +180,10 @@ def build_result(data: dict, location: str, units: str = "celsius") -> dict:
     if hi is not None and lo is not None:
         rows.append({"label": "Today", "value": f"High {hi}{t_unit} · Low {lo}{t_unit}"})
 
+    rain = _rain_row(today)
+    if rain:
+        rows.append(rain)
+
     temp_txt = f"{temp}{t_unit}" if temp is not None else "?"
     summary = f"{label}: {desc}, {temp_txt}"
 
@@ -141,13 +193,16 @@ def build_result(data: dict, location: str, units: str = "celsius") -> dict:
 
 @tool
 def get_weather(location: str, units: str = "celsius") -> str:
-    """Get current weather and a short forecast for a location.
+    """Get current weather and today's forecast for a location, including rain
+    probability and the hours rain is expected.
 
-    Use this for ANY weather or forecast request — it is the fast, reliable path
-    (one call), so do not web-search for weather. Returns a JSON object whose
-    `condition` is already one of the WeatherPanel enum values and whose `rows`
-    are ready to render: emit a WeatherPanel directly from `location`, `condition`,
-    and `rows`, and use `summary` for your prose.
+    Start here for any weather or forecast request — it is the fast, reliable path
+    (one call). Returns a JSON object whose `condition` is already one of the
+    WeatherPanel enum values and whose `rows` are ready to render: emit a
+    WeatherPanel directly from `location`, `condition`, and `rows`, and use
+    `summary` for your prose. The "Rain" row carries the peak chance of rain today
+    and the windows when it is likely. Search the web for anything this does not
+    cover (multi-day outlooks, severe-weather warnings, marine or alpine detail).
 
     Args:
         location: City, region, airport code, or "lat,lon".
@@ -158,7 +213,8 @@ def get_weather(location: str, units: str = "celsius") -> str:
     """
     import httpx
 
-    url = f"https://wttr.in/{quote(location.strip())}?format=j2"
+    # j1 (not j2) — only j1 carries the 3-hourly slots that give rain chance and timing.
+    url = f"https://wttr.in/{quote(location.strip())}?format=j1"
     try:
         response = httpx.get(
             url,

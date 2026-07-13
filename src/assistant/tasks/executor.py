@@ -218,26 +218,6 @@ async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdi
         return _Verdict(satisfied=False, reason=f"verification error: {exc}")
 
 
-async def _used_web_tools(source) -> bool:
-    """True if the agent actually called a search / web-fetch tool this turn."""
-    from ag2.events import BuiltinToolCallEvent, ToolCallEvent
-
-    try:
-        history = source.history if hasattr(source, "history") else source
-        events = list(await history.get_events())
-    except Exception as exc:
-        from assistant.observability import log_suppressed
-
-        log_suppressed("web tool usage introspection", exc)
-        return True  # can't introspect → don't falsely reject
-    for ev in events:
-        if isinstance(ev, (ToolCallEvent, BuiltinToolCallEvent)):
-            name = (getattr(ev, "name", "") or "").lower()
-            if "search" in name or "fetch" in name:
-                return True
-    return False
-
-
 def make_task_executor(config, skills: bool = True):
     """Build an executor coroutine for `TaskManager`, using the real agent."""
 
@@ -379,22 +359,8 @@ def make_task_executor(config, skills: bool = True):
             raise RuntimeError(str(result.error or "subagent failed"))
         output = (result.result or "").strip()
 
-        # Grounding gate: if this task is meant to research the web but the agent
-        # never actually called a web tool, its facts aren't grounded → reject.
-        web_used = await _used_web_tools(result.stream)
-        ungrounded = "web" in caps and not web_used
-
         produced = 0
         for d in pending:
-            if ungrounded:
-                await store.set_deliverable_status(
-                    task_id,
-                    d["id"],
-                    DeliverableStatus.REJECTED,
-                    notes="not grounded: answer was written without using the search/"
-                    "web-fetch tools — research the facts before producing this.",
-                )
-                continue
             verdict = await _verify_deliverable(config, d, output)
             if verdict.satisfied:
                 produced += 1
