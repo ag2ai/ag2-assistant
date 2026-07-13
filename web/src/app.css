@@ -246,6 +246,12 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-eyebrow { font-size: 10.5px; line-height: 1.1; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .a2ui-title { font-size: 14px; line-height: 1.2; font-weight: var(--fw-semibold); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .a2ui-catalog { margin-left: auto; flex: none; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-pill); padding: 2px 8px; font-size: 10.5px; color: var(--muted); }
+/* Placeholder while the model is still writing the surface's A2UI payload. */
+.a2ui-composing .a2ui-head { margin-bottom: 14px; }
+.a2ui-composing .a2ui-mark { animation: ag2-glow 2.8s var(--ease-in-out) infinite; }
+.a2ui-composing .a2ui-title { color: var(--muted); font-weight: var(--fw-medium); }
+.a2ui-skeleton { display: flex; flex-direction: column; gap: 9px; }
+.a2ui-skeleton span { height: 10px; border-radius: var(--radius-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, var(--code)) 0%, color-mix(in srgb, var(--accent) 22%, var(--code)) 50%, color-mix(in srgb, var(--accent) 8%, var(--code)) 100%); background-size: 220% 100%; animation: ag2-shimmer 1.6s var(--ease-in-out) infinite; }
 .a2ui-main { font-size: 14.5px; font-weight: var(--fw-semibold); line-height: 1.35; color: var(--ink); overflow-wrap: anywhere; }
 .a2ui-sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
 .a2ui-weather-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

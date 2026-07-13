@@ -3,6 +3,111 @@ const nextId = () => `a2ui-${Date.now()}-${++_seq}`
 
 export const BETA_CATALOG_ID = 'https://ag2.ai/assistant/a2ui/catalog.json'
 
+// ── A2UI payload in the model's text ────────────────────────────────────────
+// The model authors a surface by writing A2UI messages into its reply text (either
+// wrapped in <a2ui-json>…</a2ui-json> or as a bare JSON array/objects). The backend
+// strips them from the FINAL message, but the chunks stream through raw — so the
+// chat has to hide the payload itself while it is being typed.
+
+const A2UI_KEYS = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface']
+const OPEN_TAG = '<a2ui-json>'
+const CLOSE_TAG = '</a2ui-json>'
+
+// Openings a streaming A2UI payload can start with. A fragment counts as "an A2UI
+// payload mid-flight" if it is a prefix of one of these, or has already grown past it.
+const HEADS = ['version', ...A2UI_KEYS].flatMap((k) => [`[{"${k}"`, `{"${k}"`])
+
+// End of the JSON value opened at `start`, or -1 if it hasn't been closed yet.
+function matchingJsonEnd(text, start) {
+  const open = text[start]
+  const close = open === '[' ? ']' : '}'
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === open) depth++
+    else if (ch === close && --depth === 0) return i + 1
+  }
+  return -1
+}
+
+function isA2UIPayload(value) {
+  const messages = Array.isArray(value) ? value : [value]
+  return messages.some(
+    (m) => m && typeof m === 'object' && A2UI_KEYS.some((k) => k in m)
+  )
+}
+
+// An unterminated JSON fragment: is this the beginning of an A2UI payload (hide it
+// and show the composing indicator) or just prose the user should see?
+function isA2UIPrefix(fragment) {
+  if (A2UI_KEYS.some((k) => fragment.includes(k))) return true
+  const compact = fragment.replace(/\s+/g, '')
+  return HEADS.some((h) => compact.startsWith(h) || h.startsWith(compact))
+}
+
+/** Split an agent message into the prose to render and whether an A2UI payload is
+ *  still streaming. Complete payloads are removed (the surface renders as its own
+ *  item); a partial one sets `composing` so the UI can show a placeholder instead
+ *  of a wall of half-typed JSON. */
+export function splitA2UIText(text) {
+  const source = text || ''
+  let out = ''
+  let composing = false
+  let i = 0
+
+  while (i < source.length) {
+    const tagAt = source.indexOf(OPEN_TAG, i)
+    const bracketAt = source.slice(i).search(/[[{]/)
+    const jsonAt = bracketAt < 0 ? -1 : i + bracketAt
+    const start = tagAt >= 0 && (jsonAt < 0 || tagAt < jsonAt) ? tagAt : jsonAt
+    if (start < 0) {
+      out += source.slice(i)
+      break
+    }
+    out += source.slice(i, start)
+
+    if (start === tagAt) {
+      const close = source.indexOf(CLOSE_TAG, start)
+      if (close < 0) {
+        composing = true // the wrapped payload is still being written
+        break
+      }
+      i = close + CLOSE_TAG.length
+      continue
+    }
+
+    const end = matchingJsonEnd(source, start)
+    if (end < 0) {
+      // Unterminated — either an A2UI payload mid-flight, or ordinary text.
+      if (isA2UIPrefix(source.slice(start))) composing = true
+      else out += source.slice(start)
+      break
+    }
+    const candidate = source.slice(start, end)
+    let parsed
+    try {
+      parsed = JSON.parse(candidate)
+    } catch {}
+    if (parsed !== undefined && isA2UIPayload(parsed)) {
+      i = end
+      continue
+    }
+    out += candidate
+    i = end
+  }
+
+  return { text: out.replace(/\n{3,}/g, '\n\n').trim(), composing }
+}
+
 function componentKind(component = {}) {
   return component.component || 'AnswerBrief'
 }
