@@ -153,15 +153,22 @@ def build_image_tool(config, workspace_dir):
         rel = write_image(workspace_dir, prompt, data, media)
         # Emit onto the stream so the client renders an inline thumbnail (the path
         # lives in the result, not the call args, so a card alone can't show it).
+        emitted = False
         if context is not None:
             from assistant.events import ImageGenerated
 
             with contextlib.suppress(Exception):
                 await context.send(ImageGenerated(rel, prompt=prompt, media_type=media))
+                emitted = True
+        shown = (
+            "It has been shown to the user inline already, so refer to it rather than "
+            "embedding it again."
+            if emitted
+            else "It has NOT been shown to the user — present it however this surface allows."
+        )
         return (
-            f"Generated image saved to {rel} and ALREADY shown to the user inline — do "
-            f"NOT embed it again with markdown image syntax. Just refer to it. To modify "
-            f"it, call generate_image again with source_image='{rel}'."
+            f"Generated image saved to {rel}. {shown} To modify it, call this tool "
+            f"again with source_image='{rel}'."
         )
 
     return generate_image

@@ -46,35 +46,40 @@ class _Verdict(BaseModel):
     reason: str = ""
 
 
+# The worker name shown in the UI for a given capability, most specific first. Purely
+# a display label — the persona itself is built from the capability registry below.
+_ARCHETYPE_NAMES = (
+    ("web", "researcher"),
+    ("code", "coder"),
+    ("images", "illustrator"),
+    ("gmail", "operator"),
+    ("calendar", "operator"),
+    ("drive", "operator"),
+    ("mcp", "operator"),
+)
+
+
 def _subagent_archetype(caps: list[str]) -> tuple[str, str]:
-    """Pick a visible worker archetype for this task attempt."""
-    if "web" in caps:
-        return (
-            "researcher",
-            "You are a focused research subagent. Use the available research tools, "
-            "ground factual claims in sources, and return finished notes or answers "
-            "that directly satisfy the assigned deliverables.",
-        )
-    if any(c in caps for c in ("gmail", "calendar", "drive", "google")):
-        return (
-            "operator",
-            "You are a focused workspace operator subagent. Use only the assigned "
-            "workspace tools, ask for confirmation when needed, and return the "
-            "finished result of the assigned work.",
-        )
-    if "code" in caps:
-        return (
-            "coder",
-            "You are a focused coding subagent. Use the available code tools only "
-            "for the assigned work, keep changes scoped, and return the finished "
-            "implementation or analysis.",
-        )
-    return (
-        "worker",
-        "You are a focused worker subagent. Complete the assigned deliverables "
-        "directly, ask for missing user information when needed, and return the "
-        "finished result.",
+    """Name and persona for a task subagent, derived from the capabilities it was
+    scoped to — so a new capability needs no new branch here."""
+    from assistant.tools import capability_catalogue
+
+    name = next((label for cap, label in _ARCHETYPE_NAMES if cap in caps), "worker")
+    scope = capability_catalogue(caps)
+    persona = (
+        "You are a focused subagent completing one assigned piece of a larger task. "
+        "Produce the finished result the deliverables ask for, ask the user when you "
+        "need something only they can give you, and report honestly anything you "
+        "could not do."
     )
+    if scope:
+        persona += f"\n\nYou have been scoped to these capabilities:\n{scope}"
+    else:
+        persona += (
+            "\n\nYou have no external tools for this piece — work from the material "
+            "you have been given."
+        )
+    return name, persona
 
 
 async def _run_visible_subagent(
@@ -105,7 +110,12 @@ async def _run_visible_subagent(
     # it without memory guidance because these subagents run with memory=False.
     sub_config.agent.system_prompt = archetype_prompt
     sub_config.agent.system_prompt = "\n\n".join(
-        turn_prompt(sub_config, memory=False, workspace="files" in caps)
+        turn_prompt(
+            sub_config,
+            memory=False,
+            workspace="files" in caps,
+            google=any(c in caps for c in ("gmail", "calendar", "drive")),
+        )
     )
     # Leaf subtasks run cheap; the root synthesis runs on the main model. `model`
     # (set on the final attempt) overrides that, escalating a struggling leaf.
@@ -207,9 +217,15 @@ async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdi
         "Be strict, but judge only whether the finished deliverable content is "
         "present and meets the criteria. satisfied=false if the output merely "
         "describes what COULD be done, hands back a plan or a menu of options "
-        "instead of the finished work, or says it couldn't complete it. "
+        "instead of the finished work, or is empty of real content. "
         "satisfied=true if the actual deliverable content is present and meets the "
-        "criteria — even if it also notes caveats or open questions alongside it."
+        "criteria — even if it also notes caveats or open questions alongside it.\n"
+        "Judge the work that was done, not the work that was possible. An output that "
+        "delivers what could genuinely be reached and states plainly, with a reason, "
+        "which part it could not — a source that was unavailable, access it was "
+        "denied — is SATISFIED, provided the rest meets the criteria: an honest gap "
+        "is a valid result and must not be failed for its honesty. Only a fabricated "
+        "or guessed answer fails on grounds of accuracy."
     )
     try:
         reply = await verifier.ask(prompt, response_schema=_Verdict)

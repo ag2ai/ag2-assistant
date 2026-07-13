@@ -55,16 +55,21 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert "LowdownPanel" not in prompt
     assert 'root component="Column"' in prompt
     assert "users do not need to ask for A2UI explicitly" in prompt
-    assert "Prefer using A2UI components" in prompt
+    assert "Prefer an A2UI component" in prompt
     assert "optional summary" in prompt
     assert "TaskPlan" in prompt
-    assert "Intent mapping:" in prompt
-    assert "Weather or forecast -> call get_weather" in prompt
-    assert "render a WeatherPanel" in prompt
-    assert "Creating, scheduling, or planning a new task -> TaskPlan" in prompt
-    assert "then TaskProgress" in prompt
+    # Intent → COMPONENT. Which tool gathers the data is the tool's own business, so no
+    # tool name appears here (see tests/test_capability_registry.py). The imperative to
+    # actually EMIT the component must survive: dropping it silently cost us the
+    # MarketBoard, which the model replaced with prose.
+    assert "EMIT that component" in prompt
+    assert "Weather or forecast -> render a WeatherPanel" in prompt
+    assert "market prices -> render a MarketBoard" in prompt
+    assert "Gather the real data with your tools BEFORE you render" in prompt
+    assert "Creating, scheduling, or planning a new task -> render a TaskPlan" in prompt
+    assert "task status/history) -> render a TaskProgress" in prompt
     assert "DecisionMatrix" in prompt
-    assert "recommending between options -> DecisionMatrix" in prompt
+    assert "recommending between options -> render a DecisionMatrix" in prompt
     assert "Use Divider for section separation when useful" in prompt
     assert "Do not call tools to discover A2UI components" in prompt
     assert 'Do not describe or print "corrected A2UI components"' in prompt

@@ -133,7 +133,7 @@ async def test_visible_subagent_emits_cancelled_when_interrupted(monkeypatch):
 
     monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
     monkeypatch.setattr(
-        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True: ["prompt"]
+        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True, google=None: ["prompt"]
     )
     monkeypatch.setattr(run_task_mod, "run_task", cancelled_run_task)
 
@@ -185,7 +185,7 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
 
     monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
     monkeypatch.setattr(
-        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True: ["prompt"]
+        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True, google=None: ["prompt"]
     )
     monkeypatch.setattr(run_task_mod, "run_task", fake_run_task)
 
@@ -234,7 +234,7 @@ async def test_visible_subagent_surfaces_generated_image_bare(monkeypatch):
 
     monkeypatch.setattr(agent_mod, "create_agent", lambda *a, **k: _Agent())
     monkeypatch.setattr(
-        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True: ["prompt"]
+        agent_mod, "turn_prompt", lambda cfg, memory=True, workspace=True, google=None: ["prompt"]
     )
     monkeypatch.setattr(run_task_mod, "run_task", fake_run_task)
 

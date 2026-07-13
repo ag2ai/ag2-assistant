@@ -42,9 +42,8 @@ async def read_file_impl(path: str, permissions: PermissionManager) -> "ToolResu
     target = Path(path).expanduser()
     if not target.exists() or not target.is_file():
         return (
-            f"File not found: {path}. Do not try to locate it by running shell "
-            "commands or code. Tell the user it wasn't found and ask how they'd "
-            "like to proceed (e.g. confirm the path)."
+            f"File not found: {path}. Nothing exists at that path — check it with the "
+            "user rather than guessing at other paths."
         )
 
     if not await permissions.check(target):

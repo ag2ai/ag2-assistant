@@ -16,6 +16,7 @@ from ag2 import Context, tool
 from pydantic import Field
 
 _PREVIEW = 240  # chars of a produced asset to surface in a summary
+_CHAT_TAIL_TURNS = 20  # turns of a past conversation read_chat returns
 
 
 def _followup_note(platform: str) -> str:
@@ -351,12 +352,23 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         async def read_chat(
             session_id: Annotated[str, Field(description="The conversation/session id.")],
         ) -> str:
-            """Read a past conversation's transcript (most recent turns)."""
+            """Read a past conversation's transcript — the most recent turns of it.
+
+            Long conversations are truncated to the latest turns; the result says so
+            when earlier turns were dropped, and those earlier turns cannot be read.
+            """
             msgs = await chats.transcript(session_id)
             if not msgs:
                 return "No such conversation (or it's empty)."
-            tail = msgs[-20:]
-            return "\n".join(f"{m['role']}: {m['text']}" for m in tail)
+            tail = msgs[-_CHAT_TAIL_TURNS:]
+            body = "\n".join(f"{m['role']}: {m['text']}" for m in tail)
+            if len(msgs) > len(tail):
+                dropped = len(msgs) - len(tail)
+                return (
+                    f"[showing the last {len(tail)} of {len(msgs)} turns — the {dropped} "
+                    f"earlier turns are NOT included and cannot be retrieved]\n{body}"
+                )
+            return body
 
         out += [list_chats, read_chat]
 

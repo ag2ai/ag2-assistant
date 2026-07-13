@@ -193,31 +193,26 @@ def build_skills_toolkit(config: Config):
 # Always-on behavioural guidance, kept separate from the (user-customisable)
 # persona so it applies even when someone overrides the system prompt.
 BEHAVIOR_GUIDANCE = (
-    "Do what the user asks directly, using the most appropriate tool. If you "
-    "cannot complete a request directly — a tool fails, a resource isn't found, "
-    "you're denied access, or you simply have no suitable tool — do NOT improvise "
-    "with other tools. Stop, tell the user plainly what happened or that you "
-    "can't do it, and ask how they'd like to proceed (offering alternatives when "
-    "there are any). Only take an alternative approach once the user chooses it.\n"
-    "Pick the right tool for the medium: web pages and URLs → the web-fetch tool; "
-    "the open web → the search tool; the user's Gmail/Calendar/Drive → the Google "
-    "tools. You CANNOT watch video or audio — if asked about a YouTube/video link, "
-    "say so and offer to fetch the page or work from a transcript they provide.\n"
-    "Before improvising a task with general web searches, check the <available_skills> "
-    "catalog: when a request matches a skill's description, load and follow that skill — "
-    "it's the curated, efficient path (one structured call beats many guesswork "
-    "searches). Use open-web search only when no skill fits.\n"
-    "The shell and code-execution tools are ONLY for when the user explicitly "
-    "asks you to run a command, execute code, or work with local files. NEVER use "
-    "them to 'look around', orient yourself, explore the filesystem (e.g. `ls`), "
-    "inspect your environment, or as a fallback when unsure — they have nothing to "
-    "do with web pages, videos, messages, or cloud data.\n"
-    "If a sandboxed runner is offered (e.g. run_code_sandboxed / run_shell_sandboxed), "
-    "prefer it; only reach for a host runner (run_code_local / run_shell_local) when "
-    "the task truly needs the user's own files — it will ask their permission.\n"
-    "To create or edit images, use the generate_image tool — never shell/osascript or "
-    "code. To change an image you already made, call it again with source_image set to "
-    "that image's path (returned by the previous call)."
+    "Do what the user asks directly, with the tools you actually have. Every tool "
+    "describes what it covers and what it does not — read those descriptions and "
+    "pick the one whose remit fits the request. A specialist tool is the fast, "
+    "reliable path for the job it names; where it doesn't reach, your general "
+    "research tools do. Reach for a tool rather than answering from memory whenever "
+    "the answer depends on the real world right now.\n"
+    "Do not answer a question a tool could answer by guessing, and do not press an "
+    "unrelated tool into service to look successful. When something is genuinely out "
+    "of reach — a tool fails, a resource isn't found, access is denied, or nothing "
+    "you have covers it — deliver whatever you legitimately could, say plainly what "
+    "you could not do and why, and ask how they'd like to proceed. An honest gap is "
+    "always better than an invented answer.\n"
+    "When a packaged skill in <available_skills> matches the request, prefer it: it "
+    "is the curated path, and one structured call beats many guesswork searches.\n"
+    "Running code and shell commands is for when the user wants code run, a command "
+    "executed, or their own local files worked on. It is not a way to look around, "
+    "orient yourself, inspect your environment, or work around a tool that failed.\n"
+    "You cannot watch video or listen to audio unless a tool you hold accepts it. If "
+    "asked about a video link, say so and offer to work from the page or from a "
+    "transcript the user provides."
 )
 
 
@@ -225,15 +220,14 @@ def behavior_guidance() -> str:
     return BEHAVIOR_GUIDANCE
 
 
-# Shown only when the user is signed in to Google — steers tool selection so the
-# agent uses the Google tools (not shell/code or local paths) for cloud content.
+# Shown only to an agent that actually holds Google tools — their content lives in
+# the cloud, so it is reached through those tools rather than the local filesystem.
 GOOGLE_GUIDANCE = (
-    "The user is connected to Google. For anything in their Gmail, Google "
-    "Calendar, or Google Drive/Docs/Sheets, use the Google tools (gmail_search, "
-    "gmail_read, calendar_list_events, drive_search, drive_read, etc.) — never "
-    "shell commands, code, or local file paths, and never invent paths. To open a "
-    "Drive/Docs/Sheets item the user names, call drive_search first to get its id; "
-    "if they paste a Docs/Sheets link, pass it straight to drive_read."
+    "The user's Google content (Gmail, Calendar, Drive/Docs/Sheets) lives in the "
+    "cloud, not on this machine: reach it with the Google tools you hold, never with "
+    "shell commands, code, or local file paths, and never invent a path. An item is "
+    "addressed by id — search for it to get the id before reading it, and a link the "
+    "user pastes can be passed straight to the reader."
 )
 
 
@@ -403,12 +397,18 @@ def workspace_guidance(config: Config) -> str:
     )
 
 
-def turn_prompt(config: Config, memory: bool = True, workspace: bool = True) -> list[str]:
+def turn_prompt(
+    config: Config, memory: bool = True, workspace: bool = True, google: bool | None = None
+) -> list[str]:
     """Per-turn system prompt: persona + live environment context.
 
     `ask(prompt=...)` replaces the base prompt for that turn, so we include the
     persona, the always-on behaviour guidance, optional memory guidance, and the
     refreshed environment.
+
+    `google` says whether this agent holds the Google tools; None means "whenever the
+    user is signed in". A scoped agent (a task subagent) passes False so it is never
+    told to reach for tools its capability list left out.
     """
     parts = [config.agent.system_prompt, BEHAVIOR_GUIDANCE]
     if memory:
@@ -421,7 +421,7 @@ def turn_prompt(config: Config, memory: bool = True, workspace: bool = True) -> 
     try:
         from assistant.integrations.google_auth import has_token
 
-        if has_token():
+        if has_token() if google is None else google:
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         from assistant.observability import log_suppressed

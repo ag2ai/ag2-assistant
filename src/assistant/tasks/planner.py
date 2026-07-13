@@ -69,18 +69,17 @@ Produce a plan:
   (e.g. "research notes on X") and criteria. Do NOT create a "compile" or
   "synthesise" subtask — the final deliverable above is the synthesis and is
   produced from the subtasks automatically.
-- capabilities: for the top-level work AND for each subtask, list ONLY the tool
-  groups it genuinely needs, chosen from: {capabilities}. Use the fewest that fit
-  — e.g. factual research → ["web"]; ANY current real-world data, such as weather,
-  a forecast, share/index/crypto prices, news or sport → ["web"] (that group holds
-  the search, web-fetch, weather and market-quote tools); running/calculating →
-  ["code"]; the user's calendar → ["calendar"]; their Drive files → ["drive"];
-  reading a local file OR saving a file to the workspace (e.g. writing a markdown
-  report/document) → ["files"]. "skills" only unlocks packaged skills — it is NOT
-  a way to reach the web, so never use it in place of ["web"]. A pure
-  writing/synthesis step that only combines other results into the deliverable
-  text (no file saved) needs NONE ([]). Never request a capability the work
-  doesn't need (e.g. don't add "drive" to web research).
+- capabilities: for the top-level work AND for each subtask, list the capability
+  groups it genuinely needs, chosen from the catalogue below. A group grants the
+  work every tool it holds; a group left out means that work simply cannot do that
+  kind of thing, so read each description and pick the groups that COVER the work.
+  Each group you add also widens what this task can reach into — the user's mail,
+  their files, their Drive — so include one only where the work would fail without
+  it. A step that only reasons or writes, combining results already gathered into
+  the deliverable text and saving nothing, needs none ([]).
+
+Capability groups available for this request:
+{capabilities}
 
 Keep it tight. Trivial tasks need no questions, no subtasks, and one deliverable.
 
@@ -90,10 +89,10 @@ User request:
 
 async def make_plan(agent, request: str, capabilities: list[str] | None = None) -> TaskPlan:
     """Ask the agent for a structured plan (LLM call)."""
-    from assistant.tools import available_capabilities
+    from assistant.tools import available_capabilities, capability_catalogue
 
     caps = capabilities if capabilities is not None else available_capabilities()
-    prompt = _PLAN_PROMPT.format(request=request, capabilities=caps)
+    prompt = _PLAN_PROMPT.format(request=request, capabilities=capability_catalogue(caps))
     reply = await agent.ask(prompt, response_schema=TaskPlan)
     return await reply.content()
 

@@ -176,14 +176,17 @@ def _fetch_one(client, item: str):
 
 @tool
 def get_quotes(symbols: str, title: str = "") -> str:
-    """Get live market quotes for stocks, ETFs, indices, or crypto across global exchanges.
+    """Get the current market price of stocks, ETFs, indices, or crypto on global
+    exchanges. Quoted from the exchange's latest session and may lag the market by a
+    few minutes; `asOf` and `state` say how fresh it is.
 
-    Start here for any markets/stocks/shares/ETFs/funds/indices/crypto request — it is
-    the fast, reliable path for prices. Search the web for anything it does not cover
-    (news, analysis, fundamentals). Pass the Yahoo symbols you want
-    (US tickers like AAPL; suffixed international tickers like BHP.AX, 7203.T, VOD.L;
-    indices like ^AXJO, ^FTSE, ^GDAXI, ^N225, ^HSI, 000001.SS; crypto like BTC-USD).
-    Plain names ("ASX 200", "Toyota") are resolved via search if a symbol misses.
+    This covers PRICE and today's move only — it knows nothing else about an
+    instrument. Research anything beyond that (news, fundamentals, valuation ratios,
+    history, analysis) the way you would any other fact. Pass the Yahoo symbols you
+    want (US tickers like AAPL; suffixed international tickers like BHP.AX, 7203.T,
+    VOD.L; indices like ^AXJO, ^FTSE, ^GDAXI, ^N225, ^HSI, 000001.SS; crypto like
+    BTC-USD). Plain names ("ASX 200", "Toyota") are resolved via search if a symbol
+    misses.
 
     Render the result as a MarketBoard from `title` + `quotes`; the FIRST quote is
     the lead/featured instrument. Use the prices for your short prose.

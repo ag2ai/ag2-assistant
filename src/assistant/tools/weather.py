@@ -193,16 +193,14 @@ def build_result(data: dict, location: str, units: str = "celsius") -> dict:
 
 @tool
 def get_weather(location: str, units: str = "celsius") -> str:
-    """Get current weather and today's forecast for a location, including rain
-    probability and the hours rain is expected.
+    """Get the current weather and TODAY's forecast for a location: conditions,
+    temperature range, and — when the forecast carries it — a "Rain" row giving the
+    peak chance of rain today and the hours it is likely.
 
-    Start here for any weather or forecast request — it is the fast, reliable path
-    (one call). Returns a JSON object whose `condition` is already one of the
-    WeatherPanel enum values and whose `rows` are ready to render: emit a
-    WeatherPanel directly from `location`, `condition`, and `rows`, and use
-    `summary` for your prose. The "Rain" row carries the peak chance of rain today
-    and the windows when it is likely. Search the web for anything this does not
-    cover (multi-day outlooks, severe-weather warnings, marine or alpine detail).
+    This covers today at one place. Research anything beyond that (the days ahead,
+    severe-weather warnings, marine, alpine, historical) the way you would any other
+    fact. The returned `condition` is already a WeatherPanel enum value and `rows` are
+    ready to render; `summary` is for your prose.
 
     Args:
         location: City, region, airport code, or "lat,lon".

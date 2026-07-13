@@ -53,15 +53,18 @@ def test_extract_drive_id_from_url_or_id():
 
 def test_google_guidance_in_turn_prompt_when_signed_in(monkeypatch):
     import assistant.integrations.google_auth as ga
-    from assistant.agent import turn_prompt
+    from assistant.agent import GOOGLE_GUIDANCE, turn_prompt
     from assistant.config import Config
 
     monkeypatch.setattr(ga, "has_token", lambda: True)
-    joined = " ".join(turn_prompt(Config()))
-    assert "drive_search" in joined and "never" in joined.lower()
+    assert GOOGLE_GUIDANCE in " ".join(turn_prompt(Config()))
+
+    # A scoped agent without the Google capabilities is never told to reach for them,
+    # even while the user is signed in.
+    assert GOOGLE_GUIDANCE not in " ".join(turn_prompt(Config(), google=False))
 
     monkeypatch.setattr(ga, "has_token", lambda: False)
-    assert "drive_search" not in " ".join(turn_prompt(Config()))
+    assert GOOGLE_GUIDANCE not in " ".join(turn_prompt(Config()))
 
 
 def test_build_google_tools_names():
