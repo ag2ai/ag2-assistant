@@ -10,7 +10,14 @@ import asyncio
 
 import pytest
 
-from tests.conftest import FakeAgent, FakeReply, api, make_profile_app, use_fake_agent
+from tests.conftest import (
+    FakeAgent,
+    FakeReply,
+    FakeRunMixin,
+    api,
+    make_profile_app,
+    use_fake_agent,
+)
 
 
 @pytest.fixture
@@ -29,7 +36,7 @@ async def test_send_message_returns_reply(fake_gateway):
 
 
 async def test_forwarding_events_passes_structured_events_not_transcript(fake_gateway):
-    """`_ask_forwarding_events` forwards the agent's structured events verbatim
+    """`_forwarding_events` forwards the agent's structured events verbatim
     (so a voice client folds them with the text reducer) while OMITTING the
     conversation events it renders itself as transcript — and always unsubscribes."""
     from ag2.events import (
@@ -57,13 +64,15 @@ async def test_forwarding_events_passes_structured_events_not_transcript(fake_ga
 
     batch = ToolCallsEvent(calls=[ToolCallEvent(id="a", name="write_file", arguments="{}")])
 
-    async def ask_coro():
+    async def drive():  # stands in for the task driving AgentRun.result()
         await captured["fn"](batch)
         await captured["fn"](ModelMessageChunk(content="spoken words"))  # transcript → omitted
         await captured["fn"](ModelResponse(message=ModelMessage(content="spoken")))  # → omitted
         return FakeReply("done")
 
-    reply = await fake_gateway._ask_forwarding_events(_Stream(), ask_coro(), on_event)
+    reply = await fake_gateway._forwarding_events(
+        _Stream(), asyncio.ensure_future(drive()), on_event
+    )
 
     assert reply.body == "done"
     # only the structured event is forwarded; conversation events are the voice
@@ -197,7 +206,7 @@ async def test_delete_session_removes_transcript_and_event_log(tmp_path, monkeyp
 #     a profile switch, which is a full-page nav that discards local page state) ---
 
 
-class _SlowAgent:
+class _SlowAgent(FakeRunMixin):
     """A fake agent whose turn blocks on an event, so a test can observe state while
     a turn is *in flight* (simulating a long agentic turn: web searches etc.)."""
 
@@ -623,7 +632,7 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
 
     import assistant.gateway.core as core_mod
 
-    class _HangAgent:
+    class _HangAgent(FakeRunMixin):
         tools = []
 
         async def ask(self, *a, stream=None, **k):
@@ -647,6 +656,119 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
                 if m.get("type") == "turn_end":
                     break
             assert saw_error
+
+
+def test_stream_cancel_stops_the_turn(monkeypatch):
+    """A `cancel` frame stops the running turn: AG2 propagates the cancellation into
+    the run, a TurnCancelled event comes back out on the stream, and the turn ends."""
+    from fastapi.testclient import TestClient
+
+    class _HangAgent(FakeRunMixin):
+        tools = []
+
+        def __init__(self):
+            self.cancelled = False
+
+        async def ask(self, *a, stream=None, **k):
+            try:
+                await asyncio.Event().wait()  # runs until someone stops it
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    agent = _HangAgent()
+    use_fake_agent(monkeypatch, lambda *a, **k: agent)
+
+    app, pid = make_profile_app()
+    with TestClient(app) as client:
+        with client.websocket_connect(api(pid, "/stream?session=s1")) as ws:
+            while ws.receive_json().get("type") != "ready":
+                pass
+            ws.send_json({"text": "something long"})
+            ws.send_json({"type": "cancel"})
+            saw_cancelled = False
+            for _ in range(8):
+                m = ws.receive_json()
+                if m.get("event", {}).get("type", "").endswith("TurnCancelled"):
+                    saw_cancelled = True
+                if m.get("type") == "turn_end":
+                    break
+            assert saw_cancelled
+            assert agent.cancelled  # the cancel reached the turn itself, not just the socket
+
+
+async def test_feed_message_steers_the_running_turn(fake_gateway):
+    """A message sent while a turn runs is enqueued onto that run (AG2 drains it before
+    the turn's next model call) instead of starting a second turn."""
+    started = asyncio.Event()
+
+    class _SteerableAgent(FakeRunMixin):
+        tools = []
+
+        def __init__(self):
+            self.turns = 0
+            self.release = asyncio.Event()
+
+        async def ask(self, *msg, stream=None, **k):
+            self.turns += 1
+            started.set()
+            await self.release.wait()
+            return FakeReply("done")
+
+    agent = _SteerableAgent()
+    fake_gateway._agent = agent
+
+    turn = asyncio.ensure_future(fake_gateway.send_message("research widgets", session_id="s1"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert await fake_gateway.feed_message("focus on 2026", session_id="s1") is True
+    stream = await fake_gateway.stream_for("s1")
+    # It lands in the run's inbox — the running turn's next model call drains it.
+    assert stream.pending_messages
+    assert "focus on 2026" in str(stream.pending_messages[0].parts)
+
+    agent.release.set()
+    assert await turn == "done"
+    assert agent.turns == 1  # steered the turn in flight; no second one was started
+
+
+async def test_feed_message_is_false_when_nothing_is_running(fake_gateway):
+    """Idle session → the caller runs the message as a new turn instead."""
+    assert await fake_gateway.feed_message("hello", session_id="idle") is False
+    stream = await fake_gateway.stream_for("idle")
+    assert not stream.pending_messages  # nothing left stranded in the inbox
+
+
+async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
+    """Stopping a turn keeps the events it already put on the stream, and marks the stop."""
+    from assistant.events import TurnCancelled
+
+    started = asyncio.Event()
+
+    class _WorkingAgent(FakeRunMixin):
+        tools = []
+
+        async def ask(self, *msg, stream=None, **k):
+            from ag2.context import ConversationContext
+            from ag2.events import ModelMessage, ModelResponse
+
+            await ConversationContext(stream=stream).send(
+                ModelResponse(message=ModelMessage(content="partial work"))
+            )
+            started.set()
+            await asyncio.Event().wait()
+
+    fake_gateway._agent = _WorkingAgent()
+
+    turn = asyncio.ensure_future(fake_gateway.send_message("do it", session_id="s2"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert await fake_gateway.cancel_turn("s2") is True
+    assert await turn == ""
+
+    events = await (await fake_gateway.stream_for("s2")).history.get_events()
+    assert any(getattr(e, "message", None) and "partial work" in e.message.content for e in events)
+    assert isinstance(events[-1], TurnCancelled)
+    assert await fake_gateway.cancel_turn("s2") is False  # nothing in flight now
 
 
 async def test_gateway_asker_timeout_denies():
@@ -1061,7 +1183,7 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
         "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
     ).json()["config"]
 
-    class _OkAgent:
+    class _OkAgent(FakeRunMixin):
         def __init__(self, *a, **k):
             pass
 
@@ -1075,7 +1197,7 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
     assert body["ok"] is True and body["reply"] == "PONG"
     assert isinstance(body["latency_ms"], int)
 
-    class _BoomAgent:
+    class _BoomAgent(FakeRunMixin):
         def __init__(self, *a, **k):
             pass
 
@@ -1088,7 +1210,7 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
     assert "nope-boom" in r.json()["error"]
 
     # a wedged call trips the (monkeypatched-tiny) timeout → 502
-    class _HangAgent:
+    class _HangAgent(FakeRunMixin):
         def __init__(self, *a, **k):
             pass
 
@@ -1118,7 +1240,7 @@ def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
 
     captured = {}
 
-    class _OkAgent:
+    class _OkAgent(FakeRunMixin):
         def __init__(self, name, config=None, **k):
             captured["config"] = config
 
@@ -1217,7 +1339,7 @@ def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monke
 
     captured = {}
 
-    class _OkAgent:
+    class _OkAgent(FakeRunMixin):
         def __init__(self, name, config=None, **k):
             captured["config"] = config
 

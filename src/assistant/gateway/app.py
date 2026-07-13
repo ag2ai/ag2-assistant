@@ -1875,6 +1875,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                         with contextlib.suppress(Exception):
                             await runtime.tasks.answer_inquiry(iid, ans)
                     continue
+                if data.get("type") == "cancel":
+                    # Stop the turn running on this session. The gateway cancels the
+                    # task driving AG2's run, which AG2 propagates into the turn; a
+                    # TurnCancelled event comes back out through the bridge. A no-op
+                    # when nothing is in flight.
+                    await runtime.gateway.cancel_turn(session_id)
+                    continue
                 if data.get("type") == "feedback" and data.get("target_id"):
                     # 👍/👎 + mandatory reason on a generated item. Emit it onto the
                     # session stream (persists/replays → the GUI projects the thumb
@@ -1938,9 +1945,22 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     for pth, name in saved:
                         with contextlib.suppress(Exception):
                             await runtime.gateway.emit_event(session_id, Attachment(pth, name=name))
-                asyncio.create_task(
-                    bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
-                )
+                # Typed while the agent is still working? Feed the live turn instead of
+                # queueing a second one behind it — AG2 drains the message before the
+                # turn's next model call, so the user steers the work in progress.
+                if await runtime.gateway.feed_message(text, session_id, attachments):
+                    # The agent won't echo it until it drains the inbox, which can be a
+                    # whole tool round away. Ack now so the thread can show it as queued
+                    # rather than leaving the user wondering if it landed. Transient: the
+                    # durable record is the DrainedModelRequest AG2 emits on the drain.
+                    with contextlib.suppress(Exception):
+                        await websocket.send_json(
+                            {"type": "queued", "text": text, "session": session_id}
+                        )
+                else:
+                    asyncio.create_task(
+                        bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
+                    )
         except WebSocketDisconnect:
             return
         finally:

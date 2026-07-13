@@ -144,9 +144,9 @@ def test_save_credentials_validates(google_paths):
 def _client(monkeypatch):
     from fastapi.testclient import TestClient
 
-    from tests.conftest import make_profile_app, use_fake_agent
+    from tests.conftest import FakeRunMixin, make_profile_app, use_fake_agent
 
-    class _FakeAgent:
+    class _FakeAgent(FakeRunMixin):
         tools = []
 
         async def ask(self, *a, stream=None, **k):

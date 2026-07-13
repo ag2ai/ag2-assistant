@@ -6,7 +6,7 @@ import { thread, taskPanel, sessions, inspectorEvents } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
-import { foldEvent, isBusy } from './project.js'
+import { foldEvent, isBusy, queueMessage } from './project.js'
 
 let client = null
 let panelTimer = null
@@ -67,6 +67,12 @@ export function openThread(kind, id) {
       thread.update((t) => ({ ...t, items, busy: isBusy(items) }))
     },
     onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
+    // Fed into the turn already running: show it straight away (marked queued) so the
+    // wait for the agent to reach its next step isn't silent.
+    onQueued: (m) => thread.update((t) => {
+      queueMessage(t.items, m.text)
+      return { ...t, items: t.items, busy: true }
+    }),
     onError: (m) => thread.update((t) => {
       t.items.push({ id: Date.now(), kind: 'note', icon: 'x', text: m.message || 'error', alert: true })
       return { ...t, busy: false }
@@ -97,6 +103,12 @@ export function send(text, attachments = []) {
         : [{ session_id: t.session, preview: text.trim().slice(0, 80), updated: new Date().toISOString(), turns: 0 }, ...list]
     )
   }
+}
+
+// Stop the running turn. Stays busy until the server confirms — the turn ends when
+// the TurnCancelled event lands (or turn_end arrives), not when we ask.
+export function stop() {
+  if (client) client.cancel()
 }
 
 export function answer(inquiryId, text) {
