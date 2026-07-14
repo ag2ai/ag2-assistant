@@ -358,7 +358,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
     The app owns the manager's lifecycle: ``profiles.start()`` runs on lifespan
-    startup (migration + boot all unarchived profiles) and ``profiles.close()`` on
+    startup (boot all unarchived profiles) and ``profiles.close()`` on
     shutdown. ``persist`` is accepted for signature symmetry (the manager itself is
     already configured with its persistence choice).
 
@@ -369,7 +369,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await manager.start()  # migration + boot all unarchived profiles (+ channels)
+        await manager.start()  # boot all unarchived profiles (+ channels)
         try:
             yield
         finally:

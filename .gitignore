@@ -12,5 +12,7 @@ dist/
 build/
 .pytest_cache/
 
+docs/superpowers/
+
 # pre-recorded voice samples (regenerate with scripts/record_voice_samples.py)
 src/assistant/gateway/static/voices/

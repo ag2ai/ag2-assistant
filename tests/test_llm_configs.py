@@ -1,7 +1,7 @@
-"""The install-wide named LLM configuration store, derivation, and migration.
+"""The install-wide named LLM configuration store and derivation.
 
 HOME is isolated by the autouse conftest fixture, so each test gets its own empty
-``~/.ag2assistant`` (and thus an empty ``llm_configs.json`` to start).
+``~/.ag2assistant`` (and thus an empty store to start).
 """
 
 import json
@@ -223,83 +223,6 @@ def test_config_key_stored_but_not_in_env(monkeypatch):
     assert "…4242" not in json.dumps(secrets.status())
     assert secrets.set_config_key(e["id"], "") is True  # clear
     assert secrets.config_key(e["id"]) == ""
-
-
-# ---- one-time migration -------------------------------------------------------
-
-
-def test_migration_folds_legacy_llm_and_is_idempotent(monkeypatch):
-    from assistant import profiles
-    from assistant.config import data_dir
-    from assistant.gateway.migration import migrate_llm_configs
-
-    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
-
-    # An install with a config.json default + a profile that overrode to a compat server.
-    data_dir().mkdir(parents=True, exist_ok=True)
-    (data_dir() / "config.json").write_text(
-        json.dumps({"llm": {"provider": "gemini", "model": "gemini-3.5-flash"}})
-    )
-    work = profiles.create_profile("Work", "teal")
-    home = profiles.create_profile("Home", "coral")
-    profiles.set_active_default(work.id)
-    profiles.profile_dir(work.id).mkdir(parents=True, exist_ok=True)
-    profiles.profile_dir(home.id).mkdir(parents=True, exist_ok=True)
-    (profiles.profile_dir(work.id) / "settings.json").write_text(
-        json.dumps(
-            {
-                "llm": {"provider": "openai", "model": "gemma-4"},
-                "llm_options": {"openai": {"base_url": "http://192.168.0.55:8080/v1"}},
-                "voice_provider": "gemini",
-            }
-        )
-    )
-
-    # migrate_llm_configs writes the legacy llm_configs.json (migrate_config_files
-    # folds it into config.yaml later), so verify that file directly.
-    assert migrate_llm_configs() is True
-    store = json.loads((data_dir() / "llm_configs.json").read_text())
-    configs = store["configs"]
-    assert {c["type"] for c in configs} == {"gemini", "openai"}
-
-    work_cfg = next(c for c in configs if c["type"] == "openai")
-    assert work_cfg["model"] == "gemma-4"
-    assert work_cfg["base_url"] == "http://192.168.0.55:8080/v1"  # lifted to first-class
-    assert "base_url" not in work_cfg["options"]
-
-    # active is the active-default profile's (Work) entry
-    assert store["active"] == work_cfg["id"]
-
-    # legacy keys stripped from the profile settings; other keys preserved
-    ws = json.loads((profiles.profile_dir(work.id) / "settings.json").read_text())
-    assert "llm" not in ws and "llm_options" not in ws
-    assert ws["voice_provider"] == "gemini"
-
-    # idempotent — a second run is a no-op
-    before = json.loads((data_dir() / "llm_configs.json").read_text())
-    assert migrate_llm_configs() is False
-    assert json.loads((data_dir() / "llm_configs.json").read_text()) == before
-
-
-def test_migration_noop_on_fresh_install():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_llm_configs
-
-    # A profile with settings but no llm block, and no config.json → nothing to migrate.
-    p = profiles.create_profile("Solo", "teal")
-    profiles.profile_dir(p.id).mkdir(parents=True, exist_ok=True)
-    (profiles.profile_dir(p.id) / "settings.json").write_text(
-        json.dumps({"voice_provider": "gemini"})
-    )
-
-    assert migrate_llm_configs() is False
-    assert llm_configs.list_configs() == []
-    # store not created → flat defaults apply (neither the legacy json nor a section)
-    from assistant.config import data_dir, read_global_config
-
-    assert not (data_dir() / "llm_configs.json").exists()
-    assert "llm_configs" not in read_global_config()
 
 
 def test_store_lives_in_global_config_yaml():

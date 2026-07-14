@@ -2,8 +2,8 @@
 
 A profile is a named, colour-coded runtime: one ``Gateway`` + one ``TaskService``
 + its own channels, all alive simultaneously so background tasks in a non-viewed
-profile keep running. This module boots them all at server start, runs the
-one-time legacy migration first, and owns the create / archive / reload lifecycle.
+profile keep running. This module boots them all at server start and owns the
+create / archive / reload lifecycle.
 
 Isolation is structural (directory-per-profile), not query discipline: each
 runtime is constructed from a **derived config** (``Config.with_profile(meta)``)
@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 from assistant import profiles
 from assistant.config import Config, load_config
 from assistant.gateway.core import Gateway, build_gateway
-from assistant.gateway.migration import migrate_if_needed, migrate_llm_configs
 from assistant.observability import setup_logging
 from assistant.profiles import ProfileMeta
 
@@ -197,17 +196,13 @@ class ProfileManager:
         self.channel_errors: dict[str, str] = {}
 
     async def start(self) -> None:
-        """Run migration first, boot every UNARCHIVED registered profile, then start
-        each channel the registry binds to a booted profile.
+        """Boot every UNARCHIVED registered profile, then start each channel the
+        registry binds to a booted profile.
 
         Zero profiles is a legal no-op (fresh install, §3.5). Logging is set up once
         against the root config here so per-profile loggers write to the shared file.
         """
         setup_logging(load_config())
-        migrate_if_needed()
-        # One-time: fold legacy config.json llm + each profile's settings llm/llm_options
-        # into the install-wide named-config store (idempotent — skipped if it exists).
-        migrate_llm_configs()
         for meta in profiles.list_profiles(include_archived=False):
             await self._boot(meta)
         await self._start_bound_channels()

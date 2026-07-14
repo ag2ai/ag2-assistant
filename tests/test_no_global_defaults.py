@@ -29,7 +29,6 @@ _ALLOWLIST = {
     "llm_configs.py",  # install-wide named LLM configs (llm_configs.json), like secrets
     "codex_auth.py",  # global ChatGPT-subscription tokens (account-level, like google_auth)
     "profiles.py",  # the registry + default-workspace seed
-    "gateway/migration.py",  # one-time install-wide JSON→YAML bridge (root-level by nature)
     "usage.py",  # pricing read ONLY (asserted below)
     "integrations/google_auth.py",  # global OAuth files (routed via data_dir())
     "gateway/app.py",  # fs-browser Path.home() starting points ONLY

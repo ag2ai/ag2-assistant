@@ -1,11 +1,10 @@
-"""ProfileManager, config_factory, and legacy migration (WP3).
+"""ProfileManager and config_factory (WP3).
 
 The autouse conftest fixture points HOME at a tmp dir, so the registry, profile
 dirs, and stores resolve under disposable space. The agent factory is faked
 (``create_agent``) so no runtime touches a real LLM.
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -38,120 +37,6 @@ def _root() -> Path:
     from assistant.config import load_config
 
     return load_config().root_dir
-
-
-# --- migration ---
-
-
-def _seed_legacy(root: Path, *, onboarded_key=False, onboarded_marker=False, extra=None):
-    """Create a legacy (pre-profile) layout at the root."""
-    root.mkdir(parents=True, exist_ok=True)
-    settings = {"llm": {"provider": "openai", "model": "gpt-x"}}
-    if onboarded_key:
-        settings["onboarded"] = True
-    (root / "settings.json").write_text(json.dumps(settings))
-    (root / "sessions.db").write_text("db")
-    (root / "tasks.db").write_text("db")
-    (root / "profile.db").write_text("db")
-    (root / "skills").mkdir(exist_ok=True)
-    (root / "skills" / "a.md").write_text("skill")
-    if onboarded_marker:
-        (root / "onboarded").write_text("")
-    for name, content in (extra or {}).items():
-        (root / name).write_text(content)
-
-
-def test_migration_moves_files_and_writes_registry():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root, onboarded_key=True)
-
-    assert migrate_if_needed() is True
-
-    dest = root / "profiles" / "default"
-    # files moved out of the root, into the default profile dir
-    assert not (root / "sessions.db").exists()
-    assert (dest / "sessions.db").exists()
-    assert (dest / "tasks.db").exists()
-    assert (dest / "profile.db").exists()
-    assert (dest / "skills" / "a.md").exists()
-
-    # registry written with a single "default" profile, active + onboarded carried
-    reg = profiles.load_registry()
-    assert reg["active_default"] == "default"
-    assert reg["onboarded"] is True
-    assert [p["id"] for p in reg["profiles"]] == ["default"]
-
-    # onboarded key stripped from the moved settings file (registry is its only home)
-    moved = json.loads((dest / "settings.json").read_text())
-    assert "onboarded" not in moved
-    assert moved["llm"]["provider"] == "openai"
-
-    # idempotent: a second run is a no-op
-    assert migrate_if_needed() is False
-
-
-def test_migration_leaves_global_permissions_at_root():
-    # permissions.json is the INSTALL-WIDE store now — it can legitimately exist at
-    # the root before profiles/ does (e.g. a CLI grant on a fresh install). Migration
-    # must not relocate it into profiles/default/ (that would orphan global grants).
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root, extra={"permissions.json": json.dumps({"folders": ["/tmp/x"]})})
-
-    assert migrate_if_needed() is True
-    assert (root / "permissions.json").exists()
-    assert not (root / "profiles" / "default" / "permissions.json").exists()
-
-
-def test_migration_onboarded_from_marker_only():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root, onboarded_key=False, onboarded_marker=True)
-
-    assert migrate_if_needed() is True
-    assert profiles.load_registry()["onboarded"] is True
-    # marker deleted (registry owns the flag now)
-    assert not (root / "onboarded").exists()
-
-
-def test_migration_not_onboarded_when_neither_present():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    _seed_legacy(_root(), onboarded_key=False, onboarded_marker=False)
-    assert migrate_if_needed() is True
-    assert profiles.load_registry()["onboarded"] is False
-
-
-def test_migration_binds_channels_from_env(monkeypatch):
-    for e in ("DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
-        monkeypatch.delenv(e, raising=False)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root)
-    assert migrate_if_needed() is True
-    # env-enabled channels are bound to the default profile in the registry
-    bindings = profiles.channel_bindings()
-    assert bindings["telegram"] == "default"
-    assert bindings["discord"] is None
-    assert bindings["slack"] is None
-
-
-def test_migration_noop_on_fresh_install():
-    from assistant.gateway.migration import migrate_if_needed
-
-    # nothing at the root → no-op
-    assert migrate_if_needed() is False
-    assert not (_root() / "profiles").exists()
 
 
 # --- ProfileManager start / boot ---

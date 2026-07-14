@@ -2,7 +2,7 @@
 
 A profile is a named, colour-coded runtime; on disk it is a directory under
 ``<root>/profiles/<id>``. This module owns the registry file only — booting the
-runtimes, migration, and guardrails live elsewhere (ProfileManager, later).
+runtimes and guardrails live elsewhere (ProfileManager).
 
 Read/write style mirrors ``settings.py``: a small read-modify-write over a JSON
 file, tolerant of a missing/malformed file (treated as empty registry).
