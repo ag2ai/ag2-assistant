@@ -105,6 +105,51 @@ def test_malformed_json_falls_back_to_defaults(tmp_path):
     assert cfg.llm.provider == "gemini"
 
 
+def _meta(tmp_path, pid="work"):
+    from assistant.profiles import ProfileMeta
+
+    return ProfileMeta(
+        id=pid,
+        name=pid.title(),
+        palette="teal",
+        workspace=str(tmp_path / "ws"),
+        created="2026-01-01T00:00:00Z",
+    )
+
+
+def test_profile_overlay_overrides_global(tmp_path):
+    cfg = Config(root_dir=tmp_path, data_dir=tmp_path)
+    pdir = tmp_path / "profiles" / "work"
+    pdir.mkdir(parents=True)
+    (pdir / "config.yaml").write_text("llm:\n  model: overlay-model\nvoice:\n  gemini: Puck\n")
+    prof = cfg.with_profile(_meta(tmp_path))
+    assert prof.llm.model == "overlay-model"
+    assert prof.llm.provider == cfg.llm.provider  # untouched fields inherit the global
+    assert cfg.llm.model != "overlay-model"  # the base config is not mutated
+
+
+def test_env_still_wins_over_profile_overlay(tmp_path, monkeypatch):
+    monkeypatch.setenv("AG2ASSISTANT_MODEL", "env-model")
+    cfg = load_config(tmp_path / "absent.yaml")
+    cfg.root_dir = tmp_path
+    pdir = tmp_path / "profiles" / "work"
+    pdir.mkdir(parents=True)
+    (pdir / "config.yaml").write_text("llm:\n  model: overlay-model\n")
+    prof = cfg.with_profile(_meta(tmp_path))
+    assert prof.llm.model == "env-model"
+    assert prof.data_dir == tmp_path / "profiles" / "work"  # paths not clobbered by env re-apply
+
+
+def test_malformed_overlay_section_is_skipped(tmp_path):
+    cfg = Config(root_dir=tmp_path, data_dir=tmp_path)
+    pdir = tmp_path / "profiles" / "work"
+    pdir.mkdir(parents=True)
+    (pdir / "config.yaml").write_text("llm:\n  call_retries: not-a-number\nagent:\n  name: ok\n")
+    prof = cfg.with_profile(_meta(tmp_path))
+    assert prof.llm.call_retries == 2  # bad section skipped wholesale
+    assert prof.agent.name == "ok"  # good section still applies
+
+
 def test_load_config_reads_yaml(tmp_path):
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text("agent:\n  name: custom\nllm:\n  model: my-model\n")

@@ -154,6 +154,29 @@ class TasksConfig(BaseModel):
     digest_timeout_s: int = 30
 
 
+# The Config sections a profile's config.yaml may overlay. Settings keys in the same
+# file (voice, focuses, mcp_servers, project_folder, voice_provider) are read by
+# assistant.settings, not here.
+_OVERLAY_SECTIONS = ("llm", "agent", "tools", "memory", "tasks")
+
+
+def apply_overlay(cfg: "Config", path: Path) -> None:
+    """Merge a profile's config.yaml onto ``cfg`` in place, field-wise per known
+    section (a key present in the overlay wins; absent keys inherit the global).
+    A section that fails validation is skipped wholesale — same tolerance as a
+    malformed global config file."""
+    data = read_yaml(path)
+    for section in _OVERLAY_SECTIONS:
+        raw = data.get(section)
+        if not isinstance(raw, dict) or not raw:
+            continue
+        current = getattr(cfg, section)
+        try:
+            setattr(cfg, section, type(current)(**{**current.model_dump(), **raw}))
+        except Exception:
+            continue
+
+
 class Config(BaseModel):
     """Root AG2 Assistant configuration (built-in defaults; see `load_config`)."""
 
@@ -177,11 +200,15 @@ class Config(BaseModel):
     def with_profile(self, meta: "ProfileMeta") -> "Config":
         """A deep copy whose path fields are reinterpreted for a profile: data_dir and
         skills_dir land under root_dir/profiles/<id>, workspace_dir is the profile's
-        workspace. root_dir is unchanged (the global files stay at the root)."""
+        workspace, and the profile's config.yaml overlay is applied (explicit
+        AG2ASSISTANT_* env vars still win last). root_dir is unchanged (the global
+        files stay at the root)."""
         cfg = self.model_copy(deep=True)
         cfg.data_dir = cfg.root_dir / "profiles" / meta.id
         cfg.skills_dir = cfg.data_dir / "skills"
         cfg.workspace_dir = Path(meta.workspace)
+        apply_overlay(cfg, cfg.data_dir / "config.yaml")
+        _apply_env_overrides(cfg, include_paths=False)
         return cfg
 
 
@@ -216,8 +243,12 @@ def data_dir() -> Path:
     return _default_root()
 
 
-def _apply_env_overrides(cfg: Config) -> None:
-    """Layer AG2ASSISTANT_* environment variables on top (highest precedence)."""
+def _apply_env_overrides(cfg: Config, *, include_paths: bool = True) -> None:
+    """Layer AG2ASSISTANT_* environment variables on top (highest precedence).
+
+    ``include_paths=False`` re-applies only the non-path overrides — used by
+    with_profile() after the overlay, where the profile paths are already final and
+    AG2ASSISTANT_DATA_DIR/WORKSPACE must not clobber them back to the root."""
     env = os.environ.get
     if v := env("AG2ASSISTANT_LLM_PROVIDER"):
         cfg.llm.provider = v
@@ -253,16 +284,17 @@ def _apply_env_overrides(cfg: Config) -> None:
             pass
     if v := env("AG2ASSISTANT_LOCATION"):
         cfg.agent.location = v
-    if v := env("AG2ASSISTANT_WORKSPACE"):
-        cfg.workspace_dir = Path(v).expanduser()
-    if v := env("AG2ASSISTANT_DATA_DIR"):
-        # Redirect the whole install root (global files + profiles/ tree). Mirrors the
-        # default layout so with_profile() keeps repointing data_dir/skills_dir under it.
-        # Primarily for containers, which mount persistent state at a fixed path.
-        root = Path(v).expanduser()
-        cfg.root_dir = root
-        cfg.data_dir = root
-        cfg.skills_dir = root / "skills"
+    if include_paths:
+        if v := env("AG2ASSISTANT_WORKSPACE"):
+            cfg.workspace_dir = Path(v).expanduser()
+        if v := env("AG2ASSISTANT_DATA_DIR"):
+            # Redirect the whole install root (global files + profiles/ tree). Mirrors the
+            # default layout so with_profile() keeps repointing data_dir/skills_dir under it.
+            # Primarily for containers, which mount persistent state at a fixed path.
+            root = Path(v).expanduser()
+            cfg.root_dir = root
+            cfg.data_dir = root
+            cfg.skills_dir = root / "skills"
     if v := env("AG2ASSISTANT_SANDBOX"):
         cfg.tools.sandbox = v
     if v := env("AG2ASSISTANT_DOCKER_IMAGE"):
