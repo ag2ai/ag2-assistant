@@ -2,18 +2,18 @@
 
 Resolution order (highest precedence first):
   1. Environment variables (AG2ASSISTANT_*), loaded from .env if present
-  2. ~/.ag2assistant/config.json
+  2. ~/.ag2assistant/config.yaml
   3. Built-in defaults
 
 Use `load_config()` to get a fully resolved Config; bare `Config()` is just the
 built-in defaults (handy in tests).
 """
 
-import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -35,6 +35,26 @@ def _default_root() -> Path:
     if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
         return Path(v).expanduser()
     return Path.home() / _DATA_DIR_NAME
+
+
+def read_yaml(path: Path) -> dict:
+    """Parse a YAML mapping file. A missing, malformed, or non-mapping file reads
+    as an empty dict — the same tolerance a malformed config.json had."""
+    try:
+        data = yaml.safe_load(Path(path).read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_yaml(path: Path, data: dict) -> None:
+    """Atomically write a YAML mapping (tmp file + os.replace, so a crashed write
+    never leaves a truncated config behind)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    os.replace(tmp, path)
 
 
 class LLMConfig(BaseModel):
@@ -166,25 +186,20 @@ class Config(BaseModel):
 
 
 def default_config_path() -> Path:
-    """Where AG2 Assistant looks for a JSON config file."""
-    return _default_root() / "config.json"
+    """Where AG2 Assistant looks for the global YAML config file."""
+    return _default_root() / "config.yaml"
 
 
 def data_dir() -> Path:
     """Resolve the data directory WITHOUT the full config layering, so the secrets /
     settings stores can locate their files without recursing back into load_config()
     (which itself consults settings). AG2ASSISTANT_DATA_DIR wins (highest precedence,
-    matching _apply_env_overrides); then a config.json data_dir; then the default root."""
+    matching _apply_env_overrides); then a config.yaml data_dir; then the default root."""
     if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
         return Path(v).expanduser()
-    p = default_config_path()
-    if p.exists():
-        try:
-            d = json.loads(p.read_text()).get("data_dir")
-            if d:
-                return Path(d)
-        except Exception:
-            pass
+    d = read_yaml(default_config_path()).get("data_dir")
+    if d:
+        return Path(d).expanduser()
     return _default_root()
 
 
@@ -265,14 +280,9 @@ def _apply_env_overrides(cfg: Config) -> None:
 
 
 def load_config(path: Path | None = None) -> Config:
-    """Resolve config from defaults ← config.json ← environment (env wins)."""
+    """Resolve config from defaults ← config.yaml ← environment (env wins)."""
     path = path or default_config_path()
-    data: dict = {}
-    if path and path.exists():
-        try:
-            data = json.loads(path.read_text())
-        except Exception:
-            data = {}  # a malformed config file falls back to defaults
+    data: dict = read_yaml(path) if path else {}
     cfg = Config(**data)
     # root_dir tracks whatever data_dir resolves to (config.json may override it); the
     # profiles/ tree and global files live under this root. Profile derivation is via

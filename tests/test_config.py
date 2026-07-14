@@ -105,6 +105,38 @@ def test_malformed_json_falls_back_to_defaults(tmp_path):
     assert cfg.llm.provider == "gemini"
 
 
+def test_load_config_reads_yaml(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("agent:\n  name: custom\nllm:\n  model: my-model\n")
+    cfg = load_config(cfg_file)
+    assert cfg.agent.name == "custom"
+    assert cfg.llm.model == "my-model"
+
+
+def test_malformed_yaml_falls_back_to_defaults(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("[unclosed")
+    cfg = load_config(cfg_file)
+    assert cfg.agent.name == "ag2-assistant"
+
+
+def test_default_config_path_is_yaml():
+    from assistant.config import default_config_path
+
+    assert default_config_path().name == "config.yaml"
+
+
+def test_yaml_roundtrip_helpers(tmp_path):
+    from assistant.config import read_yaml, write_yaml
+
+    p = tmp_path / "nested" / "config.yaml"
+    write_yaml(p, {"a": 1, "b": {"c": "х"}})  # unicode survives
+    assert read_yaml(p) == {"a": 1, "b": {"c": "х"}}
+    assert read_yaml(tmp_path / "absent.yaml") == {}
+    (tmp_path / "list.yaml").write_text("- 1\n- 2\n")
+    assert read_yaml(tmp_path / "list.yaml") == {}  # non-mapping reads as empty
+
+
 def test_model_config_gemini_and_aggregate_override():
     from assistant.agent import model_config
 
