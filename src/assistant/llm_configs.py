@@ -7,9 +7,10 @@ model: a ``type`` (one of :data:`TYPES`), a ``model`` name, an optional endpoint
 free-form ``options`` escape-hatch object, and — held separately in the secrets
 store, never here — an optional per-config API key. The list *and* the single
 ``active`` selection are install-wide (the LLM is common across profiles), so this
-store lives at ``data_dir()/llm_configs.json`` (no secrets) alongside
-``secrets.json`` and resolves its path the same standalone way (via
-``config.data_dir()``), so it never recurses back into ``load_config()``.
+store lives in the ``llm_configs:`` section of the global ``config.yaml`` (no
+secrets), read/written via ``config.read_global_config`` / ``update_global_section``
+so it shares the file without disturbing neighbouring sections and never recurses
+back into ``load_config()``.
 
 The bridge to the rest of the app is :func:`apply_active`: ``load_config()`` calls
 it to *derive* the active entry onto the flat ``cfg.llm`` fields
@@ -37,7 +38,7 @@ default used when the store is empty or has no active entry).
 from secrets import token_hex
 
 from assistant import secrets
-from assistant.config import data_dir
+from assistant.config import read_global_config, update_global_section
 
 # The supported configuration types. ``openai`` = Chat Completions API, the surface
 # OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) implement reliably;
@@ -73,20 +74,14 @@ def _subscription_signed_in() -> bool:
         return False
 
 
-def _path():
-    return data_dir() / "llm_configs.json"
+_SECTION = "llm_configs"
 
 
 def _read() -> dict:
-    """The raw store (``{"active": id|None, "configs": [...]}``). A missing or
-    malformed file reads as an empty store — the flat ``config.json`` defaults then
-    apply, exactly like a malformed ``config.json`` falls back to defaults."""
-    try:
-        import json
-
-        data = json.loads(_path().read_text())
-    except Exception:
-        return {"active": None, "configs": []}
+    """The store section (``{"active": id|None, "configs": [...]}``) of the global
+    config.yaml. A missing or malformed section reads as an empty store — the flat
+    ``llm:`` defaults then apply, exactly like a malformed config file."""
+    data = read_global_config().get(_SECTION)
     if not isinstance(data, dict):
         return {"active": None, "configs": []}
     configs = data.get("configs")
@@ -97,11 +92,9 @@ def _read() -> dict:
 
 
 def _write(data: dict) -> None:
-    import json
-
-    p = _path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2))
+    update_global_section(
+        _SECTION, {"active": data.get("active"), "configs": list(data.get("configs") or [])}
+    )
 
 
 def _clean_entry(raw: dict) -> dict:

@@ -256,8 +256,11 @@ def test_migration_folds_legacy_llm_and_is_idempotent(monkeypatch):
         )
     )
 
+    # migrate_llm_configs writes the legacy llm_configs.json (migrate_config_files
+    # folds it into config.yaml later), so verify that file directly.
     assert migrate_llm_configs() is True
-    configs = llm_configs.list_configs()
+    store = json.loads((data_dir() / "llm_configs.json").read_text())
+    configs = store["configs"]
     assert {c["type"] for c in configs} == {"gemini", "openai"}
 
     work_cfg = next(c for c in configs if c["type"] == "openai")
@@ -266,7 +269,7 @@ def test_migration_folds_legacy_llm_and_is_idempotent(monkeypatch):
     assert "base_url" not in work_cfg["options"]
 
     # active is the active-default profile's (Work) entry
-    assert llm_configs.active_config()["id"] == work_cfg["id"]
+    assert store["active"] == work_cfg["id"]
 
     # legacy keys stripped from the profile settings; other keys preserved
     ws = json.loads((profiles.profile_dir(work.id) / "settings.json").read_text())
@@ -274,9 +277,9 @@ def test_migration_folds_legacy_llm_and_is_idempotent(monkeypatch):
     assert ws["voice_provider"] == "gemini"
 
     # idempotent — a second run is a no-op
-    before = llm_configs.list_configs()
+    before = json.loads((data_dir() / "llm_configs.json").read_text())
     assert migrate_llm_configs() is False
-    assert llm_configs.list_configs() == before
+    assert json.loads((data_dir() / "llm_configs.json").read_text()) == before
 
 
 def test_migration_noop_on_fresh_install():
@@ -292,7 +295,32 @@ def test_migration_noop_on_fresh_install():
 
     assert migrate_llm_configs() is False
     assert llm_configs.list_configs() == []
-    assert not llm_configs._path().exists()  # store not created → flat defaults apply
+    # store not created → flat defaults apply (neither the legacy json nor a section)
+    from assistant.config import data_dir, read_global_config
+
+    assert not (data_dir() / "llm_configs.json").exists()
+    assert "llm_configs" not in read_global_config()
+
+
+def test_store_lives_in_global_config_yaml():
+    import yaml
+
+    from assistant.config import default_config_path
+
+    # Seed an unrelated key to prove the store preserves neighbours in the shared file.
+    p = default_config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("agent:\n  name: keep-me\n")
+
+    e = llm_configs.save_config({"name": "G", "type": "gemini", "model": "gemini-x"})
+    llm_configs.set_active(e["id"])
+
+    data = yaml.safe_load(p.read_text())
+    assert data["agent"]["name"] == "keep-me"  # RMW preserved the neighbour section
+    assert data["llm_configs"]["active"] == e["id"]
+    assert data["llm_configs"]["configs"][0]["model"] == "gemini-x"
+    assert not (p.parent / "llm_configs.json").exists()
+    assert llm_configs.active_config()["name"] == "G"
 
 
 # ---- openai_subscription type (ChatGPT sign-in) -------------------------------

@@ -190,6 +190,19 @@ def default_config_path() -> Path:
     return _default_root() / "config.yaml"
 
 
+def read_global_config() -> dict:
+    """The raw global config.yaml document (empty dict when absent/malformed)."""
+    return read_yaml(default_config_path())
+
+
+def update_global_section(key: str, value) -> None:
+    """Read-modify-write one top-level section of the global config.yaml, preserving
+    every other key (the file is shared: Config sections, llm_configs, data_dir)."""
+    data = read_yaml(default_config_path())
+    data[key] = value
+    write_yaml(default_config_path(), data)
+
+
 def data_dir() -> Path:
     """Resolve the data directory WITHOUT the full config layering, so the secrets /
     settings stores can locate their files without recursing back into load_config()
