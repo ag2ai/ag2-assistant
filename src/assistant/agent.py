@@ -151,20 +151,17 @@ def bundled_skills_dir():
     return Path(__file__).parent / "skills"
 
 
-def build_skills_toolkit(config: Config):
-    """A toolkit that lets the agent search, install, and run skills.
+def build_skills_runtime(config: Config):
+    """The runtime backing skill discovery, load, and script execution.
 
-    `SkillSearchToolkit` extends the local skills toolkit (list/load/read/run)
-    with registry search + install from skills.sh. Skills install into
-    `config.skills_dir`; AG2 Assistant's bundled first-party skills are always available
-    too (read-only, via `extra_paths`), so it's capable on first run.
+    Skills install into `config.skills_dir`; AG2 Assistant's bundled first-party
+    skills are always available too (read-only, via `extra_paths`), so it's
+    capable on first run.
 
     When the Docker sandbox is selected (`config.tools.sandbox == "docker"`),
     skill *scripts* run inside a one-shot, bind-mounted container — so untrusted
     skill code can't reach the user's files. Storage/discovery stay local.
     """
-    from ag2.tools import SkillSearchToolkit
-
     config.skills_dir.mkdir(parents=True, exist_ok=True)
     extra = [str(bundled_skills_dir())]
 
@@ -175,19 +172,50 @@ def build_skills_toolkit(config: Config):
         )
 
         if docker_available():
-            runtime = build_docker_skill_runtime(
+            return build_docker_skill_runtime(
                 install_dir=config.skills_dir,
                 blocked=_SKILL_BLOCKED,
                 image=config.tools.docker_image,
                 network=config.tools.docker_network,
                 extra_paths=extra,
             )
-            return SkillSearchToolkit(runtime)
 
     from ag2.tools.skills import LocalRuntime
 
-    runtime = LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
-    return SkillSearchToolkit(runtime)
+    return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
+
+
+def build_skills_plugin(config: Config, runtime):
+    """Progressive-disclosure Skills plugin over `runtime`.
+
+    `SkillPlugin` injects the `<available_skills>` catalog (name + description +
+    location per skill) straight into the system prompt on startup — the model
+    discovers what's available with no `list_skills` round-trip — and exposes
+    `load_skill` / `read_skill_resource` / `run_skill_script` for those skills.
+
+    The catalog and the activation tools are a **construction-time snapshot**: a
+    skill installed mid-session (via the registry tools below) lands on disk and
+    in `skills-lock.json` but isn't loadable until the next agent build picks it
+    up. Install now, use next session.
+    """
+    from ag2.tools.skills import SkillPlugin
+
+    return SkillPlugin(runtime)
+
+
+def build_skills_install_tools(config: Config, runtime) -> list:
+    """Registry search/install/remove tools (skills.sh), kept alongside the
+    `SkillPlugin` so the agent can still grow its skill set.
+
+    `SkillSearchToolkit` bundles the local list/load/read/run tools too, but the
+    plugin already owns discovery and execution — so we take only the three
+    registry tools to avoid registering duplicates. They share the plugin's
+    `runtime`, so an install writes to the same store the plugin reads from.
+    """
+    from ag2.tools import SkillSearchToolkit
+
+    toolkit = SkillSearchToolkit(runtime)
+    return [toolkit.search_skills(), toolkit.install_skill(), toolkit.remove_skill()]
 
 
 # Always-on behavioural guidance, kept separate from the (user-customisable)
@@ -538,8 +566,13 @@ def create_agent(
         workspace_dir=config.workspace_dir,
         config=config,  # enables generate_image (needs provider/keys)
     )
+    plugins: list = []
     if skills and (capabilities is None or "skills" in capabilities):
-        tools.append(build_skills_toolkit(config))
+        # One runtime backs both the disclosure/run plugin and the registry
+        # install tools, so an install writes to the store the plugin reads from.
+        skills_runtime = build_skills_runtime(config)
+        plugins.append(build_skills_plugin(config, skills_runtime))
+        tools.extend(build_skills_install_tools(config, skills_runtime))
 
     # system tools (retrieval + actions over tasks/chats/questions) — these make
     # the agent "universal": it can know and do everything via tools (create/
@@ -601,6 +634,7 @@ def create_agent(
         prompt=config.agent.system_prompt,
         config=llm_config,
         tools=tools,
+        plugins=plugins,
         knowledge=knowledge,
         assembly=assembly,
         hitl_hook=hitl_hook,

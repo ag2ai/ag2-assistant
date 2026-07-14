@@ -1,17 +1,36 @@
-"""Tests for the skills toolkit wiring."""
+"""Tests for the skills plugin + registry install wiring."""
 
 import pytest
 
-from assistant.agent import build_skills_toolkit, create_agent
+from assistant.agent import (
+    build_skills_install_tools,
+    build_skills_plugin,
+    build_skills_runtime,
+    create_agent,
+)
 from assistant.config import Config
 
 
-def test_skills_toolkit_builds_and_creates_dir(tmp_path):
+def test_skills_runtime_builds_and_creates_dir(tmp_path):
     config = Config()
     config.skills_dir = tmp_path / "skills"
-    toolkit = build_skills_toolkit(config)
-    assert type(toolkit).__name__ == "SkillSearchToolkit"
+    runtime = build_skills_runtime(config)
+    assert runtime is not None
     assert config.skills_dir.exists()
+
+
+def test_skills_plugin_injects_catalog(tmp_path):
+    """SkillPlugin surfaces bundled skills via the <available_skills> prompt block."""
+    config = Config()
+    config.skills_dir = tmp_path / "skills"
+    runtime = build_skills_runtime(config)
+    plugin = build_skills_plugin(config, runtime)
+    assert type(plugin).__name__ == "Plugin"
+    # Bundled skills are present, so the plugin contributes a catalog + tools.
+    prompt = "\n".join(plugin._system_prompt)
+    assert "<available_skills>" in prompt
+    tool_names = {t.name for t in plugin._tools}
+    assert "load_skill" in tool_names
 
 
 def test_bundled_skills_are_discoverable(tmp_path):
@@ -32,12 +51,14 @@ def test_bundled_skills_are_discoverable(tmp_path):
     assert all(m.metadata.description for m in discovered)  # required for disclosure
 
 
-def test_skills_toolkit_exposes_search_and_install(tmp_path):
+def test_registry_install_tools_exposed(tmp_path):
+    """The skills.sh search/install/remove tools ride alongside the plugin."""
     config = Config()
     config.skills_dir = tmp_path / "skills"
-    toolkit = build_skills_toolkit(config)
-    for tool in ("search_skills", "install_skill", "list_skills", "load_skill"):
-        assert hasattr(toolkit, tool), f"missing {tool}"
+    runtime = build_skills_runtime(config)
+    tools = build_skills_install_tools(config, runtime)
+    names = {t.name for t in tools}
+    assert {"search_skills", "install_skill", "remove_skill"} == names
 
 
 def test_agent_with_skills_builds(tmp_path):
