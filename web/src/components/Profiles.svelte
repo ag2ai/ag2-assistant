@@ -1,8 +1,8 @@
 <script>
   // Settings → "Profiles" section (§5.4). Lists all unarchived profiles. For the
-  // ACTIVE profile it offers inline edit (rename / palette / workspace) via
-  // updateProfile; a workspace change reloads that runtime server-side, so after
-  // any save we re-fetch /api/profiles and re-apply the palette if it changed.
+  // ACTIVE profile it offers inline edit (rename / palette) via updateProfile; the
+  // workspace folder is derived (not user-chosen) and shown read-only. After any save
+  // we re-fetch /api/profiles and re-apply the palette if it changed.
   // Archive (§4.9): a quiet action per row; archiving the active_default requires
   // choosing a replacement (pre-selected). Archiving the ACTIVE profile navigates
   // to /app/ so boot re-resolves.
@@ -28,7 +28,6 @@
   let editing = $state(false)
   let eName = $state('')
   let ePalette = $state('')
-  let eWorkspace = $state('')
   let busy = $state(false)
   let err = $state('')
 
@@ -40,7 +39,6 @@
     err = ''
     eName = p.name
     ePalette = p.palette
-    eWorkspace = p.workspace || ''
     editing = true
   }
   function cancelEdit() { editing = false; err = '' }
@@ -60,7 +58,6 @@
     const body = {}
     if (eName.trim() && eName.trim() !== p.name) body.name = eName.trim()
     if (ePalette && ePalette !== p.palette) body.palette = ePalette
-    if (eWorkspace.trim() !== (p.workspace || '')) body.workspace = eWorkspace.trim()
     if (!Object.keys(body).length) { editing = false; busy = false; return }
     try {
       await api.updateProfile(p.id, body)
@@ -151,11 +148,6 @@
               >{#if ePalette === sw.id}<Icon name="check" size={12} />{/if}</button>
             {/each}
           </div>
-        </div>
-        <div class="pfield">
-          <label for="pf-ws">Workspace folder</label>
-          <input id="pf-ws" bind:value={eWorkspace} placeholder="~/Documents/AG2 Assistant/…" />
-          <span class="phint">Changing this points new work at the new folder — existing files stay in the old folder.</span>
         </div>
         {#if err}<p class="perr">{err}</p>{/if}
         <div class="peditactions">

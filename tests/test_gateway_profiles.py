@@ -136,25 +136,24 @@ def test_secrets_key_reloads_all_runtimes(monkeypatch):
         assert set(reloaded) == {"work", "personal"}  # every runtime reloaded
 
 
-# --- workspace edit reloads the runtime (config picks up new workspace) ---
+# --- workspace is derived under the profile dir (not a user choice) ---
 
 
-def test_workspace_edit_reloads_runtime(monkeypatch, tmp_path):
+def test_workspace_is_derived_under_profile_dir(monkeypatch):
+    from assistant import profiles as profiles_mod
+
     with TestClient(_app(monkeypatch)) as client:
-        ws1 = tmp_path / "ws-one"
-        ws2 = tmp_path / "ws-two"
-        client.post(
-            "/api/profiles",
-            json={"name": "Work", "palette": "teal", "workspace": str(ws1)},
-        )
-        runtime = client.app.state.profiles.get("work")
-        assert str(runtime.config.workspace_dir) == str(ws1)
+        r = client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
+        expected = str(profiles_mod.profile_dir("work") / "workspace")
+        assert r.json()["profile"]["workspace"] == expected
 
-        r = client.post("/api/profiles/work", json={"workspace": str(ws2)})
+        runtime = client.app.state.profiles.get("work")
+        assert str(runtime.config.workspace_dir) == expected
+
+        # A stray `workspace` in the body is ignored — it's not an editable field.
+        r = client.post("/api/profiles/work", json={"workspace": "/tmp/nope"})
         assert r.status_code == 200
-        assert r.json()["profile"]["workspace"] == str(ws2)
-        # reference-swap reload re-resolved the config against the new registry entry
-        assert str(runtime.config.workspace_dir) == str(ws2)
+        assert r.json()["profile"]["workspace"] == expected
 
 
 def test_name_palette_edit_no_reload(monkeypatch):

@@ -199,14 +199,14 @@ class Config(BaseModel):
 
     def with_profile(self, meta: "ProfileMeta") -> "Config":
         """A deep copy whose path fields are reinterpreted for a profile: data_dir and
-        skills_dir land under root_dir/profiles/<id>, workspace_dir is the profile's
-        workspace, and the profile's config.yaml overlay is applied (explicit
-        AG2ASSISTANT_* env vars still win last). root_dir is unchanged (the global
-        files stay at the root)."""
+        skills_dir land under root_dir/profiles/<id>, workspace_dir is that profile dir's
+        ``workspace/`` subfolder (derived, not user-chosen), and the profile's config.yaml
+        overlay is applied (explicit AG2ASSISTANT_* env vars still win last). root_dir is
+        unchanged (the global files stay at the root)."""
         cfg = self.model_copy(deep=True)
         cfg.data_dir = cfg.root_dir / "profiles" / meta.id
         cfg.skills_dir = cfg.data_dir / "skills"
-        cfg.workspace_dir = Path(meta.workspace)
+        cfg.workspace_dir = cfg.data_dir / "workspace"
         apply_overlay(cfg, cfg.data_dir / "config.yaml")
         _apply_env_overrides(cfg, include_paths=False)
         return cfg

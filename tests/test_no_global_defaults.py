@@ -119,7 +119,7 @@ def test_with_profile_overrides_every_path_field():
     (which by design still carries the root)."""
     from assistant import profiles
 
-    meta = profiles.create_profile("Work", "teal", workspace="/tmp/work-ws")
+    meta = profiles.create_profile("Work", "teal")
     base = Config()
     derived = base.with_profile(meta)
 

@@ -1,14 +1,17 @@
 <script>
-  // Reusable profile form (§5.5): name + palette swatches + workspace. One form,
-  // three consumers so they can't drift:
+  // Reusable profile form (§5.5): name + palette swatches. One form, three consumers
+  // so they can't drift:
   //   (a) the onboarding multi-profile loop (§5.5) — also the zero-profile bootstrap
   //   (b) Drawer "+" chip create modal (§5.4)
   //   (c) Settings "Profiles" section inline edit of the active profile (§5.4)
   //
+  // The workspace folder is NOT a user choice — every profile stores its files under
+  // the install root, so there's no folder field here.
+  //
   // The form owns only field state + busy/error UI. The actual persistence is the
-  // parent's job via onSubmit({name, palette, workspace}) → Promise. If it throws,
-  // the message is shown inline (e.g. 400 "palette already in use"). This lets each
-  // consumer choose what "submit" means (create, create-then-continue, etc.).
+  // parent's job via onSubmit({name, palette}) → Promise. If it throws, the message is
+  // shown inline (e.g. 400 "palette already in use"). This lets each consumer choose
+  // what "submit" means (create, create-then-continue, etc.).
   import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
 
@@ -21,10 +24,9 @@
     // Initial values (edit affordances reuse this form shape too).
     initialName = '',
     initialPalette = null,
-    initialWorkspace = '',
     submitLabel = 'Create profile',
     busyLabel = 'Creating…',
-    // onSubmit({name, palette, workspace}) -> Promise. Throw to show inline error.
+    // onSubmit({name, palette}) -> Promise. Throw to show inline error.
     onSubmit,
     autofocus = true,
   } = $props()
@@ -36,7 +38,6 @@
 
   let name = $state(initialName)
   let palette = $state(initialPalette || (available[0] && available[0].id) || PALETTES[0].id)
-  let workspace = $state(initialWorkspace)
   let busy = $state(false)
   let error = $state('')
 
@@ -46,16 +47,12 @@
     if (!available.some((p) => p.id === palette) && available.length) palette = available[0].id
   })
 
-  const wsPlaceholder = $derived(
-    '~/Documents/AG2 Assistant/' + (name.trim() || '<Name>')
-  )
-
   async function submit() {
     if (!name.trim() || busy) return
     busy = true
     error = ''
     try {
-      await onSubmit({ name: name.trim(), palette, workspace: workspace.trim() || undefined })
+      await onSubmit({ name: name.trim(), palette })
       // On success the parent typically navigates/closes; leave busy true so the
       // button doesn't flash back to idle mid-transition.
     } catch (e) {
@@ -92,15 +89,6 @@
         </button>
       {/each}
     </div>
-  </div>
-
-  <div class="pf-field">
-    <div class="pf-flabel"><span>Workspace folder</span><span class="hint">optional</span></div>
-    <div class="pf-input">
-      <Icon name="folder" size={15} />
-      <input placeholder={wsPlaceholder} bind:value={workspace} onkeydown={(e) => e.key === 'Enter' && submit()} />
-    </div>
-    <div class="hint">Leave empty to use the default shown above.</div>
   </div>
 
   {#if error}<div class="pf-error"><Icon name="x" size={13} /> {error}</div>{/if}

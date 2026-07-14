@@ -30,10 +30,8 @@ async function j(method, path, body) {
 export const api = {
   // ---- Global (unprefixed) ----
   profiles: () => j('GET', G('/profiles')),
-  createProfile: (name, palette, workspace) =>
-    j('POST', G('/profiles'), workspace ? { name, palette, workspace } : { name, palette }),
-  // Metadata update (§4.2): {name?, palette?, workspace?}. workspace triggers a
-  // server-side runtime reload; name/palette are registry-only.
+  createProfile: (name, palette) => j('POST', G('/profiles'), { name, palette }),
+  // Metadata update (§4.2): {name?, palette?} — both registry-only, display changes.
   updateProfile: (pid, body) => j('POST', G('/profiles/' + encodeURIComponent(pid)), body),
   // Archive (§4.9). newDefault is required when archiving the active_default —
   // passed in the request body (DELETE with body → ProfileArchiveRequest).

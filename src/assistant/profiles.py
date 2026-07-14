@@ -46,9 +46,14 @@ class ProfileMeta:
     id: str
     name: str
     palette: str
-    workspace: str
     created: str
     archived: bool = field(default=False)
+
+    @property
+    def workspace(self) -> str:
+        """The agent's working file folder — always ``<profile dir>/workspace``. Derived,
+        never stored: the user cannot pick it (every profile lives under the install root)."""
+        return str(profile_dir(self.id) / "workspace")
 
 
 def _now() -> str:
@@ -58,10 +63,6 @@ def _now() -> str:
 def _slug(name: str) -> str:
     """Lowercase, alphanumeric-plus-dashes slug (dashes collapsed and trimmed)."""
     return _SLUG_RE.sub("-", name.strip().lower()).strip("-")
-
-
-def _default_workspace(name: str) -> str:
-    return str(Path.home() / "Documents" / "AG2 Assistant" / name.strip())
 
 
 def _path() -> Path:
@@ -114,7 +115,6 @@ def _meta(entry: dict) -> ProfileMeta:
         id=entry["id"],
         name=entry["name"],
         palette=entry["palette"],
-        workspace=entry["workspace"],
         created=entry["created"],
         archived=bool(entry.get("archived", False)),
     )
@@ -163,9 +163,10 @@ def _check_palette(palette: str, data: dict, *, exclude: str | None = None) -> N
             raise ValueError(f"palette already in use: {palette}")
 
 
-def create_profile(name: str, palette: str, workspace: str | None = None) -> ProfileMeta:
+def create_profile(name: str, palette: str) -> ProfileMeta:
     """Create a profile. Slug id derived from name (deduped -2/-3…); first profile
-    becomes ``active_default``; workspace defaults to ~/Documents/AG2 Assistant/<Name>."""
+    becomes ``active_default``. The workspace is derived from the profile dir (not a
+    user choice) — see ``ProfileMeta.workspace``."""
     name = name.strip()
     if not name:
         raise ValueError("profile name is required")
@@ -184,7 +185,6 @@ def create_profile(name: str, palette: str, workspace: str | None = None) -> Pro
         id=pid,
         name=name,
         palette=palette,
-        workspace=workspace or _default_workspace(name),
         created=_now(),
     )
     data["profiles"].append(asdict(meta))
@@ -212,15 +212,6 @@ def set_palette(pid: str, palette: str) -> ProfileMeta:
     entry = _find(data, pid)
     _check_palette(palette, data, exclude=pid)
     entry["palette"] = palette
-    _write(data)
-    return _meta(entry)
-
-
-def set_workspace(pid: str, workspace: str) -> ProfileMeta:
-    """Change a profile's workspace folder (registry-level; runtime reload is elsewhere)."""
-    data = load_registry()
-    entry = _find(data, pid)
-    entry["workspace"] = workspace
     _write(data)
     return _meta(entry)
 

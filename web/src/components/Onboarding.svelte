@@ -221,8 +221,8 @@
   // Create one profile live (POST /api/profiles boots the runtime). On the first
   // one we also adopt it as the active profile so it's the one App boots into, and
   // reflect its palette immediately.
-  async function createProfile({ name: pname, palette, workspace }) {
-    const res = await api.createProfile(pname, palette, workspace) // throws → inline error
+  async function createProfile({ name: pname, palette }) {
+    const res = await api.createProfile(pname, palette) // throws → inline error
     const p = res.profile
     const first = created.length === 0
     created = [...created, p]

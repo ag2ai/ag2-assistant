@@ -50,7 +50,7 @@ def config_factory(pid: str) -> Callable[[], Config]:
 
     On EACH call it: ``load_config()`` (which already derives the install-wide active
     ``llm_configs`` entry onto ``cfg.llm``) → re-reads the profile's ``ProfileMeta``
-    from the registry (never a captured snapshot, so workspace edits are picked up) →
+    from the registry (never a captured snapshot, so rename/palette edits are picked up) →
     ``with_profile(meta)``. The LLM is common across profiles now, so there is no
     per-profile settings overlay — a config change reloads every runtime.
     """
@@ -119,14 +119,14 @@ class ProfileRuntime:
     @property
     def config(self) -> Config | None:
         """The runtime's live config. Once the gateway is up this delegates to the
-        gateway's config so a reload (workspace/model edit) is reflected everywhere
+        gateway's config so a reload (model/config edit) is reflected everywhere
         the routes read ``runtime.config`` — before start it's the prepared config."""
         if self.gateway is not None:
             return self.gateway.config
         return self._config
 
     def refresh_meta(self) -> None:
-        """Re-read this profile's registry entry (after a rename/palette/workspace edit)."""
+        """Re-read this profile's registry entry (after a rename/palette edit)."""
         meta = profiles.get_profile(self.pid)
         if meta is not None:
             self.meta = meta
@@ -375,9 +375,9 @@ class ProfileManager:
     def active_default(self) -> str | None:
         return profiles.load_registry().get("active_default")
 
-    async def create(self, name: str, palette: str, workspace: str | None = None) -> ProfileRuntime:
+    async def create(self, name: str, palette: str) -> ProfileRuntime:
         """Create a profile (registry + dir) and boot its runtime live (§3.5)."""
-        meta = profiles.create_profile(name, palette, workspace=workspace)
+        meta = profiles.create_profile(name, palette)
         profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
         return await self._boot(meta)
 

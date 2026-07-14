@@ -112,7 +112,6 @@ def _meta(tmp_path, pid="work"):
         id=pid,
         name=pid.title(),
         palette="teal",
-        workspace=str(tmp_path / "ws"),
         created="2026-01-01T00:00:00Z",
     )
 

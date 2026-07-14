@@ -67,8 +67,8 @@
   // applies its palette). 400s (e.g. duplicate palette) surface inline in the form.
   let createOpen = $state(false)
   const claimedPalettes = $derived(list.map((p) => p.palette))
-  async function createProfile({ name, palette, workspace }) {
-    const res = await api.createProfile(name, palette, workspace) // throws → inline
+  async function createProfile({ name, palette }) {
+    const res = await api.createProfile(name, palette) // throws → inline
     location.assign('/app/' + res.profile.id + '/')
   }
 

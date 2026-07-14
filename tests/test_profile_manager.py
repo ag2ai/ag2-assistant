@@ -206,17 +206,14 @@ async def test_archive_bad_new_default_rejected():
 # --- config_factory ---
 
 
-def test_config_factory_picks_up_workspace_edit():
+def test_config_factory_derives_workspace_under_profile_dir():
     from assistant import profiles
     from assistant.gateway.profile_manager import config_factory
 
-    meta = profiles.create_profile("Work", "teal", workspace="/tmp/ws-one")
+    meta = profiles.create_profile("Work", "teal")
     factory = config_factory(meta.id)
-    assert str(factory().workspace_dir) == "/tmp/ws-one"
-
-    # edit the registry; the factory (which re-reads meta each call) sees it
-    profiles.set_workspace(meta.id, "/tmp/ws-two")
-    assert str(factory().workspace_dir) == "/tmp/ws-two"
+    # workspace is always <profile dir>/workspace — derived, not user-chosen.
+    assert factory().workspace_dir == profiles.profile_dir(meta.id) / "workspace"
 
 
 def test_config_factory_derives_active_llm_config(monkeypatch):
@@ -279,8 +276,8 @@ def test_resolve_active_profile_defaults_to_active():
     from assistant import profiles
     from assistant.gateway.profile_manager import resolve_active_profile
 
-    meta = profiles.create_profile("Work", "teal", workspace="/tmp/ws")
+    meta = profiles.create_profile("Work", "teal")
     pid, cfg, factory = resolve_active_profile()
     assert pid == meta.id
-    assert str(cfg.workspace_dir) == "/tmp/ws"
+    assert cfg.workspace_dir == profiles.profile_dir(meta.id) / "workspace"
     assert callable(factory)

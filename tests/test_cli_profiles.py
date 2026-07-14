@@ -66,26 +66,22 @@ def test_create_invalid_palette_errors():
     assert "invalid palette" in result.output
 
 
-def test_create_workspace_default():
+def test_create_workspace_derived():
     result = runner.invoke(app, ["profiles", "create", "Work"])
     assert result.exit_code == 0, result.output
 
     from assistant import profiles
 
     meta = profiles.get_profile("work")
-    # default workspace ends with ~/Documents/AG2 Assistant/<Name>
-    assert meta.workspace.endswith("Documents/AG2 Assistant/Work")
+    # workspace is derived from the profile dir (not user-chosen) and echoed on create.
+    assert meta.workspace == str(profiles.profile_dir("work") / "workspace")
     assert f"workspace {meta.workspace}" in result.output
 
 
-def test_create_explicit_workspace():
+def test_create_rejects_workspace_flag():
+    # The --workspace flag was removed — profiles always store under the install root.
     result = runner.invoke(app, ["profiles", "create", "Work", "--workspace", "/tmp/my-ws"])
-    assert result.exit_code == 0, result.output
-    assert "workspace /tmp/my-ws" in result.output
-
-    from assistant import profiles
-
-    assert profiles.get_profile("work").workspace == "/tmp/my-ws"
+    assert result.exit_code != 0
 
 
 # --- profiles list ---

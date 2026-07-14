@@ -4,21 +4,20 @@ The autouse conftest fixture points HOME at a tmp dir, so ``data_dir()`` — and
 therefore the registry file — resolves under disposable space.
 """
 
-from pathlib import Path
-
 import pytest
 
 from assistant import profiles
 from assistant.config import Config, load_config
 
 
-def test_create_slug_default_workspace_and_first_becomes_default():
+def test_create_slug_derived_workspace_and_first_becomes_default():
     meta = profiles.create_profile("My Work", "teal")
     assert meta.id == "my-work"  # lowercase, alphanumeric+dashes
     assert meta.name == "My Work"
     assert meta.palette == "teal"
     assert meta.archived is False
-    assert meta.workspace == str(Path.home() / "Documents" / "AG2 Assistant" / "My Work")
+    # workspace is derived from the profile dir (not user-chosen), never stored.
+    assert meta.workspace == str(profiles.profile_dir("my-work") / "workspace")
     assert meta.created.endswith("Z")
 
     reg = profiles.load_registry()
@@ -37,9 +36,14 @@ def test_slug_dedupe():
     assert (a.id, b.id, c.id) == ("work", "work-2", "work-3")
 
 
-def test_explicit_workspace_respected():
-    meta = profiles.create_profile("Work", "teal", workspace="/tmp/ws-here")
-    assert meta.workspace == "/tmp/ws-here"
+def test_workspace_is_derived_not_stored():
+    profiles.create_profile("Work", "teal")
+    # The workspace is a computed property; the registry entry never persists it.
+    entry = profiles.load_registry()["profiles"][0]
+    assert "workspace" not in entry
+    assert profiles.get_profile("work").workspace == str(
+        profiles.profile_dir("work") / "workspace"
+    )
 
 
 def test_empty_name_rejected():
@@ -109,13 +113,6 @@ def test_set_palette_excludes_self():
         profiles.set_palette("a", "coral")
 
 
-def test_set_workspace():
-    profiles.create_profile("Work", "teal")
-    meta = profiles.set_workspace("work", "/tmp/new-ws")
-    assert meta.workspace == "/tmp/new-ws"
-    assert profiles.get_profile("work").workspace == "/tmp/new-ws"
-
-
 def test_archive_flag_and_list_filtering():
     profiles.create_profile("Work", "teal")
     profiles.create_profile("Personal", "coral")
@@ -171,7 +168,7 @@ def test_load_registry_does_not_create_tree(tmp_path, monkeypatch):
 
 
 def test_with_profile_path_derivation():
-    meta = profiles.create_profile("Work", "teal", workspace="/tmp/work-ws")
+    meta = profiles.create_profile("Work", "teal")
     base = load_config()
     derived = base.with_profile(meta)
 
@@ -179,7 +176,8 @@ def test_with_profile_path_derivation():
     assert derived.root_dir == root  # root preserved
     assert derived.data_dir == root / "profiles" / "work"
     assert derived.skills_dir == root / "profiles" / "work" / "skills"
-    assert derived.workspace_dir == Path("/tmp/work-ws")
+    # workspace is a subfolder of the profile dir, derived (not user-chosen)
+    assert derived.workspace_dir == root / "profiles" / "work" / "workspace"
 
     # derived is an independent copy; the base config is untouched
     assert base.data_dir == root

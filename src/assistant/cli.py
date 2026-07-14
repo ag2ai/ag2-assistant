@@ -260,9 +260,6 @@ def profiles_create(
     palette: str | None = typer.Option(
         None, "--palette", help="Colour palette (default: first unused). One of PALETTES."
     ),
-    workspace: str | None = typer.Option(
-        None, "--workspace", help="Workspace folder (default: ~/Documents/AG2 Assistant/<Name>)."
-    ),
 ) -> None:
     """Register a new profile (headless bootstrap, §3.5).
 
@@ -282,7 +279,7 @@ def profiles_create(
             raise typer.Exit(1)
 
     try:
-        meta = profiles.create_profile(name, palette, workspace=workspace)
+        meta = profiles.create_profile(name, palette)
     except ValueError as exc:
         typer.echo(f"error: {exc}")
         raise typer.Exit(1)
