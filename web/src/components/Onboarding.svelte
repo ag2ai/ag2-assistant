@@ -42,21 +42,46 @@
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
     { icon: 'brain', title: 'Remembers what matters', desc: 'Builds a private memory of your preferences so it gets more helpful over time.' },
   ]
+  // Single source of truth for selectable models — finish() maps the chosen label
+  // back to provider/model via this list. The first entry per provider is that tab's
+  // default (recommended); the rest are common alternatives shown as extra pills.
   const MODELS = [
     { label: 'Gemini · gemini-3.5-flash', provider: 'gemini', model: 'gemini-3.5-flash' },
-    { label: 'OpenAI · gpt-5', provider: 'openai', model: 'gpt-5' },
+    { label: 'Gemini · gemini-3.5-pro', provider: 'gemini', model: 'gemini-3.5-pro' },
+    { label: 'Gemini · gemini-3.5-flash-lite', provider: 'gemini', model: 'gemini-3.5-flash-lite' },
+    { label: 'OpenAI · gpt-5.5', provider: 'openai', model: 'gpt-5.5' },
+    { label: 'OpenAI · gpt-5.5-mini', provider: 'openai', model: 'gpt-5.5-mini' },
+    { label: 'OpenAI · gpt-5.5-nano', provider: 'openai', model: 'gpt-5.5-nano' },
     { label: 'Anthropic · claude-opus-4', provider: 'anthropic', model: 'claude-opus-4' },
+    { label: 'Anthropic · claude-sonnet-5', provider: 'anthropic', model: 'claude-sonnet-5' },
+    { label: 'Anthropic · claude-haiku-4.5', provider: 'anthropic', model: 'claude-haiku-4.5' },
   ]
-  const KEY_FIELDS = [
-    { id: 'gemini', label: 'Gemini', hint: 'recommended' },
-    { id: 'openai', label: 'OpenAI', hint: 'optional' },
-    { id: 'anthropic', label: 'Anthropic', hint: 'optional' },
+  const modelsFor = (provider) => MODELS.filter((m) => m.provider === provider)
+  // Connect step is organised as provider tabs. Each key-based tab owns one API-key
+  // field (keyed into `keys`) plus its provider's models; the OAuth tab hosts the
+  // ChatGPT subscription sign-in instead. The ACTIVE tab drives which model gets
+  // activated on finish (see `selectTab`); within a tab the user picks among its models.
+  const TABS = [
+    { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: 'recommended', models: modelsFor('gemini') },
+    { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: 'optional', models: modelsFor('openai') },
+    { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
+    { id: 'oauth', label: 'OpenAI OAuth', oauth: true, hint: 'no API key · unofficial' },
   ]
   const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
 
   let step = $state(0)
   let keys = $state({ gemini: '', openai: '', anthropic: '' })
+  let activeTab = $state(TABS[0].id)
   let modelLabel = $state(MODELS[0].label)
+  const currentTab = $derived(TABS.find((t) => t.id === activeTab) || TABS[0])
+  // The active tab drives which model gets activated. Key tabs carry their single
+  // model; the OAuth tab's model is the subscription one, but only once signed in.
+  function selectTab(id) {
+    activeTab = id
+    const t = TABS.find((x) => x.id === id)
+    if (t?.oauth) { if (codex?.signed_in) modelLabel = SUB_MODEL.label }
+    else if (t?.models?.length) modelLabel = t.models[0].label
+  }
   let name = $state($profile.name || '')
   // "About you" identity answers — seed the shared universal "who the user is" doc
   // (POST /api/identity at flow completion). All optional; name comes from Welcome.
@@ -337,52 +362,74 @@
           {:else if step === CONNECT_STEP}
             <h2>Connect a model</h2>
             <p class="lead">Add at least one provider key. It's stored locally and shared across all your profiles — you can change these anytime in Settings.</p>
-            {#each KEY_FIELDS as k}
-              <div class="onb-field">
-                <div class="onb-flabel"><span>{k.label} API key</span><span class="hint">{k.hint}</span></div>
-                <div class="onb-input">
-                  <Icon name="settings" size={15} />
-                  <input type="password" placeholder="paste key…" bind:value={keys[k.id]} />
-                </div>
-              </div>
-            {/each}
 
-            <!-- Or: use a ChatGPT/Codex subscription instead of an API key (unofficial). -->
-            <div class="onb-field">
-              <div class="onb-flabel"><span>Or use your ChatGPT subscription</span><span class="hint">no API key · unofficial</span></div>
-              {#if codex?.signed_in}
-                <div class="onb-input" style="cursor:default">
-                  <Icon name="check" size={15} />
-                  <span style="flex:1;font-size:var(--text-sm)">Signed in with ChatGPT{codex.account_id ? ' · ' + codex.account_id : ''}</span>
-                </div>
-              {:else}
-                <button class="onb-pill" onclick={connectCodex}>
-                  <Icon name="sparkles" size={14} /> {codexConnecting ? 'Waiting for ChatGPT…' : 'Sign in with ChatGPT'}
-                </button>
-                {#if codexConnecting}
-                  <p class="hint" style="margin-top:2px">
-                    Complete sign-in in the opened tab.
-                    Headless? <button class="onb-btn ghost" style="padding:0 4px" onclick={() => (codexShowManual = !codexShowManual)}>paste the code</button>
-                  </p>
-                  {#if codexShowManual}
-                    <div class="onb-input">
-                      <Icon name="settings" size={15} />
-                      <input placeholder="paste the code from the redirect URL" bind:value={codexCode} />
-                    </div>
-                    <button class="onb-pill" onclick={submitCodexCode}>Submit code</button>
-                  {/if}
-                {/if}
-                <p class="hint" style="margin-top:2px">Runs on your ChatGPT Plus/Pro quota. OpenAI doesn't officially support this — your account could be rate-limited.</p>
-              {/if}
+            <!-- Provider tabs: one panel per provider. The active tab drives which model
+                 gets activated on finish; the OAuth tab hosts the ChatGPT sign-in flow. -->
+            <div class="onb-tabs" role="tablist">
+              {#each TABS as t}
+                <button
+                  class="onb-tab"
+                  class:on={activeTab === t.id}
+                  role="tab"
+                  aria-selected={activeTab === t.id}
+                  onclick={() => selectTab(t.id)}
+                >{t.label}</button>
+              {/each}
             </div>
 
-            <div class="onb-field">
-              <div class="onb-flabel"><span>Assistant model</span></div>
-              <div class="onb-pills">
-                {#each allModels as m}
-                  <button class="onb-pill" class:on={modelLabel === m.label} onclick={() => (modelLabel = m.label)}>{m.label}</button>
-                {/each}
-              </div>
+            <div class="onb-tabpanel">
+              {#if currentTab.oauth}
+                <!-- ChatGPT/Codex subscription instead of an API key (unofficial). -->
+                <div class="onb-field">
+                  <div class="onb-flabel"><span>Sign in with your ChatGPT subscription</span><span class="hint">no API key · unofficial</span></div>
+                  {#if codex?.signed_in}
+                    <div class="onb-input" style="cursor:default">
+                      <Icon name="check" size={15} />
+                      <span style="flex:1;font-size:var(--text-sm)">Signed in with ChatGPT{codex.account_id ? ' · ' + codex.account_id : ''}</span>
+                    </div>
+                  {:else}
+                    <button class="onb-pill" onclick={connectCodex}>
+                      <Icon name="sparkles" size={14} /> {codexConnecting ? 'Waiting for ChatGPT…' : 'Sign in with ChatGPT'}
+                    </button>
+                    {#if codexConnecting}
+                      <p class="hint" style="margin-top:2px">
+                        Complete sign-in in the opened tab.
+                        Headless? <button class="onb-btn ghost" style="padding:0 4px" onclick={() => (codexShowManual = !codexShowManual)}>paste the code</button>
+                      </p>
+                      {#if codexShowManual}
+                        <div class="onb-input">
+                          <Icon name="settings" size={15} />
+                          <input placeholder="paste the code from the redirect URL" bind:value={codexCode} />
+                        </div>
+                        <button class="onb-pill" onclick={submitCodexCode}>Submit code</button>
+                      {/if}
+                    {/if}
+                    <p class="hint" style="margin-top:2px">Runs on your ChatGPT Plus/Pro quota. OpenAI doesn't officially support this — your account could be rate-limited.</p>
+                  {/if}
+                </div>
+                {#if codex?.signed_in}
+                  <div class="onb-field">
+                    <div class="onb-flabel"><span>Assistant model</span></div>
+                    <div class="onb-pills"><span class="onb-pill on">{SUB_MODEL.label}</span></div>
+                  </div>
+                {/if}
+              {:else}
+                <div class="onb-field">
+                  <div class="onb-flabel"><span>{currentTab.label} API key</span><span class="hint">{currentTab.hint}</span></div>
+                  <div class="onb-input">
+                    <Icon name="settings" size={15} />
+                    <input type="password" placeholder="paste key…" bind:value={keys[currentTab.keyId]} />
+                  </div>
+                </div>
+                <div class="onb-field">
+                  <div class="onb-flabel"><span>Assistant model</span></div>
+                  <div class="onb-pills">
+                    {#each currentTab.models as m}
+                      <button class="onb-pill" class:on={modelLabel === m.label} onclick={() => (modelLabel = m.label)}>{m.label}</button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
             </div>
 
           {:else if step === PROFILES_STEP}
@@ -583,6 +630,21 @@
   }
   .onb-pill:hover { border-color: var(--accent); }
   .onb-pill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+  /* Connect provider tabs */
+  .onb-tabs {
+    display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-sm);
+    background: var(--surface-sunk); border: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .onb-tab {
+    flex: 1; min-width: max-content; cursor: pointer; padding: 8px 14px;
+    border: none; border-radius: calc(var(--radius-sm) - 2px); background: none;
+    color: var(--text-muted); font: inherit; font-size: var(--text-sm);
+    font-weight: var(--fw-semibold); transition: all var(--dur-fast) var(--ease-out);
+  }
+  .onb-tab:hover { color: var(--text); }
+  .onb-tab.on { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-sm); }
+  .onb-tabpanel { display: flex; flex-direction: column; gap: 16px; }
 
   /* Profiles loop: chips of what's been created + the "add another" affordance. */
   .onb-chips { display: flex; flex-wrap: wrap; gap: 8px; }
