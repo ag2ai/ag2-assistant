@@ -9,7 +9,10 @@ import typer
 from assistant.agent import ask
 from assistant.config import Config
 
-app = typer.Typer(name="ag2-assistant", help="AG2 Assistant - Personal AI Assistant")
+app = typer.Typer(
+    name="ag2-assistant",
+    help="AG2 Assistant - Personal AI Assistant",
+)
 
 
 @app.callback()
