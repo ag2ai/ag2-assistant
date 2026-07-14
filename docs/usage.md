@@ -177,7 +177,7 @@ ag2-assistant setup
 # ? API key: ****
 # ? Enable Telegram? (y/n)
 # ? Telegram bot token: ****
-# Configuration saved to ~/.ag2assistant/config.json
+# Configuration saved to ~/.ag2assistant/config.yaml
 ```
 
 ### `ag2-assistant status` (coming soon)
@@ -309,28 +309,29 @@ Now it can answer "what's the time here?" and reason about your local context.
 Configuration resolves in this order (later wins):
 
 1. Built-in defaults
-2. `~/.ag2assistant/config.json`
-3. `AG2ASSISTANT_*` environment variables (from `.env` or the shell)
+2. Global `~/.ag2assistant/config.yaml`
+3. The active profile's `~/.ag2assistant/profiles/<id>/config.yaml` overlay
+4. `AG2ASSISTANT_*` environment variables (from `.env` or the shell)
 
-So you can keep a base `config.json` and override per-run with an env var.
+So you can keep a base global `config.yaml`, override per profile, and override
+per-run with an env var. (Point the whole install root elsewhere with `--data-dir`
+or `AG2ASSISTANT_DATA_DIR`.)
 
-### `~/.ag2assistant/config.json`
+### `~/.ag2assistant/config.yaml`
 
-```json
-{
-  "llm": {
-    "provider": "gemini",
-    "model": "gemini-3.5-flash",
-    "api_key_env": "GEMINI_API_KEY",
-    "aggregate_model": "gemini-2.5-flash"
-  },
-  "agent": {
-    "name": "ag2-assistant",
-    "system_prompt": "You are AG2 Assistant, a helpful personal AI assistant."
-  },
-  "tools": { "sandbox": "local" },
-  "memory": { "aggregate_every_n_turns": 4 }
-}
+```yaml
+llm:
+  provider: gemini
+  model: gemini-3.5-flash
+  api_key_env: GEMINI_API_KEY
+  aggregate_model: gemini-2.5-flash
+agent:
+  name: ag2-assistant
+  system_prompt: You are AG2 Assistant, a helpful personal AI assistant.
+tools:
+  sandbox: local
+memory:
+  aggregate_every_n_turns: 4
 ```
 
 `aggregate_model` (optional) runs the passive memory-distillation pass on a
@@ -340,7 +341,7 @@ your main model to disable the saving.
 
 ### Environment variable overrides
 
-Every key above also has an env override (these win over `config.json`):
+Every key above also has an env override (these win over `config.yaml`):
 
 | Env var | Overrides |
 |---|---|
@@ -358,11 +359,11 @@ Every key above also has an env override (these win over `config.json`):
 Set the provider + model + the env var holding its key, and install that
 provider's extra (`pip install "ag2[anthropic]"` / `ag2[openai]`):
 
-```json
-{ "llm": { "provider": "openai", "model": "gpt-4o", "api_key_env": "OPENAI_API_KEY" } }
+```yaml
+llm: { provider: openai, model: gpt-4o, api_key_env: OPENAI_API_KEY }
 ```
-```json
-{ "llm": { "provider": "anthropic", "model": "claude-sonnet-4-6", "api_key_env": "ANTHROPIC_API_KEY" } }
+```yaml
+llm: { provider: anthropic, model: claude-sonnet-4-6, api_key_env: ANTHROPIC_API_KEY }
 ```
 
 Or quickly, without a file:
@@ -376,14 +377,11 @@ AG2ASSISTANT_LLM_PROVIDER=anthropic AG2ASSISTANT_MODEL=claude-sonnet-4-6 \
 
 ### System prompt
 
-Customize your agent's personality by editing the system prompt in `~/.ag2assistant/config.json`:
+Customize your agent's personality by editing the system prompt in `~/.ag2assistant/config.yaml`:
 
-```json
-{
-  "agent": {
-    "system_prompt": "You are Jarvis, a witty personal assistant. You speak concisely and always suggest actionable next steps."
-  }
-}
+```yaml
+agent:
+  system_prompt: You are Jarvis, a witty personal assistant. You speak concisely and always suggest actionable next steps.
 ```
 
 ### Agent name

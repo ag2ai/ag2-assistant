@@ -39,10 +39,10 @@ def test_ollama_base_url(monkeypatch, tmp_path):
 
 
 def test_load_config_no_longer_overlays_settings(monkeypatch, tmp_path):
-    """A per-profile settings.json llm block is NOT consulted by load_config() — the
+    """A per-profile settings llm block is NOT consulted by load_config() — the
     assistant model is the install-wide named-config store now. load_config() derives
-    only defaults ← config.json ← active llm config ← env; with no store it stays on
-    the flat gemini defaults, ignoring any legacy settings.json llm block."""
+    only defaults ← config.yaml ← active llm config ← env; with no store it stays on
+    the flat gemini defaults, ignoring any stray profile-settings llm block."""
     import json
 
     monkeypatch.setenv("HOME", str(tmp_path))

@@ -255,13 +255,18 @@ All channels share the one agent.
 - **`storage.py`** — `SerialStore` (an `asyncio.Lock` over AG2's
   `SqliteKnowledgeStore`, since SQLite isn't safe for concurrent coroutine access),
   plus `now_iso()` / `new_id()`. `EventLogWriter` (AG2) writes the event log.
-- **`config.py`** — `Config` resolved defaults ← `config.json` ← UI settings ← env
-  (`AG2ASSISTANT_*` wins). `data_dir()`/`workspace_dir` derive from `Path.home()`.
+- **`config.py`** — `Config` resolved defaults ← global `config.yaml` ← active
+  `llm_configs` ← env (`AG2ASSISTANT_*` wins). `with_profile()` then overlays that
+  profile's `config.yaml` (per-section, profile key wins; env re-applied last).
+  `read_yaml`/`write_yaml` + `update_global_section` own the shared-file I/O.
+  `data_dir()`/`workspace_dir` derive from `Path.home()` (root overridable via
+  `--data-dir` / `AG2ASSISTANT_DATA_DIR`).
 - **`secrets.py`** — API keys in `secrets.json` (chmod 0600), loaded into
   `os.environ` at startup/reload (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
   `ANTHROPIC_API_KEY`, GitHub token, Ollama base URL).
-- **`settings.py`** — non-secret UI prefs: provider/model, voice provider+voice,
-  onboarded flag, project folder, MCP server list.
+- **`settings.py`** — non-secret per-profile UI prefs (voice provider+voice,
+  focuses, project folder, MCP server list), persisted at the top level of the
+  profile's `config.yaml` alongside its Config overlay sections.
 - **`permissions.py`** — `PermissionStore` (folder grants/blocks → `permissions.json`)
   + per-turn `PermissionManager`.
 - **`usage.py`** — `UsageLedger` (daily tokens + estimated cost → `usage.json`,
@@ -500,9 +505,9 @@ Under `~/.ag2assistant/`:
 | `tasks.db` | task records, deliverables, progress, schedule |
 | `inquiries.db` | durable HITL inquiries (clarifications/permissions) |
 | `profile.db` | learned user profile (`/memory/working.md` inside) |
-| `settings.json` | provider/model, voice, onboarded flag, project folder, MCP servers |
+| `config.yaml` (global) | Config overrides + the `llm_configs:` section (named models + active); env still wins |
+| `profiles/<id>/config.yaml` | per-profile Config overlay + non-secret UI prefs (voice, focuses, project folder, MCP servers) |
 | `secrets.json` | API keys (chmod 0600), loaded into env at startup/reload |
-| `config.json` | optional config overrides (env still wins) |
 | `permissions.json` | folder grants/blocks |
 | `usage.json` / `pricing.json` | daily token+cost ledger / price overrides |
 | `ag2assistant.log` | rotating application log (2 MB × 3) |
@@ -543,8 +548,9 @@ the single process. The web client is a viewer pointed at exactly one profile.
 - **Registry & layout.** `profiles.json` (`src/assistant/profiles.py`) is the
   registry: `{active_default, onboarded, profiles:[{id, name, palette, workspace,
   archived}]}`. Each profile owns `~/.ag2assistant/profiles/<id>/` holding its
-  `settings.json`, `sessions.db`, `tasks.db`, `inquiries.db`, `profile.db`,
-  `permissions.json`, `usage.json`, `skills/`, `debug/`. `id` is an immutable slug;
+  `config.yaml` (overlay + UI prefs), `sessions.db`, `tasks.db`, `inquiries.db`,
+  `profile.db`, `permissions.json`, `usage.json`, `skills/`, `debug/`. `id` is an
+  immutable slug;
   `palette` is unique while ≤6 profiles exist (the palette *is* the profile's
   identity).
 - **ProfileManager** (`gateway/profile_manager.py`) boots **all unarchived**
@@ -555,13 +561,14 @@ the single process. The web client is a viewer pointed at exactly one profile.
   onboarding creates the first, which boots live).
 - **Derived config.** Each runtime is built from `Config.with_profile(meta)`, which
   overrides **every** path field (`data_dir`, `workspace_dir`, `skills_dir`) onto the
-  profile dir; `root_dir` still points at `~/.ag2assistant`. A per-profile
-  `config_factory(pid)` re-reads the registry entry on every call and overlays that
-  profile's `settings.json` LLM provider/model (env still wins) — so `reload()`
-  (workspace/model edit) rebuilds against the right profile, not the global root.
-- **Global vs per-profile split.** Per-profile: settings, sessions, tasks, memory,
-  usage, skills, permissions, inquiries, and the HITL store (on the runtime).
-  Global: `secrets.json` (keys load into one process-wide `os.environ`),
+  profile dir (`root_dir` still points at `~/.ag2assistant`) and then overlays that
+  profile's `config.yaml` Config sections (env still wins). A per-profile
+  `config_factory(pid)` re-reads the registry entry on every call — so `reload()`
+  (workspace/config edit) rebuilds against the right profile, not the global root.
+- **Global vs per-profile split.** Per-profile: `config.yaml` (overlay + UI prefs),
+  sessions, tasks, memory, usage, skills, permissions, inquiries, and the HITL store
+  (on the runtime). Global: the global `config.yaml`, `secrets.json` (keys load into
+  one process-wide `os.environ`),
   `pricing.json`, `ag2assistant.log` (records tagged `[profile]` via a
   `LoggerAdapter`), and Google OAuth. The global-singleton audit removed every
   module-level path default so nothing silently leaks across profiles (pinned by

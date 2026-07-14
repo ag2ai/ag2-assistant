@@ -55,7 +55,7 @@ To serve the API/UI without any messaging channels, use `ag2-assistant gateway` 
 
 The assistant is organised into **profiles** — separate, colour-coded workspaces you switch between from the sidebar (or ⌘1–⌘9). A profile has its own chats, tasks, memory, files, project folder, MCP servers and permissions, so a *Work* profile never sees your *Personal* one.
 
-Provider keys, the model configuration, and who you are are shared install-wide; everything else is per profile. State lives in `~/.ag2assistant/profiles/<id>/` and generated files in `~/Documents/AG2 Assistant/<Profile>/`.
+Provider keys, the model configuration, and who you are are shared install-wide (the global `~/.ag2assistant/config.yaml`); everything else is per profile, overlaid from that profile's `~/.ag2assistant/profiles/<id>/config.yaml`. State lives in `~/.ag2assistant/profiles/<id>/` and generated files in `~/Documents/AG2 Assistant/<Profile>/`. Override the install root with `--data-dir` (or `AG2ASSISTANT_DATA_DIR`).
 
 ## The web app
 
@@ -179,7 +179,7 @@ A text sketch of the same shape:
     +-----------+
 ```
 
-Install-wide state lives under `~/.ag2assistant/` (provider keys, model configs, profiles); each profile keeps its own chats, tasks and memory in `~/.ag2assistant/profiles/<id>/`, and its generated files in `~/Documents/AG2 Assistant/<Profile>/`.
+Install-wide state lives under `~/.ag2assistant/` — the global `config.yaml` (model configs live in its `llm_configs:` section), `secrets.json` (provider keys), and the profile registry; each profile keeps its own `config.yaml` overlay, chats, tasks and memory in `~/.ag2assistant/profiles/<id>/`, and its generated files in `~/Documents/AG2 Assistant/<Profile>/`. The install root is overridable with `--data-dir` / `AG2ASSISTANT_DATA_DIR`.
 
 ## Project Status
 

@@ -8,7 +8,7 @@ from assistant.tasks import TaskManager, TaskStatus, TaskStore
 
 
 def _settings(tmp_path):
-    return Settings(tmp_path / "settings.json")
+    return Settings(tmp_path / "config.yaml")
 
 
 def _service(tmp_path):
