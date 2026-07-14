@@ -247,10 +247,10 @@ def build_agent_tools(
     if want("mcp") and config is not None:
         # Read THIS profile's MCP server list (config.data_dir is the profile dir),
         # so an agent only loads the MCP servers configured in its own profile.
-        from assistant.settings import Settings
+        from assistant.settings import profile_settings
         from assistant.tools.mcp import build_mcp_tools
 
-        settings = Settings(config.data_dir / "settings.json")
+        settings = profile_settings(config.data_dir)
         tools += build_mcp_tools(settings.list_mcp_servers(include_env=True))
 
     return tools

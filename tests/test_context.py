@@ -42,7 +42,7 @@ def test_focuses_guidance_omitted_when_unset(tmp_path):
 def test_focuses_guidance_includes_line_when_set(tmp_path):
     config = Config()
     config.data_dir = tmp_path
-    Settings(tmp_path / "settings.json").set_focuses(["research", "coding"])
+    Settings(tmp_path / "config.yaml").set_focuses(["research", "coding"])
     line = focuses_guidance(config)
     assert "focus areas for this profile" in line
     assert "research, coding" in line
@@ -51,7 +51,7 @@ def test_focuses_guidance_includes_line_when_set(tmp_path):
 def test_universal_turn_prompt_injects_focuses_when_set(tmp_path):
     config = Config()
     config.data_dir = tmp_path
-    Settings(tmp_path / "settings.json").set_focuses(["writing"])
+    Settings(tmp_path / "config.yaml").set_focuses(["writing"])
     prompt = universal_turn_prompt(config)
     joined = " ".join(prompt)
     assert "focus areas for this profile: writing" in joined
@@ -92,7 +92,7 @@ async def test_universal_turn_prompt_injects_universal_doc(tmp_path):
     config.root_dir = tmp_path
     config.data_dir = tmp_path
     await _seed_universal(tmp_path, "# User profile\n- Name: TestUser")
-    Settings(tmp_path / "settings.json").set_focuses(["research"])
+    Settings(tmp_path / "config.yaml").set_focuses(["research"])
     prompt = universal_turn_prompt(config)
     joined = " ".join(prompt)
     # both layers present: universal identity facts AND the per-profile focus line

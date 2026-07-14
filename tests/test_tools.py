@@ -144,7 +144,7 @@ def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(tmp_path):
     # MCP servers are read from THIS profile's settings (config.data_dir), so write
     # one there and pass the config — no module-level monkeypatch.
     config = Config(data_dir=tmp_path)
-    Settings(config.data_dir / "settings.json").upsert_mcp_server(
+    Settings(config.data_dir / "config.yaml").upsert_mcp_server(
         {
             "name": "repo-files",
             "command": "npx",

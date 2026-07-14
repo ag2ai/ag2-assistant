@@ -12,7 +12,26 @@ from assistant.settings import Settings
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(tmp_path / "settings.json")
+    return Settings(tmp_path / "config.yaml")
+
+
+def test_settings_preserve_overlay_sections(tmp_path):
+    import yaml
+
+    path = tmp_path / "config.yaml"
+    path.write_text("llm:\n  model: overlay\n")
+    s = Settings(path)
+    s.set_focuses(["research"])
+    data = yaml.safe_load(path.read_text())
+    assert data["llm"]["model"] == "overlay"  # settings writes keep the Config overlay
+    assert data["focuses"] == ["research"]
+
+
+def test_profile_settings_accessor(tmp_path):
+    from assistant.settings import profile_settings
+
+    s = profile_settings(tmp_path)
+    assert s._path == tmp_path / "config.yaml"
 
 
 def test_voice_provider_env(settings, monkeypatch):
@@ -111,8 +130,8 @@ def test_mcp_servers_roundtrip(settings):
 
 def test_two_profiles_settings_are_isolated(tmp_path):
     # Two profiles, two settings files — no cross-talk.
-    a = Settings(tmp_path / "a" / "settings.json")
-    b = Settings(tmp_path / "b" / "settings.json")
+    a = Settings(tmp_path / "a" / "config.yaml")
+    b = Settings(tmp_path / "b" / "config.yaml")
     a.set_voice("Kore", provider="gemini")
     a.upsert_mcp_server({"name": "only-a", "command": "npx"})
     assert a.get_voice("gemini") == "Kore"
@@ -138,8 +157,8 @@ def test_focuses_roundtrip_and_normalisation(settings):
 
 
 def test_focuses_are_per_profile(tmp_path):
-    a = Settings(tmp_path / "a" / "settings.json")
-    b = Settings(tmp_path / "b" / "settings.json")
+    a = Settings(tmp_path / "a" / "config.yaml")
+    b = Settings(tmp_path / "b" / "config.yaml")
     a.set_focuses(["research"])
     assert a.get_focuses() == ["research"]
     assert b.get_focuses() == []  # untouched → default

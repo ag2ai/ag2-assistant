@@ -307,9 +307,9 @@ class _HitlDispatcher:
 
 def _runtime_settings(runtime: ProfileRuntime):
     """This profile's Settings, resolved from the runtime's derived config."""
-    from assistant.settings import Settings
+    from assistant.settings import profile_settings
 
-    return Settings(runtime.config.data_dir / "settings.json")
+    return profile_settings(runtime.config.data_dir)
 
 
 def _chat_asker(runtime: ProfileRuntime, session_id: str):

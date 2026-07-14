@@ -177,11 +177,11 @@ def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
         assert r.status_code == 200, r.text
 
         # A's settings.json updated; B's has no focuses
-        assert Settings(profiles.profile_dir(a) / "settings.json").get_focuses() == [
+        assert Settings(profiles.profile_dir(a) / "config.yaml").get_focuses() == [
             "research",
             "coding",
         ]
-        assert Settings(profiles.profile_dir(b) / "settings.json").get_focuses() == []
+        assert Settings(profiles.profile_dir(b) / "config.yaml").get_focuses() == []
 
         # regression: after reload A's config still points at A's data_dir (not root/B)
         assert a_runtime.config.data_dir == a_data_dir
@@ -306,7 +306,7 @@ def test_voice_system_tool_isolated(monkeypatch):
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
         a_runtime = client.app.state.profiles.get(a)
-        a_settings = Settings(a_runtime.config.data_dir / "settings.json")
+        a_settings = Settings(a_runtime.config.data_dir / "config.yaml")
 
         # pick a valid non-default voice for the active provider
         provider = voice_providers.get(a_settings.voice_provider())
@@ -317,9 +317,9 @@ def test_voice_system_tool_isolated(monkeypatch):
         msg = asyncio.run(_run_tool(set_voice, voice=target))
         assert "Voice set to" in msg
 
-        assert Settings(profiles.profile_dir(a) / "settings.json").get_voice() == target
+        assert Settings(profiles.profile_dir(a) / "config.yaml").get_voice() == target
         # B's settings.json has no voice override → its provider default
-        b_settings = Settings(profiles.profile_dir(b) / "settings.json")
+        b_settings = Settings(profiles.profile_dir(b) / "config.yaml")
         assert (
             b_settings.get_voice() == voice_providers.get(b_settings.voice_provider()).default_voice
         )

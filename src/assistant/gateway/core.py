@@ -117,14 +117,14 @@ class Gateway:
         everything) + compaction. Used by start() and reload()."""
         extra_tools = None
         if self._tasks is not None:
-            from assistant.settings import Settings
+            from assistant.settings import profile_settings
             from assistant.system_tools import build_system_tools
 
             # create/schedule come from the system tools, so we don't also wire
             # start_task/schedule_task here (that duplicated names). `platform` lets
             # those tools note (on channels) that follow-up questions go to the web app.
             # The voice get/set tools read/write THIS profile's settings.
-            settings = Settings(self._config.data_dir / "settings.json")
+            settings = profile_settings(self._config.data_dir)
             extra_tools = build_system_tools(
                 self._tasks, settings, chats=self, platform=self._platform
             )
@@ -529,7 +529,7 @@ class Gateway:
         agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
-        from assistant.settings import Settings
+        from assistant.settings import profile_settings
         from assistant.system_tools import format_task
         from assistant.voice import build_voice_agent
 
@@ -590,7 +590,7 @@ class Gateway:
         assistant_tools = [n for n in assistant_tools if n]
         return build_voice_agent(
             self._config,
-            Settings(self._config.data_dir / "settings.json"),
+            profile_settings(self._config.data_dir),
             self._tasks,
             delegate,
             voice=voice,

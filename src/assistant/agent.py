@@ -371,13 +371,13 @@ def focuses_guidance(config: Config) -> str:
     """The profile's focus areas as a persona line, or "" when none are set.
 
     Focuses are a per-profile persona attribute chosen in onboarding / Settings and
-    persisted to that profile's ``settings.json``. Read here (mirroring core.py's
-    ``Settings(config.data_dir / "settings.json")`` pattern) so a reference-swap
-    reload picks up changes on the next turn. Empty focuses → no line at all."""
-    from assistant.settings import Settings
+    persisted to that profile's ``config.yaml``. Read here (mirroring core.py's
+    ``profile_settings(config.data_dir)`` pattern) so a reference-swap reload picks up
+    changes on the next turn. Empty focuses → no line at all."""
+    from assistant.settings import profile_settings
 
     try:
-        focuses = Settings(config.data_dir / "settings.json").get_focuses()
+        focuses = profile_settings(config.data_dir).get_focuses()
     except Exception:
         return ""
     if not focuses:
