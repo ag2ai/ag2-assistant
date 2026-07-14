@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from pathlib import Path
 
 import typer
 
@@ -9,6 +10,20 @@ from assistant.agent import ask
 from assistant.config import Config
 
 app = typer.Typer(name="ag2-assistant", help="AG2 Assistant - Personal AI Assistant")
+
+
+@app.callback()
+def _global_options(
+    data_dir: str | None = typer.Option(
+        None,
+        "--data-dir",
+        help="Override the install root — all settings, profiles and state live here "
+        "(same as AG2ASSISTANT_DATA_DIR).",
+    ),
+) -> None:
+    """Global options, applied before any command runs."""
+    if data_dir:
+        os.environ["AG2ASSISTANT_DATA_DIR"] = str(Path(data_dir).expanduser())
 
 
 def _resolve_profile_config(profile: str | None) -> Config:
@@ -577,6 +592,9 @@ def run(
     sandbox: str | None = typer.Option(
         None, help="Execution sandbox: 'local' or 'docker'. Overrides AG2ASSISTANT_SANDBOX."
     ),
+    data_dir: str | None = typer.Option(
+        None, "--data-dir", help="Override the install root (same as the top-level --data-dir)."
+    ),
 ) -> None:
     """Run everything in one process — the ProfileManager boots every unarchived
     profile (each with its own gateway, scheduler, and enabled channels), and the
@@ -584,6 +602,8 @@ def run(
     here and handed to ``create_app``, which owns its lifecycle (started in the app
     lifespan). Zero profiles is a legal state — the SPA shell + global routes serve,
     and ``/api/p/*`` 404s until the first profile is created (§3.5)."""
+    if data_dir:
+        os.environ["AG2ASSISTANT_DATA_DIR"] = str(Path(data_dir).expanduser())
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 

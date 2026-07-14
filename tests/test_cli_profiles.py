@@ -259,5 +259,13 @@ def test_permissions_allow_command_rejects_bare_exec_tools():
         assert tool not in listing.output
 
 
+def test_data_dir_flag_redirects_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("AG2ASSISTANT_DATA_DIR", str(tmp_path))
+    result = runner.invoke(app, ["--data-dir", str(tmp_path), "profiles", "create", "Work"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "profiles.json").exists()
+    assert (tmp_path / "profiles" / "work").is_dir()
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
