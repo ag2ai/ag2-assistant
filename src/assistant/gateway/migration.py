@@ -9,9 +9,10 @@ afterwards — all code reads only the new layout (project rule: no legacy shims
 import json
 import shutil
 from pathlib import Path
+from secrets import token_hex
 
 from assistant import profiles
-from assistant.config import load_config
+from assistant.config import data_dir, default_config_path, load_config
 from assistant.observability import profile_logger
 
 # Legacy per-profile items that live at the root pre-migration and move into the
@@ -221,13 +222,15 @@ def migrate_llm_configs() -> bool:
     store stays empty — the flat gemini defaults then apply exactly as before.
     Dev-quality: best-effort, tolerant of missing/malformed data.
     """
-    from assistant import llm_configs
-    from assistant.config import default_config_path
+    store_path = data_dir() / "llm_configs.json"
+    if store_path.exists() or default_config_path().exists():
+        return False  # already migrated (or the install is already on the YAML layout)
 
-    if llm_configs._path().exists():
-        return False  # already migrated (or a fresh install that will write on first save)
-
-    cfg = load_config()  # flat defaults ← config.json ← env (store is empty here)
+    # The legacy root config lived in config.json (default_config_path() is config.yaml
+    # now). Read it explicitly so the flat provider/model/options resolve as they did
+    # before the YAML switch (config.json ← env, store still empty here).
+    legacy_cfg_path = default_config_path().with_name("config.json")
+    cfg = load_config(legacy_cfg_path)
     root_provider = cfg.llm.provider
     root_model = cfg.llm.model
 
@@ -246,10 +249,9 @@ def migrate_llm_configs() -> bool:
     # 1) Root config.json default — ONLY when it carries an explicit llm block (a fresh
     # install with no config.json contributes nothing, keeping the store empty).
     root_key: tuple | None = None
-    cfg_path = default_config_path()
-    if cfg_path.exists():
+    if legacy_cfg_path.exists():
         try:
-            has_llm = isinstance(json.loads(cfg_path.read_text()).get("llm"), dict)
+            has_llm = isinstance(json.loads(legacy_cfg_path.read_text()).get("llm"), dict)
         except Exception:
             has_llm = False
         if has_llm:
@@ -282,21 +284,22 @@ def migrate_llm_configs() -> bool:
         return False  # nothing worth migrating (no legacy LLM state anywhere)
 
     # Persist the entries (minting ids) and mark the active one — the active-default
-    # profile's entry, else the root default, else the first entry.
+    # profile's entry, else the root default, else the first entry. Written straight
+    # to the legacy llm_configs.json: migrate_config_files() folds it into config.yaml
+    # right after this runs (the store module itself is YAML-only now).
     target = active_key or root_key or _dedup_key(entries[0])
-    active_id: str | None = None
+    active_entry_id: str | None = None
     for entry in entries:
-        saved = llm_configs.save_config(entry)
-        if active_id is None and _dedup_key(saved) == target:
-            active_id = saved["id"]
-    if active_id:
-        llm_configs.set_active(active_id)
+        entry["id"] = "c_" + token_hex(4)
+        if active_entry_id is None and _dedup_key(entry) == target:
+            active_entry_id = entry["id"]
+    store_path.write_text(json.dumps({"active": active_entry_id, "configs": entries}, indent=2))
 
     # Strip the legacy keys from every profile settings file (the store owns them now).
     for meta in profiles.list_profiles(include_archived=True):
         _strip_profile_llm(profiles.profile_dir(meta.id) / "settings.json")
 
     profile_logger("default").info(
-        "migration: wrote %d llm config(s), active=%s", len(entries), active_id
+        "migration: wrote %d llm config(s), active=%s", len(entries), active_entry_id
     )
     return True
