@@ -104,14 +104,13 @@
       {/each}
 
       <!-- Custom colour: a native <input type=color> hidden behind our swatch.
-           Always shows the palette glyph (never the chosen colour) — its job is
-           to open the picker; the selected hex reads below in .pf-hex. -->
+           Always shows the rainbow gradient (never the chosen colour) — its job
+           is to open the picker; the selected hex reads below in .pf-hex. -->
       <label
         class="pf-dot pf-custom rainbow"
         class:on={isCustom}
         title="Custom colour"
       >
-        <Icon name="palette" size={15} />
         <input type="color" value={accent} oninput={pickCustom} aria-label="Custom colour" />
       </label>
     </div>
@@ -164,8 +163,6 @@
   .pf-custom.rainbow {
     background: conic-gradient(from 90deg, #f95339, #ec5d18, #e0b400, #2f8c44, #109e91, #2f6fe0, #7a52ec, #f95339);
   }
-  /* The palette glyph sits over the gradient — a drop-shadow keeps it legible. */
-  .pf-custom :global(svg) { filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.55)); }
   .pf-custom.rainbow.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
   .pf-custom input {
     position: absolute; inset: 0; width: 100%; height: 100%;

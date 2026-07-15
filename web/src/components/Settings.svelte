@@ -3,7 +3,7 @@
   // switch; all section markup lives in the six settings/*Page.svelte components,
   // which share one reactive $state context (settings/context.svelte.js).
   import { onMount } from 'svelte'
-  import { settingsPage, profiles } from '../store.js'
+  import { settingsPage, profiles, SETTINGS_PAGE } from '../store.js'
   import { getActiveProfileId } from '../lib/profile.js'
   import { createSettingsContext } from './settings/context.svelte.js'
   import GeneralPage from './settings/GeneralPage.svelte'
@@ -15,20 +15,20 @@
   import AdvancedPage from './settings/AdvancedPage.svelte'
 
   const PAGES = [
-    { id: 'general', label: 'General', comp: GeneralPage },
-    { id: 'profiles', label: 'Profiles', comp: ProfilesPage },
-    { id: 'models', label: 'Models', comp: ModelsPage },
-    { id: 'voice', label: 'Voice', comp: VoicePage },
-    { id: 'tools', label: 'Tools & Permissions', comp: ToolsPage },
-    { id: 'integrations', label: 'Integrations', comp: IntegrationsPage },
-    { id: 'advanced', label: 'Advanced', comp: AdvancedPage },
+    { id: SETTINGS_PAGE.GENERAL, label: 'General', comp: GeneralPage },
+    { id: SETTINGS_PAGE.PROFILES, label: 'Profiles', comp: ProfilesPage },
+    { id: SETTINGS_PAGE.MODELS, label: 'Models', comp: ModelsPage },
+    { id: SETTINGS_PAGE.VOICE, label: 'Voice', comp: VoicePage },
+    { id: SETTINGS_PAGE.TOOLS, label: 'Tools & Permissions', comp: ToolsPage },
+    { id: SETTINGS_PAGE.INTEGRATIONS, label: 'Integrations', comp: IntegrationsPage },
+    { id: SETTINGS_PAGE.ADVANCED, label: 'Advanced', comp: AdvancedPage },
   ]
 
   // Must run synchronously at init — setContext requires it (see context header).
   const ctx = createSettingsContext()
 
-  // Seed the page from the deep-link store; validate against PAGES, fallback 'general'.
-  let page = $state(PAGES.some((p) => p.id === $settingsPage) ? $settingsPage : 'general')
+  // Seed the page from the deep-link store; validate against PAGES, fallback General.
+  let page = $state(PAGES.some((p) => p.id === $settingsPage) ? $settingsPage : SETTINGS_PAGE.GENERAL)
   function go(id) { page = id; settingsPage.set(id) }
 
   // Svelte 5 renders a capitalized component-valued variable directly as <Active />.

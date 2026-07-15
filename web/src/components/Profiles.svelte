@@ -10,7 +10,7 @@
   // non-empty) lists archived profiles with Restore (unarchive + boot) and a
   // type-to-confirm permanent Delete.
   import { onDestroy } from 'svelte'
-  import { profiles, settingsPage } from '../store.js'
+  import { profiles, settingsPage, SETTINGS_PAGE } from '../store.js'
   import { api } from '../transport/api.js'
   import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
   import { PALETTES, setAccent, getAccent } from '../design/palette.js'
@@ -119,7 +119,7 @@
   // Settings on the SAME page — the user stays where they were.
   function switchTo(p) {
     if (p.id === activeId) return
-    try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || 'profiles') } catch {}
+    try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || SETTINGS_PAGE.PROFILES) } catch {}
     location.assign('/app/' + p.id + '/')
   }
 
@@ -184,7 +184,7 @@
         // The active profile is gone — the SPA must reload so boot re-resolves to a
         // valid one (§5.4). Stash the reopen flag (like switchTo) so Settings comes
         // back on the same page instead of closing under the user.
-        try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || 'profiles') } catch {}
+        try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || SETTINGS_PAGE.PROFILES) } catch {}
         setActiveProfileId(null)
         location.assign('/app/')
         return
@@ -297,12 +297,11 @@
               >{#if eAccent === sw.hex}<Icon name="check" size={12} />{/if}</button>
             {/each}
             <!-- Custom colour: native <input type=color> behind the swatch. Always
-                 shows the palette glyph (never the current colour) — its job is to
-                 open the picker; the selected hex reads below in .phex. -->
+                 shows the rainbow gradient (never the current colour) — its job is
+                 to open the picker; the selected hex reads below in .phex. -->
             <label
               class="pswatch pcustom rainbow" class:on={eCustom} title="Custom colour"
             >
-              <Icon name="palette" size={14} />
               <input type="color" value={eAccent} oninput={pickCustom} aria-label="Custom colour" />
             </label>
           </div>
@@ -399,13 +398,16 @@
 
 <style>
   .profiles { display: flex; flex-direction: column; gap: 2px; }
+  /* Selection/highlight pattern mirrors the composer ModelSwitcher menu
+     (.modelsw-item): soft accent-tint fill for the active row, neutral --code fill
+     on click-to-switch hover, --focus-ring for keyboard focus. */
   .prow {
     display: flex; align-items: center; gap: 10px; padding: 8px 4px;
-    border: 1px solid transparent; border-radius: var(--radius-sm);
+    border-radius: var(--radius-sm);
   }
-  .prow.active { background: var(--surface-sunk); border-color: var(--accent); padding: 7px; }
+  .prow.active { background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 8px; }
   .prow.clickable { cursor: pointer; }
-  .prow.clickable:hover { background: var(--surface-sunk); }
+  .prow.clickable:hover { background: var(--code); }
   .prow.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .pdot { width: 12px; height: 12px; flex: none; border-radius: var(--radius-pill); background: var(--dot, var(--accent)); }
   .pmeta { flex: 1; min-width: 0; }
@@ -446,8 +448,6 @@
   .pcustom.rainbow {
     background: conic-gradient(from 90deg, #f95339, #ec5d18, #e0b400, #2f8c44, #109e91, #2f6fe0, #7a52ec, #f95339);
   }
-  /* The palette glyph sits over the gradient — a drop-shadow keeps it legible. */
-  .pcustom :global(svg) { filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.55)); }
   .pcustom.rainbow.on { box-shadow: 0 0 0 2px var(--surface-sunk), 0 0 0 4px var(--accent); }
   .pcustom input {
     position: absolute; inset: 0; width: 100%; height: 100%;

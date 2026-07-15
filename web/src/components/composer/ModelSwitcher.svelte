@@ -7,46 +7,38 @@
   // turn already built its agent from the previous config and can't switch
   // retroactively) — the button says so.
   //
-  // Self-contained like ModelsPage/McpServers: owns its own fetch, refetches after
-  // the mutation. No shared store state.
+  // Reads the shared `llmConfigs` store (lib/llm.js), not a private fetch — so a
+  // rename / add / active-switch made in Settings → Models shows up here live,
+  // without a reload. Mutations here (choose → Use) refresh the same store, so
+  // Settings sees them too. See docs/adr/0004-shared-llm-config-store.md.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
-  import { settingsOpen, settingsPage } from '../../store.js'
-  import { LOGO, TYPE_LABEL, isUsable } from '../../lib/llm.js'
+  import { settingsOpen, settingsPage, SETTINGS_PAGE } from '../../store.js'
+  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   import Icon from '../Icon.svelte'
 
-  let configs = $state([])
-  let active = $state(null)
-  let envOverride = $state(null)
   let busy = $state(false)
   let open = $state(false)   // popover menu open
 
-  onMount(reload)
+  // A failed load just leaves the row empty-stated; the composer stays usable.
+  onMount(() => { loadLlmConfigs().catch(() => {}) })
 
-  async function reload() {
-    try {
-      const d = await api.llmConfigs()
-      configs = d.configs || []
-      active = d.active ?? null
-      envOverride = d.env_override ?? null
-    } catch {
-      // A failed fetch just leaves the row empty-stated; the composer stays usable.
-    }
-  }
-
+  const configs = $derived($llmConfigs.configs)
+  const active = $derived($llmConfigs.active)
+  const envOverride = $derived($llmConfigs.envOverride)
   const activeConfig = $derived(configs.find((c) => c.id === active) || null)
 
   async function choose(c) {
     if (busy || c.id === active || !isUsable(c)) return
     open = false
     busy = true
-    try { await api.useLlmConfig(c.id); await reload() } catch { /* keep prior active */ }
+    try { await api.useLlmConfig(c.id); await loadLlmConfigs() } catch { /* keep prior active */ }
     busy = false
   }
 
   function openSettings() {
     open = false
-    settingsPage.set('model')
+    settingsPage.set(SETTINGS_PAGE.MODELS)
     settingsOpen.set(true)
   }
 </script>

@@ -5,13 +5,16 @@
   // optional secret per-config key, a provider logo, a one-click real-PONG Test,
   // and an explicit Use. Replaces the old Model & Keys page.
   //
-  // Self-contained like McpServers: owns its list state, refetches after every
-  // mutation. Test uses the McpServers per-row health-map pattern (a `tests` map
-  // keyed by config id: {testing} → green PONG/latency or red error).
+  // The config list lives in the shared `llmConfigs` store (lib/llm.js), so edits
+  // here (add / rename / Use) show up live in the composer's ModelSwitcher without
+  // a reload. Local UI state (tests, editing, adding, busy, err) stays private.
+  // Test uses the McpServers per-row health-map pattern (a `tests` map keyed by
+  // config id: {testing} → green PONG/latency or red error).
+  // See docs/adr/0004-shared-llm-config-store.md.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
   import LlmConfigForm from './LlmConfigForm.svelte'
-  import { LOGO, TYPE_LABEL } from '../../lib/llm.js'
+  import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
   const TEMPLATES = [
@@ -38,9 +41,8 @@
     },
   ]
 
-  let configs = $state([])
-  let active = $state(null)
-  let envOverride = $state(null)
+  const configs = $derived($llmConfigs.configs)
+  const envOverride = $derived($llmConfigs.envOverride)
   let tests = $state({})       // config id -> {testing} | {ok, reply, latency_ms} | {ok:false, error}
   let busy = $state(false)
   let err = $state('')
@@ -50,13 +52,9 @@
 
   onMount(reload)
 
+  // Thin wrapper: refresh the shared store and surface any failure in this page's err.
   async function reload() {
-    try {
-      const d = await api.llmConfigs()
-      configs = d.configs || []
-      active = d.active ?? null
-      envOverride = d.env_override ?? null
-    } catch (e) { err = String(e.message || e) }
+    try { await loadLlmConfigs() } catch (e) { err = String(e.message || e) }
   }
 
   // Test = per-row health map, exactly like McpServers.check.

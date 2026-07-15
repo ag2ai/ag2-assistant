@@ -40,11 +40,24 @@ export const settingsOpen = writable(false)
 // Memory viewer/editor modal open/closed.
 export const memoryOpen = writable(false)
 
-// Which Settings page is shown when the modal opens: one of the PAGES ids defined
-// in Settings.svelte ('general'|'profiles'|'model'|'tools'|'integrations'|'advanced').
-// Lets callers deep-link into a page (e.g. settingsPage.set('tools'); settingsOpen.set(true)).
+// The valid Settings page ids — the single source of truth for what settingsPage
+// may hold. Settings.svelte binds each id to a label + component; callers deep-link
+// with SETTINGS_PAGE.* so a bad id is impossible to mistype (no more 'model' vs
+// 'models' drift). Frozen so the vocabulary can't be mutated at runtime.
+export const SETTINGS_PAGE = Object.freeze({
+  GENERAL: 'general',
+  PROFILES: 'profiles',
+  MODELS: 'models',
+  VOICE: 'voice',
+  TOOLS: 'tools',
+  INTEGRATIONS: 'integrations',
+  ADVANCED: 'advanced',
+})
+
+// Which Settings page is shown when the modal opens: one of the SETTINGS_PAGE ids.
+// Lets callers deep-link into a page (e.g. settingsPage.set(SETTINGS_PAGE.TOOLS); settingsOpen.set(true)).
 // Settings seeds its local `page` from this on mount (validated) and writes it back on nav click.
-export const settingsPage = writable('general')
+export const settingsPage = writable(SETTINGS_PAGE.GENERAL)
 
 // "Powered by AG2" architecture-map modal open/closed.
 export const poweredByOpen = writable(false)

@@ -2,10 +2,31 @@
 // truth for the provider logos, the human type label, and the client-side "can this
 // run right now?" predicate. Consumed by Settings → Models (ModelsPage) and the
 // composer's model switcher so the two surfaces speak identically.
+import { writable } from 'svelte/store'
+import { api } from '../transport/api.js'
 import openaiLogo from '../assets/openai.svg'
 import anthropicLogo from '../assets/anthropic.svg'
 import geminiLogo from '../assets/gemini.svg'
 import ollamaLogo from '../assets/ollama.svg'
+
+// Shared install-wide LLM config state — the single source of truth for BOTH the
+// composer's ModelSwitcher and Settings → Models. Two live views of the same list
+// (rename / add / switch-active in Settings must show up in the composer without a
+// reload), so the data can't be per-component local state. Lives here rather than
+// store.js because it needs `api`, and store.js → api.js → lib/profile.js → store.js
+// would be an import cycle. See docs/adr/0004-shared-llm-config-store.md.
+// Mutate via the API, then call loadLlmConfigs() to refresh every subscriber.
+export const llmConfigs = writable({ configs: [], active: null, envOverride: null, loaded: false })
+
+export async function loadLlmConfigs() {
+  const d = await api.llmConfigs()
+  llmConfigs.set({
+    configs: d.configs || [],
+    active: d.active ?? null,
+    envOverride: d.env_override ?? null,
+    loaded: true,
+  })
+}
 
 // type -> provider logo (all three OpenAI surfaces share the OpenAI mark).
 export const LOGO = {

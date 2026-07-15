@@ -83,8 +83,5 @@
       </div>
     </div>
   </div>
-  {#if $voice.active}
-    <div class="voicebar"><span class="vdot"></span>{$voice.status}</div>
-  {/if}
   <div class="cnote">AG2 Assistant is AI and can make mistakes. Check important info.</div>
 </div>
