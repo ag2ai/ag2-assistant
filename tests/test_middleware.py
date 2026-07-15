@@ -10,7 +10,7 @@ Covers three layers:
 import asyncio
 
 from ag2 import Agent
-from ag2.config import ModelConfig, ModelProvider
+from ag2.config import ModelConfig
 
 from assistant.middleware import (
     LLMCallTimeout,
@@ -30,7 +30,7 @@ class _HangingClient:
 class _HangingConfig(ModelConfig):
     """Minimal ModelConfig that hands back a never-resolving client."""
 
-    provider = ModelProvider.GEMINI
+    provider = "gemini"
     model = "hang"
 
     def copy(self):

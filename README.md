@@ -10,7 +10,19 @@ AG2 Assistant is a web app (with optional messaging-channel and CLI front-ends) 
 
 ### 1. Install
 
-Clone for a development checkout:
+The quickest way — one line, no clone, no Python setup (the script installs [uv](https://docs.astral.sh/uv/) if needed, and uv brings its own Python):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ag2ai/ag2-assistant/main/scripts/install.sh | sh
+```
+
+On Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/ag2ai/ag2-assistant/main/scripts/install.ps1 | iex"
+```
+
+Re-run the same script any time to upgrade. Or clone for a development checkout:
 
 ```bash
 git clone https://github.com/ag2ai/ag2-assistant.git
@@ -22,7 +34,7 @@ pip install -e ".[dev]"
 
 The repo also ships a `uv.lock`, so `uv run ag2-assistant …` and `uv run pytest` work without setting up a venv yourself.
 
-Or just install the CLI globally, no clone (installed from git — not yet on PyPI):
+Or just install the CLI globally yourself, no clone (git = latest commit; releases publish to PyPI from the first tagged version):
 
 ```bash
 uv tool install "git+https://github.com/ag2ai/ag2-assistant.git"   # or: pipx install "git+https://github.com/ag2ai/ag2-assistant.git"
@@ -124,21 +136,32 @@ The Quick Start above is the developer setup. For other ways to run it — see
 | Tier | For | How |
 |------|-----|-----|
 | **Contributor** | hacking on the code | `git clone` + `pip install -e ".[dev]"` |
-| **CLI user** | running locally, no clone | `uv tool install "git+https://github.com/ag2ai/ag2-assistant.git"` |
+| **CLI user** | running locally, no clone | `curl -fsSL https://raw.githubusercontent.com/ag2ai/ag2-assistant/main/scripts/install.sh \| sh` |
 | **Self-hosted** | an always-on instance | `docker compose up -d` |
-| **PyPI** | `pip install ag2-assistant` | not yet (blocked on AG2's PyPI release; targeted for 1.0) |
+| **PyPI** | released versions | `uv tool install ag2-assistant` (from the first release) |
 
 ### Docker (self-hosted)
+
+No clone needed — tagged releases publish a prebuilt image to GHCR (`:latest` moves on
+each release):
+
+```bash
+docker run -d --name ag2-assistant -p 8800:8800 \
+  -v ag2_data:/data -v ag2_workspace:/workspace \
+  ghcr.io/ag2ai/ag2-assistant:latest
+```
+
+Or from a checkout, with Compose:
 
 ```bash
 cp .env.example .env         # add a provider key (e.g. GEMINI_API_KEY) — optional
 docker compose up -d         # build + run; open http://localhost:8800/
 ```
 
-State and the agent's file workspace persist in named volumes. Tagged releases also publish
-a prebuilt image to `ghcr.io/ag2ai/ag2-assistant`. Code execution runs in-container by
-default (no host Docker socket); see [docs/deployment.md](docs/deployment.md) for the
-docker-out-of-docker option and channel setup.
+State and the agent's file workspace persist in named volumes. Code execution runs
+in-container by default (no host Docker socket); see
+[docs/deployment.md](docs/deployment.md) for the docker-out-of-docker option and channel
+setup.
 
 > The gateway has no built-in auth. Only expose port 8800 beyond localhost behind a reverse
 > proxy that handles TLS and authentication.
