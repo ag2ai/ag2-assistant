@@ -58,7 +58,7 @@
   /* ---- Layout ---- */
   --drawer-w:    280px; /* @kind spacing */
   --inspector-w: 372px; /* @kind spacing */
-  --thread-max:  760px; /* @kind spacing */
+  --thread-max:  780px; /* @kind spacing — message column cap (Claude/Linear-style) */
   --z-modal:     50;    /* @kind other */
   --z-backdrop:  40;    /* @kind other */
 }

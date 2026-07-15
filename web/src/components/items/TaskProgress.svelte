@@ -109,7 +109,7 @@
   .dels .d-pending i, .dels .d-pending { color: var(--ink-2); }
 
   .prog { margin-top: 8px; font-family: var(--code); font-size: 11px; color: var(--ink-3); }
-  .prog::before { content: "→ "; color: var(--ink-3); }
+  .prog::before { content: "→ "; color: var(--accent); }
   .err { margin-top: 9px; padding-left: 12px; border-left: 2px solid var(--accent); font-size: 12.5px; line-height: 1.5; color: var(--ink); }
   .err b { font-family: var(--code); font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--accent-d); display: block; margin-bottom: 2px; }
 </style>

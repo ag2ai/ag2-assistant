@@ -637,7 +637,7 @@
     color: var(--text-muted); font: inherit; font-size: var(--text-sm);
     font-weight: var(--fw-semibold); transition: all var(--dur-fast) var(--ease-out);
   }
-  .onb-tab:hover { color: var(--text); }
+  .onb-tab:hover { color: var(--accent); }
   .onb-tab.on { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-sm); }
   .onb-tabpanel { display: flex; flex-direction: column; gap: 16px; }
 

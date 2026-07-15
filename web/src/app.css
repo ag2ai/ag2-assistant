@@ -58,7 +58,7 @@
 .segbar { display: flex; gap: 3px; margin: 8px 12px 0; padding: 3px; background: var(--code); border-radius: var(--radius-pill); }
 .seg { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: 13px; font-weight: var(--fw-medium); color: var(--muted); background: none; border: none; border-radius: var(--radius-pill); padding: 6px 10px; cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
 .seg:hover { color: var(--text); }
-.seg.on { color: var(--text); background: var(--surface); box-shadow: var(--shadow-sm); }
+.seg.on { color: var(--accent); background: var(--surface); box-shadow: var(--shadow-sm); }
 
 /* "New chat" — the first line of the Chats list: a quiet full-width action row
    that reads as "start something" without competing with real chat rows. */
@@ -239,7 +239,10 @@
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
-.drow.on { background: var(--code); }
+/* Active/selected row: accent tint + a left accent bar so the current chat/task
+   reads as selected, not just hovered. */
+.drow.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.drow.on .ttitle, .drow.on .runwhen { color: var(--text); font-weight: 600; }
 .drow .sub { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; gap: 6px; }
 .tag { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 1px 7px; border-radius: var(--radius-pill); border: 1px solid var(--line); }
 .tag.sched { color: color-mix(in srgb, var(--accent) 72%, var(--text)); border: none; padding: 0; font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -267,7 +270,7 @@
 .none { color: var(--muted); font-size: 13px; padding: 16px; }
 
 .thread { flex: 1; overflow-y: auto; padding: 24px 0 168px; }
-.inner { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+.inner { max-width: var(--thread-max); margin: 0 auto; padding: 0 20px; }
 .daysep { display: flex; align-items: center; justify-content: center; margin: 20px 0 14px; }
 .daysep span { font-size: 11px; font-weight: 600; letter-spacing: .3px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 3px 12px; }
 .empty { text-align: center; color: var(--muted); margin-top: 18vh; }
@@ -486,13 +489,13 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
    (centered) message column is unaffected. */
 .composer { position: absolute; left: 16px; right: 16px; bottom: 0; padding: 28px 20px 16px; background: linear-gradient(to bottom, transparent, var(--bg) 42%); pointer-events: none; }
 .composer > * { pointer-events: auto; }
-.cnote { max-width: 760px; margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
+.cnote { max-width: var(--thread-max); margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
 /* Scroll-to-latest — floats above the composer, centered, only when unpinned. */
 .scrolldown { position: absolute; left: 50%; transform: translateX(-50%); bottom: 148px; z-index: 5; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; cursor: pointer; box-shadow: var(--shadow-lg); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .scrolldown:hover { border-color: var(--accent); color: var(--accent); }
 /* One rounded input box (Claude-style): textarea on top, a control bar beneath —
    attach on the left, model switcher + live voice + send/stop on the right. */
-.inputbox { max-width: 760px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--code); padding: 8px 8px 8px 14px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.inputbox { max-width: var(--thread-max); margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--code); padding: 8px 8px 8px 14px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
 .inputbox:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .cinput { display: block; width: 100%; resize: none; border: none; background: none; color: var(--ink); font: inherit; padding: 6px 4px 2px; max-height: 200px; }
 .cinput:focus { outline: none; }
@@ -522,9 +525,9 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .mhead .back:hover { border-color: var(--accent); color: var(--accent); }
 .mhead .title { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-lg); }
 .mhead .hactions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent-border); background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-medium); }
 
-.panel { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 0 auto 14px; max-width: 760px; }
+.panel { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 0 auto 14px; max-width: var(--thread-max); }
 .panel .ptitle { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
 .panel .tasktime { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: var(--text-sm); color: var(--text-muted); }
 .panel .taskerror { display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; padding: 9px 11px; font-size: var(--text-sm); line-height: var(--leading-snug); color: var(--ag2-observer); background: color-mix(in srgb, var(--ag2-observer) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ag2-observer) 28%, transparent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }

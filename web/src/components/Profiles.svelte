@@ -469,7 +469,7 @@
     background: none; border: none; cursor: pointer; font: inherit;
     font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--text-muted);
   }
-  .padd:hover { color: var(--text); }
+  .padd:hover { color: var(--accent); }
   .padd:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
   .padd-cancel { align-self: flex-end; }
 
@@ -488,7 +488,7 @@
     font-size: var(--text-xs); font-weight: var(--fw-semibold); text-transform: uppercase;
     letter-spacing: var(--tracking-eyebrow); color: var(--text-muted);
   }
-  .parchhead:hover { color: var(--text); }
+  .parchhead:hover { color: var(--accent); }
   .parchhead:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
   .parchentry { display: flex; flex-direction: column; gap: 2px; }
   .prow.arch { padding: 8px 4px; }
