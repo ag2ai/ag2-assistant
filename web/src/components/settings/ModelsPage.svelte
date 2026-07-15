@@ -11,20 +11,7 @@
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
   import LlmConfigForm from './LlmConfigForm.svelte'
-  import openaiLogo from '../../assets/openai.svg'
-  import anthropicLogo from '../../assets/anthropic.svg'
-  import geminiLogo from '../../assets/gemini.svg'
-  import ollamaLogo from '../../assets/ollama.svg'
-
-  const LOGO = {
-    openai: openaiLogo, openai_responses: openaiLogo, openai_subscription: openaiLogo,
-    anthropic: anthropicLogo, gemini: geminiLogo, ollama: ollamaLogo,
-  }
-  const TYPE_LABEL = {
-    openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
-    openai_subscription: 'OpenAI · ChatGPT subscription',
-    anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
-  }
+  import { LOGO, TYPE_LABEL } from '../../lib/llm.js'
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
   const TEMPLATES = [

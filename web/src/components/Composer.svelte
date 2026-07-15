@@ -2,6 +2,7 @@
   import { thread } from '../store.js'
   import { send, stop, startVoice, stopVoice, voice } from '../controller.js'
   import Icon from './Icon.svelte'
+  import ModelSwitcher from './composer/ModelSwitcher.svelte'
 
   let text = $state('')
   let pending = $state([])  // {name, payload:{name,mime,data(b64)}}
@@ -45,17 +46,17 @@
 </script>
 
 <div class="composer">
-  {#if pending.length}
-    <div class="pending">
-      {#each pending as p, i}
-        <span class="chip"><Icon name="paperclip" size={13} /> {p.name}<button class="x" onclick={() => removeFile(i)}>×</button></span>
-      {/each}
-    </div>
-  {/if}
-  <div class="crow">
-    <button class="icon" onclick={() => fileInput.click()} title="Attach files" aria-label="Attach files"><Icon name="paperclip" size={18} /></button>
+  <div class="inputbox" class:busy={$thread.busy}>
+    {#if pending.length}
+      <div class="pending">
+        {#each pending as p, i}
+          <span class="chip"><Icon name="paperclip" size={13} /> {p.name}<button class="x" onclick={() => removeFile(i)}>×</button></span>
+        {/each}
+      </div>
+    {/if}
     <input type="file" multiple hidden bind:this={fileInput} onchange={pick} />
     <textarea
+      class="cinput"
       bind:this={ta}
       bind:value={text}
       rows="1"
@@ -63,15 +64,27 @@
       oninput={grow}
       onkeydown={key}
     ></textarea>
-    <button class="icon mic" class:live={$voice.active} onclick={toggleMic} title="Talk to AG2 Assistant" aria-label="Talk to AG2 Assistant"><Icon name="mic" size={18} /></button>
-    <!-- Stop sits BESIDE Send while a turn runs: sending mid-turn feeds the running
-         turn, so the composer must stay usable — stopping is a separate choice. -->
-    {#if $thread.busy}
-      <button class="icon stop" onclick={stop} title="Stop the agent" aria-label="Stop the agent"><Icon name="square" size={14} /></button>
-    {/if}
-    <button class="send" onclick={submit}><Icon name="send" size={16} /> Send</button>
+    <div class="cbar">
+      <button class="cbtn" onclick={() => fileInput.click()} title="Attach files" aria-label="Attach files"><Icon name="plus" size={18} /></button>
+      <div class="cbar-right">
+        <ModelSwitcher />
+        <!-- Single live-voice control: toggles the realtime voice session. -->
+        <button class="cbtn live" class:on={$voice.active} onclick={toggleMic}
+                title="Live voice" aria-label="Live voice"><Icon name="waveform" size={18} /></button>
+        <!-- Primary action. While a turn runs it's Stop; Enter still sends (feeds the
+             running turn), so "add while it works" survives via the keyboard. Idle it's
+             Send, disabled until there's text or an attachment. -->
+        {#if $thread.busy}
+          <button class="csend stop" onclick={stop} title="Stop the agent" aria-label="Stop the agent"><Icon name="square" size={15} /></button>
+        {:else}
+          <button class="csend" onclick={submit} disabled={!text.trim() && !pending.length}
+                  title="Send" aria-label="Send"><Icon name="arrow-up" size={18} /></button>
+        {/if}
+      </div>
+    </div>
   </div>
   {#if $voice.active}
     <div class="voicebar"><span class="vdot"></span>{$voice.status}</div>
   {/if}
+  <div class="cnote">AG2 Assistant is AI and can make mistakes. Check important info.</div>
 </div>

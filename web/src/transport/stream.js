@@ -65,5 +65,6 @@ export class StreamClient {
   cancel() { this._send({ type: 'cancel' }) }
   answer(id, answer) { this._send({ type: 'answer', id, answer }) }
   feedback(payload) { this._send({ type: 'feedback', ...payload }) }
+  clearFeedback(payload) { this._send({ type: 'feedback_clear', ...payload }) }
   close() { this._closed = true; try { this.ws && this.ws.close() } catch {} }
 }

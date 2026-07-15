@@ -21,6 +21,28 @@
   function onScroll() {
     if (scroller) pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < NEAR_BOTTOM
   }
+  // Glide to the latest and re-pin (so the stream follows again). A hand-rolled eased
+  // tween (not native `behavior:'smooth'`, which is browser-paced and whips over long
+  // distances) with a capped duration. The streaming autoscroll below stays instant so
+  // it can't fight each chunk.
+  function scrollToBottom() {
+    if (!scroller) return
+    const el = scroller
+    const start = el.scrollTop
+    const dist = (el.scrollHeight - el.clientHeight) - start
+    if (dist <= 4) { el.scrollTop = el.scrollHeight; pinned = true; return }
+    const dur = Math.min(600, 240 + dist * 0.3) // ms — longer for farther, capped
+    const ease = (p) => 1 - Math.pow(1 - p, 3)   // easeOutCubic
+    let t0 = null
+    function step(ts) {
+      if (t0 === null) t0 = ts
+      const p = Math.min(1, (ts - t0) / dur)
+      el.scrollTop = start + dist * ease(p)
+      if (p < 1) requestAnimationFrame(step)
+      else pinned = true
+    }
+    requestAnimationFrame(step)
+  }
 
   // Opening another thread starts pinned again, whatever the last one was left at.
   let shown = null
@@ -78,5 +100,11 @@
     {#if showThinking}<Thinking />{/if}
   </div>
 </div>
+
+{#if !pinned}
+  <button class="scrolldown" onclick={scrollToBottom} title="Scroll to latest" aria-label="Scroll to latest">
+    <Icon name="chevron-down" size={18} />
+  </button>
+{/if}
 
 <Composer />

@@ -1907,6 +1907,21 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                             )
                         )
                     continue
+                if data.get("type") == "feedback_clear" and data.get("target_id"):
+                    # Retract a rating (thumb toggled off). Emit onto the stream so the
+                    # cleared state persists/replays; no learner — unmarking takes back
+                    # only the visible thumb, never the memory it already taught.
+                    from assistant.events import FeedbackCleared
+
+                    with contextlib.suppress(Exception):
+                        await runtime.gateway.emit_event(
+                            session_id,
+                            FeedbackCleared(
+                                data["target_id"],
+                                target_kind=data.get("target_kind", "message"),
+                            ),
+                        )
+                    continue
                 text = data.get("text", "")
                 raw_atts = data.get("attachments")
                 attachments = _decode_attachments(raw_atts)

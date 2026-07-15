@@ -27,9 +27,9 @@
    and the drawer buttons / composer / modals drift out of position. */
 .app { display: grid; grid-template-columns: 270px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; }
 .drawer { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
-.main { display: flex; flex-direction: column; min-width: 0; }
+.main { display: flex; flex-direction: column; min-width: 0; position: relative; }
 
-.dhead { padding: 14px 16px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); }
+.dhead { padding: 14px 16px; display: flex; align-items: center; gap: 9px; }
 /* AG2 brand logo (real SVG mark) — black on light, white on dark (auto-swapped). */
 .brandlogo { height: 20px; width: auto; flex: none; display: block; }
 .brandlogo.on-dark { display: none; }
@@ -215,7 +215,7 @@
 .drow .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .none { color: var(--muted); font-size: 13px; padding: 16px; }
 
-.thread { flex: 1; overflow-y: auto; padding: 24px 0; }
+.thread { flex: 1; overflow-y: auto; padding: 24px 0 168px; }
 .inner { max-width: 760px; margin: 0 auto; padding: 0 20px; }
 .empty { text-align: center; color: var(--muted); margin-top: 18vh; }
 .empty h1 { color: var(--ink); font-weight: 600; }
@@ -229,8 +229,11 @@
 .msg.user.queued { flex-direction: column; align-items: flex-end; gap: 4px; }
 .msg.user.queued .bubble { opacity: 0.6; }
 .msg.user.queued .hint { font-size: 12px; color: var(--muted); }
-.msg.agent .bubble { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
-.msg.agent .bubble.empty { color: var(--muted); border-style: dashed; }
+/* Assistant replies read as plain prose (ChatGPT / Claude style): no bubble
+   background, border, or padding — just full-width text. Only the user's messages
+   keep a bubble. */
+.msg.agent .bubble { background: none; border: none; padding: 0; max-width: 100%; }
+.msg.agent .bubble.empty { color: var(--muted); }
 .bubble :first-child { margin-top: 0; } .bubble :last-child { margin-bottom: 0; }
 .bubble a { color: var(--accent); }
 .bubble pre { background: var(--code); padding: 10px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
@@ -301,10 +304,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .fb-row { display: flex; align-items: center; gap: 4px; }
 .fb-thumb { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid transparent; background: none; color: var(--text-faint); border-radius: var(--radius-sm); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
 .fb-thumb:hover { color: var(--text-muted); background: var(--surface-hover); }
-.fb-thumb.active { border-color: var(--accent); color: var(--accent); }
-.fb-thumb.on { color: var(--text-on-accent); }
-.fb-row .fb-thumb.on:first-child { background: var(--success); border-color: var(--success); }   /* 👍 */
-.fb-row .fb-thumb.on:nth-child(2) { background: var(--danger); border-color: var(--danger); }       /* 👎 */
+/* Monochrome and consistent across copy / 👍 / 👎: the icon just brightens to full
+   ink when active (reason open) or recorded — no per-sentiment colour fill. */
+.fb-thumb.active { color: var(--text); background: var(--surface-hover); }
+.fb-thumb.on { color: var(--text); }
 .fb-recorded { font-size: var(--text-xs); color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
 .fb-reason { display: flex; align-items: center; gap: 6px; }
 .fb-reason input { flex: 1; min-width: 0; max-width: 520px; border: 1px solid var(--line); background: var(--surface-sunk); color: var(--text); border-radius: var(--radius-sm); padding: 7px 11px; font: inherit; font-size: var(--text-sm); }
@@ -389,7 +392,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .card { border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin: 12px 0; max-width: 80%; }
 .card .k { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; }
 .card .t { margin: 4px 0 8px; font-size: 14px; }
-.card button, .composer .send, .panel button { font-family: var(--sans); cursor: pointer; }
+.card button, .composer .csend, .panel button { font-family: var(--sans); cursor: pointer; }
 .card .open { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: var(--fw-medium); border: 1px solid var(--accent); color: var(--accent); background: none; border-radius: var(--radius-sm); padding: 6px 12px; transition: background var(--dur-fast) var(--ease-out); }
 .card .open:hover { background: var(--accent-soft); }
 
@@ -421,18 +424,37 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .inquiry input { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
 .inquiry .idetail { margin: 8px 0; padding: 10px 12px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; overflow: auto; max-height: 320px; }
 
-.composer { border-top: 1px solid var(--line); padding: 14px 20px; }
-.crow { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
-.crow textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 11px 14px; font: inherit; background: var(--code); color: var(--ink); max-height: 160px; transition: border-color var(--dur-fast) var(--ease-out); }
-.crow textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
-.crow .send { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--text-on-accent); border-radius: var(--radius-sm); padding: 10px 18px; box-shadow: var(--shadow-accent); transition: background var(--dur-fast) var(--ease-out); }
-.crow .send:hover { background: var(--accent-hover); }
-/* Stop appears next to Send while a turn runs (Send keeps working — it feeds the
-   running turn). Quiet by default, warning-red on hover: it ends work in progress. */
-.crow .icon.stop:hover { border-color: var(--danger); color: var(--danger); }
-.crow .icon { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 9px 12px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-.crow .icon:hover { border-color: var(--accent); color: var(--accent); }
-.crow .icon.mic.live { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); animation: micpulse 1.4s infinite; }
+/* The composer floats over the message list (ChatGPT/Claude style): content scrolls
+   underneath and fades into the page bg above it. The gradient's transparent top lets
+   wheel/clicks pass through to the messages behind; only the input box captures events. */
+/* Inset from the edges so the fade stops short of the scroller's scrollbar on the
+   right — a full-bleed gradient paints over the scrollbar and makes its thumb appear
+   to fade out in the corner. The insets sit over empty margin, so the fade over the
+   (centered) message column is unaffected. */
+.composer { position: absolute; left: 16px; right: 16px; bottom: 0; padding: 28px 20px 16px; background: linear-gradient(to bottom, transparent, var(--bg) 42%); pointer-events: none; }
+.composer > * { pointer-events: auto; }
+.cnote { max-width: 760px; margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
+/* Scroll-to-latest — floats above the composer, centered, only when unpinned. */
+.scrolldown { position: absolute; left: 50%; transform: translateX(-50%); bottom: 148px; z-index: 5; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; cursor: pointer; box-shadow: var(--shadow-lg); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.scrolldown:hover { border-color: var(--accent); color: var(--accent); }
+/* One rounded input box (Claude-style): textarea on top, a control bar beneath —
+   attach on the left, model switcher + live voice + send/stop on the right. */
+.inputbox { max-width: 760px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--code); padding: 8px 8px 8px 14px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.inputbox:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.cinput { display: block; width: 100%; resize: none; border: none; background: none; color: var(--ink); font: inherit; padding: 6px 4px 2px; max-height: 200px; }
+.cinput:focus { outline: none; }
+.cbar { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.cbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* Round quiet control (attach, live voice). */
+.cbtn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: none; background: none; color: var(--muted); border-radius: 999px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.cbtn:hover { background: var(--surface); color: var(--ink); }
+.cbtn.live.on { background: var(--accent); color: var(--text-on-accent); animation: micpulse 1.4s infinite; }
+/* Primary send / stop — round, accent-filled. Stop is a quiet variant (danger on hover). */
+.csend { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: none; border-radius: 999px; background: var(--accent); color: var(--text-on-accent); cursor: pointer; box-shadow: var(--shadow-accent); transition: background var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out); }
+.csend:hover:not(:disabled) { background: var(--accent-hover); }
+.csend:disabled { opacity: .4; cursor: default; box-shadow: none; }
+.csend.stop { background: var(--surface); color: var(--ink); border: 1px solid var(--line); box-shadow: none; }
+.csend.stop:hover { border-color: var(--danger); color: var(--danger); }
 @keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(249,83,57,.5); } 50% { box-shadow: 0 0 0 6px rgba(249,83,57,0); } }
 .voicebar { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
 .vdot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: micpulse 1.4s infinite; }
@@ -465,9 +487,36 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .qcard .qopts button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
 .qcard input { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
 
-.pending { max-width: 760px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.pending { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 4px; }
 .pending .chip { display: inline-flex; align-items: center; gap: 4px; }
 .pending .chip .x { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
+
+/* Model switcher — a pill in the input's control bar. Picks the install-wide
+   active LLM config (takes effect on the NEXT message). */
+.modelsw { display: inline-flex; align-items: center; }
+.modelsw-wrap { position: relative; display: inline-block; }
+.modelsw-btn { display: inline-flex; align-items: center; gap: 6px; border: none; background: none; color: var(--muted); border-radius: 999px; padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.modelsw-btn:hover:not(:disabled) { background: var(--surface); color: var(--ink); }
+.modelsw-btn:disabled { opacity: .6; cursor: default; }
+.modelsw-logo { width: 14px; height: 14px; object-fit: contain; }
+.modelsw-name { display: inline-flex; align-items: center; gap: 4px; }
+.modelsw-name.muted { color: var(--muted); }
+.modelsw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok, #3aa657); flex: none; }
+.modelsw-dot.warn { background: var(--muted); }
+.modelsw-pin, .modelsw-empty { font-size: 12px; color: var(--muted); }
+.modelsw-empty { border: none; background: none; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font: inherit; font-size: 12px; color: var(--muted); }
+.modelsw-empty:hover { color: var(--accent); }
+.modelsw-scrim { position: fixed; inset: 0; z-index: 9; border: none; background: none; cursor: default; }
+.modelsw-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; min-width: 240px; max-width: min(360px, 90vw); max-height: 320px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+.modelsw-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: none; background: none; color: var(--ink); border-radius: var(--radius-sm); padding: 7px 9px; cursor: pointer; font: inherit; }
+.modelsw-item:hover:not(:disabled) { background: var(--code); }
+.modelsw-item.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.modelsw-item:disabled { opacity: .5; cursor: default; }
+.modelsw-itemmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.modelsw-item .modelsw-name { font-size: 13px; }
+.modelsw-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modelsw-manage { border: none; background: none; color: var(--muted); border-radius: var(--radius-sm); padding: 7px 9px; text-align: left; cursor: pointer; font: inherit; font-size: 12px; border-top: 1px solid var(--line); margin-top: 2px; }
+.modelsw-manage:hover { color: var(--accent); }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 20; animation: ag2-fade var(--dur-base) var(--ease-out) both; }
 .modal { position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(560px, 92vw); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow-lg); animation: modal-pop var(--dur-base) var(--ease-spring) both; }

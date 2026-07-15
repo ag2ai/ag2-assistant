@@ -14,5 +14,8 @@ build/
 
 docs/superpowers/
 
+# graphify knowledge-graph build output
+graphify-out/
+
 # pre-recorded voice samples (regenerate with scripts/record_voice_samples.py)
 src/assistant/gateway/static/voices/

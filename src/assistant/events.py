@@ -144,6 +144,20 @@ class FeedbackGiven(AssistantEvent):
     request: str = ""  # the user's ask / task objective that produced it
 
 
+class FeedbackCleared(AssistantEvent):
+    """The user retracted a rating (toggled the 👍/👎 off). Rides the stream so the
+    cleared state persists + replays — the GUI projects the thumb back to neutral.
+
+    Carries no sentiment or reason: unmarking takes back only the *visible* rating.
+    Any preference the learner already distilled into the memory profile is left
+    untouched (editable directly in Settings → Memory), so this event never runs the
+    learner. `target_kind`/`target_id` match the original FeedbackGiven's key.
+    """
+
+    target_id: str = Field(kw_only=False)
+    target_kind: str = "message"  # "message" | "image" | "deliverable"
+
+
 class TurnCancelled(AssistantEvent):
     """The user stopped a turn while it was running. Emitted after AG2 cancels the
     run, so it lands after whatever the turn had already produced (tool calls and

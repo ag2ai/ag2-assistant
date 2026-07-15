@@ -121,6 +121,12 @@ export function feedback({ targetKind, targetId, sentiment, reason, content = ''
   if (client) client.feedback({ target_kind: targetKind, target_id: targetId, sentiment, reason, content, request })
 }
 
+// Retract a rating (toggle the 👍/👎 off). Clears only the visible thumb — the server
+// emits FeedbackCleared and runs no learner, so learned memory is left untouched.
+export function clearFeedback({ targetKind, targetId }) {
+  if (client) client.clearFeedback({ target_kind: targetKind, target_id: targetId })
+}
+
 export function closeThread() {
   if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }  // _voiceEnded's reload is guarded out on nav
   _voiceActive = false; _vitem = null; _vrole = null
