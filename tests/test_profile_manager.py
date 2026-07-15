@@ -203,6 +203,145 @@ async def test_archive_bad_new_default_rejected():
         await mgr.close()
 
 
+# --- restore (unarchive + boot) ---
+
+
+async def test_restore_boots_live():
+    from assistant import profiles
+    from assistant.gateway.profile_manager import ProfileManager
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        b = await mgr.create("Personal", "#f95339")
+        await mgr.archive(b.pid)  # non-default, no replacement needed
+        assert {r.pid for r in mgr.runtimes()} == {a.pid}
+
+        runtime = await mgr.restore(b.pid)
+        assert runtime.pid == b.pid
+        assert profiles.get_profile(b.pid).archived is False
+        assert mgr.get(b.pid) is runtime  # booted + resolvable
+        assert {r.pid for r in mgr.runtimes()} == {a.pid, b.pid}
+    finally:
+        await mgr.close()
+
+
+async def test_restore_unknown_raises():
+    from assistant.gateway.profile_manager import ProfileManager, UnknownProfile
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        with pytest.raises(UnknownProfile):
+            await mgr.restore("ghost")
+    finally:
+        await mgr.close()
+
+
+async def test_restore_non_archived_rejected():
+    from assistant.gateway.profile_manager import ProfileManager
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        await mgr.create("Personal", "#f95339")
+        # a is live, not archived → restoring it is a no-op error, not a boot
+        with pytest.raises(ValueError):
+            await mgr.restore(a.pid)
+    finally:
+        await mgr.close()
+
+
+async def test_restore_rolls_back_on_boot_failure(monkeypatch):
+    """§4.9 (Q9): if boot fails, the profile stays cleanly archived — never left in the
+    unarchived-but-not-running limbo the manager treats as a server bug."""
+    from assistant import profiles
+    from assistant.gateway.profile_manager import (
+        ArchivedProfile,
+        ProfileManager,
+    )
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        b = await mgr.create("Personal", "#f95339")
+        await mgr.archive(b.pid)
+
+        async def _boom(meta):
+            raise RuntimeError("boot exploded")
+
+        monkeypatch.setattr(mgr, "_boot", _boom)
+        with pytest.raises(RuntimeError):
+            await mgr.restore(b.pid)
+
+        # rolled back: still archived, not running, still resolvable-as-archived
+        assert profiles.get_profile(b.pid).archived is True
+        assert {r.pid for r in mgr.runtimes()} == {a.pid}
+        with pytest.raises(ArchivedProfile):
+            mgr.get(b.pid)
+    finally:
+        await mgr.close()
+
+
+# --- purge (hard delete, archive-first) ---
+
+
+async def test_purge_deletes_dir_and_registry_entry():
+    from assistant import profiles
+    from assistant.gateway.profile_manager import ProfileManager
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        await mgr.create("Work", "#109e91")
+        b = await mgr.create("Personal", "#f95339")
+        await mgr.archive(b.pid)
+        b_dir = profiles.profile_dir(b.pid)
+        assert b_dir.exists()
+
+        await mgr.purge(b.pid)
+
+        assert not b_dir.exists()  # folder erased from disk
+        assert profiles.get_profile(b.pid) is None  # registry entry gone
+        assert b.pid not in {m.id for m in profiles.list_profiles(include_archived=True)}
+    finally:
+        await mgr.close()
+
+
+async def test_purge_unknown_raises():
+    from assistant.gateway.profile_manager import ProfileManager, UnknownProfile
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        with pytest.raises(UnknownProfile):
+            await mgr.purge("ghost")
+    finally:
+        await mgr.close()
+
+
+async def test_purge_refuses_unarchived_profile():
+    """Archive-first (Q4/ADR 0003): a live profile cannot be hard-deleted directly."""
+    from assistant import profiles
+    from assistant.gateway.profile_manager import ProfileManager
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        await mgr.create("Personal", "#f95339")
+        with pytest.raises(ValueError):
+            await mgr.purge(a.pid)  # not archived
+        # untouched: still live, dir intact, still in registry
+        assert profiles.profile_dir(a.pid).exists()
+        assert profiles.get_profile(a.pid) is not None
+    finally:
+        await mgr.close()
+
+
 # --- config_factory ---
 
 

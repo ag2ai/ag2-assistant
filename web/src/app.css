@@ -113,7 +113,11 @@
 .memory .mfoot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .memory .okmsg { color: #3ba55d; font-size: 13px; }
 .settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
-.settings .linkbtn:hover { color: #d8552f; }
+/* Benign links hover to primary text (near-white in dark, ink in light — theme-safe;
+   a literal white would vanish on the light theme). Only destructive actions
+   (.danger / .quiet) hover red — see below. */
+.settings .linkbtn:hover { color: var(--text); }
+.settings .linkbtn.danger:hover, .settings .linkbtn.quiet:hover { color: var(--danger); }
 /* Disabled linkbtns must LOOK disabled too (Edit/Delete on LLM rows grey out while
    the editor is open) — without this they only lose their click, not their look. */
 .settings .linkbtn:disabled { opacity: .4; cursor: default; }

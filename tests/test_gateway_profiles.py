@@ -32,6 +32,7 @@ def test_profiles_zero_state_contract(monkeypatch):
         body = client.get("/api/profiles").json()
         assert body == {
             "profiles": [],
+            "archived": [],
             "active_default": None,
             "onboarded": False,
             "version": __version__,
@@ -212,6 +213,91 @@ def test_archive_http_guardrails_and_success(monkeypatch):
         # routes on the archived profile now 410; archiving it again → 410
         assert client.get(api("work", "/tasks")).status_code == 410
         assert client.request("DELETE", "/api/profiles/work").status_code == 410
+
+
+# --- archived list + restore + purge (ADR 0003) ---
+
+
+def test_archived_list_in_payload(monkeypatch):
+    """GET /api/profiles carries an `archived` array beside `profiles`."""
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        # archive the non-default → no replacement needed
+        assert client.request("DELETE", "/api/profiles/personal").status_code == 200
+
+        body = client.get("/api/profiles").json()
+        assert [p["id"] for p in body["profiles"]] == ["work"]  # live only
+        assert [p["id"] for p in body["archived"]] == ["personal"]  # archived only
+
+
+def test_restore_over_http(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        client.request("DELETE", "/api/profiles/personal")
+        assert client.get(api("personal", "/tasks")).status_code == 410  # archived
+
+        r = client.post("/api/profiles/personal/restore")
+        assert r.status_code == 200
+        assert r.json()["profile"]["id"] == "personal"
+
+        body = client.get("/api/profiles").json()
+        assert "personal" in [p["id"] for p in body["profiles"]]  # back in the live list
+        assert [p["id"] for p in body["archived"]] == []  # no longer archived
+        assert client.get(api("personal", "/tasks")).status_code == 200  # booted live
+
+
+def test_restore_non_archived_409(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        # work is live, not archived → restore is a conflict
+        assert client.post("/api/profiles/work/restore").status_code == 409
+
+
+def test_restore_unknown_404(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        assert client.post("/api/profiles/ghost/restore").status_code == 404
+
+
+def test_purge_requires_archive_first_409(monkeypatch):
+    """Archive-first: a live profile cannot be hard-deleted (409), and it is untouched."""
+    from assistant import profiles
+
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+
+        r = client.request("DELETE", "/api/profiles/personal", params={"purge": "true"})
+        assert r.status_code == 409
+        assert profiles.get_profile("personal") is not None  # still there
+        assert profiles.profile_dir("personal").exists()  # dir intact
+
+
+def test_purge_archived_profile(monkeypatch):
+    from assistant import profiles
+
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        client.request("DELETE", "/api/profiles/personal")  # archive first
+        assert profiles.profile_dir("personal").exists()
+
+        r = client.request("DELETE", "/api/profiles/personal", params={"purge": "true"})
+        assert r.status_code == 200
+        assert profiles.get_profile("personal") is None  # gone from registry
+        assert not profiles.profile_dir("personal").exists()  # folder erased
+        # gone from both lists
+        body = client.get("/api/profiles").json()
+        assert "personal" not in [p["id"] for p in body["profiles"] + body["archived"]]
+
+
+def test_purge_unknown_404(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        r = client.request("DELETE", "/api/profiles/ghost", params={"purge": "true"})
+        assert r.status_code == 404
 
 
 # --- WS close on archive (§4.9) ---

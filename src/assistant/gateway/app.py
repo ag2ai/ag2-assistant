@@ -22,10 +22,11 @@ Route map:
     POST /api/onboarded                      -> set the install-level onboarding flag
     GET/POST /api/memory                     -> universal "who the user is" doc (shared root/user.db)
     POST /api/identity                       -> seed universal doc from web onboarding (name/location/hours/style); seed-only, never clobbers
-    GET  /api/profiles                       -> {profiles, active_default, onboarded} (§3.5 contract)
+    GET  /api/profiles                       -> {profiles, archived, active_default, onboarded} (§3.5 contract)
     POST /api/profiles                       -> create {name, accent}; boots live
     POST /api/profiles/{pid}                 -> rename / accent (display-only)
-    DELETE /api/profiles/{pid}               -> archive (guardrails §4.9)
+    POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
+    DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
     GET  /api/channels                       -> {platform: {profile, token_present, active, error}} (install-level)
     POST /api/channels                       -> bind {platform, profile:pid|null}; hot-applies; returns updated entry
     GET  /api/google/*                       -> account-level OAuth (shared like keys)
@@ -925,10 +926,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         from assistant import profiles as profiles_mod
 
         reg = profiles_mod.load_registry()
+        allp = profiles_mod.list_profiles(include_archived=True)
         return {
-            "profiles": [
-                _profile_view(m) for m in profiles_mod.list_profiles(include_archived=False)
-            ],
+            "profiles": [_profile_view(m) for m in allp if not m.archived],
+            # Archived profiles for the Settings "Archived" section (ADR 0003): restore
+            # or permanently delete them. Empty on a fresh install / when none archived.
+            "archived": [_profile_view(m) for m in allp if m.archived],
             "active_default": reg.get("active_default"),
             "onboarded": bool(reg.get("onboarded")),
             # App version rides the boot payload so the UI needn't make a second request.
@@ -962,9 +965,26 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         return {"profile": _profile_view(profiles_mod.get_profile(pid))}
 
     @app.delete("/api/profiles/{pid}")
-    async def archive_profile(pid: str, req: ProfileArchiveRequest | None = None):
-        """Archive a profile with the §4.9 guardrails. new_default may come in the
-        body. ValueError (guardrail) → 400, unknown → 404, already archived → 410."""
+    async def archive_or_purge_profile(
+        pid: str, purge: bool = False, req: ProfileArchiveRequest | None = None
+    ):
+        """Soft-archive by default; hard-delete when ``?purge=true`` (ADR 0003).
+
+        Archive: §4.9 guardrails — ValueError (guardrail) → 400, unknown → 404, already
+        archived → 410. new_default may come in the body.
+
+        Purge (``?purge=true``): permanently erase an ALREADY-archived profile. Unknown →
+        404; a live (not-yet-archived) profile → 409 (archive-first). The explicit flag
+        makes the soft→hard escalation deliberate."""
+        if purge:
+            try:
+                await manager.purge(pid)
+            except UnknownProfile:
+                return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=409)
+            return {"ok": True}
+
         new_default = req.new_default if req is not None else None
         try:
             await manager.archive(pid, new_default=new_default)
@@ -975,6 +995,21 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"ok": True}
+
+    @app.post("/api/profiles/{pid}/restore")
+    async def restore_profile(pid: str):
+        """Un-archive a profile and boot it live (ADR 0003). Unknown → 404; a live
+        (non-archived) profile → 409; a boot failure rolls the archive flag back and
+        surfaces 500."""
+        try:
+            runtime = await manager.restore(pid)
+        except UnknownProfile:
+            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        except Exception as exc:  # boot failed; manager already rolled back to archived
+            return JSONResponse({"error": f"could not restore profile: {exc}"}, status_code=500)
+        return {"profile": _profile_view(runtime.meta)}
 
     # ---- Channels (global, install-level: platform → one profile or disabled) ----
 

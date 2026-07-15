@@ -6,6 +6,9 @@
   // Archive (§4.9): a quiet action per row; archiving the active_default requires
   // choosing a replacement (pre-selected). Archiving the ACTIVE profile navigates
   // to /app/ so boot re-resolves.
+  // Archived section (ADR 0003): a collapsed "Archived" disclosure (shown only when
+  // non-empty) lists archived profiles with Restore (unarchive + boot) and a
+  // type-to-confirm permanent Delete.
   import { onDestroy } from 'svelte'
   import { profiles, settingsPage } from '../store.js'
   import { api } from '../transport/api.js'
@@ -41,6 +44,15 @@
   // Archive confirm state: {pid, name, isActive} + the chosen replacement default.
   let confirmArchive = $state(null)
   let replacement = $state('')
+
+  // Archived profiles (ADR 0003): the collapsed "Archived" section. `archived` is
+  // filled from the same /api/profiles fetch; the disclosure is closed by default.
+  let archived = $state([])
+  let showArchived = $state(false)
+  // Delete confirm: {pid, name}. Type-to-confirm — the permanent-delete button stays
+  // disabled until `deleteText` matches the profile name exactly.
+  let confirmDelete = $state(null)
+  let deleteText = $state('')
 
   function startEdit(p) {
     err = ''
@@ -103,6 +115,13 @@
       const reg = await api.profiles()
       const newList = reg.profiles || []
       activeDefault = reg.active_default
+      archived = reg.archived || []
+      // Drop a stale delete-confirm if its target is no longer archived (restored,
+      // purged, or changed elsewhere) — otherwise re-archiving reopens the form.
+      if (confirmDelete && !archived.some((a) => a.id === confirmDelete.pid)) {
+        confirmDelete = null
+        deleteText = ''
+      }
       $profiles = { list: newList, activeId }
     } catch {}
   }
@@ -158,8 +177,56 @@
       await refetch()
     } catch (e) {
       err = (e && e.message) || 'Could not archive profile'
+    } finally {
+      // Always clear busy — the success (non-active) path forgot to, leaving every
+      // button (incl. the archived rows' Restore/Delete) stuck disabled until remount.
       busy = false
     }
+  }
+
+  // Restore an archived profile (unarchive + boot live, ADR 0003). Re-fetch so it
+  // moves from the Archived section back into the live list.
+  async function doRestore(p) {
+    if (busy) return
+    busy = true; err = ''
+    try {
+      await api.restoreProfile(p.id)
+      await refetch()
+    } catch (e) {
+      err = (e && e.message) || 'Could not restore profile'
+    }
+    busy = false
+  }
+
+  // Scope the accent tokens to a profile's OWN colour so its archived row + confirm
+  // (Restore hover, input border + focus ring) follow that profile, not the globally
+  // active accent. `--accent-ring`/`--focus-ring` are frozen with the root accent at
+  // :root, so overriding `--accent` alone wouldn't reach them — redeclare all three.
+  function accentVars(hex) {
+    const ring = `color-mix(in srgb, ${hex} 40%, transparent)`
+    return `--accent:${hex};--accent-ring:${ring};--focus-ring:0 0 0 3px ${ring};`
+  }
+
+  function askDelete(p) {
+    err = ''
+    deleteText = ''
+    confirmDelete = { pid: p.id, name: p.name }
+  }
+
+  // Permanent delete (ADR 0003) — guarded by the type-to-confirm match in the markup;
+  // re-check here so a stray call can never purge on a mismatch.
+  async function doDelete() {
+    if (busy || !confirmDelete || deleteText !== confirmDelete.name) return
+    busy = true; err = ''
+    try {
+      await api.deleteProfile(confirmDelete.pid)
+      confirmDelete = null
+      deleteText = ''
+      await refetch()
+    } catch (e) {
+      err = (e && e.message) || 'Could not delete profile'
+    }
+    busy = false
   }
 
   // Prime activeDefault on mount (cheap; the list itself comes from the store).
@@ -254,6 +321,47 @@
       </div>
     </div>
   {/if}
+
+  <!-- Archived section (ADR 0003): collapsed by default, shown only when non-empty. -->
+  {#if archived.length > 0}
+    <div class="parch">
+      <button class="parchhead" onclick={() => (showArchived = !showArchived)} aria-expanded={showArchived}>
+        <Icon name={showArchived ? 'chevron-down' : 'chevron-right'} size={14} />
+        Archived ({archived.length})
+      </button>
+
+      {#if showArchived}
+        {#each archived as p (p.id)}
+          <div class="parchentry" style={accentVars(p.accent)}>
+          <div class="prow arch">
+            <span class="pdot" style="--dot:{p.accent}"></span>
+            <div class="pmeta"><div class="pname">{p.name}</div></div>
+            <div class="pactions">
+              <button class="linkbtn" disabled={busy} onclick={() => doRestore(p)}>Restore</button>
+              <button class="linkbtn quiet" disabled={busy} onclick={() => askDelete(p)}>Delete…</button>
+            </div>
+          </div>
+
+          {#if confirmDelete && confirmDelete.pid === p.id}
+            <div class="pconfirm">
+              <div class="pconfirmhead"><Icon name="trash" size={15} /> Delete “{confirmDelete.name}” permanently?</div>
+              <p class="phint">Erases this profile's folder — chats, tasks, memory, and files — from disk. This cannot be undone.</p>
+              <div class="pfield">
+                <label for="pf-del">Type <b>{confirmDelete.name}</b> to confirm</label>
+                <input id="pf-del" bind:value={deleteText} placeholder={confirmDelete.name} autocomplete="off" autocapitalize="off" spellcheck="false" />
+              </div>
+              {#if err}<p class="perr">{err}</p>{/if}
+              <div class="peditactions">
+                <button class="linkbtn" disabled={busy} onclick={() => { confirmDelete = null; deleteText = '' }}>Cancel</button>
+                <button class="open danger" disabled={busy || deleteText !== confirmDelete.name} onclick={doDelete}>{busy ? 'Deleting…' : 'Delete permanently'}</button>
+              </div>
+            </div>
+          {/if}
+          </div>
+        {/each}
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -324,6 +432,21 @@
     background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm);
   }
   .pconfirmhead { display: flex; align-items: center; gap: 7px; font-size: var(--text-sm); font-weight: var(--fw-semibold); }
+
+  /* Archived section (ADR 0003) */
+  .parch { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .parchhead {
+    display: flex; align-items: center; gap: 6px; padding: 6px 4px;
+    background: none; border: none; cursor: pointer; font: inherit;
+    font-size: var(--text-xs); font-weight: var(--fw-semibold); text-transform: uppercase;
+    letter-spacing: var(--tracking-eyebrow); color: var(--text-muted);
+  }
+  .parchhead:hover { color: var(--text); }
+  .parchhead:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+  .parchentry { display: flex; flex-direction: column; gap: 2px; }
+  .prow.arch { padding: 8px 4px; }
+  .prow.arch .pdot { opacity: 0.55; }
+  .prow.arch .pname { color: var(--text-muted); font-weight: var(--fw-medium); }
 
   .perr { font-size: var(--text-sm); color: var(--danger, #d8552f); margin: 0; }
   .linkbtn.quiet { color: var(--text-muted); }

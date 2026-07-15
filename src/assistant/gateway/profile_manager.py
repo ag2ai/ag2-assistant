@@ -12,6 +12,7 @@ so every profile-owned path lands under the profile dir.
 
 import asyncio
 import os
+import shutil
 from collections.abc import Callable, Iterator
 
 from assistant import profiles
@@ -444,3 +445,50 @@ class ProfileManager:
             self._runtimes.pop(pid, None)
 
         profiles.archive_profile(pid)
+
+    async def restore(self, pid: str) -> ProfileRuntime:
+        """Un-archive a profile and boot its runtime live (§4.9, ADR 0003).
+
+        Symmetric with ``create``: clear the archived flag then ``_boot``. All-or-
+        nothing — if boot fails the flag is rolled back to archived so the profile is
+        never left in the unarchived-but-not-running state ``get`` treats as a server
+        bug. Unknown → UnknownProfile; a live (non-archived) profile → ValueError.
+        """
+        meta = profiles.get_profile(pid)
+        if meta is None:
+            raise UnknownProfile(pid)
+        if not meta.archived:
+            raise ValueError(f"profile is not archived: {pid}")
+
+        restored = profiles.restore_profile(pid)
+        try:
+            return await self._boot(restored)
+        except Exception:
+            # Roll back the flag so the invariant "unarchived ⟺ running" holds.
+            profiles.archive_profile(pid)
+            self._runtimes.pop(pid, None)
+            raise
+
+    async def purge(self, pid: str) -> None:
+        """Permanently delete an ARCHIVED profile: erase its folder and drop its
+        registry entry (§4.9, ADR 0003). The only state-destroying operation.
+
+        Archive-first: refuses a live profile (ValueError → 409) so delete never has to
+        tear down a running runtime, reassign the active default, or hit the last-profile
+        guardrail — an archived profile is already none of those. Unknown → UnknownProfile.
+        """
+        meta = profiles.get_profile(pid)
+        if meta is None:
+            raise UnknownProfile(pid)
+        if not meta.archived:
+            raise ValueError(f"cannot delete a profile that is not archived: {pid}")
+
+        # Archived profiles are never booted, but be defensive if one somehow is.
+        runtime = self._runtimes.pop(pid, None)
+        if runtime is not None:
+            await runtime.close()
+
+        # Erase the folder first; only drop the registry entry once the disk is clear,
+        # so a failed rmtree leaves the profile cleanly archived rather than half-gone.
+        shutil.rmtree(profiles.profile_dir(pid), ignore_errors=True)
+        profiles.delete_profile(pid)

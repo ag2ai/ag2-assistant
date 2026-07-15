@@ -84,7 +84,7 @@
     <div class="permrow">
       <span class="permico"><Icon name="folder" size={14} /></span>
       <span class="permval" title={path}>{path}</span>
-      <button class="linkbtn" disabled={busy} onclick={() => revokeFolder(path)}>Remove</button>
+      <button class="linkbtn danger" disabled={busy} onclick={() => revokeFolder(path)}>Remove</button>
     </div>
   {/each}
   {#if !addGrant}
@@ -105,7 +105,7 @@
     <div class="permrow">
       <span class="permico"><Icon name="folder" size={14} /></span>
       <span class="permval" title={path}>{path}</span>
-      <button class="linkbtn" disabled={busy} onclick={() => unblockFolder(path)}>Remove</button>
+      <button class="linkbtn danger" disabled={busy} onclick={() => unblockFolder(path)}>Remove</button>
     </div>
   {/each}
   {#if !addBlock}
@@ -126,7 +126,7 @@
     <div class="permrow">
       <span class="permico"><Icon name="code" size={14} /></span>
       <span class="permval" title={rule}>{rule}</span>
-      <button class="linkbtn" disabled={busy} onclick={() => revokeCommand(rule)}>Remove</button>
+      <button class="linkbtn danger" disabled={busy} onclick={() => revokeCommand(rule)}>Remove</button>
     </div>
   {/each}
   <div class="keyrow">

@@ -37,6 +37,13 @@ export const api = {
   // passed in the request body (DELETE with body → ProfileArchiveRequest).
   archiveProfile: (pid, newDefault) =>
     j('DELETE', G('/profiles/' + encodeURIComponent(pid)), newDefault ? { new_default: newDefault } : {}),
+  // Restore (unarchive + boot live) an archived profile → {profile}. 409 if it isn't
+  // archived, 404 if unknown (ADR 0003).
+  restoreProfile: (pid) => j('POST', G('/profiles/' + encodeURIComponent(pid) + '/restore')),
+  // Permanently delete an ARCHIVED profile (erases its folder). ?purge=true escalates
+  // the DELETE from archive to hard-delete; 409 if the profile isn't archived yet.
+  deleteProfile: (pid) =>
+    j('DELETE', G('/profiles/' + encodeURIComponent(pid) + '?purge=true')),
   status: () => j('GET', G('/status')),
   // Install-wide token/cost roll-up across all profiles: {profiles:[{pid,name,...}],
   // total}. The HUD derives the active profile's numbers from `profiles` and appends

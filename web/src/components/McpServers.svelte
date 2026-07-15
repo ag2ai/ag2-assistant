@@ -147,7 +147,7 @@
       {/if}
     </div>
     <button class="open" disabled={busy} onclick={() => check(server.name)}>Check</button>
-    <button class="linkbtn" disabled={busy} onclick={() => remove(server.name)}>Delete</button>
+    <button class="linkbtn danger" disabled={busy} onclick={() => remove(server.name)}>Delete</button>
   </div>
 {/each}
 
