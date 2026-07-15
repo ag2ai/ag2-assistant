@@ -79,7 +79,7 @@ google = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag2", extras = ["gemini", "ddgs", "openai", "docker"], git = "https://github.com/ag2ai/ag2.git?rev=main" },
+    { name = "ag2", extras = ["gemini", "ddgs", "openai"], git = "https://github.com/ag2ai/ag2.git?rev=main" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
     { name = "cronsim", specifier = ">=2.7" },

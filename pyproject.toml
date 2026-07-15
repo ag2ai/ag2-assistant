@@ -11,11 +11,10 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    # Tracks AG2 main; requires >= 1.0.0b0 (a direct git reference can't carry a
-    # version floor, so the minimum is enforced by keeping main, whose version is
-    # 1.0.0b0+). ddgs powers the native DuckDuckSearchTool, openai the OpenAI voice
-    # provider.
-    "ag2[gemini,ddgs,openai,docker] @ git+https://github.com/ag2ai/ag2.git@main",
+    # Published metadata depends on the PyPI release; development (uv sync, Docker)
+    # tracks AG2 main via [tool.uv.sources] below. ddgs powers the native
+    # DuckDuckSearchTool, openai the OpenAI voice provider.
+    "ag2[gemini,ddgs,openai]>=1.0.0b0",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
@@ -53,6 +52,12 @@ google = [
 
 [project.scripts]
 ag2-assistant = "assistant.cli:app"
+
+# Development installs (uv sync / uv run, and the Docker build) resolve ag2 from
+# git main instead of PyPI. Sources are a uv-only overlay: they never reach the
+# published wheel's metadata, so PyPI consumers get the released ag2 above.
+[tool.uv.sources]
+ag2 = { git = "https://github.com/ag2ai/ag2.git", rev = "main" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
