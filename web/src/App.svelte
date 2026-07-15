@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, settingsPage, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setPalette } from './design/palette.js'
@@ -78,7 +78,22 @@
     // Canonicalise the URL: bare /app/ or a stale/foreign pid → /app/{pid}/.
     if ($route.pid !== pid) redirectToProfile(pid)
     boot = 'ready'
+    reopenSettingsAfterSwitch()
     maybeOnboard()
+  }
+
+  // A profile switch from inside Settings reloads the SPA; the switcher stashed a
+  // one-shot flag naming the page it was on. Honour it so Settings re-opens where
+  // the user left it, then clear the flag (a plain refresh must NOT re-open it).
+  function reopenSettingsAfterSwitch() {
+    let page = null
+    try {
+      page = sessionStorage.getItem('ag2-reopen-settings')
+      if (page) sessionStorage.removeItem('ag2-reopen-settings')
+    } catch {}
+    if (!page) return
+    $settingsPage = page
+    $settingsOpen = true
   }
 
   // Fresh-install onboarding finished (§5.5): it created ≥1 profile live and set

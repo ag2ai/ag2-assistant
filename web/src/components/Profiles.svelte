@@ -6,7 +6,7 @@
   // Archive (§4.9): a quiet action per row; archiving the active_default requires
   // choosing a replacement (pre-selected). Archiving the ACTIVE profile navigates
   // to /app/ so boot re-resolves.
-  import { profiles } from '../store.js'
+  import { profiles, settingsPage } from '../store.js'
   import { api } from '../transport/api.js'
   import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
   import { PALETTES, setPalette, getPalette } from '../design/palette.js'
@@ -42,6 +42,17 @@
     editing = true
   }
   function cancelEdit() { editing = false; err = '' }
+
+  // Switch the active profile (§5.4): a full-page nav to /app/{pid}/, the same
+  // mechanism as the Drawer chips and ⌘1..9 shortcuts. App.svelte's boot adopts
+  // the URL pid, persists it, and applies its palette. No-op on the active one.
+  // Switching reloads the SPA (closing Settings); stash a flag so boot re-opens
+  // Settings on the SAME page — the user stays where they were.
+  function switchTo(p) {
+    if (p.id === activeId) return
+    try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || 'profiles') } catch {}
+    location.assign('/app/' + p.id + '/')
+  }
 
   async function refetch() {
     try {
@@ -112,7 +123,14 @@
 
   {#each list as p (p.id)}
     {@const isActive = p.id === activeId}
-    <div class="prow" class:active={isActive}>
+    <div
+      class="prow" class:active={isActive} class:clickable={!isActive}
+      role={isActive ? undefined : 'button'}
+      tabindex={isActive ? undefined : 0}
+      title={isActive ? undefined : `Switch to ${p.name}`}
+      onclick={isActive ? undefined : () => switchTo(p)}
+      onkeydown={isActive ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTo(p) } }}
+    >
       <span class="pdot" style="--dot:{paletteHex(p.palette)}"></span>
       <div class="pmeta">
         <div class="pname">
@@ -126,7 +144,7 @@
           <button class="linkbtn" onclick={() => startEdit(p)}>Edit</button>
         {/if}
         {#if list.length > 1}
-          <button class="linkbtn quiet" onclick={() => askArchive(p)}>Archive…</button>
+          <button class="linkbtn quiet" onclick={(e) => { e.stopPropagation(); askArchive(p) }}>Archive…</button>
         {/if}
       </div>
     </div>
@@ -188,6 +206,9 @@
     border-radius: var(--radius-sm);
   }
   .prow.active { background: var(--surface-sunk); padding: 8px; }
+  .prow.clickable { cursor: pointer; }
+  .prow.clickable:hover { background: var(--surface-sunk); }
+  .prow.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .pdot { width: 12px; height: 12px; flex: none; border-radius: var(--radius-pill); background: var(--dot, var(--accent)); }
   .pmeta { flex: 1; min-width: 0; }
   .pname { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); font-weight: var(--fw-semibold); }
