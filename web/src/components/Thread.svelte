@@ -8,9 +8,15 @@
   import Icon from './Icon.svelte'
   import ThemeToggle from './ThemeToggle.svelte'
   import SystemHealth from './SystemHealth.svelte'
+  import { dayRows } from '../lib/time.js'
 
   let scroller
   const tail = $derived($thread.items[$thread.items.length - 1])
+
+  // Interleave day breakpoints: each row carries `sep`, the divider label to show
+  // above the first item of a new calendar day (null otherwise). Items carry `at`
+  // (the source event's created_at, Unix seconds — see project.js). See dayRows.
+  const rows = $derived(dayRows($thread.items))
   const showThinking = $derived($thread.busy && !(tail && tail.kind === 'agent' && tail.streaming))
 
   // Autoscroll follows the stream only while the reader is at the bottom. Scrolling
@@ -94,7 +100,8 @@
     {#if !$thread.items.length && $thread.kind === 'chat'}
       <div class="empty"><h1>How can I help{$profile.name ? `, ${$profile.name}` : ''}?</h1>Ask me anything — I can search, run code, manage tasks, and more.</div>
     {/if}
-    {#each $thread.items as item (item.id)}
+    {#each rows as { item, sep } (item.id)}
+      {#if sep}<div class="daysep"><span>{sep}</span></div>{/if}
       <Item {item} />
     {/each}
     {#if showThinking}<Thinking />{/if}

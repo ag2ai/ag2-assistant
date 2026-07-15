@@ -58,6 +58,55 @@ export function fmtDateTime(v) {
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+// Stable per-calendar-day key for grouping thread items under date breakpoints.
+// Two moments share a key iff they fall on the same local calendar day. Returns
+// null when the item has no time yet (live/streaming items before `created_at`
+// lands) so no divider is drawn for them.
+export function dayKey(v) {
+  const d = toDate(v)
+  if (!d) return null
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
+// Label for a day breakpoint between messages, ChatGPT-style: a relative day name
+// ("Today" / "Yesterday") or an absolute date for anything older, ALWAYS followed
+// by that day's first-message time — "Today at 5:24 PM", "Yesterday at 11:00 AM",
+// "Fri, Jun 26 at 5:24 PM" (localized, e.g. "пт, 26 июн. в 17:24"). The year shows
+// only when it isn't the current one. `v` is the first-of-day item's `at`, so the
+// time is that first message's time.
+export function fmtDay(v) {
+  const d = toDate(v)
+  if (!d) return ''
+  const now = new Date()
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
+  const dayDiff = Math.round((startOfDay(d) - startOfDay(now)) / 86400000)
+  let day
+  if (dayDiff === 0) day = 'Today'
+  else if (dayDiff === -1) day = 'Yesterday'
+  else {
+    const opts = { weekday: 'short', month: 'short', day: 'numeric' }
+    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
+    day = d.toLocaleDateString([], opts)
+  }
+  return `${day} at ${time}`
+}
+
+// Interleave day breakpoints through a thread's items: each item is tagged with
+// `sep` — the divider label to render above it (fmtDay) when it's the first item
+// of a new calendar day, else null. Items without a time (`at` missing, e.g. a
+// live/streaming bubble before created_at lands) never start a new day. Pure so
+// the thread view and its tests share one source of truth.
+export function dayRows(items) {
+  let lastDay = null
+  return items.map((item) => {
+    const key = dayKey(item.at)
+    const sep = key && key !== lastDay ? fmtDay(item.at) : null
+    if (key) lastDay = key
+    return { item, sep }
+  })
+}
+
 // Combined inline stamp shown on thread items / the task panel: "4:52 AM · 2h ago".
 export function fmtStamp(v) {
   const clock = fmtClock(v)
