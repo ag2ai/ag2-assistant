@@ -88,9 +88,10 @@
      The --accent* tokens resolve to whatever palette is set via [data-palette];
      soft + ring derive from --accent so they follow the palette automatically. */
   --accent:        var(--p-500);
-  --accent-hover:  var(--p-600);
-  --accent-press:  var(--p-700);
+  --accent-hover:  color-mix(in srgb, #fff 9%, var(--accent)); /* ~9% lighter, calmer than a darker press */
+  --accent-press:  var(--p-600);
   --accent-soft:   color-mix(in srgb, var(--accent) 12%, transparent); /* tinted fills, unseen rows */
+  --accent-border: color-mix(in srgb, var(--accent) 22%, transparent); /* card frames — soft, not a bright rule */
   --accent-ring:   color-mix(in srgb, var(--accent) 38%, transparent);
   --text-on-accent: #ffffff;
   /* Fixed brand pop — AG2 coral, independent of the chosen palette
@@ -122,11 +123,14 @@
    ========================================================= */
 
 [data-theme="dark"] {
-  --bg:            var(--sand-950);
-  --surface:       var(--sand-900);
-  --surface-sunk:  #221d19;
-  --surface-hover: #262019;
-  --panel:         #1a1713;
+  /* Four elevation levels so cards, inputs and the sidebar don't blend.
+     bg (canvas) < panel (sidebar/rails) < surface (cards/modals) <
+     interactive (inputs, wells, hover). Each step ~+4–5% lightness. */
+  --bg:            #12100f;  /* app canvas — darkest         */
+  --panel:         #171412;  /* drawer / rails (sidebar)     */
+  --surface:       #1c1816;  /* cards, bubbles, modals       */
+  --surface-sunk:  #26211e;  /* inputs, code wells           */
+  --surface-hover: #26211e;  /* interactive / hover          */
 
   --text:          var(--sand-25);
   --text-muted:    #998f83;
@@ -140,9 +144,10 @@
 
   /* Palette-driven; dark uses the brighter palette steps. */
   --accent:        var(--p-400);
-  --accent-hover:  var(--p-300);
-  --accent-press:  var(--p-200);
+  --accent-hover:  color-mix(in srgb, #fff 10%, var(--accent)); /* ~10% lighter */
+  --accent-press:  var(--p-300);
   --accent-soft:   color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 25%, transparent);
   --accent-ring:   color-mix(in srgb, var(--accent) 45%, transparent);
 
   --user-bubble:     var(--p-500);

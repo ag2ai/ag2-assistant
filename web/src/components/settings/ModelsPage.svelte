@@ -18,6 +18,7 @@
   import { api } from '../../transport/api.js'
   import LlmConfigForm from './LlmConfigForm.svelte'
   import VoiceSection from './VoiceSection.svelte'
+  import Icon from '../Icon.svelte'
   import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
@@ -175,8 +176,8 @@
     >Test</button>
     <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
     <button
-      class="linkbtn" disabled={busy || c.active || !!editing}
-      title={c.active ? 'Active configuration — switch to another before deleting' : ''}
+      class="linkbtn" disabled={busy || !!editing}
+      title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
       onclick={(e) => { e.stopPropagation(); remove(c) }}
     >Delete</button>
   </div>
@@ -186,7 +187,9 @@
   <LlmConfigForm config={editing} activate={activateOnSave} {onSaved} onCancel={() => (editing = null)} />
 {:else}
   {#if !adding}
-    <button class="open" style="justify-self:start" disabled={busy} onclick={() => (adding = true)}>Add model</button>
+    <button class="addbtn" disabled={busy} onclick={() => (adding = true)}>
+      <Icon name="plus" size={14} /> Add model
+    </button>
   {:else}
     <div class="setsec">Start from a template</div>
     <div class="mcpcat">

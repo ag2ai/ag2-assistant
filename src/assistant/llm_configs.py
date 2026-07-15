@@ -168,16 +168,19 @@ def save_config(raw: dict) -> dict:
 
 
 def delete_config(cid: str) -> bool:
-    """Remove a configuration by id (returns False if unknown). Refuses to delete the
-    active one — the caller must select another first — raising ``ValueError``. The
-    per-config secret is the endpoint's to clean up (this store holds no secrets)."""
+    """Remove a configuration by id (returns False if unknown). Deleting the active one
+    is allowed: the active pointer moves to the first remaining config, or None when it
+    was the last (an empty store then falls back to the flat ``llm:`` defaults, exactly
+    like a fresh install). The per-config secret is the endpoint's to clean up (this
+    store holds no secrets)."""
     data = _read()
     configs = list(data.get("configs") or [])
     if not any(c.get("id") == cid for c in configs):
         return False
+    remaining = [c for c in configs if c.get("id") != cid]
+    data["configs"] = remaining
     if data.get("active") == cid:
-        raise ValueError("cannot delete the active configuration; select another first")
-    data["configs"] = [c for c in configs if c.get("id") != cid]
+        data["active"] = remaining[0]["id"] if remaining else None
     _write(data)
     return True
 

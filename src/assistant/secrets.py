@@ -40,6 +40,12 @@ _CHANNELS_FIELD = "channels"
 # config. Stored under an ``llm_keys`` sub-map keyed by config id, mirroring channels.
 _LLM_KEYS_FIELD = "llm_keys"
 
+# Per-config LIVE (voice) keys — one secret per named ``live_configs`` entry, keyed by
+# config id under a ``live_keys`` sub-map. Same treatment as ``llm_keys``: never loaded
+# into os.environ (belongs to one config, not a whole provider); resolved in-process at
+# voice-session connect via ``live_configs.resolve_key``.
+_LIVE_KEYS_FIELD = "live_keys"
+
 
 def _path():
     return data_dir() / "secrets.json"
@@ -162,6 +168,49 @@ def config_key_hint(cid: str) -> dict:
     """Presence + a last-4 hint for one config's key (never the raw value), for the
     Settings UI. Shape mirrors ``status()`` entries: ``{"set": bool, "hint": str}``."""
     v = config_key(cid)
+    return {"set": bool(v), "hint": ("…" + v[-4:]) if v else ""}
+
+
+def set_live_config_key(cid: str, value: str) -> bool:
+    """Set or clear (empty value) the API key for one named live (voice) config, keyed
+    by its config id. Mirrors :func:`set_config_key` (a ``live_keys`` sub-map, never
+    touching os.environ); resolved in-process by ``live_configs.resolve_key`` at
+    voice-session connect. Returns False for a blank id."""
+    cid = (cid or "").strip()
+    if not cid:
+        return False
+    value = (value or "").strip()
+    data = _read()
+    keys = data.get(_LIVE_KEYS_FIELD)
+    if not isinstance(keys, dict):
+        keys = {}
+    if value:
+        keys[cid] = value
+    else:
+        keys.pop(cid, None)
+    if keys:
+        data[_LIVE_KEYS_FIELD] = keys
+    else:
+        data.pop(_LIVE_KEYS_FIELD, None)
+    _write(data)
+    return True
+
+
+def _saved_live_config_keys(data: dict) -> dict:
+    """The ``live_keys`` sub-map from the store (empty dict if absent/malformed)."""
+    keys = data.get(_LIVE_KEYS_FIELD)
+    return keys if isinstance(keys, dict) else {}
+
+
+def live_config_key(cid: str) -> str:
+    """The raw API key for one named live config (empty string if unset). In-process
+    only — used by ``live_configs.resolve_key``; never returned by any endpoint."""
+    return _saved_live_config_keys(_read()).get((cid or "").strip(), "") or ""
+
+
+def live_config_key_hint(cid: str) -> dict:
+    """Presence + a last-4 hint for one live config's key (never the raw value)."""
+    v = live_config_key(cid)
     return {"set": bool(v), "hint": ("…" + v[-4:]) if v else ""}
 
 

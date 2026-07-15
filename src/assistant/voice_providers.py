@@ -45,8 +45,12 @@ class VoiceProvider:
     default_voice: str
     realtime_model: str  # default model; AG2ASSISTANT_VOICE_MODEL overrides at the call site
     input_rate: int  # mic capture rate the backend expects (Hz); the browser matches it
-    build_realtime: Callable[[Config, str, str], object]  # (config, voice, model) -> RealtimeConfig
-    synthesize: Callable[[Config, str, str], Awaitable[bytes]]  # (config, voice, text) -> WAV bytes
+    # (config, voice, model, api_key) -> RealtimeConfig. api_key is the resolved key for
+    # the active live config (its own per-config key, or the shared provider key); the
+    # builders fall back to the provider's env key when it is empty.
+    build_realtime: Callable[[Config, str, str, str], object]
+    synthesize: Callable[[Config, str, str, str], Awaitable[bytes]]  # (config, voice, text, api_key)
+    check: Callable[[str], Awaitable[None]]  # (api_key) -> None; raises if the key can't reach the API
 
 
 _REGISTRY: dict[str, VoiceProvider] = {}
@@ -118,11 +122,16 @@ _GEMINI_VOICES = {
 _GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 
-def _gemini_realtime(config: Config, voice: str, model: str):
+def _gemini_key(api_key: str, config: Config) -> str:
+    """Resolved Gemini key: the passed per-config/shared key, else the env fallback."""
+    return api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get(config.llm.api_key_env, "")
+
+
+def _gemini_realtime(config: Config, voice: str, model: str, api_key: str = ""):
     from ag2.live import gemini
     from google.genai import Client
 
-    client = Client(api_key=os.environ.get(config.llm.api_key_env, ""))
+    client = Client(api_key=_gemini_key(api_key, config))
     return gemini.RealTimeConfig(
         model,
         output=gemini.AudioOutput(voice=voice, language_code="en-US"),
@@ -131,12 +140,12 @@ def _gemini_realtime(config: Config, voice: str, model: str):
     )
 
 
-async def _gemini_preview(config: Config, voice: str, text: str) -> bytes:
+async def _gemini_preview(config: Config, voice: str, text: str, api_key: str = "") -> bytes:
     import asyncio
 
     from google.genai import Client, types
 
-    client = Client(api_key=os.environ.get(config.llm.api_key_env, ""))
+    client = Client(api_key=_gemini_key(api_key, config))
 
     def _call() -> bytes:
         resp = client.models.generate_content(
@@ -155,6 +164,16 @@ async def _gemini_preview(config: Config, voice: str, text: str) -> bytes:
 
     pcm = await asyncio.to_thread(_call)
     return pcm_to_wav(pcm)
+
+
+async def _gemini_check(api_key: str) -> None:
+    """Cheap key probe: list models (one page). Raises on a bad/absent key."""
+    import asyncio
+
+    from google.genai import Client
+
+    client = Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
+    await asyncio.to_thread(lambda: next(iter(client.models.list()), None))
 
 
 # --- OpenAI -----------------------------------------------------------------
@@ -177,11 +196,11 @@ _OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 _OPENAI_INPUT_RATE = 24000
 
 
-def _openai_key() -> str:
-    return os.environ.get("OPENAI_API_KEY", "")
+def _openai_key(api_key: str = "") -> str:
+    return api_key or os.environ.get("OPENAI_API_KEY", "")
 
 
-def _openai_realtime(config: Config, voice: str, model: str):
+def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
     from ag2.live import openai as oai
     from openai import AsyncOpenAI
 
@@ -190,17 +209,26 @@ def _openai_realtime(config: Config, voice: str, model: str):
     return oai.RealTimeConfig(
         model,
         output=oai.AudioOutput(voice=voice),
-        client=AsyncOpenAI(api_key=_openai_key()),
+        client=AsyncOpenAI(api_key=_openai_key(api_key)),
     )
 
 
-async def _openai_preview(config: Config, voice: str, text: str) -> bytes:
+async def _openai_preview(config: Config, voice: str, text: str, api_key: str = "") -> bytes:
     from ag2.live import OpenAITTSConfig
     from openai import AsyncOpenAI
 
-    tts = OpenAITTSConfig(_OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key()))
+    tts = OpenAITTSConfig(
+        _OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key(api_key))
+    )
     pcm = await tts.synthesize(text)  # 24 kHz mono PCM
     return pcm_to_wav(pcm, rate=24000)
+
+
+async def _openai_check(api_key: str) -> None:
+    """Cheap key probe: list models. Raises on a bad/absent key."""
+    from openai import AsyncOpenAI
+
+    await AsyncOpenAI(api_key=_openai_key(api_key)).models.list()
 
 
 # --- registration -----------------------------------------------------------
@@ -214,6 +242,7 @@ register(
         input_rate=16000,  # Gemini Live is fixed at 16 kHz mono PCM input
         build_realtime=_gemini_realtime,
         synthesize=_gemini_preview,
+        check=_gemini_check,
     )
 )
 
@@ -226,5 +255,6 @@ register(
         input_rate=_OPENAI_INPUT_RATE,  # 24 kHz native
         build_realtime=_openai_realtime,
         synthesize=_openai_preview,
+        check=_openai_check,
     )
 )

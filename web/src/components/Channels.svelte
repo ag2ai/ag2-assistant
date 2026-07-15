@@ -204,7 +204,7 @@
   /* Profile picker — matches the form controls in Profiles/Settings. */
   .chpick {
     flex: none; border: 1px solid var(--line); border-radius: var(--radius-sm);
-    padding: 7px 10px; background: var(--bg); color: var(--text);
+    padding: 7px 30px 7px 10px; background-color: var(--bg); color: var(--text);
     font: inherit; font-size: var(--text-sm); cursor: pointer;
   }
   .chpick:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }

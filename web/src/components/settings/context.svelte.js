@@ -26,7 +26,8 @@
 import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api.js'
 import {
-  settingsOpen, voicePickerOpen, googleOpen, codexOpen, memoryOpen, poweredByOpen, onboardingOpen,
+  settingsOpen, voicePickerOpen, voicePickerConfig, googleOpen, codexOpen, memoryOpen,
+  poweredByOpen, onboardingOpen,
 } from '../../store.js'
 
 const KEY = Symbol('settings')
@@ -62,7 +63,10 @@ export function createSettingsContext() {
   // Cross-modal openers — each closes Settings then opens the target modal,
   // exactly the old Settings.svelte behaviour (close settings store, open target).
   ctx.close = () => settingsOpen.set(false)
-  ctx.openVoice = () => { settingsOpen.set(false); voicePickerOpen.set(true) }
+  // "Change voice" for a named live config: stack the picker OVER Settings (like
+  // openCodex) scoped to that config, so closing it returns to the Live list with the
+  // config's new voice — Settings is never torn down and the list stays put.
+  ctx.openVoice = (configId = null) => { voicePickerConfig.set(configId); voicePickerOpen.set(true) }
   ctx.openGoogle = () => { settingsOpen.set(false); googleOpen.set(true) }
   // Codex is the ONE opener that does NOT close Settings: it's launched from the
   // half-filled LLM config form, and unmounting Settings would throw that draft

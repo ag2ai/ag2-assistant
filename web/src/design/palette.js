@@ -26,16 +26,16 @@ const THEME_KEY = 'ag2-theme'
 // The frontend's preset catalogue. `hex` is each preset's --p-500 (the applied
 // accent); the full hand-tuned ramp lives in design/tokens/palettes.css.
 export const PALETTES = [
-  { id: 'teal', label: 'Teal', hex: '#109e91' },
-  { id: 'coral', label: 'Coral', hex: '#f95339' },
-  { id: 'ocean', label: 'Ocean', hex: '#2f6fe0' },
-  { id: 'violet', label: 'Violet', hex: '#7a52ec' },
-  { id: 'sage', label: 'Sage', hex: '#2f8c44' },
-  { id: 'sunset', label: 'Sunset', hex: '#ec5d18' },
+  { id: 'navy-blue', label: 'Navy Blue', hex: '#1d4ed8' },
+  { id: 'royal-blue', label: 'Royal Blue', hex: '#1e40af' },
+  { id: 'dark-indigo', label: 'Dark Indigo', hex: '#4338ca' },
+  { id: 'deep-purple', label: 'Deep Purple', hex: '#5b21b6' },
+  { id: 'forest-green', label: 'Forest Green', hex: '#166534' },
+  { id: 'burgundy', label: 'Burgundy', hex: '#9f1239' },
 ]
 // hex → preset id, for the match-by-hex fast path.
 const PRESET_BY_HEX = new Map(PALETTES.map((p) => [p.hex.toLowerCase(), p.id]))
-export const DEFAULT_ACCENT = PALETTES[0].hex // teal
+export const DEFAULT_ACCENT = PALETTES[0].hex // navy blue
 
 // The 10 ramp stops, and how each is mixed from the picked colour (the picked
 // hex IS the 500 stop). Light stops mix toward white, dark stops toward black;
@@ -115,7 +115,7 @@ export function getAccent() {
 }
 
 // The preset id whose --p-500 equals this hex, or null for a custom colour.
-// Handy for labelling ("Teal") without re-implementing the match.
+// Handy for labelling ("Navy Blue") without re-implementing the match.
 export function presetIdForAccent(value) {
   const hex = normHex(value)
   return hex ? PRESET_BY_HEX.get(hex) || null : null

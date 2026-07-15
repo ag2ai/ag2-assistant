@@ -70,6 +70,21 @@ export const api = {
   // Test an UNSAVED editor draft (nothing persisted; a blank api_key falls back to
   // the stored key when cfg.id is set).
   testLlmConfigDraft: (cfg) => j('POST', G('/llm-configs/test'), cfg),
+  // Named LIVE (voice) configurations — the spoken counterpart of the LLM configs,
+  // same install-wide list + active shape. liveConfigs() → {configs:[entry +
+  // {key:{set,hint}, key_source, shared_key, active}], active:id|null, providers:
+  // [{name, default_model, default_voice}]}. api_key is WRITE-ONLY (null=unchanged,
+  // ""=clear, string=set). Test is a provider models-list ping → {ok, reply,
+  // latency_ms} (502 {ok:false,error} throws via j()).
+  liveConfigs: () => j('GET', G('/live-configs')),
+  saveLiveConfig: (cfg) => {
+    const { id, ...body } = cfg
+    return j('POST', G('/live-configs' + (id ? '/' + encodeURIComponent(id) : '')), body)
+  },
+  deleteLiveConfig: (id) => j('DELETE', G('/live-configs/' + encodeURIComponent(id))),
+  useLiveConfig: (id) => j('POST', G('/live-configs/' + encodeURIComponent(id) + '/use')),
+  testLiveConfig: (id) => j('POST', G('/live-configs/' + encodeURIComponent(id) + '/test')),
+  testLiveConfigDraft: (cfg) => j('POST', G('/live-configs/test'), cfg),
   setOnboarded: (value = true) => j('POST', G('/onboarded'), { value }),
   listDirs: (path = '') => j('GET', G('/fs/list?path=' + encodeURIComponent(path))),
   googleStatus: () => j('GET', G('/google/status')),
@@ -137,7 +152,10 @@ export const api = {
   // The desktop HITL answer route stays GLOBAL + unprefixed (ids are globally
   // unique; URLs are baked into notifications) — see plan §4.2.
   answerHitl: (id, answer) => j('POST', `/hitl/${encodeURIComponent(id)}/answer`, { answer }),
-  voices: () => j('GET', P('/voice/voices')),
+  // Voice catalogue + selection. Pass a live-config id to scope to that config's
+  // provider/voice (else the profile's legacy voice-provider setting).
+  voices: (configId) =>
+    j('GET', P('/voice/voices' + (configId ? '?config_id=' + encodeURIComponent(configId) : ''))),
   settings: () => j('GET', P('/settings')),
   setProjectFolder: (path) => j('POST', P('/settings/project-folder'), { path }),
   // Focus areas are a per-profile persona attribute (settings.json → injected into
@@ -161,10 +179,11 @@ export const api = {
   },
   deleteFile: (path) => j('DELETE', P('/files/raw?path=' + encodeURIComponent(path))),
   usage: () => j('GET', P('/usage')),
-  selectVoice: (voice) => j('POST', P('/voice/select'), { voice }),
-  previewVoice: async (voice) => {
+  selectVoice: (voice, configId) => j('POST', P('/voice/select'), { voice, config_id: configId || null }),
+  previewVoice: async (voice, configId) => {
     const r = await fetch(P('/voice/preview'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voice }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice, config_id: configId || null }),
     })
     if (!r.ok) throw new Error('preview failed (' + r.status + ')')
     return r.blob()

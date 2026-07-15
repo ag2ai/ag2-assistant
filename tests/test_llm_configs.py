@@ -42,18 +42,22 @@ def test_update_by_id_and_unknown_id_raises():
         llm_configs.save_config({"id": "c_nope", "name": "x", "type": "gemini", "model": "m"})
 
 
-def test_delete_refuses_active_and_cleans_up():
+def test_delete_active_moves_active_to_next():
     a = llm_configs.save_config({"name": "A", "type": "gemini", "model": "gm"})
     b = llm_configs.save_config({"name": "B", "type": "anthropic", "model": "cl"})
     llm_configs.set_active(a["id"])
 
     assert llm_configs.delete_config("c_ghost") is False  # unknown id
-    with pytest.raises(ValueError):  # active → refused
-        llm_configs.delete_config(a["id"])
 
-    llm_configs.set_active(b["id"])  # select another first
+    # Deleting the active config is allowed; active moves to the remaining one.
     assert llm_configs.delete_config(a["id"]) is True
     assert llm_configs.get_config(a["id"]) is None
+    assert llm_configs.active_id() == b["id"]
+
+    # Deleting the last remaining (still active) clears active → empty store.
+    assert llm_configs.delete_config(b["id"]) is True
+    assert llm_configs.active_id() is None
+    assert llm_configs.list_configs() == []
 
 
 def test_set_active_unknown_returns_false():

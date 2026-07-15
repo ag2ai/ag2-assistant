@@ -429,8 +429,9 @@
   .pfield label, .plabel { font-size: var(--text-xs); font-weight: var(--fw-semibold); color: var(--text-muted); }
   .pfield input, .pfield select {
     border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;
-    background: var(--bg); color: var(--text); font: inherit; font-size: var(--text-sm);
+    background-color: var(--bg); color: var(--text); font: inherit; font-size: var(--text-sm);
   }
+  .pfield select { padding-right: 30px; }  /* clear the chevron */
   .pfield input:focus, .pfield select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
   .phint { font-size: var(--text-xs); color: var(--text-muted); line-height: var(--leading-snug); }
 

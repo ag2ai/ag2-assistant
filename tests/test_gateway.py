@@ -1123,17 +1123,15 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
     assert g["configs"][0]["model"] == "gemma-5"
     assert g["configs"][0]["key"]["set"] is True  # untouched
 
-    # delete-active → 409
-    assert client.delete(f"/api/llm-configs/{cid}").status_code == 409
-
-    # add a second, switch to it, then the first is deletable
+    # add a second config, then delete the ACTIVE first one: allowed, and active moves
+    # to the remaining config (no "switch first" dance).
     r2 = client.post("/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"})
     cid2 = r2.json()["config"]["id"]
-    assert client.post(f"/api/llm-configs/{cid2}/use").status_code == 200
-    assert client.get("/api/llm-configs").json()["active"] == cid2
+    assert client.get("/api/llm-configs").json()["active"] == cid  # first is still active
 
     assert client.delete(f"/api/llm-configs/{cid}").status_code == 200
     assert secrets.config_key(cid) == ""  # secret cleaned up
+    assert client.get("/api/llm-configs").json()["active"] == cid2  # active moved on
 
     # unknown ids → 404
     assert client.post("/api/llm-configs/c_ghost/use").status_code == 404

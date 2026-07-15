@@ -30,6 +30,10 @@ export const codexOpen = writable(false)
 
 // Voice picker modal open/closed.
 export const voicePickerOpen = writable(false)
+// When the voice picker targets a specific named live config, its id (else null for
+// the profile's legacy voice setting). Set alongside voicePickerOpen; the picker
+// scopes its voices/select/preview to this config and stacks over Settings.
+export const voicePickerConfig = writable(null)
 
 // Deliverable full-view modal: { title, text } when open, null when closed.
 export const viewer = writable(null)

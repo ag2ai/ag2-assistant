@@ -174,6 +174,9 @@ class FocusesRequest(BaseModel):
 
 class VoiceRequest(BaseModel):
     voice: str
+    # When set, the voice op targets a named live config (its provider/key, and
+    # select persists onto that config) instead of the profile's legacy voice setting.
+    config_id: str | None = None
 
 
 class MCPServerRequest(BaseModel):
@@ -207,6 +210,22 @@ class LlmConfigRequest(BaseModel):
     host: str = ""
     api_key: str | None = None
     options: dict = Field(default_factory=dict)
+    activate: bool = False
+
+
+class LiveConfigRequest(BaseModel):
+    """Create/update body for a named live (voice) configuration. ``api_key`` is
+    write-only (None keeps the stored key, "" clears, a value sets); the raw key is
+    never echoed back. ``id`` is only read by the draft-test endpoint. ``voice`` is
+    optional on save (defaults to the provider's default voice; usually changed via
+    the voice picker, not this body)."""
+
+    id: str | None = None
+    name: str
+    provider: str
+    model: str = ""
+    voice: str = ""
+    api_key: str | None = None
     activate: bool = False
 
 
@@ -719,18 +738,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.delete("/api/llm-configs/{cid}")
     async def delete_llm_config(cid: str):
-        """Delete a config. 409 if it is active (select another first), 404 if unknown;
-        else remove it, clear its per-config key, and reload every runtime."""
+        """Delete a config (404 if unknown). Deleting the active one moves active to the
+        next remaining config (or none — flat defaults). Clears its per-config key and
+        reloads every runtime so the new active takes effect."""
         from assistant import llm_configs, secrets
 
         if llm_configs.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        try:
-            llm_configs.delete_config(cid)
-        except ValueError:
-            return JSONResponse(
-                {"ok": False, "error": "select another configuration first"}, status_code=409
-            )
+        llm_configs.delete_config(cid)
         secrets.set_config_key(cid, "")  # drop the orphaned secret
         await _reload_all()
         return {"ok": True}
@@ -755,6 +770,172 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if entry is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         return await _ping_entry(entry)
+
+    # ---- Named LIVE (voice) configurations — the spoken counterpart of the LLM
+    # configs above. Install-wide list + single active selection, read fresh by the
+    # voice session at connect (so no runtime reload on change). ----
+
+    def _live_entry_view(entry: dict, active: str | None) -> dict:
+        """One live config as the API exposes it: stored fields + a set/hint summary for
+        both keys that could apply (its own per-config key and the provider's shared env
+        key — never the raw values) + ``key_source`` naming which one a session sends."""
+        from assistant import live_configs, secrets
+        from assistant.secrets import KEY_ENV
+
+        provider = entry["provider"]
+        shared = secrets.status().get(provider, {})
+        return {
+            "id": entry["id"],
+            "name": entry["name"],
+            "provider": provider,
+            "model": entry["model"],
+            "voice": entry.get("voice", ""),
+            "key": secrets.live_config_key_hint(entry["id"]),
+            "key_source": live_configs.key_source(entry),  # config | shared | none
+            "shared_key": {
+                "env": KEY_ENV.get(provider, ""),
+                "set": bool(shared.get("set")),
+                "hint": shared.get("hint", ""),
+            },
+            "active": entry["id"] == active,
+        }
+
+    async def _ping_live(entry: dict, draft_key: str | None = None):
+        """Models-list key probe (the live-config 'Test'): call the provider's cheap
+        ``check`` with the resolved key. ``draft_key`` overrides for an unsaved edit —
+        None uses the stored/shared key, "" tests as if the stored key were cleared, a
+        value tests that key directly. Ok → ``{ok, reply, latency_ms}``; any failure →
+        502 ``{ok:false, error}``."""
+        import time
+
+        from assistant import live_configs, voice_providers
+
+        if draft_key is None:
+            key = live_configs.resolve_key(entry)
+        elif draft_key:
+            key = draft_key
+        else:
+            key = live_configs._shared_key(entry.get("provider", ""))
+        started = time.monotonic()
+        try:
+            await asyncio.wait_for(
+                voice_providers.get(entry["provider"]).check(key), timeout=_LLM_TEST_TIMEOUT_S
+            )
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=502)
+        return {"ok": True, "reply": "OK", "latency_ms": int((time.monotonic() - started) * 1000)}
+
+    @app.get("/api/live-configs")
+    async def list_live_configs() -> dict:
+        """The install-wide named live configs, the active id, and the provider catalog
+        (default model/voice per provider) that seeds the add-form and templates."""
+        from assistant import live_configs, voice_providers
+
+        active = live_configs.active_id()
+        return {
+            "configs": [_live_entry_view(e, active) for e in live_configs.list_configs()],
+            "active": active,
+            "providers": [
+                {
+                    "name": n,
+                    "default_model": voice_providers.get(n).realtime_model,
+                    "default_voice": voice_providers.get(n).default_voice,
+                }
+                for n in voice_providers.names()
+            ],
+        }
+
+    async def _save_live_config(req: LiveConfigRequest, cid: str | None):
+        """Shared create/update: validate (bad provider/voice → 400), save, write the
+        per-config key, optionally activate. 404 when updating an unknown id. A blank
+        ``voice`` on update keeps the config's existing voice (it's set via the picker,
+        not this form) rather than resetting to the provider default."""
+        from assistant import live_configs, secrets
+
+        existing = live_configs.get_config(cid) if cid is not None else None
+        if cid is not None and existing is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        voice = req.voice
+        if not voice and existing and existing.get("provider") == req.provider:
+            voice = existing.get("voice", "")
+        entry = {"name": req.name, "provider": req.provider, "model": req.model, "voice": voice}
+        if cid is not None:
+            entry["id"] = cid
+        try:
+            saved = live_configs.save_config(entry)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        except KeyError:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        if req.api_key is not None:
+            secrets.set_live_config_key(saved["id"], req.api_key)
+        if req.activate:
+            live_configs.set_active(saved["id"])
+        active = live_configs.active_id()
+        return {"ok": True, "config": _live_entry_view(saved, active), "active": active}
+
+    @app.post("/api/live-configs")
+    async def create_live_config(req: LiveConfigRequest):
+        """Create a new named live configuration."""
+        return await _save_live_config(req, None)
+
+    @app.post("/api/live-configs/test")
+    async def test_live_config_draft(req: LiveConfigRequest):
+        """Probe a DRAFT live config as entered, WITHOUT saving. Registered before the
+        /{cid} routes so "test" isn't captured as an id. ``req.id`` lets a blank key
+        field fall back to that config's stored key; a typed key is used directly."""
+        from assistant import live_configs
+
+        try:
+            entry = live_configs._clean_entry(
+                {
+                    "id": req.id or "",
+                    "name": req.name or "draft",
+                    "provider": req.provider,
+                    "model": req.model,
+                    "voice": req.voice,
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        entry.setdefault("id", "")
+        return await _ping_live(entry, draft_key=req.api_key)
+
+    @app.post("/api/live-configs/{cid}")
+    async def update_live_config(cid: str, req: LiveConfigRequest):
+        """Update an existing named live configuration (404 if unknown)."""
+        return await _save_live_config(req, cid)
+
+    @app.delete("/api/live-configs/{cid}")
+    async def delete_live_config(cid: str):
+        """Delete a live config (404 if unknown). Deleting the active one moves active to
+        the next remaining config (or none — legacy fallback). Clears its per-config key."""
+        from assistant import live_configs, secrets
+
+        if live_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        live_configs.delete_config(cid)
+        secrets.set_live_config_key(cid, "")  # drop the orphaned secret
+        return {"ok": True}
+
+    @app.post("/api/live-configs/{cid}/use")
+    async def use_live_config(cid: str):
+        """Make ``cid`` the active live configuration (404 if unknown)."""
+        from assistant import live_configs
+
+        if not live_configs.set_active(cid):
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        return {"ok": True}
+
+    @app.post("/api/live-configs/{cid}/test")
+    async def test_live_config(cid: str):
+        """Models-list key probe against a SAVED live config. 404 if unknown."""
+        from assistant import live_configs
+
+        entry = live_configs.get_config(cid)
+        if entry is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        return await _ping_live(entry)
 
     @app.post("/api/onboarded")
     async def set_onboarded(req: OnboardedRequest) -> dict:
@@ -1451,35 +1632,58 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     # ---- Voice picker: list voices, select (persist), preview (TTS) ----
 
     @p.get("/voice/voices")
-    async def voice_voices(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        from assistant import voice_providers
+    async def voice_voices(
+        config_id: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The voice catalogue + current selection. Scoped to a named live config when
+        ``config_id`` is given (its provider + persisted voice); otherwise the profile's
+        legacy voice-provider setting."""
+        from assistant import live_configs, voice_providers
 
         settings = _runtime_settings(runtime)
+        entry = live_configs.get_config(config_id) if config_id else None
+        provider = entry["provider"] if entry else settings.voice_provider()
+        p_v = voice_providers.get(provider)
+        current = entry.get("voice") if entry else settings.get_voice(provider)
         return {
-            "voices": [{"name": n, "style": s} for n, s in settings.voices_for().items()],
-            "current": settings.get_voice(),
-            "provider": settings.voice_provider(),
-            # mic capture rate the client should use, for this profile's provider
-            "input_rate": voice_providers.get(settings.voice_provider()).input_rate,
+            "voices": [{"name": n, "style": s} for n, s in p_v.voices.items()],
+            "current": current,
+            "provider": provider,
+            "input_rate": p_v.input_rate,  # mic capture rate the client should use
         }
 
     @p.post("/voice/select")
     async def voice_select(
         req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
-        if not _runtime_settings(runtime).set_voice(req.voice):
+        """Persist the chosen voice — onto the named live config when ``config_id`` is
+        given, else the profile's legacy per-provider voice setting."""
+        from assistant import live_configs
+
+        if req.config_id:
+            if not live_configs.set_voice(req.config_id, req.voice):
+                return Response(status_code=400)
+        elif not _runtime_settings(runtime).set_voice(req.voice):
             return Response(status_code=400)
         return {"ok": True, "voice": req.voice}
 
     @p.post("/voice/preview")
     async def voice_preview(req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)):
+        from assistant import live_configs, voice_providers
         from assistant.voice import synthesize_preview
 
         settings = _runtime_settings(runtime)
-        if req.voice not in settings.voices_for():
+        entry = live_configs.get_config(req.config_id) if req.config_id else None
+        provider = entry["provider"] if entry else None
+        api_key = live_configs.resolve_key(entry) if entry else ""
+        # Validate the voice against the target provider's catalogue.
+        catalog = voice_providers.get(provider or settings.voice_provider()).voices
+        if req.voice not in catalog:
             return Response(status_code=400)
         try:
-            wav = await synthesize_preview(runtime.config, settings, req.voice)
+            wav = await synthesize_preview(
+                runtime.config, settings, req.voice, provider=provider, api_key=api_key
+            )
         except Exception as exc:
             return Response(content=str(exc)[:200], status_code=502)
         return Response(content=wav, media_type="audio/wav")

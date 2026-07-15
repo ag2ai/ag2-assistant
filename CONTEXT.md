@@ -35,10 +35,13 @@ integrations, agent parameters, defaults for all profiles.
 
 **Profile config**:
 A profile's configuration overlay: a key present here overrides the Global
-config for this profile only. Holds profile-specific choices (voice, focuses,
-MCP servers, Project folder). The agent edits its own Profile config, never the
+config for this profile only. Holds profile-specific choices (focuses, MCP
+servers, Project folder). The agent edits its own Profile config, never the
 Global config or another profile's overlay.
 _Avoid_: settings (the retired per-profile `settings.json`)
+_Note_: the Text model and Live model are NOT here — both are install-wide (Global
+config). A legacy per-profile `voice_provider` still exists as a fallback, but voice
+is now configured install-wide via the Active Live model.
 
 **Global skills**:
 Skills installed once at the Root, available to every profile. Only the user
@@ -80,3 +83,41 @@ and drop its registry entry. Only ever applies to an already-Archived profile �
 there is no one-step delete of a live profile. The only operation in the app that
 destroys profile state.
 _Avoid_: archive (archive keeps the data; delete does not)
+
+## Models
+
+The install-wide, named backends the assistant runs on. Two kinds — one for typed
+chat, one for spoken voice — each an independent list with its own single Active
+selection, both living in the Global config (shared across every Profile).
+
+**Text model**:
+A named configuration for a chat LLM — a provider/type, a model name, and an
+optional per-config key. The assistant's "brain" for typed conversation. Shown as
+the Text section of Settings → Models; exactly one is Active install-wide.
+_Avoid_: LLM config (the `llm_configs` store/implementation name), model (bare —
+ambiguous with a Live model)
+
+**Live model**:
+A named configuration for realtime voice — a Voice provider, a realtime model, an
+optional per-config key, and a chosen Voice. The spoken counterpart of a Text model.
+Shown as the Live section of Settings → Models; exactly one is Active install-wide.
+_Avoid_: voice model / voice config (collide with Voice, the spoken attribute), live
+config (the `live_configs` store name)
+
+**Voice**:
+The spoken voice a Live model talks in — one entry from its Voice provider's named
+catalogue (e.g. marin, cedar, Puck). An attribute of a Live model, chosen with the
+voice picker; not a configuration in its own right.
+_Avoid_: voice model, voice config (those are the Live model)
+
+**Voice provider**:
+The realtime speech backend a Live model runs on — Gemini or OpenAI. A fixed,
+code-defined registry: the user picks from it but cannot add one, unlike a Text
+model's open-ended provider/type.
+_Avoid_: provider (bare — a Text model has a provider too)
+
+**Active** (model):
+The single Text model and single Live model currently in effect, install-wide.
+Switching re-points the whole install and persists; it takes effect on the next
+message (Text) or next voice session (Live), never retroactively on one in flight.
+_Avoid_: default, current, selected

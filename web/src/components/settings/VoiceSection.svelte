@@ -1,43 +1,145 @@
 <script>
-  // Settings → Models → Live: the voice provider (per-profile) plus the SHARED
-  // Gemini/OpenAI provider-key rows. Voice runs on Gemini or OpenAI directly and
-  // reads those keys from the environment, so these are deliberately the same
-  // install-wide key slots the model configs use — not a separate voice-only secret.
-  // Rendered as the "Live" group of ModelsPage (no longer its own nav page).
-  import { getSettings } from './context.svelte.js'
+  // Settings → Models → Live: the install-wide list of named voice (live) configs and
+  // the one active selection — the spoken counterpart of the Text list in ModelsPage,
+  // built from the same row/health-map/inline-form pattern. Each config is a
+  // provider + realtime model + per-config key + chosen voice; click a row to use it,
+  // Test pings the provider's models list, "Change voice" opens the picker scoped to
+  // that config. Backed by the shared `liveConfigs` store (lib/live.js).
+  import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
+  import { getSettings } from './context.svelte.js'
+  import LiveConfigForm from './LiveConfigForm.svelte'
+  import Icon from '../Icon.svelte'
+  import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
 
   const ctx = getSettings()
-  const LABEL = { gemini: 'Gemini', openai: 'OpenAI' }
-  const VOICE_PROVIDERS = ['gemini', 'openai']
 
-  const saveKey = (p) => ctx.run(() => api.setKey(p, ctx.drafts[p] || '').then(() => { ctx.drafts[p] = '' }))
-  const clearKey = (p) => ctx.run(() => api.setKey(p, ''))
-  const saveVoiceProvider = (p) => ctx.run(() => api.setVoiceProvider(p))
+  const configs = $derived($liveConfigs.configs)
+  const providers = $derived($liveConfigs.providers)
+  let tests = $state({})       // config id -> {testing} | {ok, reply, latency_ms} | {ok:false, error}
+  let busy = $state(false)
+  let err = $state('')
+
+  let editing = $state(null)   // config/template being edited in the inline form (null = closed)
+  let adding = $state(false)   // provider-template grid showing
+
+  onMount(reload)
+
+  async function reload() {
+    try { await loadLiveConfigs() } catch (e) { err = String(e.message || e) }
+  }
+
+  async function test(c) {
+    tests = { ...tests, [c.id]: { testing: true } }
+    try {
+      tests = { ...tests, [c.id]: { ok: true, ...(await api.testLiveConfig(c.id)) } }
+    } catch (e) {
+      tests = { ...tests, [c.id]: { ok: false, error: String(e.message || e) } }
+    }
+  }
+
+  async function use(c) {
+    err = ''; busy = true
+    try { await api.useLiveConfig(c.id); await reload() } catch (e) { err = String(e.message || e) }
+    busy = false
+  }
+
+  async function remove(c) {
+    err = ''; busy = true
+    try {
+      await api.deleteLiveConfig(c.id)
+      const { [c.id]: _gone, ...rest } = tests
+      tests = rest
+      await reload()
+    } catch (e) { err = String(e.message || e) }
+    busy = false
+  }
+
+  // Open the editor: a provider template (no id → create) or an existing row (edit).
+  function pickTemplate(p) { adding = false; editing = { provider: p.name, name: PROVIDER_LABEL[p.name] + ' Live', model: '' } }
+  function edit(c) { adding = false; editing = { ...c } }
+
+  const activateOnSave = $derived(editing?.id ? !!editing.active : configs.length === 0)
+
+  async function onSaved() { editing = null; await reload() }
+
+  function keyChip(c) {
+    if (c.key_source === 'config') return 'own key ' + (c.key?.hint || '')
+    if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
+    return 'no key — add one or set ' + (c.shared_key?.env || 'the provider key')
+  }
 </script>
 
-<div class="setsec">Voice provider</div>
-{#if VOICE_PROVIDERS.some((p) => ctx.s.voice_available?.[p])}
-  <div class="keyrow">
-    <select value={ctx.s.voice_provider} onchange={(e) => saveVoiceProvider(e.target.value)}>
-      {#each VOICE_PROVIDERS as p}
-        {@const ok = ctx.s.voice_available?.[p]}
-        <option value={p} disabled={!ok}>{LABEL[p]}{ok ? '' : ' (no key)'}</option>
-      {/each}
-    </select>
-    <button class="open" onclick={ctx.openVoice}>Change voice</button>
-  </div>
-{:else}
-  <p class="muted" style="font-size:13px">Add an OpenAI or Gemini key below to enable voice.</p>
+{#if err}<p class="muted" style="color:#d8552f;font-size:13px">{err}</p>{/if}
+
+{#if !configs.length && !editing}
+  <p class="muted" style="font-size:13px">No live models yet — add one below to talk to the assistant.</p>
 {/if}
 
-<div class="setsec">Provider keys <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
-<p class="muted" style="font-size:13px;margin:0">Voice runs on Gemini or OpenAI directly — add the key for the provider you pick.</p>
-{#each VOICE_PROVIDERS as p}
-  <div class="keyrow">
-    <span class="kp">{LABEL[p]}</span>
-    <input type="password" placeholder={ctx.s.keys[p]?.set ? '•••• ' + ctx.s.keys[p].hint : 'paste key'} bind:value={ctx.drafts[p]} />
-    <button class="open" disabled={ctx.busy} onclick={() => saveKey(p)}>Save</button>
-    {#if ctx.s.keys[p]?.set}<button class="linkbtn" disabled={ctx.busy} onclick={() => clearKey(p)}>Clear</button>{/if}
+{#each configs as c (c.id)}
+  <div
+    class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
+    role={!c.active && !editing ? 'button' : undefined}
+    tabindex={!c.active && !editing ? 0 : undefined}
+    aria-label={!c.active ? `Use ${c.name}` : undefined}
+    title={!c.active && !editing ? 'Click to use this live model' : ''}
+    onclick={() => { if (!c.active && !busy && !editing) use(c) }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
+  >
+    <img class="llmlogo" src={LOGO[c.provider]} alt="" />
+    <div class="llmmeta">
+      <div class="llmname">
+        {c.name}
+        {#if c.active}<span class="llmbadge">active</span>{/if}
+      </div>
+      <div class="llmsub">{PROVIDER_LABEL[c.provider]} · {c.model}</div>
+      <div class="llmsub">
+        <span class="llmkey" class:warn={c.key_source === 'none'}>{keyChip(c)}</span>
+        {#if c.voice}<span class="llmkey">voice: {c.voice}</span>{/if}
+        {#if tests[c.id]}
+          {#if tests[c.id].testing}
+            <span class="llmtest">testing…</span>
+          {:else if tests[c.id].ok}
+            <span class="llmtest ok">{tests[c.id].reply} · {tests[c.id].latency_ms} ms</span>
+          {:else}
+            <span class="llmtest bad">{tests[c.id].error}</span>
+          {/if}
+        {/if}
+      </div>
+    </div>
+    <button
+      class="open" disabled={busy || tests[c.id]?.testing || !!editing}
+      onclick={(e) => { e.stopPropagation(); test(c) }}
+    >Test</button>
+    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
+    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
+    <button
+      class="linkbtn" disabled={busy || !!editing}
+      title={c.active ? 'Deleting the active live model falls back to the next one (or legacy)' : ''}
+      onclick={(e) => { e.stopPropagation(); remove(c) }}
+    >Delete</button>
   </div>
 {/each}
+
+{#if editing}
+  <LiveConfigForm config={editing} {providers} activate={activateOnSave} {onSaved} onCancel={() => (editing = null)} />
+{:else}
+  {#if !adding}
+    <button class="addbtn" disabled={busy} onclick={() => (adding = true)}>
+      <Icon name="plus" size={14} /> Add live model
+    </button>
+  {:else}
+    <div class="setsec">Choose a provider</div>
+    <div class="mcpcat">
+      {#each providers as p}
+        <button class="mcpcatcard" onclick={() => pickTemplate(p)}>
+          <span class="mcpcathead"><img class="llmlogo sm" src={LOGO[p.name]} alt="" /> {PROVIDER_LABEL[p.name]}</span>
+          <span class="mcpcatblurb">Realtime voice · {p.default_model}</span>
+        </button>
+      {/each}
+    </div>
+    <div class="keyrow" style="justify-content:flex-end">
+      <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
+    </div>
+  {/if}
+{/if}

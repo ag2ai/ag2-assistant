@@ -19,6 +19,21 @@
   --mono:     var(--font-mono);
   --user-bg:  var(--user-bubble);
   --user-ink: var(--user-bubble-ink);
+  /* Custom dropdown chevron for native <select>s (Lucide chevron-down, muted).
+     Native selects jam the browser arrow against the right border; we replace it
+     with this and reserve right padding so the icon sits comfortably inset. */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23998f83' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+/* Shared native-<select> chevron: opt in by adding `select` to a rule below. */
+.chpick,
+.settings .keyrow select,
+.settings .llmfield select,
+.pfield select {
+  appearance: none; -webkit-appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
 }
 #app { height: 100vh; }
 
@@ -70,7 +85,9 @@
 .settings .setnavbtn { display: block; width: 100%; text-align: left; border: none; background: none; color: var(--ink); font: inherit; font-size: 13px; border-radius: var(--radius-sm); padding: 8px 11px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .settings .setnavbtn:hover { background: var(--surface-hover); }
 .settings .setnavbtn.on { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-semibold); }
-.settings .setscroll { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; overflow-y: auto; }
+/* padding-right + stable gutter keep the scrollbar off the content — without it the
+   overlay scroll track clips right-aligned controls (e.g. the template Cancel button). */
+.settings .setscroll { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; overflow-y: auto; padding-right: 10px; scrollbar-gutter: stable; }
 /* Narrow: nav becomes a horizontal, scrollable tab strip above the page. */
 @media (max-width: 720px) {
   .settings .setbody { flex-direction: column; gap: 12px; }
@@ -83,12 +100,25 @@
    Heavier than .setsec so nested .setsec sub-headers still read as subordinate. */
 .settings .setgroup { font-size: 13px; font-weight: var(--fw-semibold); letter-spacing: .2px; color: var(--ink); margin: 14px 0 4px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
 .settings .setgroup:first-child { margin-top: 0; }
+/* Ghost "add" affordance (Add model / Add live model) — matches Profiles' "Add
+   profile": a muted text button + plus icon that hugs its content (align-self so it
+   doesn't stretch the flex column) and brightens on hover. */
+.settings .addbtn {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  margin-top: 6px; padding: 8px 4px;
+  background: none; border: none; cursor: pointer; font: inherit;
+  font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--text-muted);
+}
+.settings .addbtn:hover:not(:disabled) { color: var(--text); }
+.settings .addbtn:disabled { opacity: .5; cursor: default; }
+.settings .addbtn:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
 .settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
 /* Marks a section that applies to the whole install, not the titled profile. */
 .settings .setsec .setwide { font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
 .settings .keyrow { display: flex; align-items: center; gap: 8px; }
 .settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
-.settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
+.settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background-color: var(--bg); color: var(--ink); }
+.settings .keyrow select { padding-right: 30px; }  /* clear the chevron */
 /* Focus-area pill toggles — same vocabulary as onboarding (lib/focuses.js). */
 .settings .focuspills { display: flex; flex-wrap: wrap; gap: 7px; }
 .settings .focuspill { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
@@ -197,7 +227,8 @@
 .settings .llmform { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface-sunk); }
 .settings .llmfield { display: flex; flex-direction: column; gap: 5px; }
 .settings .llmfield > label, .settings .llmfield > .llmlabel { font-size: 12px; font-weight: 600; color: var(--muted); }
-.settings .llmfield input, .settings .llmfield select { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
+.settings .llmfield input, .settings .llmfield select { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background-color: var(--bg); color: var(--ink); }
+.settings .llmfield select { padding-right: 30px; }  /* clear the chevron */
 .settings .llmfield input:focus, .settings .llmfield select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 .settings .llmhint { font-size: 11px; font-weight: 400; color: var(--muted); }
 .settings .llmkeyfield { display: flex; align-items: center; gap: 6px; }
@@ -411,7 +442,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .subagent .skids .bubble { max-width: 100%; font-size: 14px; }
 .subagent .skids .subagent { max-width: 100%; }
 
-.card { border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin: 12px 0; max-width: 80%; }
+.card { border: 1px solid var(--accent-border); border-radius: 12px; padding: 12px 14px; margin: 12px 0; max-width: 80%; }
 .card .k { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; }
 .card .t { margin: 4px 0 8px; font-size: 14px; }
 .card button, .composer .csend, .panel button { font-family: var(--sans); cursor: pointer; }
@@ -439,7 +470,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .md table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; }
 .md th, .md td { border: 1px solid var(--line); padding: 5px 9px; }
 
-.inquiry { border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
+.inquiry { border: 1px solid var(--accent-border); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
 .inquiry.resolved { border-color: var(--line); opacity: .6; }
 .inquiry .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .inquiry .opts button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 5px 11px; }
@@ -469,12 +500,17 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .cbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 /* Round quiet control (attach, live voice). */
 .cbtn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: none; background: none; color: var(--muted); border-radius: 999px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-.cbtn:hover { background: var(--surface); color: var(--ink); }
+.cbtn:hover:not(:disabled) { background: var(--surface); color: var(--ink); }
+/* pointer-events:none so hover falls through to the wrapper (a disabled button never
+   fires hover itself) — lets the .livetip bubble show over the disabled Live mic. */
+.cbtn:disabled { opacity: .4; cursor: default; pointer-events: none; }
 .cbtn.live.on { background: var(--accent); color: var(--text-on-accent); animation: micpulse 1.4s infinite; }
 /* Primary send / stop — round, accent-filled. Stop is a quiet variant (danger on hover). */
 .csend { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: none; border-radius: 999px; background: var(--accent); color: var(--text-on-accent); cursor: pointer; box-shadow: var(--shadow-accent); transition: background var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out); }
 .csend:hover:not(:disabled) { background: var(--accent-hover); }
-.csend:disabled { opacity: .4; cursor: default; box-shadow: none; }
+/* pointer-events:none so hover reaches the .ctip wrapper (a disabled button fires no
+   hover itself) — lets the "no model configured" bubble show over the disabled Send. */
+.csend:disabled { opacity: .4; cursor: default; box-shadow: none; pointer-events: none; }
 .csend.stop { background: var(--surface); color: var(--ink); border: 1px solid var(--line); box-shadow: none; }
 .csend.stop:hover { border-color: var(--danger); color: var(--danger); }
 @keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(249,83,57,.5); } 50% { box-shadow: 0 0 0 6px rgba(249,83,57,0); } }
@@ -498,7 +534,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 
 .hitl { border-bottom: 1px solid var(--line); background: var(--panel); padding: 10px 20px; max-height: 40vh; overflow-y: auto; }
 .hitlhead { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; margin-bottom: 6px; }
-.qcard { border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin: 6px 0; max-width: 760px; }
+.qcard { border: 1px solid var(--accent-border); border-radius: 10px; padding: 10px 12px; margin: 6px 0; max-width: 760px; }
 .qcard .qk { font-size: 11px; color: var(--muted); }
 .qcard .qk a { color: var(--accent); cursor: pointer; }
 .qcard .qt { margin: 4px 0; font-size: 14px; }
