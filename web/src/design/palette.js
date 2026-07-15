@@ -85,6 +85,16 @@ function deriveRamp(hex) {
   return out
 }
 
+// Relative luminance (sRGB) of a hex, 0..1 — the "is this colour light?" signal
+// behind the adaptive ink below.
+function luminance(hex) {
+  const [r, g, b] = toRgb(hex).map((c) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
 let _accent = DEFAULT_ACCENT // current applied accent hex
 
 function applyAccent(hex) {
@@ -99,6 +109,13 @@ function applyAccent(hex) {
     for (const [stop] of RAMP) ROOT.style.setProperty(stop, ramp[stop])
     ROOT.setAttribute('data-palette', 'custom')
   }
+  // Adaptive ink on accent fills (send button, active profile chip, unread badge):
+  // the accent is user-picked and can be ANY colour — white text on a white or
+  // yellow accent would vanish. Light theme applies --p-500 and dark applies
+  // --p-400, so white ink is safe only when BOTH are dark enough.
+  const ramp = deriveRamp(hex)
+  const light = Math.max(luminance(hex), luminance(ramp['--p-400'])) >= 0.45
+  ROOT.style.setProperty('--text-on-accent', light ? '#1d1a16' : '#ffffff')
 }
 
 export function setAccent(value) {
@@ -112,6 +129,14 @@ export function setAccent(value) {
 
 export function getAccent() {
   return _accent
+}
+
+// Readable ink for text/glyphs sitting ON a given accent hex (profile chips fill
+// with their own profile colour, not the applied accent, so they can't use the
+// global --text-on-accent). Same luminance rule as applyAccent.
+export function inkOn(value) {
+  const hex = normHex(value) || DEFAULT_ACCENT
+  return luminance(hex) >= 0.45 ? '#1d1a16' : '#ffffff'
 }
 
 // The preset id whose --p-500 equals this hex, or null for a custom colour.

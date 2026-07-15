@@ -5,9 +5,10 @@
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
-  import { fmtWhen, fmtNextIn, dayRows, fmtDayShort } from '../lib/time.js'
+  import { fmtWhen, fmtNextIn, fmtAgoShort, dayRows, fmtDayShort } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
+  import { inkOn } from '../design/palette.js'
 
   // Compact form of a cron description for the narrow schedule tag: abbreviate
   // day names and collapse "Every hour, between X and Y" → "Hourly X–Y"
@@ -252,7 +253,7 @@
           <button
             class="chip"
             class:active={isActive}
-            style="--p:{p.accent}"
+            style="--p:{p.accent}; --p-ink:{inkOn(p.accent)}"
             title={chipTitle(p)}
             role="tab"
             aria-selected={isActive}
@@ -342,6 +343,7 @@
               <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>no</button>
             </span>
           {:else}
+            {#if s.updated}<span class="rowtime">{fmtAgoShort(s.updated)}</span>{/if}
             <button class="rowdel" title="Delete chat" aria-label="Delete chat"
               onclick={(e) => { e.stopPropagation(); confirmChat = s.session_id }}><Icon name="trash" size={13} /></button>
           {/if}
@@ -422,7 +424,7 @@
      keeps the exact same 28px footprint as the others — an OUTER ring would extend past
      the box and make the row's spacing/alignment shift per active-chip position. */
   .chip.active {
-    background: var(--p, var(--accent)); color: #fff; cursor: default;
+    background: var(--p, var(--accent)); color: var(--p-ink, var(--text-on-accent)); cursor: default;
     border-color: var(--p, var(--accent));
     box-shadow: inset 0 0 0 2px var(--surface);
   }
@@ -463,7 +465,7 @@
   .profmenu {
     position: absolute; top: calc(100% - 4px); left: 16px; z-index: var(--z-modal);
     min-width: 150px; max-width: 220px; display: flex; flex-direction: column;
-    padding: 4px; background: var(--surface); border: 1px solid var(--line);
+    padding: 4px; background: var(--surface-elevated); border: 1px solid var(--line);
     border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
   }
   .profitem {
@@ -492,8 +494,13 @@
   .datesep:first-child { margin-top: 2px; }
   .chatrow { display: flex; align-items: center; gap: 8px; }
   .clabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rowdel { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .12s, color .12s; }
-  .chatrow:hover .rowdel, .chatrow:focus-within .rowdel { opacity: .55; }
+  /* Last-activity stamp, right-aligned; the hover swaps it for the delete
+     affordance so the row's right slot never doubles up. */
+  .rowtime { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .chatrow:hover .rowtime, .chatrow:focus-within .rowtime { display: none; }
+  /* Hidden via opacity (not display) so it stays keyboard-focusable. */
+  .rowdel { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; width: 0; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+  .chatrow:hover .rowdel, .chatrow:focus-within .rowdel { opacity: .55; width: auto; }
   .rowdel:hover { opacity: 1; color: #d8552f; }
   .rowconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; }
   .rowconfirm .confirm { color: #d8552f; font-size: 12px; }

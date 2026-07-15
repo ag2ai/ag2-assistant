@@ -69,13 +69,14 @@
   /* Surfaces */
   --bg:            var(--sand-50);   /* app canvas — warm paper   */
   --surface:       var(--sand-0);    /* cards, bubbles, modals    */
-  --surface-sunk:  var(--sand-100);  /* code blocks, wells, input */
+  --surface-sunk:  var(--sand-100);  /* code blocks, wells        */
   --surface-hover: var(--sand-100);
+  --surface-elevated: var(--sand-0); /* popovers, modals, composer — elevation via shadow in light */
   --panel:         var(--sand-25);   /* drawer / rails            */
 
   /* Ink */
   --text:          var(--sand-900);
-  --text-muted:    var(--sand-500);
+  --text-muted:    var(--sand-600);
   --text-faint:    var(--sand-400);
   --text-on-coral: #ffffff;
   --text-on-dark:  var(--sand-25);
@@ -98,10 +99,13 @@
      (lives in the mascot antenna + heritage moments). */
   --brand-coral:   var(--coral-500);
 
-  /* Message bubbles — the user's bubble follows the palette accent. */
-  --user-bubble:     var(--accent);
-  --user-bubble-ink: #ffffff;
-  --agent-bubble:    var(--sand-0);
+  /* Message bubbles — both neutral Surface cards; the user's carries only a
+     whisper of the palette accent (≤5% tint + a thin tinted border) so the
+     UI reads calm with ANY workspace accent, white included. */
+  --user-bubble:        color-mix(in srgb, var(--accent) 5%, var(--surface));
+  --user-bubble-border: color-mix(in srgb, var(--accent) 22%, var(--line));
+  --user-bubble-ink:    var(--text);
+  --agent-bubble:    var(--surface);
   --agent-bubble-ink: var(--sand-900);
 
   /* State */
@@ -123,24 +127,27 @@
    ========================================================= */
 
 [data-theme="dark"] {
-  /* Four elevation levels so cards, inputs and the sidebar don't blend.
-     bg (canvas) < panel (sidebar/rails) < surface (cards/modals) <
-     interactive (inputs, wells, hover). Each step ~+4–5% lightness. */
+  /* Elevation ladder so cards, inputs and the sidebar don't blend.
+     bg (canvas) < panel (sidebar/rails) < surface (cards/bubbles) <
+     elevated (popovers/modals/composer) < sunk/hover (wells, interactive).
+     Each step ~+4–5% lightness. */
   --bg:            #12100f;  /* app canvas — darkest         */
   --panel:         #171412;  /* drawer / rails (sidebar)     */
-  --surface:       #1c1816;  /* cards, bubbles, modals       */
-  --surface-sunk:  #26211e;  /* inputs, code wells           */
+  --surface:       #1b1816;  /* cards, bubbles               */
+  --surface-elevated: #221d1a; /* popovers, modals, composer */
+  --surface-sunk:  #26211e;  /* code wells                   */
   --surface-hover: #26211e;  /* interactive / hover          */
 
   --text:          var(--sand-25);
-  --text-muted:    #998f83;
+  --text-muted:    #a1978a;
   --text-faint:    #6b645b;
   --text-on-coral: #ffffff;
   --text-on-accent: #ffffff;
   --text-on-dark:  var(--sand-25);
 
-  --line:          #2e2823;
-  --line-strong:   #3c352d;
+  /* Hairline borders — white-alpha so they sit quietly on every surface level. */
+  --line:          rgba(255, 255, 255, 0.07);
+  --line-strong:   rgba(255, 255, 255, 0.12);
 
   /* Palette-driven; dark uses the brighter palette steps. */
   --accent:        var(--p-400);
@@ -150,9 +157,10 @@
   --accent-border: color-mix(in srgb, var(--accent) 25%, transparent);
   --accent-ring:   color-mix(in srgb, var(--accent) 45%, transparent);
 
-  --user-bubble:     var(--p-500);
-  --user-bubble-ink: #ffffff;
-  --agent-bubble:    var(--sand-900);
+  --user-bubble:        color-mix(in srgb, var(--accent) 8%, var(--surface));
+  --user-bubble-border: color-mix(in srgb, var(--accent) 24%, var(--line-strong));
+  --user-bubble-ink:    var(--text);
+  --agent-bubble:    var(--surface);
   --agent-bubble-ink: var(--sand-25);
 
   color-scheme: dark;

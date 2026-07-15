@@ -1,5 +1,6 @@
 <script>
-  import { thread, taskPanel, ag2View, profile } from '../store.js'
+  import { thread, taskPanel, ag2View, profile, profiles } from '../store.js'
+  import { llmConfigs } from '../lib/llm.js'
   import { go, newChatId } from '../router.js'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
@@ -12,6 +13,13 @@
 
   let scroller
   const tail = $derived($thread.items[$thread.items.length - 1])
+
+  // Header subtitle: "Workspace • Active model". Reads the same shared stores the
+  // Drawer chips and the composer's ModelSwitcher use (llmConfigs is loaded by the
+  // composer on mount), so a profile/model switch updates the header live.
+  const activeProfile = $derived(($profiles.list || []).find((p) => p.id === $profiles.activeId))
+  const activeModel = $derived($llmConfigs.configs.find((c) => c.id === $llmConfigs.active))
+  const subtitle = $derived([activeProfile?.name, activeModel?.name].filter(Boolean).join(' • '))
 
   // Interleave day breakpoints: each row carries `sep`, the divider label to show
   // above the first item of a new calendar day (null otherwise). Items carry `at`
@@ -82,8 +90,11 @@
 
 <div class="mhead">
   <button class="back" onclick={() => go('/c/' + newChatId())}><Icon name="chevron-left" size={15} /> Chat</button>
-  <span class="title">
-    {#if $thread.kind === 'task'}{($taskPanel && $taskPanel.title) || 'Task'}{:else}Conversation{/if}
+  <span class="titles">
+    <span class="title">
+      {#if $thread.kind === 'task'}{($taskPanel && $taskPanel.title) || 'Task'}{:else}Conversation{/if}
+    </span>
+    {#if subtitle}<span class="msub">{subtitle}</span>{/if}
   </span>
   {#if $thread.kind === 'task' && $taskPanel}<span class="badge">{$taskPanel.status}</span>{/if}
   <div class="hactions">

@@ -40,6 +40,23 @@ export function fmtAgo(v) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
+// Ultra-compact relative past for dense lists (the drawer's chat rows): "now",
+// "5m", "2h", "3d", else a short date. Sibling of fmtAgo without the " ago"
+// tail — the row has no room for it and the header already frames the day.
+export function fmtAgoShort(v) {
+  const d = toDate(v)
+  if (!d) return ''
+  const ms = Date.now() - d.getTime()
+  const mins = Math.round(ms / 60000)
+  if (mins < 1) return 'now'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.round(hours / 24)
+  if (days < 7) return `${days}d`
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
 // Neat, human absolute date-time for a specific moment (e.g. a scheduled run) —
 // replaces raw ISO like "2026-06-23T08:15:00+10:00". Day-aware:
 //   "Today 8:15 AM", "Tomorrow 8:15 AM", "Yesterday 8:15 AM",

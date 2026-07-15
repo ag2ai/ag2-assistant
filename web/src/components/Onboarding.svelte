@@ -655,14 +655,17 @@
   /* Buttons */
   .onb-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer;
-    border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 16px;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 9px 16px;
     font: inherit; font-size: var(--text-sm); font-weight: var(--fw-semibold);
     transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
   }
   .onb-btn.lg { padding: 11px 20px; font-size: var(--text-base); }
-  .onb-btn.primary { background: var(--accent); color: var(--text-on-accent); box-shadow: var(--shadow-accent); }
-  .onb-btn.primary:hover { background: var(--accent-hover); }
-  .onb-btn.primary:disabled { opacity: .5; cursor: default; box-shadow: none; }
+  /* Primary is a neutral surface button — the accent is workspace-personalization,
+     never a button fill (it can be any colour, white included). */
+  .onb-btn.primary { background: var(--surface); color: var(--text); }
+  .onb-btn.primary:hover { background: var(--surface-hover); border-color: var(--accent-border); }
+  .onb-btn.primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .onb-btn.primary:disabled { opacity: .5; cursor: default; }
   .onb-btn.ghost { background: none; border-color: transparent; color: var(--text-muted); box-shadow: none; }
   .onb-btn.ghost:hover { color: var(--accent); }
   .onb-welcomeactions { display: flex; gap: 10px; margin-top: 4px; }
@@ -672,7 +675,8 @@
   .onb-readytick {
     display: inline-flex; align-items: center; justify-content: center;
     width: 52px; height: 52px; flex: none; border-radius: var(--radius-pill);
-    background: var(--accent); color: var(--text-on-accent);
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--accent-border);
   }
   .onb-summary {
     display: flex; flex-direction: column; gap: 12px;

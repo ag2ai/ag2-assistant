@@ -140,7 +140,7 @@
   .ctip-bubble {
     position: absolute; bottom: calc(100% + 8px); right: 0;
     width: max-content; max-width: 220px; text-align: left; line-height: 1.35;
-    background: var(--surface); color: var(--ink);
+    background: var(--surface-elevated); color: var(--ink);
     border: 1px solid var(--line); border-radius: var(--radius-sm);
     box-shadow: var(--shadow-lg); padding: 7px 10px; font-size: 12px;
     opacity: 0; pointer-events: none; transform: translateY(3px);

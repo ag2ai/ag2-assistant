@@ -182,11 +182,14 @@
   .pf-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
   .pf-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer;
-    border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 10px 18px;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 10px 18px;
     font: inherit; font-size: var(--text-sm); font-weight: var(--fw-semibold);
     transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
   }
-  .pf-btn.primary { background: var(--accent); color: var(--text-on-accent); box-shadow: var(--shadow-accent); }
-  .pf-btn.primary:hover { background: var(--accent-hover); }
-  .pf-btn.primary:disabled { opacity: .5; cursor: default; box-shadow: none; }
+  /* Primary reads through weight + surface, not an accent fill — the workspace
+     accent can be any colour (white included), so it never carries a button. */
+  .pf-btn.primary { background: var(--surface); color: var(--text); }
+  .pf-btn.primary:hover { background: var(--surface-hover); border-color: var(--accent-border); }
+  .pf-btn.primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .pf-btn.primary:disabled { opacity: .5; cursor: default; }
 </style>

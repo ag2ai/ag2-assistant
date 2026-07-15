@@ -123,7 +123,7 @@
   }
   .chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .chip:disabled { cursor: default; opacity: .45; }
-  .chip.picked { opacity: 1; border-color: var(--accent); background: var(--accent); color: var(--paper, #fff); }
+  .chip.picked { opacity: 1; border-color: var(--accent); background: var(--accent); color: var(--text-on-accent, #fff); }
 
   .cans { margin-top: 9px; font-family: var(--code, ui-monospace, monospace); font-size: 12.5px; color: var(--muted); }
 
