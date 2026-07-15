@@ -127,7 +127,17 @@
 {/if}
 
 {#each configs as c (c.id)}
-  <div class="llmrow" class:active={c.active}>
+  <!-- Click the row to make it the active config (unless it already is, or the
+       editor is open). Action buttons below stopPropagation so they never activate. -->
+  <div
+    class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
+    role={!c.active && !editing ? 'button' : undefined}
+    tabindex={!c.active && !editing ? 0 : undefined}
+    aria-label={!c.active ? `Use ${c.name}` : undefined}
+    title={!c.active && !editing ? 'Click to use this model' : ''}
+    onclick={() => { if (!c.active && !busy && !editing) use(c) }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
+  >
     <img class="llmlogo" src={LOGO[c.type]} alt="" />
     <div class="llmmeta">
       <div class="llmname">
@@ -152,18 +162,18 @@
       </div>
     </div>
     <!-- While the editor is open ALL row actions are disabled — mutating or testing
-         the list mid-edit invites confusion (the editor has its own Test button). -->
-    {#if !c.active}<button class="open" disabled={busy || !!editing} onclick={() => use(c)}>Use</button>{/if}
+         the list mid-edit invites confusion (the editor has its own Test button).
+         Each button stops propagation so it never triggers the row's click-to-use. -->
     <button
       class="open" disabled={busy || tests[c.id]?.testing || !!editing}
       title={editing ? 'Editing in progress — use the editor’s Test button to test your changes' : ''}
-      onclick={() => test(c)}
+      onclick={(e) => { e.stopPropagation(); test(c) }}
     >Test</button>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={() => edit(c)}>Edit</button>
+    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
     <button
       class="linkbtn" disabled={busy || c.active || !!editing}
       title={c.active ? 'Active configuration — switch to another before deleting' : ''}
-      onclick={() => remove(c)}
+      onclick={(e) => { e.stopPropagation(); remove(c) }}
     >Delete</button>
   </div>
 {/each}
@@ -172,7 +182,7 @@
   <LlmConfigForm config={editing} activate={activateOnSave} {onSaved} onCancel={() => (editing = null)} />
 {:else}
   {#if !adding}
-    <button class="open" style="justify-self:start" disabled={busy} onclick={() => (adding = true)}>Add configuration</button>
+    <button class="open" style="justify-self:start" disabled={busy} onclick={() => (adding = true)}>Add model</button>
   {:else}
     <div class="setsec">Start from a template</div>
     <div class="mcpcat">

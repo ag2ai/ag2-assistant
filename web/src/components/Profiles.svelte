@@ -15,6 +15,7 @@
   import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
   import { PALETTES, setAccent, getAccent } from '../design/palette.js'
   import Icon from './Icon.svelte'
+  import ProfileForm from './ProfileForm.svelte'
 
   const list = $derived($profiles.list || [])
   const activeId = $derived($profiles.activeId || getActiveProfileId())
@@ -44,6 +45,18 @@
   // Archive confirm state: {pid, name, isActive} + the chosen replacement default.
   let confirmArchive = $state(null)
   let replacement = $state('')
+
+  // Create a new profile inline, without leaving Settings (reuses ProfileForm — the
+  // same form as onboarding / the Drawer "+"). Preset accents already taken are nudged
+  // out of the swatches. On success we refetch and the new profile joins the live list;
+  // we deliberately DON'T navigate to it (unlike the Drawer), so the user stays here.
+  let creating = $state(false)
+  const claimedAccents = $derived(list.map((p) => p.accent))
+  async function doCreate({ name, accent }) {
+    await api.createProfile(name, accent) // throws → ProfileForm shows inline error
+    creating = false
+    await refetch()
+  }
 
   // Archived profiles (ADR 0003): the collapsed "Archived" section. `archived` is
   // filled from the same /api/profiles fetch; the disclosure is closed by default.
@@ -168,7 +181,10 @@
     try {
       await api.archiveProfile(pid, replacement || undefined)
       if (isActive) {
-        // The active profile is gone — let boot re-resolve to a valid one (§5.4).
+        // The active profile is gone — the SPA must reload so boot re-resolves to a
+        // valid one (§5.4). Stash the reopen flag (like switchTo) so Settings comes
+        // back on the same page instead of closing under the user.
+        try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || 'profiles') } catch {}
         setActiveProfileId(null)
         location.assign('/app/')
         return
@@ -280,12 +296,13 @@
                 onclick={() => pickAccent(sw.hex)}
               >{#if eAccent === sw.hex}<Icon name="check" size={12} />{/if}</button>
             {/each}
-            <!-- Custom colour: native <input type=color> behind the swatch. -->
+            <!-- Custom colour: native <input type=color> behind the swatch. Always
+                 shows the palette glyph (never the current colour) — its job is to
+                 open the picker; the selected hex reads below in .phex. -->
             <label
-              class="pswatch pcustom" class:on={eCustom} class:rainbow={!eCustom}
-              style="--dot:{eCustom ? eAccent : 'transparent'}" title="Custom colour"
+              class="pswatch pcustom rainbow" class:on={eCustom} title="Custom colour"
             >
-              {#if eCustom}<Icon name="check" size={12} />{/if}
+              <Icon name="palette" size={14} />
               <input type="color" value={eAccent} oninput={pickCustom} aria-label="Custom colour" />
             </label>
           </div>
@@ -299,6 +316,22 @@
       </div>
     {/if}
   {/each}
+
+  {#if creating}
+    <div class="peditor">
+      <ProfileForm
+        claimed={claimedAccents}
+        submitLabel="Create profile"
+        busyLabel="Creating…"
+        onSubmit={doCreate}
+      />
+      <button class="linkbtn padd-cancel" onclick={() => (creating = false)}>Cancel</button>
+    </div>
+  {:else}
+    <button class="padd" onclick={() => { err = ''; creating = true }}>
+      <Icon name="plus" size={14} /> Add profile
+    </button>
+  {/if}
 
   {#if confirmArchive}
     <div class="pconfirm">
@@ -368,9 +401,9 @@
   .profiles { display: flex; flex-direction: column; gap: 2px; }
   .prow {
     display: flex; align-items: center; gap: 10px; padding: 8px 4px;
-    border-radius: var(--radius-sm);
+    border: 1px solid transparent; border-radius: var(--radius-sm);
   }
-  .prow.active { background: var(--surface-sunk); padding: 8px; }
+  .prow.active { background: var(--surface-sunk); border-color: var(--accent); padding: 7px; }
   .prow.clickable { cursor: pointer; }
   .prow.clickable:hover { background: var(--surface-sunk); }
   .prow.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
@@ -413,6 +446,8 @@
   .pcustom.rainbow {
     background: conic-gradient(from 90deg, #f95339, #ec5d18, #e0b400, #2f8c44, #109e91, #2f6fe0, #7a52ec, #f95339);
   }
+  /* The palette glyph sits over the gradient — a drop-shadow keeps it legible. */
+  .pcustom :global(svg) { filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.55)); }
   .pcustom.rainbow.on { box-shadow: 0 0 0 2px var(--surface-sunk), 0 0 0 4px var(--accent); }
   .pcustom input {
     position: absolute; inset: 0; width: 100%; height: 100%;
@@ -425,6 +460,17 @@
   }
 
   .peditactions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+
+  /* "Add profile" affordance at the foot of the live list. */
+  .padd {
+    display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+    margin-top: 6px; padding: 8px 4px;
+    background: none; border: none; cursor: pointer; font: inherit;
+    font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--text-muted);
+  }
+  .padd:hover { color: var(--text); }
+  .padd:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+  .padd-cancel { align-self: flex-end; }
 
   .pconfirm {
     display: flex; flex-direction: column; gap: 10px;

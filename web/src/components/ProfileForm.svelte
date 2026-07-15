@@ -104,15 +104,14 @@
       {/each}
 
       <!-- Custom colour: a native <input type=color> hidden behind our swatch.
-           The swatch shows the chosen colour when custom, else a rainbow ring. -->
+           Always shows the palette glyph (never the chosen colour) — its job is
+           to open the picker; the selected hex reads below in .pf-hex. -->
       <label
-        class="pf-dot pf-custom"
+        class="pf-dot pf-custom rainbow"
         class:on={isCustom}
-        class:rainbow={!isCustom}
-        style="--dot:{isCustom ? accent : 'transparent'}"
         title="Custom colour"
       >
-        {#if isCustom}<Icon name="check" size={13} />{/if}
+        <Icon name="palette" size={15} />
         <input type="color" value={accent} oninput={pickCustom} aria-label="Custom colour" />
       </label>
     </div>
@@ -159,12 +158,14 @@
   .pf-dot:hover { transform: scale(1.08); }
   .pf-dot.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--dot); }
 
-  /* Custom-colour swatch: wraps a hidden native colour input. When no custom
-     colour is active it shows a rainbow ring to read as "pick any colour". */
+  /* Custom-colour swatch: wraps a hidden native colour input. Always shows a
+     rainbow ring + palette glyph to read as "pick any colour". */
   .pf-custom { position: relative; overflow: hidden; padding: 0; }
   .pf-custom.rainbow {
     background: conic-gradient(from 90deg, #f95339, #ec5d18, #e0b400, #2f8c44, #109e91, #2f6fe0, #7a52ec, #f95339);
   }
+  /* The palette glyph sits over the gradient — a drop-shadow keeps it legible. */
+  .pf-custom :global(svg) { filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.55)); }
   .pf-custom.rainbow.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
   .pf-custom input {
     position: absolute; inset: 0; width: 100%; height: 100%;

@@ -409,17 +409,21 @@
   }
   .chip:hover { transform: translateY(-1px); }
   .chip:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--p, var(--accent)) 35%, transparent); }
-  /* active: filled with the palette colour, white glyph, cursor default */
+  /* active: filled with the palette colour, white glyph, cursor default. The selected
+     ring is INSET (a surface-coloured gap just inside the tinted border) so the chip
+     keeps the exact same 28px footprint as the others — an OUTER ring would extend past
+     the box and make the row's spacing/alignment shift per active-chip position. */
   .chip.active {
     background: var(--p, var(--accent)); color: #fff; cursor: default;
-    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--p, var(--accent));
+    border-color: var(--p, var(--accent));
+    box-shadow: inset 0 0 0 2px var(--surface);
   }
   .chip.more { color: var(--muted); border-color: var(--line); background: var(--surface); font-weight: var(--fw-semibold); }
   .chip.more:hover { color: var(--text); border-color: var(--text); }
   .chip.more.active { color: var(--text); }
   /* "+" chip: a quiet dashed affordance to add a profile */
   .chip.add { color: var(--muted); border-style: dashed; border-color: var(--line); background: var(--surface); }
-  .chip.add:hover { color: var(--accent); border-color: var(--accent); }
+  .chip.add:hover { color: var(--text); border-color: var(--text); }
   .mono { pointer-events: none; }
   /* unread-results dot: a small badge in the chip's top-right when the profile has
      finished tasks the user hasn't opened yet. A fixed amber attention color (not the
