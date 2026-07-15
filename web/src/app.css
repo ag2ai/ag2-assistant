@@ -37,12 +37,18 @@
 [data-theme="dark"] .brandlogo.on-dark { display: block; }
 .onb-brand .brandlogo { height: 38px; }  /* larger on the onboarding hero */
 .brand { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-xl); letter-spacing: -0.01em; }
-.newbtn { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 5px 11px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-.newbtn:hover { border-color: var(--accent); color: var(--accent); }
-.tabs { display: flex; gap: 6px; padding: 8px 12px; align-items: center; }
-.tabs .newbtn { margin-left: auto; }
-.tab { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: var(--radius-pill); padding: 4px 12px; cursor: pointer; transition: all var(--dur-fast) var(--ease-out); }
-.tab.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+/* Segmented Chats/Tasks switcher (Cowork-style): a single sunken pill track with
+   two equal segments; the active one lifts onto a raised surface, inactive stays
+   muted and transparent. Supersedes the old .tabs row + trailing New button. */
+.segbar { display: flex; gap: 3px; margin: 8px 12px 0; padding: 3px; background: var(--code); border-radius: var(--radius-pill); }
+.seg { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: 13px; font-weight: var(--fw-medium); color: var(--muted); background: none; border: none; border-radius: var(--radius-pill); padding: 6px 10px; cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.seg:hover { color: var(--text); }
+.seg.on { color: var(--text); background: var(--surface); box-shadow: var(--shadow-sm); }
+
+/* "New chat" — the first line of the Chats list: a quiet full-width action row
+   that reads as "start something" without competing with real chat rows. */
+.newrow { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font: inherit; font-size: 13px; font-weight: var(--fw-medium); color: var(--muted); background: none; border: none; border-radius: var(--radius-sm); padding: 8px 11px; margin-bottom: 4px; cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.newrow:hover { color: var(--accent); background: var(--code); }
 
 .dfoot { border-top: 1px solid var(--line); padding: 8px 12px; }
 .settingsbtn { display: inline-flex; align-items: center; gap: 7px; width: 100%; text-align: left; font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 8px 11px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
@@ -73,6 +79,10 @@
      whole strip and only one is visible at a time. */
   .settings .setnavbtn { flex: none; width: auto; white-space: nowrap; }
 }
+/* Top-level divider between the major groups of a page (e.g. Models → Text / Live).
+   Heavier than .setsec so nested .setsec sub-headers still read as subordinate. */
+.settings .setgroup { font-size: 13px; font-weight: var(--fw-semibold); letter-spacing: .2px; color: var(--ink); margin: 14px 0 4px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+.settings .setgroup:first-child { margin-top: 0; }
 .settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
 /* Marks a section that applies to the whole install, not the titled profile. */
 .settings .setsec .setwide { font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }

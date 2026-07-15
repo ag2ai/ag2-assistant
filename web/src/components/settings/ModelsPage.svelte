@@ -1,9 +1,12 @@
 <script>
-  // Settings → Models: the install-wide list of named LLM configurations and the
-  // one active selection (LLM is common across every profile — no per-profile
-  // override, no fallback). Each config has a type, type-specific fields, an
-  // optional secret per-config key, a provider logo, a one-click real-PONG Test,
-  // and an explicit Use. Replaces the old Model & Keys page.
+  // Settings → Models: two stacked groups.
+  //   • Text — the install-wide list of named LLM configurations and the one active
+  //     selection (LLM is common across every profile — no per-profile override, no
+  //     fallback). Each config has a type, type-specific fields, an optional secret
+  //     per-config key, a provider logo, a one-click real-PONG Test, and an explicit
+  //     Use. Replaces the old Model & Keys page.
+  //   • Live — the voice provider + shared provider keys, rendered by <VoiceSection/>
+  //     (formerly its own "Voice" nav page, folded in here).
   //
   // The config list lives in the shared `llmConfigs` store (lib/llm.js), so edits
   // here (add / rename / Use) show up live in the composer's ModelSwitcher without
@@ -14,6 +17,7 @@
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
   import LlmConfigForm from './LlmConfigForm.svelte'
+  import VoiceSection from './VoiceSection.svelte'
   import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
@@ -111,6 +115,8 @@
   }
 </script>
 
+<div class="setgroup">Text</div>
+
 {#if err}<p class="muted" style="color:#d8552f;font-size:13px">{err}</p>{/if}
 
 {#if envOverride}
@@ -196,3 +202,6 @@
     </div>
   {/if}
 {/if}
+
+<div class="setgroup">Live</div>
+<VoiceSection />

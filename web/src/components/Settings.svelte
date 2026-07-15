@@ -9,7 +9,6 @@
   import GeneralPage from './settings/GeneralPage.svelte'
   import ProfilesPage from './settings/ProfilesPage.svelte'
   import ModelsPage from './settings/ModelsPage.svelte'
-  import VoicePage from './settings/VoicePage.svelte'
   import ToolsPage from './settings/ToolsPage.svelte'
   import IntegrationsPage from './settings/IntegrationsPage.svelte'
   import AdvancedPage from './settings/AdvancedPage.svelte'
@@ -18,7 +17,6 @@
     { id: SETTINGS_PAGE.GENERAL, label: 'General', comp: GeneralPage },
     { id: SETTINGS_PAGE.PROFILES, label: 'Profiles', comp: ProfilesPage },
     { id: SETTINGS_PAGE.MODELS, label: 'Models', comp: ModelsPage },
-    { id: SETTINGS_PAGE.VOICE, label: 'Voice', comp: VoicePage },
     { id: SETTINGS_PAGE.TOOLS, label: 'Tools & Permissions', comp: ToolsPage },
     { id: SETTINGS_PAGE.INTEGRATIONS, label: 'Integrations', comp: IntegrationsPage },
     { id: SETTINGS_PAGE.ADVANCED, label: 'Advanced', comp: AdvancedPage },

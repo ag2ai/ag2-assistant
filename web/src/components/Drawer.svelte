@@ -321,14 +321,14 @@
     </div>
   {/if}
 
-  <div class="tabs">
-    <button class="tab" class:on={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={13} /> Chats</button>
-    <button class="tab" class:on={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={13} /> Tasks</button>
-    <button class="newbtn" onclick={newChat}><Icon name="plus" size={14} /> New</button>
+  <div class="segbar" role="tablist" aria-label="View">
+    <button class="seg" class:on={$drawerTab === 'chats'} role="tab" aria-selected={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={14} /> Chats</button>
+    <button class="seg" class:on={$drawerTab === 'tasks'} role="tab" aria-selected={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={14} /> Tasks</button>
   </div>
 
   <div class="dlist">
     {#if $drawerTab === 'chats'}
+      <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
       {#if !$sessions.length}<div class="none">No conversations yet.</div>{/if}
       {#each chatRows as { item: s, sep } (s.session_id)}
         {#if sep}<div class="datesep">{sep}</div>{/if}

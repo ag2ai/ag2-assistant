@@ -48,7 +48,6 @@ export const SETTINGS_PAGE = Object.freeze({
   GENERAL: 'general',
   PROFILES: 'profiles',
   MODELS: 'models',
-  VOICE: 'voice',
   TOOLS: 'tools',
   INTEGRATIONS: 'integrations',
   ADVANCED: 'advanced',

@@ -1,8 +1,9 @@
 <script>
-  // Settings → Voice: the voice provider (per-profile) plus the SHARED Gemini/OpenAI
-  // provider-key rows. Voice runs on Gemini or OpenAI directly and reads those keys
-  // from the environment, so these are deliberately the same install-wide key slots
-  // the model configs use — not a separate voice-only secret.
+  // Settings → Models → Live: the voice provider (per-profile) plus the SHARED
+  // Gemini/OpenAI provider-key rows. Voice runs on Gemini or OpenAI directly and
+  // reads those keys from the environment, so these are deliberately the same
+  // install-wide key slots the model configs use — not a separate voice-only secret.
+  // Rendered as the "Live" group of ModelsPage (no longer its own nav page).
   import { getSettings } from './context.svelte.js'
   import { api } from '../../transport/api.js'
 
