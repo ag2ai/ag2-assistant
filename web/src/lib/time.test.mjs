@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { foldEvent } from '../project.js'
-import { dayKey, fmtDay, dayRows } from './time.js'
+import { dayKey, fmtDay, fmtDayShort, dayRows } from './time.js'
 
 // Local noon of (today + offset), as Unix seconds — matches AG2 `created_at`.
 // Anchored at noon so a message never sits near midnight and flips its day.
@@ -110,4 +110,47 @@ test('fmtDay: Today/Yesterday/absolute date, always with the first-message time'
   assert.doesNotMatch(fmtDay(today), new RegExp(String(new Date().getFullYear())))
   const priorYear = new Date(2000, 0, 15, 12).getTime() / 1000
   assert.match(fmtDay(priorYear), /2000/)
+})
+
+// --- Chats-list date section headers (fmtDayShort + dayRows) -------------------
+// A chat row's ISO `updated` (last-message time) at local noon of (today+offset),
+// noon-anchored so it can't drift across midnight.
+const isoAt = (offset) => {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  d.setHours(12, 0, 0, 0)
+  return d.toISOString()
+}
+// A drawer chat row: dayRows keys off `at`, which the drawer maps from `updated`.
+const chat = (id, offset) => ({ session_id: id, at: isoAt(offset) })
+
+test('fmtDayShort: today is "Recent", then "Yesterday", then a date — never a time', () => {
+  assert.equal(fmtDayShort(isoAt(0)), 'Recent')
+  assert.equal(fmtDayShort(isoAt(-1)), 'Yesterday')
+  const older = fmtDayShort(isoAt(-4))
+  assert.doesNotMatch(older, /Recent|Yesterday|Today/)
+  assert.doesNotMatch(older, / at |:\d\d/) // date-only: no "at TIME", no clock
+  // This year → no year; a prior year → year included.
+  assert.doesNotMatch(fmtDayShort(isoAt(0)), new RegExp(String(new Date().getFullYear())))
+  assert.match(fmtDayShort(new Date(2000, 0, 15, 12).toISOString()), /2000/)
+})
+
+test('chats list: one header per day, on the first row of each day (newest-first)', () => {
+  const rows = dayRows(
+    [chat('a', 0), chat('b', 0), chat('c', -1), chat('d', -4)],
+    fmtDayShort,
+  )
+  const seps = rows.map((r) => r.sep)
+  // "Recent" leads and spans both same-day chats; "Yesterday"; then a bare date.
+  assert.equal(seps[0], 'Recent')
+  assert.equal(seps[1], null) // second same-day chat: no repeat header
+  assert.equal(seps[2], 'Yesterday')
+  assert.match(seps[3], /\w+ \d/) // "Thu, Jul 11"-style
+  assert.equal(seps.filter(Boolean).length, 3)
+})
+
+test('chats list: a chat with a blank `updated` gets no header and rides under the last one', () => {
+  const rows = dayRows([chat('a', 0), { session_id: 'b', at: '' }], fmtDayShort)
+  const seps = rows.map((r) => r.sep)
+  assert.deepEqual(seps, ['Recent', null]) // blank-updated chat: no header
 })

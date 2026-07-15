@@ -92,16 +92,38 @@ export function fmtDay(v) {
   return `${day} at ${time}`
 }
 
-// Interleave day breakpoints through a thread's items: each item is tagged with
-// `sep` — the divider label to render above it (fmtDay) when it's the first item
-// of a new calendar day, else null. Items without a time (`at` missing, e.g. a
-// live/streaming bubble before created_at lands) never start a new day. Pure so
-// the thread view and its tests share one source of truth.
-export function dayRows(items) {
+// Date-only day label for a section header (the chats list), sibling to fmtDay
+// but WITHOUT the "at TIME" tail — a header groups many rows, each with its own
+// time, so a single time would be meaningless. Today's group reads "Recent"
+// (friendlier than "Today" for a chat list); "Yesterday" otherwise a relative
+// day name is dropped for an absolute date: "Wed, Jul 13" — weekday + month +
+// day, with the year appended only when it isn't the current one.
+export function fmtDayShort(v) {
+  const d = toDate(v)
+  if (!d) return ''
+  const now = new Date()
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
+  const dayDiff = Math.round((startOfDay(d) - startOfDay(now)) / 86400000)
+  if (dayDiff === 0) return 'Recent'
+  if (dayDiff === -1) return 'Yesterday'
+  const opts = { weekday: 'short', month: 'short', day: 'numeric' }
+  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
+  return d.toLocaleDateString([], opts)
+}
+
+// Interleave day breakpoints through a list of items: each item is tagged with
+// `sep` — the divider/header label to render above it when it's the first item
+// of a new calendar day, else null. `label` builds that string from the item's
+// `at` (defaults to fmtDay, the thread's per-item divider with a time; the chats
+// list passes fmtDayShort for date-only section headers). Items without a time
+// (`at` missing/blank — a live/streaming bubble before created_at lands, or a
+// bare session stub) never start a new day, so they ride under the previous
+// header. Pure so the views and their tests share one source of truth.
+export function dayRows(items, label = fmtDay) {
   let lastDay = null
   return items.map((item) => {
     const key = dayKey(item.at)
-    const sep = key && key !== lastDay ? fmtDay(item.at) : null
+    const sep = key && key !== lastDay ? label(item.at) : null
     if (key) lastDay = key
     return { item, sep }
   })

@@ -5,7 +5,7 @@
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
-  import { fmtWhen, fmtNextIn } from '../lib/time.js'
+  import { fmtWhen, fmtNextIn, dayRows, fmtDayShort } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
 
@@ -142,6 +142,13 @@
       document.removeEventListener('keydown', onDocKey)
     }
   })
+
+  // Chats grouped under date section headers by last-message time. `updated` is
+  // the session's last-update ISO stamp (rewritten on every message → respects
+  // the latest message, not the first); dayRows tags the first row of each
+  // calendar day with `sep`, the fmtDayShort header ("Recent"/"Yesterday"/date).
+  // The list already arrives newest-first, so the walk just detects day changes.
+  const chatRows = $derived(dayRows($sessions.map((s) => ({ ...s, at: s.updated })), fmtDayShort))
 
   const openChat = (id) => go('/c/' + id)
   const openTask = (id) => go('/t/' + id)
@@ -323,7 +330,8 @@
   <div class="dlist">
     {#if $drawerTab === 'chats'}
       {#if !$sessions.length}<div class="none">No conversations yet.</div>{/if}
-      {#each $sessions as s (s.session_id)}
+      {#each chatRows as { item: s, sep } (s.session_id)}
+        {#if sep}<div class="datesep">{sep}</div>{/if}
         <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.session_id} onclick={() => openChat(s.session_id)}>
           <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.session_id}</div>
           {#if confirmChat === s.session_id}
@@ -477,6 +485,11 @@
 
   /* Chat row: title + a hover-revealed trash that swaps to an inline "Delete?"
      confirm (same idiom as the Files modal). Delete is permanent. */
+  /* Date section header between chat rows: last-message day, left-aligned and
+     muted so it frames the group without competing with the chat titles. The
+     first-child rule drops the top margin so "Recent" hugs the list top. */
+  .datesep { font-size: 11px; font-weight: 600; letter-spacing: .3px; color: var(--muted); text-transform: uppercase; padding: 2px 8px; margin: 10px 0 2px; }
+  .datesep:first-child { margin-top: 2px; }
   .chatrow { display: flex; align-items: center; gap: 8px; }
   .clabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rowdel { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .12s, color .12s; }
