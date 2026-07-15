@@ -3,7 +3,6 @@
   import { sessions, tasks, drawerTab, settingsOpen, filesOpen, profiles } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
-  import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
   import { fmtWhen, fmtNextIn } from '../lib/time.js'
@@ -22,13 +21,11 @@
     .replace(/\b[Bb]etween (\S+) and (\S+)/, '$1–$2')
     .replace(/ through /g, '–')
 
-  // Profile switcher chips (§5.4). A row of palette-tinted monogram chips at the
+  // Profile switcher chips (§5.4). A row of accent-tinted monogram chips at the
   // top of the Drawer: the active profile filled, others outlined; click switches
   // (full-page nav — App.svelte's boot makes the URL pid the persisted choice and
-  // applies its palette). >4 profiles collapse the overflow into a small anchored
-  // picker. Reuses the PALETTES hex map (same source as the create-profile
-  // swatches) — profile.palette id → --p-500 hex.
-  const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
+  // applies its accent). >4 profiles collapse the overflow into a small anchored
+  // picker. Each profile's accent is a #rrggbb hex applied directly.
   const list = $derived($profiles.list || [])
   // ⌘1..9 shortcut hint for a chip's tooltip (§5.4): the profile's 1-based index in
   // registry order, shown only for the first 9 (the shortcut range). ⌘ on mac, Ctrl
@@ -62,13 +59,13 @@
   }
 
   // "+" chip → profile-creation modal (§5.4). Reuses ProfileForm (same form as
-  // onboarding). Palettes already claimed by existing profiles are hidden. On
-  // success → full-page navigate to /app/{pid}/ (App.svelte's boot adopts it and
-  // applies its palette). 400s (e.g. duplicate palette) surface inline in the form.
+  // onboarding). Preset accents already claimed by existing profiles are hidden
+  // (a custom colour is always available). On success → full-page navigate to
+  // /app/{pid}/ (App.svelte's boot adopts it and applies its accent).
   let createOpen = $state(false)
-  const claimedPalettes = $derived(list.map((p) => p.palette))
-  async function createProfile({ name, palette }) {
-    const res = await api.createProfile(name, palette) // throws → inline
+  const claimedAccents = $derived(list.map((p) => p.accent))
+  async function createProfile({ name, accent }) {
+    const res = await api.createProfile(name, accent) // throws → inline
     location.assign('/app/' + res.profile.id + '/')
   }
 
@@ -248,7 +245,7 @@
           <button
             class="chip"
             class:active={isActive}
-            style="--p:{paletteHex(p.palette)}"
+            style="--p:{p.accent}"
             title={chipTitle(p)}
             role="tab"
             aria-selected={isActive}
@@ -296,7 +293,7 @@
               aria-current={isActive ? 'true' : undefined}
               onclick={() => (isActive ? (pickerOpen = false) : switchTo(p.id))}
             >
-              <span class="profdot" style="--dot:{paletteHex(p.palette)}"></span>
+              <span class="profdot" style="--dot:{p.accent}"></span>
               <span class="profname">{p.name}</span>
               {#if hasUnseen(p.id)}<span class="actdot inmenu" title="unread results"></span>{/if}
               {#if isActive}<Icon name="check" size={13} />{/if}
@@ -312,7 +309,7 @@
     <div class="modal profcreate">
       <h2>New profile</h2>
       <p class="pc-lead">A colour-coded, isolated workspace — its own chats, tasks, memory, and files.</p>
-      <ProfileForm claimed={claimedPalettes} submitLabel="Create profile" busyLabel="Creating…" onSubmit={createProfile} />
+      <ProfileForm claimed={claimedAccents} submitLabel="Create profile" busyLabel="Creating…" onSubmit={createProfile} />
       <button class="modal-close" onclick={() => (createOpen = false)}>Cancel</button>
     </div>
   {/if}

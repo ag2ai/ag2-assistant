@@ -2,6 +2,9 @@
 
 The autouse conftest fixture points HOME at a tmp dir, so ``data_dir()`` — and
 therefore the registry file — resolves under disposable space.
+
+Accents are opaque ``#rrggbb`` hexes (ADR 0002): the backend keeps no palette
+catalogue and enforces neither a closed set nor cross-profile uniqueness.
 """
 
 import pytest
@@ -9,12 +12,16 @@ import pytest
 from assistant import profiles
 from assistant.config import Config, load_config
 
+TEAL = "#109e91"
+CORAL = "#f95339"
+OCEAN = "#2f6fe0"
+
 
 def test_create_slug_derived_workspace_and_first_becomes_default():
-    meta = profiles.create_profile("My Work", "teal")
+    meta = profiles.create_profile("My Work", TEAL)
     assert meta.id == "my-work"  # lowercase, alphanumeric+dashes
     assert meta.name == "My Work"
-    assert meta.palette == "teal"
+    assert meta.accent == TEAL
     assert meta.archived is False
     # workspace is derived from the profile dir (not user-chosen), never stored.
     assert meta.workspace == str(profiles.profile_dir("my-work") / "workspace")
@@ -24,20 +31,20 @@ def test_create_slug_derived_workspace_and_first_becomes_default():
     assert reg["active_default"] == "my-work"  # first profile becomes active_default
 
     # second profile does not steal active_default
-    second = profiles.create_profile("Personal", "coral")
+    second = profiles.create_profile("Personal", CORAL)
     assert profiles.load_registry()["active_default"] == "my-work"
     assert second.id == "personal"
 
 
 def test_slug_dedupe():
-    a = profiles.create_profile("Work", "teal")
-    b = profiles.create_profile("Work", "coral")
-    c = profiles.create_profile("Work", "ocean")
+    a = profiles.create_profile("Work", TEAL)
+    b = profiles.create_profile("Work", CORAL)
+    c = profiles.create_profile("Work", OCEAN)
     assert (a.id, b.id, c.id) == ("work", "work-2", "work-3")
 
 
 def test_workspace_is_derived_not_stored():
-    profiles.create_profile("Work", "teal")
+    profiles.create_profile("Work", TEAL)
     # The workspace is a computed property; the registry entry never persists it.
     entry = profiles.load_registry()["profiles"][0]
     assert "workspace" not in entry
@@ -48,11 +55,11 @@ def test_workspace_is_derived_not_stored():
 
 def test_empty_name_rejected():
     with pytest.raises(ValueError):
-        profiles.create_profile("   ", "teal")
+        profiles.create_profile("   ", TEAL)
 
 
 def test_rename_keeps_id():
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", TEAL)
     renamed = profiles.rename_profile(meta.id, "Day Job")
     assert renamed.id == "work"  # id immutable
     assert renamed.name == "Day Job"
@@ -60,7 +67,7 @@ def test_rename_keeps_id():
 
 
 def test_rename_empty_rejected():
-    profiles.create_profile("Work", "teal")
+    profiles.create_profile("Work", TEAL)
     with pytest.raises(ValueError):
         profiles.rename_profile("work", "")
 
@@ -69,53 +76,55 @@ def test_unknown_pid_raises():
     with pytest.raises(ValueError):
         profiles.rename_profile("nope", "X")
     with pytest.raises(ValueError):
-        profiles.set_palette("nope", "teal")
+        profiles.set_accent("nope", TEAL)
     with pytest.raises(ValueError):
         profiles.set_active_default("nope")
     assert profiles.get_profile("nope") is None
 
 
-def test_invalid_palette_rejected():
+def test_invalid_accent_rejected():
+    # Not a hex at all.
     with pytest.raises(ValueError):
         profiles.create_profile("Work", "rainbow")
-    profiles.create_profile("Work", "teal")
+    # Wrong shape (3-digit, no hash, bad chars).
+    for bad in ("#fff", "109e91", "#12345g", "#1234567"):
+        with pytest.raises(ValueError):
+            profiles.create_profile("Work", bad)
+    profiles.create_profile("Work", TEAL)
     with pytest.raises(ValueError):
-        profiles.set_palette("work", "rainbow")
+        profiles.set_accent("work", "not-a-hex")
 
 
-def test_palette_uniqueness_and_relaxation_beyond_six():
-    # first six must be distinct
-    for name, pal in zip(("A", "B", "C", "D", "E", "F"), profiles.PALETTES, strict=True):
-        profiles.create_profile(name, pal)
-
-    # a seventh distinct palette does not exist; duplicate is now allowed (>6 rule)
-    seventh = profiles.create_profile("G", "teal")
-    assert seventh.palette == "teal"
-
-    # while ≤6 unarchived, duplicates are rejected — verify with a fresh registry
-    profiles.set_onboarded(False)  # touch registry; no effect on the rule
+def test_accent_normalised_to_lowercase():
+    meta = profiles.create_profile("Work", "#AABBCC")
+    assert meta.accent == "#aabbcc"
+    assert profiles.set_accent("work", "#DDEEFF").accent == "#ddeeff"
 
 
-def test_palette_duplicate_rejected_within_six():
-    profiles.create_profile("A", "teal")
-    with pytest.raises(ValueError):
-        profiles.create_profile("B", "teal")
+def test_custom_accent_accepted():
+    meta = profiles.create_profile("Work", "#3a7bd5")
+    assert meta.accent == "#3a7bd5"
 
 
-def test_set_palette_excludes_self():
-    profiles.create_profile("A", "teal")
-    # setting a profile to its own current palette is a no-op, not a conflict
-    meta = profiles.set_palette("a", "teal")
-    assert meta.palette == "teal"
-    # but taking another profile's palette is rejected
-    profiles.create_profile("B", "coral")
-    with pytest.raises(ValueError):
-        profiles.set_palette("a", "coral")
+def test_duplicate_accent_allowed():
+    # No uniqueness rule anymore — two profiles may share a colour (ADR 0002).
+    profiles.create_profile("A", TEAL)
+    b = profiles.create_profile("B", TEAL)
+    assert b.accent == TEAL
+    # set_accent onto a colour another profile already holds is fine too.
+    profiles.create_profile("C", CORAL)
+    assert profiles.set_accent("a", CORAL).accent == CORAL
+
+
+def test_set_accent_updates_value():
+    profiles.create_profile("A", TEAL)
+    assert profiles.set_accent("a", OCEAN).accent == OCEAN
+    assert profiles.get_profile("a").accent == OCEAN
 
 
 def test_archive_flag_and_list_filtering():
-    profiles.create_profile("Work", "teal")
-    profiles.create_profile("Personal", "coral")
+    profiles.create_profile("Work", TEAL)
+    profiles.create_profile("Personal", CORAL)
     profiles.archive_profile("personal")
 
     assert profiles.get_profile("personal").archived is True
@@ -124,14 +133,46 @@ def test_archive_flag_and_list_filtering():
     allp = [m.id for m in profiles.list_profiles(include_archived=True)]
     assert set(allp) == {"work", "personal"}
 
-    # archiving frees the palette for reuse within the ≤6 rule
-    reused = profiles.create_profile("New", "coral")
-    assert reused.palette == "coral"
+
+def test_restore_profile_clears_flag_and_keeps_accent():
+    profiles.create_profile("Work", TEAL)
+    profiles.create_profile("Personal", CORAL)
+    profiles.archive_profile("personal")
+    assert profiles.get_profile("personal").archived is True
+
+    restored = profiles.restore_profile("personal")
+    assert restored.archived is False
+    assert restored.accent == CORAL  # keeps its stored accent
+    assert profiles.get_profile("personal").archived is False
+    # it reappears in the default (unarchived-only) listing
+    assert "personal" in [m.id for m in profiles.list_profiles()]
+
+
+def test_restore_unknown_raises():
+    with pytest.raises(ValueError):
+        profiles.restore_profile("nope")
+
+
+def test_delete_profile_removes_entry():
+    profiles.create_profile("Work", TEAL)
+    profiles.create_profile("Personal", CORAL)
+    profiles.archive_profile("personal")
+
+    removed = profiles.delete_profile("personal")
+    assert removed.id == "personal"
+    # gone from the registry entirely, even with include_archived
+    assert profiles.get_profile("personal") is None
+    assert "personal" not in [m.id for m in profiles.list_profiles(include_archived=True)]
+
+
+def test_delete_unknown_raises():
+    with pytest.raises(ValueError):
+        profiles.delete_profile("nope")
 
 
 def test_set_active_default():
-    profiles.create_profile("Work", "teal")
-    profiles.create_profile("Personal", "coral")
+    profiles.create_profile("Work", TEAL)
+    profiles.create_profile("Personal", CORAL)
     profiles.set_active_default("personal")
     assert profiles.load_registry()["active_default"] == "personal"
 
@@ -168,7 +209,7 @@ def test_load_registry_does_not_create_tree(tmp_path, monkeypatch):
 
 
 def test_with_profile_path_derivation():
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", TEAL)
     base = load_config()
     derived = base.with_profile(meta)
 
@@ -187,7 +228,7 @@ def test_with_profile_path_derivation():
 def test_with_profile_paths_differ_from_legacy_root_locations():
     """Every overridable path field on the derived config must differ from its
     legacy root-level location (§3.4) — else installed state leaks across profiles."""
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", TEAL)
     base = Config()
     derived = base.with_profile(meta)
 
@@ -197,7 +238,7 @@ def test_with_profile_paths_differ_from_legacy_root_locations():
 
 
 def test_with_profile_deep_copy_isolates_nested_models():
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", TEAL)
     base = Config()
     derived = base.with_profile(meta)
     derived.llm.model = "changed"

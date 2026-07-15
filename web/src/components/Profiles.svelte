@@ -6,30 +6,37 @@
   // Archive (§4.9): a quiet action per row; archiving the active_default requires
   // choosing a replacement (pre-selected). Archiving the ACTIVE profile navigates
   // to /app/ so boot re-resolves.
+  import { onDestroy } from 'svelte'
   import { profiles, settingsPage } from '../store.js'
   import { api } from '../transport/api.js'
   import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
-  import { PALETTES, setPalette, getPalette } from '../design/palette.js'
+  import { PALETTES, setAccent, getAccent } from '../design/palette.js'
   import Icon from './Icon.svelte'
 
-  const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
   const list = $derived($profiles.list || [])
   const activeId = $derived($profiles.activeId || getActiveProfileId())
   // active_default from the registry (mirrored on the store when we refetch).
   let activeDefault = $state(null)
 
-  // Palettes taken by OTHER profiles — hidden from the active profile's swatches;
-  // the profile keeps its own.
+  // Preset accents taken by OTHER profiles — hidden from the active profile's
+  // preset swatches (a nudge; a custom colour can still reproduce any of them).
   const claimedByOthers = $derived(
-    list.filter((p) => p.id !== activeId).map((p) => p.palette)
+    list.filter((p) => p.id !== activeId).map((p) => p.accent)
   )
 
   // Inline editor state for the active profile.
   let editing = $state(false)
   let eName = $state('')
-  let ePalette = $state('')
+  let eAccent = $state('')
+  // Accent applied when editing began — restored on rollback (§5.4). Picking a
+  // swatch applies the scheme live (preview) without persisting to the backend;
+  // if the edit ends without a save we revert to this.
+  let origAccent = $state('')
   let busy = $state(false)
   let err = $state('')
+
+  // The edited accent is a custom colour when it's not one of the presets.
+  const eCustom = $derived(!PALETTES.some((x) => x.hex === eAccent))
 
   // Archive confirm state: {pid, name, isActive} + the chosen replacement default.
   let confirmArchive = $state(null)
@@ -38,10 +45,47 @@
   function startEdit(p) {
     err = ''
     eName = p.name
-    ePalette = p.palette
+    eAccent = p.accent
+    origAccent = p.accent   // the profile's saved colour — baseline for rollback & save-diff
     editing = true
   }
-  function cancelEdit() { editing = false; err = '' }
+
+  // Tint the active profile in the store so every surface bound to its accent
+  // (Drawer monogram chips, the row dot here) re-renders with `hex`. Optimistic —
+  // rolled back if the edit isn't saved.
+  function tintActive(hex) {
+    $profiles = {
+      ...$profiles,
+      list: (($profiles.list) || []).map((p) => (p.id === activeId ? { ...p, accent: hex } : p)),
+    }
+  }
+
+  // Live-preview an accent: the active profile is the only one editable here, so
+  // apply the whole scheme immediately — global accent (setAccent) AND the
+  // profile-tinted surfaces (tintActive). Nothing is persisted until Save.
+  function pickAccent(hex) {
+    eAccent = hex
+    setAccent(hex)
+    tintActive(hex)
+  }
+  // Native colour input → any custom hex, previewed the same way.
+  function pickCustom(e) {
+    const v = (e.target.value || '').toLowerCase()
+    if (/^#[0-9a-f]{6}$/.test(v)) pickAccent(v)
+  }
+
+  // Restore the pre-edit scheme if the live preview drifted from it — both the
+  // global accent and the store tint.
+  function rollbackAccent() {
+    if (!origAccent) return
+    if (getAccent() !== origAccent) setAccent(origAccent)
+    if (($profiles.list || []).some((p) => p.id === activeId && p.accent !== origAccent)) tintActive(origAccent)
+  }
+
+  function cancelEdit() { rollbackAccent(); editing = false; err = '' }
+
+  // Closing Settings (unmount) mid-edit counts as "not saved" → revert the preview.
+  onDestroy(() => { if (editing) rollbackAccent() })
 
   // Switch the active profile (§5.4): a full-page nav to /app/{pid}/, the same
   // mechanism as the Drawer chips and ⌘1..9 shortcuts. App.svelte's boot adopts
@@ -68,14 +112,18 @@
     busy = true; err = ''
     const body = {}
     if (eName.trim() && eName.trim() !== p.name) body.name = eName.trim()
-    if (ePalette && ePalette !== p.palette) body.palette = ePalette
+    // Diff against origAccent, not p.accent — the store already holds the
+    // optimistic preview value, so p.accent === eAccent here.
+    if (eAccent && eAccent !== origAccent) body.accent = eAccent
     if (!Object.keys(body).length) { editing = false; busy = false; return }
     try {
       await api.updateProfile(p.id, body)
-      const paletteChanged = 'palette' in body
+      const accentChanged = 'accent' in body
       await refetch()
-      // Re-apply the palette if the ACTIVE profile's palette changed (§5.4).
-      if (paletteChanged && p.id === activeId && ePalette !== getPalette()) setPalette(ePalette)
+      // The scheme was already applied live while picking; only re-assert it here
+      // for the ACTIVE profile if something drifted it (§5.4).
+      if (accentChanged && p.id === activeId && eAccent !== getAccent()) setAccent(eAccent)
+      origAccent = eAccent   // the preview is now the committed baseline
       editing = false
     } catch (e) {
       err = (e && e.message) || 'Could not save profile'
@@ -131,7 +179,7 @@
       onclick={isActive ? undefined : () => switchTo(p)}
       onkeydown={isActive ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTo(p) } }}
     >
-      <span class="pdot" style="--dot:{paletteHex(p.palette)}"></span>
+      <span class="pdot" style="--dot:{p.accent}"></span>
       <div class="pmeta">
         <div class="pname">
           {p.name}
@@ -158,14 +206,23 @@
         <div class="pfield">
           <span class="plabel">Colour</span>
           <div class="pdots">
-            {#each PALETTES.filter((x) => !claimedByOthers.includes(x.id)) as sw (sw.id)}
+            {#each PALETTES.filter((x) => !claimedByOthers.includes(x.hex) || x.hex === origAccent) as sw (sw.id)}
               <button
-                class="pswatch" class:on={ePalette === sw.id}
+                class="pswatch" class:on={eAccent === sw.hex}
                 style="--dot:{sw.hex}" title={sw.label} aria-label={sw.label}
-                onclick={() => (ePalette = sw.id)}
-              >{#if ePalette === sw.id}<Icon name="check" size={12} />{/if}</button>
+                onclick={() => pickAccent(sw.hex)}
+              >{#if eAccent === sw.hex}<Icon name="check" size={12} />{/if}</button>
             {/each}
+            <!-- Custom colour: native <input type=color> behind the swatch. -->
+            <label
+              class="pswatch pcustom" class:on={eCustom} class:rainbow={!eCustom}
+              style="--dot:{eCustom ? eAccent : 'transparent'}" title="Custom colour"
+            >
+              {#if eCustom}<Icon name="check" size={12} />{/if}
+              <input type="color" value={eAccent} oninput={pickCustom} aria-label="Custom colour" />
+            </label>
           </div>
+          <div class="phex">{eAccent}{#if eCustom} · custom{/if}</div>
         </div>
         {#if err}<p class="perr">{err}</p>{/if}
         <div class="peditactions">
@@ -243,6 +300,21 @@
   }
   .pswatch:hover { transform: scale(1.08); }
   .pswatch.on { box-shadow: 0 0 0 2px var(--surface-sunk), 0 0 0 4px var(--dot); }
+
+  .pcustom { position: relative; overflow: hidden; padding: 0; }
+  .pcustom.rainbow {
+    background: conic-gradient(from 90deg, #f95339, #ec5d18, #e0b400, #2f8c44, #109e91, #2f6fe0, #7a52ec, #f95339);
+  }
+  .pcustom.rainbow.on { box-shadow: 0 0 0 2px var(--surface-sunk), 0 0 0 4px var(--accent); }
+  .pcustom input {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer; border: none; padding: 0; background: none;
+  }
+
+  .phex {
+    font-size: var(--text-xs); color: var(--text-muted);
+    font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  }
 
   .peditactions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
 

@@ -1,5 +1,5 @@
 <script>
-  // Compact theme cycle: light → dark → auto. Reads/writes the shared AG2Palette
+  // Compact theme cycle: light → dark → auto. Reads/writes the shared theme switcher (palette.js)
   // switcher (persists to localStorage + applies [data-theme] on <html>).
   import { getTheme, setTheme } from '../design/palette.js'
   import Icon from './Icon.svelte'

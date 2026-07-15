@@ -111,7 +111,7 @@ def _meta(tmp_path, pid="work"):
     return ProfileMeta(
         id=pid,
         name=pid.title(),
-        palette="teal",
+        accent="#109e91",
         created="2026-01-01T00:00:00Z",
     )
 

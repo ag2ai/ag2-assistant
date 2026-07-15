@@ -3,12 +3,14 @@
    ------------------------------------------------------------
    The accent is themeable. Each palette defines a --p-* ramp;
    the semantic --accent* tokens (in colors.css) resolve to it.
-   Switch by setting a [data-palette="…"] attribute on <html>
-   (or any wrapper) — do it in code with palette.js:
+   A profile's Accent (any #rrggbb hex) is applied in code via
+   palette.js — a preset hex activates its block below, any other
+   hex gets a ramp derived + inlined on <html>:
 
-       AG2Palette.setPalette('ocean')
+       AG2Accent.setAccent('#2f6fe0')   // preset → this Ocean block
+       AG2Accent.setAccent('#3a7bd5')   // custom → derived inline ramp
 
-   …or hand the agent that same call as a tool. Default = Teal
+   Default = Teal
    (calmer + more organic than the heritage coral, which stays
    alive as --brand-coral in the mascot antenna).
 

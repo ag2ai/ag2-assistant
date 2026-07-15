@@ -42,8 +42,8 @@ def _two_profile_client(monkeypatch):
 
 def _boot_two(client):
     """Create work + personal over HTTP on an already-open client. Returns (a, b)."""
-    client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-    client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+    client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+    client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
     return "work", "personal"
 
 
@@ -340,8 +340,8 @@ async def test_a_scheduler_fires_while_b_active(monkeypatch):
 
     use_fake_agent(monkeypatch)
 
-    a_meta = profiles.create_profile("Work", "teal")
-    b_meta = profiles.create_profile("Personal", "coral")
+    a_meta = profiles.create_profile("Work", "#109e91")
+    b_meta = profiles.create_profile("Personal", "#f95339")
     profiles.profile_dir(a_meta.id).mkdir(parents=True, exist_ok=True)
     profiles.profile_dir(b_meta.id).mkdir(parents=True, exist_ok=True)
 

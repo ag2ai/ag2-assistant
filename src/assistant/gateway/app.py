@@ -23,8 +23,8 @@ Route map:
     GET/POST /api/memory                     -> universal "who the user is" doc (shared root/user.db)
     POST /api/identity                       -> seed universal doc from web onboarding (name/location/hours/style); seed-only, never clobbers
     GET  /api/profiles                       -> {profiles, active_default, onboarded} (§3.5 contract)
-    POST /api/profiles                       -> create {name, palette}; boots live
-    POST /api/profiles/{pid}                 -> rename / palette (display-only)
+    POST /api/profiles                       -> create {name, accent}; boots live
+    POST /api/profiles/{pid}                 -> rename / accent (display-only)
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9)
     GET  /api/channels                       -> {platform: {profile, token_present, active, error}} (install-level)
     POST /api/channels                       -> bind {platform, profile:pid|null}; hot-applies; returns updated entry
@@ -246,12 +246,12 @@ class IdentityRequest(BaseModel):
 
 class ProfileCreateRequest(BaseModel):
     name: str
-    palette: str
+    accent: str
 
 
 class ProfileUpdateRequest(BaseModel):
     name: str | None = None
-    palette: str | None = None
+    accent: str | None = None
 
 
 class ProfileArchiveRequest(BaseModel):
@@ -911,7 +911,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         return {
             "id": meta.id,
             "name": meta.name,
-            "palette": meta.palette,
+            "accent": meta.accent,
             "workspace": meta.workspace,
             "created": meta.created,
         }
@@ -939,14 +939,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def create_profile(req: ProfileCreateRequest):
         """Create a profile (dir + registry) and boot its runtime live (§3.5)."""
         try:
-            runtime = await manager.create(req.name, req.palette)
+            runtime = await manager.create(req.name, req.accent)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"profile": _profile_view(runtime.meta)}
 
     @app.post("/api/profiles/{pid}")
     async def update_profile(pid: str, req: ProfileUpdateRequest):
-        """Rename and/or set palette (both display-only, registry-level). Unknown pid →
+        """Rename and/or set accent (both display-only, registry-level). Unknown pid →
         404, invalid value → 400."""
         from assistant import profiles as profiles_mod
 
@@ -955,8 +955,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         try:
             if req.name is not None:
                 profiles_mod.rename_profile(pid, req.name)
-            if req.palette is not None:
-                profiles_mod.set_palette(pid, req.palette)
+            if req.accent is not None:
+                profiles_mod.set_accent(pid, req.accent)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"profile": _profile_view(profiles_mod.get_profile(pid))}

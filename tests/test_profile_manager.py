@@ -55,8 +55,8 @@ async def test_boot_skips_archived():
     from assistant import profiles
     from assistant.gateway.profile_manager import ProfileManager
 
-    a = profiles.create_profile("Work", "teal")
-    b = profiles.create_profile("Personal", "coral")
+    a = profiles.create_profile("Work", "#109e91")
+    b = profiles.create_profile("Personal", "#f95339")
     profiles.archive_profile(b.id)
 
     mgr = ProfileManager(memory=False, persist=False)
@@ -74,8 +74,8 @@ async def test_get_raises_unknown_archived_and_not_running():
         UnknownProfile,
     )
 
-    a = profiles.create_profile("Work", "teal")
-    b = profiles.create_profile("Personal", "coral")
+    a = profiles.create_profile("Work", "#109e91")
+    b = profiles.create_profile("Personal", "#f95339")
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -90,7 +90,7 @@ async def test_get_raises_unknown_archived_and_not_running():
         with pytest.raises(ArchivedProfile):
             mgr.get(b.id)
         # registered + unarchived but not running → server-bug RuntimeError
-        c = profiles.create_profile("Third", "ocean")
+        c = profiles.create_profile("Third", "#2f6fe0")
         with pytest.raises(RuntimeError):
             mgr.get(c.id)
     finally:
@@ -103,7 +103,7 @@ async def test_create_boots_live():
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        runtime = await mgr.create("Work", "teal")
+        runtime = await mgr.create("Work", "#109e91")
         assert runtime.pid == "work"
         assert mgr.get("work") is runtime
         assert runtime.gateway is not None
@@ -124,7 +124,7 @@ async def test_archive_refuses_last_profile():
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        await mgr.create("Only", "teal")
+        await mgr.create("Only", "#109e91")
         with pytest.raises(ValueError):
             await mgr.archive("only")
     finally:
@@ -138,8 +138,8 @@ async def test_archive_requires_new_default_when_archiving_active():
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        a = await mgr.create("Work", "teal")  # first → active_default
-        b = await mgr.create("Personal", "coral")
+        a = await mgr.create("Work", "#109e91")  # first → active_default
+        b = await mgr.create("Personal", "#f95339")
         assert mgr.active_default == a.pid
 
         # archiving the active default without a replacement → ValueError
@@ -167,8 +167,8 @@ async def test_restart_after_archive_stays_gone(monkeypatch):
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
-    a = await mgr.create("Work", "teal")  # first → active_default
-    b = await mgr.create("Personal", "coral")
+    a = await mgr.create("Work", "#109e91")  # first → active_default
+    b = await mgr.create("Personal", "#f95339")
     await mgr.archive(b.pid)  # archiving a non-default needs no replacement
     b_dir = profiles.profile_dir(b.pid)
     assert b_dir.exists()
@@ -195,8 +195,8 @@ async def test_archive_bad_new_default_rejected():
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        a = await mgr.create("Work", "teal")
-        await mgr.create("Personal", "coral")
+        a = await mgr.create("Work", "#109e91")
+        await mgr.create("Personal", "#f95339")
         with pytest.raises(ValueError):
             await mgr.archive(a.pid, new_default="does-not-exist")
     finally:
@@ -210,7 +210,7 @@ def test_config_factory_derives_workspace_under_profile_dir():
     from assistant import profiles
     from assistant.gateway.profile_manager import config_factory
 
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", "#109e91")
     factory = config_factory(meta.id)
     # workspace is always <profile dir>/workspace — derived, not user-chosen.
     assert factory().workspace_dir == profiles.profile_dir(meta.id) / "workspace"
@@ -225,7 +225,7 @@ def test_config_factory_derives_active_llm_config(monkeypatch):
 
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
 
     # No store yet → flat gemini defaults.
@@ -243,7 +243,7 @@ def test_config_factory_env_wins_over_active_config(monkeypatch):
     from assistant import llm_configs, profiles
     from assistant.gateway.profile_manager import config_factory
 
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     entry = llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "claude-x"})
     llm_configs.set_active(entry["id"])
@@ -276,7 +276,7 @@ def test_resolve_active_profile_defaults_to_active():
     from assistant import profiles
     from assistant.gateway.profile_manager import resolve_active_profile
 
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", "#109e91")
     pid, cfg, factory = resolve_active_profile()
     assert pid == meta.id
     assert cfg.workspace_dir == profiles.profile_dir(meta.id) / "workspace"

@@ -87,7 +87,7 @@ def use_fake_agent(monkeypatch, agent_factory=None):
     monkeypatch.setattr(core_mod, "create_agent", factory)
 
 
-def make_profile_app(*, name="Test", palette="teal", persist=False, memory=False):
+def make_profile_app(*, name="Test", accent="#109e91", persist=False, memory=False):
     """Build a create_app FastAPI app around a ProfileManager with ONE profile.
 
     Returns ``(app, pid)``. Relies on the autouse HOME-isolation fixture so the
@@ -98,7 +98,7 @@ def make_profile_app(*, name="Test", palette="teal", persist=False, memory=False
     from assistant.gateway.app import create_app
     from assistant.gateway.profile_manager import ProfileManager
 
-    meta = profiles.create_profile(name, palette)
+    meta = profiles.create_profile(name, accent)
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     manager = ProfileManager(memory=memory, persist=persist)
     app = create_app(manager, persist=persist)

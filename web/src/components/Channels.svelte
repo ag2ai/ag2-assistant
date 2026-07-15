@@ -9,7 +9,6 @@
   import { onMount } from 'svelte'
   import { profiles } from '../store.js'
   import { api } from '../transport/api.js'
-  import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
 
   // Token env var(s) per platform — mirrors the backend CHANNEL_TOKEN_ENVS. Slack
@@ -28,10 +27,9 @@
   // Per-env token draft inputs (ENV_NAME -> string). Emptied after a successful save.
   let drafts = $state({})
 
-  // Unarchived profiles, for the pickers + name/palette lookup.
+  // Unarchived profiles, for the pickers + name/accent lookup.
   const list = $derived(($profiles.list || []).filter((p) => !p.archived))
   const profById = $derived(Object.fromEntries(list.map((p) => [p.id, p])))
-  const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
 
   async function load() {
     try {
@@ -121,15 +119,15 @@
     {#each PLATFORMS as pf}
       {@const c = channels[pf.id]}
       {@const st = statusOf(pf.id, c)}
-      {@const boundPalette = c && c.profile != null ? profById[c.profile]?.palette : null}
+      {@const boundAccent = c && c.profile != null ? profById[c.profile]?.accent : null}
       <div class="chrow">
         <div class="chtop">
           <div class="chmeta">
             <div class="chname">
               <span
                 class="chdot"
-                class:on={!!boundPalette}
-                style={boundPalette ? `--dot:${paletteHex(boundPalette)}` : ''}
+                class:on={!!boundAccent}
+                style={boundAccent ? `--dot:${boundAccent}` : ''}
               ></span>
               {pf.label}
             </div>

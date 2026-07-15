@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from assistant.cli import app
-from assistant.profiles import PALETTES
+from assistant.cli import _DEFAULT_ACCENT
 
 runner = CliRunner()
 
@@ -17,53 +17,50 @@ runner = CliRunner()
 # --- profiles create ---
 
 
-def test_create_default_palette_picks_first_unused():
+def test_create_default_accent():
     result = runner.invoke(app, ["profiles", "create", "Work"])
     assert result.exit_code == 0, result.output
-    # first PALETTES entry with nothing claimed yet
-    assert f"palette   {PALETTES[0]}" in result.output
+    # no --accent → the single fallback hex (backend keeps no palette catalogue)
+    assert f"accent    {_DEFAULT_ACCENT}" in result.output
     assert "Created profile 'work'" in result.output
 
     from assistant import profiles
 
     meta = profiles.get_profile("work")
     assert meta is not None
-    assert meta.palette == PALETTES[0]
+    assert meta.accent == _DEFAULT_ACCENT
     # first profile becomes the active default
     assert profiles.load_registry()["active_default"] == "work"
     # the dir was created
     assert profiles.profile_dir("work").exists()
 
 
-def test_create_second_default_palette_skips_used():
-    runner.invoke(app, ["profiles", "create", "Work"])
-    result = runner.invoke(app, ["profiles", "create", "Personal"])
+def test_create_explicit_accent():
+    result = runner.invoke(app, ["profiles", "create", "Work", "--accent", "#7A52EC"])
     assert result.exit_code == 0, result.output
-    # second profile takes the SECOND palette (first is claimed)
-    assert f"palette   {PALETTES[1]}" in result.output
-
-
-def test_create_explicit_palette():
-    result = runner.invoke(app, ["profiles", "create", "Work", "--palette", "violet"])
-    assert result.exit_code == 0, result.output
-    assert "palette   violet" in result.output
+    # normalised to lowercase on store + echo
+    assert "accent    #7a52ec" in result.output
 
     from assistant import profiles
 
-    assert profiles.get_profile("work").palette == "violet"
+    assert profiles.get_profile("work").accent == "#7a52ec"
 
 
-def test_create_duplicate_palette_errors():
-    runner.invoke(app, ["profiles", "create", "Work", "--palette", "teal"])
-    result = runner.invoke(app, ["profiles", "create", "Personal", "--palette", "teal"])
+def test_create_duplicate_accent_allowed():
+    # No uniqueness rule (ADR 0002): two profiles may share a colour.
+    runner.invoke(app, ["profiles", "create", "Work", "--accent", "#109e91"])
+    result = runner.invoke(app, ["profiles", "create", "Personal", "--accent", "#109e91"])
+    assert result.exit_code == 0, result.output
+
+    from assistant import profiles
+
+    assert profiles.get_profile("personal").accent == "#109e91"
+
+
+def test_create_invalid_accent_errors():
+    result = runner.invoke(app, ["profiles", "create", "Work", "--accent", "chartreuse"])
     assert result.exit_code == 1
-    assert "palette already in use" in result.output
-
-
-def test_create_invalid_palette_errors():
-    result = runner.invoke(app, ["profiles", "create", "Work", "--palette", "chartreuse"])
-    assert result.exit_code == 1
-    assert "invalid palette" in result.output
+    assert "invalid accent" in result.output
 
 
 def test_create_workspace_derived():

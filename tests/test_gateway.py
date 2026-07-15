@@ -373,9 +373,9 @@ def test_unknown_and_archived_profile_status(monkeypatch):
     from assistant.gateway.profile_manager import ProfileManager
 
     use_fake_agent(monkeypatch)
-    work = profiles.create_profile("Work", "teal")
+    work = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(work.id).mkdir(parents=True, exist_ok=True)
-    keep = profiles.create_profile("Personal", "coral")  # so archive isn't the last
+    keep = profiles.create_profile("Personal", "#f95339")  # so archive isn't the last
     profiles.profile_dir(keep.id).mkdir(parents=True, exist_ok=True)
 
     app = create_app(ProfileManager(memory=False, persist=False))
@@ -477,7 +477,7 @@ def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
     from assistant.profiles import create_profile, profile_dir
 
     use_fake_agent(monkeypatch)
-    meta = create_profile("Work", "teal")
+    meta = create_profile("Work", "#109e91")
     profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     manager = ProfileManager(memory=False, persist=False)
     app = create_app(manager)
@@ -586,7 +586,7 @@ async def test_hitl_routes_served_by_gateway(monkeypatch):
     from assistant.hitl.base import Question
 
     use_fake_agent(monkeypatch)
-    meta = profiles.create_profile("Test", "teal")
+    meta = profiles.create_profile("Test", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     manager = ProfileManager(memory=False, persist=False)
     app = create_app(manager)

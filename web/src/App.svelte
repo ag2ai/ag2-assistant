@@ -5,7 +5,7 @@
   import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, settingsPage, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
-  import { setPalette } from './design/palette.js'
+  import { setAccent } from './design/palette.js'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
@@ -69,12 +69,12 @@
       : list[0].id
     setActiveProfileId(pid)
     $profiles = { list, activeId: pid }
-    // §5.3 Palette ownership: the active profile's palette IS the applied palette.
-    // palette.js self-applied localStorage('ag2-palette') pre-Svelte as a *hint*
+    // §5.3 Accent ownership: the active profile's accent IS the applied accent.
+    // palette.js self-applied localStorage('ag2-accent') pre-Svelte as a *hint*
     // (avoids flash); correct it from the registry now — the profile is the source
     // of truth, not localStorage. Switching is full-page nav, so boot covers it too.
     const active = list.find((p) => p.id === pid)
-    if (active?.palette) setPalette(active.palette)
+    if (active?.accent) setAccent(active.accent)
     // Canonicalise the URL: bare /app/ or a stale/foreign pid → /app/{pid}/.
     if ($route.pid !== pid) redirectToProfile(pid)
     boot = 'ready'
@@ -106,7 +106,7 @@
     setActiveProfileId(pid)
     $profiles = { list, activeId: pid }
     const active = list.find((p) => p.id === pid)
-    if (active?.palette) setPalette(active.palette)
+    if (active?.accent) setAccent(active.accent)
     redirectToProfile(pid)
     boot = 'ready'
   }

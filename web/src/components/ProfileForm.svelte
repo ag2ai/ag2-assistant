@@ -9,50 +9,64 @@
   // the install root, so there's no folder field here.
   //
   // The form owns only field state + busy/error UI. The actual persistence is the
-  // parent's job via onSubmit({name, palette}) → Promise. If it throws, the message is
-  // shown inline (e.g. 400 "palette already in use"). This lets each consumer choose
-  // what "submit" means (create, create-then-continue, etc.).
+  // parent's job via onSubmit({name, accent}) → Promise. If it throws, the message is
+  // shown inline. This lets each consumer choose what "submit" means (create,
+  // create-then-continue, etc.). `accent` is an opaque #rrggbb hex (ADR 0002): a
+  // preset swatch or any colour from the custom picker.
   import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
 
   let {
-    // Palette ids already taken by other profiles — hidden from the swatches when
-    // creating (plan §5.4/§5.5). `keepPalettes` re-admits ids (e.g. the profile's
-    // own palette when editing) even if they're in `claimed`.
+    // Preset hexes already taken by other profiles — hidden from the swatches when
+    // creating (plan §5.4/§5.5). `keepAccents` re-admits hexes (e.g. the profile's
+    // own accent when editing) even if they're in `claimed`. Custom colours are
+    // never hidden — this is a gentle nudge over the presets, not a constraint.
     claimed = [],
-    keepPalettes = [],
+    keepAccents = [],
     // Initial values (edit affordances reuse this form shape too).
     initialName = '',
-    initialPalette = null,
+    initialAccent = null,
     submitLabel = 'Create profile',
     busyLabel = 'Creating…',
-    // onSubmit({name, palette}) -> Promise. Throw to show inline error.
+    // onSubmit({name, accent}) -> Promise. Throw to show inline error.
     onSubmit,
     autofocus = true,
   } = $props()
 
-  // Available swatches: all palettes minus claimed, plus any explicitly kept.
+  // Available preset swatches: all presets minus claimed, plus any explicitly kept.
   const available = $derived(
-    PALETTES.filter((p) => !claimed.includes(p.id) || keepPalettes.includes(p.id))
+    PALETTES.filter((p) => !claimed.includes(p.hex) || keepAccents.includes(p.hex))
   )
 
   let name = $state(initialName)
-  let palette = $state(initialPalette || (available[0] && available[0].id) || PALETTES[0].id)
+  let accent = $state(initialAccent || (available[0] && available[0].hex) || PALETTES[0].hex)
   let busy = $state(false)
   let error = $state('')
 
-  // If the currently-selected palette gets claimed out from under us (e.g. the
-  // loop removed it), fall back to the first still-available swatch.
+  // Custom = the accent is not one of the (available) presets. Drives the custom
+  // swatch's selected state + colour.
+  const isCustom = $derived(!PALETTES.some((p) => p.hex === accent))
+
+  // If the selected PRESET gets claimed out from under us (e.g. the loop removed
+  // it), fall back to the first still-available swatch. A custom colour is left
+  // alone — it's always valid.
   $effect(() => {
-    if (!available.some((p) => p.id === palette) && available.length) palette = available[0].id
+    if (!isCustom && !available.some((p) => p.hex === accent) && available.length) {
+      accent = available[0].hex
+    }
   })
+
+  function pickCustom(e) {
+    const v = (e.target.value || '').toLowerCase()
+    if (/^#[0-9a-f]{6}$/.test(v)) accent = v
+  }
 
   async function submit() {
     if (!name.trim() || busy) return
     busy = true
     error = ''
     try {
-      await onSubmit({ name: name.trim(), palette })
+      await onSubmit({ name: name.trim(), accent })
       // On success the parent typically navigates/closes; leave busy true so the
       // button doesn't flash back to idle mid-transition.
     } catch (e) {
@@ -78,17 +92,31 @@
       {#each available as p (p.id)}
         <button
           class="pf-dot"
-          class:on={palette === p.id}
+          class:on={accent === p.hex}
           style="--dot:{p.hex}"
           title={p.label}
           aria-label={p.label}
           type="button"
-          onclick={() => (palette = p.id)}
+          onclick={() => (accent = p.hex)}
         >
-          {#if palette === p.id}<Icon name="check" size={13} />{/if}
+          {#if accent === p.hex}<Icon name="check" size={13} />{/if}
         </button>
       {/each}
+
+      <!-- Custom colour: a native <input type=color> hidden behind our swatch.
+           The swatch shows the chosen colour when custom, else a rainbow ring. -->
+      <label
+        class="pf-dot pf-custom"
+        class:on={isCustom}
+        class:rainbow={!isCustom}
+        style="--dot:{isCustom ? accent : 'transparent'}"
+        title="Custom colour"
+      >
+        {#if isCustom}<Icon name="check" size={13} />{/if}
+        <input type="color" value={accent} oninput={pickCustom} aria-label="Custom colour" />
+      </label>
     </div>
+    <div class="pf-hex">{accent}{#if isCustom} · custom{/if}</div>
   </div>
 
   {#if error}<div class="pf-error"><Icon name="x" size={13} /> {error}</div>{/if}
@@ -130,6 +158,23 @@
   }
   .pf-dot:hover { transform: scale(1.08); }
   .pf-dot.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--dot); }
+
+  /* Custom-colour swatch: wraps a hidden native colour input. When no custom
+     colour is active it shows a rainbow ring to read as "pick any colour". */
+  .pf-custom { position: relative; overflow: hidden; padding: 0; }
+  .pf-custom.rainbow {
+    background: conic-gradient(from 90deg, #f95339, #ec5d18, #e0b400, #2f8c44, #109e91, #2f6fe0, #7a52ec, #f95339);
+  }
+  .pf-custom.rainbow.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+  .pf-custom input {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer; border: none; padding: 0; background: none;
+  }
+
+  .pf-hex {
+    margin-top: 2px; font-size: var(--text-xs); color: var(--text-muted);
+    font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  }
 
   .pf-error {
     display: flex; align-items: center; gap: 6px;

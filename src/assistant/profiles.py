@@ -16,8 +16,20 @@ from pathlib import Path
 
 from assistant.config import data_dir
 
-# The 6 design-system palettes (web/src/design/tokens/palettes.css).
-PALETTES = ("teal", "coral", "ocean", "violet", "sage", "sunset")
+# A profile's Accent is an opaque #rrggbb hex. The backend keeps NO catalogue of
+# named palettes — the preset colours + ramps live entirely in the frontend
+# (web/src/design/palette.js). See docs/adr/0002-frontend-owned-accent-color.md.
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _norm_accent(accent: str) -> str:
+    """Validate + normalise an accent to a lowercase ``#rrggbb`` hex. The only colour
+    rule the backend enforces is the format; it never checks a palette catalogue or
+    cross-profile uniqueness (ADR 0002)."""
+    s = accent.strip() if isinstance(accent, str) else accent
+    if not isinstance(s, str) or not _HEX_RE.match(s):
+        raise ValueError(f"invalid accent: {accent!r} (expected a #rrggbb hex)")
+    return s.lower()
 
 # The canonical messaging platforms a channel can bind to. This is the single
 # source of truth for platform names.
@@ -45,7 +57,7 @@ class ProfileMeta:
 
     id: str
     name: str
-    palette: str
+    accent: str
     created: str
     archived: bool = field(default=False)
 
@@ -114,7 +126,7 @@ def _meta(entry: dict) -> ProfileMeta:
     return ProfileMeta(
         id=entry["id"],
         name=entry["name"],
-        palette=entry["palette"],
+        accent=entry["accent"],
         created=entry["created"],
         archived=bool(entry.get("archived", False)),
     )
@@ -146,32 +158,16 @@ def _find(data: dict, pid: str) -> dict:
     raise ValueError(f"unknown profile: {pid}")
 
 
-def _check_palette(palette: str, data: dict, *, exclude: str | None = None) -> None:
-    """Validate a palette value and enforce per-profile uniqueness while ≤6 unarchived
-    profiles exist (the palette is the visual identity); reuse is allowed beyond 6."""
-    if palette not in PALETTES:
-        raise ValueError(f"invalid palette: {palette} (choose from {', '.join(PALETTES)})")
-    unarchived = [e for e in data["profiles"] if not e.get("archived")]
-    # Uniqueness holds only while ≤6 unarchived profiles exist; once all 6 palettes
-    # are spoken for, further profiles may reuse one (spec §3.2).
-    if len(unarchived) >= len(PALETTES):
-        return
-    for entry in unarchived:
-        if entry["id"] == exclude:
-            continue
-        if entry["palette"] == palette:
-            raise ValueError(f"palette already in use: {palette}")
-
-
-def create_profile(name: str, palette: str) -> ProfileMeta:
+def create_profile(name: str, accent: str) -> ProfileMeta:
     """Create a profile. Slug id derived from name (deduped -2/-3…); first profile
     becomes ``active_default``. The workspace is derived from the profile dir (not a
-    user choice) — see ``ProfileMeta.workspace``."""
+    user choice) — see ``ProfileMeta.workspace``. ``accent`` is a ``#rrggbb`` hex
+    (ADR 0002); no palette catalogue or uniqueness is enforced."""
     name = name.strip()
     if not name:
         raise ValueError("profile name is required")
+    accent = _norm_accent(accent)
     data = load_registry()
-    _check_palette(palette, data)
 
     base = _slug(name) or "profile"
     existing = {e["id"] for e in data["profiles"]}
@@ -184,7 +180,7 @@ def create_profile(name: str, palette: str) -> ProfileMeta:
     meta = ProfileMeta(
         id=pid,
         name=name,
-        palette=palette,
+        accent=accent,
         created=_now(),
     )
     data["profiles"].append(asdict(meta))
@@ -206,12 +202,13 @@ def rename_profile(pid: str, name: str) -> ProfileMeta:
     return _meta(entry)
 
 
-def set_palette(pid: str, palette: str) -> ProfileMeta:
-    """Change a profile's palette (validated + uniqueness-checked, self excluded)."""
+def set_accent(pid: str, accent: str) -> ProfileMeta:
+    """Change a profile's accent (validated as a ``#rrggbb`` hex; ADR 0002 — no
+    catalogue, no cross-profile uniqueness)."""
+    accent = _norm_accent(accent)
     data = load_registry()
     entry = _find(data, pid)
-    _check_palette(palette, data, exclude=pid)
-    entry["palette"] = palette
+    entry["accent"] = accent
     _write(data)
     return _meta(entry)
 
@@ -225,6 +222,28 @@ def archive_profile(pid: str) -> ProfileMeta:
     for platform, owner in data["channels"].items():
         if owner == pid:
             data["channels"][platform] = None
+    _write(data)
+    return _meta(entry)
+
+
+def restore_profile(pid: str) -> ProfileMeta:
+    """Clear a profile's archived flag (registry-level only; booting the runtime is
+    the ProfileManager's job). The profile keeps its stored accent. Unknown pid →
+    ValueError."""
+    data = load_registry()
+    entry = _find(data, pid)
+    entry["archived"] = False
+    _write(data)
+    return _meta(entry)
+
+
+def delete_profile(pid: str) -> ProfileMeta:
+    """Drop a profile's registry entry entirely and return the removed meta (erasing
+    its on-disk folder is the ProfileManager's job). Registry-level mechanic only —
+    the archive-first guardrail lives in the manager. Unknown pid → ValueError."""
+    data = load_registry()
+    entry = _find(data, pid)
+    data["profiles"] = [e for e in data["profiles"] if e["id"] != pid]
     _write(data)
     return _meta(entry)
 

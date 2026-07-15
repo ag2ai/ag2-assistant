@@ -20,7 +20,7 @@
   import { onboardingOpen, profile, profiles } from '../store.js'
   import { api } from '../transport/api.js'
   import { setActiveProfileId } from '../lib/profile.js'
-  import { PALETTES, setPalette } from '../design/palette.js'
+  import { setAccent } from '../design/palette.js'
   import { FOCUS, focusLabel } from '../lib/focuses.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
@@ -67,7 +67,6 @@
     { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
     { id: 'oauth', label: 'OpenAI OAuth', oauth: true, hint: 'no API key · unofficial' },
   ]
-  const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
 
   let step = $state(0)
   let keys = $state({ gemini: '', openai: '', anthropic: '' })
@@ -137,12 +136,12 @@
   }
 
   // Profiles created during THIS flow. Starts from whatever the server already has
-  // (re-run mode); fresh install starts empty. Palettes already used are removed
-  // from the ProfileForm swatches (§5.5).
+  // (re-run mode); fresh install starts empty. Preset accents already used are
+  // removed from the ProfileForm swatches (§5.5) — a custom colour is always
+  // available, so the form is never gated shut.
   let created = $state([...($profiles.list || [])])
   let showForm = $state(true)
-  const claimedPalettes = $derived(created.map((p) => p.palette))
-  const allPalettesUsed = $derived(claimedPalettes.length >= PALETTES.length)
+  const claimedAccents = $derived(created.map((p) => p.accent))
 
   // Per-profile "Set up" step: iterate `created`, one page each. `setupIdx` is the
   // current profile; `chosen` accumulates {folder, focuses} keyed by pid for the
@@ -220,16 +219,16 @@
 
   // Create one profile live (POST /api/profiles boots the runtime). On the first
   // one we also adopt it as the active profile so it's the one App boots into, and
-  // reflect its palette immediately.
-  async function createProfile({ name: pname, palette }) {
-    const res = await api.createProfile(pname, palette) // throws → inline error
+  // reflect its accent immediately.
+  async function createProfile({ name: pname, accent }) {
+    const res = await api.createProfile(pname, accent) // throws → inline error
     const p = res.profile
     const first = created.length === 0
     created = [...created, p]
     $profiles = { list: created, activeId: first ? p.id : $profiles.activeId }
     if (first) {
       setActiveProfileId(p.id)
-      if (p.palette) setPalette(p.palette)
+      if (p.accent) setAccent(p.accent)
     }
     showForm = false // → summary + "Add another / Continue"
   }
@@ -439,32 +438,28 @@
             {#if created.length}
               <div class="onb-chips">
                 {#each created as p (p.id)}
-                  <span class="onb-chip" style="--dot:{paletteHex(p.palette)}"><span class="onb-chipdot"></span>{p.name}</span>
+                  <span class="onb-chip" style="--dot:{p.accent}"><span class="onb-chipdot"></span>{p.name}</span>
                 {/each}
               </div>
             {/if}
 
-            {#if showForm && !allPalettesUsed}
+            {#if showForm}
               <ProfileForm
-                claimed={claimedPalettes}
+                claimed={claimedAccents}
                 submitLabel={created.length ? 'Add profile' : 'Create profile'}
                 busyLabel="Creating…"
                 onSubmit={createProfile}
               />
             {:else}
               <div class="onb-loopactions">
-                {#if allPalettesUsed}
-                  <p class="hint">All six palettes are in use — that's the max distinct colours.</p>
-                {:else}
-                  <button class="onb-btn ghost" onclick={addAnother}><Icon name="plus" size={15} /> Add another profile</button>
-                {/if}
+                <button class="onb-btn ghost" onclick={addAnother}><Icon name="plus" size={15} /> Add another profile</button>
               </div>
             {/if}
 
           {:else if step === SETUP_STEP}
             {#if setupProfile}
               <div class="onb-setuphead">
-                <span class="onb-setupdot" style="--dot:{paletteHex(setupProfile.palette)}"></span>
+                <span class="onb-setupdot" style="--dot:{setupProfile.accent}"></span>
                 <h2>Set up {setupProfile.name}</h2>
                 {#if created.length > 1}<span class="onb-setupprog">{setupIdx + 1} of {created.length}</span>{/if}
               </div>
@@ -501,12 +496,12 @@
             <div class="onb-summary">
               <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">Model</span><span class="onb-sumval">{modelLabel}</span></div>
             </div>
-            <!-- Per-profile summary: name, palette dot, folder-or-—, focuses-or-—. -->
+            <!-- Per-profile summary: name, accent dot, folder-or-—, focuses-or-—. -->
             <div class="onb-summary">
               {#each created as p (p.id)}
                 {@const c = chosen[p.id] || {}}
                 <div class="onb-profrow">
-                  <span class="onb-profdot" style="--dot:{paletteHex(p.palette)}"></span>
+                  <span class="onb-profdot" style="--dot:{p.accent}"></span>
                   <span class="onb-profname">{p.name}</span>
                   <span class="onb-profmeta">
                     <span class="onb-profmetaitem"><Icon name="folder" size={13} /> {c.folder || '—'}</span>

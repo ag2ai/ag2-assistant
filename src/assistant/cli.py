@@ -242,23 +242,17 @@ profiles_app = typer.Typer(help="Manage assistant profiles (isolated workspaces)
 app.add_typer(profiles_app, name="profiles")
 
 
-def _first_unused_palette() -> str | None:
-    """The first PALETTES entry not claimed by an unarchived profile, or None if all
-    six are taken (uniqueness only holds while ≤6 profiles exist, §3.2)."""
-    from assistant.profiles import PALETTES, list_profiles
-
-    used = {p.palette for p in list_profiles()}
-    for palette in PALETTES:
-        if palette not in used:
-            return palette
-    return None
+# Default accent for headless creation. The backend keeps no palette catalogue
+# (ADR 0002) — the preset colours live in the frontend — so the CLI carries just
+# this single fallback hex so `create` works with no --accent.
+_DEFAULT_ACCENT = "#109e91"
 
 
 @profiles_app.command("create")
 def profiles_create(
     name: str = typer.Argument(help="Display name for the profile (its id is a slug of this)."),
-    palette: str | None = typer.Option(
-        None, "--palette", help="Colour palette (default: first unused). One of PALETTES."
+    accent: str = typer.Option(
+        _DEFAULT_ACCENT, "--accent", help=f"Accent colour as a #rrggbb hex (default {_DEFAULT_ACCENT})."
     ),
 ) -> None:
     """Register a new profile (headless bootstrap, §3.5).
@@ -269,17 +263,8 @@ def profiles_create(
     """
     from assistant import profiles
 
-    if palette is None:
-        palette = _first_unused_palette()
-        if palette is None:
-            typer.echo(
-                "all palettes are in use — pass --palette explicitly to reuse one "
-                f"(choose from {', '.join(profiles.PALETTES)})"
-            )
-            raise typer.Exit(1)
-
     try:
-        meta = profiles.create_profile(name, palette)
+        meta = profiles.create_profile(name, accent)
     except ValueError as exc:
         typer.echo(f"error: {exc}")
         raise typer.Exit(1)
@@ -287,7 +272,7 @@ def profiles_create(
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     typer.echo(f"Created profile '{meta.id}':")
     typer.echo(f"  name      {meta.name}")
-    typer.echo(f"  palette   {meta.palette}")
+    typer.echo(f"  accent    {meta.accent}")
     typer.echo(f"  workspace {meta.workspace}")
     typer.echo(f"\n`ag2-assistant run` and `ag2-assistant chat -p {meta.id}` will use it.")
 
@@ -307,12 +292,12 @@ def profiles_list(
         return
 
     active = profiles.load_registry().get("active_default")
-    header = f"{'':1} {'id':16} {'name':20} {'palette':8} workspace"
+    header = f"{'':1} {'id':16} {'name':20} {'accent':9} workspace"
     typer.echo(header)
     for meta in metas:
         mark = "*" if meta.id == active else " "
         name = meta.name + (" (archived)" if meta.archived else "")
-        typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.palette:8} {meta.workspace}")
+        typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.accent:9} {meta.workspace}")
 
 
 perms_app = typer.Typer(help="Manage folder + command permissions (install-wide).")
