@@ -612,11 +612,11 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modal-close { display: inline-flex; align-items: center; gap: 6px; align-self: flex-end; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 14px; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .modal-close:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 
-.viewer { width: min(820px, 92vw); max-height: 84vh; padding: 0; gap: 0; }
+.viewer { width: min(820px, 92vw); height: min(84vh, 900px); padding: 0; gap: 0; overflow: hidden; }
 .viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
 .viewer .vhead h2 { font-size: 18px; margin: 0; flex: 1; overflow-wrap: anywhere; }
 .viewer .vhead .modal-close { align-self: auto; }
-.viewer .vbody { padding: 20px 26px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+.viewer .vbody { min-height: 0; flex: 1; padding: 20px 26px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .viewer .vhead .dl { font-size: 12px; color: var(--accent); text-decoration: none; }
 .viewer .vhead .dl:hover { text-decoration: underline; }
 .viewer .vbody.native { padding: 10px; }

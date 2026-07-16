@@ -31,8 +31,8 @@
   })
 </script>
 
-<div class="modal-backdrop" onclick={close}></div>
-<div class="modal viewer">
+<div class="modal-backdrop over" onclick={close}></div>
+<div class="modal viewer over">
   <div class="vhead">
     <h2>{$viewer.title || 'Preview'}</h2>
     {#if $viewer.path}<a class="dl" href={api.fileUrl($viewer.path, true)}>download</a>{/if}
