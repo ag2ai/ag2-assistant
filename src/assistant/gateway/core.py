@@ -816,7 +816,9 @@ class Gateway:
             # silently drop the user's edit (and False would read as "unknown chat").
             doc = json.loads(await self._event_store.read(path))
             if title is not None and title.strip():
-                doc["title"] = title.strip()
+                # Auto-titler caps at 80 (_clean_title); 200 gives user renames
+                # headroom while still bounding the doc.
+                doc["title"] = title.strip()[:200]
             if starred is not None:
                 doc["starred"] = bool(starred)
             await self._event_store.write(path, json.dumps(doc))

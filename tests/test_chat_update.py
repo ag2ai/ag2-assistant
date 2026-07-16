@@ -2,7 +2,7 @@
 
 import pytest
 
-from tests.conftest import FakeAgent
+from tests.conftest import FakeAgent, api
 
 
 @pytest.fixture
@@ -54,6 +54,11 @@ async def test_update_chat_partial_leaves_other_field(gw):
     assert c["title"] == "Kept title"
     assert c["starred"] is True
 
+    # An oversize user title is capped at 200 chars in the stored doc.
+    await gw.update_chat("c1", title="x" * 500)
+    c = next(c for c in await gw.list_chats() if c["chat_id"] == "c1")
+    assert len(c["title"]) == 200
+
 
 async def test_update_unknown_chat_returns_false(gw):
     assert await gw.update_chat("missing", title="x") is False
@@ -75,3 +80,23 @@ async def test_user_rename_wins_over_auto_titler(gw, monkeypatch):
     await gw.update_chat("c1", title="User title")
     await gw._title_chat("c1", "hello", "echo[1]: hello")  # would set "LLM title"
     assert next(c for c in await gw.list_chats() if c["chat_id"] == "c1")["title"] == "User title"
+
+
+# --- REST facade ---
+
+
+def test_patch_chat_route(profile_app):
+    """PATCH /chats/{chat_id}: 200 {ok}, 404 unknown, 400 empty patch."""
+    client, pid = profile_app  # conftest fixture: started app, persist=True, agent faked
+    client.post(api(pid, "/message"), json={"text": "hi", "chat_id": "c1"})
+
+    r = client.patch(api(pid, "/chats/c1"), json={"title": "Named", "starred": True})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    chats = client.get(api(pid, "/chats")).json()["chats"]
+    c1 = next(c for c in chats if c["chat_id"] == "c1")
+    assert c1["title"] == "Named" and c1["starred"] is True
+
+    # unknown chat → 404; empty patch → 400
+    assert client.patch(api(pid, "/chats/nope"), json={"title": "x"}).status_code == 404
+    r = client.patch(api(pid, "/chats/c1"), json={})
+    assert r.status_code == 400 and r.json()["error"] == "empty patch"

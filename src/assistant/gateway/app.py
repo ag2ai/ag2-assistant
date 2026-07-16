@@ -137,6 +137,13 @@ class MessageResponse(BaseModel):
     chat_id: str
 
 
+class ChatPatch(BaseModel):
+    """Partial chat-metadata update: rename and/or star. Absent field = unchanged."""
+
+    title: str | None = None
+    starred: bool | None = None
+
+
 class CredentialsUpload(BaseModel):
     content: str  # raw OAuth client JSON
 
@@ -1492,6 +1499,20 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Permanently delete a chat (transcript + full event log). Irreversible."""
         removed = await runtime.gateway.delete_chat(chat_id)
         if not removed:
+            return Response(status_code=404)
+        return {"ok": True}
+
+    @p.patch("/chats/{chat_id}")
+    async def update_chat(
+        chat_id: str, patch: ChatPatch, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Rename and/or star a chat. 400 on an empty patch, 404 on unknown chat."""
+        if patch.title is None and patch.starred is None:
+            return JSONResponse({"error": "empty patch"}, status_code=400)
+        ok = await runtime.gateway.update_chat(
+            chat_id, title=patch.title, starred=patch.starred
+        )
+        if not ok:
             return Response(status_code=404)
         return {"ok": True}
 
