@@ -5,6 +5,7 @@
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
+  import ChatFolders from './ChatFolders.svelte'
   import { fmtWhen, fmtNextIn, fmtAgoShort, dayRows, fmtDayShort } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
@@ -182,6 +183,7 @@
   // kebab with position:fixed so the scrolling list can't clip it; closes on
   // outside pointer, Escape, scroll, or action.
   let menuChat = $state('') // chat_id whose menu is open
+  let foldersChat = $state('') // chat_id whose Folder-access modal is open
   let menuPos = $state({ x: 0, y: 0 })
   function toggleMenu(e, s) {
     e.stopPropagation()
@@ -373,6 +375,10 @@
     </div>
   {/if}
 
+  {#if foldersChat}
+    <ChatFolders chatId={foldersChat} onClose={() => (foldersChat = '')} />
+  {/if}
+
   <div class="segbar" role="tablist" aria-label="View">
     <button class="seg" class:on={$drawerTab === 'chats'} role="tab" aria-selected={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={14} /> Chats</button>
     <button class="seg" class:on={$drawerTab === 'tasks'} role="tab" aria-selected={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={14} /> Tasks</button>
@@ -408,6 +414,9 @@
             </button>
             <button class="cmitem" role="menuitem" onclick={() => startRename(s)}>
               <Icon name="pencil" size={14} /> Rename
+            </button>
+            <button class="cmitem" role="menuitem" onclick={() => { const id = menuChat; menuChat = ''; foldersChat = id }}>
+              <Icon name="folder" size={13} /> Folder access
             </button>
             <div class="cmdiv"></div>
             <button class="cmitem danger" role="menuitem"

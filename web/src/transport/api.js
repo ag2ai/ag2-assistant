@@ -131,18 +131,23 @@ export const api = {
   // Seed the universal doc from web-onboarding identity answers (all optional).
   // Seed-only: the server refuses to clobber an existing doc → {ok, seeded}.
   setIdentity: (fields) => j('POST', G('/identity'), fields),
-  // Persistent, install-wide permission grants (folders + shell/tool command rules).
-  // GLOBAL routes; every mutation returns the full snapshot {ok, folders, blocked,
-  // commands} so the client never needs a follow-up GET (McpServers contract).
-  // Bodies (not URL segments): paths contain '/', command rules contain '( * )'.
-  // DELETE-with-body is supported by j() (precedent: archiveProfile).
+  // Persistent, install-wide COMMAND permission grants. GLOBAL routes; every
+  // mutation returns the full snapshot {ok, commands} (McpServers contract).
   permissions:   () => j('GET', G('/permissions')),
-  grantFolder:   (path) => j('POST', G('/permissions/folders'), { path }),
-  revokeFolder:  (path) => j('DELETE', G('/permissions/folders'), { path }),
-  blockFolder:   (path) => j('POST', G('/permissions/blocked'), { path }),
-  unblockFolder: (path) => j('DELETE', G('/permissions/blocked'), { path }),
   grantCommand:  (tool, prefix) => j('POST', G('/permissions/commands'), { tool, prefix }),
   revokeCommand: (rule) => j('DELETE', G('/permissions/commands'), { rule }),
+  // ---- Folders + Grants (install-wide registry; CONTEXT.md "Folders", ADR 0006).
+  // Snapshot shape: {folders:[{id,name,path,exists,grants:[{profile,chat_id,mode}]}]}.
+  // createFolder 409s with err.body.existing when the path is already registered.
+  // mode: 'read' | 'read_write'. Empty chatId = profile-scope grant.
+  folders: () => j('GET', G('/folders')),
+  createFolder: (path, name = '') => j('POST', G('/folders'), { path, name }),
+  updateFolder: (id, patch) => j('POST', G('/folders/' + encodeURIComponent(id)), patch),
+  deleteFolder: (id) => j('DELETE', G('/folders/' + encodeURIComponent(id))),
+  setGrant: (id, profile, mode, chatId = '') =>
+    j('POST', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, mode }),
+  revokeGrant: (id, profile, chatId = '') =>
+    j('DELETE', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId }),
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
   // Cheap subsystem health for the status dot: {overall, checks:[{id,label,state,detail,…}]}.
@@ -173,7 +178,6 @@ export const api = {
   voices: (configId) =>
     j('GET', P('/voice/voices' + (configId ? '?config_id=' + encodeURIComponent(configId) : ''))),
   settings: () => j('GET', P('/settings')),
-  setProjectFolder: (path) => j('POST', P('/settings/project-folder'), { path }),
   // Focus areas are a per-profile persona attribute (settings.json → injected into
   // the agent's context). Active-profile setter (Settings modal).
   setFocuses: (focuses) => j('POST', P('/settings/focuses'), { focuses }),
@@ -212,7 +216,6 @@ export const api = {
   // Returns the subset of scoped helpers those pages need.
   forProfile: (pid) => ({
     settings: () => j('GET', PID(pid, '/settings')),
-    setProjectFolder: (path) => j('POST', PID(pid, '/settings/project-folder'), { path }),
     setFocuses: (focuses) => j('POST', PID(pid, '/settings/focuses'), { focuses }),
   }),
 }

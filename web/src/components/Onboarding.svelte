@@ -3,7 +3,7 @@
   // can create SEVERAL profiles. Steps: Welcome (name) → Connect (global provider
   // keys + model) → Profiles (the multi-profile creation LOOP, ProfileForm reused
   // from the "+" chip modal so they can't drift) → Set up (ONE page PER created
-  // profile: its project folder + its focus areas, both skippable) → Ready. POST
+  // profile: a Folder (granted read to it) + its focus areas, both skippable) → Ready. POST
   // /api/onboarded fires once, at flow completion.
   //
   // Focus areas are a PER-PROFILE persona attribute persisted server-side (each
@@ -209,7 +209,17 @@
       chosen = { ...chosen, [p.id]: { folder, focuses: [...focuses] } }
       if (!skip) {
         const scoped = api.forProfile(p.id)
-        if (folder) { try { await scoped.setProjectFolder(folder) } catch {} }
+        if (folder) {
+          // Register the picked directory as an install-wide Folder (or adopt the
+          // existing one on a 409 path collision) and grant THIS profile read.
+          try {
+            let view
+            try { view = (await api.createFolder(folder)).folder } catch (e) {
+              view = e.status === 409 ? e.body?.existing : null
+            }
+            if (view) await api.setGrant(view.id, p.id, 'read')
+          } catch {}
+        }
         // Always send focuses when the user engaged the page: an empty list clears
         // any prior selection. Only skip when Skip was pressed.
         try { await scoped.setFocuses(focuses) } catch {}
@@ -465,10 +475,10 @@
                 <h2>Set up {setupProfile.name}</h2>
                 {#if created.length > 1}<span class="onb-setupprog">{setupIdx + 1} of {created.length}</span>{/if}
               </div>
-              <p class="lead">Give this profile a project folder and tell it what you'll use it for. Both are optional — you can change them anytime in Settings.</p>
+              <p class="lead">Give this profile a folder to work in and tell it what you'll use it for. Both are optional — you can change them anytime in Settings.</p>
 
               <div class="onb-field">
-                <div class="onb-flabel"><span>Project folder</span><span class="hint">read-only — it can browse & search, never write</span></div>
+                <div class="onb-flabel"><span>Folder</span><span class="hint">the assistant gets read access — manage access later in Settings → Folders</span></div>
                 <FolderPicker roots={fsRoots} start={folder || fsRoots.cwd} bind:selected={folder} />
               </div>
 

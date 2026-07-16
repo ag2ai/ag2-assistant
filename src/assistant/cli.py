@@ -302,7 +302,7 @@ def profiles_list(
         typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.accent:9} {meta.workspace}")
 
 
-perms_app = typer.Typer(help="Manage folder + command permissions (install-wide).")
+perms_app = typer.Typer(help="Manage command permissions (install-wide).")
 app.add_typer(perms_app, name="permissions")
 
 
@@ -319,45 +319,10 @@ def _permissions_store():
 
 @perms_app.command("list")
 def permissions_list() -> None:
-    """List granted/blocked folders and allowed commands."""
-    store = _permissions_store()
-    granted = store.granted_folders()
-    blocked = store.blocked_folders()
-    commands = store.granted_commands()
-    typer.echo("Allowed folders:")
-    typer.echo("\n".join(f"  ✓ {g}" for g in granted) or "  (none)")
-    typer.echo("\nBlocked folders:")
-    typer.echo("\n".join(f"  ✗ {b}" for b in blocked) or "  (none)")
-    typer.echo("\nAllowed commands:")
+    """List allowed commands (folder access is 'ag2-assistant folders')."""
+    commands = _permissions_store().granted_commands()
+    typer.echo("Allowed commands:")
     typer.echo("\n".join(f"  ✓ {c}" for c in commands) or "  (none)")
-
-
-@perms_app.command("allow")
-def permissions_allow(folder: str = typer.Argument(help="Folder path to allow.")) -> None:
-    """Permanently allow access to a folder."""
-    _permissions_store().grant(folder)
-    typer.echo(f"Allowed: {folder}")
-
-
-@perms_app.command("revoke")
-def permissions_revoke(folder: str = typer.Argument(help="Folder path to revoke.")) -> None:
-    """Revoke a previously granted folder."""
-    ok = _permissions_store().revoke(folder)
-    typer.echo(f"Revoked: {folder}" if ok else f"Not in allow list: {folder}")
-
-
-@perms_app.command("block")
-def permissions_block(folder: str = typer.Argument(help="Folder path to block.")) -> None:
-    """Permanently block a folder (the agent will never be allowed to access it)."""
-    _permissions_store().block(folder)
-    typer.echo(f"Blocked: {folder}")
-
-
-@perms_app.command("unblock")
-def permissions_unblock(folder: str = typer.Argument(help="Folder path to unblock.")) -> None:
-    """Remove a folder from the block list."""
-    ok = _permissions_store().unblock(folder)
-    typer.echo(f"Unblocked: {folder}" if ok else f"Not in block list: {folder}")
 
 
 @perms_app.command("allow-command")
@@ -401,6 +366,92 @@ def permissions_revoke_command(
         raise typer.Exit(1)
     ok = _permissions_store().revoke_command(canonical)
     typer.echo(f"Revoked command: {canonical}" if ok else f"Not in allow list: {canonical}")
+
+
+folders_app = typer.Typer(help="Manage Folders + Grants (install-wide registry, ADR 0006).")
+app.add_typer(folders_app, name="folders")
+
+
+def _folder_store():
+    from assistant.config import load_config
+    from assistant.folders import FolderStore
+
+    return FolderStore(load_config().root_dir / "folders.json")
+
+
+@folders_app.command("list")
+def folders_list() -> None:
+    """List every Folder, its path, and its Grants."""
+    views = _folder_store().list_folders()
+    if not views:
+        typer.echo("No folders registered.")
+        return
+    for v in views:
+        badge = "" if v["exists"] else "  (path not found)"
+        typer.echo(f"{v['id']}  {v['name']}  {v['path']}{badge}")
+        for g in v["grants"]:
+            scope = f"chat {g['chat_id']}" if g["chat_id"] else "profile"
+            typer.echo(f"    {g['profile']} ({scope}): {g['mode']}")
+
+
+@folders_app.command("add")
+def folders_add(
+    path: str = typer.Argument(help="Directory to register."),
+    name: str = typer.Option("", help="Display name (default: the directory's basename)."),
+) -> None:
+    """Register a directory as a Folder."""
+    from assistant.folders import DuplicatePath
+
+    try:
+        v = _folder_store().create_folder(path, name=name)
+    except DuplicatePath as exc:
+        typer.echo(f"Already registered as {exc.existing['name']!r} ({exc.existing['id']}).")
+        raise typer.Exit(1)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1)
+    typer.echo(f"Added {v['id']}: {v['name']} -> {v['path']}")
+
+
+@folders_app.command("rm")
+def folders_rm(folder_id: str = typer.Argument(help="Folder id (see 'list').")) -> None:
+    """Delete a Folder — revokes every Grant to it instantly."""
+    if not _folder_store().delete_folder(folder_id):
+        typer.echo(f"Unknown folder: {folder_id}")
+        raise typer.Exit(1)
+    typer.echo(f"Deleted {folder_id} (all grants revoked).")
+
+
+@folders_app.command("grant")
+def folders_grant(
+    folder_id: str = typer.Argument(help="Folder id (see 'list')."),
+    profile: str = typer.Argument(help="Profile id the Grant belongs to."),
+    mode: str = typer.Option("read", help="read or read_write."),
+    chat: str = typer.Option("", help="Chat id for a chat-scoped Grant (default: whole profile)."),
+) -> None:
+    """Grant a profile (or one chat) access to a Folder."""
+    try:
+        _folder_store().set_grant(folder_id, mode, profile=profile, chat_id=chat)
+    except KeyError:
+        typer.echo(f"Unknown folder: {folder_id}")
+        raise typer.Exit(1)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1)
+    typer.echo(f"Granted {mode} on {folder_id} to {profile}" + (f" (chat {chat})" if chat else ""))
+
+
+@folders_app.command("revoke")
+def folders_revoke(
+    folder_id: str = typer.Argument(help="Folder id."),
+    profile: str = typer.Argument(help="Profile id."),
+    chat: str = typer.Option("", help="Chat id of a chat-scoped Grant."),
+) -> None:
+    """Revoke one Grant."""
+    if not _folder_store().revoke_grant(folder_id, profile=profile, chat_id=chat):
+        typer.echo("No such grant.")
+        raise typer.Exit(1)
+    typer.echo("Revoked.")
 
 
 google_app = typer.Typer(help="Manage the Google (Gmail/Calendar/Drive) integration.")

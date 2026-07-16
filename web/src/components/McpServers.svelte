@@ -15,7 +15,6 @@
   import Icon from './Icon.svelte'
 
   let servers = $state([])
-  let projectFolder = $state('')
   let health = $state({})     // name -> {ok, tools[]|error} | {checking: true}
   let busy = $state(false)
   let err = $state('')
@@ -40,7 +39,6 @@
     try {
       const s = await api.settings()
       servers = s.mcp_servers || []
-      projectFolder = s.project_folder || ''
     } catch (e) { err = String(e.message || e) }
   })
 
@@ -105,8 +103,7 @@
     if (names.has(entry.id) || busy) return
     if (!entry.inputs.length) { addEntry(entry); return }
     openEntry = openEntry === entry.id ? '' : entry.id
-    // Prefill the files entry with the profile's project folder when set.
-    entryValues = entry.id === 'repo-files' && projectFolder ? { folder: projectFolder } : {}
+    entryValues = {}
   }
   const entryReady = (entry) =>
     entry.inputs.every((i) => !i.required || String(entryValues[i.key] || '').trim())

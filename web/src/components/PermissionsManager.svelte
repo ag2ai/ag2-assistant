@@ -1,29 +1,22 @@
 <script>
   // Settings → Tools & Permissions → "Permissions". Persistent, install-wide grants
-  // the assistant honours without re-prompting. Three groups:
-  //   • Granted folders — folders the assistant may act in
-  //   • Blocked folders — folders explicitly off-limits (a block wins over a grant)
+  // the assistant honours without re-prompting. One group:
   //   • Command grants — rule strings: a bare tool name ("gmail_send") allows every call
   //     to that ACTION tool; "tool(prefix *)" allows shell commands whose first token
   //     matches. Arbitrary-execution tools (shell without a prefix, run_code) can never
   //     be blanket-granted — the server rejects those rules.
+  // Folder access is no longer here — it lives in Settings → Folders (the install-wide
+  // Folder registry + Grants, ADR 0006).
   // Self-contained like McpServers.svelte: owns its list state; every mutator replaces
-  // `perms` wholesale from the endpoint's full-snapshot response ({ok, folders, blocked,
-  // commands}) — no follow-up GET needed. `roots` (the fs browser roots) is passed in.
+  // `perms` wholesale from the endpoint's full-snapshot response ({ok, commands}) —
+  // no follow-up GET needed.
   import { onMount } from 'svelte'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
-  import FolderPicker from './FolderPicker.svelte'
 
-  let { roots = {} } = $props()
-
-  let perms = $state({ folders: [], blocked: [], commands: [] })
+  let perms = $state({ commands: [] })
   let busy = $state(false)
   let err = $state('')
-
-  // Collapsible folder pickers (the Project-folder collapse pattern).
-  let addGrant = $state(false)
-  let addBlock = $state(false)
 
   // Command-rule text input.
   let cmd = $state('')
@@ -48,7 +41,7 @@
   })
 
   const apply = (r) => {
-    perms = { folders: r.folders || [], blocked: r.blocked || [], commands: r.commands || [] }
+    perms = { commands: r.commands || [] }
   }
 
   onMount(async () => {
@@ -62,10 +55,6 @@
     busy = false
   }
 
-  const grantFolder = (path) => run(() => api.grantFolder(path).then((r) => { addGrant = false; return r }))
-  const revokeFolder = (path) => run(() => api.revokeFolder(path))
-  const blockFolder = (path) => run(() => api.blockFolder(path).then((r) => { addBlock = false; return r }))
-  const unblockFolder = (path) => run(() => api.unblockFolder(path))
   const revokeCommand = (rule) => run(() => api.revokeCommand(rule))
   function addCommand() {
     const p = splitRule(cmd)
@@ -75,48 +64,6 @@
 </script>
 
 {#if err}<p class="muted permerr">{err}</p>{/if}
-
-<!-- Granted folders -->
-<div class="permgroup">
-  <div class="permhd">Granted folders</div>
-  {#if !perms.folders.length}<p class="muted permempty">No folders granted yet.</p>{/if}
-  {#each perms.folders as path (path)}
-    <div class="permrow">
-      <span class="permico"><Icon name="folder" size={14} /></span>
-      <span class="permval" title={path}>{path}</span>
-      <button class="linkbtn danger" disabled={busy} onclick={() => revokeFolder(path)}>Remove</button>
-    </div>
-  {/each}
-  {#if !addGrant}
-    <button class="open permadd" onclick={() => (addGrant = true)}>Grant a folder…</button>
-  {:else}
-    <FolderPicker {roots} start={roots.cwd} {busy} onUse={grantFolder} />
-    <div class="keyrow" style="justify-content:flex-end">
-      <button class="linkbtn" onclick={() => (addGrant = false)}>Cancel</button>
-    </div>
-  {/if}
-</div>
-
-<!-- Blocked folders -->
-<div class="permgroup">
-  <div class="permhd">Blocked folders</div>
-  {#if !perms.blocked.length}<p class="muted permempty">No folders blocked.</p>{/if}
-  {#each perms.blocked as path (path)}
-    <div class="permrow">
-      <span class="permico"><Icon name="folder" size={14} /></span>
-      <span class="permval" title={path}>{path}</span>
-      <button class="linkbtn danger" disabled={busy} onclick={() => unblockFolder(path)}>Remove</button>
-    </div>
-  {/each}
-  {#if !addBlock}
-    <button class="open permadd" onclick={() => (addBlock = true)}>Block a folder…</button>
-  {:else}
-    <FolderPicker {roots} start={roots.cwd} {busy} onUse={blockFolder} />
-    <div class="keyrow" style="justify-content:flex-end">
-      <button class="linkbtn" onclick={() => (addBlock = false)}>Cancel</button>
-    </div>
-  {/if}
-</div>
 
 <!-- Command grants -->
 <div class="permgroup">
@@ -154,7 +101,6 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .permempty { font-size: 13px; margin: 0; }
-  .permadd { align-self: flex-start; }
   .permhint { font-size: 12px; margin: 2px 0 0; }
   .permerr { color: #d8552f; font-size: 13px; margin: 0; }
 </style>

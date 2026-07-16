@@ -602,17 +602,22 @@ def create_agent(
     if memory:
         tools.append(build_memory_tool(config.data_dir / "profile.db", config.root_dir / "user.db"))
 
+    from assistant.folders import FolderStore
     from assistant.permissions import PermissionManager, PermissionStore
 
     # One injected authority for all permission decisions (knows the sandbox mode
-    # so prompts can say where a command actually runs — host vs container). Backed
-    # by the install-wide persistent grant store (root_dir) so a grant is global —
-    # allowing a folder/command in one profile pre-authorises it everywhere.
+    # so prompts can say where a command actually runs — host vs container).
+    # Commands: the install-wide permissions.json. Folder access: the install-wide
+    # Folder registry + this profile's Grants (ADR 0006); the profile's own
+    # workspace is implicitly read+write.
     dependencies: dict = {
         PermissionManager: PermissionManager(
             PermissionStore(config.root_dir / "permissions.json"),
             asker=asker,
             sandbox=config.tools.sandbox,
+            folders=FolderStore(config.root_dir / "folders.json"),
+            profile=config.data_dir.name,
+            workspace_dir=config.workspace_dir,
         )
     }
     if asker is not None:

@@ -152,7 +152,7 @@ def list_files(workspace_dir) -> list[dict]:
 
 def list_dirs(path: str) -> dict | None:
     """Immediate subdirectories of `path` (non-recursive) — for the folder picker that
-    lets the user choose a project folder anywhere on the host (not workspace-scoped).
+    lets the user choose a Folder to register anywhere on the host (not workspace-scoped).
     Dotfolders are hidden. Returns ``{path, parent, dirs:[{name, path}]}`` (absolute
     paths), or None if `path` isn't a readable directory."""
     try:

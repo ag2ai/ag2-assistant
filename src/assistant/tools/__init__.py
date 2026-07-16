@@ -29,7 +29,7 @@ from ag2.tools import (
 )
 
 from assistant.tools.approval import require_command_approval
-from assistant.tools.files import read_file
+from assistant.tools.files import list_folder, read_file, write_file
 from assistant.tools.finance import get_quotes
 from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch, web_fetch_tool
@@ -215,12 +215,11 @@ def build_agent_tools(
         tools.append(build_image_tool(config, workspace_dir))
 
     if want("files"):
-        tools.append(read_file)  # permission-gated (host FS, any path, vision)
-        # AG2's sandboxed filesystem toolkit, confined to the agent's workspace —
-        # write/update/list/delete its own files (no approval needed; it's the
-        # agent's own dir). We drop its `read_file` to avoid a name clash with the
-        # custom host reader above (providers require unique tool names); reading
-        # workspace files goes through that reader.
+        # Host FS, Grant-gated (CONTEXT.md "Folders"): read_file/list_folder need a
+        # read Grant, write_file a read+write Grant; the profile's own workspace is
+        # implicit. write_file also serves the workspace (relative paths), so the
+        # toolkit's write_file is dropped alongside its read_file (name clashes).
+        tools += [read_file, list_folder, write_file]
         if workspace_dir:
             from pathlib import Path
 
@@ -229,7 +228,7 @@ def build_agent_tools(
             wd = Path(workspace_dir).expanduser()
             wd.mkdir(parents=True, exist_ok=True)
             fk = FilesystemToolkit(base_path=wd)
-            tools += [t for t in fk.tools if t.name != "read_file"]
+            tools += [t for t in fk.tools if t.name not in ("read_file", "write_file")]
 
     # Google tools (only when signed in), per requested group.
     from assistant.integrations.google_auth import has_token
@@ -263,6 +262,8 @@ __all__ = [
     "CAPABILITIES",
     "CAPABILITY_DOCS",
     "read_file",
+    "list_folder",
+    "write_file",
     "get_weather",
     "get_quotes",
     "web_fetch",

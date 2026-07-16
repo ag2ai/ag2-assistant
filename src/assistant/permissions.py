@@ -1,18 +1,18 @@
-"""Folder-access + command permissions (Claude-Code-style).
+"""Command permissions (Claude-Code-style).
 
-The agent must get permission the first time it accesses a folder or runs a
-shell/code command. Grants persist to a single install-wide store on disk:
+The agent must get permission the first time it runs a shell/code command.
+Folder access is governed separately by ``assistant.folders`` (Folders +
+Grants, ADR 0006) — this module's store holds ONLY command grants:
 
-  - Folders: per-folder (covering files and subfolders), three options on first
-    access — Allow once / Always allow this folder / Deny.
   - Commands: shell tools persist a *command-prefix* rule (`tool(prefix *)`);
     code/action tools persist a whole-tool rule (bare tool name). The prompt's
     dynamic "always allow" option reads back what will be persisted.
 
-The store is a plain JSON document (schema v2) — hand-editable, rendered directly
-as Settings rows. It self-refreshes on mtime change so a long-lived instance (the
-gateway) sees grants written by another process (the CLI) or the HTTP API, and
-every mutation is a read-modify-write over fresh state.
+The store is a plain JSON document (schema ``{"commands": [...]}``) —
+hand-editable, rendered directly as Settings rows. It self-refreshes on mtime
+change so a long-lived instance (the gateway) sees grants written by another
+process (the CLI) or the HTTP API, and every mutation is a read-modify-write
+over fresh state.
 """
 
 import contextlib
@@ -53,7 +53,8 @@ else:
 
 
 ALLOW_ONCE = "Allow once"
-ALWAYS_ALLOW = "Always allow this folder"
+GRANT_CHAT = "Allow for this chat"
+GRANT_PROFILE = "Always allow in this profile"
 DENY = "Deny"
 
 # A persisted command rule is either a bare tool name (`run_code` — a whole-tool
@@ -177,15 +178,13 @@ def _command_detail(arguments) -> str:
 
 
 class PermissionStore:
-    """Persistent record of folders + commands the user has granted access to."""
+    """Persistent record of the commands the user has granted access to."""
 
     def __init__(self, path: Path | None) -> None:
         # `path` is REQUIRED (no global default). Pass ``None`` only for an explicit
         # ephemeral, non-persisting store (e.g. an un-wired fallback) — there is no
         # implicit on-disk location.
         self._path = Path(path) if path is not None else None
-        self._granted: set[str] = set()
-        self._blocked: set[str] = set()
         self._commands: set[str] = set()
         # (st_mtime_ns, st_size) of the file when we last read it — the freshness key
         # for _refresh(). None means "no file loaded" (missing/ephemeral).
@@ -193,7 +192,7 @@ class PermissionStore:
         self._load()
 
     def _load(self) -> None:
-        self._granted, self._blocked, self._commands = set(), set(), set()
+        self._commands = set()
         self._stat = None
         if self._path is None:
             return
@@ -208,8 +207,6 @@ class PermissionStore:
             data = json.loads(self._path.read_text())
         except Exception:
             return  # exists but corrupt → empty
-        self._granted = set(data.get("folders", []))
-        self._blocked = set(data.get("blocked", []))
         self._commands = set(data.get("commands", []))
 
     def _refresh(self) -> None:
@@ -233,8 +230,8 @@ class PermissionStore:
 
         Every mutation is refresh → change → save. Without a lock, two writers can
         interleave (both refresh, both save) and the second save silently drops the
-        first — worst case a fresh BLOCK clobbered by a stale grant writer, i.e. a
-        lost deny boundary. An exclusive lock on a sidecar lock file (flock on POSIX,
+        first — worst case a freshly minted command grant clobbered by a stale
+        writer, i.e. a lost grant. An exclusive lock on a sidecar lock file (flock on POSIX,
         msvcrt byte-range on Windows — see _lock_exclusive) makes the whole sequence
         atomic; it serialises separate fds even within one process, so this covers
         gateway-vs-CLI, two gateways, and two store instances alike. Queries stay
@@ -256,14 +253,7 @@ class PermissionStore:
         if self._path is None:
             return  # ephemeral store — nothing to persist
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(
-            {
-                "folders": sorted(self._granted),
-                "blocked": sorted(self._blocked),
-                "commands": sorted(self._commands),
-            },
-            indent=2,
-        )
+        payload = json.dumps({"commands": sorted(self._commands)}, indent=2)
         # Atomic write: temp file in the SAME directory + os.replace, so a concurrent
         # reader never sees a half-written file (torn read). os.replace is atomic only
         # within a filesystem — same-dir guarantees that.
@@ -285,71 +275,6 @@ class PermissionStore:
             self._stat = (st.st_mtime_ns, st.st_size)
         except OSError:
             self._stat = None
-
-    @staticmethod
-    def _covers(folders: set[str], folder: Path) -> bool:
-        for g in folders:
-            gp = Path(g)
-            if folder == gp or gp in folder.parents:
-                return True
-        return False
-
-    def is_allowed(self, folder) -> bool:
-        """True if the folder or any ancestor has been granted AND the folder isn't
-        inside a blocked subtree. A block always wins over a grant here at the store
-        level, so no caller can honour a stale parent grant inside a blocked subtree
-        by checking is_allowed without is_blocked. Grants and blocks deliberately
-        coexist: granting a parent while blocking a child is a supported shape, and
-        unblocking the child restores the parent grant's coverage."""
-        self._refresh()
-        f = _norm(folder)
-        if self._covers(self._blocked, f):
-            return False
-        return self._covers(self._granted, f)
-
-    def is_blocked(self, folder) -> bool:
-        """True if the folder or any ancestor is permanently blocked."""
-        self._refresh()
-        return self._covers(self._blocked, _norm(folder))
-
-    def grant(self, folder) -> None:
-        with self._mutate():
-            self._granted.add(str(_norm(folder)))
-            self._save()
-
-    def revoke(self, folder) -> bool:
-        with self._mutate():
-            key = str(_norm(folder))
-            if key in self._granted:
-                self._granted.discard(key)
-                self._save()
-                return True
-            return False
-
-    def block(self, folder) -> None:
-        """Permanently deny a folder (and remove any conflicting grant)."""
-        with self._mutate():
-            key = str(_norm(folder))
-            self._blocked.add(key)
-            self._granted.discard(key)
-            self._save()
-
-    def unblock(self, folder) -> bool:
-        with self._mutate():
-            key = str(_norm(folder))
-            if key in self._blocked:
-                self._blocked.discard(key)
-                self._save()
-                return True
-            return False
-
-    def granted_folders(self) -> list[str]:
-        self._refresh()
-        return sorted(self._granted)
-
-    def blocked_folders(self) -> list[str]:
-        self._refresh()
-        return sorted(self._blocked)
 
     # ---- commands ----
 
@@ -426,7 +351,8 @@ class PermissionManager:
 
     One instance is created per user turn (per `send_message`) and shared by every
     access tool (`read_file`, shell, code). It holds:
-      - the persistent grant store (folder + command grants, survive turns),
+      - the persistent command-grant store (`store`, ADR pre-0006 shape, survives
+        turns) and the persistent Folder/Grant store (`folders`, ADR 0006),
       - turn-scoped decisions (folders/commands allowed or denied this turn),
       - a turn-level stance: once the user denies *anything*, stop asking for new
         access for the rest of the turn (kills prompt-spam and tool escalation).
@@ -440,51 +366,88 @@ class PermissionManager:
         store: PermissionStore | None = None,
         asker: Asker | None = None,
         sandbox: str = "local",
+        folders=None,
+        profile: str = "",
+        chat_id: str = "",
+        workspace_dir=None,
     ) -> None:
-        # A store is normally injected (the install's persistent grants). When one
-        # isn't (a defensive fallback where no dependency was wired), fall back to an
-        # ephemeral in-memory store — never a global on-disk default.
+        from assistant.folders import FolderStore
+
         self.store = store if store is not None else PermissionStore(path=None)
+        self.folders = folders if folders is not None else FolderStore(path=None)
         self.asker = asker
-        self.sandbox = sandbox  # "local" (host) or "docker" (isolated) — shown in prompts
+        self.sandbox = sandbox
+        self.profile = profile
+        self.chat_id = (chat_id or "").strip()
+        # The profile's own Files space (CONTEXT.md "Files"): always read+write,
+        # no Grant needed — Folders govern only paths outside the Root.
+        self.workspace_dir = _norm(workspace_dir) if workspace_dir else None
         self._denied_folders: set[str] = set()
-        # Turn caches are keyed by RULE STRING, not tool name, so a shell prefix grant
-        # sticks per-prefix and a whole-tool grant per-tool — and they still work with
-        # an ephemeral (path=None) store where nothing persists to disk.
+        # Turn-scoped allow-once: folder path -> write allowed too?
+        self._once: dict[str, bool] = {}
         self._cmd_allowed: set[str] = set()
         self._cmd_denied: set[str] = set()
-        self._any_denied = False  # user said no to something this turn
+        self._any_denied = False
 
-    async def check(self, target) -> bool:
-        """Ensure access to `target`'s folder, prompting if needed (turn-scoped)."""
+    async def check(self, target, write: bool = False) -> bool:
+        """Ensure access to ``target``'s folder at the needed mode, prompting if
+        needed (turn-scoped). ``write=True`` requires a read_write Grant; plain
+        reads accept either mode (write implies read). Approving the prompt at
+        chat/profile scope auto-creates the Folder + Grant (ADR 0006)."""
+        from assistant.folders import READ, READ_WRITE
+
         target = Path(target).expanduser()
         folder = _norm(target if target.is_dir() else target.parent)
 
-        if self.store.is_blocked(folder):
-            return False  # permanently blocked → never ask
-        if self.store.is_allowed(folder):
+        if self.workspace_dir is not None and (
+            folder == self.workspace_dir or self.workspace_dir in folder.parents
+        ):
             return True
-        if str(folder) in self._denied_folders or self._any_denied:
-            return False  # denied / user already said no this turn → don't ask
+        mode = self.folders.mode_for(folder, self.profile, self.chat_id)
+        if mode == READ_WRITE or (mode == READ and not write):
+            return True
+        key = str(folder)
+        if key in self._once and (self._once[key] or not write):
+            return True
+        if key in self._denied_folders or self._any_denied:
+            return False
         if self.asker is None:
             return False
 
+        verb = "write in" if write else "read"
+        options = [ALLOW_ONCE]
+        if self.chat_id:
+            options.append(GRANT_CHAT)
+        options += [GRANT_PROFILE, DENY]
+        scope_hint = (
+            "Allow just this once, grant it to this chat, always allow it in "
+            "this profile, or deny."
+            if self.chat_id
+            else "Allow just this once, always allow it in this profile, or deny."
+        )
         answer = await self.asker.ask(
             Question(
-                text=f"Allow AG2 Assistant to read {folder.name or folder}?",
-                detail=f"AG2 Assistant wants to access {folder} (to read {target.name}). "
-                "Allow just this once, always allow this folder, or deny.",
-                options=[ALLOW_ONCE, ALWAYS_ALLOW, DENY],
+                text=f"Allow AG2 Assistant to {verb} {folder.name or folder}?",
+                detail=(
+                    f"AG2 Assistant wants {'write' if write else 'read'} access to "
+                    f"{folder} (for {target.name}). {scope_hint}"
+                ),
+                options=options,
                 kind="permission",
             )
         )
 
-        if answer == ALWAYS_ALLOW:
-            self.store.grant(folder)
+        minted = READ_WRITE if write else READ
+        if answer == GRANT_PROFILE:
+            self.folders.grant_path(folder, minted, self.profile)
+            return True
+        if answer == GRANT_CHAT and self.chat_id:
+            self.folders.grant_path(folder, minted, self.profile, self.chat_id)
             return True
         if answer == ALLOW_ONCE:
+            self._once[key] = write or self._once.get(key, False)
             return True
-        self._denied_folders.add(str(folder))
+        self._denied_folders.add(key)
         self._any_denied = True
         return False
 
@@ -559,16 +522,3 @@ class PermissionManager:
         self._cmd_denied.add(rule)
         self._any_denied = True
         return False
-
-    # Management pass-throughs (for the `ag2-assistant permissions` CLI, etc.)
-    def is_allowed(self, folder) -> bool:
-        return self.store.is_allowed(folder)
-
-    def grant(self, folder) -> None:
-        self.store.grant(folder)
-
-    def revoke(self, folder) -> bool:
-        return self.store.revoke(folder)
-
-    def granted_folders(self) -> list[str]:
-        return self.store.granted_folders()

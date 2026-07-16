@@ -96,6 +96,7 @@ async def _run_visible_subagent(
     from ag2.tools.subagents.run_task import run_task
 
     from assistant.agent import cheap_model, create_agent, turn_prompt
+    from assistant.folders import FolderStore
     from assistant.permissions import PermissionManager, PermissionStore
 
     name, archetype_prompt = _subagent_archetype(caps)
@@ -170,6 +171,9 @@ async def _run_visible_subagent(
                     PermissionStore(config.root_dir / "permissions.json"),
                     asker=asker,
                     sandbox=config.tools.sandbox,
+                    folders=FolderStore(config.root_dir / "folders.json"),
+                    profile=config.data_dir.name,
+                    workspace_dir=config.workspace_dir,
                 )
             },
         )
