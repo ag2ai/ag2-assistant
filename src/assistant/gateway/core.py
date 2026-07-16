@@ -758,6 +758,8 @@ class Gateway:
                     # LLM-named after the first exchange; None on an in-flight stub —
                     # normalise to "" so the drawer falls back to the preview cleanly.
                     "title": doc.get("title") or "",
+                    # user-set star; absent on old/new docs → False
+                    "starred": bool(doc.get("starred")),
                     "preview": first_user[:80],
                     # Completed exchanges only; a lone in-flight user message is 0 turns.
                     "turns": len(msgs) // 2,
@@ -791,6 +793,28 @@ class Gateway:
             self._loaded.discard(chat_id)
         self._locks.pop(chat_id, None)
         return removed
+
+    async def update_chat(
+        self, chat_id: str, *, title: str | None = None, starred: bool | None = None
+    ) -> bool:
+        """Partial metadata update on a persisted chat: rename and/or star.
+
+        A user title is authoritative: the auto-titler only fills an empty title,
+        so it never overwrites this. Returns False for an unknown chat.
+        """
+        if self._event_store is None:
+            return False
+        path = self._transcript_path(chat_id)
+        async with self._chat_lock(chat_id):
+            if not await self._event_store.exists(path):
+                return False
+            doc = json.loads(await self._event_store.read(path))
+            if title is not None and title.strip():
+                doc["title"] = title.strip()
+            if starred is not None:
+                doc["starred"] = bool(starred)
+            await self._event_store.write(path, json.dumps(doc))
+        return True
 
     async def _maybe_onboard(self, asker) -> None:
         """Run first-run onboarding once, via the asker that made this request.
