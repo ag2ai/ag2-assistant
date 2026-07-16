@@ -24,8 +24,8 @@
   // two-field local-server case is one click plus a model name.
   const TEMPLATES = [
     { name: 'Gemini', type: 'gemini', model: 'gemini-3.5-flash', blurb: 'Google Gemini' },
-    { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.2', blurb: 'Responses API' },
-    { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.2', blurb: 'Chat Completions API' },
+    { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.6-terra', blurb: 'Responses API' },
+    { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.6-terra', blurb: 'Chat Completions API' },
     {
       name: 'OpenAI · ChatGPT subscription',
       card: 'OpenAI · Sign in with ChatGPT',
