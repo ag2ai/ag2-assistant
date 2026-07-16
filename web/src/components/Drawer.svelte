@@ -53,10 +53,12 @@
   // Close the picker on click-outside / Escape.
   function onDocPointer(e) {
     if (pickerOpen && !e.target.closest('.profchips')) pickerOpen = false
+    if (menuChat && !e.target.closest('.chatmenu') && !e.target.closest('.rowkebab')) menuChat = ''
   }
   function onDocKey(e) {
     if (createOpen && e.key === 'Escape') { createOpen = false; return }
     if (pickerOpen && e.key === 'Escape') pickerOpen = false
+    if (menuChat && e.key === 'Escape') menuChat = ''
   }
 
   // "+" chip → profile-creation modal (§5.4). Reuses ProfileForm (same form as
@@ -149,7 +151,12 @@
   // the latest message, not the first); dayRows tags the first row of each
   // calendar day with `sep`, the fmtDayShort header ("Recent"/"Yesterday"/date).
   // The list already arrives newest-first, so the walk just detects day changes.
-  const chatRows = $derived(dayRows($chats.map((s) => ({ ...s, at: s.updated })), fmtDayShort))
+  // Starred chats pin to a "Starred" section above the date groups (they appear
+  // ONLY there); the rest group under date headers by last-message time.
+  const starredChats = $derived($chats.filter((c) => c.starred))
+  const chatRows = $derived(
+    dayRows($chats.filter((c) => !c.starred).map((s) => ({ ...s, at: s.updated })), fmtDayShort)
+  )
 
   const openChat = (id) => go('/c/' + id)
   const openTask = (id) => go('/t/' + id)
@@ -170,6 +177,50 @@
     busyChat = ''
     confirmChat = ''
   }
+
+  // Row kebab menu (Star / Rename / Delete). One menu at a time, anchored to the
+  // kebab with position:fixed so the scrolling list can't clip it; closes on
+  // outside pointer, Escape, scroll, or action.
+  let menuChat = $state('') // chat_id whose menu is open
+  let menuPos = $state({ x: 0, y: 0 })
+  function toggleMenu(e, s) {
+    e.stopPropagation()
+    if (menuChat === s.chat_id) { menuChat = ''; return }
+    const r = e.currentTarget.getBoundingClientRect()
+    menuPos = { x: r.right, y: r.bottom + 4 }
+    menuChat = s.chat_id
+  }
+
+  async function toggleStar(s) {
+    menuChat = ''
+    const next = !s.starred
+    $chats = $chats.map((c) => (c.chat_id === s.chat_id ? { ...c, starred: next } : c))
+    try { await api.updateChat(s.chat_id, { starred: next }) } catch {
+      $chats = $chats.map((c) => (c.chat_id === s.chat_id ? { ...c, starred: !next } : c))
+    }
+  }
+
+  // Inline rename: the row's label becomes an input; Enter/blur commit, Escape
+  // cancels, empty commit = cancel. A user title is authoritative server-side.
+  let renameChat = $state('') // chat_id being renamed
+  let renameText = $state('')
+  function startRename(s) {
+    menuChat = ''
+    renameChat = s.chat_id
+    renameText = s.title || s.preview || ''
+  }
+  async function commitRename(s) {
+    if (renameChat !== s.chat_id) return // Escape already cancelled; ignore the blur
+    renameChat = ''
+    const t = renameText.trim()
+    if (!t || t === (s.title || '')) return
+    const prev = s.title
+    $chats = $chats.map((c) => (c.chat_id === s.chat_id ? { ...c, title: t } : c))
+    try { await api.updateChat(s.chat_id, { title: t }) } catch {
+      $chats = $chats.map((c) => (c.chat_id === s.chat_id ? { ...c, title: prev } : c))
+    }
+  }
+  function focusSelect(node) { node.focus(); node.select() }
 
   // status → Lucide icon name + tooltip label. Colored per-status via the
   // .statusicon CSS classes; replaces the old emoji/unicode glyphs.
@@ -327,27 +378,59 @@
     <button class="seg" class:on={$drawerTab === 'tasks'} role="tab" aria-selected={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={14} /> Tasks</button>
   </div>
 
-  <div class="dlist">
+  {#snippet chatRow(s)}
+    <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id} onclick={() => openChat(s.chat_id)}>
+      {#if renameChat === s.chat_id}
+        <input class="renamein" value={renameText} use:focusSelect
+          oninput={(e) => (renameText = e.target.value)}
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => { if (e.key === 'Enter') commitRename(s); else if (e.key === 'Escape') renameChat = '' }}
+          onblur={() => commitRename(s)} />
+      {:else}
+        <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.chat_id}</div>
+      {/if}
+      {#if confirmChat === s.chat_id}
+        <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+          <span class="confirm">Delete?</span>
+          <button class="linkbtn danger" disabled={busyChat === s.chat_id}
+            onclick={(e) => { e.stopPropagation(); delChat(s.chat_id) }}>{busyChat === s.chat_id ? '…' : 'yes'}</button>
+          <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>no</button>
+        </span>
+      {:else if renameChat !== s.chat_id}
+        {#if s.updated}<span class="rowtime">{fmtAgoShort(s.updated)}</span>{/if}
+        <button class="rowkebab" title="Chat actions" aria-haspopup="menu" aria-expanded={menuChat === s.chat_id}
+          onclick={(e) => toggleMenu(e, s)}><Icon name="ellipsis-vertical" size={14} /></button>
+        {#if menuChat === s.chat_id}
+          <div class="chatmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
+            onclick={(e) => e.stopPropagation()}>
+            <button class="cmitem" role="menuitem" onclick={() => toggleStar(s)}>
+              <Icon name="star" size={14} /> {s.starred ? 'Unstar' : 'Star'}
+            </button>
+            <button class="cmitem" role="menuitem" onclick={() => startRename(s)}>
+              <Icon name="pencil" size={14} /> Rename
+            </button>
+            <div class="cmdiv"></div>
+            <button class="cmitem danger" role="menuitem"
+              onclick={() => { menuChat = ''; confirmChat = s.chat_id }}>
+              <Icon name="trash" size={14} /> Delete
+            </button>
+          </div>
+        {/if}
+      {/if}
+    </div>
+  {/snippet}
+
+  <div class="dlist" onscroll={() => (menuChat = '')}>
     {#if $drawerTab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
       {#if !$chats.length}<div class="none">No conversations yet.</div>{/if}
+      {#if starredChats.length}
+        <div class="datesep">Starred</div>
+        {#each starredChats as s (s.chat_id)}{@render chatRow(s)}{/each}
+      {/if}
       {#each chatRows as { item: s, sep } (s.chat_id)}
         {#if sep}<div class="datesep">{sep}</div>{/if}
-        <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id} onclick={() => openChat(s.chat_id)}>
-          <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.chat_id}</div>
-          {#if confirmChat === s.chat_id}
-            <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
-              <span class="confirm">Delete?</span>
-              <button class="linkbtn danger" disabled={busyChat === s.chat_id}
-                onclick={(e) => { e.stopPropagation(); delChat(s.chat_id) }}>{busyChat === s.chat_id ? '…' : 'yes'}</button>
-              <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>no</button>
-            </span>
-          {:else}
-            {#if s.updated}<span class="rowtime">{fmtAgoShort(s.updated)}</span>{/if}
-            <button class="rowdel" title="Delete chat" aria-label="Delete chat"
-              onclick={(e) => { e.stopPropagation(); confirmChat = s.chat_id }}><Icon name="trash" size={13} /></button>
-          {/if}
-        </div>
+        {@render chatRow(s)}
       {/each}
     {:else}
       {#if !groups.length}<div class="none">No tasks yet.</div>{/if}
@@ -485,8 +568,9 @@
   .profcreate { width: min(460px, 92vw); }
   .pc-lead { font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-normal); margin: -2px 0 6px; }
 
-  /* Chat row: title + a hover-revealed trash that swaps to an inline "Delete?"
-     confirm (same idiom as the Files modal). Delete is permanent. */
+  /* Chat row: title + a hover-revealed kebab (⋮) that opens a Star/Rename/Delete
+     menu. Delete re-uses the inline "Delete?" confirm (same idiom as the Files
+     modal) and is permanent. */
   /* Date section header between chat rows: last-message day, left-aligned and
      muted so it frames the group without competing with the chat titles. The
      first-child rule drops the top margin so "Recent" hugs the list top. */
@@ -498,10 +582,6 @@
      affordance so the row's right slot never doubles up. */
   .rowtime { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .chatrow:hover .rowtime, .chatrow:focus-within .rowtime { display: none; }
-  /* Hidden via opacity (not display) so it stays keyboard-focusable. */
-  .rowdel { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; width: 0; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-  .chatrow:hover .rowdel, .chatrow:focus-within .rowdel { opacity: .55; width: auto; }
-  .rowdel:hover { opacity: 1; color: #d8552f; }
   .rowconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; }
   .rowconfirm .confirm { color: #d8552f; font-size: 12px; }
   .rowconfirm .linkbtn { border: none; background: none; font: inherit; font-size: 12px; cursor: pointer; padding: 0; color: var(--accent); }
@@ -509,4 +589,22 @@
   .rowconfirm .linkbtn.danger { color: var(--muted); }
   .rowconfirm .linkbtn.danger:hover { color: #d8552f; }
   .rowconfirm .linkbtn.danger:disabled { cursor: default; opacity: .6; }
+
+  /* Kebab: hover-revealed like the old trash; swaps with the timestamp. */
+  .rowkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; width: 0; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+  .chatrow:hover .rowkebab, .chatrow:focus-within .rowkebab { opacity: .55; width: auto; }
+  .rowkebab:hover { opacity: 1; color: var(--text); }
+
+  /* Row action menu: fixed-position (escapes the scrolling list), right edge
+     anchored to the kebab via translateX(-100%). */
+  .chatmenu { position: fixed; z-index: var(--z-modal); transform: translateX(-100%); min-width: 150px; display: flex; flex-direction: column; padding: 4px; background: var(--surface-elevated); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
+  .cmitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: none; background: none; font: inherit; font-size: var(--text-xs); color: var(--text); border-radius: var(--radius-xs, 6px); cursor: pointer; text-align: left; }
+  .cmitem:hover { background: var(--surface-hover); }
+  .cmitem.danger { color: var(--danger, #d8552f); }
+  .cmitem.danger:hover { background: color-mix(in srgb, var(--danger, #d8552f) 12%, transparent); }
+  .cmitem :global(svg) { flex: none; opacity: .7; }
+  .cmdiv { height: 1px; margin: 4px 6px; background: var(--line); }
+
+  /* Inline rename input, replacing the label at the row's own size. */
+  .renamein { flex: 1; min-width: 0; font: inherit; font-size: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; padding: 1px 6px; outline: none; }
 </style>
