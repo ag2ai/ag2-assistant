@@ -1,0 +1,52 @@
+# Build and upload the sdist + wheel to PyPI when a GitHub release is published
+# (create the release from the same vX.Y.Z tag that triggers the Docker publish).
+#
+# Publishing uses PyPI Trusted Publishing (OIDC) — no API tokens. The trusted publisher
+# must be configured on PyPI for (owner=ag2ai, repo=ag2-assistant, workflow=pypi-publish.yml,
+# environment=package), mirroring ag2-classic's python-package.yml setup.
+#
+# The published wheel depends on the released `ag2` from PyPI ([project.dependencies]);
+# only development installs track AG2 main (via [tool.uv.sources], which never
+# reaches built metadata).
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: package
+    permissions:
+      contents: read
+      # IMPORTANT: required for PyPI Trusted Publishing (OIDC). No API token needed.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Check release tag matches project version
+        run: |
+          version="$(uv version --short)"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "release tag ${GITHUB_REF_NAME} does not match project version ${version}" >&2
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Publish to PyPI
+        # Trusted Publishing (OIDC) — authenticates via the PyPI trusted publisher
+        # configured for this repo/workflow/environment; no username/password.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0

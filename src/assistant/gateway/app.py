@@ -508,6 +508,39 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return {"status": "ok", "profiles": 0}
         return runtime.gateway.status()
 
+    @app.get("/api/coding/agents")
+    async def coding_agents() -> dict:
+        """Read-only status of CLI coding agents (for the Settings "Coding agents"
+        card). In Docker with ``AG2ASSISTANT_ACP_BRIDGE`` set, reports the host
+        bridge and the agents it exposes; otherwise the locally-installed agents.
+        Never raises — an unreachable bridge is reported as ``connected: false``.
+        """
+        from assistant.coding import detect
+
+        endpoint = detect.bridge_endpoint()
+        if endpoint is None:
+            agents = [
+                {"name": a.name, "label": a.label, "available": a.available}
+                for a in detect.detect_agents()
+            ]
+            return {"mode": "local", "bridge": None, "connected": True, "agents": agents}
+
+        from assistant.coding import bridge_client
+
+        target = f"{endpoint.host}:{endpoint.port}"
+        try:
+            inventory = await bridge_client.list_agents(endpoint)
+        except Exception as exc:  # noqa: BLE001 — surface as a disconnected status
+            return {
+                "mode": "bridge",
+                "bridge": target,
+                "connected": False,
+                "error": str(exc),
+                "agents": [],
+            }
+        agents = [{"name": a.name, "label": a.label, "available": a.available} for a in inventory]
+        return {"mode": "bridge", "bridge": target, "connected": True, "agents": agents}
+
     @app.get("/api/usage")
     async def usage() -> dict:
         """Install-wide token/cost roll-up across ALL running profiles (for the HUD's

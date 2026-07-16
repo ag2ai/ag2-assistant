@@ -9,13 +9,13 @@ the same socket. Either way the styled `/hitl/{id}` page works too.
 
 import asyncio
 
-from assistant.hitl.base import Question
+from assistant.hitl.base import PendingGuard, Question
 
 # Timeout = deny, so a never-answered prompt fails safe instead of hanging forever.
 _DEFAULT_TIMEOUT = 300.0
 
 
-class GatewayAsker:
+class GatewayAsker(PendingGuard):
     """Asks via the gateway's HITL registry; optionally pushes the question."""
 
     def __init__(self, server, on_question=None, timeout: float = _DEFAULT_TIMEOUT) -> None:
@@ -24,17 +24,18 @@ class GatewayAsker:
         self._timeout = timeout
 
     async def ask(self, question: Question, timeout: float | None = None) -> str:
-        req_id, fut = self._server.register(question)
-        if self._on_question is not None:
+        with self.pending_guard():
+            req_id, fut = self._server.register(question)
+            if self._on_question is not None:
+                try:
+                    await self._on_question(req_id, question, self._server.path_for(req_id))
+                except Exception:
+                    pass  # a push failure shouldn't abort the prompt; the page still works
             try:
-                await self._on_question(req_id, question, self._server.path_for(req_id))
-            except Exception:
-                pass  # a push failure shouldn't abort the prompt; the page still works
-        try:
-            return await asyncio.wait_for(fut, timeout=timeout or self._timeout)
-        except asyncio.TimeoutError:
-            from assistant.permissions import DENY
+                return await asyncio.wait_for(fut, timeout=timeout or self._timeout)
+            except asyncio.TimeoutError:
+                from assistant.permissions import DENY
 
-            return DENY  # unanswered → deny (safe default for permission prompts)
-        finally:
-            self._server.discard(req_id)
+                return DENY  # unanswered → deny (safe default for permission prompts)
+            finally:
+                self._server.discard(req_id)

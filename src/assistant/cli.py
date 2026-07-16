@@ -473,6 +473,31 @@ def gateway(
     uvicorn.run(create_app(ProfileManager(memory=memory)), host=host, port=port)
 
 
+@app.command("acp-bridge")
+def acp_bridge(
+    host: str = typer.Option(
+        "127.0.0.1",
+        help="Interface to bind (loopback is reachable from Docker Desktop via host.docker.internal).",
+    ),
+    port: int = typer.Option(8801, help="TCP port to listen on."),
+    token: str = typer.Option(
+        "",
+        help="Shared secret the container must present. Empty = no token (bind to loopback only).",
+    ),
+) -> None:
+    """Run the host ACP bridge: lets a containerized ag2-assistant see and drive
+    THIS host's CLI coding agents (Claude Code / Codex / OpenCode).
+
+    Run this on the HOST (not in Docker), then point the container at it with
+    AG2ASSISTANT_ACP_BRIDGE=host.docker.internal:PORT (and _TOKEN if set)."""
+    from assistant.coding.bridge_server import serve
+
+    try:
+        asyncio.run(serve(host=host, port=port, token=token))
+    except KeyboardInterrupt:
+        typer.echo("\nacp-bridge stopped")
+
+
 @app.command()
 def telegram(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),

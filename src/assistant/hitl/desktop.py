@@ -13,7 +13,7 @@ import webbrowser
 
 from pydantic import BaseModel
 
-from assistant.hitl.base import Question
+from assistant.hitl.base import PendingGuard, Question
 
 _PAGE = """<!doctype html>
 <html lang="en">
@@ -275,7 +275,7 @@ class HitlServer:
         self._task = None
 
 
-class DesktopAsker:
+class DesktopAsker(PendingGuard):
     """Asks the human via a styled local web page opened in the browser."""
 
     def __init__(

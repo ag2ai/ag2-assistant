@@ -44,7 +44,18 @@ _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
 # Capability groups → the tools they unlock. Tasks declare the capabilities they
 # need so an agent is built with EXACTLY those (privacy, focus, speed); chat
 # (capabilities=None) gets everything.
-CAPABILITIES = ("web", "code", "files", "images", "skills", "mcp", "gmail", "calendar", "drive")
+CAPABILITIES = (
+    "web",
+    "code",
+    "coding",
+    "files",
+    "images",
+    "skills",
+    "mcp",
+    "gmail",
+    "calendar",
+    "drive",
+)
 
 # What each capability unlocks, in the model's own terms. This is the ONE place a
 # capability is described: every prompt that offers a choice of capabilities renders
@@ -59,6 +70,11 @@ CAPABILITY_DOCS = {
     "code": (
         "run code and shell commands — for work that is more reliably computed than "
         "reasoned (calculation, data transformation, parsing, verification)"
+    ),
+    "coding": (
+        "write or edit code in the user's own repositories and folders, driven by a "
+        "locally installed CLI coding agent — the path for real code changes on disk, "
+        "as opposed to running snippets; the user approves the folder first"
     ),
     "files": "read the user's local files, and save files into the workspace",
     "images": "generate and edit images",
@@ -87,7 +103,7 @@ def available_capabilities() -> list[str]:
     """Capabilities currently usable (Google ones only when signed in)."""
     from assistant.integrations.google_auth import has_token
 
-    caps = ["web", "code", "files", "images", "skills", "mcp"]
+    caps = ["web", "code", "coding", "files", "images", "skills", "mcp"]
     if has_token():
         caps += ["gmail", "calendar", "drive"]
     return caps
@@ -206,6 +222,14 @@ def build_agent_tools(
                 SandboxShellTool(blocked=_SHELL_BLOCKED, middleware=[approval]),
                 SandboxCodeTool(environment=LocalEnvironment(), middleware=[approval]),
             ]
+
+    if want("coding"):
+        # Drive host CLI coding agents (Claude Code / Codex / OpenCode) over ACP.
+        # The tools resolve the PermissionManager/Asker from the turn's context at
+        # call time, so nothing extra is wired here.
+        from assistant.tools.coding import build_coding_tools
+
+        tools += build_coding_tools()
 
     if want("images") and config is not None:
         # generate_image: provider-aware image generation + editing → saved to the
