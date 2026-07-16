@@ -50,8 +50,8 @@ class Inquiry:
     channel: str | None = None  # the surface it was raised on
     # Stream the InquiryRaised/Answered events surface on (so it renders inline) and
     # that the GUI matches against the open page. Tasks: "task:<id>"; chat: the
-    # chat session id. None → falls back to "task:<task_id>".
-    session: str | None = None
+    # chat id. None → falls back to "task:<task_id>".
+    chat: str | None = None
     status: str = InquiryStatus.PENDING
     answer: str | None = None
     created_at: str = field(default_factory=now_iso)
@@ -121,7 +121,7 @@ class InquiryStore:
         detail: str | None = None,
         resource: str | None = None,
         channel: str | None = None,
-        session: str | None = None,
+        chat: str | None = None,
     ) -> Inquiry:
         inq = Inquiry(
             id=new_id("inq"),
@@ -132,7 +132,7 @@ class InquiryStore:
             detail=detail,
             resource=resource,
             channel=channel,
-            session=session,
+            chat=chat,
         )
         await self._save(inq)
         await self._notify(inq, "raised")
@@ -246,14 +246,14 @@ class DurableAsker:
         *,
         task_id: str | None = None,
         channel: str | None = None,
-        session: str | None = None,
+        chat: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         self._inner = inner
         self._store = store
         self.task_id = task_id
         self.channel = channel
-        self._session = session
+        self._chat = chat
         self._timeout = timeout
 
     def rebind(self, task_id: str) -> "DurableAsker":
@@ -263,15 +263,15 @@ class DurableAsker:
             self._store,
             task_id=task_id,
             channel=self.channel,
-            session=self._session,
+            chat=self._chat,
             timeout=self._timeout,
         )
 
     async def ask(self, question: Question, timeout: float | None = None) -> str:
         to = timeout or self._timeout
-        # Surface on the explicit session, else the task's stream (so a task's
+        # Surface on the explicit chat, else the task's stream (so a task's
         # inquiries render inline on its page exactly as before).
-        session = self._session or (f"task:{self.task_id}" if self.task_id else None)
+        chat = self._chat or (f"task:{self.task_id}" if self.task_id else None)
         inq = await self._store.create(
             text=question.text,
             kind=getattr(question, "kind", "question") or "question",
@@ -279,7 +279,7 @@ class DurableAsker:
             options=list(question.options or []),
             detail=getattr(question, "detail", None),
             channel=self.channel,
-            session=session,
+            chat=chat,
         )
 
         async def via_transport() -> None:

@@ -166,7 +166,7 @@ A text sketch of the same shape:
     |  Gateway  |  (FastAPI: /api/p/{profile}/message, /api/p/{profile}/stream,
     |           |   /api/health, /app)
     +-----------+
-         |  per-profile, per-session isolation; events streamed to every client
+         |  per-profile, per-chat isolation; events streamed to every client
     +-----------+
     |   Agent   |  (AG2 + Gemini / OpenAI / Anthropic / Ollama)
     |   Tools   |  (web search, web fetch, weather, markets, shell, code exec,
@@ -188,8 +188,8 @@ Install-wide state lives under `~/.ag2assistant/` — the global `config.yaml` (
 - [x] Profiles — isolated, colour-coded workspaces (own chats, tasks, memory, files)
 - [x] CLI (run, gateway, chat, agent, onboard, profiles, permissions, auth, google)
 - [x] Tools (web search, web fetch, weather, markets, shell, code execution, image generation, files)
-- [x] Memory — passively learns preferences and from 👍/👎 feedback; persists across sessions
-- [x] Multi-turn conversations (per-session isolation)
+- [x] Memory — passively learns preferences and from 👍/👎 feedback; persists across chats
+- [x] Multi-turn conversations (per-chat isolation)
 - [x] Gateway (REST + WebSocket event-stream API)
 - [x] Web UI — chat, tasks, files, images, voice, memory, usage, permissions, onboarding, settings
 - [x] Generative UI — rich live surfaces (weather, markets, news, agenda, inbox, decisions)

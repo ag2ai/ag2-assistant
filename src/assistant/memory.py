@@ -234,9 +234,9 @@ def build_knowledge_config(
         store: An existing KnowledgeStore to reuse (e.g. a shared, locked store
             when several agents must write the same profile concurrently).
         every_n_turns: Distil the profile every N turns. Batches the (LLM-backed)
-            aggregation so long sessions don't pay it on every message. 0 disables.
+            aggregation so long chats don't pay it on every message. 0 disables.
         on_end: Also distil when a conversation ends. Use for single-shot runs
-            (CLI) so their one turn is still captured; leave off for long sessions
+            (CLI) so their one turn is still captured; leave off for long chats
             to avoid an aggregation call per turn.
         compact: Bound a long conversation's context by summarising the oldest
             events (an LLM call on the cheap model) when the stream grows large.

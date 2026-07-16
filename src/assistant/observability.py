@@ -6,7 +6,7 @@ Three layers, all writing where they can be read back:
 - AG2-native ``LoggingMiddleware`` on each agent → per-turn LLM call / tool / turn
   entries in that same log.
 - A failure snapshot: when an agent turn raises (e.g. a provider 400), a compact
-  JSON record at ``<data_dir>/debug/<ts>-<session>.json`` capturing the error,
+  JSON record at ``<data_dir>/debug/<ts>-<chat>.json`` capturing the error,
   traceback, and the *shape* of the history that triggered it.
 
 The full per-turn event stream is already persisted by the gateway's
@@ -89,7 +89,7 @@ def log_suppressed(operation: str, exc: BaseException, **context: Any) -> None:
 
 
 async def capture_failure(
-    config, *, session_id, surface="", user_text="", error=None, stream=None
+    config, *, chat_id, surface="", user_text="", error=None, stream=None
 ) -> str | None:
     """Write a compact JSON debug record for a failed turn; return its path.
 
@@ -107,7 +107,7 @@ async def capture_failure(
                 events = []
         record = {
             "ts": datetime.now().astimezone().isoformat(),
-            "session_id": session_id,
+            "chat_id": chat_id,
             "surface": (surface or "")[:800],
             "user_text": (user_text or "")[:800],
             "error_type": type(error).__name__ if error else "",
@@ -123,11 +123,11 @@ async def capture_failure(
         }
         debug_dir = config.data_dir / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
-        safe = str(session_id).replace(":", "_").replace("/", "_")
+        safe = str(chat_id).replace(":", "_").replace("/", "_")
         path = debug_dir / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{safe}.json"
         path.write_text(json.dumps(record, indent=2))
         logger.error(
-            "turn failed (%s) on %s → debug record %s", record["error_type"], session_id, path
+            "turn failed (%s) on %s → debug record %s", record["error_type"], chat_id, path
         )
         return str(path)
     except Exception:

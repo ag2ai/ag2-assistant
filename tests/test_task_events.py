@@ -24,8 +24,8 @@ async def _started(tmp_path):
     svc = _service(tmp_path)
     emitted: list = []
 
-    async def emitter(session_id, event):
-        emitted.append((session_id, event))
+    async def emitter(chat_id, event):
+        emitted.append((chat_id, event))
 
     svc.set_emitter(emitter)
     await svc.start()
@@ -250,8 +250,8 @@ async def test_visible_subagent_surfaces_generated_image_bare(monkeypatch):
     assert not [e for _, e in events if isinstance(e, SubagentTrace)]
 
 
-async def test_chat_inquiry_surfaces_on_its_session_stream(tmp_path):
-    """A durable inquiry bound to a chat session emits InquiryRaised on THAT session
+async def test_chat_inquiry_surfaces_on_its_chat_stream(tmp_path):
+    """A durable inquiry bound to a chat emits InquiryRaised on THAT chat's
     stream (so it renders inline in the chat), and answering it out of band resolves
     the asker — durable, inline chat HITL with no separate live channel."""
     import asyncio
@@ -260,7 +260,7 @@ async def test_chat_inquiry_surfaces_on_its_session_stream(tmp_path):
     from assistant.hitl import DurableAsker, NullAsker, Question
 
     svc, emitted = await _started(tmp_path)
-    asker = DurableAsker(NullAsker(), svc.inquiries, session="web-chat-1")
+    asker = DurableAsker(NullAsker(), svc.inquiries, chat="web-chat-1")
 
     pending = asyncio.ensure_future(
         asker.ask(Question(text="Which city?", options=["Sydney", "Perth"]))
@@ -269,7 +269,7 @@ async def test_chat_inquiry_surfaces_on_its_session_stream(tmp_path):
 
     raised = [e for _, e in emitted if isinstance(e, InquiryRaised)]
     assert raised, "InquiryRaised should be emitted"
-    assert ("web-chat-1", raised[0]) in emitted  # on the chat session stream, not task:
+    assert ("web-chat-1", raised[0]) in emitted  # on the chat stream, not task:
 
     await svc.answer_inquiry(raised[0].inquiry_id, "Sydney")
     assert await asyncio.wait_for(pending, timeout=2) == "Sydney"

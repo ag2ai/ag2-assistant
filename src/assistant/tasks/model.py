@@ -94,7 +94,7 @@ class Task:
 
     # origin / routing
     origin_channel: str | None = None
-    origin_session: str | None = None
+    origin_chat: str | None = None
     hitl_channel: str | None = None  # where to ask (override; default=origin)
 
     stream_id: str | None = None  # per-task event-log id

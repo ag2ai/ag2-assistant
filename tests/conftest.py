@@ -67,7 +67,7 @@ class FakeRunMixin:
 
 
 class FakeAgent(FakeRunMixin):
-    """Deterministic fake agent: echo[N] proves per-session continuity; empty tools."""
+    """Deterministic fake agent: echo[N] proves per-chat continuity; empty tools."""
 
     def __init__(self):
         self._counts: dict = {}
@@ -106,7 +106,7 @@ def make_profile_app(*, name="Test", accent="#109e91", persist=False, memory=Fal
 
 
 def api(pid: str, path: str = "") -> str:
-    """Profile-scoped route prefix helper for tests: api('work', '/sessions')."""
+    """Profile-scoped route prefix helper for tests: api('work', '/chats')."""
     return f"/api/p/{pid}{path}"
 
 

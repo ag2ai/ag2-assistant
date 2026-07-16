@@ -57,10 +57,10 @@ Start an interactive, multi-turn conversation in your terminal (the single-shot
 ```bash
 ag2-assistant chat                     # talk back and forth; type 'exit' or Ctrl-D to quit
 ag2-assistant chat --sandbox docker    # run shell/code in a container during the chat
-ag2-assistant chat --no-memory         # don't learn from this session
+ag2-assistant chat --no-memory         # don't learn from this chat
 ```
 
-It keeps one session, so AG2 Assistant remembers earlier turns, asks permissions via the
+It keeps one chat, so AG2 Assistant remembers earlier turns, asks permissions via the
 desktop popup, and learns your profile as you go.
 
 ### `ag2-assistant version`
@@ -89,23 +89,23 @@ permission/HITL prompts rendered inline as cards. The **History** button lists
 past conversations and lets you resume any of them. Use it as-is or as a reference
 for building your own front-end against the API below.
 
-**Resumable conversations.** Each session's full event history is persisted to
-`~/.ag2assistant/sessions.db` after every turn (via AG2's event log) and reloaded into a
+**Resumable conversations.** Each chat's full event history is persisted to
+`~/.ag2assistant/chats.db` after every turn (via AG2's event log) and reloaded into a
 fresh stream on demand — so conversations survive a gateway restart with complete
 context, not just a text transcript. This applies to **every** surface (web and
-all chat channels), keyed by session id.
+all chat channels), keyed by chat id.
 
 Endpoints:
 
 ```
-GET  /api/health                      -> {status, model, sessions, ...}
-GET  /api/sessions                    -> {sessions: [{session_id, updated, preview, turns}]}
-GET  /api/sessions/{id}               -> {session_id, messages: [{role, text}]}
+GET  /api/health                      -> {status, model, chats, ...}
+GET  /api/chats                       -> {chats: [{chat_id, updated, preview, turns}]}
+GET  /api/chats/{id}                  -> {chat_id, messages: [{role, text}]}
 GET  /api/hitl/pending                -> {pending: [{id, text, options, path, ...}]}
-POST /api/message   {text, session_id} -> {reply, session_id}
+POST /api/message   {text, chat_id}   -> {reply, chat_id}
 POST /hitl/{id}/answer  {answer}       -> {ok: true}   (answer a permission prompt)
 GET  /hitl/{id}                        -> styled HTML question page
-WS   /api/ws                           -> send {text, session_id};
+WS   /api/ws                           -> send {text, chat_id};
                                           receive {type: thinking|question|reply|error};
                                           answer a question with {type:"answer", id, answer}
 ```
@@ -126,11 +126,11 @@ Example:
 ```bash
 curl -X POST http://127.0.0.1:8800/api/message \
   -H 'Content-Type: application/json' \
-  -d '{"text":"What is the capital of Japan?","session_id":"u1"}'
-# {"reply":"The capital of Japan is Tokyo.","session_id":"u1"}
+  -d '{"text":"What is the capital of Japan?","chat_id":"u1"}'
+# {"reply":"The capital of Japan is Tokyo.","chat_id":"u1"}
 ```
 
-Each `session_id` keeps its own isolated multi-turn conversation. For
+Each `chat_id` keeps its own isolated multi-turn conversation. For
 distributed/multi-agent deployments, the agent can also be served over WebSocket
 through an AG2 Hub.
 
@@ -182,14 +182,14 @@ ag2-assistant setup
 
 ### `ag2-assistant status` (coming soon)
 
-Check the status of the gateway, connected channels, and active sessions.
+Check the status of the gateway, connected channels, and active chats.
 
 ```bash
 ag2-assistant status
 # Gateway: running (ws://127.0.0.1:8789)
 # Channels:
-#   telegram: connected (2 active sessions)
-#   discord:  connected (1 active session)
+#   telegram: connected (2 active chats)
+#   discord:  connected (1 active chat)
 #   slack:    not configured
 # Agent: idle
 # Uptime: 3h 42m
@@ -337,7 +337,7 @@ memory:
 ```
 
 `aggregate_model` (optional) runs the passive memory-distillation pass on a
-cheaper model than your main one — handy on long sessions. On Gemini this
+cheaper model than your main one — handy on long chats. On Gemini this
 defaults to `gemini-2.5-flash-lite`; set it explicitly to override, or set it to
 your main model to disable the saving.
 
@@ -578,17 +578,17 @@ Scopes requested (least-privilege): `gmail.readonly` + `gmail.compose` (read mai
 create drafts, and send — but **not** delete or relabel existing mail),
 `calendar.events` (read + create events, not calendar management), and `drive.readonly`.
 
-## Sessions
+## Chats
 
-AG2 Assistant maintains conversation history per user per channel. When you message your agent on Telegram, it remembers your previous conversations on Telegram. Discord conversations are separate sessions.
+AG2 Assistant maintains conversation history per user per channel. When you message your agent on Telegram, it remembers your previous conversations on Telegram. Discord conversations are separate chats.
 
-Sessions are persisted locally in `~/.ag2assistant/sessions/`.
+Chats are persisted locally in `~/.ag2assistant/chats.db`.
 
 ## How It Works
 
 1. You send a message on any connected platform (or CLI)
 2. The channel adapter normalizes it to a common format
-3. The gateway routes it to your session
+3. The gateway routes it to your chat
 4. The AG2 agent processes it with your conversation history
 5. The response is sent back through the same channel
 

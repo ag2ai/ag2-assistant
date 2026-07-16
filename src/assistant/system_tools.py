@@ -91,8 +91,8 @@ def format_task(node: dict) -> str:
 def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -> list:
     """Build the system toolkit. `tasks` is a TaskService; `settings` is the profile's
     `Settings` (the voice get/set tools read/write it, so they touch only this
-    profile); `chats` (optional) is a provider with `list_sessions()` and
-    `transcript(session_id)` (the gateway). `platform` is the surface ("gateway" for
+    profile); `chats` (optional) is a provider with `list_chats()` and
+    `transcript(chat_id)` (the gateway). `platform` is the surface ("gateway" for
     web, else a channel name) — on a channel, task confirmations note that follow-up
     questions are asked in the web app."""
     note = _followup_note(platform)
@@ -339,25 +339,25 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
 
         @tool
         async def list_chats() -> str:
-            """List past conversations (session id · last update · preview)."""
-            sess = await chats.list_sessions()
+            """List past conversations (chat id · last update · preview)."""
+            sess = await chats.list_chats()
             if not sess:
                 return "No conversations."
             return "\n".join(
-                f"{s['session_id']} · {s.get('turns', 0)} turns · {s.get('preview', '')}"
+                f"{s['chat_id']} · {s.get('turns', 0)} turns · {s.get('preview', '')}"
                 for s in sess
             )
 
         @tool
         async def read_chat(
-            session_id: Annotated[str, Field(description="The conversation/session id.")],
+            chat_id: Annotated[str, Field(description="The chat id.")],
         ) -> str:
             """Read a past conversation's transcript — the most recent turns of it.
 
             Long conversations are truncated to the latest turns; the result says so
             when earlier turns were dropped, and those earlier turns cannot be read.
             """
-            msgs = await chats.transcript(session_id)
+            msgs = await chats.transcript(chat_id)
             if not msgs:
                 return "No such conversation (or it's empty)."
             tail = msgs[-_CHAT_TAIL_TURNS:]

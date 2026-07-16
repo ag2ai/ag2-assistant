@@ -134,7 +134,7 @@ export function fmtDayShort(v) {
 // `at` (defaults to fmtDay, the thread's per-item divider with a time; the chats
 // list passes fmtDayShort for date-only section headers). Items without a time
 // (`at` missing/blank — a live/streaming bubble before created_at lands, or a
-// bare session stub) never start a new day, so they ride under the previous
+// bare chat stub) never start a new day, so they ride under the previous
 // header. Pure so the views and their tests share one source of truth.
 export function dayRows(items, label = fmtDay) {
   let lastDay = null

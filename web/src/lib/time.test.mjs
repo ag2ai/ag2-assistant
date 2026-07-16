@@ -122,7 +122,7 @@ const isoAt = (offset) => {
   return d.toISOString()
 }
 // A drawer chat row: dayRows keys off `at`, which the drawer maps from `updated`.
-const chat = (id, offset) => ({ session_id: id, at: isoAt(offset) })
+const chat = (id, offset) => ({ chat_id: id, at: isoAt(offset) })
 
 test('fmtDayShort: today is "Recent", then "Yesterday", then a date — never a time', () => {
   assert.equal(fmtDayShort(isoAt(0)), 'Recent')
@@ -150,7 +150,7 @@ test('chats list: one header per day, on the first row of each day (newest-first
 })
 
 test('chats list: a chat with a blank `updated` gets no header and rides under the last one', () => {
-  const rows = dayRows([chat('a', 0), { session_id: 'b', at: '' }], fmtDayShort)
+  const rows = dayRows([chat('a', 0), { chat_id: 'b', at: '' }], fmtDayShort)
   const seps = rows.map((r) => r.sep)
   assert.deepEqual(seps, ['Recent', null]) // blank-updated chat: no header
 })

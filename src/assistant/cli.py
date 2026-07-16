@@ -185,7 +185,7 @@ def chat(
                     break
                 if not user.strip():
                     continue
-                reply = await gateway.send_message(user, session_id="cli-chat", asker=asker)
+                reply = await gateway.send_message(user, chat_id="cli-chat", asker=asker)
                 typer.echo(f"ag2-assistant> {reply}\n")
         finally:
             if asker is not None:

@@ -31,7 +31,7 @@ def fake_gateway(monkeypatch):
 
 
 async def test_send_message_returns_reply(fake_gateway):
-    reply = await fake_gateway.send_message("hello", session_id="s1")
+    reply = await fake_gateway.send_message("hello", chat_id="s1")
     assert reply == "echo[1]: hello"
 
 
@@ -104,8 +104,8 @@ async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
             return "x"
 
     asker = _Asker()
-    await fake_gateway.send_message("hi", session_id="s1", asker=asker)
-    await fake_gateway.send_message("again", session_id="s1", asker=asker)
+    await fake_gateway.send_message("hi", chat_id="s1", asker=asker)
+    await fake_gateway.send_message("again", chat_id="s1", asker=asker)
     assert calls["run"] == 1  # onboarded once, not on every message
 
 
@@ -116,20 +116,20 @@ async def test_gateway_skips_onboarding_without_asker(fake_gateway, monkeypatch)
         raise AssertionError("should not be called without an asker")
 
     monkeypatch.setattr(onboarding, "needs_onboarding", boom)
-    await fake_gateway.send_message("hi", session_id="s1")  # no asker → no onboarding
+    await fake_gateway.send_message("hi", chat_id="s1")  # no asker → no onboarding
 
 
-async def test_session_keeps_multi_turn_history(fake_gateway):
-    await fake_gateway.send_message("first", session_id="s1")
-    reply = await fake_gateway.send_message("second", session_id="s1")
+async def test_chat_keeps_multi_turn_history(fake_gateway):
+    await fake_gateway.send_message("first", chat_id="s1")
+    reply = await fake_gateway.send_message("second", chat_id="s1")
     # The chain grew to length 2, proving history is threaded.
     assert reply == "echo[2]: second"
 
 
-async def test_sessions_are_isolated(fake_gateway):
-    await fake_gateway.send_message("a", session_id="s1")
-    await fake_gateway.send_message("b", session_id="s1")
-    reply = await fake_gateway.send_message("c", session_id="s2")
+async def test_chats_are_isolated(fake_gateway):
+    await fake_gateway.send_message("a", chat_id="s1")
+    await fake_gateway.send_message("b", chat_id="s1")
+    reply = await fake_gateway.send_message("c", chat_id="s2")
     # s2 starts a fresh chain (length 1), unaffected by s1.
     assert reply == "echo[1]: c"
 
@@ -138,11 +138,11 @@ def test_status_shape(fake_gateway):
     status = fake_gateway.status()
     assert status["status"] == "ok"
     assert "model" in status
-    assert status["sessions"] == 0
+    assert status["chats"] == 0
 
 
 async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
-    """A new Gateway over the same data dir sees prior sessions (resumable)."""
+    """A new Gateway over the same data dir sees prior chats (resumable)."""
     import assistant.gateway.core as core_mod
     from assistant.config import Config
     from assistant.gateway.core import Gateway
@@ -151,8 +151,8 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
 
     gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
     await gw.start()
-    await gw.send_message("hello there", session_id="s1")
-    await gw.send_message("again", session_id="s1")
+    await gw.send_message("hello there", chat_id="s1")
+    await gw.send_message("again", chat_id="s1")
     await gw.close()
 
     gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
@@ -161,13 +161,13 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     assert [m["role"] for m in turns] == ["user", "agent", "user", "agent"]
     assert turns[0]["text"] == "hello there"
 
-    listed = await gw2.list_sessions()
-    s1 = next(s for s in listed if s["session_id"] == "s1")
+    listed = await gw2.list_chats()
+    s1 = next(s for s in listed if s["chat_id"] == "s1")
     assert s1["turns"] == 2
     assert s1["preview"] == "hello there"
 
 
-async def test_delete_session_removes_transcript_and_event_log(tmp_path, monkeypatch):
+async def test_delete_chat_removes_transcript_and_event_log(tmp_path, monkeypatch):
     """Deleting a chat drops BOTH artifacts — the display transcript AND the AG2
     event log — so it neither lists nor resumes, even on a fresh Gateway."""
     from ag2.knowledge.constants import LOG_PREFIX
@@ -180,17 +180,17 @@ async def test_delete_session_removes_transcript_and_event_log(tmp_path, monkeyp
 
     gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
     await gw.start()
-    await gw.send_message("keep me", session_id="keep")
-    await gw.send_message("delete me", session_id="gone")
+    await gw.send_message("keep me", chat_id="keep")
+    await gw.send_message("delete me", chat_id="gone")
     # both artifacts exist before delete
     assert await gw._event_store.exists(gw._transcript_path("gone"))
     assert await gw._event_store.exists(f"{LOG_PREFIX}gone.jsonl")
 
-    assert await gw.delete_session("gone") is True
-    assert await gw.delete_session("gone") is False  # idempotent: nothing left to remove
+    assert await gw.delete_chat("gone") is True
+    assert await gw.delete_chat("gone") is False  # idempotent: nothing left to remove
 
-    # gone from the list; both on-disk artifacts removed; other session untouched
-    assert {s["session_id"] for s in await gw.list_sessions()} == {"keep"}
+    # gone from the list; both on-disk artifacts removed; other chat untouched
+    assert {s["chat_id"] for s in await gw.list_chats()} == {"keep"}
     assert not await gw._event_store.exists(gw._transcript_path("gone"))
     assert not await gw._event_store.exists(f"{LOG_PREFIX}gone.jsonl")
     await gw.close()
@@ -198,11 +198,11 @@ async def test_delete_session_removes_transcript_and_event_log(tmp_path, monkeyp
     # a fresh Gateway over the same data dir does not resurrect it
     gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
     await gw2.start()
-    assert {s["session_id"] for s in await gw2.list_sessions()} == {"keep"}
+    assert {s["chat_id"] for s in await gw2.list_chats()} == {"keep"}
     assert await gw2.transcript("gone") == []
 
 
-# --- in-flight session stub (bug: a chat mid-turn must be listable so it survives
+# --- in-flight chat stub (bug: a chat mid-turn must be listable so it survives
 #     a profile switch, which is a full-page nav that discards local page state) ---
 
 
@@ -234,12 +234,12 @@ async def _persistent_gateway(tmp_path, monkeypatch, agent):
     return gw
 
 
-async def test_inflight_session_listed_before_completion(tmp_path, monkeypatch):
-    """(a) A session is listed with the user-message preview *while* its (slow) turn
+async def test_inflight_chat_listed_before_completion(tmp_path, monkeypatch):
+    """(a) A chat is listed with the user-message preview *while* its (slow) turn
     is still running — the stub is written the instant the message is accepted."""
     slow = _SlowAgent()
     gw = await _persistent_gateway(tmp_path, monkeypatch, slow)
-    turn = asyncio.create_task(gw.send_message("search the web for X", session_id="live"))
+    turn = asyncio.create_task(gw.send_message("search the web for X", chat_id="live"))
     try:
         # Let send_message reach the (blocked) agent turn.
         for _ in range(50):
@@ -247,8 +247,8 @@ async def test_inflight_session_listed_before_completion(tmp_path, monkeypatch):
                 break
             await asyncio.sleep(0.01)
 
-        listed = await gw.list_sessions()
-        s = next(s for s in listed if s["session_id"] == "live")
+        listed = await gw.list_chats()
+        s = next(s for s in listed if s["chat_id"] == "live")
         assert s["preview"] == "search the web for X"  # user message shows immediately
         assert s["turns"] == 0  # no completed exchange yet
         assert s["title"] == ""  # not yet named → drawer falls back to the preview
@@ -274,10 +274,10 @@ async def test_inflight_stub_completed_in_place_no_duplicate(tmp_path, monkeypat
     monkeypatch.setattr(title_mod, "generate_title", fake_title)
 
     gw = await _persistent_gateway(tmp_path, monkeypatch, FakeAgent())
-    await gw.send_message("first question", session_id="s1")
+    await gw.send_message("first question", chat_id="s1")
     for _ in range(50):  # title generation is fire-and-forget
-        listed = await gw.list_sessions()
-        if next(x for x in listed if x["session_id"] == "s1")["title"]:
+        listed = await gw.list_chats()
+        if next(x for x in listed if x["chat_id"] == "s1")["title"]:
             break
         await asyncio.sleep(0.01)
 
@@ -287,13 +287,13 @@ async def test_inflight_stub_completed_in_place_no_duplicate(tmp_path, monkeypat
         {"role": "user", "text": "first question"},
         {"role": "agent", "text": "echo[1]: first question"},
     ]
-    listed = await gw.list_sessions()
-    s1 = next(x for x in listed if x["session_id"] == "s1")
+    listed = await gw.list_chats()
+    s1 = next(x for x in listed if x["chat_id"] == "s1")
     assert s1["turns"] == 1
     assert s1["title"] == "Named Chat"
 
     # Second turn: no stub duplication, history keeps growing normally.
-    await gw.send_message("second question", session_id="s1")
+    await gw.send_message("second question", chat_id="s1")
     msgs = await gw.transcript("s1")
     assert [m["text"] for m in msgs] == [
         "first question",
@@ -301,25 +301,25 @@ async def test_inflight_stub_completed_in_place_no_duplicate(tmp_path, monkeypat
         "second question",
         "echo[2]: second question",
     ]
-    listed = await gw.list_sessions()
-    assert next(x for x in listed if x["session_id"] == "s1")["turns"] == 2
+    listed = await gw.list_chats()
+    assert next(x for x in listed if x["chat_id"] == "s1")["turns"] == 2
     await gw.close()
 
 
-async def test_inflight_session_stream_replay_returns_user_event(tmp_path, monkeypatch):
-    """(d) Reopening an in-flight session mid-turn replays the user message event, so
+async def test_inflight_chat_stream_replay_returns_user_event(tmp_path, monkeypatch):
+    """(d) Reopening an in-flight chat mid-turn replays the user message event, so
     the stream bridge shows the history so far and attaches live. Here the user event
-    is emitted onto the session stream before the (blocked) turn, exactly as the WS
+    is emitted onto the chat stream before the (blocked) turn, exactly as the WS
     stream path does for a real message; a fresh bridge open() must replay it."""
-    from assistant.events import Attachment  # any persisted, replayable session event
+    from assistant.events import Attachment  # any persisted, replayable chat event
 
     slow = _SlowAgent()
     gw = await _persistent_gateway(tmp_path, monkeypatch, slow)
-    # Emit a marker event onto the session stream (persisted + replayable), the way the
+    # Emit a marker event onto the chat stream (persisted + replayable), the way the
     # app's stream handler surfaces the user's turn context before running it.
     await gw.emit_event("live", Attachment("/tmp/x.png", name="x.png"))
 
-    turn = asyncio.create_task(gw.send_message("do the slow thing", session_id="live"))
+    turn = asyncio.create_task(gw.send_message("do the slow thing", chat_id="live"))
     try:
         for _ in range(50):
             if await gw._event_store.exists(gw._transcript_path("live")):
@@ -342,12 +342,12 @@ async def test_inflight_session_stream_replay_returns_user_event(tmp_path, monke
 # --- REST facade (profile-scoped) ---
 
 
-def test_sessions_rest_endpoints(profile_app):
+def test_chats_rest_endpoints(profile_app):
     client, pid = profile_app
-    client.post(api(pid, "/message"), json={"text": "first msg", "session_id": "u1"})
-    sessions = client.get(api(pid, "/sessions")).json()["sessions"]
-    assert any(s["session_id"] == "u1" for s in sessions)
-    msgs = client.get(api(pid, "/sessions/u1")).json()["messages"]
+    client.post(api(pid, "/message"), json={"text": "first msg", "chat_id": "u1"})
+    chats = client.get(api(pid, "/chats")).json()["chats"]
+    assert any(s["chat_id"] == "u1" for s in chats)
+    msgs = client.get(api(pid, "/chats/u1")).json()["messages"]
     assert msgs[0]["text"] == "first msg"
 
 
@@ -357,11 +357,11 @@ def test_rest_message_endpoint(profile_app):
     health = client.get("/api/health").json()
     assert health["status"] == "ok"
 
-    resp = client.post(api(pid, "/message"), json={"text": "hi there", "session_id": "u1"})
+    resp = client.post(api(pid, "/message"), json={"text": "hi there", "chat_id": "u1"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["reply"] == "echo[1]: hi there"
-    assert body["session_id"] == "u1"
+    assert body["chat_id"] == "u1"
 
 
 def test_unknown_and_archived_profile_status(monkeypatch):
@@ -380,11 +380,11 @@ def test_unknown_and_archived_profile_status(monkeypatch):
 
     app = create_app(ProfileManager(memory=False, persist=False))
     with TestClient(app) as client:
-        assert client.get(api("ghost", "/sessions")).status_code == 404
-        assert client.get(api(work.id, "/sessions")).status_code == 200
+        assert client.get(api("ghost", "/chats")).status_code == 404
+        assert client.get(api(work.id, "/chats")).status_code == 200
         # archive work (with a replacement default if needed), then it 410s
         client.request("DELETE", f"/api/profiles/{work.id}", json={"new_default": keep.id})
-        assert client.get(api(work.id, "/sessions")).status_code == 410
+        assert client.get(api(work.id, "/chats")).status_code == 410
 
 
 def test_mcp_settings_endpoints(profile_app):
@@ -570,7 +570,7 @@ def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
 def test_stream_roundtrip(profile_app):
     """The stream WebSocket replays history (ready) then runs a turn (turn_end)."""
     client, pid = profile_app
-    with client.websocket_connect(api(pid, "/stream?session=w1")) as ws:
+    with client.websocket_connect(api(pid, "/stream?chat=w1")) as ws:
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"text": "ping"})
         assert ws.receive_json()["type"] == "turn_end"
@@ -582,7 +582,7 @@ def test_stream_unknown_profile_ws_closed(profile_app):
 
     client, _pid = profile_app
     with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(api("ghost", "/stream?session=x")) as ws:
+        with client.websocket_connect(api("ghost", "/stream?chat=x")) as ws:
             ws.receive_json()
     assert exc.value.code == 4404
 
@@ -677,7 +677,7 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
     monkeypatch.setenv("AG2ASSISTANT_REPLY_TIMEOUT", "0.2")
     app, pid = make_profile_app()
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?session=s1")) as ws:
+        with client.websocket_connect(api(pid, "/stream?chat=s1")) as ws:
             while ws.receive_json().get("type") != "ready":
                 pass
             ws.send_json({"text": "slow"})
@@ -715,7 +715,7 @@ def test_stream_cancel_stops_the_turn(monkeypatch):
 
     app, pid = make_profile_app()
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?session=s1")) as ws:
+        with client.websocket_connect(api(pid, "/stream?chat=s1")) as ws:
             while ws.receive_json().get("type") != "ready":
                 pass
             ws.send_json({"text": "something long"})
@@ -752,10 +752,10 @@ async def test_feed_message_steers_the_running_turn(fake_gateway):
     agent = _SteerableAgent()
     fake_gateway._agent = agent
 
-    turn = asyncio.ensure_future(fake_gateway.send_message("research widgets", session_id="s1"))
+    turn = asyncio.ensure_future(fake_gateway.send_message("research widgets", chat_id="s1"))
     await asyncio.wait_for(started.wait(), timeout=1)
 
-    assert await fake_gateway.feed_message("focus on 2026", session_id="s1") is True
+    assert await fake_gateway.feed_message("focus on 2026", chat_id="s1") is True
     stream = await fake_gateway.stream_for("s1")
     # It lands in the run's inbox — the running turn's next model call drains it.
     assert stream.pending_messages
@@ -767,8 +767,8 @@ async def test_feed_message_steers_the_running_turn(fake_gateway):
 
 
 async def test_feed_message_is_false_when_nothing_is_running(fake_gateway):
-    """Idle session → the caller runs the message as a new turn instead."""
-    assert await fake_gateway.feed_message("hello", session_id="idle") is False
+    """Idle chat → the caller runs the message as a new turn instead."""
+    assert await fake_gateway.feed_message("hello", chat_id="idle") is False
     stream = await fake_gateway.stream_for("idle")
     assert not stream.pending_messages  # nothing left stranded in the inbox
 
@@ -794,7 +794,7 @@ async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
 
     fake_gateway._agent = _WorkingAgent()
 
-    turn = asyncio.ensure_future(fake_gateway.send_message("do it", session_id="s2"))
+    turn = asyncio.ensure_future(fake_gateway.send_message("do it", chat_id="s2"))
     await asyncio.wait_for(started.wait(), timeout=1)
     assert await fake_gateway.cancel_turn("s2") is True
     assert await turn == ""
@@ -817,21 +817,21 @@ async def test_gateway_asker_timeout_denies():
 
 @pytest.mark.integration
 async def test_gateway_real_agent_multiturn_and_isolation():
-    """End-to-end with the real agent: multi-turn recall + session isolation."""
+    """End-to-end with the real agent: multi-turn recall + chat isolation."""
     from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False)
     await gw.start()
     try:
         await gw.send_message(
-            "My codeword is KIWI-7. Acknowledge in one sentence.", session_id="s1"
+            "My codeword is KIWI-7. Acknowledge in one sentence.", chat_id="s1"
         )
-        recall = await gw.send_message("What is my codeword? One word.", session_id="s1")
+        recall = await gw.send_message("What is my codeword? One word.", chat_id="s1")
         assert "KIWI-7" in recall.upper()
 
         other = await gw.send_message(
             "What is my codeword? If unknown, reply exactly UNKNOWN.",
-            session_id="s2",
+            chat_id="s2",
         )
         assert "KIWI-7" not in other.upper()
     finally:
@@ -845,17 +845,17 @@ async def test_conversation_resumes_across_restart(tmp_path):
     from assistant.gateway.core import Gateway
 
     cfg = load_config()
-    cfg.data_dir = tmp_path  # isolate the session store
+    cfg.data_dir = tmp_path  # isolate the chat store
 
     gw1 = Gateway(config=cfg, memory=False)
     await gw1.start()
-    await gw1.send_message("My lucky number is 7. Acknowledge.", session_id="resume-1")
+    await gw1.send_message("My lucky number is 7. Acknowledge.", chat_id="resume-1")
     await gw1.close()  # simulate shutdown
 
     gw2 = Gateway(config=cfg, memory=False)
     await gw2.start()
     recall = await gw2.send_message(
-        "What is my lucky number? Reply with just the digit.", session_id="resume-1"
+        "What is my lucky number? Reply with just the digit.", chat_id="resume-1"
     )
     assert "7" in recall
     await gw2.close()
@@ -906,13 +906,13 @@ def test_cross_origin_requests_rejected(monkeypatch):
         # cross-origin WebSocket handshake is closed before accept()
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(
-                api(pid, "/stream?session=x"), headers={"origin": "http://evil.example"}
+                api(pid, "/stream?chat=x"), headers={"origin": "http://evil.example"}
             ) as ws:
                 ws.receive_json()
 
         # same-origin WebSocket still connects and replays history
         with client.websocket_connect(
-            api(pid, "/stream?session=y"), headers={"origin": "http://testserver"}
+            api(pid, "/stream?chat=y"), headers={"origin": "http://testserver"}
         ) as ws:
             assert ws.receive_json()["type"] == "ready"
 

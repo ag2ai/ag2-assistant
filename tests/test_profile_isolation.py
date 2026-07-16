@@ -47,28 +47,28 @@ def _boot_two(client):
     return "work", "personal"
 
 
-# --- a. chat isolation: A's sessions has it, B's is empty; dbs in right dirs ---
+# --- a. chat isolation: A's chats has it, B's is empty; dbs in right dirs ---
 
 
-def test_chat_sessions_isolated(monkeypatch):
+def test_chats_isolated(monkeypatch):
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
 
-        r = client.post(api(a, "/message"), json={"text": "hi A", "session_id": "s-a"})
+        r = client.post(api(a, "/message"), json={"text": "hi A", "chat_id": "s-a"})
         assert r.status_code == 200
         assert r.json()["reply"].startswith("echo[1]")
 
-        a_sessions = client.get(api(a, "/sessions")).json()["sessions"]
-        b_sessions = client.get(api(b, "/sessions")).json()["sessions"]
-        assert any(s["session_id"] == "s-a" for s in a_sessions)
-        assert b_sessions == []  # B never saw the chat
+        a_chats = client.get(api(a, "/chats")).json()["chats"]
+        b_chats = client.get(api(b, "/chats")).json()["chats"]
+        assert any(s["chat_id"] == "s-a" for s in a_chats)
+        assert b_chats == []  # B never saw the chat
 
-        # each profile has its OWN sessions.db under its own dir (persist=True creates
+        # each profile has its OWN chats.db under its own dir (persist=True creates
         # one per runtime at boot); the chat lives only in A's, and neither is the root's
-        assert (profiles.profile_dir(a) / "sessions.db").exists()
-        assert (profiles.profile_dir(b) / "sessions.db").exists()
+        assert (profiles.profile_dir(a) / "chats.db").exists()
+        assert (profiles.profile_dir(b) / "chats.db").exists()
         assert profiles.profile_dir(a) != profiles.profile_dir(b)
-        assert not (profiles.data_dir() / "sessions.db").exists()
+        assert not (profiles.data_dir() / "chats.db").exists()
 
 
 # --- b. remember tool: A's profile.db changes, B's absent; GET B/memory empty ---
@@ -379,7 +379,7 @@ async def test_a_scheduler_fires_while_b_active(monkeypatch):
         await a_tasks.store.add_deliverable(task.id, "the output")
 
         # meanwhile, drive a message through B (B is the "active" profile)
-        reply = await b_gw.send_message("busy over here", session_id="b1")
+        reply = await b_gw.send_message("busy over here", chat_id="b1")
         assert reply.startswith("echo[")
 
         # A's scheduler fired A's task autonomously while B was in use

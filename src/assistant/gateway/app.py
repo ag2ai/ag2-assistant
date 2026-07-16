@@ -35,7 +35,7 @@ Route map:
     static: /, /{name}.svg, /favicon.ico, /voices/{name}.wav, /app*, catch-all
 
   Profile-scoped (under /api/p/{pid}):
-    GET  sessions, sessions/{sid}
+    GET  chats, chats/{cid}
     POST message
     GET/POST tasks* (all/schedule/{id}/cancel/rerun/seen/archive/chat)
     GET  inquiries/pending, POST inquiries/{id}/answer
@@ -128,13 +128,13 @@ _SURFACES = {
 
 class MessageRequest(BaseModel):
     text: str
-    session_id: str = "default"
+    chat_id: str = "default"
     platform: str | None = None
 
 
 class MessageResponse(BaseModel):
     reply: str
-    session_id: str
+    chat_id: str
 
 
 class CredentialsUpload(BaseModel):
@@ -334,15 +334,15 @@ def _runtime_settings(runtime: ProfileRuntime):
     return profile_settings(runtime.config.data_dir)
 
 
-def _chat_asker(runtime: ProfileRuntime, session_id: str):
+def _chat_asker(runtime: ProfileRuntime, chat_id: str):
     """Durable, inline HITL for a chat turn: the agent's question persists as an
-    Inquiry and surfaces inline on this session's stream (InquiryRaised),
+    Inquiry and surfaces inline on this chat's stream (InquiryRaised),
     answerable from the thread or the strip. Falls back to the transient HITL
     registry if the inquiry store isn't available."""
     inquiries = getattr(runtime.tasks, "inquiries", None) if runtime.tasks is not None else None
     if inquiries is None:
         return GatewayAsker(runtime.hitl)
-    return DurableAsker(NullAsker(), inquiries, session=session_id)
+    return DurableAsker(NullAsker(), inquiries, chat=chat_id)
 
 
 async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
@@ -1468,29 +1468,29 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         except Exception:
             return False
 
-    # ---- Sessions ----
+    # ---- Chats ----
 
-    @p.get("/sessions")
-    async def sessions(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+    @p.get("/chats")
+    async def chats(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """List persisted, resumable conversations (newest first)."""
-        return {"sessions": await runtime.gateway.list_sessions()}
+        return {"chats": await runtime.gateway.list_chats()}
 
-    @p.get("/sessions/{session_id}")
-    async def session_transcript(
-        session_id: str, runtime: ProfileRuntime = Depends(get_runtime)
+    @p.get("/chats/{chat_id}")
+    async def chat_transcript(
+        chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
-        """The display transcript for a session, for the UI to restore."""
+        """The display transcript for a chat, for the UI to restore."""
         return {
-            "session_id": session_id,
-            "messages": await runtime.gateway.transcript(session_id),
+            "chat_id": chat_id,
+            "messages": await runtime.gateway.transcript(chat_id),
         }
 
-    @p.delete("/sessions/{session_id}")
-    async def delete_session(
-        session_id: str, runtime: ProfileRuntime = Depends(get_runtime)
+    @p.delete("/chats/{chat_id}")
+    async def delete_chat(
+        chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
         """Permanently delete a chat (transcript + full event log). Irreversible."""
-        removed = await runtime.gateway.delete_session(session_id)
+        removed = await runtime.gateway.delete_chat(chat_id)
         if not removed:
             return Response(status_code=404)
         return {"ok": True}
@@ -1501,11 +1501,11 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def message(
         req: MessageRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> MessageResponse:
-        # Durable, inline HITL bound to this chat session (answerable from the
+        # Durable, inline HITL bound to this chat (answerable from the
         # thread or the strip); the request blocks until answered (or times out).
-        asker = _chat_asker(runtime, req.session_id)
-        reply = await runtime.gateway.send_message(req.text, session_id=req.session_id, asker=asker)
-        return MessageResponse(reply=reply, session_id=req.session_id)
+        asker = _chat_asker(runtime, req.chat_id)
+        reply = await runtime.gateway.send_message(req.text, chat_id=req.chat_id, asker=asker)
+        return MessageResponse(reply=reply, chat_id=req.chat_id)
 
     # ---- Tasks + durable HITL inquiries ----
 
@@ -1575,10 +1575,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         ok, ids = await runtime.tasks.delete(task_id)
         if not ok:
             return Response(status_code=404)
-        # Purge the per-task chat/event streams (task pages use session "task:<id>").
+        # Purge the per-task chat/event streams (task pages use chat "task:<id>").
         for tid in ids:
             with contextlib.suppress(Exception):
-                await runtime.gateway.delete_session(f"task:{tid}")
+                await runtime.gateway.delete_chat(f"task:{tid}")
         return {"ok": True, "deleted": ids}
 
     @p.post("/tasks/{task_id}/chat")
@@ -1602,7 +1602,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         asker = _chat_asker(runtime, f"task:{task_id}")
         reply = await runtime.gateway.send_message(
             req.text,
-            session_id=f"task:{task_id}",
+            chat_id=f"task:{task_id}",
             asker=asker,
             surface=surface,
         )
@@ -2066,7 +2066,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.websocket("/api/p/{pid}/stream")
     async def stream_ws(websocket: WebSocket, pid: str) -> None:
-        """Event-stream transport: the client receives the session's events as
+        """Event-stream transport: the client receives the chat's events as
         `{event:{type,data}}` — replayed on connect, then live — and sends `{text}`
         turns. Closes with 4001 if the profile is archived mid-session (§4.9)."""
         if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
@@ -2086,14 +2086,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         runtime.on_close(_on_archive)
 
-        session_id = websocket.query_params.get("session") or "default"
+        chat_id = websocket.query_params.get("chat") or "default"
         default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
-        bridge = StreamBridge(runtime.gateway, websocket, session_id)
+        bridge = StreamBridge(runtime.gateway, websocket, chat_id)
 
         async def turn_surface() -> str:
             # task threads get a fresh task snapshot each turn so "this task" resolves
-            if session_id.startswith("task:"):
-                tid = session_id.split(":", 1)[1]
+            if chat_id.startswith("task:"):
+                tid = chat_id.split(":", 1)[1]
                 node = await runtime.tasks.get_task(tid)
                 if node:
                     from assistant.system_tools import format_task
@@ -2119,15 +2119,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                             await runtime.tasks.answer_inquiry(iid, ans)
                     continue
                 if data.get("type") == "cancel":
-                    # Stop the turn running on this session. The gateway cancels the
+                    # Stop the turn running on this chat. The gateway cancels the
                     # task driving AG2's run, which AG2 propagates into the turn; a
                     # TurnCancelled event comes back out through the bridge. A no-op
                     # when nothing is in flight.
-                    await runtime.gateway.cancel_turn(session_id)
+                    await runtime.gateway.cancel_turn(chat_id)
                     continue
                 if data.get("type") == "feedback" and data.get("target_id"):
                     # 👍/👎 + mandatory reason on a generated item. Emit it onto the
-                    # session stream (persists/replays → the GUI projects the thumb
+                    # chat stream (persists/replays → the GUI projects the thumb
                     # state, shows in the AG2 inspector), then fire-and-forget a learner
                     # that distils it into the memory profile (never blocks the socket).
                     from assistant import feedback as feedback_learner
@@ -2139,7 +2139,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     request = data.get("request") or ""
                     with contextlib.suppress(Exception):
                         await runtime.gateway.emit_event(
-                            session_id,
+                            chat_id,
                             FeedbackGiven(
                                 data["target_id"],
                                 target_kind=data.get("target_kind", "message"),
@@ -2168,7 +2168,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
                     with contextlib.suppress(Exception):
                         await runtime.gateway.emit_event(
-                            session_id,
+                            chat_id,
                             FeedbackCleared(
                                 data["target_id"],
                                 target_kind=data.get("target_kind", "message"),
@@ -2182,7 +2182,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     text = "Here is a file I'm sharing with you."
                 if not text:
                     continue
-                asker = _chat_asker(runtime, session_id)
+                asker = _chat_asker(runtime, chat_id)
                 surface = await turn_surface()
                 # Persist uploads into the workspace and tell the agent their paths (via
                 # surface, so the transcript stays clean) — enables editing/reading them.
@@ -2199,21 +2199,21 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     )
                     # Surface each upload in the thread (thumbnail / file chip) — emitted
                     # before the turn so it sits with the user's message; persists on the
-                    # session stream so it survives reload.
+                    # chat stream so it survives reload.
                     for pth, name in saved:
                         with contextlib.suppress(Exception):
-                            await runtime.gateway.emit_event(session_id, Attachment(pth, name=name))
+                            await runtime.gateway.emit_event(chat_id, Attachment(pth, name=name))
                 # Typed while the agent is still working? Feed the live turn instead of
                 # queueing a second one behind it — AG2 drains the message before the
                 # turn's next model call, so the user steers the work in progress.
-                if await runtime.gateway.feed_message(text, session_id, attachments):
+                if await runtime.gateway.feed_message(text, chat_id, attachments):
                     # The agent won't echo it until it drains the inbox, which can be a
                     # whole tool round away. Ack now so the thread can show it as queued
                     # rather than leaving the user wondering if it landed. Transient: the
                     # durable record is the DrainedModelRequest AG2 emits on the drain.
                     with contextlib.suppress(Exception):
                         await websocket.send_json(
-                            {"type": "queued", "text": text, "session": session_id}
+                            {"type": "queued", "text": text, "chat": chat_id}
                         )
                 else:
                     asyncio.create_task(
@@ -2264,10 +2264,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         sid = uuid.uuid4().hex[:8]
         task_id = websocket.query_params.get("task") or None
-        chat_session = websocket.query_params.get("session") or None
+        origin_chat = websocket.query_params.get("chat") or None
         # persist spoken transcripts onto the surface's stream so they survive reload
         # and become shared conversation history (None → bare voice session, skip).
-        persist_session = f"task:{task_id}" if task_id else chat_session
+        persist_chat = f"task:{task_id}" if task_id else origin_chat
         # Persist spoken turns by ROLE ALTERNATION, not the "completed" event (Gemini
         # doesn't fire it reliably): accumulate each side's chunks and flush a turn
         # when the other side starts speaking → alternating ModelRequest/ModelResponse.
@@ -2278,19 +2278,19 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         async def _flush_user():
             text = "".join(user_buf).strip()
             user_buf.clear()
-            if persist_session and text:
+            if persist_chat and text:
                 with contextlib.suppress(Exception):
                     await runtime.gateway.emit_event(
-                        persist_session, ModelRequest(parts=[TextInput(content=text)])
+                        persist_chat, ModelRequest(parts=[TextInput(content=text)])
                     )
 
         async def _flush_agent():
             text = "".join(agent_buf).strip()
             agent_buf.clear()
-            if persist_session and text:
+            if persist_chat and text:
                 with contextlib.suppress(Exception):
                     await runtime.gateway.emit_event(
-                        persist_session, ModelResponse(message=ModelMessage(content=text))
+                        persist_chat, ModelResponse(message=ModelMessage(content=text))
                     )
 
         async def forward_event(event) -> None:
@@ -2306,9 +2306,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         try:
             agent = await runtime.gateway.build_voice_agent(
-                session_id=sid,
+                voice_id=sid,
                 task_id=task_id,
-                chat_session=chat_session,
+                origin_chat=origin_chat,
                 on_event=forward_event,  # delegated universal-agent events → voice client
                 on_end=end_requested.set,
             )

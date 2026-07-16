@@ -39,8 +39,8 @@ class _GW:
     async def stream_for(self, sid):
         return self._stream
 
-    async def send_message(self, text, session_id=None, asker=None, attachments=None, surface=""):
-        self.turns.append((text, session_id))
+    async def send_message(self, text, chat_id=None, asker=None, attachments=None, surface=""):
+        self.turns.append((text, chat_id))
         return "ok"
 
 

@@ -1,7 +1,7 @@
-"""The event bridge: a session's AG2 stream ⇄ a WebSocket client.
+"""The event bridge: a chat's AG2 stream ⇄ a WebSocket client.
 
 This is the generalized form of the subscriptions we already run piecemeal (tool
-chips, voice). For one session it (1) replays the persisted stream on connect and
+chips, voice). For one chat it (1) replays the persisted stream on connect and
 (2) forwards every live event via ``stream.subscribe`` — both as the single
 `{type, data}` wire shape (`to_wire`). Input messages run through the gateway's
 `send_message`, which appends to the *same* stream, so the agent's events flow
@@ -14,13 +14,13 @@ from assistant.gateway.wire import is_binary_event, to_wire
 
 
 class StreamBridge:
-    """Bridges one session stream to one WebSocket. Construct, ``open()``, feed
+    """Bridges one chat stream to one WebSocket. Construct, ``open()``, feed
     turns via ``run_turn``, and ``close()`` to detach."""
 
-    def __init__(self, gateway, websocket, session_id: str):
+    def __init__(self, gateway, websocket, chat_id: str):
         self._gw = gateway
         self._ws = websocket
-        self._sid = session_id
+        self._sid = chat_id
         self._stream = None
         self._sub = None
 
@@ -30,7 +30,7 @@ class StreamBridge:
         for event in await self._stream.history.get_events():
             await self._forward(event)
         with contextlib.suppress(Exception):
-            await self._ws.send_json({"type": "ready", "session": self._sid})
+            await self._ws.send_json({"type": "ready", "chat": self._sid})
         self._sub = self._stream.subscribe(self._forward)  # event injected positionally
 
     async def _forward(self, event) -> None:
@@ -44,17 +44,17 @@ class StreamBridge:
         try:
             await self._gw.send_message(
                 text,
-                session_id=self._sid,
+                chat_id=self._sid,
                 asker=asker,
                 attachments=attachments,
                 surface=surface,
             )
             with contextlib.suppress(Exception):
-                await self._ws.send_json({"type": "turn_end", "session": self._sid})
+                await self._ws.send_json({"type": "turn_end", "chat": self._sid})
         except Exception as exc:
             with contextlib.suppress(Exception):
                 await self._ws.send_json(
-                    {"type": "error", "message": str(exc) or repr(exc), "session": self._sid}
+                    {"type": "error", "message": str(exc) or repr(exc), "chat": self._sid}
                 )
 
     def close(self) -> None:

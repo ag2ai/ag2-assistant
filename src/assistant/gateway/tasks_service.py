@@ -79,7 +79,7 @@ class TaskService:
         self._digest_workers: list[asyncio.Task] = []
         self._digest_inflight: set[str] = set()
         self._control_agents: dict = {}  # task_id -> (agent, stream) for task chat
-        # Async (session_id, event) -> None, wired by the gateway. Lets a task's
+        # Async (chat_id, event) -> None, wired by the gateway. Lets a task's
         # lifecycle ride the AG2 stream so the GUI renders it as events. None → off.
         self._emit = None
 
@@ -91,7 +91,7 @@ class TaskService:
         return self._scheduler is not None
 
     def set_emitter(self, emitter) -> None:
-        """Wire an async ``(session_id, event)`` emitter (the gateway's)."""
+        """Wire an async ``(chat_id, event)`` emitter (the gateway's)."""
         self._emit = emitter
 
     async def _emit_status(self, task_id: str, status: str, error: str = "") -> None:
@@ -312,14 +312,14 @@ class TaskService:
     async def _emit_inquiry(self, inquiry, kind) -> None:
         """Durable HITL lifecycle → InquiryRaised/InquiryAnswered on its stream.
         (AG2's HumanInputRequest is transient; our inquiries are durable.) The
-        target stream is the inquiry's `session` — a task page (`task:<id>`) or a
-        chat session — so the question renders inline wherever it was raised."""
+        target stream is the inquiry's `chat` — a task page (`task:<id>`) or a
+        chat — so the question renders inline wherever it was raised."""
         if self._emit is None:
             return
         from assistant.events import InquiryAnswered, InquiryRaised
         from assistant.hitl.inquiry import InquiryStatus
 
-        sid = inquiry.session or (f"task:{inquiry.task_id}" if inquiry.task_id else None)
+        sid = inquiry.chat or (f"task:{inquiry.task_id}" if inquiry.task_id else None)
         if not sid:
             return
         try:
@@ -350,7 +350,7 @@ class TaskService:
         except Exception as exc:
             from assistant.observability import log_suppressed
 
-            log_suppressed("inquiry event emit", exc, inquiry_id=inquiry.id, kind=kind, session=sid)
+            log_suppressed("inquiry event emit", exc, inquiry_id=inquiry.id, kind=kind, chat=sid)
 
     async def start(self, *, scheduler: bool = True) -> None:
         """Build the durable stores + runner (cheap; no LLM agent yet).
@@ -923,7 +923,7 @@ class TaskService:
         return {
             "id": i.id,
             "task_id": i.task_id,
-            "session": i.session,  # stream it's on → strip matches it to the open page
+            "chat": i.chat,  # stream it's on → strip matches it to the open page
             "kind": i.kind,
             "text": i.text,
             "detail": i.detail,

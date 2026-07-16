@@ -2,7 +2,7 @@
 
 A channel adapter normalises an inbound platform message into an `InboundMessage`,
 decides whether the agent should respond (DMs always; groups only on @mention),
-derives a stable session id, calls the gateway, and sends the reply back in the
+derives a stable chat id, calls the gateway, and sends the reply back in the
 platform's format.
 """
 
@@ -27,8 +27,12 @@ class InboundMessage:
     sender_name: str | None = None
     raw: object = field(default=None, repr=False)  # original platform object
 
-    def session_id(self) -> str:
-        """Stable session id — one isolated conversation per chat."""
+    def stable_id(self) -> str:
+        """Stable chat id — one isolated conversation per channel chat.
+
+        Named distinctly from ``chat_id`` (the platform's own chat/conversation id,
+        above) to avoid shadowing that dataclass field: this is the gateway-facing id
+        (``{platform}:{chat_id}``) passed as ``chat_id=`` to ``send_message``."""
         return f"{self.platform}:{self.chat_id}"
 
 

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { sessions, tasks, drawerTab, settingsOpen, filesOpen, profiles } from '../store.js'
+  import { chats, tasks, drawerTab, settingsOpen, filesOpen, profiles } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
@@ -81,10 +81,10 @@
 
   async function refresh() {
     try {
-      const server = await api.sessions()
-      const ids = new Set(server.map((s) => s.session_id))
+      const server = await api.chats()
+      const ids = new Set(server.map((s) => s.chat_id))
       // keep optimistic, not-yet-persisted chats (just sent, agent still replying)
-      $sessions = [...$sessions.filter((s) => !ids.has(s.session_id)), ...server]
+      $chats = [...$chats.filter((s) => !ids.has(s.chat_id)), ...server]
     } catch {}
     try { $tasks = await api.tasksAll('all') } catch {}
     // One global roll-up serves both the active profile's line and the install-wide
@@ -145,11 +145,11 @@
   })
 
   // Chats grouped under date section headers by last-message time. `updated` is
-  // the session's last-update ISO stamp (rewritten on every message → respects
+  // the chat's last-update ISO stamp (rewritten on every message → respects
   // the latest message, not the first); dayRows tags the first row of each
   // calendar day with `sep`, the fmtDayShort header ("Recent"/"Yesterday"/date).
   // The list already arrives newest-first, so the walk just detects day changes.
-  const chatRows = $derived(dayRows($sessions.map((s) => ({ ...s, at: s.updated })), fmtDayShort))
+  const chatRows = $derived(dayRows($chats.map((s) => ({ ...s, at: s.updated })), fmtDayShort))
 
   const openChat = (id) => go('/c/' + id)
   const openTask = (id) => go('/t/' + id)
@@ -158,13 +158,13 @@
   // Chat delete: a hover-revealed trash on the row swaps to an inline "Delete? yes/no"
   // confirm (mirrors the Files modal). Permanent — the backend drops the transcript
   // AND the full event log. If the open chat is the one deleted, hop to a fresh chat.
-  let confirmChat = $state('') // session_id awaiting delete confirmation
-  let busyChat = $state('') // session_id currently being deleted
+  let confirmChat = $state('') // chat_id awaiting delete confirmation
+  let busyChat = $state('') // chat_id currently being deleted
   async function delChat(id) {
     busyChat = id
     try {
-      await api.deleteSession(id)
-      $sessions = $sessions.filter((s) => s.session_id !== id)
+      await api.deleteChat(id)
+      $chats = $chats.filter((s) => s.chat_id !== id)
       if ($route.name === 'chat' && $route.id === id) go('/c/' + newChatId())
     } catch {}
     busyChat = ''
@@ -330,22 +330,22 @@
   <div class="dlist">
     {#if $drawerTab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
-      {#if !$sessions.length}<div class="none">No conversations yet.</div>{/if}
-      {#each chatRows as { item: s, sep } (s.session_id)}
+      {#if !$chats.length}<div class="none">No conversations yet.</div>{/if}
+      {#each chatRows as { item: s, sep } (s.chat_id)}
         {#if sep}<div class="datesep">{sep}</div>{/if}
-        <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.session_id} onclick={() => openChat(s.session_id)}>
-          <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.session_id}</div>
-          {#if confirmChat === s.session_id}
+        <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id} onclick={() => openChat(s.chat_id)}>
+          <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.chat_id}</div>
+          {#if confirmChat === s.chat_id}
             <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
               <span class="confirm">Delete?</span>
-              <button class="linkbtn danger" disabled={busyChat === s.session_id}
-                onclick={(e) => { e.stopPropagation(); delChat(s.session_id) }}>{busyChat === s.session_id ? '…' : 'yes'}</button>
+              <button class="linkbtn danger" disabled={busyChat === s.chat_id}
+                onclick={(e) => { e.stopPropagation(); delChat(s.chat_id) }}>{busyChat === s.chat_id ? '…' : 'yes'}</button>
               <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>no</button>
             </span>
           {:else}
             {#if s.updated}<span class="rowtime">{fmtAgoShort(s.updated)}</span>{/if}
             <button class="rowdel" title="Delete chat" aria-label="Delete chat"
-              onclick={(e) => { e.stopPropagation(); confirmChat = s.session_id }}><Icon name="trash" size={13} /></button>
+              onclick={(e) => { e.stopPropagation(); confirmChat = s.chat_id }}><Icon name="trash" size={13} /></button>
           {/if}
         </div>
       {/each}

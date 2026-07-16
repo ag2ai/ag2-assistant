@@ -513,7 +513,7 @@ def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch):
 
         async def ask(self, *msg, stream=None, prompt=None, **k):
             seen["prompt"] = prompt
-            seen["session"] = getattr(stream, "id", None)
+            seen["chat"] = getattr(stream, "id", None)
             return _Reply()
 
     use_fake_agent(monkeypatch, lambda *a, **k: _Agent())
@@ -524,6 +524,6 @@ def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch):
 
         r = client.post(api(pid, f"/tasks/{task_id}/chat"), json={"text": "what's the status?"})
         assert r.json()["reply"] == "on it"
-        assert seen["session"] == f"task:{task_id}"  # per-task stream
+        assert seen["chat"] == f"task:{task_id}"  # per-task stream
         assert any(task_id in p for p in seen["prompt"])  # task surface injected
         assert client.post(api(pid, "/tasks/nope/chat"), json={"text": "x"}).status_code == 404

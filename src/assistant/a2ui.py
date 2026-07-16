@@ -633,7 +633,7 @@ def runtime():
 
     The public A2UIServer wraps this runtime internally; for AG2 Assistant's
     existing WebSocket stream we use the same beta runtime/middleware directly
-    so A2UIMessageEvent is emitted on the normal session stream.
+    so A2UIMessageEvent is emitted on the normal chat stream.
     """
 
     from ag2.a2ui._runtime import _A2UIRuntime

@@ -76,7 +76,7 @@ async def test_gateway_passes_attachments_as_positional_inputs():
     gw._agent = agent
 
     img = ImageInput(data=b"img", media_type="image/png")
-    await gw.send_message("look at this", session_id="s1", attachments=[img])
+    await gw.send_message("look at this", chat_id="s1", attachments=[img])
 
     # The agent received text + the attachment as positional inputs.
     assert agent.captured[0] == "look at this"

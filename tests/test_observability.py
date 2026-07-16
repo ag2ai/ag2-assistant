@@ -65,7 +65,7 @@ async def test_capture_failure_writes_record_with_history_shape(tmp_path):
     err = ValueError("400 INVALID_ARGUMENT boom")
     path = await capture_failure(
         cfg,
-        session_id="task:abc",
+        chat_id="task:abc",
         surface="ctx",
         user_text="hi",
         error=err,
@@ -73,7 +73,7 @@ async def test_capture_failure_writes_record_with_history_shape(tmp_path):
     )
     assert path is not None
     rec = json.loads(open(path).read())
-    assert rec["session_id"] == "task:abc"
+    assert rec["chat_id"] == "task:abc"
     assert rec["error_type"] == "ValueError" and "boom" in rec["error"]
     assert rec["event_count"] == 2
     assert rec["event_types"].get("ModelRequest") == 1
@@ -85,7 +85,7 @@ async def test_capture_failure_writes_record_with_history_shape(tmp_path):
 async def test_capture_failure_best_effort_no_stream(tmp_path):
     cfg = _cfg(tmp_path)
     setup_logging(cfg)
-    path = await capture_failure(cfg, session_id="s1", error=RuntimeError("x"))
+    path = await capture_failure(cfg, chat_id="s1", error=RuntimeError("x"))
     assert path and json.loads(open(path).read())["event_count"] == 0
 
 

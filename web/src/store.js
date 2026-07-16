@@ -11,7 +11,7 @@ export const profiles = writable({ list: [], activeId: null })
 export const thread = writable({ id: null, kind: 'chat', items: [], busy: false })
 
 // Drawer: unified history of chats + tasks.
-export const sessions = writable([])
+export const chats = writable([])
 export const tasks = writable([])
 export const drawerTab = writable('chats') // 'chats' | 'tasks'
 
@@ -72,7 +72,7 @@ export const appVersion = writable('')
 // Files browser modal (the agent's working file space) open/closed.
 export const filesOpen = writable(false)
 
-// A bounded buffer of the raw {type,data} events the current session's stream
+// A bounded buffer of the raw {type,data} events the current chat's stream
 // already delivers — the AG2 Inspector renders it to show the live AG2 events
 // behind the UI. Reset when a thread opens (see controller.openThread).
 export const inspectorEvents = writable([])

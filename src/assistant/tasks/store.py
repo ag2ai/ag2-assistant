@@ -1,7 +1,7 @@
 """Persistent task store — JSON task records in a SQLite knowledge store.
 
 Each task is one JSON doc at `/tasks/{id}.json`; the tree is reconstructed from
-`parent_id`. Mirrors how sessions are persisted, so it's durable across restarts.
+`parent_id`. Mirrors how chats are persisted, so it's durable across restarts.
 """
 
 import json

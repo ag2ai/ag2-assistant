@@ -18,8 +18,8 @@ def _msg(text="hi", is_direct=True, mentioned=False) -> InboundMessage:
     )
 
 
-def test_session_id_is_per_chat():
-    assert _msg().session_id() == "telegram:c1"
+def test_stable_id_is_per_chat():
+    assert _msg().stable_id() == "telegram:c1"
 
 
 def test_should_respond_dm():
@@ -78,7 +78,7 @@ def test_normalize_dm():
     assert inbound.is_direct is True
     assert inbound.mentioned is False
     assert inbound.text == "hello"
-    assert inbound.session_id() == "telegram:42"
+    assert inbound.stable_id() == "telegram:42"
 
 
 def test_normalize_group_with_mention_strips_handle():

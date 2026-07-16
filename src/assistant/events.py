@@ -164,5 +164,5 @@ class TurnCancelled(AssistantEvent):
     their results stay in the history) — the thread shows where the work stopped,
     and replays that way."""
 
-    session_id: str = Field(kw_only=False)
+    chat_id: str = Field(kw_only=False)
     reason: str = "Stopped"

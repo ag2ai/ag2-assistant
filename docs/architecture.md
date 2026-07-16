@@ -28,9 +28,9 @@ AG2 main genuinely doesn't reach yet (durable scheduled tasks, durable HITL).
 ## 2. Guiding principle: the event stream is the source of truth
 
 Each conversation surface — a web chat, each task, a voice session — is a
-per-session AG2 **`Stream`** keyed by `session_id`:
+per-chat AG2 **`Stream`** keyed by `chat_id`:
 
-| Session id          | Surface                          |
+| Chat id             | Surface                          |
 | ------------------- | -------------------------------- |
 | `web-<uuid>`        | a web chat                       |
 | `task:<task_id>`    | a background task's own stream   |
@@ -38,8 +38,8 @@ per-session AG2 **`Stream`** keyed by `session_id`:
 | `default`           | CLI single-shot                  |
 
 A stream's event history *is* the conversation. After each turn the events are
-persisted with AG2's `EventLogWriter` to `~/.ag2assistant/sessions.db` and reloaded
-on demand, so sessions are **resumable** and never cross histories.
+persisted with AG2's `EventLogWriter` to `~/.ag2assistant/chats.db` and reloaded
+on demand, so chats are **resumable** and never cross histories.
 
 **One wire contract — `wire = log = {type, data}`.** A serialized event is exactly
 what `EventLogWriter` persists:
@@ -77,7 +77,7 @@ exposes:
 tokens are present, and serves the FastAPI app from `create_app()`
 (`src/assistant/gateway/app.py`).
 
-**Scale.** For a single user (1–5 sessions) one process is sufficient; scaling out
+**Scale.** For a single user (1–5 chats) one process is sufficient; scaling out
 (worker pool, session affinity, external queue, or AG2 `Hub` distributed transport)
 is future work — the agent composes onto a Hub without changing the client API.
 
@@ -100,20 +100,20 @@ memory, voice, HITL, and the persistent stores hanging off the event-stream spin
 
 ### 5.1 Gateway core — `src/assistant/gateway/core.py`, `gateway/app.py`
 
-`Gateway` owns sessions, streams, persistence, and the shared agent.
+`Gateway` owns chats, streams, persistence, and the shared agent.
 
-- **Sessions & streams.** `stream_for(session_id)` returns the live per-session
+- **Chats & streams.** `stream_for(chat_id)` returns the live per-chat
   `Stream`, hydrating it from disk on first use (`_get_stream`), repairing broken
   compaction with `sanitize_history()` before resume.
 - **Turns.** `send_message()` resolves the stream, injects surface context, builds a
   per-turn permission manager + HITL hook (`_ask_kwargs`), runs `agent.ask(...)`,
   subscribes to the stream to tally usage and forward events, then persists events +
   a display transcript. Persistence is best-effort and never fails the user's turn.
-- **Persistence.** Events → `EventLogWriter` → `sessions.db`. A separate compact
-  transcript (role/text) is written for fast session listing/restore.
+- **Persistence.** Events → `EventLogWriter` → `chats.db`. A separate compact
+  transcript (role/text) is written for fast chat listing/restore.
 - **Reload.** `reload()` (`core.py:186`) reference-swaps the agent: in-flight turns
   finish on the old agent; the next turn uses a freshly-built one (new keys/config).
-  Per-session streams are untouched, so no history is lost. The task service rebuilds
+  Per-chat streams are untouched, so no history is lost. The task service rebuilds
   its planner lazily.
 - **app.py** wires it together: builds/owns the gateway + `TaskService`, mounts the
   REST routes and the two WebSockets, serves the Svelte bundle at `/app`, and runs
@@ -237,7 +237,7 @@ that emit `ObserverAlert`.
 `build_voice_agent()` constructs an AG2 **`LiveAgent`** (Gemini Live or OpenAI
 realtime, swappable via `voice_providers`). It carries a small read-only toolset
 (list/get task, list/answer questions, `current_time`) and an **`ask_assistant`**
-tool that delegates heavy work to the universal agent on the same session — so voice
+tool that delegates heavy work to the universal agent on the same chat — so voice
 shares the chat's context and tools. Audio is full-duplex over `/api/voice`: 16 kHz
 mono PCM in, 24 kHz PCM out, with transcript + delegated-event JSON frames
 interleaved. No state is persisted per voice session.
@@ -247,7 +247,7 @@ interleaved. No state is persisted per voice session.
 `Channel` adapters (`telegram.py`, `discord.py`, `slack.py`) normalize inbound
 messages to `InboundMessage`, apply **mention-gating** (`should_respond()`: DMs
 always, groups only on @mention), call `gateway.send_message()` with a per-chat
-session, and format replies (`formatting.py`). HITL surfaces through `ChannelAsker`.
+id, and format replies (`formatting.py`). HITL surfaces through `ChannelAsker`.
 All channels share the one agent.
 
 ### 5.10 Storage, config & cross-cutting — `storage.py`, `config.py`, …
@@ -311,15 +311,15 @@ agents 1/4/7 without dropping streams.
 All under `create_app()` (`gateway/app.py`); `/api/*` is origin-guarded. Two
 WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 
-### Chat / sessions
+### Chats
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET  | `/api/health` | gateway status |
-| GET  | `/api/sessions` | list resumable sessions (newest first) |
-| GET  | `/api/sessions/{session_id}` | display transcript for a session |
-| POST | `/api/message` | send a message, blocking → `{reply, session_id}` |
-| WS   | `/api/stream?session=&surface=` | **event stream**: replay + live (frames below) |
+| GET  | `/api/chats` | list resumable chats (newest first) |
+| GET  | `/api/chats/{chat_id}` | display transcript for a chat |
+| POST | `/api/message` | send a message, blocking → `{reply, chat_id}` |
+| WS   | `/api/stream?chat=&surface=` | **event stream**: replay + live (frames below) |
 
 ### Tasks / inquiries
 
@@ -380,7 +380,7 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | POST | `/api/voice/select` | persist voice selection |
 | POST | `/api/voice/preview` | TTS preview (wav) |
 | GET  | `/voices/{name}.wav` | pre-recorded sample (falls back to TTS) |
-| WS   | `/api/voice?task=&session=` | full-duplex audio + transcript/event frames |
+| WS   | `/api/voice?task=&chat=` | full-duplex audio + transcript/event frames |
 
 ### Google
 
@@ -458,7 +458,7 @@ StreamBridge ── replay history ──► client     (gateway/stream_bridge.p
       │  subscribe(live)
       ▼
 Gateway.send_message()                          (gateway/core.py)
-   • resolve/hydrate session Stream
+   • resolve/hydrate chat Stream
    • inject surface context, permission mgr + HITL hook
       ▼
 Universal Agent.ask(stream, prompt)             (agent.py)
@@ -467,7 +467,7 @@ Universal Agent.ask(stream, prompt)             (agent.py)
    • system tools → TaskCreated / TaskScheduled / InquiryRaised
    • observers → ObserverAlert
       ▼
-Stream emits events ──► EventLogWriter ──► sessions.db   (persist)
+Stream emits events ──► EventLogWriter ──► chats.db   (persist)
                    └──► subscribers ──► to_wire() ──► WS {event:{type,data}}  (live)
       ▼
 Frontend foldEvent(items, wire) → thread items → Svelte components  (web/src/project.js)
@@ -476,7 +476,7 @@ Side flows:
    • Tasks: TaskService.run → planner → runner → executor subagents → verifier,
      emitting on task:<id> stream; deliverable files → workspace.
    • Memory: aggregator every N turns + feedback.learn() on 👍/👎 → profile.db.
-   • Resume: stream_for() hydrates from sessions.db; replay == live (same wire).
+   • Resume: stream_for() hydrates from chats.db; replay == live (same wire).
 ```
 
 ---
@@ -501,7 +501,7 @@ Under `~/.ag2assistant/`:
 
 | File | Holds |
 | ---- | ----- |
-| `sessions.db` | event log for all sessions (via `EventLogWriter`) + display transcripts |
+| `chats.db` | event log for all chats (via `EventLogWriter`) + display transcripts |
 | `tasks.db` | task records, deliverables, progress, schedule |
 | `inquiries.db` | durable HITL inquiries (clarifications/permissions) |
 | `profile.db` | learned user profile (`/memory/working.md` inside) |
@@ -511,7 +511,7 @@ Under `~/.ag2assistant/`:
 | `permissions.json` | folder grants/blocks |
 | `usage.json` / `pricing.json` | daily token+cost ledger / price overrides |
 | `ag2assistant.log` | rotating application log (2 MB × 3) |
-| `debug/<ts>-<session>.json` | failure snapshots (error + traceback + event tail) |
+| `debug/<ts>-<chat>.json` | failure snapshots (error + traceback + event tail) |
 
 Generated artifacts (images, deliverables, uploads) live in the **workspace**
 (`~/Documents/AG2 Assistant/` by default), in shared `images/`, `deliverables/`,
@@ -548,7 +548,7 @@ the single process. The web client is a viewer pointed at exactly one profile.
 - **Registry & layout.** `profiles.json` (`src/assistant/profiles.py`) is the
   registry: `{active_default, onboarded, profiles:[{id, name, palette, workspace,
   archived}]}`. Each profile owns `~/.ag2assistant/profiles/<id>/` holding its
-  `config.yaml` (overlay + UI prefs), `sessions.db`, `tasks.db`, `inquiries.db`,
+  `config.yaml` (overlay + UI prefs), `chats.db`, `tasks.db`, `inquiries.db`,
   `profile.db`, `permissions.json`, `usage.json`, `skills/`, `debug/`. `id` is an
   immutable slug;
   `palette` is unique while ≤6 profiles exist (the palette *is* the profile's
@@ -566,7 +566,7 @@ the single process. The web client is a viewer pointed at exactly one profile.
   `config_factory(pid)` re-reads the registry entry on every call — so `reload()`
   (workspace/config edit) rebuilds against the right profile, not the global root.
 - **Global vs per-profile split.** Per-profile: `config.yaml` (overlay + UI prefs),
-  sessions, tasks, memory, usage, skills, permissions, inquiries, and the HITL store
+  chats, tasks, memory, usage, skills, permissions, inquiries, and the HITL store
   (on the runtime). Global: the global `config.yaml`, `secrets.json` (keys load into
   one process-wide `os.environ`),
   `pricing.json`, `ag2assistant.log` (records tagged `[profile]` via a
@@ -617,7 +617,7 @@ the single process. The web client is a viewer pointed at exactly one profile.
    history and live are one path.
 3. **UI-agnostic** — the gateway API is the only contract; the Svelte app is one
    client among several (channels, voice, CLI).
-4. **One universal agent, many resumable per-session streams** — isolation via
+4. **One universal agent, many resumable per-chat streams** — isolation via
    streams, not separate agents.
 5. **Build on main; migrate to native as it lands** — the durable task/inquiry layer
    is the seam, kept thin and speaking AG2's event vocabulary (`ag2-build-on-main`).

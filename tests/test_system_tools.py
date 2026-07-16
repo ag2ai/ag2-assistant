@@ -25,8 +25,8 @@ def _service(tmp_path):
 
 
 class _Chats:
-    async def list_sessions(self):
-        return [{"session_id": "web-1", "turns": 2, "preview": "hi there"}]
+    async def list_chats(self):
+        return [{"chat_id": "web-1", "turns": 2, "preview": "hi there"}]
 
     async def transcript(self, sid):
         return [{"role": "user", "text": "hello"}, {"role": "agent", "text": "hi"}]

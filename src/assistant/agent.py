@@ -530,7 +530,7 @@ def create_agent(
             Observations learned this session are tagged with it.
         knowledge_store: A shared KnowledgeStore to reuse for the profile. Pass a
             locked/shared store when multiple agents write the same profile (e.g.
-            the gateway's per-session agents).
+            the gateway's per-chat agents).
         skills: Whether to give the agent the skill search/install/run toolkit.
         asker: An `Asker` for human-in-the-loop questions (routes `context.input()`
             to the requesting surface). If None, the agent has no HITL hook.

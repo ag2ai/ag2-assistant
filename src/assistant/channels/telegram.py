@@ -223,7 +223,7 @@ class TelegramChannel(Channel):
         try:
             reply = await self._gateway.send_message(
                 text,
-                session_id=inbound.session_id(),
+                chat_id=inbound.stable_id(),
                 asker=self._asker_for(chat_id),
                 attachments=attachments,
             )

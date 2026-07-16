@@ -1,8 +1,8 @@
-// Owns the active thread's stream connection: opens /api/stream for a session,
+// Owns the active thread's stream connection: opens /api/stream for a chat,
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, taskPanel, sessions, inspectorEvents } from './store.js'
+import { thread, taskPanel, chats, inspectorEvents } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
@@ -45,11 +45,11 @@ export function openThread(kind, id) {
   closeThread()
   _suppressStream = false       // a fresh thread always folds its stream
   _replaying = true; _replayBuf = []   // first connect's replay buffers until `ready`
-  const session = kind === 'task' ? 'task:' + id : id
-  thread.set({ id, kind, session, items: [], busy: false })
+  const chat = kind === 'task' ? 'task:' + id : id
+  thread.set({ id, kind, chat, items: [], busy: false })
   inspectorEvents.set([])       // fresh inspector buffer per thread
 
-  client = new StreamClient(session, {
+  client = new StreamClient(chat, {
     // Each (re)connect re-replays the full history: buffer it afresh so a reconnect
     // rebuilds rather than double-folds onto the live items.
     onOpen: () => { _replaying = true; _replayBuf = [] },
@@ -92,15 +92,15 @@ export function send(text, attachments = []) {
   if (!client || (!text.trim() && !attachments.length)) return
   thread.update((t) => ({ ...t, busy: true }))
   client.send(text, attachments)
-  // Surface a brand-new chat in the drawer immediately — the sessions list is
+  // Surface a brand-new chat in the drawer immediately — the chats list is
   // only persisted server-side once the first turn completes (which can take a
   // while). The drawer poll merges this until the server reports it for real.
   const t = get(thread)
   if (t.kind === 'chat' && text.trim()) {
-    sessions.update((list) =>
-      list.some((s) => s.session_id === t.session)
+    chats.update((list) =>
+      list.some((s) => s.chat_id === t.chat)
         ? list
-        : [{ session_id: t.session, preview: text.trim().slice(0, 80), updated: new Date().toISOString(), turns: 0 }, ...list]
+        : [{ chat_id: t.chat, preview: text.trim().slice(0, 80), updated: new Date().toISOString(), turns: 0 }, ...list]
     )
   }
 }
@@ -136,7 +136,7 @@ export function closeThread() {
 
 // ---- voice: frames render into the SAME thread (transcripts as bubbles, tool
 // chips, task cards). While active we suppress stream folding so the agent's
-// delegated work (which also lands on this session's stream) isn't double-shown. ----
+// delegated work (which also lands on this chat's stream) isn't double-shown. ----
 function _setBusy(b) { thread.update((t) => ({ ...t, busy: b })) }
 
 function _voiceTranscript(role, text, final) {
@@ -159,7 +159,7 @@ function _voiceTranscript(role, text, final) {
 export async function startVoice() {
   const t = get(thread)
   if (!t.id || _voiceActive) return
-  const query = t.kind === 'task' ? '?task=' + encodeURIComponent(t.id) : '?session=' + encodeURIComponent(t.session)
+  const query = t.kind === 'task' ? '?task=' + encodeURIComponent(t.id) : '?chat=' + encodeURIComponent(t.chat)
   // capture at the active provider's native rate (Gemini 16 kHz / OpenAI 24 kHz)
   let inputRate = 16000
   try { inputRate = (await api.voices()).input_rate || 16000 } catch {}

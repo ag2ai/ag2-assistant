@@ -137,8 +137,8 @@ export const api = {
   // here means the profile is genuinely gone, so it rides j()'s recovery like the
   // other scoped polls.
   health: () => j('GET', P('/health')),
-  sessions: () => j('GET', P('/sessions')).then((d) => d.sessions || []),
-  deleteSession: (id) => j('DELETE', P('/sessions/' + encodeURIComponent(id))),
+  chats: () => j('GET', P('/chats')).then((d) => d.chats || []),
+  deleteChat: (id) => j('DELETE', P('/chats/' + encodeURIComponent(id))),
   tasksAll: (status) => j('GET', P('/tasks/all' + (status && status !== 'all' ? '?status=' + status : ''))).then((d) => d.tasks || []),
   task: (id) => j('GET', P('/tasks/' + id)).then((d) => d.task),
   cancelTask: (id) => j('POST', P(`/tasks/${id}/cancel`)),

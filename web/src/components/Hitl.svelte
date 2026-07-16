@@ -10,20 +10,20 @@
   let first = true
 
   // The stream the open page renders inline: a task page → "task:<id>", a chat
-  // page → the chat id (mirrors controller.js's session mapping).
-  const pageSession = $derived(
+  // page → the chat id (mirrors controller.js's chat mapping).
+  const pageChat = $derived(
     $route.name === 'task' ? 'task:' + $route.id : $route.name === 'chat' ? $route.id : null,
   )
 
   // An inquiry the open page already renders inline (its InquiryRaised rides that
-  // session's stream) is dropped from the strip — answer it in context, not twice.
+  // chat's stream) is dropped from the strip — answer it in context, not twice.
   // Everything else stays: other pages' inquiries, subtask inquiries (different
-  // stream), and transient prompts without a session.
+  // stream), and transient prompts without a chat.
   const visible = $derived(
     $inquiries.filter((q) => {
       if (q._src !== 'inquiry') return true
-      if (q.session && q.session === pageSession) return false
-      if ($route.name === 'task' && q.task_id === $route.id) return false // pre-session fallback
+      if (q.chat && q.chat === pageChat) return false
+      if ($route.name === 'task' && q.task_id === $route.id) return false // pre-chat fallback
       return true
     }),
   )

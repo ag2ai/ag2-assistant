@@ -75,7 +75,7 @@ class LLMConfig(BaseModel):
     streaming: bool = True
     # Optional cheaper model for the passive memory-aggregation pass. None → reuse
     # the main model. Aggregation is a background summarisation, so a smaller/
-    # cheaper model is usually fine and saves cost on long sessions.
+    # cheaper model is usually fine and saves cost on long chats.
     aggregate_model: str | None = None
     # Per-provider advanced options, keyed by provider name; each entry is extra
     # constructor kwargs for that provider's AG2 config, merged in last (so they

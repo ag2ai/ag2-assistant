@@ -40,7 +40,7 @@ def test_profiles_zero_state_contract(monkeypatch):
         # health still serves (SPA shell + global routes live with zero profiles)
         assert client.get("/api/health").json()["status"] == "ok"
         # nothing to serve under the profile prefix
-        assert client.get(api("anything", "/sessions")).status_code == 404
+        assert client.get(api("anything", "/chats")).status_code == 404
 
 
 # --- create + serve immediately (§3.5) ---
@@ -59,7 +59,7 @@ def test_create_profile_serves_immediately(monkeypatch):
         assert [p["id"] for p in listed["profiles"]] == ["work"]
 
         # its runtime is live: a prefixed route works right away
-        assert client.get(api(pid, "/sessions")).status_code == 200
+        assert client.get(api(pid, "/chats")).status_code == 200
         assert client.get(api(pid, "/settings")).json()["mcp_servers"] == []
 
 
@@ -311,7 +311,7 @@ def test_stream_ws_closed_4001_on_archive(monkeypatch):
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
-        with client.websocket_connect(api("work", "/stream?session=w1")) as ws:
+        with client.websocket_connect(api("work", "/stream?chat=w1")) as ws:
             assert ws.receive_json()["type"] == "ready"
             # archive work from under the open socket
             client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})

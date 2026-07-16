@@ -24,7 +24,7 @@
     <button class="insp-x" title="Hide AG2 view" aria-label="Hide AG2 view" onclick={() => ($ag2View = false)}><Icon name="x" size={16} /></button>
   </div>
   <div class="insp-sub">
-    Live events on this session's AG2 <code>Stream</code> — the substrate this UI projects.
+    Live events on this chat's AG2 <code>Stream</code> — the substrate this UI projects.
   </div>
 
   <div class="insp-list">
