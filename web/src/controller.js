@@ -115,6 +115,10 @@ export function answer(inquiryId, text) {
   if (client) client.answer(inquiryId, text)
 }
 
+export function a2uiAction(message) {
+  if (client) client.a2ui(message)
+}
+
 // Send 👍/👎 + a (mandatory) reason on a generated item. `target` carries the
 // stable id/kind plus context for the learner: { targetKind, targetId, content, request }.
 export function feedback({ targetKind, targetId, sentiment, reason, content = '', request = '' }) {

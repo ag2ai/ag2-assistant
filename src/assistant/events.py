@@ -81,6 +81,20 @@ class A2UISurface(AssistantEvent):
     intent: str = ""
 
 
+class A2UISurfaceDataUpdated(AssistantEvent):
+    """Durable data-model snapshot emitted after an A2UI server action."""
+
+    surface_id: str = Field(kw_only=False)
+    data: dict = Field(default_factory=dict)
+
+
+class A2UIActionSubmitted(AssistantEvent):
+    """A user action was accepted by the backend and is being handled."""
+
+    surface_id: str = Field(kw_only=False)
+    action_name: str = ""
+
+
 class SubagentTrace(AssistantEvent):
     """One inner event from a subagent's own run, forwarded onto the parent task
     stream so the GUI nests it under the subagent card — live, persistent (rides

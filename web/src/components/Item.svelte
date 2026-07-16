@@ -27,11 +27,13 @@
 
 <!-- ag2-rise: a subtle rise+fade entrance per item (runs once on mount; gated by
      prefers-reduced-motion in base.css). Streaming updates don't re-trigger it. -->
-<div class="ag2-rise">
-  {#if Cmp}<Cmp {item} />{/if}
-  {#if prov}
-    <div class="ag2tag" class:right={item.kind === 'user'} class:applayer={prov.layer === 'app'}>
-      AG2 · {prov.label}
-    </div>
-  {/if}
-</div>
+{#if !(item.kind === 'note' && item.a2uiActionPending)}
+  <div class="ag2-rise">
+    {#if Cmp}<Cmp {item} />{/if}
+    {#if prov}
+      <div class="ag2tag" class:right={item.kind === 'user'} class:applayer={prov.layer === 'app'}>
+        AG2 · {prov.label}
+      </div>
+    {/if}
+  </div>
+{/if}

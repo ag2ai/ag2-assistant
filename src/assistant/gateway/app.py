@@ -55,6 +55,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from ag2.a2ui.incoming import A2UIIncomingAction, A2UIIncomingActionResult, parse_incoming_message
+from ag2.a2ui.server_action import build_server_action_context, run_server_action
 from fastapi import (
     APIRouter,
     Depends,
@@ -68,6 +70,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from assistant import __version__
+from assistant.a2ui import A2UI_SERVER_ACTIONS
+from assistant.events import A2UIActionSubmitted, A2UISurfaceDataUpdated
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
     ProfileManager,
@@ -2277,6 +2281,76 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             await bridge.open()
             while True:
                 data = await websocket.receive_json()
+                if data.get("type") == "a2ui":
+                    # A2UI clicks use AG2's standard action envelope. Only actions
+                    # explicitly registered by this app may mutate durable state.
+                    parsed = parse_incoming_message(data.get("message"))
+                    if not isinstance(parsed, A2UIIncomingActionResult):
+                        await websocket.send_json(
+                            {"type": "error", "message": "Invalid A2UI action."}
+                        )
+                        continue
+                    click = parsed.action
+                    action = A2UI_SERVER_ACTIONS.get(click.name)
+                    if not click.surface_id or not click.source_component_id:
+                        await websocket.send_json(
+                            {"type": "error", "message": "Unsupported A2UI action."}
+                        )
+                        continue
+                    if action is None:
+                        # AG2's standard fallback for an undeclared Button action is
+                        # an agent turn. Preserve its supplied state first, then give
+                        # the agent a concise, structured description of the click.
+                        await runtime.gateway.emit_event(
+                            chat_id,
+                            A2UISurfaceDataUpdated(
+                                click.surface_id,
+                                data=click.context if isinstance(click.context, dict) else {},
+                            ),
+                        )
+                        await runtime.gateway.emit_event(
+                            chat_id,
+                            A2UIActionSubmitted(click.surface_id, action_name=click.name),
+                        )
+                        action_text = (
+                            f"[[A2UI_ACTION]] The user clicked the A2UI action '{click.name}' on surface "
+                            f"'{click.surface_id}'. Its current values are: {click.context}. "
+                            "Carry out the requested action and respond to the user."
+                        )
+                        asyncio.create_task(
+                            bridge.run_turn(
+                                action_text,
+                                asker=_chat_asker(runtime, chat_id),
+                                surface=await turn_surface(),
+                            )
+                        )
+                        continue
+                    # The surface id is transport metadata, never trusted from a model
+                    # supplied context object. The registered handler receives it as a
+                    # normal argument after the standard AG2 action parsing step.
+                    click = A2UIIncomingAction(
+                        name=click.name,
+                        surface_id=click.surface_id,
+                        source_component_id=click.source_component_id,
+                        timestamp=click.timestamp,
+                        context={**click.context, "surface_id": click.surface_id},
+                        response_request=click.response_request,
+                    )
+                    messages = await run_server_action(
+                        action,
+                        click,
+                        version=data.get("message", {}).get("version", "v1.0"),
+                        context=build_server_action_context(runtime.gateway._agent),
+                    )
+                    for message in messages:
+                        update = message.get("updateDataModel")
+                        if update and update.get("surfaceId") == click.surface_id:
+                            value = update.get("value")
+                            if update.get("path", "/") == "/" and isinstance(value, dict):
+                                await runtime.gateway.emit_event(
+                                    chat_id, A2UISurfaceDataUpdated(click.surface_id, data=value)
+                                )
+                    continue
                 if data.get("type") == "answer" and data.get("id"):
                     iid, ans = data["id"], data.get("answer", "")
                     # Chat permission prompts live in this profile's HITL registry;

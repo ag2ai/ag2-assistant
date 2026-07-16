@@ -167,6 +167,35 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     assert s1["preview"] == "hello there"
 
 
+async def test_replay_and_chat_reads_share_one_sqlite_connection(tmp_path, monkeypatch):
+    """Hydrating a chat and reading its metadata may happen in the same request burst."""
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
+    from assistant.events import Attachment
+    from assistant.gateway.core import Gateway
+    from assistant.storage import SerialStore
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
+
+    first = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await first.start()
+    await first.send_message("hello", chat_id="s1")
+    await first.emit_event("s1", Attachment("/tmp/demo.txt", name="demo.txt"))
+    await first.close()
+
+    second = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await second.start()
+    assert isinstance(second._event_store, SerialStore)
+
+    stream, transcript, chats = await asyncio.gather(
+        second.stream_for("s1"), second.transcript("s1"), second.list_chats()
+    )
+    assert len(await stream.history.get_events()) > 0
+    assert transcript[0]["text"] == "hello"
+    assert any(chat["chat_id"] == "s1" for chat in chats)
+    await second.close()
+
+
 async def test_delete_chat_removes_transcript_and_event_log(tmp_path, monkeypatch):
     """Deleting a chat drops BOTH artifacts — the display transcript AND the AG2
     event log — so it neither lists nor resumes, even on a fresh Gateway."""

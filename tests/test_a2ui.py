@@ -71,6 +71,9 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert "DecisionMatrix" in prompt
     assert "recommending between options -> render a DecisionMatrix" in prompt
     assert "Use Divider for section separation when useful" in prompt
+    assert "A canvas is an A2UI surface, not a component" in prompt
+    assert "place that exact value in an Image component's required `url`" in prompt
+    assert '"component":"DateTimeInput"' in prompt
     assert "Do not call tools to discover A2UI components" in prompt
     assert 'Do not describe or print "corrected A2UI components"' in prompt
     assert (

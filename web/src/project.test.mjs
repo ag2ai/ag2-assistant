@@ -11,6 +11,11 @@ const user = (text) => ({
 })
 const chunk = (text) => ({ type: 'ag2.events.ModelMessageChunk', data: { content: text } })
 const cancelled = (reason) => ({ type: 'assistant.events.TurnCancelled', data: { reason } })
+const a2uiAction = () => ({ type: 'assistant.events.A2UIActionSubmitted', data: { surface_id: 'demo', action_name: 'continue' } })
+const response = (content) => ({
+  type: 'ag2.events.ModelResponse',
+  data: { message: { content }, tool_calls: { calls: [] } },
+})
 
 test('a user message with no reply yet is busy', () => {
   const items = []
@@ -63,4 +68,16 @@ test('TurnCancelled ends the turn, keeps the partial reply, and clears busy', ()
   assert.equal(note.text, 'Stopped')
   assert.equal(note.ends, true)
   assert.equal(isBusy(items), false)     // replay of a cancelled turn is never "thinking"
+})
+
+test('an A2UI action shows one transient indicator and retires it on the reply', () => {
+  const items = []
+  foldEvent(items, a2uiAction())
+  foldEvent(items, a2uiAction())
+
+  assert.equal(items.filter((i) => i.a2uiActionPending).length, 1)
+
+  foldEvent(items, response('Your adventure continues.'))
+  assert.equal(items.filter((i) => i.a2uiActionPending).length, 0)
+  assert.equal(items.at(-1).text, 'Your adventure continues.')
 })

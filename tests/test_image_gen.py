@@ -1,7 +1,7 @@
 """Provider-aware image generation tool wiring (the model call itself is live)."""
 
 from assistant.config import Config
-from assistant.tools.image_gen import _image_agent, build_image_tool
+from assistant.tools.image_gen import _image_agent, _workspace_file_url, build_image_tool
 
 
 def _cfg(provider: str) -> Config:
@@ -30,6 +30,16 @@ def test_gemini_image_agent_requests_image_modality():
 def test_build_image_tool_is_named_generate_image(tmp_path):
     tool = build_image_tool(_cfg("gemini"), tmp_path)
     assert tool.name == "generate_image"
+
+
+def test_workspace_file_url_is_profile_scoped_and_path_encoded(tmp_path):
+    config = _cfg("gemini")
+    config.root_dir = tmp_path
+    config.data_dir = tmp_path / "profiles" / "work"
+
+    assert _workspace_file_url(config, "images/sunrise & lake.jpg") == (
+        "/api/p/work/files/raw?path=images%2Fsunrise%20%26%20lake.jpg"
+    )
 
 
 def test_image_agent_follows_active_config_only(monkeypatch, tmp_path):

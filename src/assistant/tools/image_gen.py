@@ -15,6 +15,7 @@ Other providers (Anthropic/Ollama) have no image model → the tool says so.
 import contextlib
 import os
 from typing import Annotated
+from urllib.parse import quote
 
 from ag2 import Agent, Context, tool
 from pydantic import Field
@@ -95,6 +96,19 @@ def _image_agent(config):
     return None  # anthropic / ollama: no image generation
 
 
+def _workspace_file_url(config, path: str) -> str:
+    """Return the profile-scoped browser URL for a workspace file."""
+    profiles_dir = config.root_dir / "profiles"
+    try:
+        relative_data_dir = config.data_dir.resolve().relative_to(profiles_dir.resolve())
+    except ValueError:
+        return ""
+    if not relative_data_dir.parts:
+        return ""
+    profile_id = relative_data_dir.parts[0]
+    return f"/api/p/{quote(profile_id, safe='')}/files/raw?path={quote(path, safe='')}"
+
+
 async def _first_image(reply) -> tuple[bytes, str] | tuple[None, None]:
     """Extract the first generated image (bytes, media_type) from a reply, or (None, None)."""
     for f in getattr(reply, "files", None) or []:
@@ -161,14 +175,19 @@ def build_image_tool(config, workspace_dir):
                 await context.send(ImageGenerated(rel, prompt=prompt, media_type=media))
                 emitted = True
         shown = (
-            "It has been shown to the user inline already, so refer to it rather than "
-            "embedding it again."
+            "It has been shown to the user inline already."
             if emitted
             else "It has NOT been shown to the user — present it however this surface allows."
         )
+        canvas_url = _workspace_file_url(config, rel)
+        canvas_instruction = (
+            f" To show it in an A2UI Image component, use this exact url value: {canvas_url}."
+            if canvas_url
+            else ""
+        )
         return (
             f"Generated image saved to {rel}. {shown} To modify it, call this tool "
-            f"again with source_image='{rel}'."
+            f"again with source_image='{rel}'.{canvas_instruction}"
         )
 
     return generate_image

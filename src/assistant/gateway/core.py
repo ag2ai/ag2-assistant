@@ -25,6 +25,7 @@ from assistant.agent import create_agent, universal_turn_prompt
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled
 from assistant.gateway.repair import repair_stream_history, wait_reply
+from assistant.storage import SerialStore
 
 _TRANSCRIPT_PREFIX = "/transcript/"
 
@@ -178,7 +179,9 @@ class Gateway:
             from ag2.knowledge.log import EventLogWriter
 
             self._config.data_dir.mkdir(parents=True, exist_ok=True)
-            self._event_store = SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
+            self._event_store = SerialStore(
+                SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
+            )
             self._writer = EventLogWriter(self._event_store)
 
     async def reload(self) -> None:

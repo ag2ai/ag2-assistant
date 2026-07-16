@@ -9,12 +9,16 @@
   import AgendaCard from './AgendaCard.svelte'
   import InboxBrief from './InboxBrief.svelte'
   import CodingSession from './CodingSession.svelte'
+  import A2UIComposing from './A2UIComposing.svelte'
+  import { a2uiComposingSurfaceId, withA2UIValue } from '../../lib/a2ui.js'
+  import { a2uiAction } from '../../controller.js'
+  import { thread } from '../../store.js'
 
   let { item } = $props()
   const data = $derived(item.data || {})
   const components = $derived(item.components || item.component?._components || [item.component].filter(Boolean))
   const type = $derived(((item.component && item.component.component) || 'AnswerBrief').toLowerCase())
-  const isBasicLayout = $derived(['column', 'row', 'list', 'card', 'text', 'divider'].includes(type))
+  const isBasicLayout = $derived(['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput'].includes(type))
   const componentIcon = $derived(
     isBasicLayout ? 'sparkles'
       : type === 'weatherpanel' ? 'sun'
@@ -41,7 +45,29 @@
       : type === 'restaurantfinder' ? 'Places'
       : 'A2UI'
   )
-  const displayTitle = $derived(item.title || eyebrow)
+  const displayTitle = $derived(item.title === 'Briefing' ? 'Interactive view' : item.title || eyebrow)
+  const isComposingUpdate = $derived($thread.items.some(
+    (entry) => entry.kind === 'agent' && entry.streaming && a2uiComposingSurfaceId(entry.text) === item.surfaceId
+  ))
+  const actionPending = $derived($thread.items.some(
+    (entry) => entry.kind === 'note' && entry.a2uiActionPending && entry.surfaceId === item.surfaceId
+  ))
+  let inputData = $state({})
+
+  $effect(() => {
+    inputData = data
+  })
+
+  function setInputValue(path, value) {
+    inputData = withA2UIValue(inputData, path, value)
+  }
+
+  function submitAction(action) {
+    a2uiAction({
+      version: item.version || 'v1.0',
+      action: { ...action, surfaceId: item.surfaceId, timestamp: new Date().toISOString() },
+    })
+  }
 
   function list(value) {
     return Array.isArray(value) ? value.filter(Boolean) : []
@@ -56,7 +82,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'checklist', 'codingsession'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'checklist', 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -64,7 +90,9 @@
   )
 </script>
 
-{#if !emptyAnswerBrief}
+{#if isComposingUpdate}
+  <A2UIComposing />
+{:else if !emptyAnswerBrief}
 {#if type === 'newsdigest' && list(data.stories).length}
   <NewsWire {data} />
 {:else if type === 'weatherpanel'}
@@ -93,7 +121,7 @@
   </div>
 
   {#if isBasicLayout}
-    <BasicA2UIComponent component={item.component} {components} />
+    <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
   {:else if type === 'taskplan'}
     <div class="a2ui-task">
       <div class="a2ui-main">{data.objective || 'New task'}</div>
@@ -167,4 +195,7 @@
   {/if}
 </div>
 {/if}
+{/if}
+{#if actionPending}
+  <div class="a2ui-action-pending" role="status" aria-label="Submitting action"><Icon name="rotate-cw" size={14} /></div>
 {/if}

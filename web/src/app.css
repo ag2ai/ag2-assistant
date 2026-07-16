@@ -306,6 +306,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .note { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0; }
 .note.withicon { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .note.alert { color: var(--ag2-observer); }
+.note.pending svg { animation: note-spin 900ms linear infinite; }
+@keyframes note-spin { to { transform: rotate(360deg); } }
 
 .a2ui { max-width: min(80%, 620px); margin: 8px 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, var(--accent) 6%), var(--panel)); border-radius: 8px; padding: 14px; box-shadow: 0 10px 28px rgba(0,0,0,.055); }
 .a2ui-head { display: flex; align-items: center; gap: 9px; min-width: 0; margin-bottom: 12px; }
@@ -318,6 +320,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-composing .a2ui-head { margin-bottom: 14px; }
 .a2ui-composing .a2ui-mark { animation: ag2-glow 2.8s var(--ease-in-out) infinite; }
 .a2ui-composing .a2ui-title { color: var(--muted); font-weight: var(--fw-medium); }
+.a2ui-action-pending { display: flex; justify-content: center; padding: 10px 0 2px; color: var(--muted); }
+.a2ui-action-pending svg { animation: note-spin 900ms linear infinite; }
 .a2ui-skeleton { display: flex; flex-direction: column; gap: 9px; }
 .a2ui-skeleton span { height: 10px; border-radius: var(--radius-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, var(--code)) 0%, color-mix(in srgb, var(--accent) 22%, var(--code)) 50%, color-mix(in srgb, var(--accent) 8%, var(--code)) 100%); background-size: 220% 100%; animation: ag2-shimmer 1.6s var(--ease-in-out) infinite; }
 .a2ui-main { font-size: 14.5px; font-weight: var(--fw-semibold); line-height: 1.35; color: var(--ink); overflow-wrap: anywhere; }
@@ -337,6 +341,21 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-basic-card { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; }
 .a2ui-text { font-size: 12.5px; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
 .a2ui-divider { height: 1px; background: var(--line); margin: 2px 0; }
+.a2ui-checkbox { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); color: var(--ink); font-size: 12.5px; line-height: 1.35; cursor: pointer; }
+.a2ui-checkbox input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.a2ui-checkbox:has(input:focus-visible) { outline: none; box-shadow: var(--focus-ring); }
+.a2ui-button { align-self: flex-start; min-height: 34px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.a2ui-button.primary { border-color: var(--accent); background: var(--accent); color: white; }
+.a2ui-button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.a2ui-image { display: block; width: 100%; max-height: 360px; border-radius: 7px; background: var(--code); }
+.a2ui-image.icon, .a2ui-image.avatar { width: 48px; height: 48px; }
+.a2ui-icon { display: inline-flex; color: var(--muted); }
+.a2ui-video { width: 100%; min-height: 220px; border: 0; border-radius: 7px; background: #000; }
+.a2ui-field { display: flex; flex-direction: column; gap: 6px; color: var(--ink); font-size: 12.5px; }
+.a2ui-field input, .a2ui-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; background: var(--code); color: var(--ink); font: inherit; }
+.a2ui-field textarea { min-height: 88px; resize: vertical; }
+.a2ui-slider { display: grid; grid-template-columns: 1fr auto; align-items: center; }.a2ui-slider > span { grid-column: 1 / -1; }.a2ui-slider input { padding: 0; }.a2ui-slider output { color: var(--muted); min-width: 3ch; text-align: right; }
+.a2ui-choice { margin: 0; padding: 0; border: 0; }.a2ui-choice legend { padding: 0 0 6px; font-size: 12.5px; color: var(--ink); }.a2ui-choice > div { display: flex; flex-direction: column; gap: 6px; }.a2ui-choice label { display: flex; align-items: center; gap: 8px; min-height: 34px; color: var(--ink); font-size: 12.5px; }.a2ui-choice .chips { flex-direction: row; flex-wrap: wrap; }.a2ui-choice .chips label { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; }
 .a2ui-list { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
 .a2ui-story { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); background: var(--code); border-radius: 8px; padding: 8px 9px; min-width: 0; }
 .a2ui-story > span { flex: none; display: inline-flex; width: 15px; justify-content: center; color: var(--muted); margin-top: 2px; }
