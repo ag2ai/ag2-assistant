@@ -44,6 +44,9 @@ services:
       - ag2_data:/data
       # The agent's readable/writable file workspace (generated images, outputs).
       - ag2_workspace:/workspace
+      # ACP bridge: the repo the coding agent may edit, at the SAME path as on the
+      # host (folder approval, the daemon's cwd check and diffs must line up).
+      - "/Users/vvlrff/Documents/AG2 Assistant/work:/Users/vvlrff/Documents/AG2 Assistant/work"
     restart: unless-stopped
 
     # --- Optional: docker-out-of-docker code execution -----------------------
@@ -73,6 +76,7 @@ services:
 
     # --- Optional: drive the HOST's CLI coding agents (Claude Code / Codex /
     #     OpenCode) from inside this container over the ACP host bridge ---------
+    # Full walkthrough: docs/deployment.md § "Coding agents from Docker".
     # 1) On the HOST (not in Docker), where the CLIs are installed & logged in:
     #        pip install ag2-assistant          # once
     #        ag2-assistant acp-bridge --port 8801 --token "$(openssl rand -hex 16)"
