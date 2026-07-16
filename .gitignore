@@ -13,6 +13,8 @@ build/
 .pytest_cache/
 .claude/settings.local.json
 
+# local-markdown issue tracker (specs + tickets, see docs/agents/issue-tracker.md)
+.scratch/
 docs/superpowers/
 
 # graphify knowledge-graph build output
