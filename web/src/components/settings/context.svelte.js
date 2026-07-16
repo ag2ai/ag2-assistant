@@ -1,7 +1,7 @@
 // Settings — shared reactive context (Svelte 5 runes).
 //
-// ONE `$state` object holds every field the six Settings pages share
-// ({ s, google, drafts, model, busy, err }) plus the methods that act on it
+// ONE `$state` object holds every field the Settings pages share
+// ({ s, google, drafts, busy, err }) plus the methods that act on it
 // (load, run) and the cross-modal openers. The shell calls createSettingsContext()
 // synchronously at init and setContext()s it; each page reads it with getSettings().
 //
@@ -17,17 +17,16 @@
 //    (a plain `let s` reassigned inside this module wouldn't reach the pages).
 // 2. NEVER destructure at init: `const { s } = getSettings()` captures the null
 //    value forever. Pages dot-access `ctx.s` / `ctx.busy`, or alias via $derived.
-// 3. Deep binds work: `bind:value={ctx.drafts[k.id]}`, `bind:value={ctx.s.assistant.provider}`,
-//    `bind:value={ctx.model}` — the proxy tracks nested mutation.
+// 3. Deep binds work: `bind:value={ctx.drafts[k.id]}` — the proxy tracks nested mutation.
 // 4. createSettingsContext() MUST run synchronously in the shell's <script> top
 //    (setContext requirement); ctx.load() is called from the shell's onMount.
 // 5. Page-local state (open FolderPicker, MCP health) resets on page switch because
-//    pages unmount; anything that must survive a switch lives on ctx (drafts, model).
+//    pages unmount; anything that must survive a switch lives on ctx (drafts).
 
 import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api.js'
 import {
-  settingsOpen, voicePickerOpen, googleOpen, memoryOpen, poweredByOpen, onboardingOpen,
+  settingsOpen, voicePickerOpen, googleOpen, codexOpen, memoryOpen, poweredByOpen, onboardingOpen,
 } from '../../store.js'
 
 const KEY = Symbol('settings')
@@ -36,19 +35,17 @@ export function createSettingsContext() {
   const ctx = $state({
     s: null,        // GET /api/settings payload (null until load() resolves)
     google: null,   // GET /api/google/status
-    drafts: {},     // provider -> input value (API-key + ollama drafts)
-    model: '',      // assistant model draft
+    drafts: {},     // provider -> input value (API-key drafts)
     busy: false,
     err: '',
   })
 
-  // Fetch the whole Settings payload. Mirrors the old Settings.svelte load():
-  // resets `drafts` to just the ollama base_url so a fresh load starts clean.
+  // Fetch the whole Settings payload. Resets `drafts` so a fresh load starts clean
+  // (key rows bind lazily into ctx.drafts[provider]).
   ctx.load = async () => {
     try {
       ctx.s = await api.settings()
-      ctx.model = ctx.s.assistant.model || ''
-      ctx.drafts = { ollama: ctx.s.keys.ollama?.base_url || '' }
+      ctx.drafts = {}
     } catch (e) { ctx.err = String(e.message || e) }
     // google status stays fetched here so Integrations shows it ready when opened.
     try { ctx.google = await api.googleStatus() } catch {}
@@ -67,6 +64,11 @@ export function createSettingsContext() {
   ctx.close = () => settingsOpen.set(false)
   ctx.openVoice = () => { settingsOpen.set(false); voicePickerOpen.set(true) }
   ctx.openGoogle = () => { settingsOpen.set(false); googleOpen.set(true) }
+  // Codex is the ONE opener that does NOT close Settings: it's launched from the
+  // half-filled LLM config form, and unmounting Settings would throw that draft
+  // away. It stacks over Settings (.modal.over) and closing it reveals the form
+  // again, with its signed-in state refreshed.
+  ctx.openCodex = () => codexOpen.set(true)
   ctx.openMemory = () => { settingsOpen.set(false); memoryOpen.set(true) }
   ctx.openPoweredBy = () => { settingsOpen.set(false); poweredByOpen.set(true) }
   ctx.reRunSetup = () => { settingsOpen.set(false); onboardingOpen.set(true) }

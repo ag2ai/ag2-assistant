@@ -13,13 +13,42 @@
   const tail = $derived($thread.items[$thread.items.length - 1])
   const showThinking = $derived($thread.busy && !(tail && tail.kind === 'agent' && tail.streaming))
 
+  // Autoscroll follows the stream only while the reader is at the bottom. Scrolling
+  // up unpins (so you can read back mid-turn); scrolling back down re-pins. Without
+  // this, every streamed chunk yanks the view back down and reading is impossible.
+  const NEAR_BOTTOM = 80 // px of slack — "at the bottom" for a reader, not to the pixel
+  let pinned = $state(true)
+  function onScroll() {
+    if (scroller) pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < NEAR_BOTTOM
+  }
+
+  // Opening another thread starts pinned again, whatever the last one was left at.
+  let shown = null
+  $effect(() => {
+    if ($thread.id !== shown) {
+      shown = $thread.id
+      pinned = true
+    }
+  })
+
+  // Sending re-pins: you asked for the reply, so follow it. (`sent` is a plain let,
+  // not $state — this effect must not invalidate itself.)
+  let sent = null
+  $effect(() => {
+    if (tail && tail.kind === 'user' && tail.id !== sent) {
+      sent = tail.id
+      pinned = true
+    }
+  })
+
   // Autoscroll to the bottom after the DOM updates. Use $effect (not `$: tick()` —
   // that self-reschedules and loops in Svelte 5), and scroll on the next frame so
   // markdown that sets its height after render still lands us at the true bottom.
   $effect(() => {
     $thread.items
     showThinking
-    requestAnimationFrame(() => { if (scroller) scroller.scrollTop = scroller.scrollHeight })
+    if (!pinned) return
+    requestAnimationFrame(() => { if (scroller && pinned) scroller.scrollTop = scroller.scrollHeight })
   })
 </script>
 
@@ -37,7 +66,7 @@
   </div>
 </div>
 
-<div class="thread" bind:this={scroller}>
+<div class="thread" bind:this={scroller} onscroll={onScroll}>
   <div class="inner">
     {#if $thread.kind === 'task'}<TaskPanel />{/if}
     {#if !$thread.items.length && $thread.kind === 'chat'}

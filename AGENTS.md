@@ -53,6 +53,9 @@ Ruff owns formatting and import order — line length 100, double quotes, rule s
   typed event stream; the web UI, channels, and CLI are all *projections* of that
   stream. Add new behaviour as events/observers — don't build a parallel data
   path that bypasses the stream.
+- **Comments say what, in ≤2 lines.** A comment or docstring describes what the
+  code does — not why it exists, what it replaced, or how it was decided. Keep
+  each one to two lines at most.
 - **No compat shims.** This is a fast-moving prototype: when you change or remove
   something, delete the obsolete code and its guards outright rather than keeping
   backward-compat fallbacks.

@@ -657,5 +657,69 @@ def version() -> None:
     typer.echo(f"ag2-assistant {__version__}")
 
 
+# --- ChatGPT-subscription auth ("Sign in with ChatGPT") --------------------- #
+
+auth_app = typer.Typer(name="auth", help="Sign in with a ChatGPT/Codex subscription (OpenAI).")
+app.add_typer(auth_app, name="auth")
+
+
+@auth_app.command("login")
+def auth_login(
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Print the URL and paste the code (headless)."
+    ),
+) -> None:
+    """Sign in with ChatGPT to run the assistant on your Codex/ChatGPT subscription.
+
+    Unofficial and likely against OpenAI's Terms of Service — your account could be
+    restricted. To use it, also set the provider to OpenAI in subscription mode:
+    `AG2ASSISTANT_LLM_PROVIDER=openai AG2ASSISTANT_OPENAI_AUTH_MODE=subscription`.
+    """
+    from assistant import codex_auth
+
+    typer.echo("⚠️  Unofficial — this uses your ChatGPT subscription in a way OpenAI")
+    typer.echo("   does not officially support; your account could be rate-limited.\n")
+    try:
+        if no_browser:
+            verifier, challenge = codex_auth.generate_pkce()
+            import secrets as _secrets
+
+            state = _secrets.token_urlsafe(24)
+            url = codex_auth.build_authorize_url(challenge, state)
+            typer.echo("Open this URL, sign in, then paste the `code` from the redirect URL:\n")
+            typer.echo(url + "\n")
+            code = typer.prompt("code").strip()
+            codex_auth.exchange_code(code, verifier)
+        else:
+            typer.echo("Opening your browser to sign in with ChatGPT…")
+            codex_auth.run_local_login()
+    except codex_auth.CodexAuthError as exc:
+        typer.echo(f"Sign-in failed: {exc}")
+        raise typer.Exit(1) from None
+    st = codex_auth.status()
+    acct = st.get("account_id") or "unknown account"
+    typer.echo(f"Signed in ✓ ({acct})")
+
+
+@auth_app.command("logout")
+def auth_logout() -> None:
+    """Remove the stored ChatGPT-subscription tokens."""
+    from assistant import codex_auth
+
+    typer.echo("Signed out." if codex_auth.logout() else "Not signed in.")
+
+
+@auth_app.command("status")
+def auth_status() -> None:
+    """Show whether you're signed in with ChatGPT."""
+    from assistant import codex_auth
+
+    st = codex_auth.status()
+    if st.get("signed_in"):
+        typer.echo(f"Signed in ✓ (account: {st.get('account_id') or 'unknown'})")
+    else:
+        typer.echo("Not signed in. Run `ag2-assistant auth login`.")
+
+
 if __name__ == "__main__":
     app()

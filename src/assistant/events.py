@@ -142,3 +142,13 @@ class FeedbackGiven(AssistantEvent):
     reason: str = ""
     content: str = ""  # excerpt of the rated output
     request: str = ""  # the user's ask / task objective that produced it
+
+
+class TurnCancelled(AssistantEvent):
+    """The user stopped a turn while it was running. Emitted after AG2 cancels the
+    run, so it lands after whatever the turn had already produced (tool calls and
+    their results stay in the history) — the thread shows where the work stopped,
+    and replays that way."""
+
+    session_id: str = Field(kw_only=False)
+    reason: str = "Stopped"

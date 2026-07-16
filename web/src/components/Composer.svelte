@@ -1,6 +1,6 @@
 <script>
   import { thread } from '../store.js'
-  import { send, startVoice, stopVoice, voice } from '../controller.js'
+  import { send, stop, startVoice, stopVoice, voice } from '../controller.js'
   import Icon from './Icon.svelte'
 
   let text = $state('')
@@ -16,6 +16,12 @@
   }
   function key(e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
+  }
+  // While the agent is working, Enter still sends — the message is fed to the running
+  // turn (it picks it up at its next step), so say so rather than leaving it a mystery.
+  function placeholder() {
+    if ($thread.busy) return 'Add something while it works…'
+    return $thread.kind === 'task' ? 'Tell the agent to change this task…' : 'Message AG2 Assistant…'
   }
   function grow() { if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px' } }
   function toggleMic() { $voice.active ? stopVoice() : startVoice() }
@@ -53,11 +59,16 @@
       bind:this={ta}
       bind:value={text}
       rows="1"
-      placeholder={$thread.kind === 'task' ? 'Tell the agent to change this task…' : 'Message AG2 Assistant…'}
+      placeholder={placeholder()}
       oninput={grow}
       onkeydown={key}
     ></textarea>
     <button class="icon mic" class:live={$voice.active} onclick={toggleMic} title="Talk to AG2 Assistant" aria-label="Talk to AG2 Assistant"><Icon name="mic" size={18} /></button>
+    <!-- Stop sits BESIDE Send while a turn runs: sending mid-turn feeds the running
+         turn, so the composer must stay usable — stopping is a separate choice. -->
+    {#if $thread.busy}
+      <button class="icon stop" onclick={stop} title="Stop the agent" aria-label="Stop the agent"><Icon name="square" size={14} /></button>
+    {/if}
     <button class="send" onclick={submit}><Icon name="send" size={16} /> Send</button>
   </div>
   {#if $voice.active}

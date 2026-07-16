@@ -57,6 +57,41 @@ CAPABILITIES = (
     "drive",
 )
 
+# What each capability unlocks, in the model's own terms. This is the ONE place a
+# capability is described: every prompt that offers a choice of capabilities renders
+# this catalogue rather than restating it, so adding or renaming a group updates them
+# all. Describe the KIND of work the group covers, never the individual tool names.
+CAPABILITY_DOCS = {
+    "web": (
+        "search the web, fetch pages, and read current real-world facts — anything "
+        "happening now or otherwise outside your own knowledge (news, weather and "
+        "forecasts, market/share/crypto prices, sport, live reference data)"
+    ),
+    "code": (
+        "run code and shell commands — for work that is more reliably computed than "
+        "reasoned (calculation, data transformation, parsing, verification)"
+    ),
+    "coding": (
+        "write or edit code in the user's own repositories and folders, driven by a "
+        "locally installed CLI coding agent — the path for real code changes on disk, "
+        "as opposed to running snippets; the user approves the folder first"
+    ),
+    "files": "read the user's local files, and save files into the workspace",
+    "images": "generate and edit images",
+    "skills": "find, install and run packaged skills (curated procedures for known jobs)",
+    "mcp": "the MCP servers configured in this profile",
+    "gmail": "the user's Gmail",
+    "calendar": "the user's Google Calendar",
+    "drive": "the user's Google Drive, Docs and Sheets",
+}
+
+
+def capability_catalogue(capabilities=None) -> str:
+    """Render the capability groups as a `- name: what it unlocks` list for a prompt."""
+    caps = capabilities if capabilities is not None else CAPABILITIES
+    return "\n".join(f"- {c}: {CAPABILITY_DOCS[c]}" for c in caps if c in CAPABILITY_DOCS)
+
+
 _GOOGLE_GROUPS = {
     "gmail": {"gmail_search", "gmail_read", "gmail_send", "gmail_create_draft"},
     "calendar": {"calendar_list_events", "calendar_create_event"},
@@ -248,7 +283,9 @@ def build_agent_tools(
 __all__ = [
     "build_agent_tools",
     "available_capabilities",
+    "capability_catalogue",
     "CAPABILITIES",
+    "CAPABILITY_DOCS",
     "read_file",
     "get_weather",
     "get_quotes",

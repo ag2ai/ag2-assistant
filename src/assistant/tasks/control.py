@@ -16,6 +16,14 @@ from typing import Annotated
 from ag2 import tool
 from pydantic import Field
 
+from assistant.tools import capability_catalogue
+
+# Rendered from the capability registry so this field can never drift from the groups
+# that actually exist.
+_CAPABILITIES_FIELD_DOC = (
+    "Comma-separated capability groups this subtask needs:\n" + capability_catalogue()
+)
+
 
 class _BlockingAsker:
     """Parking asker for resumed work — HITL resolves out of band via inquiries."""
@@ -188,9 +196,7 @@ def build_task_tools(store, manager, task_id: str) -> list:
         description: Annotated[str, Field(description="What this subtask should do.")] = "",
         capabilities: Annotated[
             str,
-            Field(
-                description="Comma-separated tool groups it needs: web, code, files, calendar, drive."
-            ),
+            Field(description=_CAPABILITIES_FIELD_DOC),
         ] = "web",
     ) -> str:
         """Add a subtask (e.g. 'also research X'). It's scheduled and run automatically."""

@@ -9,6 +9,7 @@ import asyncio
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
+from tests.conftest import FakeRunMixin
 
 
 def _service(tmp_path, executor, planner=None):
@@ -479,7 +480,7 @@ async def test_chat_routes_to_control_agent(tmp_path):
     class _Reply:
         body = "Added the subtask."
 
-    class _Agent:
+    class _Agent(FakeRunMixin):
         async def ask(self, text, stream=None, prompt=None, **k):
             captured["text"] = text
             captured["prompt"] = prompt
@@ -507,7 +508,7 @@ def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch):
     class _Reply:
         body = "on it"
 
-    class _Agent:  # the one universal gateway agent
+    class _Agent(FakeRunMixin):  # the one universal gateway agent
         tools = []
 
         async def ask(self, *msg, stream=None, prompt=None, **k):

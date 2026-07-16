@@ -10,7 +10,14 @@ import asyncio
 
 import pytest
 
-from tests.conftest import FakeAgent, FakeReply, api, make_profile_app, use_fake_agent
+from tests.conftest import (
+    FakeAgent,
+    FakeReply,
+    FakeRunMixin,
+    api,
+    make_profile_app,
+    use_fake_agent,
+)
 
 
 @pytest.fixture
@@ -29,7 +36,7 @@ async def test_send_message_returns_reply(fake_gateway):
 
 
 async def test_forwarding_events_passes_structured_events_not_transcript(fake_gateway):
-    """`_ask_forwarding_events` forwards the agent's structured events verbatim
+    """`_forwarding_events` forwards the agent's structured events verbatim
     (so a voice client folds them with the text reducer) while OMITTING the
     conversation events it renders itself as transcript — and always unsubscribes."""
     from ag2.events import (
@@ -57,13 +64,15 @@ async def test_forwarding_events_passes_structured_events_not_transcript(fake_ga
 
     batch = ToolCallsEvent(calls=[ToolCallEvent(id="a", name="write_file", arguments="{}")])
 
-    async def ask_coro():
+    async def drive():  # stands in for the task driving AgentRun.result()
         await captured["fn"](batch)
         await captured["fn"](ModelMessageChunk(content="spoken words"))  # transcript → omitted
         await captured["fn"](ModelResponse(message=ModelMessage(content="spoken")))  # → omitted
         return FakeReply("done")
 
-    reply = await fake_gateway._ask_forwarding_events(_Stream(), ask_coro(), on_event)
+    reply = await fake_gateway._forwarding_events(
+        _Stream(), asyncio.ensure_future(drive()), on_event
+    )
 
     assert reply.body == "done"
     # only the structured event is forwarded; conversation events are the voice
@@ -197,7 +206,7 @@ async def test_delete_session_removes_transcript_and_event_log(tmp_path, monkeyp
 #     a profile switch, which is a full-page nav that discards local page state) ---
 
 
-class _SlowAgent:
+class _SlowAgent(FakeRunMixin):
     """A fake agent whose turn blocks on an event, so a test can observe state while
     a turn is *in flight* (simulating a long agentic turn: web searches etc.)."""
 
@@ -623,7 +632,7 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
 
     import assistant.gateway.core as core_mod
 
-    class _HangAgent:
+    class _HangAgent(FakeRunMixin):
         tools = []
 
         async def ask(self, *a, stream=None, **k):
@@ -647,6 +656,119 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
                 if m.get("type") == "turn_end":
                     break
             assert saw_error
+
+
+def test_stream_cancel_stops_the_turn(monkeypatch):
+    """A `cancel` frame stops the running turn: AG2 propagates the cancellation into
+    the run, a TurnCancelled event comes back out on the stream, and the turn ends."""
+    from fastapi.testclient import TestClient
+
+    class _HangAgent(FakeRunMixin):
+        tools = []
+
+        def __init__(self):
+            self.cancelled = False
+
+        async def ask(self, *a, stream=None, **k):
+            try:
+                await asyncio.Event().wait()  # runs until someone stops it
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    agent = _HangAgent()
+    use_fake_agent(monkeypatch, lambda *a, **k: agent)
+
+    app, pid = make_profile_app()
+    with TestClient(app) as client:
+        with client.websocket_connect(api(pid, "/stream?session=s1")) as ws:
+            while ws.receive_json().get("type") != "ready":
+                pass
+            ws.send_json({"text": "something long"})
+            ws.send_json({"type": "cancel"})
+            saw_cancelled = False
+            for _ in range(8):
+                m = ws.receive_json()
+                if m.get("event", {}).get("type", "").endswith("TurnCancelled"):
+                    saw_cancelled = True
+                if m.get("type") == "turn_end":
+                    break
+            assert saw_cancelled
+            assert agent.cancelled  # the cancel reached the turn itself, not just the socket
+
+
+async def test_feed_message_steers_the_running_turn(fake_gateway):
+    """A message sent while a turn runs is enqueued onto that run (AG2 drains it before
+    the turn's next model call) instead of starting a second turn."""
+    started = asyncio.Event()
+
+    class _SteerableAgent(FakeRunMixin):
+        tools = []
+
+        def __init__(self):
+            self.turns = 0
+            self.release = asyncio.Event()
+
+        async def ask(self, *msg, stream=None, **k):
+            self.turns += 1
+            started.set()
+            await self.release.wait()
+            return FakeReply("done")
+
+    agent = _SteerableAgent()
+    fake_gateway._agent = agent
+
+    turn = asyncio.ensure_future(fake_gateway.send_message("research widgets", session_id="s1"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert await fake_gateway.feed_message("focus on 2026", session_id="s1") is True
+    stream = await fake_gateway.stream_for("s1")
+    # It lands in the run's inbox — the running turn's next model call drains it.
+    assert stream.pending_messages
+    assert "focus on 2026" in str(stream.pending_messages[0].parts)
+
+    agent.release.set()
+    assert await turn == "done"
+    assert agent.turns == 1  # steered the turn in flight; no second one was started
+
+
+async def test_feed_message_is_false_when_nothing_is_running(fake_gateway):
+    """Idle session → the caller runs the message as a new turn instead."""
+    assert await fake_gateway.feed_message("hello", session_id="idle") is False
+    stream = await fake_gateway.stream_for("idle")
+    assert not stream.pending_messages  # nothing left stranded in the inbox
+
+
+async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
+    """Stopping a turn keeps the events it already put on the stream, and marks the stop."""
+    from assistant.events import TurnCancelled
+
+    started = asyncio.Event()
+
+    class _WorkingAgent(FakeRunMixin):
+        tools = []
+
+        async def ask(self, *msg, stream=None, **k):
+            from ag2.context import ConversationContext
+            from ag2.events import ModelMessage, ModelResponse
+
+            await ConversationContext(stream=stream).send(
+                ModelResponse(message=ModelMessage(content="partial work"))
+            )
+            started.set()
+            await asyncio.Event().wait()
+
+    fake_gateway._agent = _WorkingAgent()
+
+    turn = asyncio.ensure_future(fake_gateway.send_message("do it", session_id="s2"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert await fake_gateway.cancel_turn("s2") is True
+    assert await turn == ""
+
+    events = await (await fake_gateway.stream_for("s2")).history.get_events()
+    assert any(getattr(e, "message", None) and "partial work" in e.message.content for e in events)
+    assert isinstance(events[-1], TurnCancelled)
+    assert await fake_gateway.cancel_turn("s2") is False  # nothing in flight now
 
 
 async def test_gateway_asker_timeout_denies():
@@ -938,3 +1060,300 @@ def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
     channels = next(c for c in body["checks"] if c["id"] == "channels")
     assert channels["state"] == "warn"
     assert any(it["platform"] == "discord" and it["error"] for it in channels["items"])
+
+
+# ---- Named LLM configurations (global /api/llm-configs) ------------------------
+
+
+def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
+    """Create/update/use/delete named configs; the raw per-config key is never echoed
+    (only a set/hint), and a config's secret is cleaned up on delete."""
+    from assistant import secrets
+
+    client, pid = profile_app
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    # empty install
+    r = client.get("/api/llm-configs").json()
+    assert r == {"configs": [], "active": None, "env_override": None}
+
+    # create a local-server config with a secret key + activate
+    r = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "Local",
+            "type": "openai",
+            "model": "gemma-4",
+            "base_url": "http://192.168.0.55:8080/v1",
+            "api_key": "sk-secret-1234",
+            "activate": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    cid = body["config"]["id"]
+    assert body["ok"] is True and body["active"] == cid
+    # raw key never echoed — only the set/hint summary
+    assert body["config"]["key"] == {"set": True, "hint": "…1234"}
+    assert "sk-secret-1234" not in r.text
+
+    g = client.get("/api/llm-configs").json()
+    assert g["active"] == cid
+    assert g["configs"][0]["base_url"] == "http://192.168.0.55:8080/v1"
+    assert g["configs"][0]["key"] == {"set": True, "hint": "…1234"}
+    assert "sk-secret-1234" not in client.get("/api/llm-configs").text
+    # the honest key labels: its own key wins; the shared env slot is reported too
+    entry = g["configs"][0]
+    assert entry["key_source"] == "config"
+    assert entry["shared_key"]["env"] == "OPENAI_API_KEY"
+    assert entry["shared_key"]["set"] is False  # env cleared above
+
+    # update leaving api_key None → key unchanged, model changed
+    r = client.post(
+        f"/api/llm-configs/{cid}",
+        json={
+            "name": "Local",
+            "type": "openai",
+            "model": "gemma-5",
+            "base_url": "http://192.168.0.55:8080/v1",
+        },
+    )
+    assert r.status_code == 200
+    g = client.get("/api/llm-configs").json()
+    assert g["configs"][0]["model"] == "gemma-5"
+    assert g["configs"][0]["key"]["set"] is True  # untouched
+
+    # delete-active → 409
+    assert client.delete(f"/api/llm-configs/{cid}").status_code == 409
+
+    # add a second, switch to it, then the first is deletable
+    r2 = client.post("/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"})
+    cid2 = r2.json()["config"]["id"]
+    assert client.post(f"/api/llm-configs/{cid2}/use").status_code == 200
+    assert client.get("/api/llm-configs").json()["active"] == cid2
+
+    assert client.delete(f"/api/llm-configs/{cid}").status_code == 200
+    assert secrets.config_key(cid) == ""  # secret cleaned up
+
+    # unknown ids → 404
+    assert client.post("/api/llm-configs/c_ghost/use").status_code == 404
+    assert client.delete("/api/llm-configs/c_ghost").status_code == 404
+    assert (
+        client.post(
+            "/api/llm-configs/c_ghost", json={"name": "x", "type": "gemini", "model": "m"}
+        ).status_code
+        == 404
+    )
+
+
+def test_llm_config_dry_construct_rejects_bad_options(profile_app):
+    """A typo'd advanced kwarg fails the dry-construct (400 + the constructor's
+    message) and nothing is persisted."""
+    client, pid = profile_app
+    r = client.post(
+        "/api/llm-configs",
+        json={"name": "Bad", "type": "openai", "model": "m", "options": {"bogus_kwarg": 1}},
+    )
+    assert r.status_code == 400
+    assert "bogus_kwarg" in r.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []  # not saved
+
+
+def test_llm_config_env_override_surfaced(profile_app, monkeypatch):
+    """When AG2ASSISTANT_MODEL / _LLM_PROVIDER is set (they pin the model in
+    load_config), GET reports it so the UI can show the 'pinned by env' banner."""
+    client, pid = profile_app
+    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("AG2ASSISTANT_MODEL", "gpt-x")
+    assert client.get("/api/llm-configs").json()["env_override"] == {
+        "provider": "openai",
+        "model": "gpt-x",
+    }
+
+
+def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
+    """The /test endpoint runs a real PONG round-trip (agent faked here): a reply →
+    {ok, reply, latency_ms}; any exception or a timeout → 502 {ok:false, error}."""
+    import ag2
+
+    from assistant.gateway import app as app_mod
+
+    client, pid = profile_app
+    entry = client.post(
+        "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
+    ).json()["config"]
+
+    class _OkAgent(FakeRunMixin):
+        def __init__(self, *a, **k):
+            pass
+
+        async def ask(self, *a, **k):
+            return FakeReply("PONG")
+
+    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    r = client.post(f"/api/llm-configs/{entry['id']}/test")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["reply"] == "PONG"
+    assert isinstance(body["latency_ms"], int)
+
+    class _BoomAgent(FakeRunMixin):
+        def __init__(self, *a, **k):
+            pass
+
+        async def ask(self, *a, **k):
+            raise RuntimeError("nope-boom")
+
+    monkeypatch.setattr(ag2, "Agent", _BoomAgent)
+    r = client.post(f"/api/llm-configs/{entry['id']}/test")
+    assert r.status_code == 502
+    assert "nope-boom" in r.json()["error"]
+
+    # a wedged call trips the (monkeypatched-tiny) timeout → 502
+    class _HangAgent(FakeRunMixin):
+        def __init__(self, *a, **k):
+            pass
+
+        async def ask(self, *a, **k):
+            await asyncio.sleep(0.5)
+            return FakeReply("late")
+
+    monkeypatch.setattr(ag2, "Agent", _HangAgent)
+    monkeypatch.setattr(app_mod, "_LLM_TEST_TIMEOUT_S", 0.01)
+    r = client.post(f"/api/llm-configs/{entry['id']}/test")
+    assert r.status_code == 502
+
+    # unknown id → 404
+    assert client.post("/api/llm-configs/c_ghost/test").status_code == 404
+
+
+def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
+    """POST /api/llm-configs/test pings an UNSAVED editor draft: nothing persisted,
+    a typed api_key is used for the call, a blank one falls back to the stored key
+    of the config named by ``id``, and validation errors come back as 400 (the
+    literal "test" segment must not be captured by the /{cid} update route)."""
+    import ag2
+
+    from assistant import llm_configs
+
+    client, pid = profile_app
+
+    captured = {}
+
+    class _OkAgent(FakeRunMixin):
+        def __init__(self, name, config=None, **k):
+            captured["config"] = config
+
+        async def ask(self, *a, **k):
+            return FakeReply("PONG")
+
+    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+
+    # pure draft (no id): tested and NOT saved
+    r = client.post(
+        "/api/llm-configs/test",
+        json={
+            "name": "Draft",
+            "type": "openai",
+            "model": "gemma-4",
+            "base_url": "http://h:8080/v1",
+            "api_key": "sk-draft-key-1",
+        },
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert llm_configs.list_configs() == []  # nothing persisted
+    assert getattr(captured["config"], "api_key", None) == "sk-draft-key-1"  # draft key used
+
+    # editing an existing config with a stored key: blank draft key falls back to it
+    entry = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "E",
+            "type": "openai",
+            "model": "m",
+            "base_url": "http://h/v1",
+            "api_key": "sk-stored-key-2",
+        },
+    ).json()["config"]
+    r = client.post(
+        "/api/llm-configs/test",
+        json={
+            "id": entry["id"],
+            "name": "E",
+            "type": "openai",
+            "model": "m",
+            "base_url": "http://h/v1",
+        },
+    )
+    assert r.status_code == 200
+    assert getattr(captured["config"], "api_key", None) == "sk-stored-key-2"
+
+    # a bad draft (unknown type) → 400 with the validator's message, not a 404 from
+    # the update route misparsing "test" as a config id
+    r = client.post("/api/llm-configs/test", json={"name": "X", "type": "nope", "model": "m"})
+    assert r.status_code == 400
+    assert "type must be one of" in r.json()["error"]
+
+
+def test_llm_config_subscription_entry_view_signed_in(profile_app, monkeypatch):
+    """An openai_subscription config's row/chip need the live ChatGPT sign-in state and
+    a 'subscription' key_source so the UI can label it honestly without a 2nd fetch.
+    Endpoint fields are stripped for this type (codex_auth owns the endpoint)."""
+    from assistant import codex_auth
+
+    client, pid = profile_app
+    entry = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "Sub",
+            "type": "openai_subscription",
+            "model": "gpt-5.5",
+            "base_url": "http://sneaky/v1",  # must be ignored/stripped
+            "activate": True,
+        },
+    ).json()["config"]
+    assert entry["key_source"] == "subscription"
+    assert entry["base_url"] == ""
+
+    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": True, "account_id": "acc"})
+    assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is True
+
+    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": False})
+    assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is False
+
+
+def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monkeypatch):
+    """Testing a subscription draft flows through model_config's subscription branch:
+    the probe carries auth_mode=subscription, so the built client points at the ChatGPT
+    backend with the codex token and server-side storage disabled."""
+    import ag2
+
+    from assistant import codex_auth
+
+    client, pid = profile_app
+    monkeypatch.setattr(
+        codex_auth,
+        "creds_best_effort",
+        lambda: codex_auth.Creds(access_token="TOK", account_id="acc"),
+    )
+
+    captured = {}
+
+    class _OkAgent(FakeRunMixin):
+        def __init__(self, name, config=None, **k):
+            captured["config"] = config
+
+        async def ask(self, *a, **k):
+            return FakeReply("PONG")
+
+    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    r = client.post(
+        "/api/llm-configs/test",
+        json={"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"},
+    )
+    assert r.status_code == 200 and r.json()["ok"] is True
+    cfg = captured["config"]
+    assert type(cfg).__name__ == "OpenAIResponsesConfig"
+    assert cfg.base_url == codex_auth.BACKEND_BASE
+    assert cfg.api_key == "TOK"
+    assert cfg.store is False

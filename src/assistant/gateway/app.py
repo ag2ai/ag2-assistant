@@ -13,6 +13,12 @@ Route map:
     GET  /api/status                         -> [{pid, busy, running_tasks, unseen_done}] activity badges
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
     POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
+    GET  /api/llm-configs                     -> named LLM configs (install-wide) + active + env_override
+    POST /api/llm-configs[/{cid}]             -> create/update a config (dry-construct → save → reload ALL)
+    DELETE /api/llm-configs/{cid}             -> delete a config (409 if active); reloads ALL
+    POST /api/llm-configs/{cid}/use           -> set the active config; reloads ALL
+    POST /api/llm-configs/{cid}/test          -> real PONG round-trip (502 on failure)
+    POST /api/llm-configs/test                -> same round-trip for an UNSAVED editor draft
     POST /api/onboarded                      -> set the install-level onboarding flag
     GET/POST /api/memory                     -> universal "who the user is" doc (shared root/user.db)
     POST /api/identity                       -> seed universal doc from web onboarding (name/location/hours/style); seed-only, never clobbers
@@ -34,7 +40,7 @@ Route map:
     GET  inquiries/pending, POST inquiries/{id}/answer
     GET  hitl/pending
     WS   stream, WS voice; GET voice/voices, POST voice/select, POST voice/preview
-    GET/POST settings, settings/mcp*, settings/project-folder, settings/focuses, settings/llm, settings/voice_provider
+    GET/POST settings, settings/mcp*, settings/project-folder, settings/focuses, settings/voice_provider
     GET/POST memory                          -> THIS profile's persona memory (profiles/<id>/profile.db)
     GET  files, GET/DELETE files/raw
     GET  usage
@@ -76,6 +82,11 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _WS_UNKNOWN_PROFILE = 4404  # {pid} not in registry (≈ 404)
 _WS_ARCHIVED_PROFILE = 4410  # {pid} archived (≈ 410)
 _WS_PROFILE_ARCHIVED = 4001  # runtime archived while this socket was open (§4.9)
+
+# Wall-clock ceiling on the POST /api/llm-configs/{cid}/test PONG round-trip. A
+# module constant so tests can monkeypatch it down (they use a fake Agent, so the
+# real value only bounds a genuinely wedged provider call).
+_LLM_TEST_TIMEOUT_S = 30.0
 
 
 def _allowed_origins() -> set[str]:
@@ -180,9 +191,29 @@ class KeyRequest(BaseModel):
     value: str = ""  # empty clears the key
 
 
-class LlmRequest(BaseModel):
-    provider: str
-    model: str = ""
+class LlmConfigRequest(BaseModel):
+    """Create/update body for a named LLM configuration. ``api_key`` is write-only:
+    None leaves the stored key unchanged, "" clears it, a value sets it — the raw key
+    is never echoed back (only a set/hint). ``id`` is only read by the draft-test
+    endpoint (create/update take the id from the URL path), letting a test of an
+    edit-in-progress fall back to that config's STORED key when none is typed."""
+
+    id: str | None = None
+    name: str
+    type: str
+    model: str
+    base_url: str = ""
+    host: str = ""
+    api_key: str | None = None
+    options: dict = Field(default_factory=dict)
+    activate: bool = False
+
+
+class CodexCodeRequest(BaseModel):
+    """Headless ChatGPT-subscription sign-in: a pasted auth code + its flow state."""
+
+    state: str
+    code: str
 
 
 class VoiceProviderRequest(BaseModel):
@@ -347,6 +378,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     app = FastAPI(title="AG2 Assistant Gateway", version=__version__, lifespan=lifespan)
     app.state.profiles = manager
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
+    app.state.codex_flows = {}  # state token -> PKCE verifier (ChatGPT-subscription login)
 
     @app.middleware("http")
     async def _origin_guard(request: Request, call_next):
@@ -513,10 +545,250 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         if not secrets.set_key(req.provider, req.value):
             return Response(status_code=400)
+        await _reload_all()
+        return {"ok": True}
+
+    # ---- Named LLM configurations (install-wide list + single active selection) ----
+
+    async def _reload_all() -> None:
+        """Reference-swap reload of every running runtime so all profiles' agents pick
+        up an LLM change on their next turn (the same loop set_secrets_key uses)."""
         for runtime in list(manager.runtimes()):
             with contextlib.suppress(Exception):
                 await manager.reload(runtime.pid)
+
+    def _llm_entry_view(entry: dict, active: str | None) -> dict:
+        """One config as the API exposes it: the stored fields, a set/hint summary for
+        BOTH keys that could apply (its own per-config key and the provider's shared
+        env key — never the raw values), plus ``key_source`` naming which one an
+        actual call would send. That triple is what lets the UI say honestly why a
+        keyless-looking config still works (shared fallback / no key needed)."""
+        from assistant import llm_configs, secrets
+        from assistant.secrets import KEY_ENV
+
+        provider = llm_configs.PROVIDER_OF.get(entry["type"], "")
+        shared = secrets.status().get(provider, {})
+        view = {
+            "id": entry["id"],
+            "name": entry["name"],
+            "type": entry["type"],
+            "model": entry["model"],
+            "base_url": entry.get("base_url", ""),
+            "host": entry.get("host", ""),
+            "options": entry.get("options", {}),
+            "key": secrets.config_key_hint(entry["id"]),
+            "key_source": llm_configs.key_source(
+                entry
+            ),  # config | shared | not_needed | none | subscription
+            "images": llm_configs.image_capable(entry),  # drives the row's "images" chip
+            "shared_key": {
+                "env": KEY_ENV.get(provider, ""),
+                "set": bool(shared.get("set")),
+                "hint": shared.get("hint", ""),
+            },
+            "active": entry["id"] == active,
+        }
+        if entry["type"] == "openai_subscription":
+            # The chip/form need the live ChatGPT sign-in state without a second
+            # fetch. Lazy + guarded so a missing/broken codex_auth reads as signed-out.
+            try:
+                from assistant import codex_auth
+
+                view["signed_in"] = bool(codex_auth.status().get("signed_in"))
+            except Exception:
+                view["signed_in"] = False
+        return view
+
+    def _llm_env_override() -> dict | None:
+        """The env pin banner payload: whichever of AG2ASSISTANT_LLM_PROVIDER /
+        AG2ASSISTANT_MODEL is set (they override any active config in load_config), or
+        None when neither is set."""
+        out = {}
+        if v := os.environ.get("AG2ASSISTANT_LLM_PROVIDER"):
+            out["provider"] = v
+        if v := os.environ.get("AG2ASSISTANT_MODEL"):
+            out["model"] = v
+        return out or None
+
+    def _llm_probe_config(entry: dict):
+        """A throwaway Config carrying just the entry's derived provider/model/options,
+        for the dry-construct + test round-trip. Streaming off (a one-shot probe)."""
+        from assistant import llm_configs
+        from assistant.config import Config
+
+        probe = Config()
+        probe.llm.streaming = False
+        probe.llm.provider = llm_configs.PROVIDER_OF[entry["type"]]
+        probe.llm.model = entry["model"]
+        probe.llm.provider_options[probe.llm.provider] = llm_configs.entry_options(entry)
+        # Subscription mode is carried on auth_mode (not provider_options), so mirror
+        # apply_active here — otherwise the probe would test the key path with no key.
+        if entry["type"] == "openai_subscription":
+            probe.llm.auth_mode = "subscription"
+        return probe
+
+    @app.get("/api/llm-configs")
+    async def list_llm_configs() -> dict:
+        """The install-wide named LLM configs, the active id, and any env override that
+        pins provider/model over them (drives the 'pinned by env' UI banner)."""
+        from assistant import llm_configs
+
+        active = llm_configs.active_id()
+        return {
+            "configs": [_llm_entry_view(e, active) for e in llm_configs.list_configs()],
+            "active": active,
+            "env_override": _llm_env_override(),
+        }
+
+    async def _save_llm_config(req: LlmConfigRequest, cid: str | None):
+        """Shared create/update: dry-construct the derived model_config BEFORE
+        persisting (a bad type/kwarg fails here, 400 + the constructor's message, not on
+        the agent's next turn), then save the entry, write the per-config key, optionally
+        activate, and reload every runtime. 404 when updating an unknown id."""
+        from assistant import llm_configs, secrets
+        from assistant.agent import model_config
+
+        entry = {
+            "name": req.name,
+            "type": req.type,
+            "model": req.model,
+            "base_url": req.base_url,
+            "host": req.host,
+            "options": req.options,
+        }
+        if cid is not None:
+            if llm_configs.get_config(cid) is None:
+                return JSONResponse(
+                    {"ok": False, "error": f"unknown config: {cid}"}, status_code=404
+                )
+            entry["id"] = cid
+        # Validate shape + derived construction before anything is written.
+        try:
+            probe_entry = llm_configs._clean_entry(entry)
+            probe_entry.setdefault("id", cid or "")
+            model_config(_llm_probe_config(probe_entry))
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        saved = llm_configs.save_config(entry)
+        # api_key: None leaves it unchanged; "" clears; a value sets it.
+        if req.api_key is not None:
+            secrets.set_config_key(saved["id"], req.api_key)
+        if req.activate:
+            llm_configs.set_active(saved["id"])
+        await _reload_all()
+        active = llm_configs.active_id()
+        return {"ok": True, "config": _llm_entry_view(saved, active), "active": active}
+
+    async def _ping_entry(entry: dict, draft_key: str | None = None):
+        """The PONG round-trip shared by the saved-config and draft tests: build the
+        derived config (streaming off, no tools/memory) and make ONE real call.
+        ``draft_key`` overrides the key resolution for an unsaved edit: a typed value
+        is used directly, "" tests as if the stored key were cleared (base_url configs
+        then get the placeholder — the same thing a save would produce). A working
+        reply → ``{ok, reply, latency_ms}``; ANY failure (construction, auth,
+        timeout) → 502 ``{ok:false, error}``."""
+        import time
+
+        from assistant.agent import model_config
+
+        started = time.monotonic()
+        try:
+            probe = _llm_probe_config(entry)
+            if draft_key is not None:
+                opts = probe.llm.provider_options[probe.llm.provider]
+                opts.pop("api_key", None)
+                if draft_key:
+                    opts["api_key"] = draft_key
+                elif entry.get("base_url"):
+                    opts["api_key"] = "unused"  # mirror entry_options' placeholder
+            from ag2 import Agent
+
+            agent = Agent("ping", config=model_config(probe))
+            reply = await asyncio.wait_for(
+                agent.ask("Reply with exactly: PONG"), timeout=_LLM_TEST_TIMEOUT_S
+            )
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=502)
+        return {
+            "ok": True,
+            "reply": (getattr(reply, "body", "") or "")[:200],
+            "latency_ms": int((time.monotonic() - started) * 1000),
+        }
+
+    @app.post("/api/llm-configs")
+    async def create_llm_config(req: LlmConfigRequest):
+        """Create a new named LLM configuration."""
+        return await _save_llm_config(req, None)
+
+    @app.post("/api/llm-configs/test")
+    async def test_llm_config_draft(req: LlmConfigRequest):
+        """Test a DRAFT configuration exactly as entered in the editor, WITHOUT saving.
+        Registered before the /{cid} routes so the literal "test" segment isn't
+        captured as an id. ``req.id`` (when editing an existing config) lets a blank
+        key field fall back to that config's stored key, matching what a save would
+        produce; a typed ``api_key`` is used directly and never persisted."""
+        from assistant import llm_configs
+
+        try:
+            entry = llm_configs._clean_entry(
+                {
+                    "id": req.id or "",
+                    "name": req.name or "draft",
+                    "type": req.type,
+                    "model": req.model,
+                    "base_url": req.base_url,
+                    "host": req.host,
+                    "options": req.options,
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        entry.setdefault("id", "")
+        return await _ping_entry(entry, draft_key=req.api_key)
+
+    @app.post("/api/llm-configs/{cid}")
+    async def update_llm_config(cid: str, req: LlmConfigRequest):
+        """Update an existing named LLM configuration (404 if unknown)."""
+        return await _save_llm_config(req, cid)
+
+    @app.delete("/api/llm-configs/{cid}")
+    async def delete_llm_config(cid: str):
+        """Delete a config. 409 if it is active (select another first), 404 if unknown;
+        else remove it, clear its per-config key, and reload every runtime."""
+        from assistant import llm_configs, secrets
+
+        if llm_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        try:
+            llm_configs.delete_config(cid)
+        except ValueError:
+            return JSONResponse(
+                {"ok": False, "error": "select another configuration first"}, status_code=409
+            )
+        secrets.set_config_key(cid, "")  # drop the orphaned secret
+        await _reload_all()
         return {"ok": True}
+
+    @app.post("/api/llm-configs/{cid}/use")
+    async def use_llm_config(cid: str):
+        """Make ``cid`` the active configuration and reload every runtime (404 unknown)."""
+        from assistant import llm_configs
+
+        if not llm_configs.set_active(cid):
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        await _reload_all()
+        return {"ok": True}
+
+    @app.post("/api/llm-configs/{cid}/test")
+    async def test_llm_config(cid: str):
+        """Real PONG round-trip against a SAVED config, exercising the exact runtime
+        key-resolution path. 404 if unknown; result shape per ``_ping_entry``."""
+        from assistant import llm_configs
+
+        entry = llm_configs.get_config(cid)
+        if entry is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        return await _ping_entry(entry)
 
     @app.post("/api/onboarded")
     async def set_onboarded(req: OnboardedRequest) -> dict:
@@ -905,6 +1177,82 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 await manager.reload(runtime.pid)
         return {"ok": ok}
 
+    # ---- OpenAI ChatGPT-subscription OAuth ("Sign in with ChatGPT") ----
+    # Unofficial / gray-area vs OpenAI ToS — see assistant.codex_auth. The flow is a
+    # loopback (localhost:1455) OAuth; the gateway is local + single-user, so it can
+    # run the callback capture itself. Headless setups paste the code via /submit.
+
+    async def _reload_all_runtimes() -> None:
+        for runtime in list(manager.runtimes()):
+            with contextlib.suppress(Exception):
+                await manager.reload(runtime.pid)
+
+    @app.get("/api/codex/status")
+    async def codex_status() -> dict:
+        from assistant import codex_auth
+
+        return codex_auth.status()
+
+    @app.post("/api/codex/login_url")
+    async def codex_login_url() -> dict:
+        """Begin a ChatGPT sign-in: return the consent URL for the UI to open, and
+        start a background loopback listener (localhost:1455) that completes the flow
+        when OpenAI redirects back. The UI polls GET /api/codex/status."""
+        from assistant import codex_auth
+
+        verifier, challenge = codex_auth.generate_pkce()
+        import secrets as _secrets
+
+        state = _secrets.token_urlsafe(24)
+        app.state.codex_flows[state] = verifier
+        url = codex_auth.build_authorize_url(challenge, state)
+
+        async def _complete() -> None:
+            try:
+                code = await asyncio.to_thread(codex_auth._capture_code, state)
+            except Exception:
+                return  # loopback failed/timed out — leave the flow for /submit (headless)
+            if app.state.codex_flows.pop(state, None) is None:
+                return  # already completed via /submit
+            try:
+                await asyncio.to_thread(codex_auth.exchange_code, code, verifier)
+            except Exception:
+                return
+            await _reload_all_runtimes()
+
+        asyncio.create_task(_complete())
+        return {"ok": True, "auth_url": url, "state": state}
+
+    @app.post("/api/codex/submit")
+    async def codex_submit(payload: CodexCodeRequest) -> dict:
+        """Headless fallback: exchange a manually pasted auth code for the flow's
+        pending PKCE verifier. Used when the loopback callback can't reach the box
+        (e.g. Docker/remote) — the user copies the ``code`` from the redirect URL."""
+        from assistant import codex_auth
+
+        verifier = app.state.codex_flows.pop(payload.state, None)
+        if verifier is None:
+            return JSONResponse(
+                {"ok": False, "error": "unknown or expired sign-in"}, status_code=400
+            )
+        # Accept either the bare code or the whole redirect URL the user copied out
+        # of the browser's address bar (even off the "connection refused" page).
+        code = codex_auth.extract_auth_code(payload.code)
+        try:
+            await asyncio.to_thread(codex_auth.exchange_code, code, verifier)
+        except codex_auth.CodexAuthError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        await _reload_all_runtimes()
+        return {"ok": True}
+
+    @app.post("/api/codex/logout")
+    async def codex_logout() -> dict:
+        from assistant import codex_auth
+
+        ok = codex_auth.logout()
+        await _reload_all_runtimes()
+        return {"ok": ok}
+
     @app.get("/api/fs/list")
     async def fs_list(path: str = "") -> dict:
         """List immediate subdirectories of a host path — drives the folder picker. The
@@ -924,7 +1272,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     p = APIRouter(prefix="/api/p/{pid}")
 
     def _available_providers() -> dict:
-        """Which providers can actually be used right now (key set / Ollama deps)."""
+        """Which providers have a usable key right now — key-only. This is what the
+        VOICE endpoints need (the realtime APIs always talk to the provider's own
+        endpoint, so a base_url never makes a provider available). Assistant model
+        availability is per-config now and lives in the named LLM configs store."""
         from assistant import secrets
 
         st = secrets.status()
@@ -1145,14 +1496,20 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @p.get("/settings")
     async def get_settings(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        from assistant import secrets
+        from assistant import codex_auth, secrets
 
         cfg = runtime.config
         settings = _runtime_settings(runtime)
+        keys = secrets.status()
         return {
-            "keys": secrets.status(),  # per-provider {set, hint} — never raw
-            "available": _available_providers(),
+            "keys": keys,  # per-provider {set, hint} — never raw
+            # Voice runs on the provider's own realtime endpoint, so a base_url
+            # never makes it available — keys only.
+            "voice_available": {prov: keys[prov]["set"] for prov in ("gemini", "openai")},
+            # Display-only view of the resolved assistant model (the active named LLM
+            # config, derived onto cfg.llm). Managed via /api/llm-configs, not here.
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
+            "codex": codex_auth.status(),  # ChatGPT-subscription sign-in state
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
             "project_folder": settings.get_project_folder(),  # repo-files MCP root
@@ -1194,15 +1551,25 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             }
         )
 
-        # LLM provider — the configured provider must have a usable key.
-        provider = runtime.config.llm.provider
-        key_set = _available_providers().get(provider, False)
+        # LLM provider — the active named config must be usable (per-config key, a
+        # base_url compat server, Ollama, or the provider's env key). When the store is
+        # empty we fall back to the flat provider's key check (fresh install / CLI).
+        from assistant import llm_configs
+
+        entry = llm_configs.active_config()
+        if entry is not None:
+            key_set = llm_configs.usable(entry)
+            detail = f"{entry['name']} · {entry['model']}"
+        else:
+            provider = runtime.config.llm.provider
+            key_set = _available_providers().get(provider, False)
+            detail = f"{provider} · {'key set' if key_set else 'no key'}"
         checks.append(
             {
                 "id": "provider",
                 "label": "LLM key",
                 "state": "ok" if key_set else "down",
-                "detail": f"{provider} · {'key set' if key_set else 'no key'}",
+                "detail": detail,
             }
         )
 
@@ -1406,24 +1773,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         await manager.reload(runtime.pid)  # context change → next turn gets the line
         return {"ok": True, "focuses": focuses}
 
-    @p.post("/settings/llm")
-    async def set_settings_llm(
-        req: LlmRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        provider = req.provider.lower()
-        if not _available_providers().get(provider):
-            hint = (
-                "Install with `pip install ag2[ollama]`."
-                if provider == "ollama"
-                else "Add the provider's API key first."
-            )
-            return JSONResponse(
-                {"ok": False, "error": f"{provider} isn't available. {hint}"}, status_code=409
-            )
-        _runtime_settings(runtime).set_llm(provider=provider, model=req.model or None)
-        await manager.reload(runtime.pid)
-        return {"ok": True}
-
     @p.post("/settings/voice_provider")
     async def set_settings_voice_provider(
         req: VoiceProviderRequest, runtime: ProfileRuntime = Depends(get_runtime)
@@ -1559,6 +1908,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                         with contextlib.suppress(Exception):
                             await runtime.tasks.answer_inquiry(iid, ans)
                     continue
+                if data.get("type") == "cancel":
+                    # Stop the turn running on this session. The gateway cancels the
+                    # task driving AG2's run, which AG2 propagates into the turn; a
+                    # TurnCancelled event comes back out through the bridge. A no-op
+                    # when nothing is in flight.
+                    await runtime.gateway.cancel_turn(session_id)
+                    continue
                 if data.get("type") == "feedback" and data.get("target_id"):
                     # 👍/👎 + mandatory reason on a generated item. Emit it onto the
                     # session stream (persists/replays → the GUI projects the thumb
@@ -1622,9 +1978,22 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     for pth, name in saved:
                         with contextlib.suppress(Exception):
                             await runtime.gateway.emit_event(session_id, Attachment(pth, name=name))
-                asyncio.create_task(
-                    bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
-                )
+                # Typed while the agent is still working? Feed the live turn instead of
+                # queueing a second one behind it — AG2 drains the message before the
+                # turn's next model call, so the user steers the work in progress.
+                if await runtime.gateway.feed_message(text, session_id, attachments):
+                    # The agent won't echo it until it drains the inbox, which can be a
+                    # whole tool round away. Ack now so the thread can show it as queued
+                    # rather than leaving the user wondering if it landed. Transient: the
+                    # durable record is the DrainedModelRequest AG2 emits on the drain.
+                    with contextlib.suppress(Exception):
+                        await websocket.send_json(
+                            {"type": "queued", "text": text, "session": session_id}
+                        )
+                else:
+                    asyncio.create_task(
+                        bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
+                    )
         except WebSocketDisconnect:
             return
         finally:

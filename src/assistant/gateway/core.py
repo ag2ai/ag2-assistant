@@ -17,11 +17,13 @@ import asyncio
 import contextlib
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
 
 from assistant.agent import create_agent, universal_turn_prompt
 from assistant.config import Config, load_config
+from assistant.events import TurnCancelled
 from assistant.gateway.repair import repair_stream_history, wait_reply
 
 REPLY_TIMEOUT = 240.0
@@ -38,6 +40,24 @@ def _conversation_events() -> tuple:
 
 
 _CONVERSATION_EVENTS = _conversation_events()
+
+
+@dataclass
+class _ActiveTurn:
+    """A turn in flight, so other coroutines can steer or stop it.
+
+    `run` is AG2's ``AgentRun`` — its ``enqueue`` feeds the running turn (drained
+    before the turn's next model call). `task` is *our* task awaiting
+    ``run.result()``: AG2 cancels the turn when that await is cancelled, which is
+    the framework's cancellation contract (``AgentRun.result``). `cancelled` marks
+    the cancel as ours, so ``send_message`` can tell a user stop apart from an
+    ambient cancellation (WS disconnect, shutdown) it must re-raise.
+    """
+
+    run: object
+    task: "asyncio.Task"
+    cancelled: bool = False
+    reason: str = "Stopped"
 
 
 class Gateway:
@@ -66,6 +86,9 @@ class Gateway:
         self._config_factory = config_factory or load_config
         self._onboarding_done = False
         self._agent = None
+        # Last ChatGPT-subscription access token baked into the agent, so a pre-turn
+        # refresh only rebuilds the (cached) agent when the token actually rotated.
+        self._codex_token: str | None = None
         self._permissions = None
         self._event_store = None
         self._writer = None
@@ -73,6 +96,8 @@ class Gateway:
         self._streams: dict[str, object] = {}
         self._loaded: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = {}
+        # session_id -> the turn currently running on it (feed_message / cancel_turn)
+        self._active: dict[str, _ActiveTurn] = {}
         from assistant.usage import UsageLedger
 
         # Per-profile daily token/cost tally for the activity HUD.
@@ -111,6 +136,28 @@ class Gateway:
             extra_tools=extra_tools,
             compact=self._memory,
         )
+
+    async def _ensure_subscription_fresh(self) -> None:
+        """When OpenAI runs in ChatGPT-subscription mode, refresh the OAuth access
+        token before a turn and rebuild the cached agent iff the token rotated.
+
+        The token is baked into the agent at build time; OAuth access tokens are
+        short-lived, so a long-lived cached agent would go stale. The common case
+        (token still valid) is cheap: no refresh, no rebuild. Best-effort — a
+        refresh failure surfaces as a normal turn error with a re-login hint."""
+        cfg = self._config
+        if cfg.llm.provider.lower() != "openai" or cfg.llm.auth_mode != "subscription":
+            return
+        from assistant import codex_auth
+
+        try:
+            creds = await asyncio.to_thread(codex_auth.ensure_fresh)
+        except codex_auth.CodexAuthError:
+            return  # let the turn fail with model_config's own clear error
+        if creds.access_token != self._codex_token:
+            self._codex_token = creds.access_token
+            if self._agent is not None:
+                self._agent = self._make_agent()
 
     async def start(self) -> None:
         """Create the shared agent and (optionally) the on-disk session store."""
@@ -166,6 +213,47 @@ class Gateway:
         event bridge replays and subscribes to. Same cached object send_message
         uses, so events from a turn are caught by the bridge's subscription."""
         return await self._get_stream(session_id)
+
+    async def feed_message(self, text: str, session_id: str = "default", attachments=None) -> bool:
+        """Feed a message into the turn already running on this session.
+
+        AG2's ``AgentRun.enqueue`` appends to the turn's inbox; the agent loop drains
+        it before its next model call (and once more when the model has nothing left
+        to do), so the *running* turn sees the message and can change course — no
+        second turn, no waiting for the first to finish. The drained message is
+        re-emitted on the stream, so it shows in the thread and persists like any
+        other user message.
+
+        Returns False when nothing is in flight, so the caller runs it as a new turn.
+        """
+        active = self._active.get(session_id)
+        if active is None or active.task.done():
+            return False
+        active.run.enqueue(text, *(attachments or []))
+        # The turn may have finished between the check and the enqueue, which would
+        # leave the message sitting in the stream inbox until some later turn drained
+        # it. Take it back and let the caller run it as a fresh turn instead.
+        stream = await self._get_stream(session_id)
+        if active.task.done() and stream.pending_messages:
+            stream.pending_messages.clear()
+            return False
+        return True
+
+    async def cancel_turn(self, session_id: str = "default", reason: str = "Stopped") -> bool:
+        """Cancel the turn running on this session; False if none is in flight.
+
+        Cancelling the task that awaits ``AgentRun.result()`` is AG2's cancellation
+        contract: ``result()`` propagates the cancel into the turn's driver, and the
+        run scope tears down. Whatever the turn already put on the stream (tool calls,
+        tool results, partial output) stays — see ``send_message``'s cancel path.
+        """
+        active = self._active.get(session_id)
+        if active is None or active.task.done():
+            return False
+        active.cancelled = True
+        active.reason = reason
+        active.task.cancel()
+        return True
 
     async def emit_event(self, session_id: str, event) -> None:
         """Emit an event onto a session's stream from outside an agent turn (the
@@ -239,6 +327,7 @@ class Gateway:
             raise RuntimeError("Gateway not started")
 
         await self._maybe_onboard(asker)
+        await self._ensure_subscription_fresh()
 
         extra = self._ask_kwargs(asker)
         msg = [text, *(attachments or [])]
@@ -282,39 +371,63 @@ class Gateway:
                 )
             else:
                 middleware = ()
-            ask_coro = self._agent.ask(
-                *msg,
-                stream=stream,
-                prompt=prompt,
-                middleware=middleware,
-                **extra,
-            )
             usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
             a2ui_handle = self._watch_a2ui(stream)
             hitl_pending = getattr(asker, "has_pending", None)
             try:
-                try:
-                    if on_event is None:
-                        reply = await wait_reply(
-                            ask_coro, timeout=REPLY_TIMEOUT, hitl_pending=hitl_pending
+                # `run` is `ask` with the turn left observable (`ask` is literally
+                # run-then-result). We drive `result()` in a task we own, which is what
+                # makes the turn steerable while it runs: `feed_message` enqueues onto
+                # the run's inbox, `cancel_turn` cancels this task — AG2 propagates that
+                # into the turn.
+                async with self._agent.run(
+                    *msg,
+                    stream=stream,
+                    prompt=prompt,
+                    middleware=middleware,
+                    **extra,
+                ) as run:
+                    turn = asyncio.ensure_future(run.result())
+                    active = _ActiveTurn(run, turn)
+                    self._active[session_id] = active
+                    try:
+                        # wait_reply = wait_for whose clock pauses while a HITL
+                        # prompt is open or a sanctioned long run (a CLI coding
+                        # agent) holds the asker's pending-guard.
+                        if on_event is None:
+                            reply = await wait_reply(
+                                turn, timeout=REPLY_TIMEOUT, hitl_pending=hitl_pending
+                            )
+                        else:
+                            reply = await self._forwarding_events(
+                                stream, turn, on_event, hitl_pending=hitl_pending
+                            )
+                    except asyncio.CancelledError:
+                        if not active.cancelled:
+                            raise  # not a user stop (disconnect, shutdown) — let it fly
+                        # A stopped turn keeps what it already did: the tool calls and
+                        # results are on the stream, so persist them and mark the stop.
+                        await self._persist_turn(session_id, stream, text, "")
+                        await self.emit_event(
+                            session_id, TurnCancelled(session_id, reason=active.reason)
                         )
-                    else:
-                        reply = await self._ask_forwarding_events(
-                            stream, ask_coro, on_event, hitl_pending=hitl_pending
-                        )
-                except Exception as exc:
-                    # snapshot the error + the exact history shape that triggered it
-                    from assistant.observability import capture_failure
+                        return ""
+                    finally:
+                        self._active.pop(session_id, None)
+            except Exception as exc:
+                # snapshot the error + the exact history shape that triggered it
+                from assistant.observability import capture_failure
 
-                    await capture_failure(
-                        self._config,
-                        session_id=session_id,
-                        surface=surface,
-                        user_text=text,
-                        error=exc,
-                        stream=stream,
-                    )
-                    raise
+                await capture_failure(
+                    self._config,
+                    session_id=session_id,
+                    surface=surface,
+                    user_text=text,
+                    error=exc,
+                    stream=stream,
+                )
+                raise
+            else:
                 await self._emit_a2ui_surfaces(stream, a2ui_handle)
                 await self._persist_turn(session_id, stream, text, reply.body)
                 return reply.body
@@ -380,8 +493,8 @@ class Gateway:
             except Exception as exc:
                 log_suppressed("a2ui durable surface emit", exc, surface_id=surface.surface_id)
 
-    async def _ask_forwarding_events(self, stream, ask_coro, on_event, hitl_pending=None):
-        """Run a turn, forwarding the agent's structured events raw to `on_event`.
+    async def _forwarding_events(self, stream, turn, on_event, hitl_pending=None):
+        """Await a driving turn, forwarding the agent's structured events to `on_event`.
 
         Uses AG2's stream subscription — the same event mechanism observers and the
         StreamBridge are built on, scoped to *this session's* stream so it can't
@@ -405,7 +518,7 @@ class Gateway:
 
         sub_id = stream.subscribe(report)
         try:
-            return await wait_reply(ask_coro, timeout=REPLY_TIMEOUT, hitl_pending=hitl_pending)
+            return await wait_reply(turn, timeout=REPLY_TIMEOUT, hitl_pending=hitl_pending)
         finally:
             stream.unsubscribe(sub_id)
 

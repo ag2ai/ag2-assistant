@@ -114,6 +114,13 @@
 .memory .okmsg { color: #3ba55d; font-size: 13px; }
 .settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
 .settings .linkbtn:hover { color: #d8552f; }
+/* Disabled linkbtns must LOOK disabled too (Edit/Delete on LLM rows grey out while
+   the editor is open) — without this they only lose their click, not their look. */
+.settings .linkbtn:disabled { opacity: .4; cursor: default; }
+.settings .linkbtn:disabled:hover { color: var(--muted); }
+/* "Advanced ●" per-provider config button when options are set for that provider */
+.settings .linkbtn.advset { color: var(--accent); }
+.settings .linkbtn.advset:hover { color: var(--accent); }
 .settings .setcheck { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; padding: 2px 0; }
 .settings .setcheck input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .settings .mcprow { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
@@ -145,6 +152,39 @@
 .settings .mcpdraft .kp { width: auto; min-width: 60px; }
 .settings .mcpdraft .mcpenvkey { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
 .settings .mcpcmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+/* ── Models page (named LLM configs) ─────────────────────────────────────────
+   Config rows reuse the .mcprow card shape; templates reuse the .mcpcat grid.
+   Only the row-internal bits (logo, name/sub, key chip, active badge, test
+   status) and the inline form add new classes, in the existing naming style. */
+/* Env-override banner: the active config is shadowed by env vars until they unset. */
+.settings .llmenv { font-size: 12.5px; color: var(--ink); background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 11px; }
+.settings .llmrow { display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.settings .llmrow.active { border-color: var(--accent); }
+.settings .llmlogo { width: 20px; height: 20px; flex: none; opacity: .85; object-fit: contain; }
+.settings .llmlogo.sm { width: 16px; height: 16px; }
+.settings .llmmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings .llmname { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.settings .llmbadge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; }
+.settings .llmsub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.settings .llmkey { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--surface-sunk); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; }
+.settings .llmkey.warn { color: #d8552f; border-color: color-mix(in srgb, #d8552f 45%, var(--line)); }
+/* Per-row Test status — the McpServers health-map vocabulary (grey → green/red). */
+.settings .llmtest { font-size: 12px; color: var(--muted); }
+.settings .llmtest.ok { color: #3ba55d; }
+.settings .llmtest.bad { color: #d8552f; }
+/* Inline config form (create/edit) — stacked label + field, in a sunk card. */
+.settings .llmform { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface-sunk); }
+.settings .llmfield { display: flex; flex-direction: column; gap: 5px; }
+.settings .llmfield > label, .settings .llmfield > .llmlabel { font-size: 12px; font-weight: 600; color: var(--muted); }
+.settings .llmfield input, .settings .llmfield select { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
+.settings .llmfield input:focus, .settings .llmfield select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.settings .llmhint { font-size: 11px; font-weight: 400; color: var(--muted); }
+.settings .llmkeyfield { display: flex; align-items: center; gap: 6px; }
+.settings .llmkeyfield input { flex: 1; }
+.settings .advtoggle { align-self: flex-start; color: var(--accent); }
+.settings .advtoggle:hover { color: var(--accent); }
+.settings .llmadv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; min-height: 82px; resize: vertical; background: var(--bg); color: var(--ink); }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 .drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
@@ -184,6 +224,11 @@
 .msg.user { justify-content: flex-end; }
 .bubble { max-width: 80%; padding: 12px 16px; border-radius: 14px; line-height: 1.55; font-size: 15px; overflow-wrap: anywhere; }
 .msg.user .bubble { background: var(--user-bg); color: var(--user-ink); border-bottom-right-radius: 4px; white-space: pre-wrap; }
+/* A message fed to the running turn: dimmed until the agent picks it up (it resolves to
+   a normal bubble when AG2 drains it), with a line saying that's what's happening. */
+.msg.user.queued { flex-direction: column; align-items: flex-end; gap: 4px; }
+.msg.user.queued .bubble { opacity: 0.6; }
+.msg.user.queued .hint { font-size: 12px; color: var(--muted); }
 .msg.agent .bubble { background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
 .msg.agent .bubble.empty { color: var(--muted); border-style: dashed; }
 .bubble :first-child { margin-top: 0; } .bubble :last-child { margin-bottom: 0; }
@@ -206,6 +251,12 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-eyebrow { font-size: 10.5px; line-height: 1.1; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .a2ui-title { font-size: 14px; line-height: 1.2; font-weight: var(--fw-semibold); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .a2ui-catalog { margin-left: auto; flex: none; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-pill); padding: 2px 8px; font-size: 10.5px; color: var(--muted); }
+/* Placeholder while the model is still writing the surface's A2UI payload. */
+.a2ui-composing .a2ui-head { margin-bottom: 14px; }
+.a2ui-composing .a2ui-mark { animation: ag2-glow 2.8s var(--ease-in-out) infinite; }
+.a2ui-composing .a2ui-title { color: var(--muted); font-weight: var(--fw-medium); }
+.a2ui-skeleton { display: flex; flex-direction: column; gap: 9px; }
+.a2ui-skeleton span { height: 10px; border-radius: var(--radius-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, var(--code)) 0%, color-mix(in srgb, var(--accent) 22%, var(--code)) 50%, color-mix(in srgb, var(--accent) 8%, var(--code)) 100%); background-size: 220% 100%; animation: ag2-shimmer 1.6s var(--ease-in-out) infinite; }
 .a2ui-main { font-size: 14.5px; font-weight: var(--fw-semibold); line-height: 1.35; color: var(--ink); overflow-wrap: anywhere; }
 .a2ui-sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
 .a2ui-weather-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -376,6 +427,9 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .crow textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 .crow .send { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--text-on-accent); border-radius: var(--radius-sm); padding: 10px 18px; box-shadow: var(--shadow-accent); transition: background var(--dur-fast) var(--ease-out); }
 .crow .send:hover { background: var(--accent-hover); }
+/* Stop appears next to Send while a turn runs (Send keeps working — it feeds the
+   running turn). Quiet by default, warning-red on hover: it ends work in progress. */
+.crow .icon.stop:hover { border-color: var(--danger); color: var(--danger); }
 .crow .icon { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 9px 12px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .crow .icon:hover { border-color: var(--accent); color: var(--accent); }
 .crow .icon.mic.live { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); animation: micpulse 1.4s infinite; }
@@ -427,6 +481,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 }
 .modal h2 { margin: 0; }
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
+/* A dialog opened from INSIDE another modal (e.g. Settings → Advanced provider
+   config) stacks above it — base modal is z 20/21. */
+.modal-backdrop.over { z-index: 29; }
+.modal.over { z-index: 30; }
 .modal .muted { color: var(--muted); }
 /* Google modal setup steps */
 .gsteps { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; color: var(--ink); }

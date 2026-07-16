@@ -25,6 +25,9 @@ export const inquiries = writable([])
 // Google connect modal open/closed.
 export const googleOpen = writable(false)
 
+// "Sign in with ChatGPT" (OpenAI Codex subscription) modal open/closed.
+export const codexOpen = writable(false)
+
 // Voice picker modal open/closed.
 export const voicePickerOpen = writable(false)
 
