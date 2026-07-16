@@ -25,7 +25,6 @@ from assistant.agent import create_agent, universal_turn_prompt
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled
 
-REPLY_TIMEOUT = 240.0
 _TRANSCRIPT_PREFIX = "/transcript/"
 
 
@@ -386,7 +385,9 @@ class Gateway:
                     self._active[session_id] = active
                     try:
                         if on_event is None:
-                            reply = await asyncio.wait_for(turn, timeout=REPLY_TIMEOUT)
+                            reply = await asyncio.wait_for(
+                                turn, timeout=self._config.gateway.reply_timeout_s
+                            )
                         else:
                             reply = await self._forwarding_events(stream, turn, on_event)
                     except asyncio.CancelledError:
@@ -505,7 +506,7 @@ class Gateway:
 
         sub_id = stream.subscribe(report)
         try:
-            return await asyncio.wait_for(turn, timeout=REPLY_TIMEOUT)
+            return await asyncio.wait_for(turn, timeout=self._config.gateway.reply_timeout_s)
         finally:
             stream.unsubscribe(sub_id)
 

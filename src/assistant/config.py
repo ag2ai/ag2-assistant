@@ -119,6 +119,14 @@ class AgentConfig(BaseModel):
     location: str | None = None
 
 
+class GatewayConfig(BaseModel):
+    """Configuration for interactive gateway turns."""
+
+    # Wall-clock limit for one chat turn, including clarification waits, model calls,
+    # and tool execution. Long-running work belongs in a background task instead.
+    reply_timeout_s: float = 600.0
+
+
 class ToolsConfig(BaseModel):
     """Configuration for the agent's execution tools (shell/code)."""
 
@@ -157,7 +165,7 @@ class TasksConfig(BaseModel):
 # The Config sections a profile's config.yaml may overlay. Settings keys in the same
 # file (voice, focuses, mcp_servers, project_folder, voice_provider) are read by
 # assistant.settings, not here.
-_OVERLAY_SECTIONS = ("llm", "agent", "tools", "memory", "tasks")
+_OVERLAY_SECTIONS = ("llm", "agent", "gateway", "tools", "memory", "tasks")
 
 
 def apply_overlay(cfg: "Config", path: Path) -> None:
@@ -182,6 +190,7 @@ class Config(BaseModel):
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tasks: TasksConfig = Field(default_factory=TasksConfig)
@@ -284,6 +293,11 @@ def _apply_env_overrides(cfg: Config, *, include_paths: bool = True) -> None:
             pass
     if v := env("AG2ASSISTANT_LOCATION"):
         cfg.agent.location = v
+    if v := env("AG2ASSISTANT_REPLY_TIMEOUT"):
+        try:
+            cfg.gateway.reply_timeout_s = float(v)
+        except ValueError:
+            pass
     if include_paths:
         if v := env("AG2ASSISTANT_WORKSPACE"):
             cfg.workspace_dir = Path(v).expanduser()

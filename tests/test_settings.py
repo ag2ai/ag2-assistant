@@ -164,6 +164,13 @@ def test_focuses_are_per_profile(tmp_path):
     assert b.get_focuses() == []  # untouched → default
 
 
+def test_reply_timeout_roundtrips(settings):
+    assert settings.set_reply_timeout(480) == 480.0
+    assert settings._read()["gateway"]["reply_timeout_s"] == 480.0
+    with pytest.raises(ValueError, match="greater than zero"):
+        settings.set_reply_timeout(0)
+
+
 def test_project_folder_roundtrips(settings):
     # Fresh install: no project folder until chosen.
     assert settings.get_project_folder() == ""

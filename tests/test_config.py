@@ -16,11 +16,13 @@ def test_default_config():
 
 
 def test_default_timeout_and_silence_thresholds():
-    llm = Config().llm
+    config = Config()
+    llm = config.llm
     assert llm.call_timeout_s == 180.0
     assert llm.call_retries == 2
     assert llm.silence_alert_s == 300.0
     assert llm.silence_halt_s == 900.0
+    assert config.gateway.reply_timeout_s == 600.0
 
 
 def test_timeout_and_silence_env_overrides(monkeypatch, tmp_path):
@@ -28,19 +30,23 @@ def test_timeout_and_silence_env_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("AG2ASSISTANT_LLM_RETRIES", "5")
     monkeypatch.setenv("AG2ASSISTANT_SILENCE_ALERT", "120")
     monkeypatch.setenv("AG2ASSISTANT_SILENCE_HALT", "600")
+    monkeypatch.setenv("AG2ASSISTANT_REPLY_TIMEOUT", "480")
     cfg = load_config(tmp_path / "missing.json")
     assert cfg.llm.call_timeout_s == 45.0
     assert cfg.llm.call_retries == 5
     assert cfg.llm.silence_alert_s == 120.0
     assert cfg.llm.silence_halt_s == 600.0
+    assert cfg.gateway.reply_timeout_s == 480.0
 
 
 def test_bad_timeout_env_falls_back_to_default(monkeypatch, tmp_path):
     monkeypatch.setenv("AG2ASSISTANT_LLM_TIMEOUT", "not-a-number")
     monkeypatch.setenv("AG2ASSISTANT_LLM_RETRIES", "not-a-number")
+    monkeypatch.setenv("AG2ASSISTANT_REPLY_TIMEOUT", "not-a-number")
     cfg = load_config(tmp_path / "missing.json")
     assert cfg.llm.call_timeout_s == 180.0
     assert cfg.llm.call_retries == 2
+    assert cfg.gateway.reply_timeout_s == 600.0
 
 
 def test_custom_llm_config():
@@ -120,10 +126,13 @@ def test_profile_overlay_overrides_global(tmp_path):
     cfg = Config(root_dir=tmp_path, data_dir=tmp_path)
     pdir = tmp_path / "profiles" / "work"
     pdir.mkdir(parents=True)
-    (pdir / "config.yaml").write_text("llm:\n  model: overlay-model\nvoice:\n  gemini: Puck\n")
+    (pdir / "config.yaml").write_text(
+        "llm:\n  model: overlay-model\ngateway:\n  reply_timeout_s: 480\nvoice:\n  gemini: Puck\n"
+    )
     prof = cfg.with_profile(_meta(tmp_path))
     assert prof.llm.model == "overlay-model"
     assert prof.llm.provider == cfg.llm.provider  # untouched fields inherit the global
+    assert prof.gateway.reply_timeout_s == 480
     assert cfg.llm.model != "overlay-model"  # the base config is not mutated
 
 

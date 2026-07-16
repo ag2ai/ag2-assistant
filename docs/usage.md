@@ -328,6 +328,8 @@ llm:
 agent:
   name: ag2-assistant
   system_prompt: You are AG2 Assistant, a helpful personal AI assistant.
+gateway:
+  reply_timeout_s: 600
 tools:
   sandbox: local
 memory:
@@ -350,6 +352,7 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_API_KEY_ENV` | `llm.api_key_env` |
 | `AG2ASSISTANT_AGGREGATE_MODEL` | `llm.aggregate_model` |
 | `AG2ASSISTANT_LOCATION` | `agent.location` |
+| `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |

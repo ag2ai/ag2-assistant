@@ -25,6 +25,7 @@ first-run flow can create several profiles, so the flag is install-level.
 
 import re
 import shlex
+from math import isfinite
 from pathlib import Path
 
 from assistant import voice_providers
@@ -103,6 +104,20 @@ class Settings:
         data["focuses"] = clean
         self._write(data)
         return clean
+
+    # --- gateway ---
+
+    def set_reply_timeout(self, seconds: float) -> float:
+        """Persist this profile's total chat-turn timeout in seconds."""
+        value = float(seconds)
+        if not isfinite(value) or value <= 0:
+            raise ValueError("Reply timeout must be greater than zero.")
+        data = self._read()
+        gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+        gateway["reply_timeout_s"] = value
+        data["gateway"] = gateway
+        self._write(data)
+        return value
 
     # --- MCP servers ---
 

@@ -512,6 +512,43 @@ def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
         assert client.get(api(pid, "/settings")).json()["focuses"] == []
 
 
+def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from assistant.gateway.app import create_app
+    from assistant.gateway.profile_manager import ProfileManager
+    from assistant.profiles import create_profile, profile_dir
+
+    use_fake_agent(monkeypatch)
+    meta = create_profile("Work", "#109e91")
+    profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    manager = ProfileManager(memory=False, persist=False)
+    app = create_app(manager)
+    with TestClient(app) as client:
+        pid = meta.id
+        assert client.get(api(pid, "/settings")).json()["reply_timeout_s"] == 600.0
+
+        reloaded: list[str] = []
+        orig = manager.reload
+
+        async def spy(p):
+            reloaded.append(p)
+            return await orig(p)
+
+        monkeypatch.setattr(manager, "reload", spy)
+        response = client.post(api(pid, "/settings/reply-timeout"), json={"reply_timeout_s": 480})
+        assert response.json() == {"ok": True, "reply_timeout_s": 480.0}
+        assert reloaded == [pid]
+        assert client.get(api(pid, "/settings")).json()["reply_timeout_s"] == 480.0
+
+        assert (
+            client.post(
+                api(pid, "/settings/reply-timeout"), json={"reply_timeout_s": 0}
+            ).status_code
+            == 422
+        )
+
+
 def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -627,10 +664,8 @@ def test_decode_attachments():
 
 
 def test_stream_timeout_sends_error_frame(monkeypatch):
-    """A turn that exceeds REPLY_TIMEOUT surfaces an error frame on the stream WS."""
+    """A turn that exceeds the configured reply timeout surfaces an error frame on the stream WS."""
     from fastapi.testclient import TestClient
-
-    import assistant.gateway.core as core_mod
 
     class _HangAgent(FakeRunMixin):
         tools = []
@@ -639,8 +674,7 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
             await asyncio.Event().wait()  # never returns → triggers wait_for timeout
 
     use_fake_agent(monkeypatch, lambda *a, **k: _HangAgent())
-    monkeypatch.setattr(core_mod, "REPLY_TIMEOUT", 0.2)
-
+    monkeypatch.setenv("AG2ASSISTANT_REPLY_TIMEOUT", "0.2")
     app, pid = make_profile_app()
     with TestClient(app) as client:
         with client.websocket_connect(api(pid, "/stream?session=s1")) as ws:

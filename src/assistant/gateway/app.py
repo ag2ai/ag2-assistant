@@ -172,6 +172,10 @@ class FocusesRequest(BaseModel):
     focuses: list[str] = []
 
 
+class ReplyTimeoutRequest(BaseModel):
+    reply_timeout_s: float = Field(gt=0, le=3600)
+
+
 class VoiceRequest(BaseModel):
     voice: str
     # When set, the voice op targets a named live config (its provider/key, and
@@ -1710,6 +1714,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "mcp_servers": settings.list_mcp_servers(),
             "project_folder": settings.get_project_folder(),  # repo-files MCP root
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
+            "reply_timeout_s": cfg.gateway.reply_timeout_s,
             "fs": {  # start roots for the folder picker
                 "home": str(Path.home()),
                 "cwd": str(Path.cwd()),
@@ -1968,6 +1973,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         focuses = settings.set_focuses(req.focuses)
         await manager.reload(runtime.pid)  # context change → next turn gets the line
         return {"ok": True, "focuses": focuses}
+
+    @p.post("/settings/reply-timeout")
+    async def set_reply_timeout(
+        req: ReplyTimeoutRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Persist this profile's chat-turn timeout and reload its runtime."""
+        timeout = _runtime_settings(runtime).set_reply_timeout(req.reply_timeout_s)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "reply_timeout_s": timeout}
 
     @p.post("/settings/voice_provider")
     async def set_settings_voice_provider(

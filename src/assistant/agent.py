@@ -425,6 +425,18 @@ def workspace_guidance(config: Config) -> str:
     )
 
 
+def chat_turn_timeout_guidance(config: Config) -> str:
+    """Tell the universal chat agent the gateway's total turn budget."""
+    seconds = config.gateway.reply_timeout_s
+    return (
+        f"This chat turn must complete within {seconds:g} seconds total, including time waiting "
+        "for a user answer, model calls, and tool execution. Before work that might exceed that "
+        "budget (such as recursive filesystem scans), use a bounded or shallow probe first. "
+        "For substantial or long-running work, create a background task and report its progress; "
+        "do not start an unbounded scan or command in this chat turn."
+    )
+
+
 def turn_prompt(
     config: Config, memory: bool = True, workspace: bool = True, google: bool | None = None
 ) -> list[str]:
@@ -471,6 +483,7 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
         config.agent.system_prompt,
         BEHAVIOR_GUIDANCE,
         CAPABILITY_GUIDANCE,
+        chat_turn_timeout_guidance(config),
         MEMORY_GUIDANCE,
         workspace_guidance(config),  # the universal agent always has the file tools
     ]

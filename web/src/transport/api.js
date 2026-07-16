@@ -161,6 +161,7 @@ export const api = {
   // Focus areas are a per-profile persona attribute (settings.json → injected into
   // the agent's context). Active-profile setter (Settings modal).
   setFocuses: (focuses) => j('POST', P('/settings/focuses'), { focuses }),
+  setReplyTimeout: (replyTimeoutS) => j('POST', P('/settings/reply-timeout'), { reply_timeout_s: replyTimeoutS }),
   rerunTask: (id) => j('POST', P(`/tasks/${encodeURIComponent(id)}/rerun`)),
   setVoiceProvider: (provider) => j('POST', P('/settings/voice_provider'), { provider }),
   addMcpServer: (server) => j('POST', P('/settings/mcp'), server),

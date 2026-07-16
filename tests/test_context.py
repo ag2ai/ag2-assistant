@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from assistant.agent import (
+    chat_turn_timeout_guidance,
     environment_context,
     focuses_guidance,
     turn_prompt,
@@ -31,6 +32,20 @@ def test_environment_context_omits_location_when_unset():
     config.agent.location = None  # independent of any AG2ASSISTANT_LOCATION env var
     ctx = environment_context(config)
     assert "User location" not in ctx
+
+
+def test_chat_turn_timeout_guidance_uses_configured_budget():
+    config = Config()
+    config.gateway.reply_timeout_s = 480
+    guidance = chat_turn_timeout_guidance(config)
+    assert "480 seconds" in guidance
+    assert "background task" in guidance
+
+
+def test_universal_turn_prompt_includes_chat_turn_timeout_guidance():
+    config = Config()
+    config.gateway.reply_timeout_s = 480
+    assert "480 seconds" in " ".join(universal_turn_prompt(config))
 
 
 def test_focuses_guidance_omitted_when_unset(tmp_path):
