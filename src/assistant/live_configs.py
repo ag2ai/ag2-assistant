@@ -5,14 +5,15 @@ A live configuration is a named bundle of what it takes to open one realtime voi
 session: a ``provider`` (one of the registered :mod:`voice_providers` — today
 ``gemini`` or ``openai``, the only backends with realtime support), a ``model`` (the
 realtime model name; defaults to the provider's ``realtime_model``), a ``voice`` (one
-of the provider's catalogue), and — held separately in the secrets store, never here
-— an optional per-config API key. The list *and* the single ``active`` selection are
+of the provider's catalogue), and an optional ``secret_id`` referencing a Secret
+(the key itself lives in the secrets store, never here). The list *and* the single ``active`` selection are
 install-wide (voice, like the LLM, is common across profiles), so this store lives in
 the ``live_configs:`` section of the global ``config.yaml``.
 
 This mirrors :mod:`llm_configs` deliberately, but stays simpler: the provider set is
 a fixed registry (no free-form types, no ``base_url``/``host``/subscription), so the
-only key sources are the config's own key, the provider's shared env key, or none.
+only key sources are the config's referenced Secret, the provider's shared env key,
+or none.
 
 The bridge to the runtime is :func:`active_config` + :func:`resolve_key`, read fresh
 by :mod:`assistant.voice` when a voice session connects — so nothing needs reloading
@@ -75,6 +76,7 @@ def _clean_entry(raw: dict) -> dict:
         "provider": provider,
         "model": model,
         "voice": voice,
+        "secret_id": str(raw.get("secret_id") or "").strip(),
     }
     if not entry["id"]:
         entry.pop("id")
@@ -129,6 +131,21 @@ def delete_config(cid: str) -> bool:
     return True
 
 
+def set_secret_id(cid: str, sid: str) -> bool:
+    """Point one config at a Secret by id (empty ``sid`` clears the reference).
+    Returns False for an unknown config. Used by the save flow and by the
+    legacy-store migration."""
+    data = _read()
+    configs = list(data.get("configs") or [])
+    for i, entry in enumerate(configs):
+        if entry.get("id") == cid:
+            configs[i] = {**entry, "secret_id": (sid or "").strip()}
+            data["configs"] = configs
+            _write(data)
+            return True
+    return False
+
+
 def active_id() -> str | None:
     """The id of the active configuration, or None (empty store / none selected)."""
     return _read().get("active")
@@ -169,11 +186,11 @@ def set_voice(cid: str, voice: str) -> bool:
 
 
 def resolve_key(entry: dict) -> str:
-    """The raw API key a session for this config would send: its own per-config key
-    (secrets ``live_keys``), else the provider's shared env key. Empty string when
-    neither is set (the builders then get an empty key and fail loudly). In-process
-    only — never returned by any endpoint."""
-    own = secrets.live_config_key(entry.get("id") or "")
+    """The raw API key a session for this config would send: its referenced Secret,
+    else the provider's shared env key (which a Default Secret populates at
+    load_into_env). Empty string when neither is set (the builders then get an
+    empty key and fail loudly). In-process only — never returned by any endpoint."""
+    own = secrets.secret_value(entry.get("secret_id") or "")
     if own:
         return own
     return _shared_key(entry.get("provider", ""))
@@ -186,11 +203,11 @@ def _shared_key(provider: str) -> str:
 
 
 def key_source(entry: dict) -> str:
-    """Which key this config would send, for honest UI labelling: ``"config"`` (its own
-    per-config key), ``"shared"`` (the provider's env key), or ``"none"`` (nothing
+    """Which key this config would send, for honest UI labelling: ``"secret"`` (its
+    referenced Secret), ``"shared"`` (the provider's env key), or ``"none"`` (nothing
     available — the config can't run)."""
-    if secrets.live_config_key(entry.get("id") or ""):
-        return "config"
+    if secrets.secret_value(entry.get("secret_id") or ""):
+        return "secret"
     provider = entry.get("provider", "")
     if secrets.status().get(provider, {}).get("set"):
         return "shared"

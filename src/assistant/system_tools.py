@@ -344,8 +344,7 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
             if not sess:
                 return "No conversations."
             return "\n".join(
-                f"{s['chat_id']} · {s.get('turns', 0)} turns · {s.get('preview', '')}"
-                for s in sess
+                f"{s['chat_id']} · {s.get('turns', 0)} turns · {s.get('preview', '')}" for s in sess
             )
 
         @tool

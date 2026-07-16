@@ -2,17 +2,20 @@
   // Inline editor for one LIVE (voice) configuration — the spoken counterpart of
   // LlmConfigForm, trimmed to what realtime voice needs: Name, Provider (the fixed
   // 2-provider registry), Model (realtime model, defaults to the provider's), and a
-  // write-only API key. No base_url/host/subscription/Advanced-JSON. Voice is NOT set
-  // here — it's chosen from the config row's "Change voice" picker (a new config gets
-  // the provider's default voice until then).
-  import { untrack } from 'svelte'
+  // Secret picker with a paste-to-create shortcut. No base_url/host/subscription/
+  // Advanced-JSON. Voice is NOT set here — it's chosen from the config row's
+  // "Change voice" picker (a new config gets the provider's default voice until then).
+  import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api.js'
   import { getSettings } from './context.svelte.js'
   import { PROVIDER_LABEL } from '../../lib/live.js'
+  import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
+  import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
 
-  // config: {id?, name, provider, model, key?, api_key?}. providers: the server catalog
+  // config: {id?, name, provider, model, secret_id?, secret?, secret_missing?}.
+  // providers: the server catalog
   // [{name, default_model, default_voice}] (for the model placeholder). activate: whether
   // the save should also make this config active (parent-decided).
   let { config, providers = [], activate = false, onSaved, onCancel } = $props()
@@ -23,14 +26,17 @@
     name: config.name || '',
     provider: config.provider || 'openai',
     model: config.model || '',
-    apiKey: config.api_key || '',
+    // A dangling reference (secret deleted) starts the picker at "none".
+    secretId: config.secret_missing ? '' : (config.secret_id || ''),
   }))
 
   let name = $state(init.name)
   let provider = $state(init.provider)
   let model = $state(init.model)
-  let apiKey = $state(init.apiKey)
-  let cleared = $state(false)   // Clear pressed → send "" to wipe the stored key
+  let secretId = $state(init.secretId)  // '' = no secret (default/env fallback)
+  let pastedKey = $state('')            // non-empty → create-or-snap a Secret on save
+
+  onMount(loadSecrets)
 
   let busy = $state(false)
   let err = $state('')
@@ -38,25 +44,28 @@
   let testResult = $state(null)
 
   const defaultModel = $derived(providers.find((p) => p.name === provider)?.default_model || '')
-  const hasKey = $derived(!!config.key?.set)
-  const keyPlaceholder = $derived(hasKey ? '•••• ' + (config.key.hint || '') : 'paste key')
+  const pickerSecrets = $derived(sortForProvider($secretsStore.secrets, provider))
 
-  function clearKey() { cleared = true; apiKey = '' }
-
-  // Live "which key will actually be sent" line — the honest answer to why a blank
-  // field can still work (the shared provider key fallback).
+  // Live "which key will actually be sent" line — the honest answer to why an
+  // empty selection can still work (the provider default / env key fallback).
   const ENV_OF = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' }
   const keyUsage = $derived.by(() => {
     const env = ENV_OF[provider]
     const shared = ctx?.s?.keys?.[provider]
-    const ownKey = (apiKey !== '' && !cleared) || (hasKey && !cleared)
-    if (ownKey) return `Uses this config's own key. It overrides ${env}.`
-    if (shared?.set) return `No key here — uses your ${env} (${shared.hint || 'set'}).`
-    return `No key available — paste one above, or set ${env}.`
+    if (pastedKey.trim()) return 'A new Secret will be created from this key on save (rename it later in Settings → Secrets).'
+    if (secretId) {
+      const s = $secretsStore.secrets.find((x) => x.id === secretId)
+      return s
+        ? `Uses the "${s.name}" secret. It overrides ${env}.`
+        : 'The referenced secret was deleted — falls back to the provider default or env key.'
+    }
+    if (shared?.set) return `No secret selected — uses your ${env} (${shared.hint || 'set'}).`
+    return `No key available — pick or paste one above, or set ${env}.`
   })
 
   // The request body Save and Test share — model blank is allowed (the server fills
-  // the provider default). api_key is write-only: "" clears, a value sets, blank keeps.
+  // the provider default). api_key rides only the draft-test call (a pasted key,
+  // used directly); save mints a Secret from it instead.
   function buildPayload() {
     err = ''
     return {
@@ -64,7 +73,8 @@
       name: name.trim(),
       provider,
       model: model.trim(),
-      api_key: cleared ? '' : (apiKey !== '' ? apiKey : null),
+      secret_id: secretId,
+      api_key: pastedKey.trim() || null,
     }
   }
 
@@ -72,6 +82,15 @@
     const payload = buildPayload()
     busy = true
     try {
+      if (pastedKey.trim()) {
+        // Paste-to-create: mint (or snap to) a Secret, then reference it.
+        const s = await createOrSnap({ name: autoSecretName(name, pastedKey), value: pastedKey.trim() })
+        payload.secret_id = s.id
+        secretId = s.id
+        pastedKey = ''
+        loadSecrets()
+      }
+      delete payload.api_key  // never persisted; Secrets carry the key
       await api.saveLiveConfig({ ...payload, activate: activate || useNow })
       onSaved()
     } catch (e) { err = String(e.message || e) }
@@ -107,12 +126,19 @@
   </div>
 
   <div class="llmfield">
-    <label for="vf-key">API key {#if hasKey && !cleared}<span class="llmhint">leave blank to keep the current key</span>{/if}</label>
+    <label for="vf-secret">Secret <span class="llmhint">a reusable API key — manage in Settings → Secrets</span></label>
     <div class="llmkeyfield">
-      <input id="vf-key" type="password" bind:value={apiKey} placeholder={keyPlaceholder} />
-      {#if hasKey && !cleared}<button class="linkbtn" onclick={clearKey}>Clear key</button>{/if}
+      <select id="vf-secret" bind:value={secretId} disabled={!!pastedKey.trim()}>
+        <option value="">No secret — provider default / env key</option>
+        {#each pickerSecrets as s (s.id)}
+          <option value={s.id}>{s.name} {s.hint}{s.default ? ' · default' : ''}</option>
+        {/each}
+      </select>
     </div>
-    {#if cleared}<span class="llmhint">Key will be cleared on save.</span>{/if}
+    <div class="llmkeyfield">
+      <input id="vf-key" type="password" bind:value={pastedKey} placeholder="…or paste a new key to create a secret" />
+    </div>
+    {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}
     <span class="llmhint">{keyUsage}</span>
   </div>
 

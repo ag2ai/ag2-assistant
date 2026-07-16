@@ -823,9 +823,7 @@ async def test_gateway_real_agent_multiturn_and_isolation():
     gw = Gateway(memory=False)
     await gw.start()
     try:
-        await gw.send_message(
-            "My codeword is KIWI-7. Acknowledge in one sentence.", chat_id="s1"
-        )
+        await gw.send_message("My codeword is KIWI-7. Acknowledge in one sentence.", chat_id="s1")
         recall = await gw.send_message("What is my codeword? One word.", chat_id="s1")
         assert "KIWI-7" in recall.upper()
 
@@ -1100,8 +1098,9 @@ def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
 
 
 def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
-    """Create/update/use/delete named configs; the raw per-config key is never echoed
-    (only a set/hint), and a config's secret is cleaned up on delete."""
+    """Create/update/use/delete named configs; the raw key of a referenced Secret is
+    never echoed (only its view with a hint), and deleting a config leaves the
+    Secret in place (they're independent entities)."""
     from assistant import secrets
 
     client, pid = profile_app
@@ -1111,7 +1110,10 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
     r = client.get("/api/llm-configs").json()
     assert r == {"configs": [], "active": None, "env_override": None}
 
-    # create a local-server config with a secret key + activate
+    # create a Secret, then a local-server config referencing it + activate
+    sid = client.post("/api/secrets", json={"name": "Local key", "value": "sk-secret-1234"}).json()[
+        "secret"
+    ]["id"]
     r = client.post(
         "/api/llm-configs",
         json={
@@ -1119,7 +1121,7 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
             "type": "openai",
             "model": "gemma-4",
             "base_url": "http://192.168.0.55:8080/v1",
-            "api_key": "sk-secret-1234",
+            "secret_id": sid,
             "activate": True,
         },
     )
@@ -1127,22 +1129,23 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
     body = r.json()
     cid = body["config"]["id"]
     assert body["ok"] is True and body["active"] == cid
-    # raw key never echoed — only the set/hint summary
-    assert body["config"]["key"] == {"set": True, "hint": "…1234"}
+    # raw key never echoed — only the Secret's view with a hint
+    assert body["config"]["secret"] == {"id": sid, "name": "Local key", "hint": "…1234"}
     assert "sk-secret-1234" not in r.text
 
     g = client.get("/api/llm-configs").json()
     assert g["active"] == cid
     assert g["configs"][0]["base_url"] == "http://192.168.0.55:8080/v1"
-    assert g["configs"][0]["key"] == {"set": True, "hint": "…1234"}
+    assert g["configs"][0]["secret_id"] == sid
     assert "sk-secret-1234" not in client.get("/api/llm-configs").text
-    # the honest key labels: its own key wins; the shared env slot is reported too
+    # the honest key labels: its referenced Secret wins; the shared env slot is
+    # reported too
     entry = g["configs"][0]
-    assert entry["key_source"] == "config"
+    assert entry["key_source"] == "secret"
     assert entry["shared_key"]["env"] == "OPENAI_API_KEY"
     assert entry["shared_key"]["set"] is False  # env cleared above
 
-    # update leaving api_key None → key unchanged, model changed
+    # update keeping the secret_id reference → reference kept, model changed
     r = client.post(
         f"/api/llm-configs/{cid}",
         json={
@@ -1150,12 +1153,13 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
             "type": "openai",
             "model": "gemma-5",
             "base_url": "http://192.168.0.55:8080/v1",
+            "secret_id": sid,
         },
     )
     assert r.status_code == 200
     g = client.get("/api/llm-configs").json()
     assert g["configs"][0]["model"] == "gemma-5"
-    assert g["configs"][0]["key"]["set"] is True  # untouched
+    assert g["configs"][0]["secret_id"] == sid  # untouched
 
     # add a second config, then delete the ACTIVE first one: allowed, and active moves
     # to the remaining config (no "switch first" dance).
@@ -1164,7 +1168,7 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
     assert client.get("/api/llm-configs").json()["active"] == cid  # first is still active
 
     assert client.delete(f"/api/llm-configs/{cid}").status_code == 200
-    assert secrets.config_key(cid) == ""  # secret cleaned up
+    assert secrets.get_secret(sid) is not None  # the Secret survives its referrer
     assert client.get("/api/llm-configs").json()["active"] == cid2  # active moved on
 
     # unknown ids → 404
@@ -1261,9 +1265,9 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
 
 def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
     """POST /api/llm-configs/test pings an UNSAVED editor draft: nothing persisted,
-    a typed api_key is used for the call, a blank one falls back to the stored key
-    of the config named by ``id``, and validation errors come back as 400 (the
-    literal "test" segment must not be captured by the /{cid} update route)."""
+    a typed api_key is used for the call, a blank one resolves the draft's
+    ``secret_id`` reference, and validation errors come back as 400 (the literal
+    "test" segment must not be captured by the /{cid} update route)."""
     import ag2
 
     from assistant import llm_configs
@@ -1296,25 +1300,18 @@ def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
     assert llm_configs.list_configs() == []  # nothing persisted
     assert getattr(captured["config"], "api_key", None) == "sk-draft-key-1"  # draft key used
 
-    # editing an existing config with a stored key: blank draft key falls back to it
-    entry = client.post(
-        "/api/llm-configs",
-        json={
-            "name": "E",
-            "type": "openai",
-            "model": "m",
-            "base_url": "http://h/v1",
-            "api_key": "sk-stored-key-2",
-        },
-    ).json()["config"]
+    # a draft referencing a Secret with no typed key: the Secret's value is sent
+    sid = client.post("/api/secrets", json={"name": "Stored", "value": "sk-stored-key-2"}).json()[
+        "secret"
+    ]["id"]
     r = client.post(
         "/api/llm-configs/test",
         json={
-            "id": entry["id"],
             "name": "E",
             "type": "openai",
             "model": "m",
             "base_url": "http://h/v1",
+            "secret_id": sid,
         },
     )
     assert r.status_code == 200
@@ -1389,3 +1386,78 @@ def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monke
     assert cfg.base_url == codex_auth.BACKEND_BASE
     assert cfg.api_key == "TOK"
     assert cfg.store is False
+
+
+def test_secrets_crud_endpoints(profile_app):
+    """POST/GET/POST-{sid}/DELETE /api/secrets: safe views only (raw value never
+    echoed), 409 + existing on a duplicate value, 404s, delete-always-succeeds."""
+    client, pid = profile_app
+    r = client.post(
+        "/api/secrets",
+        json={"name": "Work", "value": "sk-w-1234", "provider": "openai", "default": True},
+    )
+    assert r.status_code == 200
+    view = r.json()["secret"]
+    sid = view["id"]
+    assert view["hint"] == "…1234" and view["default"] is True
+    assert "sk-w-1234" not in r.text
+    # unique by value → 409 pointing at the existing secret
+    r = client.post("/api/secrets", json={"name": "Other", "value": "sk-w-1234"})
+    assert r.status_code == 409
+    assert r.json()["existing"]["id"] == sid
+    # bad input → 400
+    assert client.post("/api/secrets", json={"name": "", "value": "x"}).status_code == 400
+    # list
+    r = client.get("/api/secrets")
+    assert r.json()["secrets"][0]["used_by"] == []
+    assert "sk-w-1234" not in r.text
+    # update: rename; unknown id → 404
+    r = client.post(f"/api/secrets/{sid}", json={"name": "Renamed"})
+    assert r.status_code == 200 and r.json()["secret"]["name"] == "Renamed"
+    assert client.post("/api/secrets/s_missing", json={"name": "X"}).status_code == 404
+    # delete: ok, then 404
+    assert client.delete(f"/api/secrets/{sid}").status_code == 200
+    assert client.delete(f"/api/secrets/{sid}").status_code == 404
+    # POST /api/secrets/key still routes to the provider-key handler (not /{sid})
+    r = client.post("/api/secrets/key", json={"provider": "openai", "value": "sk-ob-1"})
+    assert r.status_code == 200
+    from assistant import secrets
+
+    assert secrets.default_secret("openai")["hint"] == "…" + "sk-ob-1"[-4:]
+
+
+def test_llm_config_secret_reference_flow(profile_app):
+    """Configs reference Secrets by id: the view carries {secret, secret_missing},
+    key_source says 'secret', used_by names the config, deleting the Secret
+    degrades the config honestly, and deleting the config leaves the Secret."""
+    client, pid = profile_app
+    sid = client.post("/api/secrets", json={"name": "K", "value": "sk-k-9999"}).json()["secret"][
+        "id"
+    ]
+    r = client.post(
+        "/api/llm-configs",
+        json={"name": "GPT", "type": "openai", "model": "gpt-4o", "secret_id": sid},
+    )
+    assert r.status_code == 200
+    view = r.json()["config"]
+    cid = view["id"]
+    assert view["secret"] == {"id": sid, "name": "K", "hint": "…9999"}
+    assert view["secret_id"] == sid and view["secret_missing"] is False
+    assert view["key_source"] == "secret"
+    assert "sk-k-9999" not in r.text
+    assert client.get("/api/secrets").json()["secrets"][0]["used_by"] == ["GPT"]
+    # deleting the secret → dangling reference reported honestly
+    client.delete(f"/api/secrets/{sid}")
+    view = client.get("/api/llm-configs").json()["configs"][0]
+    assert view["secret"] is None and view["secret_missing"] is True
+    assert view["key_source"] in ("shared", "none")
+    # deleting the config never deletes a Secret (they're independent)
+    sid2 = client.post("/api/secrets", json={"name": "K2", "value": "sk-k2-9999"}).json()["secret"][
+        "id"
+    ]
+    client.post(
+        f"/api/llm-configs/{cid}",
+        json={"name": "GPT", "type": "openai", "model": "gpt-4o", "secret_id": sid2},
+    )
+    client.delete(f"/api/llm-configs/{cid}")
+    assert client.get("/api/secrets").json()["secrets"][0]["id"] == sid2

@@ -252,7 +252,9 @@ _DEFAULT_ACCENT = "#109e91"
 def profiles_create(
     name: str = typer.Argument(help="Display name for the profile (its id is a slug of this)."),
     accent: str = typer.Option(
-        _DEFAULT_ACCENT, "--accent", help=f"Accent colour as a #rrggbb hex (default {_DEFAULT_ACCENT})."
+        _DEFAULT_ACCENT,
+        "--accent",
+        help=f"Accent colour as a #rrggbb hex (default {_DEFAULT_ACCENT}).",
     ),
 ) -> None:
     """Register a new profile (headless bootstrap, §3.5).

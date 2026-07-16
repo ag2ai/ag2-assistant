@@ -31,6 +31,7 @@ def _norm_accent(accent: str) -> str:
         raise ValueError(f"invalid accent: {accent!r} (expected a #rrggbb hex)")
     return s.lower()
 
+
 # The canonical messaging platforms a channel can bind to. This is the single
 # source of truth for platform names.
 CHANNEL_PLATFORMS = ("telegram", "discord", "slack")

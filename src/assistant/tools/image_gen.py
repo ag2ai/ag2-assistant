@@ -29,7 +29,7 @@ def _image_agent(config):
     """A one-shot image-capable Agent, or None if none is available.
 
     Images follow the SELECTED configuration: the active entry runs them iff its type
-    is image-capable (``llm_configs.image_entry()``), with its own per-config key
+    is image-capable (``llm_configs.image_entry()``), with its referenced Secret
     (falling back to the provider's env key). No fallback hunting through the list —
     switching the active model never silently routes images through another config.
     When the store is empty, falls back to the flat ``config.llm.provider`` with the
@@ -38,7 +38,6 @@ def _image_agent(config):
     from assistant import llm_configs, secrets
     from assistant.secrets import KEY_ENV
 
-    cid = None
     entry = None
     if llm_configs.list_configs():
         entry = llm_configs.image_entry()
@@ -46,7 +45,6 @@ def _image_agent(config):
             return None  # the ACTIVE config can't generate images
         provider = llm_configs.PROVIDER_OF[entry["type"]]
         model = entry["model"]
-        cid = entry["id"]
     else:
         provider = (config.llm.provider or "gemini").lower()
         if provider in ("google", ""):
@@ -54,8 +52,10 @@ def _image_agent(config):
         model = config.llm.model
 
     def _key(name: str) -> str:
-        # Prefer the resolved entry's own secret; fall back to the provider env key.
-        return (secrets.config_key(cid) if cid else "") or os.environ.get(KEY_ENV.get(name, ""), "")
+        # Prefer the entry's referenced Secret; fall back to the provider env key
+        # (which a Default Secret populates at load_into_env).
+        own = secrets.secret_value(entry.get("secret_id", "")) if entry else ""
+        return own or os.environ.get(KEY_ENV.get(name, ""), "")
 
     if entry is not None and entry["type"] == "openai_subscription":
         # ChatGPT subscription: the backend runs the native image tool too (verified

@@ -48,9 +48,7 @@ def test_workspace_is_derived_not_stored():
     # The workspace is a computed property; the registry entry never persists it.
     entry = profiles.load_registry()["profiles"][0]
     assert "workspace" not in entry
-    assert profiles.get_profile("work").workspace == str(
-        profiles.profile_dir("work") / "workspace"
-    )
+    assert profiles.get_profile("work").workspace == str(profiles.profile_dir("work") / "workspace")
 
 
 def test_empty_name_rejected():

@@ -12,7 +12,8 @@ Route map:
     GET  /api/health                         -> process status (first running runtime)
     GET  /api/status                         -> [{pid, busy, running_tasks, unseen_done}] activity badges
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
-    POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
+    POST /api/secrets/key                    -> save a provider key (upserts its Default Secret); reloads ALL runtimes
+    GET/POST /api/secrets[/{sid}] + DELETE   -> Secret CRUD (named reusable API keys); reloads ALL runtimes
     GET  /api/llm-configs                     -> named LLM configs (install-wide) + active + env_override
     POST /api/llm-configs[/{cid}]             -> create/update a config (dry-construct → save → reload ALL)
     DELETE /api/llm-configs/{cid}             -> delete a config (409 if active); reloads ALL
@@ -207,11 +208,11 @@ class KeyRequest(BaseModel):
 
 
 class LlmConfigRequest(BaseModel):
-    """Create/update body for a named LLM configuration. ``api_key`` is write-only:
-    None leaves the stored key unchanged, "" clears it, a value sets it — the raw key
-    is never echoed back (only a set/hint). ``id`` is only read by the draft-test
-    endpoint (create/update take the id from the URL path), letting a test of an
-    edit-in-progress fall back to that config's STORED key when none is typed."""
+    """Create/update body for a named LLM configuration. A model's key is its
+    ``secret_id`` reference (a Secret in the secrets store). ``api_key`` is
+    DRAFT-TEST ONLY: the /test endpoints use a typed value directly ("" tests as
+    if no Secret resolved); create/update ignore it. ``id`` is only read by the
+    draft-test endpoint (create/update take the id from the URL path)."""
 
     id: str | None = None
     name: str
@@ -219,25 +220,49 @@ class LlmConfigRequest(BaseModel):
     model: str
     base_url: str = ""
     host: str = ""
+    secret_id: str = ""
     api_key: str | None = None
     options: dict = Field(default_factory=dict)
     activate: bool = False
 
 
 class LiveConfigRequest(BaseModel):
-    """Create/update body for a named live (voice) configuration. ``api_key`` is
-    write-only (None keeps the stored key, "" clears, a value sets); the raw key is
-    never echoed back. ``id`` is only read by the draft-test endpoint. ``voice`` is
-    optional on save (defaults to the provider's default voice; usually changed via
-    the voice picker, not this body)."""
+    """Create/update body for a named live (voice) configuration. A config's key is
+    its ``secret_id`` reference (a Secret in the secrets store). ``api_key`` is
+    DRAFT-TEST ONLY (a typed value is used directly, never persisted). ``id`` is
+    only read by the draft-test endpoint. ``voice`` is optional on save (defaults
+    to the provider's default voice; usually changed via the voice picker, not
+    this body)."""
 
     id: str | None = None
     name: str
     provider: str
     model: str = ""
     voice: str = ""
+    secret_id: str = ""
     api_key: str | None = None
     activate: bool = False
+
+
+class SecretCreateRequest(BaseModel):
+    """Create body for a Secret (named reusable API key — CONTEXT.md "Secrets").
+    ``value`` is write-only: no endpoint ever returns it (views carry a last-4
+    hint). ``default`` requires a provider tag."""
+
+    name: str
+    value: str
+    provider: str = ""
+    default: bool = False
+
+
+class SecretUpdateRequest(BaseModel):
+    """Partial update for a Secret — None leaves a field unchanged. Rotating
+    ``value`` re-keys every model referencing this Secret."""
+
+    name: str | None = None
+    value: str | None = None
+    provider: str | None = None
+    default: bool | None = None
 
 
 class CodexCodeRequest(BaseModel):
@@ -544,6 +569,82 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         await _reload_all()
         return {"ok": True}
 
+    # ---- Secrets: named reusable API keys (CONTEXT.md "Secrets", ADR 0005).
+    # Registered AFTER /api/secrets/key so the literal "key" segment keeps routing
+    # to the provider-key handler, not /{sid}. ----
+
+    def _secret_views() -> list[dict]:
+        """Safe views + the names of the model configs referencing each Secret
+        (drives the "used by N models" delete confirm)."""
+        from assistant import live_configs, llm_configs, secrets
+
+        llm = llm_configs.list_configs()
+        live = live_configs.list_configs()
+        out = []
+        for s in secrets.list_secrets():
+            used = [c.get("name", "") for c in llm if c.get("secret_id") == s["id"]]
+            used += [c.get("name", "") for c in live if c.get("secret_id") == s["id"]]
+            out.append({**s, "used_by": used})
+        return out
+
+    @app.get("/api/secrets")
+    async def list_secrets_api() -> dict:
+        """Every Secret as a safe view — name/provider/default/hint/used_by, never
+        the raw value."""
+        return {"secrets": _secret_views()}
+
+    @app.post("/api/secrets")
+    async def create_secret_api(req: SecretCreateRequest):
+        """Create a Secret. 409 + the existing Secret's view when the value is
+        already stored (unique by value — the model form snaps to ``existing``).
+        Reloads all runtimes (a new Default changes env-derived keys)."""
+        from assistant import secrets
+
+        try:
+            view = secrets.create_secret(
+                req.name, req.value, provider=req.provider, default=req.default
+            )
+        except secrets.DuplicateValue as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc), "existing": exc.existing}, status_code=409
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        await _reload_all()
+        return {"ok": True, "secret": view}
+
+    @app.post("/api/secrets/{sid}")
+    async def update_secret_api(sid: str, req: SecretUpdateRequest):
+        """Partial update (rename / rotate / retag / set-default). 404 unknown, 409
+        duplicate value, 400 bad input. Rotating re-keys every referencing model."""
+        from assistant import secrets
+
+        try:
+            view = secrets.update_secret(
+                sid, name=req.name, value=req.value, provider=req.provider, default=req.default
+            )
+        except KeyError:
+            return JSONResponse({"ok": False, "error": f"unknown secret: {sid}"}, status_code=404)
+        except secrets.DuplicateValue as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc), "existing": exc.existing}, status_code=409
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        await _reload_all()
+        return {"ok": True, "secret": view}
+
+    @app.delete("/api/secrets/{sid}")
+    async def delete_secret_api(sid: str):
+        """Delete a Secret (404 unknown). Always allowed — referencing configs
+        degrade down the resolution order; deleting a Default pops its env var."""
+        from assistant import secrets
+
+        if not secrets.delete_secret(sid):
+            return JSONResponse({"ok": False, "error": f"unknown secret: {sid}"}, status_code=404)
+        await _reload_all()
+        return {"ok": True}
+
     # ---- Named LLM configurations (install-wide list + single active selection) ----
 
     async def _reload_all() -> None:
@@ -554,9 +655,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 await manager.reload(runtime.pid)
 
     def _llm_entry_view(entry: dict, active: str | None) -> dict:
-        """One config as the API exposes it: the stored fields, a set/hint summary for
-        BOTH keys that could apply (its own per-config key and the provider's shared
-        env key — never the raw values), plus ``key_source`` naming which one an
+        """One config as the API exposes it: the stored fields, the referenced
+        Secret's view (or a dangling-reference flag) and the provider's shared env
+        key summary — never the raw values — plus ``key_source`` naming which one an
         actual call would send. That triple is what lets the UI say honestly why a
         keyless-looking config still works (shared fallback / no key needed)."""
         from assistant import llm_configs, secrets
@@ -564,6 +665,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         provider = llm_configs.PROVIDER_OF.get(entry["type"], "")
         shared = secrets.status().get(provider, {})
+        sec_view = secrets.get_secret(entry.get("secret_id", ""))
+        sec = (
+            {"id": sec_view["id"], "name": sec_view["name"], "hint": sec_view["hint"]}
+            if sec_view
+            else None
+        )
         view = {
             "id": entry["id"],
             "name": entry["name"],
@@ -572,10 +679,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "base_url": entry.get("base_url", ""),
             "host": entry.get("host", ""),
             "options": entry.get("options", {}),
-            "key": secrets.config_key_hint(entry["id"]),
+            "secret_id": entry.get("secret_id", ""),
+            "secret": sec,
+            "secret_missing": bool(entry.get("secret_id")) and sec is None,
             "key_source": llm_configs.key_source(
                 entry
-            ),  # config | shared | not_needed | none | subscription
+            ),  # secret | shared | not_needed | none | subscription
             "images": llm_configs.image_capable(entry),  # drives the row's "images" chip
             "shared_key": {
                 "env": KEY_ENV.get(provider, ""),
@@ -639,9 +748,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def _save_llm_config(req: LlmConfigRequest, cid: str | None):
         """Shared create/update: dry-construct the derived model_config BEFORE
         persisting (a bad type/kwarg fails here, 400 + the constructor's message, not on
-        the agent's next turn), then save the entry, write the per-config key, optionally
-        activate, and reload every runtime. 404 when updating an unknown id."""
-        from assistant import llm_configs, secrets
+        the agent's next turn), then save the entry, optionally activate, and reload
+        every runtime. 404 when updating an unknown id."""
+        from assistant import llm_configs
         from assistant.agent import model_config
 
         entry = {
@@ -650,6 +759,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "model": req.model,
             "base_url": req.base_url,
             "host": req.host,
+            "secret_id": req.secret_id,
             "options": req.options,
         }
         if cid is not None:
@@ -666,9 +776,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
         saved = llm_configs.save_config(entry)
-        # api_key: None leaves it unchanged; "" clears; a value sets it.
-        if req.api_key is not None:
-            secrets.set_config_key(saved["id"], req.api_key)
         if req.activate:
             llm_configs.set_active(saved["id"])
         await _reload_all()
@@ -734,6 +841,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     "model": req.model,
                     "base_url": req.base_url,
                     "host": req.host,
+                    "secret_id": req.secret_id or "",
                     "options": req.options,
                 }
             )
@@ -750,14 +858,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.delete("/api/llm-configs/{cid}")
     async def delete_llm_config(cid: str):
         """Delete a config (404 if unknown). Deleting the active one moves active to the
-        next remaining config (or none — flat defaults). Clears its per-config key and
-        reloads every runtime so the new active takes effect."""
-        from assistant import llm_configs, secrets
+        next remaining config (or none — flat defaults). Reloads every runtime so the
+        new active takes effect (referenced Secrets are independent and untouched)."""
+        from assistant import llm_configs
 
         if llm_configs.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         llm_configs.delete_config(cid)
-        secrets.set_config_key(cid, "")  # drop the orphaned secret
         await _reload_all()
         return {"ok": True}
 
@@ -787,22 +894,31 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     # voice session at connect (so no runtime reload on change). ----
 
     def _live_entry_view(entry: dict, active: str | None) -> dict:
-        """One live config as the API exposes it: stored fields + a set/hint summary for
-        both keys that could apply (its own per-config key and the provider's shared env
-        key — never the raw values) + ``key_source`` naming which one a session sends."""
+        """One live config as the API exposes it: stored fields + the referenced
+        Secret's view (or a dangling-reference flag) and the provider's shared env
+        key summary (never the raw values) + ``key_source`` naming which one a
+        session sends."""
         from assistant import live_configs, secrets
         from assistant.secrets import KEY_ENV
 
         provider = entry["provider"]
         shared = secrets.status().get(provider, {})
+        sec_view = secrets.get_secret(entry.get("secret_id", ""))
+        sec = (
+            {"id": sec_view["id"], "name": sec_view["name"], "hint": sec_view["hint"]}
+            if sec_view
+            else None
+        )
         return {
             "id": entry["id"],
             "name": entry["name"],
             "provider": provider,
             "model": entry["model"],
             "voice": entry.get("voice", ""),
-            "key": secrets.live_config_key_hint(entry["id"]),
-            "key_source": live_configs.key_source(entry),  # config | shared | none
+            "secret_id": entry.get("secret_id", ""),
+            "secret": sec,
+            "secret_missing": bool(entry.get("secret_id")) and sec is None,
+            "key_source": live_configs.key_source(entry),  # secret | shared | none
             "shared_key": {
                 "env": KEY_ENV.get(provider, ""),
                 "set": bool(shared.get("set")),
@@ -857,11 +973,11 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         }
 
     async def _save_live_config(req: LiveConfigRequest, cid: str | None):
-        """Shared create/update: validate (bad provider/voice → 400), save, write the
-        per-config key, optionally activate. 404 when updating an unknown id. A blank
-        ``voice`` on update keeps the config's existing voice (it's set via the picker,
-        not this form) rather than resetting to the provider default."""
-        from assistant import live_configs, secrets
+        """Shared create/update: validate (bad provider/voice → 400), save, optionally
+        activate. 404 when updating an unknown id. A blank ``voice`` on update keeps
+        the config's existing voice (it's set via the picker, not this form) rather
+        than resetting to the provider default."""
+        from assistant import live_configs
 
         existing = live_configs.get_config(cid) if cid is not None else None
         if cid is not None and existing is None:
@@ -869,7 +985,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         voice = req.voice
         if not voice and existing and existing.get("provider") == req.provider:
             voice = existing.get("voice", "")
-        entry = {"name": req.name, "provider": req.provider, "model": req.model, "voice": voice}
+        entry = {
+            "name": req.name,
+            "provider": req.provider,
+            "model": req.model,
+            "voice": voice,
+            "secret_id": req.secret_id,
+        }
         if cid is not None:
             entry["id"] = cid
         try:
@@ -878,8 +1000,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
         except KeyError:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        if req.api_key is not None:
-            secrets.set_live_config_key(saved["id"], req.api_key)
         if req.activate:
             live_configs.set_active(saved["id"])
         active = live_configs.active_id()
@@ -905,6 +1025,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     "provider": req.provider,
                     "model": req.model,
                     "voice": req.voice,
+                    "secret_id": req.secret_id or "",
                 }
             )
         except ValueError as exc:
@@ -920,13 +1041,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.delete("/api/live-configs/{cid}")
     async def delete_live_config(cid: str):
         """Delete a live config (404 if unknown). Deleting the active one moves active to
-        the next remaining config (or none — legacy fallback). Clears its per-config key."""
-        from assistant import live_configs, secrets
+        the next remaining config (or none — legacy fallback). Referenced Secrets are
+        independent and untouched."""
+        from assistant import live_configs
 
         if live_configs.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         live_configs.delete_config(cid)
-        secrets.set_live_config_key(cid, "")  # drop the orphaned secret
         return {"ok": True}
 
     @app.post("/api/live-configs/{cid}/use")
@@ -1483,9 +1604,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         return {"chats": await runtime.gateway.list_chats()}
 
     @p.get("/chats/{chat_id}")
-    async def chat_transcript(
-        chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
+    async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """The display transcript for a chat, for the UI to restore."""
         return {
             "chat_id": chat_id,
@@ -1493,9 +1612,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         }
 
     @p.delete("/chats/{chat_id}")
-    async def delete_chat(
-        chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
+    async def delete_chat(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """Permanently delete a chat (transcript + full event log). Irreversible."""
         removed = await runtime.gateway.delete_chat(chat_id)
         if not removed:
@@ -1509,9 +1626,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Rename and/or star a chat. 400 on an empty patch, 404 on unknown chat."""
         if patch.title is None and patch.starred is None:
             return JSONResponse({"error": "empty patch"}, status_code=400)
-        ok = await runtime.gateway.update_chat(
-            chat_id, title=patch.title, starred=patch.starred
-        )
+        ok = await runtime.gateway.update_chat(chat_id, title=patch.title, starred=patch.starred)
         if not ok:
             return Response(status_code=404)
         return {"ok": True}
@@ -2233,9 +2348,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     # rather than leaving the user wondering if it landed. Transient: the
                     # durable record is the DrainedModelRequest AG2 emits on the drain.
                     with contextlib.suppress(Exception):
-                        await websocket.send_json(
-                            {"type": "queued", "text": text, "chat": chat_id}
-                        )
+                        await websocket.send_json({"type": "queued", "text": text, "chat": chat_id})
                 else:
                     asyncio.create_task(
                         bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)

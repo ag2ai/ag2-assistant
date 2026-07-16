@@ -91,7 +91,9 @@ def test_entry_options_openai_surfaces_and_key_last():
     # the OpenAI SDK gets the non-empty key it requires).
     assert opts["api_key"] == "unused"
 
-    secrets.set_config_key(e["id"], "sk-xyz-9999")
+    s = secrets.create_secret("O key", "sk-xyz-9999")
+    llm_configs.set_secret_id(e["id"], s["id"])
+    e = llm_configs.get_config(e["id"])  # re-read: entry dicts are copies
     assert llm_configs.entry_options(e)["api_key"] == "sk-xyz-9999"  # merged last
 
 
@@ -175,9 +177,11 @@ def test_usable_by_type_key_and_base_url(monkeypatch):
         "status",
         lambda: {"gemini": {"set": False}, "openai": {"set": False}, "anthropic": {"set": False}},
     )
-    assert llm_configs.usable(gem) is False  # no env key, no per-config key
-    secrets.set_config_key(gem["id"], "k")
-    assert llm_configs.usable(gem) is True  # per-config key makes it usable
+    assert llm_configs.usable(gem) is False  # no env key, no referenced Secret
+    s = secrets.create_secret("G key", "sk-usable-1")
+    llm_configs.set_secret_id(gem["id"], s["id"])
+    gem = llm_configs.get_config(gem["id"])
+    assert llm_configs.usable(gem) is True  # a referenced Secret makes it usable
 
 
 def test_image_entry_follows_active_only():
@@ -209,24 +213,40 @@ def test_image_entry_none_when_no_capable():
     assert llm_configs.image_entry() is None
 
 
-# ---- per-config secret never leaks --------------------------------------------
+# ---- a referenced Secret never leaks -------------------------------------------
 
 
-def test_config_key_stored_but_not_in_env(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    e = llm_configs.save_config({"name": "O", "type": "openai", "model": "m"})
-    assert secrets.config_key(e["id"]) == ""
-    assert secrets.set_config_key(e["id"], "sk-secret-4242") is True
-    assert secrets.config_key(e["id"]) == "sk-secret-4242"
-    assert secrets.config_key_hint(e["id"]) == {"set": True, "hint": "…4242"}
-    # deliberately NOT loaded into os.environ (unlike provider keys)
+def test_secret_reference_flows_to_options_not_env(monkeypatch):
     import os
 
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)  # a real dev key must not leak in
+    s = secrets.create_secret("K", "sk-4242-4242")
+    e = llm_configs.save_config(
+        {"name": "X", "type": "openai", "model": "gpt-4o", "secret_id": s["id"]}
+    )
+    assert e["secret_id"] == s["id"]
+    assert llm_configs.entry_options(e)["api_key"] == "sk-4242-4242"
+    # deliberately NOT loaded into os.environ (non-default Secrets never hit env)
     assert os.environ.get("OPENAI_API_KEY") is None
-    # status() (per-provider) never exposes per-config keys
+    assert llm_configs.key_source(e) == "secret"
+    assert llm_configs.usable(e) is True
+    # status() (per-provider) never exposes non-default Secrets
     assert "…4242" not in json.dumps(secrets.status())
-    assert secrets.set_config_key(e["id"], "") is True  # clear
-    assert secrets.config_key(e["id"]) == ""
+    # deleting the Secret degrades: dangling reference falls through to env/none
+    secrets.delete_secret(s["id"])
+    e = llm_configs.get_config(e["id"])
+    assert "api_key" not in llm_configs.entry_options(e)
+    assert llm_configs.key_source(e) == "none"
+
+
+def test_set_secret_id():
+    s = secrets.create_secret("K2", "sk-k2-1")
+    e = llm_configs.save_config({"name": "Y", "type": "gemini", "model": "gemini-3.5-flash"})
+    assert llm_configs.set_secret_id(e["id"], s["id"]) is True
+    assert llm_configs.get_config(e["id"])["secret_id"] == s["id"]
+    assert llm_configs.set_secret_id(e["id"], "") is True  # clear
+    assert llm_configs.get_config(e["id"])["secret_id"] == ""
+    assert llm_configs.set_secret_id("c_missing", s["id"]) is False
 
 
 def test_store_lives_in_global_config_yaml():
@@ -375,8 +395,12 @@ def test_key_source_resolution(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "shared-key-1234")
     assert llm_configs.key_source(gem) == "shared"
 
-    # a per-config key overrides everything, base_url included
-    secrets.set_config_key(gem["id"], "sk-own-5678")
-    assert llm_configs.key_source(gem) == "config"
-    secrets.set_config_key(local["id"], "sk-own-9999")
-    assert llm_configs.key_source(local) == "config"
+    # a referenced Secret overrides everything, base_url included
+    s1 = secrets.create_secret("gem key", "sk-own-5678")
+    llm_configs.set_secret_id(gem["id"], s1["id"])
+    gem = llm_configs.get_config(gem["id"])
+    assert llm_configs.key_source(gem) == "secret"
+    s2 = secrets.create_secret("local key", "sk-own-9999")
+    llm_configs.set_secret_id(local["id"], s2["id"])
+    local = llm_configs.get_config(local["id"])
+    assert llm_configs.key_source(local) == "secret"

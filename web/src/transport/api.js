@@ -21,8 +21,14 @@ async function j(method, path, body) {
   }
   if (!r.ok) {
     let msg = `${method} ${path} -> ${r.status}`
-    try { const e = await r.json(); if (e && e.error) msg = e.error } catch {}
-    throw new Error(msg)
+    let payload = null
+    try { payload = await r.json(); if (payload && payload.error) msg = payload.error } catch {}
+    // status/body ride on the Error so callers can act on structured failures
+    // (e.g. createSecret's 409 carries the existing Secret to snap to).
+    const err = new Error(msg)
+    err.status = r.status
+    err.body = payload
+    throw err
   }
   return r.json()
 }
@@ -50,6 +56,14 @@ export const api = {
   // the `total` only when more than one profile exists (one request, not two).
   usageAll: () => j('GET', G('/usage')),
   setKey: (provider, value) => j('POST', G('/secrets/key'), { provider, value }),
+  // ---- Secrets: named reusable API keys (CONTEXT.md "Secrets"). value is
+  // WRITE-ONLY (views carry a last-4 hint). createSecret 409s with
+  // err.body.existing when the value is already stored (unique by value) —
+  // callers snap to it (lib/secrets.js createOrSnap). ----
+  secrets: () => j('GET', G('/secrets')),
+  createSecret: (s) => j('POST', G('/secrets'), s),
+  updateSecret: (id, patch) => j('POST', G('/secrets/' + encodeURIComponent(id)), patch),
+  deleteSecret: (id) => j('DELETE', G('/secrets/' + encodeURIComponent(id))),
   // Named LLM configurations — install-wide list + active selection (LLM is common
   // across profiles). All GLOBAL. llmConfigs() → {configs:[entry + {key:{set,hint},
   // active}], active:id|null, env_override:{provider?,model?}|null}. saveLlmConfig

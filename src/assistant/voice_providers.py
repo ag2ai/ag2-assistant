@@ -49,8 +49,12 @@ class VoiceProvider:
     # the active live config (its own per-config key, or the shared provider key); the
     # builders fall back to the provider's env key when it is empty.
     build_realtime: Callable[[Config, str, str, str], object]
-    synthesize: Callable[[Config, str, str, str], Awaitable[bytes]]  # (config, voice, text, api_key)
-    check: Callable[[str], Awaitable[None]]  # (api_key) -> None; raises if the key can't reach the API
+    synthesize: Callable[
+        [Config, str, str, str], Awaitable[bytes]
+    ]  # (config, voice, text, api_key)
+    check: Callable[
+        [str], Awaitable[None]
+    ]  # (api_key) -> None; raises if the key can't reach the API
 
 
 _REGISTRY: dict[str, VoiceProvider] = {}

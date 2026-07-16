@@ -64,9 +64,9 @@
   async function onSaved() { editing = null; await reload() }
 
   function keyChip(c) {
-    if (c.key_source === 'config') return 'own key ' + (c.key?.hint || '')
+    if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
     if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
-    return 'no key — add one or set ' + (c.shared_key?.env || 'the provider key')
+    return 'no key — pick a secret or set ' + (c.shared_key?.env || 'the provider key')
   }
 </script>
 
@@ -94,7 +94,7 @@
       </div>
       <div class="llmsub">{PROVIDER_LABEL[c.provider]} · {c.model}</div>
       <div class="llmsub">
-        <span class="llmkey" class:warn={c.key_source === 'none'}>{keyChip(c)}</span>
+        <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing}>{keyChip(c)}</span>
         {#if c.voice}<span class="llmkey">voice: {c.voice}</span>{/if}
         {#if tests[c.id]}
           {#if tests[c.id].testing}

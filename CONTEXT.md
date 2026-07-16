@@ -109,14 +109,14 @@ selection, both living in the Global config (shared across every Profile).
 
 **Text model**:
 A named configuration for a chat LLM — a provider/type, a model name, and an
-optional per-config key. The assistant's "brain" for typed conversation. Shown as
+optional referenced Secret. The assistant's "brain" for typed conversation. Shown as
 the Text section of Settings → Models; exactly one is Active install-wide.
 _Avoid_: LLM config (the `llm_configs` store/implementation name), model (bare —
 ambiguous with a Live model)
 
 **Live model**:
 A named configuration for realtime voice — a Voice provider, a realtime model, an
-optional per-config key, and a chosen Voice. The spoken counterpart of a Text model.
+optional referenced Secret, and a chosen Voice. The spoken counterpart of a Text model.
 Shown as the Live section of Settings → Models; exactly one is Active install-wide.
 _Avoid_: voice model / voice config (collide with Voice, the spoken attribute), live
 config (the `live_configs` store name)
@@ -137,4 +137,37 @@ _Avoid_: provider (bare — a Text model has a provider too)
 The single Text model and single Live model currently in effect, install-wide.
 Switching re-points the whole install and persists; it takes effect on the next
 message (Text) or next voice session (Live), never retroactively on one in flight.
-_Avoid_: default, current, selected
+_Avoid_: default, current, selected (a Secret's Default is the unrelated fallback
+concept)
+
+## Secrets
+
+**Secret**:
+A named, reusable API key — a name, a write-only value (only a last-4 hint is ever
+shown back), and an optional provider tag. Referenced by any number of Text and
+Live models; rotating its value re-keys every model that references it. Secrets are
+unique by value: no two Secrets may hold the same key — pasting a known key in the
+model form snaps to the existing Secret, and an explicit add with a duplicate value
+is rejected with a pointer to it. The provider tag is soft: it groups and sorts,
+never forbids — a Secret with no tag (or any tag) can be attached to any model,
+which is what keeps custom/unknown endpoints workable. Covers LLM provider keys
+only — channel bot tokens and the GitHub token are separate, non-reusable concepts.
+_Avoid_: API key (the value inside a Secret, not the entity), credential, token
+(collides with channel bot tokens), key (bare)
+
+**Default** (secret):
+The at-most-one Secret per provider tag that serves as that provider's install-wide
+fallback: a model with no referenced Secret sends its provider's Default. Only a
+provider-tagged Secret can be a Default. A key present only in the real environment
+(e.g. `.env`) is the last-resort fallback below the Default; the Default wins when
+both exist.
+_Avoid_: shared key / provider key (the retired pre-Secret concept), active (that
+is the models' concept)
+
+**Referenced** (secret):
+The link from one Text or Live model to the Secret it authenticates with. Optional —
+an empty reference means fallback (Default, then environment). Deleting a Secret is
+always allowed; models referencing it degrade to fallback and their health/key-source
+labelling reports it honestly. In the model form, pasting a raw key mints a new
+Secret on the spot with an auto-generated name, renameable later.
+_Avoid_: attached, bound, owned (a Secret is never owned by one model)

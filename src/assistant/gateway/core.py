@@ -163,6 +163,7 @@ class Gateway:
         from assistant.observability import setup_logging
         from assistant.permissions import PermissionStore
 
+        secrets.migrate()  # one-shot legacy -> Secret-entity upgrade (idempotent)
         secrets.load_into_env()  # provider keys into env before any agent is built
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
@@ -396,9 +397,7 @@ class Gateway:
                         # A stopped turn keeps what it already did: the tool calls and
                         # results are on the stream, so persist them and mark the stop.
                         await self._persist_turn(chat_id, stream, text, "")
-                        await self.emit_event(
-                            chat_id, TurnCancelled(chat_id, reason=active.reason)
-                        )
+                        await self.emit_event(chat_id, TurnCancelled(chat_id, reason=active.reason))
                         return ""
                     finally:
                         self._active.pop(chat_id, None)

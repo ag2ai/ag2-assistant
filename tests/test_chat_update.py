@@ -25,13 +25,18 @@ async def test_update_chat_title_persists_across_instances(gw, tmp_path, monkeyp
 
     await gw.send_message("hello", chat_id="c1")
     assert await gw.update_chat("c1", title="Renamed by user") is True
-    assert next(c for c in await gw.list_chats() if c["chat_id"] == "c1")["title"] == "Renamed by user"
+    assert (
+        next(c for c in await gw.list_chats() if c["chat_id"] == "c1")["title"] == "Renamed by user"
+    )
 
     await gw.close()
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
     gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
     await gw2.start()
-    assert next(c for c in await gw2.list_chats() if c["chat_id"] == "c1")["title"] == "Renamed by user"
+    assert (
+        next(c for c in await gw2.list_chats() if c["chat_id"] == "c1")["title"]
+        == "Renamed by user"
+    )
     await gw2.close()
 
 

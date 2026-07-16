@@ -36,7 +36,7 @@
     { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Local Ollama' },
     {
       name: 'Local server', card: 'Local server — llama.cpp / vLLM / LM Studio',
-      type: 'openai', model: '', base_url: 'http://localhost:8080/v1', api_key: 'not-needed',
+      type: 'openai', model: '', base_url: 'http://localhost:8080/v1',
       blurb: 'OpenAI-compatible local server — just set the model name',
     },
     {
@@ -109,10 +109,10 @@
   function keyChip(c) {
     if (c.key_source === 'subscription')
       return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
-    if (c.key_source === 'config') return 'own key ' + (c.key?.hint || '')
+    if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
     if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
     if (c.key_source === 'not_needed') return 'no key needed'
-    return 'no key — add one or set ' + (c.shared_key?.env || 'the provider key')
+    return 'no key — pick a secret or set ' + (c.shared_key?.env || 'the provider key')
   }
 </script>
 
@@ -151,7 +151,7 @@
       </div>
       <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
-        <span class="llmkey" class:warn={c.key_source === 'none' || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
+        <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
         <!-- Images follow the ACTIVE config: capable types advertise the chip, and on
              the active row it reads as "image generation enabled" (✓). -->
         {#if c.images}<span class="llmkey">images{c.active ? ' ✓' : ''}</span>{/if}

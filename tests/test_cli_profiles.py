@@ -8,8 +8,7 @@ dirs, and stores resolve under disposable space.
 import pytest
 from typer.testing import CliRunner
 
-from assistant.cli import app
-from assistant.cli import _DEFAULT_ACCENT
+from assistant.cli import _DEFAULT_ACCENT, app
 
 runner = CliRunner()
 
