@@ -139,6 +139,8 @@ export const api = {
   health: () => j('GET', P('/health')),
   chats: () => j('GET', P('/chats')).then((d) => d.chats || []),
   deleteChat: (id) => j('DELETE', P('/chats/' + encodeURIComponent(id))),
+  // Partial chat-metadata update: {title?, starred?} (absent = unchanged).
+  updateChat: (id, patch) => j('PATCH', P('/chats/' + encodeURIComponent(id)), patch),
   tasksAll: (status) => j('GET', P('/tasks/all' + (status && status !== 'all' ? '?status=' + status : ''))).then((d) => d.tasks || []),
   task: (id) => j('GET', P('/tasks/' + id)).then((d) => d.task),
   cancelTask: (id) => j('POST', P(`/tasks/${id}/cancel`)),
