@@ -85,9 +85,10 @@ quote-style = "double"
 # The generated SPA bundle and lockfiles are machine-written — never spell-check them.
 skip = "*.lock,*package-lock.json,src/assistant/gateway/static/app/*,.venv,node_modules"
 # Not typos: `ans` (answer var), `hsi` (Hang Seng Index ticker), `protext` (a
-# camelCase identifier), plus valid hyphenations/spellings. Extend this list when
+# camelCase identifier), `padd` (Profiles.svelte's `p`-prefixed CSS class naming,
+# i.e. "p-add"), plus valid hyphenations/spellings. Extend this list when
 # codespell flags a real term.
-ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext"
+ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd"
 
 [tool.setuptools.packages.find]
 where = ["src"]
