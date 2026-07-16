@@ -709,11 +709,15 @@ class Gateway:
             return
         path = self._transcript_path(chat_id)
         try:
-            doc = json.loads(await self._event_store.read(path))
-            if doc.get("title"):  # already named (single revision) — leave it
-                return
-            doc["title"] = title
-            await self._event_store.write(path, json.dumps(doc))
+            # This task runs after _append_transcript's lock is released; take the
+            # chat lock so a late-returning titler can't clobber a concurrent user
+            # rename/star landing between our read and write.
+            async with self._chat_lock(chat_id):
+                doc = json.loads(await self._event_store.read(path))
+                if doc.get("title"):  # already named (single revision) — leave it
+                    return
+                doc["title"] = title
+                await self._event_store.write(path, json.dumps(doc))
         except Exception as exc:
             from assistant.observability import log_suppressed
 
@@ -808,6 +812,8 @@ class Gateway:
         async with self._chat_lock(chat_id):
             if not await self._event_store.exists(path):
                 return False
+            # Unlike the passive readers, a corrupt doc here should surface, not
+            # silently drop the user's edit (and False would read as "unknown chat").
             doc = json.loads(await self._event_store.read(path))
             if title is not None and title.strip():
                 doc["title"] = title.strip()
