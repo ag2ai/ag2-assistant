@@ -84,6 +84,23 @@ there is no one-step delete of a live profile. The only operation in the app tha
 destroys profile state.
 _Avoid_: archive (archive keeps the data; delete does not)
 
+## Chats
+
+**Chat**:
+A persisted conversation with the assistant inside a Profile: its transcript, its
+title, and its Starred flag. Titled automatically after the first exchange; a
+user Rename is authoritative and is never overwritten by the auto-titler.
+Deleting a Chat is permanent and unrecoverable.
+_Avoid_: session (the retired chat-sense name — MCP client sessions and realtime
+voice sessions are different, protocol-level concepts that keep the word),
+conversation, thread
+
+**Starred** (chat):
+A user-set flag on a Chat that lifts it into the Starred section pinned at the
+top of the chat history. Toggleable at any time; unstarring returns the Chat to
+its natural date group. No effect on the Chat's content or last-update time.
+_Avoid_: pinned, favorite
+
 ## Models
 
 The install-wide, named backends the assistant runs on. Two kinds — one for typed
