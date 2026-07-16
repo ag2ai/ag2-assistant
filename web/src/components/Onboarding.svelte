@@ -46,15 +46,17 @@
   // back to provider/model via this list. The first entry per provider is that tab's
   // default (recommended); the rest are common alternatives shown as extra pills.
   const MODELS = [
-    { label: 'Gemini · gemini-3.5-flash', provider: 'gemini', model: 'gemini-3.5-flash' },
-    { label: 'Gemini · gemini-3.5-pro', provider: 'gemini', model: 'gemini-3.5-pro' },
-    { label: 'Gemini · gemini-3.5-flash-lite', provider: 'gemini', model: 'gemini-3.5-flash-lite' },
-    { label: 'OpenAI · gpt-5.4', provider: 'openai', model: 'gpt-5.4' },
-    { label: 'OpenAI · gpt-5.4-mini', provider: 'openai', model: 'gpt-5.4-mini' },
-    { label: 'OpenAI · gpt-5.4-nano', provider: 'openai', model: 'gpt-5.4-nano' },
-    { label: 'Anthropic · claude-opus-4', provider: 'anthropic', model: 'claude-opus-4' },
-    { label: 'Anthropic · claude-sonnet-5', provider: 'anthropic', model: 'claude-sonnet-5' },
-    { label: 'Anthropic · claude-haiku-4.5', provider: 'anthropic', model: 'claude-haiku-4.5' },
+    { label: 'Gemini · Gemini 3.5 Flash', provider: 'gemini', model: 'gemini-3.5-flash' },
+    { label: 'Gemini · Gemini 3.1 Flash Lite', provider: 'gemini', model: 'gemini-3.1-flash-lite' },
+    { label: 'Gemini · Gemini 3.1 Pro Preview', provider: 'gemini', model: 'gemini-3.1-pro-preview' },
+    { label: 'OpenAI · GPT-5.6 Luna', provider: 'openai', model: 'gpt-5.6-luna' },
+    { label: 'OpenAI · GPT-5.6 Terra', provider: 'openai', model: 'gpt-5.6-terra' },
+    { label: 'OpenAI · GPT-5.6 Sol', provider: 'openai', model: 'gpt-5.6-sol' },
+    { label: 'OpenAI · GPT-5.4 Mini', provider: 'openai', model: 'gpt-5.4-mini' },
+    { label: 'OpenAI · GPT-5.4 Nano', provider: 'openai', model: 'gpt-5.4-nano' },
+    { label: 'Anthropic · Claude Sonnet 5', provider: 'anthropic', model: 'claude-sonnet-5' },
+    { label: 'Anthropic · Claude Haiku 4.5', provider: 'anthropic', model: 'claude-haiku-4.5' },
+    { label: 'Anthropic · Claude Opus 4.8', provider: 'anthropic', model: 'claude-opus-4-8' },
   ]
   const modelsFor = (provider) => MODELS.filter((m) => m.provider === provider)
   // Connect step is organised as provider tabs. Each key-based tab owns one API-key
