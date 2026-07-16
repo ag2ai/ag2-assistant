@@ -254,11 +254,15 @@ def test_permissions_are_global(monkeypatch):
         assert b_cfg.root_dir / "permissions.json" == root_perm
         assert a_cfg.data_dir != b_cfg.data_dir  # profiles are still isolated elsewhere
 
-        PermissionStore(root_perm).grant("/tmp/work-repo")
+        PermissionStore(root_perm).grant_command("gmail_send")
 
         # visible via BOTH profiles' gateway stores (they share the file)
-        assert client.app.state.profiles.get(a).gateway._permissions.is_allowed("/tmp/work-repo")
-        assert client.app.state.profiles.get(b).gateway._permissions.is_allowed("/tmp/work-repo")
+        assert (
+            "gmail_send" in client.app.state.profiles.get(a).gateway._permissions.granted_commands()
+        )
+        assert (
+            "gmail_send" in client.app.state.profiles.get(b).gateway._permissions.granted_commands()
+        )
         # and no per-profile file was created
         assert not (profiles.profile_dir(a) / "permissions.json").exists()
         assert not (profiles.profile_dir(b) / "permissions.json").exists()

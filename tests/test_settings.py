@@ -169,13 +169,3 @@ def test_reply_timeout_roundtrips(settings):
     assert settings._read()["gateway"]["reply_timeout_s"] == 480.0
     with pytest.raises(ValueError, match="greater than zero"):
         settings.set_reply_timeout(0)
-
-
-def test_project_folder_roundtrips(settings):
-    # Fresh install: no project folder until chosen.
-    assert settings.get_project_folder() == ""
-    settings.set_project_folder("/tmp/my-project")
-    assert settings.get_project_folder() == "/tmp/my-project"
-    # Clearing it (empty/None) resets to "".
-    settings.set_project_folder("")
-    assert settings.get_project_folder() == ""

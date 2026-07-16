@@ -18,13 +18,15 @@ def test_build_agent_tools_has_core_capabilities():
     assert "run_shell_command" in names
     assert "run_code" in names
     assert "read_file" in names
+    assert "list_folder" in names
+    assert "write_file" in names
     assert "web_fetch" in names
     assert "get_weather" in names
     assert "get_quotes" in names
     assert "ask_user" in names  # chat-only: option-carrying HITL questions
     assert "code_with_cli_agent" in names  # ACP: drive host CLI coding agents
     assert "list_coding_agents" in names
-    assert len(tools) == 10
+    assert len(tools) == 12
 
 
 def test_build_agent_tools_gemini_uses_fallback_fetch():
@@ -124,7 +126,7 @@ def test_capability_scoping_limits_tools():
     assert "duckduckgo_search" not in code
 
     files = {t.name for t in build_agent_tools("gemini", capabilities=["files"])}
-    assert files == {"read_file"}
+    assert files == {"read_file", "list_folder", "write_file"}
 
     assert build_agent_tools("gemini", capabilities=[]) == []  # no caps → no tools
 
@@ -295,14 +297,16 @@ async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
 
 
 def test_files_capability_wires_workspace_toolkit(tmp_path):
-    """The `files` capability adds AG2's filesystem toolkit (write/update/find/
-    delete) scoped to the workspace, creating it — and keeps exactly one `read_file`
-    (our host reader; AG2's is dropped to avoid a duplicate tool name)."""
+    """The `files` capability adds AG2's filesystem toolkit (update/find/delete)
+    scoped to the workspace, creating it — and keeps exactly one `read_file` and one
+    `write_file` (our Grant-gated host tools; AG2's toolkit versions are dropped to
+    avoid duplicate tool names)."""
     ws = tmp_path / "workspace"
     tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=ws)
     names = [t.name for t in tools if getattr(t, "name", None)]
-    assert {"write_file", "update_file", "find_files", "delete_file"} <= set(names)
+    assert {"update_file", "find_files", "delete_file"} <= set(names)
     assert names.count("read_file") == 1  # only the custom host reader
+    assert names.count("write_file") == 1  # only the custom host writer
     assert ws.exists()
 
 
@@ -326,7 +330,9 @@ def test_images_capability_adds_generate_image(tmp_path):
 
 
 def test_no_workspace_dir_means_no_fs_tools():
-    """Without a workspace_dir, only the custom read_file is present (no FS toolkit)."""
+    """Without a workspace_dir, only the Grant-gated host tools are present (no
+    AG2 FS toolkit, since it has no workspace to be scoped to)."""
     tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=None)
     names = [t.name for t in tools if getattr(t, "name", None)]
-    assert "read_file" in names and "write_file" not in names
+    assert {"read_file", "list_folder", "write_file"} <= set(names)
+    assert "update_file" not in names  # no workspace → no AG2 FS toolkit

@@ -17,8 +17,9 @@ _Avoid_: account, user, persona
 
 **Files** (profile files):
 A profile's working file space — where the agent reads and writes files, including
-deliverables it produces. Lives inside the profile; there is no separate visible
-"workspace" folder outside the Root.
+deliverables it produces. Lives inside the profile; always read+write to its own
+profile with no Grant needed (Folders govern only paths outside the Root); there
+is no separate visible "workspace" folder outside the Root.
 _Avoid_: workspace (the retired `~/Documents/AG2 Assistant` level)
 
 **Accent**:
@@ -36,7 +37,7 @@ integrations, agent parameters, defaults for all profiles.
 **Profile config**:
 A profile's configuration overlay: a key present here overrides the Global
 config for this profile only. Holds profile-specific choices (focuses, MCP
-servers, Project folder). The agent edits its own Profile config, never the
+servers). The agent edits its own Profile config, never the
 Global config or another profile's overlay.
 _Avoid_: settings (the retired per-profile `settings.json`)
 _Note_: the Text model and Live model are NOT here — both are install-wide (Global
@@ -53,17 +54,11 @@ every install and for agent-authored skills. On a name clash, the Profile skill
 wins over the Global one.
 
 **Permissions**:
-The security policy of folder grants/blocks and allowed commands. Two layers —
-install-wide at the Root and per-profile — merged as unions with deny-overrides:
-a block from either layer always beats a grant, so a profile can narrow but
-never widen the install's boundaries. Edited only by the user, never by the
-agent.
-_Avoid_: settings, config (permissions are policy, not configuration)
-
-**Project folder**:
-A user-chosen folder elsewhere on disk that the assistant may only read (backs the
-read-only repo-files access). A read-only source, never assistant state.
-_Avoid_: repo folder, source folder
+The security policy of allowed commands (command-prefix and whole-tool grants).
+Commands only — folder access is the separate Folder/Grant system. Edited only by
+the user, never by the agent.
+_Avoid_: settings, config (permissions are policy, not configuration), folder
+permissions (that is a Grant)
 
 **Archived** (profile state):
 A profile flagged out of service: not running, hidden from the main Profiles list,
@@ -100,6 +95,28 @@ A user-set flag on a Chat that lifts it into the Starred section pinned at the
 top of the chat history. Toggleable at any time; unstarring returns the Chat to
 its natural date group. No effect on the Chat's content or last-update time.
 _Avoid_: pinned, favorite
+
+## Folders
+
+**Folder**:
+A named, install-wide registry entry for one directory outside the Root — a name
+and a path, unique by path. The only way disk outside the Root becomes reachable:
+no Folder (or no Grant to it) means no access, with no block/deny concept. Deleting
+a Folder is always allowed and revokes every Grant to it instantly; a Folder whose
+path no longer exists on disk is a badged, repointable state, not an error.
+_Avoid_: project folder (the retired single read-only mechanism), mount, share,
+directory, workspace
+
+**Grant**:
+The link from one Profile or one Chat to a Folder, carrying a mode — `read` or
+`read+write` (write implies read; write-only is unrepresentable). Effective access
+in a chat is the union of its profile's Grants and its own; the most permissive
+covering Grant wins, so Grants only ever widen and nothing subtracts. Created by
+the user — via settings or by approving the agent's runtime request (which
+auto-creates the Folder, auto-named and renameable) — never by the agent itself.
+"Allow once" approves a single turn's access without creating a Folder or a Grant.
+_Avoid_: permission (that is the commands policy), reference (a Secret's concept),
+access rule
 
 ## Models
 

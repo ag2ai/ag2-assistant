@@ -206,16 +206,12 @@ def test_permissions_are_global_and_need_no_profile():
     # zero profiles: list still works (no §3.5 guidance, no exit 1)
     empty = runner.invoke(app, ["permissions", "list"])
     assert empty.exit_code == 0, empty.output
-    assert "Allowed folders:" in empty.output
     assert "Allowed commands:" in empty.output
 
-    allow = runner.invoke(app, ["permissions", "allow", "/tmp/work-repo"])
-    assert allow.exit_code == 0, allow.output
     cmd = runner.invoke(app, ["permissions", "allow-command", "run_shell_command(git *)"])
     assert cmd.exit_code == 0, cmd.output
 
     listed = runner.invoke(app, ["permissions", "list"])
-    assert "/tmp/work-repo" in listed.output
     assert "run_shell_command(git *)" in listed.output
 
     # persisted to the shared root store, not a per-profile dir

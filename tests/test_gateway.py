@@ -447,55 +447,6 @@ def test_mcp_settings_endpoints(profile_app):
     assert client.delete(api(pid, "/settings/mcp/local")).status_code == 404
 
 
-def test_project_folder_endpoint_seeds_readonly_repo_files(tmp_path, monkeypatch):
-    """POST settings/project-folder persists the folder AND seeds a `repo-files`
-    MCP scoped to it with exactly the 7 read tools (no write/edit/delete reaches the agent)."""
-    from fastapi.testclient import TestClient
-
-    proj = tmp_path / "project"
-    proj.mkdir()
-
-    use_fake_agent(monkeypatch)
-    app, pid = make_profile_app()
-    with TestClient(app) as client:
-        before = client.get(api(pid, "/settings")).json()
-        assert before["project_folder"] == ""
-        assert before["mcp_servers"] == []
-        # the picker's start roots are advertised for the UI
-        assert set(before["fs"]) == {"home", "cwd", "workspace"}
-
-        resp = client.post(api(pid, "/settings/project-folder"), json={"path": str(proj)})
-        assert resp.status_code == 200
-        assert resp.json()["project_folder"] == str(proj.resolve())
-
-        s = client.get(api(pid, "/settings")).json()
-        assert s["project_folder"] == str(proj.resolve())
-        server = next(x for x in s["mcp_servers"] if x["name"] == "repo-files")
-        assert server["command"] == "npx"
-        assert server["args"] == [
-            "-y",
-            "@modelcontextprotocol/server-filesystem",
-            str(proj.resolve()),
-        ]
-        # read-only by whitelist — exactly the 7 read tools, nothing that mutates
-        assert server["allowed_tools"] == [
-            "read_file",
-            "read_multiple_files",
-            "list_directory",
-            "directory_tree",
-            "search_files",
-            "get_file_info",
-            "list_allowed_directories",
-        ]
-        assert not any(
-            "write" in t or "edit" in t or "delete" in t for t in server["allowed_tools"]
-        )
-
-        # a non-directory is rejected (and seeds nothing)
-        bad = client.post(api(pid, "/settings/project-folder"), json={"path": str(proj / "nope")})
-        assert bad.status_code == 400
-
-
 def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
     """POST settings/focuses persists the (normalised) focuses, surfaces them in GET
     settings, and reference-swap reloads the runtime so the context line takes effect."""

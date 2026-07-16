@@ -1,8 +1,8 @@
 """User-adjustable settings persisted to a profile's ``config.yaml``.
 
 Per-profile persistence for things toggled live from the GUI / tools: the realtime
-voice (per provider), the persisted voice provider, the project folder, focus areas,
-and the MCP server list. (The LLM provider/model is NOT here — it's the install-wide
+voice (per provider), the persisted voice provider, focus areas, and the MCP server
+list. (The LLM provider/model is NOT here — it's the install-wide
 named ``llm_configs`` store now, common across profiles.) These keys live at the top
 level of the same ``config.yaml`` that carries the profile's Config overlay sections
 (``llm``/``agent``/…); the read-modify-write here preserves those neighbouring
@@ -72,21 +72,6 @@ class Settings:
         data["voice_provider"] = provider
         self._write(data)
         return True
-
-    # --- project folder ---
-
-    def get_project_folder(self) -> str:
-        """The folder the assistant may read (chosen in onboarding; backs the read-only
-        repo-files MCP). Empty string if not set."""
-        v = self._read().get("project_folder")
-        return v if isinstance(v, str) else ""
-
-    def set_project_folder(self, path: str) -> None:
-        """Persist the chosen project folder. (Seeding the repo-files MCP itself is done by
-        the gateway endpoint via upsert_mcp_server.)"""
-        data = self._read()
-        data["project_folder"] = path or ""
-        self._write(data)
 
     # --- focuses (per-profile persona attribute) ---
 

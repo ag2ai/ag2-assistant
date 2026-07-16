@@ -90,6 +90,7 @@ class Gateway:
         # refresh only rebuilds the (cached) agent when the token actually rotated.
         self._codex_token: str | None = None
         self._permissions = None
+        self._folders = None
         self._event_store = None
         self._writer = None
         # chat_id -> live Stream; plus which chats we've hydrated from disk
@@ -173,6 +174,12 @@ class Gateway:
         # Install-wide persistent grant store (config.root_dir holds global files) —
         # grants are global, not per-profile.
         self._permissions = PermissionStore(self._config.root_dir / "permissions.json")
+
+        from assistant.folders import FolderStore
+
+        # Install-wide Folder registry (ADR 0006); Grants are per-profile/per-chat,
+        # resolved at check time with this profile's id + the turn's chat_id.
+        self._folders = FolderStore(self._config.root_dir / "folders.json")
 
         if self._persist:
             from ag2.knowledge import SqliteKnowledgeStore
@@ -332,7 +339,7 @@ class Gateway:
         await self._maybe_onboard(asker)
         await self._ensure_subscription_fresh()
 
-        extra = self._ask_kwargs(asker)
+        extra = self._ask_kwargs(asker, chat_id)
         msg = [text, *(attachments or [])]
 
         async with self._chat_lock(chat_id):
@@ -862,13 +869,19 @@ class Gateway:
             log_suppressed("onboarding", exc)
             # Onboarding is best-effort; never block the actual message.
 
-    def _ask_kwargs(self, asker) -> dict:
-        """Per-turn hitl_hook + dependencies bound to this request's asker."""
+    def _ask_kwargs(self, asker, chat_id: str = "") -> dict:
+        """Per-turn hitl_hook + dependencies bound to this request's asker and chat."""
         from assistant.permissions import PermissionManager
 
         deps: dict = {
             PermissionManager: PermissionManager(
-                self._permissions, asker, sandbox=self._config.tools.sandbox
+                self._permissions,
+                asker,
+                sandbox=self._config.tools.sandbox,
+                folders=self._folders,
+                profile=self._config.data_dir.name,
+                chat_id=chat_id,
+                workspace_dir=self._config.workspace_dir,
             )
         }
         out: dict = {"dependencies": deps}

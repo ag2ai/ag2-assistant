@@ -163,7 +163,7 @@ class TasksConfig(BaseModel):
 
 
 # The Config sections a profile's config.yaml may overlay. Settings keys in the same
-# file (voice, focuses, mcp_servers, project_folder, voice_provider) are read by
+# file (voice, focuses, mcp_servers, voice_provider) are read by
 # assistant.settings, not here.
 _OVERLAY_SECTIONS = ("llm", "agent", "gateway", "tools", "memory", "tasks")
 

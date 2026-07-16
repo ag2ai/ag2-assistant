@@ -42,7 +42,7 @@ Route map:
     GET  inquiries/pending, POST inquiries/{id}/answer
     GET  hitl/pending
     WS   stream, WS voice; GET voice/voices, POST voice/select, POST voice/preview
-    GET/POST settings, settings/mcp*, settings/project-folder, settings/focuses, settings/voice_provider
+    GET/POST settings, settings/mcp*, settings/focuses, settings/voice_provider
     GET/POST memory                          -> THIS profile's persona memory (profiles/<id>/profile.db)
     GET  files, GET/DELETE files/raw
     GET  usage
@@ -174,10 +174,6 @@ class ScheduleRequest(BaseModel):
 
 class OnboardedRequest(BaseModel):
     value: bool = True
-
-
-class ProjectFolderRequest(BaseModel):
-    path: str
 
 
 class FocusesRequest(BaseModel):
@@ -318,8 +314,25 @@ class ProfileArchiveRequest(BaseModel):
     new_default: str | None = None
 
 
-class PermissionFolderRequest(BaseModel):
+class FolderCreateRequest(BaseModel):
     path: str
+    name: str = ""
+
+
+class FolderUpdateRequest(BaseModel):
+    name: str | None = None
+    path: str | None = None
+
+
+class FolderGrantRequest(BaseModel):
+    profile: str
+    chat_id: str = ""
+    mode: str
+
+
+class FolderGrantDeleteRequest(BaseModel):
+    profile: str
+    chat_id: str = ""
 
 
 class PermissionCommandAddRequest(BaseModel):
@@ -1162,7 +1175,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         await write_universal(doc, path)
         return {"ok": True, "seeded": True}
 
-    # ---- Permissions (global, install-wide: one store shared by every profile) ----
+    # ---- Permissions (global, install-wide: one command store shared by every profile) ----
 
     def _permissions_store():
         """A fresh PermissionStore over the install-wide file. mtime self-refresh
@@ -1173,54 +1186,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         return PermissionStore(load_config().root_dir / "permissions.json")
 
     def _permissions_snapshot(store) -> dict:
-        return {
-            "folders": store.granted_folders(),
-            "blocked": store.blocked_folders(),
-            "commands": store.granted_commands(),
-        }
+        return {"commands": store.granted_commands()}
 
     @app.get("/api/permissions")
     async def get_permissions() -> dict:
-        """The full install-wide permission state (folders + blocked + command rules)."""
+        """The install-wide permission state (command rules)."""
         return _permissions_snapshot(_permissions_store())
-
-    @app.post("/api/permissions/folders")
-    async def grant_permission_folder(req: PermissionFolderRequest):
-        """Grant a folder. Returns the full snapshot (client never needs a second GET)."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        store.grant(req.path)
-        return {"ok": True, **_permissions_snapshot(store)}
-
-    @app.delete("/api/permissions/folders")
-    async def revoke_permission_folder(req: PermissionFolderRequest):
-        """Revoke a granted folder. 404 if it wasn't granted."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        if not store.revoke(req.path):
-            return JSONResponse({"error": f"not granted: {req.path}"}, status_code=404)
-        return {"ok": True, **_permissions_snapshot(store)}
-
-    @app.post("/api/permissions/blocked")
-    async def block_permission_folder(req: PermissionFolderRequest):
-        """Block a folder (also removes any conflicting grant)."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        store.block(req.path)
-        return {"ok": True, **_permissions_snapshot(store)}
-
-    @app.delete("/api/permissions/blocked")
-    async def unblock_permission_folder(req: PermissionFolderRequest):
-        """Unblock a folder. 404 if it wasn't blocked."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        if not store.unblock(req.path):
-            return JSONResponse({"error": f"not blocked: {req.path}"}, status_code=404)
-        return {"ok": True, **_permissions_snapshot(store)}
 
     @app.post("/api/permissions/commands")
     async def grant_permission_command(req: PermissionCommandAddRequest):
@@ -1255,6 +1226,86 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if not store.revoke_command(req.rule):
             return JSONResponse({"error": f"not granted: {req.rule}"}, status_code=404)
         return {"ok": True, **_permissions_snapshot(store)}
+
+    # ---- Folders + Grants (global: the install-wide Folder registry, ADR 0006) ----
+
+    def _folder_store():
+        """A fresh FolderStore over the install-wide file. mtime self-refresh means
+        live turns pick up any change on their next check — no manager.reload()."""
+        from assistant.config import load_config
+        from assistant.folders import FolderStore
+
+        return FolderStore(load_config().root_dir / "folders.json")
+
+    def _folders_snapshot(store) -> dict:
+        return {"folders": store.list_folders()}
+
+    @app.get("/api/folders")
+    async def get_folders() -> dict:
+        """Every Folder with its path-exists badge and its Grants."""
+        return _folders_snapshot(_folder_store())
+
+    @app.post("/api/folders")
+    async def create_folder(req: FolderCreateRequest):
+        """Register a directory as a Folder. 400 for a non-directory; 409 with a
+        pointer when the resolved path is already registered (path-unique)."""
+        from pathlib import Path as _P
+
+        from assistant.folders import DuplicatePath
+
+        fp = _P(req.path or "").expanduser()
+        if not req.path.strip() or not fp.is_dir():
+            return JSONResponse({"error": "not a directory"}, status_code=400)
+        store = _folder_store()
+        try:
+            view = store.create_folder(req.path, name=req.name)
+        except DuplicatePath as exc:
+            return JSONResponse({"error": str(exc), "existing": exc.existing}, status_code=409)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, "folder": view, **_folders_snapshot(store)}
+
+    @app.post("/api/folders/{fid}")
+    async def update_folder(fid: str, req: FolderUpdateRequest):
+        """Rename and/or repoint a Folder. 404 unknown; 409 path collision."""
+        from assistant.folders import DuplicatePath
+
+        store = _folder_store()
+        try:
+            view = store.update_folder(fid, name=req.name, path=req.path)
+        except KeyError:
+            return JSONResponse({"error": f"unknown folder: {fid}"}, status_code=404)
+        except DuplicatePath as exc:
+            return JSONResponse({"error": str(exc), "existing": exc.existing}, status_code=409)
+        return {"ok": True, "folder": view, **_folders_snapshot(store)}
+
+    @app.delete("/api/folders/{fid}")
+    async def delete_folder(fid: str):
+        """Delete a Folder — always allowed; every Grant to it is revoked instantly."""
+        store = _folder_store()
+        if not store.delete_folder(fid):
+            return JSONResponse({"error": f"unknown folder: {fid}"}, status_code=404)
+        return {"ok": True, **_folders_snapshot(store)}
+
+    @app.post("/api/folders/{fid}/grants")
+    async def set_folder_grant(fid: str, req: FolderGrantRequest):
+        """Upsert one Grant: (profile, chat_id) → mode. Empty chat_id = profile-scope."""
+        store = _folder_store()
+        try:
+            store.set_grant(fid, req.mode, profile=req.profile, chat_id=req.chat_id)
+        except KeyError:
+            return JSONResponse({"error": f"unknown folder: {fid}"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, **_folders_snapshot(store)}
+
+    @app.delete("/api/folders/{fid}/grants")
+    async def revoke_folder_grant(fid: str, req: FolderGrantDeleteRequest):
+        """Revoke one Grant. 404 when no such Grant exists."""
+        store = _folder_store()
+        if not store.revoke_grant(fid, profile=req.profile, chat_id=req.chat_id):
+            return JSONResponse({"error": "no such grant"}, status_code=404)
+        return {"ok": True, **_folders_snapshot(store)}
 
     # ---- Profile management (global) ----
 
@@ -1885,7 +1936,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "codex": codex_auth.status(),  # ChatGPT-subscription sign-in state
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
-            "project_folder": settings.get_project_folder(),  # repo-files MCP root
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
             "reply_timeout_s": cfg.gateway.reply_timeout_s,
             "fs": {  # start roots for the folder picker
@@ -2099,41 +2149,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return await _mcp_health(server)
         except Exception as exc:
             return {"ok": False, "error": str(exc)[:500]}
-
-    # Read-only subset of @modelcontextprotocol/server-filesystem — the repo-files MCP
-    # gets exactly these so the agent can read the project but never write/edit/delete.
-    _REPO_FILES_READ_TOOLS = [
-        "read_file",
-        "read_multiple_files",
-        "list_directory",
-        "directory_tree",
-        "search_files",
-        "get_file_info",
-        "list_allowed_directories",
-    ]
-
-    @p.post("/settings/project-folder")
-    async def set_project_folder(
-        req: ProjectFolderRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ):
-        """Persist the chosen project folder AND seed a read-only `repo-files` MCP pointed
-        at it (reusing the MCP-server settings path), then reload so the agent picks it up."""
-        settings = _runtime_settings(runtime)
-        fp = Path(req.path or "").expanduser()
-        if not req.path or not fp.is_dir():
-            return JSONResponse({"error": "not a directory"}, status_code=400)
-        folder = str(fp.resolve())
-        settings.set_project_folder(folder)
-        settings.upsert_mcp_server(
-            {
-                "name": "repo-files",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", folder],
-                "allowed_tools": list(_REPO_FILES_READ_TOOLS),
-            }
-        )
-        await manager.reload(runtime.pid)  # new turns get the repo-files tools
-        return {"ok": True, "project_folder": folder}
 
     @p.post("/settings/focuses")
     async def set_focuses(
@@ -2687,6 +2702,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if path and f.is_file() and str(f).startswith(str(_APP_DIR.resolve())):
             return FileResponse(f)
         return FileResponse(index)
+
+    @app.api_route("/api/{full_path:path}", methods=["POST", "PUT", "PATCH", "DELETE"])
+    async def api_not_found(full_path: str):
+        """Any unmatched /api/* write → 404 (not Starlette's default 405, which the
+        GET SPA catch-all below would otherwise force). Keeps 'route is gone' honest
+        across every method: a retired route 404s whether it's read or written."""
+        return Response(status_code=404)
 
     @app.get("/{full_path:path}")
     async def spa(full_path: str):

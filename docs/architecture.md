@@ -153,13 +153,14 @@ task subagents are scoped to their declared capabilities.
 ### 5.4 MCP integration — `tools/mcp.py`, `tools/_mcp_compat.py`
 
 `build_mcp_tools()` builds a `NamespacedMCPToolkit` per configured server. Raw MCP
-tool names are namespaced (`<server>_<tool>`, e.g. `repo_files_read_file`) to avoid
+tool names are namespaced (`<server>_<tool>`, e.g. `github_list_repos`) to avoid
 collisions with native tools, and filtered against `allowed_tools`/`blocked_tools`
 **before** namespacing. `_mcp_compat.py` quarantines the private AG2 MCP internals
 (`AnyMCPConfig`, `MCPTool`, `_resolve_config`, `_mcp_session`, `_extract_content`,
 `_wrap_middleware`) behind stable wrappers, raising `MCPCompatibilityError` on
-version drift. The onboarding project folder seeds a **read-only** `repo-files` MCP
-(7 read tools only).
+version drift. Folder access is native now (see §Folders): the host `read_file` /
+`list_folder` / `write_file` tools consult the install-wide Folder registry + Grants,
+replacing the retired auto-seeded `repo-files` MCP.
 
 ### 5.5 Task subsystem — `src/assistant/tasks/*`, `gateway/tasks_service.py`
 
@@ -265,10 +266,12 @@ All channels share the one agent.
   `os.environ` at startup/reload (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
   `ANTHROPIC_API_KEY`, GitHub token, Ollama base URL).
 - **`settings.py`** — non-secret per-profile UI prefs (voice provider+voice,
-  focuses, project folder, MCP server list), persisted at the top level of the
+  focuses, MCP server list), persisted at the top level of the
   profile's `config.yaml` alongside its Config overlay sections.
-- **`permissions.py`** — `PermissionStore` (folder grants/blocks → `permissions.json`)
-  + per-turn `PermissionManager`.
+- **`permissions.py`** — `PermissionStore` (command grants → `permissions.json`)
+  + per-turn `PermissionManager` (also resolves Folder Grants for the profile/chat).
+- **`folders.py`** — `FolderStore`: the install-wide Folder registry + per-profile /
+  per-chat Grants (`read` / `read_write`) at `root_dir/folders.json` (ADR 0006).
 - **`usage.py`** — `UsageLedger` (daily tokens + estimated cost → `usage.json`,
   priced from `pricing.json`).
 - **`workspace.py`** — sandbox-safe file I/O: `write_deliverable_file` (shared
@@ -346,11 +349,11 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | GET  | `/hitl/{req_id}` | styled browser answer page |
 | POST | `/hitl/{req_id}/answer` | submit an answer to that page |
 
-### Settings / keys / MCP / project folder
+### Settings / keys / MCP / folders
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET    | `/api/settings` | full snapshot (keys set, providers, voice, MCP, onboarded, project_folder, fs roots) |
+| GET    | `/api/settings` | full snapshot (keys set, providers, voice, MCP, onboarded, fs roots) |
 | POST   | `/api/settings/key` | set/clear an API key |
 | POST   | `/api/settings/llm` | set provider + model |
 | POST   | `/api/settings/voice_provider` | set voice provider |
@@ -358,8 +361,18 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | POST   | `/api/settings/mcp` | add/upsert an MCP server |
 | DELETE | `/api/settings/mcp/{name}` | remove an MCP server |
 | POST   | `/api/settings/mcp/{name}/health` | health-check (lists tools) |
-| POST   | `/api/settings/project-folder` | persist folder + seed read-only `repo-files` MCP |
 | GET    | `/api/fs/list?path=` | list subdirectories (folder picker) |
+
+Folders + Grants (install-wide, ADR 0006) — snapshot `{folders:[{id,name,path,exists,grants}]}`:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET    | `/api/folders` | every Folder with its path-exists badge + Grants |
+| POST   | `/api/folders` | register a directory (400 non-dir, 409 duplicate path) |
+| POST   | `/api/folders/{fid}` | rename / repoint a Folder |
+| DELETE | `/api/folders/{fid}` | delete a Folder (revokes all its Grants) |
+| POST   | `/api/folders/{fid}/grants` | upsert a Grant `(profile, chat_id) → mode` |
+| DELETE | `/api/folders/{fid}/grants` | revoke one Grant |
 
 ### Files / memory / usage
 
@@ -506,9 +519,10 @@ Under `~/.ag2assistant/`:
 | `inquiries.db` | durable HITL inquiries (clarifications/permissions) |
 | `profile.db` | learned user profile (`/memory/working.md` inside) |
 | `config.yaml` (global) | Config overrides + the `llm_configs:` section (named models + active); env still wins |
-| `profiles/<id>/config.yaml` | per-profile Config overlay + non-secret UI prefs (voice, focuses, project folder, MCP servers) |
+| `profiles/<id>/config.yaml` | per-profile Config overlay + non-secret UI prefs (voice, focuses, MCP servers) |
 | `secrets.json` | API keys (chmod 0600), loaded into env at startup/reload |
-| `permissions.json` | folder grants/blocks |
+| `permissions.json` | command grants (install-wide) |
+| `folders.json` | Folder registry + per-profile/per-chat Grants (install-wide, ADR 0006) |
 | `usage.json` / `pricing.json` | daily token+cost ledger / price overrides |
 | `ag2assistant.log` | rotating application log (2 MB × 3) |
 | `debug/<ts>-<chat>.json` | failure snapshots (error + traceback + event tail) |
@@ -528,9 +542,11 @@ Generated artifacts (images, deliverables, uploads) live in the **workspace**
 - **Single-user, local-first.** No auth headers; a remote deployment must front the
   gateway with its own auth.
 - **Filesystem sandboxing.** Workspace reads/writes go through `workspace.resolve()`
-  (no traversal escape). The `repo-files` MCP is seeded **read-only** (7 read tools).
-  Arbitrary host reads (`read_file`, `/api/fs/list`) are acceptable only because the
-  gateway is local + single-user behind the origin guard.
+  (no traversal escape). Access to paths outside the workspace is governed by the
+  Folder registry + Grants (ADR 0006): `read_file`/`list_folder` need a `read` Grant,
+  `write_file` a `read_write` Grant, minted via the first-touch HITL prompt.
+  `/api/fs/list` (the folder picker) is acceptable only because the gateway is local +
+  single-user behind the origin guard.
 - **Permissions & HITL.** Shell/code/file actions are approval-gated through
   `PermissionManager` + the HITL hook; grants persist in `permissions.json`.
 - **Secrets** live in `secrets.json` (0600) and are surfaced to the UI only as
