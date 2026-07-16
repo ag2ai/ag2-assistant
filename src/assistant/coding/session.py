@@ -1,14 +1,17 @@
 """Orchestrate one coding run against a host CLI agent.
 
 Flow: resolve the agent → gate the working directory via the assistant's
-``PermissionManager`` → snapshot the tree → run the coding turn (streaming its
-live events onto the chat via the shared stream) → compute the diff → emit a
-durable CodingSession surface and return a concise summary for the main agent.
+``PermissionManager`` → snapshot the tree → run the coding turn on a private
+stream (its plan updates are forwarded onto the caller's stream and mirrored
+to the live surface) → compute the diff → emit a durable CodingSession surface
+and return a concise summary for the main agent.
 
 The real ACP run is behind the ``runner`` seam so it can be exercised
 deterministically in tests; the default runner drives ``ag2.acp``.
 """
 
+import contextlib
+import os
 from uuid import uuid4
 
 from ag2.acp.events import ACPPlan
@@ -24,14 +27,19 @@ _NO_AGENT = (
 
 
 async def _default_runner(config, task, context, asker=None):
-    """Drive the CLI agent over ACP as a one-shot sub-run on the caller's stream.
+    """Drive the CLI agent over ACP as a one-shot sub-run on a private stream.
 
-    Passing ``stream=context.stream`` surfaces the agent's live ACP events
-    (messages, thoughts, tool calls, plan) onto the chat. ``permission_policy``
-    on the config routes ``session/request_permission`` to ``context.input`` via
-    the hitl hook, so file/command approvals reach the user.
+    The caller's turn holds ag2's per-stream turn lock for the whole tool call
+    (``Agent._execute`` serialises turns on a shared stream), so a nested
+    ``ask`` on ``context.stream`` would deadlock before the adapter even
+    spawns. The coder therefore runs on its own ``MemoryStream``, and the plan
+    updates the chat needs are forwarded onto the caller's stream (where
+    ``run_coding_session``'s watcher picks them up). ``permission_policy`` on
+    the config routes ``session/request_permission`` to the hitl hook, which
+    reaches the user through ``asker`` independently of the stream.
     """
     from ag2 import Agent
+    from ag2.stream import MemoryStream
 
     hitl_hook = None
     if asker is not None:
@@ -39,11 +47,18 @@ async def _default_runner(config, task, context, asker=None):
 
         hitl_hook = build_hitl_hook(asker)
 
+    async def _forward(event):  # positional
+        if isinstance(event, ACPPlan):
+            await context.send(event)
+
     coder = Agent("coding-agent", config=config)
+    coder_stream = MemoryStream()
+    sub = coder_stream.subscribe(_forward)
     try:
-        reply = await coder.ask(task, stream=context.stream, config=config, hitl_hook=hitl_hook)
+        reply = await coder.ask(task, stream=coder_stream, config=config, hitl_hook=hitl_hook)
         return getattr(reply, "body", "") or ""
     finally:
+        coder_stream.unsubscribe(sub)
         await config.aclose()
 
 
@@ -110,6 +125,13 @@ async def run_coding_session(
             f"{info.label} coding agent there. Approve the folder and ask again."
         )
 
+    # The tool contract allows pointing at a folder that doesn't exist yet
+    # ("start a new project in ..."); the adapter needs a real cwd to spawn.
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        return f"Couldn't create the working folder {directory}: {exc}"
+
     sid = surface_id or f"coding-{uuid4().hex[:8]}"
     config = cfgmod.build_config(info, directory, endpoint=endpoint)
     baseline = diff.capture(directory)
@@ -126,18 +148,38 @@ async def run_coding_session(
         )
     )
 
-    # capture the agent's plan updates as they stream on the shared stream
+    # Capture the agent's plan updates (forwarded by the runner) and mirror
+    # them onto the running surface, so the workshop panel shows the plan
+    # streaming in instead of "warming up" for the whole run.
     latest_plan: list[dict] = []
 
     async def _watch(event):  # positional
         if isinstance(event, ACPPlan):
             latest_plan[:] = _plan_from_event(event)
+            await context.send(
+                build_surface(
+                    surface_id=sid,
+                    agent_label=info.label,
+                    directory=directory,
+                    task=task,
+                    status="running",
+                    files=[],
+                    plan=latest_plan,
+                )
+            )
 
     sub = context.stream.subscribe(_watch)
     run = runner or (lambda c, t, ctx: _default_runner(c, t, ctx, asker=asker))
+    # A coding run legitimately outlives the gateway's turn timeout (it is
+    # bounded by its own ACP turn_timeout instead), so hold the asker's
+    # pending-guard: the turn clock pauses exactly like it does for a human
+    # prompt, instead of killing the run mid-flight.
+    guard = getattr(asker, "pending_guard", None)
+    hold = guard() if callable(guard) else contextlib.nullcontext()
     try:
         try:
-            reply = await run(config, task, context)
+            with hold:
+                reply = await run(config, task, context)
         finally:
             context.stream.unsubscribe(sub)
     except Exception as exc:  # noqa: BLE001 — surface any adapter failure, don't crash the turn

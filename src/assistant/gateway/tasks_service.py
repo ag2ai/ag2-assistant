@@ -15,6 +15,7 @@ import asyncio
 from collections.abc import Callable
 
 from assistant.config import Config, load_config
+from assistant.gateway.repair import repair_stream_history
 from assistant.hitl import NullAsker
 from assistant.tasks.scheduling import describe_cron
 
@@ -868,6 +869,9 @@ class TaskService:
         if await self._store.get(task_id) is None:
             return None
         agent, stream = self._control(task_id)
+        # A dropped/timed-out control turn can leave a dangling tool call that
+        # would poison every later turn of this cached stream — heal it first.
+        await repair_stream_history(stream, f"taskctl:{task_id}")
         snapshot = await render_task(self._store, task_id)
         prompt = [_CONTROL_PROMPT, f"Current state of the task you manage:\n{snapshot}"]
         reply = await agent.ask(text, stream=stream, prompt=prompt)

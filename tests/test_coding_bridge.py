@@ -9,10 +9,8 @@ import pytest
 from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
 
-from assistant.coding import bridge_client
-from assistant.coding import bridge_server
+from assistant.coding import bridge_client, bridge_server, detect
 from assistant.coding import config as cfgmod
-from assistant.coding import detect
 from assistant.coding import session as sessmod
 from assistant.coding.bridge_protocol import DEFAULT_PORT, encode_frame, read_frame
 from assistant.events import A2UISurface
@@ -84,7 +82,11 @@ async def test_bridge_endpoint_bare_host_defaults_port(monkeypatch):
 
 
 async def test_pick_first_available_and_named():
-    inv = [_agent("claude"), _agent("codex", "Codex", available=False), _agent("opencode", "OpenCode")]
+    inv = [
+        _agent("claude"),
+        _agent("codex", "Codex", available=False),
+        _agent("opencode", "OpenCode"),
+    ]
     assert detect.pick(inv, "").name == "claude"  # first available
     assert detect.pick(inv, "opencode").name == "opencode"
     assert detect.pick(inv, "codex") is None  # named but unavailable
@@ -96,7 +98,9 @@ async def test_pick_first_available_and_named():
 
 async def test_list_returns_inventory(monkeypatch):
     monkeypatch.setattr(
-        bridge_server.detect, "detect_agents", lambda: [_agent("claude"), _agent("codex", "Codex", available=False)]
+        bridge_server.detect,
+        "detect_agents",
+        lambda: [_agent("claude"), _agent("codex", "Codex", available=False)],
     )
     srv, port = await _start(bridge_server.BridgeServer(""))
     async with srv:
@@ -118,7 +122,9 @@ async def test_list_token_enforced(monkeypatch):
 
 
 async def test_run_relays_stdio(monkeypatch, tmp_path):
-    monkeypatch.setattr(bridge_server.detect, "resolve_agent", lambda name="": _agent(command=_ECHO))
+    monkeypatch.setattr(
+        bridge_server.detect, "resolve_agent", lambda name="": _agent(command=_ECHO)
+    )
     srv, port = await _start(bridge_server.BridgeServer(""))
     async with srv:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
@@ -134,7 +140,9 @@ async def test_run_relays_stdio(monkeypatch, tmp_path):
 
 
 async def test_run_rejects_missing_cwd(monkeypatch):
-    monkeypatch.setattr(bridge_server.detect, "resolve_agent", lambda name="": _agent(command=_ECHO))
+    monkeypatch.setattr(
+        bridge_server.detect, "resolve_agent", lambda name="": _agent(command=_ECHO)
+    )
     srv, port = await _start(bridge_server.BridgeServer(""))
     async with srv:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
@@ -169,7 +177,9 @@ async def test_connector_raises_on_refusal():
 
     srv = await asyncio.start_server(handle, "127.0.0.1", 0)
     port = srv.sockets[0].getsockname()[1]
-    connector = bridge_client.make_connector(detect.BridgeEndpoint("127.0.0.1", port, ""), "claude", "/tmp")
+    connector = bridge_client.make_connector(
+        detect.BridgeEndpoint("127.0.0.1", port, ""), "claude", "/tmp"
+    )
     async with srv:
         with pytest.raises(ConnectionError):
             async with connector(object()):

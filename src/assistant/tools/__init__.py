@@ -45,7 +45,16 @@ _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
 # need so an agent is built with EXACTLY those (privacy, focus, speed); chat
 # (capabilities=None) gets everything.
 CAPABILITIES = (
-    "web", "code", "coding", "files", "images", "skills", "mcp", "gmail", "calendar", "drive"
+    "web",
+    "code",
+    "coding",
+    "files",
+    "images",
+    "skills",
+    "mcp",
+    "gmail",
+    "calendar",
+    "drive",
 )
 
 _GOOGLE_GROUPS = {

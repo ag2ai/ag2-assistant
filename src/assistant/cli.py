@@ -473,9 +473,15 @@ def gateway(
 
 @app.command("acp-bridge")
 def acp_bridge(
-    host: str = typer.Option("127.0.0.1", help="Interface to bind (loopback is reachable from Docker Desktop via host.docker.internal)."),
+    host: str = typer.Option(
+        "127.0.0.1",
+        help="Interface to bind (loopback is reachable from Docker Desktop via host.docker.internal).",
+    ),
     port: int = typer.Option(8801, help="TCP port to listen on."),
-    token: str = typer.Option("", help="Shared secret the container must present. Empty = no token (bind to loopback only)."),
+    token: str = typer.Option(
+        "",
+        help="Shared secret the container must present. Empty = no token (bind to loopback only).",
+    ),
 ) -> None:
     """Run the host ACP bridge: lets a containerized ag2-assistant see and drive
     THIS host's CLI coding agents (Claude Code / Codex / OpenCode).

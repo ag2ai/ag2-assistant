@@ -34,8 +34,7 @@ def _child_env() -> dict:
 def _agents_payload() -> list[dict]:
     """Host inventory, mirroring ``detect_agents`` but only wire-relevant fields."""
     return [
-        {"name": a.name, "label": a.label, "available": a.available}
-        for a in detect.detect_agents()
+        {"name": a.name, "label": a.label, "available": a.available} for a in detect.detect_agents()
     ]
 
 

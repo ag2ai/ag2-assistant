@@ -22,6 +22,7 @@ from urllib.parse import quote
 
 from assistant.agent import create_agent, universal_turn_prompt
 from assistant.config import Config, load_config
+from assistant.gateway.repair import repair_stream_history, wait_reply
 
 REPLY_TIMEOUT = 240.0
 _TRANSCRIPT_PREFIX = "/transcript/"
@@ -244,6 +245,10 @@ class Gateway:
 
         async with self._session_lock(session_id):
             stream = await self._get_stream(session_id)
+            # Heal a history whose last turn died between a tool call and its
+            # result (timeout/crash) — left as is, the dangling call makes the
+            # provider reject every later turn of this session.
+            await repair_stream_history(stream, session_id)
             # Persist a transcript stub the instant we accept the message, so the
             # session shows up in list_sessions() *during* a long agentic turn — not
             # only after it completes. Without this, a chat in flight lives solely in
@@ -286,12 +291,17 @@ class Gateway:
             )
             usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
             a2ui_handle = self._watch_a2ui(stream)
+            hitl_pending = getattr(asker, "has_pending", None)
             try:
                 try:
                     if on_event is None:
-                        reply = await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
+                        reply = await wait_reply(
+                            ask_coro, timeout=REPLY_TIMEOUT, hitl_pending=hitl_pending
+                        )
                     else:
-                        reply = await self._ask_forwarding_events(stream, ask_coro, on_event)
+                        reply = await self._ask_forwarding_events(
+                            stream, ask_coro, on_event, hitl_pending=hitl_pending
+                        )
                 except Exception as exc:
                     # snapshot the error + the exact history shape that triggered it
                     from assistant.observability import capture_failure
@@ -370,7 +380,7 @@ class Gateway:
             except Exception as exc:
                 log_suppressed("a2ui durable surface emit", exc, surface_id=surface.surface_id)
 
-    async def _ask_forwarding_events(self, stream, ask_coro, on_event):
+    async def _ask_forwarding_events(self, stream, ask_coro, on_event, hitl_pending=None):
         """Run a turn, forwarding the agent's structured events raw to `on_event`.
 
         Uses AG2's stream subscription — the same event mechanism observers and the
@@ -395,7 +405,7 @@ class Gateway:
 
         sub_id = stream.subscribe(report)
         try:
-            return await asyncio.wait_for(ask_coro, timeout=REPLY_TIMEOUT)
+            return await wait_reply(ask_coro, timeout=REPLY_TIMEOUT, hitl_pending=hitl_pending)
         finally:
             stream.unsubscribe(sub_id)
 

@@ -445,10 +445,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         try:
             inventory = await bridge_client.list_agents(endpoint)
         except Exception as exc:  # noqa: BLE001 — surface as a disconnected status
-            return {"mode": "bridge", "bridge": target, "connected": False, "error": str(exc), "agents": []}
-        agents = [
-            {"name": a.name, "label": a.label, "available": a.available} for a in inventory
-        ]
+            return {
+                "mode": "bridge",
+                "bridge": target,
+                "connected": False,
+                "error": str(exc),
+                "agents": [],
+            }
+        agents = [{"name": a.name, "label": a.label, "available": a.available} for a in inventory]
         return {"mode": "bridge", "bridge": target, "connected": True, "agents": agents}
 
     @app.get("/api/usage")

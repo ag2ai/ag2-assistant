@@ -1,8 +1,10 @@
 """Coding-run orchestration (assistant.coding.session).
 
-The real ACP run is behind an injectable ``runner`` seam so these tests are fast
-and deterministic (a Python in-process ACP double deadlocks under acp 0.10.1 on
-py3.14; the real adapter is covered by the @integration test).
+Most tests drive ``run_coding_session`` through the injectable ``runner`` seam,
+fast and deterministic. The default runner itself is covered by
+``test_default_runner_survives_held_stream_turn_lock`` via ``fake_acp_config``
+(an in-process scripted agent, no subprocess); the real adapter is covered by
+the @integration test.
 """
 
 import pytest
@@ -124,3 +126,104 @@ async def test_runner_failure_emits_failed_surface(monkeypatch, tmp_path):
     assert surfaces[-1].component["status"] == "failed"
     assert "adapter blew up" in surfaces[-1].component.get("error", "")
     assert "adapter blew up" in out or "failed" in out.lower()
+
+
+async def test_missing_directory_is_created_after_approval(monkeypatch, tmp_path):
+    """The tool contract allows pointing at a not-yet-existing folder ("start a
+    new project in ..."); the adapter needs a real cwd, so the run creates it
+    once the permission gate passes."""
+    _only_claude(monkeypatch)
+    ctx, surfaces = _ctx_with_collector()
+    target = tmp_path / "new-project"
+
+    async def runner(config, task, context):
+        return "ok"
+
+    out = await sessmod.run_coding_session(
+        context=ctx, directory=str(target), task="t", pm=FakePM(), runner=runner
+    )
+    assert target.is_dir()
+    assert surfaces[-1].component["status"] == "done"
+    assert "failed" not in out.lower()
+
+
+async def test_plan_update_streams_onto_running_surface(monkeypatch, tmp_path):
+    """An ACPPlan arriving mid-run re-emits the running surface with the plan,
+    so the workshop panel shows progress instead of 'warming up' forever."""
+    _only_claude(monkeypatch)
+    ctx, surfaces = _ctx_with_collector()
+
+    async def runner(config, task, context):
+        await context.send(ACPPlan([ACPPlanEntry("step one", "in_progress", None)]))
+        return "done"
+
+    await sessmod.run_coding_session(
+        context=ctx, directory=str(tmp_path), task="t", pm=FakePM(), surface_id="cs1", runner=runner
+    )
+    running = [s.component for s in surfaces if s.component["status"] == "running"]
+    assert running[-1]["plan"] == [{"content": "step one", "status": "in_progress"}]
+
+
+async def test_default_runner_survives_held_stream_turn_lock(monkeypatch):
+    """Regression for the 'Warming up the workshop' hang: the caller's turn
+    holds ag2's per-stream turn lock while the coding tool executes, so the
+    nested ask must NOT run on the caller's stream — that deadlocks before the
+    adapter even spawns. The runner uses a private stream and forwards plan
+    updates back to the caller's stream."""
+    import asyncio
+
+    import acp
+    from ag2.acp.testing import ACPTurn, fake_acp_config
+    from ag2.agent import _get_stream_turn_lock
+
+    ctx, _ = _ctx_with_collector()
+    forwarded: list = []
+
+    async def collect_plans(event):
+        if isinstance(event, ACPPlan):
+            forwarded.append(event)
+
+    ctx.stream.subscribe(collect_plans)
+
+    config = fake_acp_config(
+        ACPTurn(
+            updates=[
+                acp.update_plan([acp.plan_entry("write hello", status="in_progress")]),
+                acp.update_agent_message_text("hi from coder"),
+            ]
+        )
+    )
+
+    lock = _get_stream_turn_lock(ctx.stream)
+    async with lock:  # what Agent._execute holds while the tool runs
+        out = await asyncio.wait_for(sessmod._default_runner(config, "do it", ctx), timeout=10)
+
+    assert out == "hi from coder"
+    assert [e.content for p in forwarded for e in p.entries] == ["write hello"]
+
+
+async def test_run_holds_askers_pending_guard(monkeypatch, tmp_path):
+    """The coding run pauses the turn clock (asker.has_pending) while the CLI
+    agent works — a long run must not be killed by the gateway turn timeout
+    (the run is already bounded by its own ACP turn_timeout)."""
+    _only_claude(monkeypatch)
+    ctx, _ = _ctx_with_collector()
+
+    from assistant.hitl.base import PendingGuard
+
+    class _Asker(PendingGuard):
+        async def ask(self, question, timeout=None):
+            return "yes"
+
+    asker = _Asker()
+    seen = {}
+
+    async def runner(config, task, context):
+        seen["during"] = asker.has_pending()
+        return "done"
+
+    await sessmod.run_coding_session(
+        context=ctx, directory=str(tmp_path), task="t", pm=FakePM(), asker=asker, runner=runner
+    )
+    assert seen["during"] is True
+    assert asker.has_pending() is False
