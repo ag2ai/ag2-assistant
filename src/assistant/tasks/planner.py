@@ -64,6 +64,20 @@ Produce a plan:
   itself and are produced LAST by combining the subtasks. Prefer outputs the
   assistant can actually produce with its tools (research, summaries, drafts,
   markdown, code) — not things needing an external app it has no tool for.
+  Keep the set EFFICIENT: combine wherever possible, so every deliverable is a
+  genuinely DISTINCT artifact and the list is only as long as the request really
+  needs. Never restate one output twice in different words, and never split out a
+  deliverable that merely names the format, component, depth or DESTINATION of
+  another. All of these are ONE deliverable each, not two:
+    - "a news briefing" + "a bullet-point briefing on the same news"
+    - "a summary of emails needing a reply" + "an InboxBrief of those messages"
+    - "a repo activity summary" + "that summary saved to the workspace as Markdown"
+  Saving, exporting or filing an output is NOT a second deliverable — it belongs in
+  the criteria of the one deliverable it applies to. A report and a slide deck ARE
+  two, because they are different artifacts. Fold format, component, depth, style
+  and where it gets saved into a deliverable's description and criteria rather than
+  adding another — each extra deliverable makes the assistant redo and re-save the
+  same work.
 - subtasks: break a non-trivial job into a few INDEPENDENT research/work pieces
   that feed the final deliverables; give each its own intermediate `deliverable`
   (e.g. "research notes on X") and criteria. Do NOT create a "compile" or
