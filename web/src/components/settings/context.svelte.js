@@ -23,12 +23,13 @@
 // 5. Page-local state (open FolderPicker, MCP health) resets on page switch because
 //    pages unmount; anything that must survive a switch lives on ctx (drafts).
 
+import { get } from 'svelte/store'
 import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api.js'
 import { closeOverlay } from '../../router.js'
 import {
   voicePickerOpen, voicePickerConfig, googleOpen, codexOpen, memoryOpen,
-  poweredByOpen, onboardingOpen,
+  poweredByOpen, onboardingOpen, profileEpoch,
 } from '../../store.js'
 
 const KEY = Symbol('settings')
@@ -43,14 +44,18 @@ export function createSettingsContext() {
   })
 
   // Fetch the whole Settings payload. Resets `drafts` so a fresh load starts clean
-  // (key rows bind lazily into ctx.drafts[provider]).
+  // (key rows bind lazily into ctx.drafts[provider]). The epoch guard drops a load
+  // that resolves after a profile switch.
   ctx.load = async () => {
+    const epoch = get(profileEpoch)
     try {
-      ctx.s = await api.settings()
+      const s = await api.settings()
+      if (get(profileEpoch) !== epoch) return
+      ctx.s = s
       ctx.drafts = {}
     } catch (e) { ctx.err = String(e.message || e) }
     // google status stays fetched here so Integrations shows it ready when opened.
-    try { ctx.google = await api.googleStatus() } catch {}
+    try { const g = await api.googleStatus(); if (get(profileEpoch) === epoch) ctx.google = g } catch {}
   }
 
   // Run a mutation, then re-fetch the whole payload on success — identical to the

@@ -1,8 +1,10 @@
 <script>
   import { onMount } from 'svelte'
-  import { chats, tasks, profiles } from '../store.js'
+  import { get } from 'svelte/store'
+  import { chats, tasks, profiles, profileEpoch } from '../store.js'
   import { route, go, newChatId, openOverlay } from '../router.js'
   import { api } from '../transport/api.js'
+  import { switchProfile } from '../controller.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
@@ -42,7 +44,8 @@
   const active = $derived(list.find((p) => p.id === $profiles.activeId))
   const initial = (p) => (p?.name || '?').trim().charAt(0).toUpperCase() || '?'
 
-  const switchTo = (pid) => location.assign('/app/' + pid + '/')
+  // In-place switch (no reload → no blink). switchProfile no-ops on the active one.
+  const switchTo = (pid) => switchProfile(pid)
 
   // Chips shown inline vs. collapsed. ≤4 profiles: all inline, no menu. >4: show
   // the first few inline and fold the rest into a "+N" overflow picker (which also
@@ -71,9 +74,14 @@
   const claimedAccents = $derived(list.map((p) => p.accent))
   async function createProfile({ name, accent }) {
     const res = await api.createProfile(name, accent) // throws → inline
-    location.assign('/app/' + res.profile.id + '/')
+    // Add to the live list before switching so switchProfile finds its accent/chip.
+    profiles.update((r) => ({ ...r, list: [...(r.list || []), res.profile] }))
+    switchProfile(res.profile.id)
   }
 
+  // False until the active profile's first refresh lands — the list shows a loader
+  // instead of the "no conversations" empty state. Reset on every profile switch.
+  let loaded = $state(false)
   let usageAll = $state(null) // install-wide roll-up {profiles:[{pid,name,...}], total}
   // The active profile's own totals, derived from the roll-up (one request, not two).
   const usage = $derived((usageAll?.profiles || []).find((p) => p.pid === $profiles.activeId) || null)
@@ -84,13 +92,20 @@
   const hasUnseen = (pid) => (statusById[pid]?.unseen_done || 0) > 0
 
   async function refresh() {
+    // Drop chats/tasks writes if a profile switch lands mid-poll (epoch moved).
+    // usage/status are global (all profiles), so they're never guarded.
+    const epoch = get(profileEpoch)
     try {
       const server = await api.chats()
-      const ids = new Set(server.map((s) => s.chat_id))
-      // keep optimistic, not-yet-persisted chats (just sent, agent still replying)
-      $chats = [...$chats.filter((s) => !ids.has(s.chat_id)), ...server]
+      if (get(profileEpoch) === epoch) {
+        const ids = new Set(server.map((s) => s.chat_id))
+        // keep optimistic, not-yet-persisted chats (just sent, agent still replying)
+        $chats = [...$chats.filter((s) => !ids.has(s.chat_id)), ...server]
+      }
     } catch {}
-    try { $tasks = await api.tasksAll('all') } catch {}
+    try { const all = await api.tasksAll('all'); if (get(profileEpoch) === epoch) $tasks = all } catch {}
+    // First fetch for this profile has settled — clears the drawer's loading state.
+    if (get(profileEpoch) === epoch) loaded = true
     // One global roll-up serves both the active profile's line and the install-wide
     // "all" total; the per-profile /usage route stays for API users.
     try { usageAll = await api.usageAll() } catch {}
@@ -146,6 +161,18 @@
       document.removeEventListener('pointerdown', onDocPointer, true)
       document.removeEventListener('keydown', onDocKey)
     }
+  })
+
+  // An in-place profile switch bumps profileEpoch without remounting the drawer, so
+  // refetch now (not on the next 5s tick) and show the loader until it lands.
+  let lastEpoch = -1
+  $effect(() => {
+    const e = $profileEpoch
+    if (lastEpoch === -1) { lastEpoch = e; return }  // initial load is onMount's job
+    if (e === lastEpoch) return
+    lastEpoch = e
+    loaded = false
+    refresh()
   })
 
   // Chats grouped under date section headers by last-message time. `updated` is
@@ -437,7 +464,7 @@
   <div class="dlist" onscroll={() => (menuChat = '')}>
     {#if $route.tab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
-      {#if !$chats.length}<div class="none">No conversations yet.</div>{/if}
+      {#if !$chats.length}<div class="none">{loaded ? 'No conversations yet.' : 'Loading…'}</div>{/if}
       {#if starredChats.length}
         <div class="datesep">Starred</div>
         {#each starredChats as s (s.chat_id)}{@render chatRow(s)}{/each}
@@ -447,7 +474,7 @@
         {@render chatRow(s)}
       {/each}
     {:else}
-      {#if !groups.length}<div class="none">No tasks yet.</div>{/if}
+      {#if !groups.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
       {#each groups as g (g.task.id)}
         {@const nextIn = g.task.status === 'scheduled' ? fmtNextIn(g.task.scheduled_for) : ''}
         {@const openId = $route.name === 'task' ? $route.id : null}

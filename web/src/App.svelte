@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
-  import { openThread, closeThread } from './controller.js'
+  import { openThread, closeThread, switchProfile } from './controller.js'
   import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
@@ -136,7 +136,7 @@
     const target = list[Number(e.key) - 1]
     if (!target) return
     e.preventDefault()
-    if (target.id !== $profiles.activeId) location.assign('/app/' + target.id + '/')
+    switchProfile(target.id)   // in-place (no reload); no-ops on the active one
   }
   onMount(() => {
     window.addEventListener('keydown', onProfileShortcut)

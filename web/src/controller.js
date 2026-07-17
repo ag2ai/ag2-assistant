@@ -2,11 +2,14 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, taskPanel, chats, inspectorEvents } from './store.js'
+import { thread, taskPanel, chats, tasks, inquiries, inspectorEvents, profiles, profileEpoch } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
 import { foldEvent, isBusy, queueMessage } from './project.js'
+import { getActiveProfileId, setActiveProfileId } from './lib/profile.js'
+import { setAccent } from './design/palette.js'
+import { go } from './router.js'
 
 let client = null
 let panelTimer = null
@@ -134,6 +137,39 @@ export function closeThread() {
   if (panelTimer) { clearInterval(panelTimer); panelTimer = null }
 }
 
+// Empty every profile-scoped store and bump profileEpoch, so a new profile starts
+// clean without a page reload. Any store keyed to the active profile MUST be reset
+// here; install-wide stores (llmConfigs, foldersStore, permissions) are left alone.
+function resetProfileState() {
+  closeThread()                                        // WS + panel timer + voice
+  thread.set({ id: null, kind: 'chat', items: [], busy: false })
+  chats.set([])
+  tasks.set([])
+  taskPanel.set(null)
+  inquiries.set([])
+  inspectorEvents.set([])
+  profileEpoch.update((n) => n + 1)
+}
+
+// Switch the active profile in place (no reload → the Settings modal doesn't blink).
+// Adopt the pid + accent before the route change so the new chat's WebSocket scopes
+// to it; go('/') lands on the profile's home and preserves the hash. On any failure
+// fall back to a full-page nav.
+export function switchProfile(pid) {
+  if (!pid || pid === getActiveProfileId()) return
+  try {
+    resetProfileState()
+    setActiveProfileId(pid)
+    const p = (get(profiles).list || []).find((x) => x.id === pid)
+    if (p?.accent) setAccent(p.accent)
+    profiles.update((r) => ({ ...r, activeId: pid }))
+    go('/', pid)
+  } catch (e) {
+    console.warn('[profile] in-place switch failed; falling back to reload', e)
+    location.assign('/app/' + pid + '/' + location.hash)
+  }
+}
+
 // ---- voice: frames render into the SAME thread (transcripts as bubbles, tool
 // chips, task cards). While active we suppress stream folding so the agent's
 // delegated work (which also lands on this chat's stream) isn't double-shown. ----
@@ -202,8 +238,10 @@ const _TERMINAL_TASK = new Set(['completed', 'failed', 'cancelled'])
 let _markedSeen = false   // per-viewed-task latch: mark seen once, only after it finishes
 
 async function loadPanel(id) {
+  const epoch = get(profileEpoch)   // drop a poll that resolves after a profile switch
   let panel
   try { panel = await api.task(id) } catch { return /* keep last panel on error */ }
+  if (get(profileEpoch) !== epoch) return
   taskPanel.set(panel)
   // Clear the unread indicator once the task is finished — whether it was already
   // done when opened or completed while the user watched. Peeking at a still-running

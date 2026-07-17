@@ -2,8 +2,7 @@
   // Settings — thin shell. Owns the modal chrome, the sidebar nav, and the page
   // switch; all section markup lives in the six settings/*Page.svelte components,
   // which share one reactive $state context (settings/context.svelte.js).
-  import { onMount } from 'svelte'
-  import { profiles, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.js'
+  import { profiles, profileEpoch, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.js'
   import { route, replaceOverlay } from '../router.js'
   import { getActiveProfileId } from '../lib/profile.js'
   import { createSettingsContext } from './settings/context.svelte.js'
@@ -46,7 +45,9 @@ import FoldersPage from './settings/FoldersPage.svelte'
     return ($profiles.list || []).find((p) => p.id === id)?.name || ''
   })
 
-  onMount(ctx.load)
+  // Load on mount, and reload on each in-place profile switch (profileEpoch bumps)
+  // so the open modal shows the new profile's settings, not the previous one's.
+  $effect(() => { $profileEpoch; ctx.load() })
 
   // Esc closes Settings — symmetric with the × button and browser Back (all funnel
   // through ctx.close → closeOverlay, stripping the hash). Guarded so Esc dismisses a

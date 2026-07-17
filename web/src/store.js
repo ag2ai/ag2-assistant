@@ -13,6 +13,11 @@ export { settingsOpen } from './router.js'
 // switcher chips + activity badges on top of this.
 export const profiles = writable({ list: [], activeId: null })
 
+// Bumped once per in-place profile switch (controller.switchProfile). A
+// profile-scoped async write guards on it to drop stale results; the open Settings
+// modal watches it to reload the new profile's payload in place.
+export const profileEpoch = writable(0)
+
 // The active thread: a projection of one AG2 stream. `items` are folded from
 // `{type,data}` events (see project.js). `kind` is 'chat' or 'task'.
 export const thread = writable({ id: null, kind: 'chat', items: [], busy: false })

@@ -12,7 +12,8 @@
   import { onDestroy } from 'svelte'
   import { profiles } from '../store.js'
   import { api } from '../transport/api.js'
-  import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
+  import { switchProfile, closeThread } from '../controller.js'
+  import { getActiveProfileId } from '../lib/profile.js'
   import { PALETTES, setAccent, getAccent } from '../design/palette.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
@@ -112,15 +113,10 @@
   // Closing Settings (unmount) mid-edit counts as "not saved" → revert the preview.
   onDestroy(() => { if (editing) rollbackAccent() })
 
-  // Switch the active profile (§5.4): a full-page nav to /app/{pid}/, the same
-  // mechanism as the Drawer chips and ⌘1..9 shortcuts. App.svelte's boot adopts
-  // the URL pid, persists it, and applies its palette. No-op on the active one.
-  // Switching reloads the SPA (which would close Settings), so we carry the current
-  // hash (`#settings=<section>`) onto the target URL — boot preserves it and Settings
-  // reopens on the same Section for the new profile. No sessionStorage flag needed.
+  // Switch the active profile (§5.4) in place, like the Drawer chips and ⌘1..9.
+  // No-ops on the active one (handled in switchProfile).
   function switchTo(p) {
-    if (p.id === activeId) return
-    location.assign('/app/' + p.id + '/' + location.hash)
+    switchProfile(p.id)
   }
 
   async function refetch() {
@@ -179,14 +175,16 @@
     busy = true; err = ''
     const { pid, isActive } = confirmArchive
     try {
+      // Archiving the ACTIVE profile: close our stream first so the server-side
+      // archive (a 4001 socket close) can't trip onProfileGone's recovery reload.
+      if (isActive) closeThread()
       await api.archiveProfile(pid, replacement || undefined)
       if (isActive) {
-        // The active profile is gone — the SPA must reload so boot re-resolves to a
-        // valid one (§5.4). Carry the current hash (like switchTo) so Settings comes
-        // back on the same Section instead of closing under the user; boot's
-        // canonicalisation preserves it as it resolves the replacement profile.
-        setActiveProfileId(null)
-        location.assign('/app/' + location.hash)
+        // Switch in place to the replacement, then refetch to drop the archived one.
+        // No valid replacement (shouldn't happen — Archive is hidden at 1 profile):
+        // reboot rather than strand the app on the dead profile.
+        if (replacement) { switchProfile(replacement); await refetch(); confirmArchive = null }
+        else location.assign('/app/' + location.hash)
         return
       }
       confirmArchive = null

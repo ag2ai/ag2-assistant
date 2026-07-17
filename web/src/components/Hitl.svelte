@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { inquiries, soundOnInput } from '../store.js'
+  import { get } from 'svelte/store'
+  import { inquiries, soundOnInput, profileEpoch } from '../store.js'
   import { api } from '../transport/api.js'
   import { go, route } from '../router.js'
   import { chime } from '../lib/chime.js'
@@ -29,6 +30,7 @@
   )
 
   async function refresh() {
+    const epoch = get(profileEpoch)   // drop a poll that resolves after a profile switch
     try {
       // Two sources merged into one strip: durable task inquiries, and chat-turn
       // permission prompts (run_code/shell/file) which live in the HitlServer.
@@ -36,6 +38,7 @@
         api.inquiries().catch(() => []),
         api.hitlPending().catch(() => []),
       ])
+      if (get(profileEpoch) !== epoch) return   // switched mid-flight — this is the old profile's data
       const next = [
         ...inq.map((q) => ({ ...q, _src: 'inquiry', _key: 'inq:' + q.id })),
         ...hitl.map((q) => ({ ...q, _src: 'hitl', _key: 'hitl:' + q.id })),
