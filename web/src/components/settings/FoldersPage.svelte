@@ -87,13 +87,6 @@
           <AccessSwitch mode={g?.mode} disabled={busy} onchange={(m) => setMode(f, p.id, m)} />
         </div>
       {/each}
-      {#each (f.grants || []).filter((g) => g.chat_id) as g}
-        <div class="grantrow chatgrant">
-          <span class="gname">chat {g.chat_id}</span>
-          <span class="gmode">{g.mode === 'read_write' ? 'read + write' : 'read'}</span>
-          <button class="linkbtn danger" disabled={busy} onclick={() => run(() => api.revokeGrant(f.id, g.profile, g.chat_id))}>Revoke</button>
-        </div>
-      {/each}
     </div>
   </div>
 {/each}
@@ -118,8 +111,6 @@
   .grants { display: flex; flex-direction: column; gap: 4px; }
   .grantrow { display: flex; align-items: center; gap: 10px; }
   .gname { flex: none; min-width: 90px; font-size: 12px; color: var(--text); }
-  .gmode { font-size: 12px; color: var(--text-muted); }
-  .chatgrant .gname { color: var(--text-muted); font-family: var(--font-mono); }
   .permadd { align-self: flex-start; }
   .permempty { font-size: 13px; margin: 0; }
   .permhint { font-size: 12px; margin: 2px 0 8px; }
