@@ -587,6 +587,18 @@ def create_agent(
         plugins.append(build_skills_plugin(config, skills_runtime))
         tools.extend(build_skills_install_tools(config, skills_runtime))
 
+    # Self-knowledge: read-only tools reporting this agent's own live state (folder
+    # access for this persona+chat, what's connected, active model). The bundled
+    # `self-knowledge` skill is the static map; these answer the live half. Wired
+    # here rather than in build_system_tools so every surface gets them.
+    # Chat only, like ask_user: a scoped task subagent answers to the task, not to
+    # questions about the product.
+    if capabilities is None:
+        from assistant.self_tools import build_self_tools
+        from assistant.settings import profile_settings
+
+        tools.extend(build_self_tools(config, profile_settings(config.data_dir)))
+
     # system tools (retrieval + actions over tasks/chats/questions) — these make
     # the agent "universal": it can know and do everything via tools (create/
     # schedule included; the chat agent no longer needs a separate start_task tool).
