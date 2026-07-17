@@ -3,10 +3,16 @@
 A FOLDER is an install-wide, named registry entry for one directory outside the
 Root — a name and a path, unique by resolved path. A GRANT links one profile or
 one chat to a Folder with a mode: ``read`` or ``read_write`` (write implies
-read; write-only is unrepresentable). Pure allowlist — no Folder (or no Grant to
-it) means no access; there is no block concept. Effective access is the union of
-the profile's Grants and the current chat's Grants; the most permissive covering
-Grant wins, so Grants only ever widen.
+read; write-only is unrepresentable), plus ``none`` — a chat-only mode that
+blocks a profile-granted Folder for that one chat. No Folder (or no covering
+Grant) still means no access.
+
+Resolution (ADR 0006, amended): a chat-scoped Grant OVERRIDES the profile-scope
+Grant on the same Folder for that chat — it may widen it (``read`` →
+``read_write``), narrow it (``read_write`` → ``read``), or block it entirely
+(``none``), affecting only that chat and never the install-wide profile Grant.
+With no chat override the profile Grant stands. Across nested Folders that all
+cover a path, the most permissive surviving Grant wins.
 
 One install-wide JSON document (``root_dir/folders.json``) with the same
 concurrency machinery as the permission store: mtime self-refresh (a long-lived
@@ -27,6 +33,7 @@ from assistant.permissions import _lock_exclusive, _norm, _unlock
 
 READ = "read"
 READ_WRITE = "read_write"
+NONE = "none"  # chat-scope only: block a profile-granted Folder for this chat
 MODES = (READ, READ_WRITE)
 
 
@@ -209,13 +216,17 @@ class FolderStore:
 
     def set_grant(self, fid: str, mode: str, *, profile: str, chat_id: str = "") -> dict:
         """Upsert the Grant (folder, profile, chat) → mode. An empty chat_id is a
-        profile-scope Grant. KeyError unknown folder; ValueError bad mode/profile."""
-        if mode not in MODES:
-            raise ValueError(f"mode must be one of {', '.join(MODES)}")
+        profile-scope Grant. ``none`` is a chat-only mode (blocks a profile-granted
+        Folder for this chat). KeyError unknown folder; ValueError bad mode/profile."""
         profile = (profile or "").strip()
+        chat_id = (chat_id or "").strip()
+        if mode == NONE:
+            if not chat_id:
+                raise ValueError("mode 'none' is only valid for a chat-scoped grant")
+        elif mode not in MODES:
+            raise ValueError(f"mode must be one of {', '.join(MODES)}")
         if not profile:
             raise ValueError("profile is required")
-        chat_id = (chat_id or "").strip()
         with self._mutate():
             entry = self._find(fid)
             if entry is None:
@@ -264,28 +275,36 @@ class FolderStore:
 
     def mode_for(self, folder, profile: str, chat_id: str = "") -> str | None:
         """The effective mode for ``folder`` in ``profile`` (and optionally one
-        chat): ``read_write`` | ``read`` | None. Union semantics — profile-scope
-        Grants plus the given chat's Grants all apply; a Grant covers its folder
-        and every subpath; the most permissive covering Grant wins (ADR 0006)."""
+        chat): ``read_write`` | ``read`` | None. Per Folder, a chat-scoped Grant
+        OVERRIDES the profile-scope Grant for that chat — widening, narrowing, or
+        (``none``) blocking it; with no override the profile Grant stands. A Grant
+        covers its folder and every subpath; across covering Folders the most
+        permissive surviving Grant wins (ADR 0006, amended)."""
         self._refresh()
         f = _norm(folder)
         profile = (profile or "").strip()
         chat_id = (chat_id or "").strip()
-        by_id = {x.get("id"): x for x in self._folders}
+        rank = {READ: 1, READ_WRITE: 2}
         best: str | None = None
-        for g in self._grants:
-            if g.get("profile") != profile:
-                continue
-            g_chat = g.get("chat_id", "")
-            if g_chat and g_chat != chat_id:
-                continue
-            entry = by_id.get(g.get("folder_id"))
-            if entry is None:
-                continue
+        for entry in self._folders:
             gp = Path(entry.get("path", ""))
             if f != gp and gp not in f.parents:
                 continue
-            if g.get("mode") == READ_WRITE:
+            fid = entry.get("id")
+            chat_mode = prof_mode = None
+            for g in self._grants:
+                if g.get("profile") != profile or g.get("folder_id") != fid:
+                    continue
+                g_chat = g.get("chat_id", "")
+                if chat_id and g_chat == chat_id:
+                    chat_mode = g.get("mode")
+                elif not g_chat:
+                    prof_mode = g.get("mode")
+            eff = chat_mode if chat_mode is not None else prof_mode
+            if eff is None or eff == NONE:
+                continue
+            if eff == READ_WRITE:
                 return READ_WRITE
-            best = READ
+            if rank.get(eff, 0) > rank.get(best, 0):
+                best = eff
         return best

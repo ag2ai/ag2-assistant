@@ -48,6 +48,7 @@ import FoldersPage from './settings/FoldersPage.svelte'
 
 <div class="modal-backdrop" onclick={ctx.close}></div>
 <div class="modal settings">
+  <button class="modal-x" aria-label="Close" onclick={ctx.close}>×</button>
   <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>
   {#if ctx.err}<p class="muted" style="color:#d8552f">{ctx.err}</p>{/if}
 
@@ -65,6 +66,4 @@ import FoldersPage from './settings/FoldersPage.svelte'
       </div>
     </div>
   {/if}
-
-  <button class="modal-close" onclick={ctx.close}>Close</button>
 </div>

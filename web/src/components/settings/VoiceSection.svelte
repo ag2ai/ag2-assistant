@@ -107,14 +107,14 @@
         {/if}
       </div>
     </div>
+    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
     <button
       class="open" disabled={busy || tests[c.id]?.testing || !!editing}
       onclick={(e) => { e.stopPropagation(); test(c) }}
     >Test</button>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
     <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
     <button
-      class="linkbtn" disabled={busy || !!editing}
+      class="linkbtn danger" disabled={busy || !!editing}
       title={c.active ? 'Deleting the active live model falls back to the next one (or legacy)' : ''}
       onclick={(e) => { e.stopPropagation(); remove(c) }}
     >Delete</button>

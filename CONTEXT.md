@@ -109,11 +109,14 @@ directory, workspace
 
 **Grant**:
 The link from one Profile or one Chat to a Folder, carrying a mode — `read` or
-`read+write` (write implies read; write-only is unrepresentable). Effective access
-in a chat is the union of its profile's Grants and its own; the most permissive
-covering Grant wins, so Grants only ever widen and nothing subtracts. Created by
-the user — via settings or by approving the agent's runtime request (which
-auto-creates the Folder, auto-named and renameable) — never by the agent itself.
+`read+write` (write implies read; write-only is unrepresentable), plus a chat-only
+`none` that blocks a profile-granted Folder for one chat. Profile Grants are a
+monotone allowlist. A chat Grant _overrides_ the profile Grant on the same Folder
+for that chat only — widening, narrowing, or blocking it, never touching the
+profile Grant or other chats (ADR 0006 amendment); with no chat override the
+profile Grant stands, and the most permissive surviving covering Grant wins.
+Created by the user — via settings or by approving the agent's runtime request
+(which auto-creates the Folder, auto-named and renameable) — never by the agent itself.
 "Allow once" approves a single turn's access without creating a Folder or a Grant.
 _Avoid_: permission (that is the commands policy), reference (a Secret's concept),
 access rule

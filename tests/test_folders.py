@@ -2,7 +2,7 @@
 
 import pytest
 
-from assistant.folders import READ, READ_WRITE, DuplicatePath, FolderStore
+from assistant.folders import NONE, READ, READ_WRITE, DuplicatePath, FolderStore
 
 
 def _store(tmp_path):
@@ -147,6 +147,64 @@ def test_mode_for_chat_grants_union_with_profile(tmp_path):
     assert store.mode_for(b, "work", chat_id="c2") is None
     # with no chat context: only profile grants apply
     assert store.mode_for(b, "work") is None
+
+
+def test_chat_grant_overrides_profile_mode_for_that_chat(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "acme"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ_WRITE, profile="work")             # profile: read+write
+    store.set_grant(f["id"], READ, profile="work", chat_id="c1")     # this chat: narrowed to read
+    assert store.mode_for(d, "work", chat_id="c1") == READ           # chat override wins (narrows)
+    assert store.mode_for(d, "work", chat_id="c2") == READ_WRITE     # other chats untouched
+    assert store.mode_for(d, "work") == READ_WRITE                   # profile grant unchanged
+
+
+def test_chat_none_blocks_profile_folder_for_that_chat_only(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "acme"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work")                   # profile-wide read
+    store.set_grant(f["id"], NONE, profile="work", chat_id="c1")     # blocked in c1
+    assert store.mode_for(d, "work", chat_id="c1") is None           # this chat: no access
+    assert store.mode_for(d, "work", chat_id="c2") == READ           # other chats keep it
+    assert store.mode_for(d, "work") == READ                         # profile grant intact
+
+
+def test_chat_grant_can_widen_profile_mode(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "acme"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work")
+    store.set_grant(f["id"], READ_WRITE, profile="work", chat_id="c1")
+    assert store.mode_for(d, "work", chat_id="c1") == READ_WRITE
+    assert store.mode_for(d, "work", chat_id="c2") == READ
+
+
+def test_none_block_on_parent_spares_independent_child_grant(tmp_path):
+    store = _store(tmp_path)
+    repos = tmp_path / "repos"
+    acme = repos / "acme"
+    acme.mkdir(parents=True)
+    f_repos = store.create_folder(str(repos))
+    f_acme = store.create_folder(str(acme))
+    store.set_grant(f_repos["id"], READ, profile="work")
+    store.set_grant(f_acme["id"], READ, profile="work")
+    store.set_grant(f_repos["id"], NONE, profile="work", chat_id="c1")  # block only the parent folder
+    assert store.mode_for(repos / "other", "work", chat_id="c1") is None  # covered only by blocked parent
+    assert store.mode_for(acme, "work", chat_id="c1") == READ             # child grant survives
+
+
+def test_none_mode_rejected_at_profile_scope(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "acme"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    with pytest.raises(ValueError):
+        store.set_grant(f["id"], NONE, profile="work")  # no chat_id: meaningless block
 
 
 def test_grant_path_finds_or_creates_by_path(tmp_path):

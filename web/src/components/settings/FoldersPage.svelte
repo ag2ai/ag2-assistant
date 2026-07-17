@@ -3,18 +3,21 @@
   // ADR 0006). A Folder is a name + a path, unique by path — the only way disk
   // outside the Root becomes reachable. Profiles hold Grants (read / read+write);
   // chat-scoped Grants are managed from the chat's kebab menu, not here.
-  // Self-contained like PermissionsManager: every mutator replaces `folders`
-  // wholesale from the endpoint's full-snapshot response.
+  // Shares ONE Folder snapshot (lib/folders.js) with the ChatFolders modal and
+  // the composer chip strip, so a Folder added/removed or a grant flipped here
+  // reaches those surfaces live. Every mutator replaces the store wholesale from
+  // the endpoint's full-snapshot response.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
   import { getSettings } from './context.svelte.js'
   import { profiles } from '../../store.js'
+  import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.js'
   import Icon from '../Icon.svelte'
   import FolderPicker from '../FolderPicker.svelte'
+  import AccessSwitch from '../AccessSwitch.svelte'
 
   const ctx = getSettings()
 
-  let folders = $state([])
   let busy = $state(false)
   let err = $state('')
   let adding = $state(false)
@@ -22,14 +25,12 @@
   let renameText = $state('')
 
   const plist = $derived($profiles.list || [])
+  const folders = $derived($foldersStore.folders)
 
-  const apply = (r) => { folders = r.folders || [] }
-  onMount(async () => {
-    try { apply(await api.folders()) } catch (e) { err = String(e.message || e) }
-  })
+  onMount(() => { if (!$foldersStore.loaded) loadFolders() })
   async function run(fn) {
     err = ''; busy = true
-    try { apply(await fn()) } catch (e) { err = String(e.message || e) }
+    try { applyFolders(await fn()) } catch (e) { err = String(e.message || e) }
     busy = false
   }
 
@@ -83,11 +84,7 @@
         {@const g = grantOf(f, p.id)}
         <div class="grantrow">
           <span class="gname">{p.name}</span>
-          <span class="focuspills">
-            <button class="focuspill" class:on={!g} disabled={busy} onclick={() => setMode(f, p.id, null)}>Off</button>
-            <button class="focuspill" class:on={g?.mode === 'read'} disabled={busy} onclick={() => setMode(f, p.id, 'read')}>Read</button>
-            <button class="focuspill" class:on={g?.mode === 'read_write'} disabled={busy} onclick={() => setMode(f, p.id, 'read_write')}>Read + write</button>
-          </span>
+          <AccessSwitch mode={g?.mode} disabled={busy} onchange={(m) => setMode(f, p.id, m)} />
         </div>
       {/each}
       {#each (f.grants || []).filter((g) => g.chat_id) as g}

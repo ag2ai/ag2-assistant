@@ -495,7 +495,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
    (centered) message column is unaffected. */
 .composer { position: absolute; left: 16px; right: 16px; bottom: 0; padding: 28px 20px 16px; background: linear-gradient(to bottom, transparent, var(--bg) 42%); pointer-events: none; }
 .composer > * { pointer-events: auto; }
-.cnote { max-width: var(--thread-max); margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
+.cnote { max-width: calc(var(--thread-max) - 40px); margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
 /* Scroll-to-latest — floats above the composer, centered, only when unpinned. */
 .scrolldown { position: absolute; left: 50%; transform: translateX(-50%); bottom: 148px; z-index: 5; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; cursor: pointer; box-shadow: var(--shadow-lg); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .scrolldown:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
@@ -504,7 +504,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* The composer input is one of the most prominent elements on the page: its own
    elevated surface, a stronger hairline, real height, and a soft resting shadow.
    Focus swaps the hairline for the accent ring. */
-.inputbox { max-width: var(--thread-max); margin: 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-elevated); box-shadow: var(--shadow-md); padding: 10px 10px 10px 16px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.inputbox { max-width: calc(var(--thread-max) - 40px); margin: 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-elevated); box-shadow: var(--shadow-md); padding: 10px 10px 10px 16px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
 .inputbox:focus-within { border-color: var(--accent-border); box-shadow: var(--focus-ring), var(--shadow-md); }
 .cinput { display: block; width: 100%; resize: none; border: none; background: none; color: var(--ink); font: inherit; font-size: var(--text-md); padding: 8px 4px 6px; max-height: 200px; }
 .cinput:focus { outline: none; }
@@ -611,6 +611,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 
 .modal-close { display: inline-flex; align-items: center; gap: 6px; align-self: flex-end; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 14px; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .modal-close:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
+/* Quiet close × in a modal's top-right corner (modals are position:fixed, so it
+   anchors to the corner). An alternative to the bottom .modal-close button. */
+.modal-x { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 8px; background: none; color: var(--text-muted); font-size: 22px; line-height: 1; cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.modal-x:hover { color: var(--ink); background: var(--code); }
 
 .viewer { width: min(820px, 92vw); height: min(84vh, 900px); padding: 0; gap: 0; overflow: hidden; }
 .viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
