@@ -3,7 +3,8 @@
   // switch; all section markup lives in the six settings/*Page.svelte components,
   // which share one reactive $state context (settings/context.svelte.js).
   import { onMount } from 'svelte'
-  import { settingsPage, profiles, SETTINGS_PAGE } from '../store.js'
+  import { profiles, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.js'
+  import { route, replaceOverlay } from '../router.js'
   import { getActiveProfileId } from '../lib/profile.js'
   import { createSettingsContext } from './settings/context.svelte.js'
   import GeneralPage from './settings/GeneralPage.svelte'
@@ -29,9 +30,11 @@ import FoldersPage from './settings/FoldersPage.svelte'
   // Must run synchronously at init — setContext requires it (see context header).
   const ctx = createSettingsContext()
 
-  // Seed the page from the deep-link store; validate against PAGES, fallback General.
-  let page = $state(PAGES.some((p) => p.id === $settingsPage) ? $settingsPage : SETTINGS_PAGE.GENERAL)
-  function go(id) { page = id; settingsPage.set(id) }
+  // The active Section is DERIVED from the route (the URL hash is the single source
+  // of truth); validate against PAGES, fallback General. A Section click REPLACEs the
+  // hash (no per-click history spam) → route updates → this re-derives.
+  const page = $derived(PAGES.some((p) => p.id === $route.overlayValue) ? $route.overlayValue : SETTINGS_PAGE.GENERAL)
+  function select(id) { replaceOverlay('settings', id) }
 
   // Svelte 5 renders a capitalized component-valued variable directly as <Active />.
   const Active = $derived((PAGES.find((p) => p.id === page) || PAGES[0]).comp)
@@ -44,8 +47,17 @@ import FoldersPage from './settings/FoldersPage.svelte'
   })
 
   onMount(ctx.load)
+
+  // Esc closes Settings — symmetric with the × button and browser Back (all funnel
+  // through ctx.close → closeOverlay, stripping the hash). Guarded so Esc dismisses a
+  // child modal stacked OVER Settings (the voice picker / Codex sign-in) first, not
+  // the Settings shell underneath it.
+  function onKey(e) {
+    if (e.key === 'Escape' && !$voicePickerOpen && !$codexOpen) ctx.close()
+  }
 </script>
 
+<svelte:window onkeydown={onKey} />
 <div class="modal-backdrop" onclick={ctx.close}></div>
 <div class="modal settings">
   <button class="modal-x" aria-label="Close" onclick={ctx.close}>×</button>
@@ -58,7 +70,7 @@ import FoldersPage from './settings/FoldersPage.svelte'
     <div class="setbody">
       <nav class="setnav">
         {#each PAGES as p}
-          <button class="setnavbtn" class:on={page === p.id} onclick={() => go(p.id)}>{p.label}</button>
+          <button class="setnavbtn" class:on={page === p.id} onclick={() => select(p.id)}>{p.label}</button>
         {/each}
       </nav>
       <div class="setscroll">

@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { chats, tasks, drawerTab, settingsOpen, profiles } from '../store.js'
-  import { route, go, newChatId } from '../router.js'
+  import { chats, tasks, profiles } from '../store.js'
+  import { route, go, newChatId, openOverlay } from '../router.js'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
@@ -381,9 +381,9 @@
   {/if}
 
   <div class="segbar" role="tablist" aria-label="View">
-    <button class="seg" class:on={$drawerTab === 'chats'} role="tab" aria-selected={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={14} /> Chats</button>
-    <button class="seg" class:on={$drawerTab === 'tasks'} role="tab" aria-selected={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={14} /> Tasks</button>
-    <button class="seg" class:on={$drawerTab === 'files'} role="tab" aria-selected={$drawerTab === 'files'} onclick={() => ($drawerTab = 'files')}><Icon name="folder" size={14} /> Files</button>
+    <button class="seg" class:on={$route.tab === 'chats'} role="tab" aria-selected={$route.tab === 'chats'} onclick={() => go('/chats')}><Icon name="message" size={14} /> Chats</button>
+    <button class="seg" class:on={$route.tab === 'tasks'} role="tab" aria-selected={$route.tab === 'tasks'} onclick={() => go('/tasks')}><Icon name="list" size={14} /> Tasks</button>
+    <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => go('/files')}><Icon name="folder" size={14} /> Files</button>
   </div>
 
   {#snippet chatRow(s)}
@@ -431,11 +431,11 @@
     </div>
   {/snippet}
 
-  {#if $drawerTab === 'files'}
+  {#if $route.tab === 'files'}
     <FilesTree />
   {:else}
   <div class="dlist" onscroll={() => (menuChat = '')}>
-    {#if $drawerTab === 'chats'}
+    {#if $route.tab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
       {#if !$chats.length}<div class="none">No conversations yet.</div>{/if}
       {#if starredChats.length}
@@ -485,7 +485,7 @@
     </div>
   {/if}
   <div class="dfoot">
-    <button class="settingsbtn" onclick={() => ($settingsOpen = true)}><Icon name="settings" size={15} /> Settings</button>
+    <button class="settingsbtn" onclick={() => openOverlay('settings', 'general')}><Icon name="settings" size={15} /> Settings</button>
   </div>
 </div>
 

@@ -25,8 +25,9 @@
 
 import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api.js'
+import { closeOverlay } from '../../router.js'
 import {
-  settingsOpen, voicePickerOpen, voicePickerConfig, googleOpen, codexOpen, memoryOpen,
+  voicePickerOpen, voicePickerConfig, googleOpen, codexOpen, memoryOpen,
   poweredByOpen, onboardingOpen,
 } from '../../store.js'
 
@@ -62,20 +63,22 @@ export function createSettingsContext() {
 
   // Cross-modal openers — each closes Settings then opens the target modal,
   // exactly the old Settings.svelte behaviour (close settings store, open target).
-  ctx.close = () => settingsOpen.set(false)
+  // Close Settings by stripping the hash — the URL is the source of truth; Back,
+  // Esc, and × all funnel through here. Returns to the exact Page underneath.
+  ctx.close = () => closeOverlay()
   // "Change voice" for a named live config: stack the picker OVER Settings (like
   // openCodex) scoped to that config, so closing it returns to the Live list with the
   // config's new voice — Settings is never torn down and the list stays put.
   ctx.openVoice = (configId = null) => { voicePickerConfig.set(configId); voicePickerOpen.set(true) }
-  ctx.openGoogle = () => { settingsOpen.set(false); googleOpen.set(true) }
+  ctx.openGoogle = () => { closeOverlay(); googleOpen.set(true) }
   // Codex is the ONE opener that does NOT close Settings: it's launched from the
   // half-filled LLM config form, and unmounting Settings would throw that draft
   // away. It stacks over Settings (.modal.over) and closing it reveals the form
   // again, with its signed-in state refreshed.
   ctx.openCodex = () => codexOpen.set(true)
-  ctx.openMemory = () => { settingsOpen.set(false); memoryOpen.set(true) }
-  ctx.openPoweredBy = () => { settingsOpen.set(false); poweredByOpen.set(true) }
-  ctx.reRunSetup = () => { settingsOpen.set(false); onboardingOpen.set(true) }
+  ctx.openMemory = () => { closeOverlay(); memoryOpen.set(true) }
+  ctx.openPoweredBy = () => { closeOverlay(); poweredByOpen.set(true) }
+  ctx.reRunSetup = () => { closeOverlay(); onboardingOpen.set(true) }
 
   setContext(KEY, ctx)
   return ctx

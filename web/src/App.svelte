@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, settingsPage, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setAccent } from './design/palette.js'
@@ -31,7 +31,7 @@
   let registryOnboarded = $state(true)
 
   // The AG2 Inspector occupies a right rail when AG2 view is on and a thread is open.
-  const showInspector = $derived(boot === 'ready' && $ag2View && $route.name !== 'home')
+  const showInspector = $derived(boot === 'ready' && $ag2View && ($route.name === 'chat' || $route.name === 'task'))
 
   // Boot sequence (§7 Phase 1 item 4): fetch /api/profiles FIRST. Empty →
   // create-first-profile form. Else resolve active pid (localStorage if still
@@ -74,25 +74,14 @@
     // of truth, not localStorage. Switching is full-page nav, so boot covers it too.
     const active = list.find((p) => p.id === pid)
     if (active?.accent) setAccent(active.accent)
-    // Canonicalise the URL: bare /app/ or a stale/foreign pid → /app/{pid}/.
+    // Canonicalise the URL: bare /app/ or a stale/foreign pid → /app/{pid}/. This
+    // preserves the hash (redirectToProfile), so a `#settings=<section>` carried
+    // across a profile-switch/archive reload — or a cold deep-link — survives and
+    // reopens Settings on the same Section (the URL is the source of truth; no
+    // sessionStorage reopen flag anymore).
     if ($route.pid !== pid) redirectToProfile(pid)
     boot = 'ready'
-    reopenSettingsAfterSwitch()
     maybeOnboard()
-  }
-
-  // A profile switch from inside Settings reloads the SPA; the switcher stashed a
-  // one-shot flag naming the page it was on. Honour it so Settings re-opens where
-  // the user left it, then clear the flag (a plain refresh must NOT re-open it).
-  function reopenSettingsAfterSwitch() {
-    let page = null
-    try {
-      page = sessionStorage.getItem('ag2-reopen-settings')
-      if (page) sessionStorage.removeItem('ag2-reopen-settings')
-    } catch {}
-    if (!page) return
-    $settingsPage = page
-    $settingsOpen = true
   }
 
   // Fresh-install onboarding finished (§5.5): it created ≥1 profile live and set
@@ -166,7 +155,8 @@
     last = key
     if (r.name === 'task') openThread('task', r.id)
     else if (r.name === 'chat') openThread('chat', r.id)
-    else { closeThread(); go('/c/' + newChatId()) }
+    else if (r.name === 'tasks' || r.name === 'files') closeThread()
+    else { closeThread(); go('/c/' + newChatId()) } // home → a fresh chat
   })
 </script>
 
@@ -182,10 +172,14 @@
     <Drawer />
     <div class="main">
       <Hitl />
-      {#if $route.name === 'home'}
-        <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
-      {:else}
+      {#if $route.name === 'chat' || $route.name === 'task'}
         <Thread />
+      {:else if $route.name === 'files'}
+        <div class="thread"><div class="empty"><h1>Files</h1>Browse and manage your files from the sidebar.</div></div>
+      {:else if $route.name === 'tasks'}
+        <div class="thread"><div class="empty"><h1>Tasks</h1>Pick a task from the sidebar to view its runs.</div></div>
+      {:else}
+        <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
       {/if}
     </div>
     {#if showInspector}<Inspector />{/if}

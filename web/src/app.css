@@ -496,7 +496,9 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .composer { position: absolute; left: 16px; right: 16px; bottom: 0; padding: 28px 20px 16px; background: linear-gradient(to bottom, transparent, var(--bg) 42%); pointer-events: none; }
 .composer > * { pointer-events: auto; }
 .cnote { max-width: calc(var(--thread-max) - 40px); margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
-/* Scroll-to-latest — floats above the composer, centered, only when unpinned. */
+/* Scroll-to-latest — floats above the composer, centered, only when unpinned. Its
+   `bottom` is set inline by Thread.svelte from the measured composer height (the fallback
+   here only applies before that first measurement) so it clears the composer as it grows. */
 .scrolldown { position: absolute; left: 50%; transform: translateX(-50%); bottom: 148px; z-index: 5; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; cursor: pointer; box-shadow: var(--shadow-lg); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .scrolldown:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 /* One rounded input box (Claude-style): textarea on top, a control bar beneath —

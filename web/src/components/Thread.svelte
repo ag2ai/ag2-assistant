@@ -58,6 +58,22 @@
     requestAnimationFrame(step)
   }
 
+  // The scroll-to-latest button floats a fixed gap above the composer. But the composer's
+  // height changes — folder chips, attachment rows, a multi-line textarea — so a hard-coded
+  // offset overlaps it as soon as it grows. Measure the live composer height instead and
+  // keep the button clear of it. (Composer is our absolute-positioned sibling in `.main`.)
+  const COMPOSER_PAD_TOP = 28 // px — .composer's transparent gradient above the input box
+  const SCROLLDOWN_GAP = 12   // px — clearance between the button and the input box top
+  let composerH = $state(160)
+  const scrolldownBottom = $derived(Math.round(composerH - COMPOSER_PAD_TOP + SCROLLDOWN_GAP))
+  $effect(() => {
+    const el = scroller?.parentElement?.querySelector('.composer')
+    if (!el) return
+    const ro = new ResizeObserver(() => { composerH = el.offsetHeight })
+    ro.observe(el)
+    return () => ro.disconnect()
+  })
+
   // Opening another thread starts pinned again, whatever the last one was left at.
   let shown = null
   $effect(() => {
@@ -120,7 +136,7 @@
 </div>
 
 {#if !pinned}
-  <button class="scrolldown" onclick={scrollToBottom} title="Scroll to latest" aria-label="Scroll to latest">
+  <button class="scrolldown" style="bottom: {scrolldownBottom}px" onclick={scrollToBottom} title="Scroll to latest" aria-label="Scroll to latest">
     <Icon name="chevron-down" size={18} />
   </button>
 {/if}

@@ -10,7 +10,7 @@
   // non-empty) lists archived profiles with Restore (unarchive + boot) and a
   // type-to-confirm permanent Delete.
   import { onDestroy } from 'svelte'
-  import { profiles, settingsPage, SETTINGS_PAGE } from '../store.js'
+  import { profiles } from '../store.js'
   import { api } from '../transport/api.js'
   import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
   import { PALETTES, setAccent, getAccent } from '../design/palette.js'
@@ -115,12 +115,12 @@
   // Switch the active profile (§5.4): a full-page nav to /app/{pid}/, the same
   // mechanism as the Drawer chips and ⌘1..9 shortcuts. App.svelte's boot adopts
   // the URL pid, persists it, and applies its palette. No-op on the active one.
-  // Switching reloads the SPA (closing Settings); stash a flag so boot re-opens
-  // Settings on the SAME page — the user stays where they were.
+  // Switching reloads the SPA (which would close Settings), so we carry the current
+  // hash (`#settings=<section>`) onto the target URL — boot preserves it and Settings
+  // reopens on the same Section for the new profile. No sessionStorage flag needed.
   function switchTo(p) {
     if (p.id === activeId) return
-    try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || SETTINGS_PAGE.PROFILES) } catch {}
-    location.assign('/app/' + p.id + '/')
+    location.assign('/app/' + p.id + '/' + location.hash)
   }
 
   async function refetch() {
@@ -182,11 +182,11 @@
       await api.archiveProfile(pid, replacement || undefined)
       if (isActive) {
         // The active profile is gone — the SPA must reload so boot re-resolves to a
-        // valid one (§5.4). Stash the reopen flag (like switchTo) so Settings comes
-        // back on the same page instead of closing under the user.
-        try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || SETTINGS_PAGE.PROFILES) } catch {}
+        // valid one (§5.4). Carry the current hash (like switchTo) so Settings comes
+        // back on the same Section instead of closing under the user; boot's
+        // canonicalisation preserves it as it resolves the replacement profile.
         setActiveProfileId(null)
-        location.assign('/app/')
+        location.assign('/app/' + location.hash)
         return
       }
       confirmArchive = null

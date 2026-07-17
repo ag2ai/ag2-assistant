@@ -88,6 +88,45 @@ there is no one-step delete of a live profile. The only operation in the app tha
 destroys profile state.
 _Avoid_: archive (archive keeps the data; delete does not)
 
+## Navigation
+
+**Page**:
+The full composition of the main application view — the active **Tab** plus the open
+**Thread** together. This is what the path addresses; switching between Chats, Tasks,
+and Files, or opening a Chat/Task, moves you between Pages. Distinct from a Settings
+**Section** (nav *inside* a Modal) and from a **Modal** layered on top.
+_Avoid_: screen, route, view
+
+**Tab**:
+The Drawer's top-level switch between **Chats**, **Tasks**, and **Files** — which
+list or tree fills the left rail. Exactly one Tab is active. A Tab is orthogonal to
+the open **Thread**; the two together compose the current **Page**. Switching Tabs
+changes only the rail, never the main pane.
+_Avoid_: section (Settings' nav), page (a Tab is only half of a Page), view
+
+**Thread**:
+A **Chat** or a **Task** as opened in the main pane — the union of the two openable,
+conversation-like items. At most one Thread is open. Orthogonal to the active Tab
+(opening the Files Tab does not close the open Thread); together with the Tab it
+composes the current **Page**. Not a synonym for Chat: a Chat is the persisted
+entity, whereas a Thread is whichever Chat *or* Task is currently on screen.
+_Avoid_: conversation, tab
+
+**Modal**:
+A single-purpose panel floating over the whole **Page** — **Settings**, **Memory**,
+and the other dialogs. At most one Modal is open at a time; the Page underneath is
+untouched and returns unchanged when the Modal is dismissed.
+_Avoid_: overlay (reserved for the config-override metaphor, e.g. Profile config),
+dialog, popup
+
+**Section** (Settings):
+A nav target inside the Settings **Modal** — General, Profiles, Models, Secrets,
+Folders, Tools, Integrations, Advanced. The Settings Modal shows exactly one Section
+at a time; opening Settings from the Drawer lands on the initial Section (General).
+Some Sections group finer areas (Models holds the Text and Live areas). Distinct from
+a **Tab** (the Drawer) and a **Page** (the Tab+Thread view underneath).
+_Avoid_: page (that is the Tab+Thread view), tab, screen
+
 ## Chats
 
 **Chat**:
@@ -97,7 +136,9 @@ user Rename is authoritative and is never overwritten by the auto-titler.
 Deleting a Chat is permanent and unrecoverable.
 _Avoid_: session (the retired chat-sense name — MCP client sessions and realtime
 voice sessions are different, protocol-level concepts that keep the word),
-conversation, thread
+conversation
+_Note_: a Chat opened in the main pane is a **Thread** (the chat-or-task union) —
+"thread" names that union, never the persisted Chat entity itself.
 
 **Starred** (chat):
 A user-set flag on a Chat that lifts it into the Starred section pinned at the

@@ -293,7 +293,7 @@
     {#if loading}
       <p class="ftmuted">Loading…</p>
     {:else if isEmpty}
-      <p class="ftmuted ftempty">No files yet — ask the agent to save something, run a task that produces a deliverable, or drag files here (or use&nbsp;⤒) to upload.</p>
+      <p class="ftmuted ftempty">No files yet — ask the agent to save something, run a task that produces a deliverable, or drag files here (or use&nbsp;+) to upload.</p>
     {:else}
       {@render level(tree, 0)}
     {/if}

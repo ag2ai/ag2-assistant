@@ -1,4 +1,11 @@
 import { writable } from 'svelte/store'
+// SETTINGS_PAGE — the valid Settings Section ids — lives in the pure route core
+// (lib/route.js validates the `#settings=<section>` hash against it). Re-export it
+// here so callers keep importing it from the store (SETTINGS_PAGE.MODELS, …).
+export { SETTINGS_PAGE } from './lib/route.js'
+// settingsOpen is derived from the route; it lives in router.js (beside `route`) to
+// avoid a module-init cycle, and is re-exported here so consumers keep one import site.
+export { settingsOpen } from './router.js'
 
 // Multi-profile registry (§5.2). `list` mirrors GET /api/profiles; `activeId`
 // is the profile the client is currently viewing (persisted separately in
@@ -13,7 +20,8 @@ export const thread = writable({ id: null, kind: 'chat', items: [], busy: false 
 // Drawer: unified history of chats + tasks, plus the user-writable Files tree.
 export const chats = writable([])
 export const tasks = writable([])
-export const drawerTab = writable('chats') // 'chats' | 'tasks' | 'files'
+// The active drawer Tab ('chats' | 'tasks' | 'files') is not a store — it is the
+// `tab` field of the current route (see router.js); read $route.tab.
 
 // Current task's durable panel data (tree/schedule/deliverables), when kind==='task'.
 export const taskPanel = writable(null)
@@ -38,31 +46,18 @@ export const voicePickerConfig = writable(null)
 // Deliverable full-view modal: { title, text } when open, null when closed.
 export const viewer = writable(null)
 
-// Settings modal open/closed (launches voice picker + Google from one place).
-export const settingsOpen = writable(false)
+// (settingsOpen is re-exported from router.js at the top of this file — it's derived
+// from the route. Open it with router.openOverlay('settings', section); close it with
+// router.closeOverlay(). The active Section is $route.overlayValue.)
 
 // Memory viewer/editor modal open/closed.
 export const memoryOpen = writable(false)
 
-// The valid Settings page ids — the single source of truth for what settingsPage
-// may hold. Settings.svelte binds each id to a label + component; callers deep-link
-// with SETTINGS_PAGE.* so a bad id is impossible to mistype (no more 'model' vs
-// 'models' drift). Frozen so the vocabulary can't be mutated at runtime.
-export const SETTINGS_PAGE = Object.freeze({
-  GENERAL: 'general',
-  PROFILES: 'profiles',
-  MODELS: 'models',
-  SECRETS: 'secrets',
-  FOLDERS: 'folders',
-  TOOLS: 'tools',
-  INTEGRATIONS: 'integrations',
-  ADVANCED: 'advanced',
-})
-
-// Which Settings page is shown when the modal opens: one of the SETTINGS_PAGE ids.
-// Lets callers deep-link into a page (e.g. settingsPage.set(SETTINGS_PAGE.TOOLS); settingsOpen.set(true)).
-// Settings seeds its local `page` from this on mount (validated) and writes it back on nav click.
-export const settingsPage = writable(SETTINGS_PAGE.GENERAL)
+// The active Settings Section is read from the route (`$route.overlayValue`),
+// validated against SETTINGS_PAGE by the pure core. Callers deep-link into a
+// Section with router.openOverlay('settings', SETTINGS_PAGE.MODELS) — a bad id is
+// impossible to mistype (no more 'model' vs 'models' drift). Settings binds each id
+// to a label + component. (SETTINGS_PAGE is re-exported from lib/route.js above.)
 
 // "Powered by AG2" architecture-map modal open/closed.
 export const poweredByOpen = writable(false)

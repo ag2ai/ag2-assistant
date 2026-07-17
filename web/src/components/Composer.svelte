@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { thread, settingsOpen, settingsPage, SETTINGS_PAGE, profiles } from '../store.js'
+  import { thread, SETTINGS_PAGE, profiles } from '../store.js'
+  import { openOverlay } from '../router.js'
   import { send, stop, startVoice, stopVoice, voice } from '../controller.js'
   import { liveConfigs, loadLiveConfigs } from '../lib/live.js'
   import { llmConfigs } from '../lib/llm.js'
@@ -120,8 +121,7 @@
   // Settings → Models to configure one; else start the session.
   function liveClick() {
     if (!$voice.active && noLiveModel) {
-      settingsPage.set(SETTINGS_PAGE.MODELS)
-      settingsOpen.set(true)
+      openOverlay('settings', SETTINGS_PAGE.MODELS)
       return
     }
     $voice.active ? stopVoice() : startVoice()
@@ -150,7 +150,7 @@
     {#if showFolders && (extraCount || chips.length)}
       <div class="cfolders">
         {#if extraCount}
-          <button class="cfmore" title="Folder access from your profile" onclick={() => (foldersModal = true)}>+{extraCount} profile folder</button>
+          <button class="cfmore" title="Folder access from your profile" onclick={() => (foldersModal = true)}>+{extraCount} profile folder{extraCount === 1 ? '' : 's'}</button>
         {/if}
         {#each chips as f (f.id)}
           <span class="chip folder" class:missing={!f.exists}>
