@@ -71,6 +71,40 @@ export function closeOverlay() {
   route.set(read())
 }
 
+// ── Aside slot helpers (the right rail — ADR 0009) ───────────────────────────
+// Each helper touches only the `aside` hash key and preserves the Modal key.
+// Opening the rail from closed pushes (Back closes it); switching occupant replaces.
+
+function setAside(next) {
+  const wasOpen = read().aside != null
+  const full = resolve(current(), { type: wasOpen ? 'replaceAside' : 'openAside', aside: next })
+  if (wasOpen) history.replaceState({}, '', full)
+  else history.pushState({}, '', full)
+  route.set(read())
+}
+
+// Open a file preview in the rail. A blank path is a no-op (never closes the rail).
+export function openAsideFile(path) { if (path) setAside({ kind: 'file', path }) }
+
+// Open the AG2 Inspector as the rail occupant.
+export function openAsideInspector() { setAside({ kind: 'inspector' }) }
+
+export function closeAside() {
+  const full = resolve(current(), { type: 'closeAside' })
+  history.replaceState({}, '', full)
+  route.set(read())
+}
+
+// Toggle the Inspector as the rail occupant on/off.
+export function toggleAsideInspector() {
+  if (read().aside?.kind === 'inspector') closeAside()
+  else openAsideInspector()
+}
+
+// Whether the AG2 Inspector occupies the rail; also gates the per-item provenance
+// tags. Derived from the route, re-exported from store.js as `ag2View`.
+export const ag2View = derived(route, ($r) => $r.aside?.kind === 'inspector')
+
 export function newChatId() {
   return 'web-' + Math.random().toString(36).slice(2, 10)
 }

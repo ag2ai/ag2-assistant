@@ -5,9 +5,10 @@
 // Two dimensions live in the URL:
 //   • the PATH carries the Page (profile + Tab + optional open Thread):
 //     /app/{pid}/{tab}[/{c|t}/{id}] — Tab and Thread are orthogonal.
-//   • the HASH carries the open Modal as a single overlay slot
-//     (`#<modal>=<value>`, split on the first `=`), client-side only. Only
-//     `settings` is wired now; the grammar is general so other Modals plug in later.
+//   • the HASH carries two orthogonal, client-side-only overlay slots as a
+//     multi-key fragment (`#k1=v1&k2=v2`, `&`-separated, each pair split on the
+//     first `=`): the open Modal (`settings=<section>`) and the right-rail
+//     `aside` occupant (`aside=file:<path>` | `aside=inspector`).
 
 const BASE = '/app'
 
@@ -40,20 +41,74 @@ function threadName(tab, kind) {
   return 'home'
 }
 
-// Parse the URL hash into the single Modal slot. Grammar: `#<modal>` or
-// `#<modal>=<value>`, split on the FIRST `=` so a future value may contain `=`/`/`.
-// Only `settings` is wired: a settings hash yields overlay='settings' + a validated
-// Section (bogus/missing → General). Any other fragment opens no Modal (overlay=null).
-function parseHash(hash) {
+// The canonical serialization order of the hash keys, so a built URL is
+// deterministic regardless of how the caller's keys were ordered.
+const HASH_KEY_ORDER = ['settings', 'aside']
+
+// Parse a multi-key hash fragment into an ordered key→raw-value Map. Grammar:
+// `#k1=v1&k2=v2`; each pair split on the FIRST `=` (a value may contain `=`/`/`).
+// A bare key (no `=`, e.g. `#settings`) maps to '' so it re-serializes bare.
+function parseHashKeys(hash) {
   const h = (hash || '').replace(/^#/, '')
-  if (!h) return { overlay: null, overlayValue: null }
-  const i = h.indexOf('=')
-  const name = i === -1 ? h : h.slice(0, i)
-  const value = i === -1 ? null : h.slice(i + 1)
-  if (name === 'settings') {
-    return { overlay: 'settings', overlayValue: SECTIONS.has(value) ? value : SETTINGS_PAGE.GENERAL }
+  const out = new Map()
+  if (!h) return out
+  for (const part of h.split('&')) {
+    if (!part) continue
+    const i = part.indexOf('=')
+    const key = i === -1 ? part : part.slice(0, i)
+    if (!key) continue
+    out.set(key, i === -1 ? '' : part.slice(i + 1))
   }
-  return { overlay: null, overlayValue: null }
+  return out
+}
+
+// Serialize a key→raw-value Map back to a hash string in canonical key order.
+// Only known keys are emitted (unknown fragments are noise). '' → a bare key.
+function buildHash(keys) {
+  const parts = []
+  for (const k of HASH_KEY_ORDER) {
+    if (!keys.has(k)) continue
+    const v = keys.get(k)
+    parts.push(v === '' ? k : k + '=' + v)
+  }
+  return parts.length ? '#' + parts.join('&') : ''
+}
+
+// Interpret the raw `aside` value into the rail occupant. `file:<path>` → a file
+// preview (path %-decoded); `inspector` → the Inspector; anything else, empty, or
+// `file:` with no path → null (rail closed), mirroring the bogus-Section fallback.
+function parseAside(value) {
+  if (value == null || value === '') return null
+  if (value === 'inspector') return { kind: 'inspector' }
+  if (value.startsWith('file:')) {
+    const path = dec(value.slice(5))
+    return path ? { kind: 'file', path } : null
+  }
+  return null
+}
+
+// Serialize a rail occupant to its raw `aside` value (inverse of parseAside); the
+// file path is encoded segment-wise so `&`/spaces are safe while `/` stays readable.
+function asideValue(aside) {
+  if (!aside) return null
+  if (aside.kind === 'inspector') return 'inspector'
+  if (aside.kind === 'file' && aside.path) {
+    return 'file:' + aside.path.split('/').map(encodeURIComponent).join('/')
+  }
+  return null
+}
+
+// Parse the hash into the independent Modal slot (`overlay`/`overlayValue`, a
+// `settings` key validated to a Section) and the `aside` rail occupant.
+function parseHash(hash) {
+  const keys = parseHashKeys(hash)
+  const overlay = keys.has('settings') ? 'settings' : null
+  const section = keys.get('settings')
+  return {
+    overlay,
+    overlayValue: overlay ? (SECTIONS.has(section) ? section : SETTINGS_PAGE.GENERAL) : null,
+    aside: parseAside(keys.get('aside')),
+  }
 }
 
 // parse(pathname, hash) → route. Routes carry the profile id, the drawer Tab, an
@@ -92,23 +147,22 @@ function normalizePath(path, r) {
   return path
 }
 
-// Build the hash fragment for a Modal slot value: `#name` (bare) or `#name=value`.
-function overlayHash(name, value) {
-  return value == null || value === '' ? '#' + name : '#' + name + '=' + value
-}
-
 // resolve(current, intent) → next URL string (path + hash). `current` is the two
 // URL parts ({ pathname, hash }); `intent` is the navigation behind a nav helper.
-// Path and hash are orthogonal: path intents preserve the current hash, Modal
-// intents preserve the current path.
-//   • go              — path nav (normalize against current); preserves the hash.
-//   • openOverlay     — set the Modal hash; preserves the path.  (shell pushes)
-//   • replaceOverlay  — same URL as openOverlay.                 (shell replaces)
-//   • closeOverlay    — strip the hash entirely; preserves the path.
+// Path and hash are orthogonal, and within the hash the Modal and `aside` keys are
+// orthogonal too: each intent touches one key and preserves the other verbatim.
+//   • go                — path nav (normalize against current); preserves the whole hash.
+//   • openOverlay       — set the Modal key; preserves the aside key.   (shell pushes)
+//   • replaceOverlay    — same URL as openOverlay.                      (shell replaces)
+//   • closeOverlay      — drop the Modal key; preserves the aside key.
+//   • openAside         — set the aside key; preserves the Modal key.   (shell pushes)
+//   • replaceAside      — same URL as openAside (switch occupant).      (shell replaces)
+//   • closeAside        — drop the aside key; preserves the Modal key.
 //   • redirectToProfile — canonicalise to /app/{pid}/; preserves the hash.
 export function resolve(current, intent) {
   const r = parse(current.pathname, current.hash)
   const hash = current.hash || ''
+  const keys = parseHashKeys(hash)
   switch (intent.type) {
     case 'go': {
       const pid = intent.pid || r.pid
@@ -116,9 +170,22 @@ export function resolve(current, intent) {
     }
     case 'openOverlay':
     case 'replaceOverlay':
-      return current.pathname + overlayHash(intent.name, intent.value)
+      keys.set(intent.name, intent.value == null ? '' : intent.value)
+      return current.pathname + buildHash(keys)
     case 'closeOverlay':
-      return current.pathname
+      // Close the Modal slot only — the aside key (if any) survives.
+      for (const k of [...keys.keys()]) if (k !== 'aside') keys.delete(k)
+      return current.pathname + buildHash(keys)
+    case 'openAside':
+    case 'replaceAside': {
+      const v = asideValue(intent.aside)
+      if (v == null) keys.delete('aside')
+      else keys.set('aside', v)
+      return current.pathname + buildHash(keys)
+    }
+    case 'closeAside':
+      keys.delete('aside')
+      return current.pathname + buildHash(keys)
     case 'redirectToProfile':
       return BASE + '/' + intent.pid + '/' + hash
     default:

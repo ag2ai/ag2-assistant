@@ -178,8 +178,13 @@ def move(workspace_dir, src: str, dst: str) -> str:
 def delete(workspace_dir, rel: str) -> bool:
     """Delete a workspace file, or a Directory and its contents recursively,
     sandboxed to the workspace root (never the root itself). Returns False if the
-    path escapes the root, is missing, or is the root. Empty parent Directories are
-    left in place — they're first-class in the Files space (ADR 0007)."""
+    path escapes the root, is missing, or is the root.
+
+    Empty parent Directories the delete *just emptied* are then pruned, walking up
+    to the root and stopping at the first Directory that still holds something. A
+    folder that was already empty before this delete (e.g. one made via New
+    directory) is never touched — it's not on the deleted path's ancestor chain —
+    so intentionally-empty Directories stay first-class (ADR 0007)."""
     root = _root(workspace_dir)
     p = _inside(root, rel)
     if p is None or p == root or not p.exists():
@@ -188,6 +193,21 @@ def delete(workspace_dir, rel: str) -> bool:
         shutil.rmtree(p) if p.is_dir() else p.unlink()
     except OSError:
         return False
+    # Prune now-empty ancestors of what we deleted, up to (never including) root.
+    parent = p.parent
+    while parent != root and root in parent.parents:
+        try:
+            next(parent.iterdir())  # still holds a file or Directory — stop here
+            break
+        except StopIteration:
+            pass
+        except OSError:
+            break
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
     return True
 
 

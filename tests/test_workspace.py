@@ -64,13 +64,42 @@ def test_list_files(tmp_path):
     assert files[0]["path"] == "ai-headlines/x.md" and files[0]["dir"] == "ai-headlines"
 
 
-def test_delete_removes_file_and_keeps_now_empty_folder(tmp_path):
+def test_delete_removes_file_and_prunes_now_empty_folder(tmp_path):
     (tmp_path / "ai-headlines").mkdir()
     (tmp_path / "ai-headlines" / "x.md").write_text("hi")
     assert delete(tmp_path, "ai-headlines/x.md") is True
     assert not (tmp_path / "ai-headlines" / "x.md").exists()
-    assert (tmp_path / "ai-headlines").exists()  # emptied folder is left in place (ADR 0007)
+    assert not (tmp_path / "ai-headlines").exists()  # the folder the delete emptied is pruned
     assert tmp_path.exists()  # and the workspace root is never touched
+
+
+def test_delete_prunes_empty_ancestors_up_to_root(tmp_path):
+    (tmp_path / "a" / "b" / "c").mkdir(parents=True)
+    (tmp_path / "a" / "b" / "c" / "x.md").write_text("hi")
+    assert delete(tmp_path, "a/b/c/x.md") is True
+    assert not (tmp_path / "a").exists()  # whole now-empty chain a/b/c collapses
+    assert tmp_path.exists()  # but never past the root
+
+
+def test_delete_prune_stops_at_first_nonempty_ancestor(tmp_path):
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "keep.md").write_text("keep")
+    (tmp_path / "a" / "b" / "x.md").write_text("hi")
+    assert delete(tmp_path, "a/b/x.md") is True
+    assert not (tmp_path / "a" / "b").exists()  # emptied leaf is pruned
+    assert (tmp_path / "a").exists()  # but a/ still holds keep.md — kept
+
+
+def test_delete_leaves_a_sibling_empty_folder_untouched(tmp_path):
+    # A folder that was already empty before the delete (New directory) sits off the
+    # deleted file's ancestor chain, so pruning never reaches it (ADR 0007).
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "b" / "x.md").write_text("hi")
+    (tmp_path / "a" / "note").mkdir()  # intentionally-empty sibling of b/
+    assert delete(tmp_path, "a/b/x.md") is True
+    assert not (tmp_path / "a" / "b").exists()  # emptied leaf pruned
+    assert (tmp_path / "a" / "note").exists()  # sibling empty folder preserved
+    assert (tmp_path / "a").exists()  # a/ still holds note/
 
 
 def test_delete_keeps_nonempty_folder(tmp_path):

@@ -2,8 +2,8 @@
   import { renderMarkdown, linkifyDom, bindImages } from '../../lib/markdown.js'
   import { splitA2UIText } from '../../lib/a2ui.js'
   import A2UIComposing from './A2UIComposing.svelte'
-  import { go } from '../../router.js'
-  import { thread, taskPanel, viewer } from '../../store.js'
+  import { go, openAsideFile } from '../../router.js'
+  import { thread, taskPanel } from '../../store.js'
   import { requestContext } from '../../lib/feedback.js'
   import Feedback from './Feedback.svelte'
   let { item } = $props()
@@ -18,7 +18,7 @@
     if (!el) return
     el.innerHTML = renderMarkdown(displayText)        // re-runs when item.text changes (streaming)
     linkifyDom(el, (id) => go('/t/' + id))
-    bindImages(el, (i) => ($viewer = { title: i.alt || i.name || 'Image', name: i.name, path: i.path }))
+    bindImages(el, (i) => openAsideFile(i.path))
   })
   // Rate only finalized, non-empty replies that carry a stable key (created_at).
   const canRate = $derived(!item.streaming && !item.empty && displayText && item.at != null)

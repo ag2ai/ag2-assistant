@@ -6,6 +6,9 @@
   import { api } from '../transport/api.js'
   import { switchProfile } from '../controller.js'
   import Icon from './Icon.svelte'
+  import RailResizer from './RailResizer.svelte'
+  import { drawerWidth } from '../store.js'
+  import { clampDrawerWidth } from '../lib/railWidth.js'
   import ProfileForm from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
   import FilesTree from './FilesTree.svelte'
@@ -320,6 +323,7 @@
 </script>
 
 <div class="drawer">
+  <RailResizer side="left" width={drawerWidth} clamp={clampDrawerWidth} />
   <div class="dhead">
     <img class="brandlogo on-light" src={ag2Logo} alt="AG2" />
     <img class="brandlogo on-dark" src={ag2LogoWhite} alt="AG2" />

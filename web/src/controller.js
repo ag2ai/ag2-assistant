@@ -2,14 +2,14 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, taskPanel, chats, tasks, inquiries, inspectorEvents, profiles, profileEpoch } from './store.js'
+import { thread, taskPanel, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
 import { foldEvent, isBusy, queueMessage } from './project.js'
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.js'
 import { setAccent } from './design/palette.js'
-import { go } from './router.js'
+import { go, closeAside, route } from './router.js'
 
 let client = null
 let panelTimer = null
@@ -148,6 +148,7 @@ function resetProfileState() {
   taskPanel.set(null)
   inquiries.set([])
   inspectorEvents.set([])
+  viewer.set(null)                                     // drop the old profile's transient preview body
   profileEpoch.update((n) => n + 1)
 }
 
@@ -159,6 +160,9 @@ export function switchProfile(pid) {
   if (!pid || pid === getActiveProfileId()) return
   try {
     resetProfileState()
+    // The file preview rail addresses a file in the OLD profile's workspace and lives
+    // in the URL's aside slot, which go() preserves — strip it so the switch closes it.
+    if (get(route).aside?.kind === 'file') closeAside()
     setActiveProfileId(pid)
     const p = (get(profiles).list || []).find((x) => x.id === pid)
     if (p?.accent) setAccent(p.accent)

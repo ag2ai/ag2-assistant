@@ -1,5 +1,5 @@
 <script>
-  import { viewer } from '../../store.js'
+  import { openAsideFile } from '../../router.js'
   import { api } from '../../transport/api.js'
   import Icon from '../Icon.svelte'
 
@@ -30,7 +30,7 @@
     // Resolve the live workspace path (also catches deletion + task-relative paths);
     // the Viewer then renders by file type (html/image/pdf/markdown/code/…).
     const p = await livePath(c)
-    if (p) $viewer = { title: c.name, name: c.name, path: p }
+    if (p) openAsideFile(p)
     else markGone(c)
   }
 
@@ -70,7 +70,7 @@
             <span class="tcgone">deleted</span>
           {:else}
             <button class="tclink" onclick={() => openFile(c)} title={c.path}>{c.name}</button>
-            <button class="tcdl" onclick={() => downloadFile(c)} title="Download {c.name}" aria-label="Download {c.name}"><Icon name="download" size={15} /></button>
+            <button class="tcdl" onclick={() => downloadFile(c)} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></button>
           {/if}
         </div>
       {:else if c.kind === 'search'}

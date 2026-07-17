@@ -1,7 +1,7 @@
 <script>
   import { thread, taskPanel, ag2View, profile, profiles } from '../store.js'
   import { llmConfigs } from '../lib/llm.js'
-  import { go, newChatId } from '../router.js'
+  import { go, newChatId, toggleAsideInspector } from '../router.js'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
   import Thinking from './items/Thinking.svelte'
@@ -116,7 +116,7 @@
   <div class="hactions">
     <SystemHealth />
     <ThemeToggle />
-    <button class="ag2toggle" class:on={$ag2View} class:ag2-glow={$ag2View} onclick={() => ($ag2View = !$ag2View)}
+    <button class="ag2toggle" class:on={$ag2View} class:ag2-glow={$ag2View} onclick={toggleAsideInspector}
             title="AG2 view — reveal the live AG2 events powering the UI"><Icon name="code" size={14} /> AG2</button>
   </div>
 </div>

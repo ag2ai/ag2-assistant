@@ -2,7 +2,8 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
   import { openThread, closeThread, switchProfile } from './controller.js'
-  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
+  import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setAccent } from './design/palette.js'
@@ -30,14 +31,29 @@
   // welcome/onboarding overlay opens once a profile already exists.
   let registryOnboarded = $state(true)
 
-  // The AG2 Inspector occupies a right rail when AG2 view is on and a thread is open.
-  const showInspector = $derived(boot === 'ready' && $ag2View && ($route.name === 'chat' || $route.name === 'task'))
+  // The AG2 Inspector occupies the rail when the route's `aside` is `inspector`.
+  const showInspector = $derived(boot === 'ready' && $route.aside?.kind === 'inspector')
+
+  // The preview rail's occupant: a URL-addressed file (route `aside`) or the path-less
+  // transient body ($viewer). It shares the grid's right column with the Inspector and
+  // takes precedence; `showRail` gates whether the third column is present.
+  const railFile = $derived($route.aside?.kind === 'file')
+  const railOpen = $derived(railFile || !!$viewer)
+  const showRail = $derived(railOpen || showInspector)
+
+  // The third column's width tracks the mounted occupant: the preview's own width, or
+  // the Inspector's. Expanded preview fills the Thread column instead (.app.rail.railfull).
+  const railW = $derived(railOpen ? clampRailWidth($previewWidth) : clampRailWidth($railWidth))
+  const previewFull = $derived(railOpen && $previewExpanded)
 
   // Boot sequence (§7 Phase 1 item 4): fetch /api/profiles FIRST. Empty →
   // create-first-profile form. Else resolve active pid (localStorage if still
   // valid, else active_default), persist it, redirect a bare /app/ into
   // /app/{pid}/, THEN let the normal boot proceed.
   onMount(async () => {
+    // Preview sizing only survives a reload when the URL re-mounts the preview
+    // (aside=file); any other boot state drops a stale expanded/width.
+    if ($route.aside?.kind !== 'file') resetPreviewView()
     try {
       const reg = await api.profiles()
       const list = reg.profiles || []
@@ -117,9 +133,11 @@
   // registry order and triggers the SAME full-page nav as a chip click. Ignored
   // when any modal is open or focus is in an editable field (typing "⌘2" in the
   // message box must not switch profiles).
+  // The preview rail is shell navigation, not a modal, so it's excluded here — the
+  // ⌘/Ctrl-1..9 profile shortcuts keep firing while a preview is open.
   function anyModalOpen() {
     return $settingsOpen || $memoryOpen || $poweredByOpen
-      || $googleOpen || $codexOpen || $voicePickerOpen || !!$viewer || $onboardingOpen
+      || $googleOpen || $codexOpen || $voicePickerOpen || $onboardingOpen
   }
   function editableFocused() {
     const el = document.activeElement
@@ -168,7 +186,8 @@
   <!-- data-animations lets any component's CSS gate its motion on the app-wide
        tier (see store.animations) without importing the store — same
        attribute-driven pattern as theming. -->
-  <div class="app" class:ag2={showInspector} data-animations={$animations}>
+  <div class="app" class:ag2={showInspector} class:rail={showRail} class:railfull={previewFull}
+       style="--drawer-w: {clampDrawerWidth($drawerWidth)}px; --rail-w: {railW}px" data-animations={$animations}>
     <Drawer />
     <div class="main">
       <Hitl />
@@ -182,14 +201,19 @@
         <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
       {/if}
     </div>
-    {#if showInspector}<Inspector />{/if}
+    <!-- The right rail holds one occupant; the preview takes precedence over the
+         Inspector. Both share the grid's third column. -->
+    {#if railOpen}
+      <Viewer />
+    {:else if showInspector}
+      <Inspector />
+    {/if}
     {#if $settingsOpen}<Settings />{/if}
     {#if $memoryOpen}<Memory />{/if}
     {#if $poweredByOpen}<PoweredBy />{/if}
     {#if $googleOpen}<Google />{/if}
     {#if $codexOpen}<Codex />{/if}
     {#if $voicePickerOpen}<VoicePicker />{/if}
-    {#if $viewer}<Viewer />{/if}
     {#if $onboardingOpen}<Onboarding />{/if}
   </div>
 {/if}

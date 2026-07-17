@@ -27,7 +27,11 @@ delete, alongside the agent's existing writes. The modal is retired.
   files/raw`: `POST files/upload` (multipart → target directory),
   `POST files/move` (`{from, to}` — files and directories, name and path changes,
   subtree rewrite on directory move), and `POST files/mkdir`. Delete extends to
-  remove directories recursively.
+  remove directories recursively, and prunes any parent directories the delete
+  just emptied (walking up to, never including, the root, stopping at the first
+  still-occupied ancestor). A directory that was already empty before the delete —
+  one made via New directory — is off the deleted path's ancestor chain, so it's
+  never touched: intentionally-empty directories stay first-class.
 - **No silent data loss.** Uploads that clash on name auto-suffix `(2)`;
   move/rename onto an existing path is rejected with an inline error. Consistent
   with the app's delete-is-permanent, no-overwrite posture.

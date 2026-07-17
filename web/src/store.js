@@ -1,11 +1,13 @@
 import { writable } from 'svelte/store'
+import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.js'
 // SETTINGS_PAGE — the valid Settings Section ids — lives in the pure route core
 // (lib/route.js validates the `#settings=<section>` hash against it). Re-export it
 // here so callers keep importing it from the store (SETTINGS_PAGE.MODELS, …).
 export { SETTINGS_PAGE } from './lib/route.js'
-// settingsOpen is derived from the route; it lives in router.js (beside `route`) to
-// avoid a module-init cycle, and is re-exported here so consumers keep one import site.
-export { settingsOpen } from './router.js'
+// settingsOpen and ag2View (whether the AG2 Inspector occupies the rail) are derived
+// from the route; they live in router.js to avoid a module-init cycle, re-exported here.
+export { settingsOpen, ag2View } from './router.js'
+import { go } from './router.js'
 
 // Multi-profile registry (§5.2). `list` mirrors GET /api/profiles; `activeId`
 // is the profile the client is currently viewing (persisted separately in
@@ -48,8 +50,26 @@ export const voicePickerOpen = writable(false)
 // scopes its voices/select/preview to this config and stacks over Settings.
 export const voicePickerConfig = writable(null)
 
-// Deliverable full-view modal: { title, text } when open, null when closed.
+// The path-less transient preview: a text-only deliverable body with no on-disk path
+// to address, rendered in the rail. { title, text } when open, null when closed.
+// (Path-backed previews live in the URL — router.openAsideFile.)
 export const viewer = writable(null)
+
+// A one-shot Reveal request: locate the Active file where it lives in the Files tree.
+// `path` is the file to surface; `epoch` bumps on every request so FilesTree re-fires
+// its expand+scroll even for a repeat Reveal of the same path. Transient — never
+// persisted, never in the URL (the expanded tree shape is session view-state).
+export const reveal = writable({ path: null, epoch: 0 })
+
+// Reveal the given file in the Files tree: record the request (bumping the epoch) and
+// switch to the Files Tab. FilesTree reacts — pull a fresh listing, persistently expand
+// the file's ancestor Directories, and scroll its row into view. Leaves the preview
+// (aside) Active file and the upload-target selection untouched. A blank path is a no-op.
+export function revealFile(path) {
+  if (!path) return
+  reveal.update((r) => ({ path, epoch: r.epoch + 1 }))
+  go('/files')
+}
 
 // (settingsOpen is re-exported from router.js at the top of this file — it's derived
 // from the route. Open it with router.openOverlay('settings', section); close it with
@@ -88,9 +108,31 @@ function persisted(key, initial) {
 // Play a chime when the assistant needs your input (HITL). Off by default.
 export const soundOnInput = persisted('soundOnInput', false)
 
-// "AG2 view" — reveal where AG2 powers things: opens the live event inspector and
-// adds per-item provenance tags. A deliberate demo mode. Off by default.
-export const ag2View = persisted('ag2View', false)
+// The AG2 Inspector rail's width in px. localStorage-backed view-state, never in the
+// URL; applied through clampRailWidth. Separate from the file preview (previewWidth).
+export const railWidth = persisted('railWidth', DEFAULT_RAIL_WIDTH)
+
+// The file preview rail's width in px — its own store, reset to default on close.
+// localStorage-backed view-state; applied through clampRailWidth.
+export const previewWidth = persisted('previewWidth', DEFAULT_RAIL_WIDTH)
+
+// Whether the file preview is expanded to fill the Thread column. localStorage-backed
+// view-state, never in the URL (see ADR 0009 amendment). Preview only.
+export const previewExpanded = persisted('previewExpanded', false)
+
+// Reset the preview's per-viewing sizing to a docked default width, un-expanded.
+// Called from Viewer.onDestroy so any close path resets it; leaves railWidth alone.
+export function resetPreviewView() {
+  previewWidth.set(DEFAULT_RAIL_WIDTH)
+  previewExpanded.set(false)
+}
+
+// The left drawer's width in px, drag-resized via RailResizer (side="left").
+// Same localStorage-backed view-state; always applied through clampDrawerWidth.
+export const drawerWidth = persisted('drawerWidth', DEFAULT_DRAWER_WIDTH)
+
+// "AG2 view" (ag2View) is derived from the route and re-exported at the top of this
+// file — the Inspector occupies the URL-addressable aside, so it's no longer persisted.
 
 // App-wide animation quality (per-device — the GPU cost is local). Any rich
 // surface should honour it; weather panels are the first consumer:

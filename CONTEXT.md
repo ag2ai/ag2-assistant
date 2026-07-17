@@ -127,6 +127,27 @@ Some Sections group finer areas (Models holds the Text and Live areas). Distinct
 a **Tab** (the Drawer) and a **Page** (the Tab+Thread view underneath).
 _Avoid_: page (that is the Tab+Thread view), tab, screen
 
+**Active file**:
+The one file the preview rail is currently showing, reflected back in the Files
+tree as a highlighted row. Derived from the URL's aside slot
+(`aside=file:<path>`), so it is whatever file the rail names — nothing is "active"
+when the rail is closed or holds the Inspector. Distinct from **selected** (the
+Files tree's upload-target Directory) and from **Active** (model): those are
+unrelated senses of the word.
+_Avoid_: selected (that is the upload target), focused, current, open
+
+**Reveal** (a file):
+Surface the **Active file** where it lives in the Files tree: switch to the Files
+**Tab**, expand its collapsed ancestor **Directories** (persisting, as if the user
+clicked each chevron), pull a fresh listing so a just-written file is present, and
+scroll its highlighted row into view. Triggered by clicking the filename in the
+preview header (path-backed previews only). A locate-and-surface action: it does
+*not* change what is **Active** (the file is already the Active file) nor the
+**selected** upload target.
+_Avoid_: activate (the file is already Active — Reveal moves the Tab and viewport,
+not the active state), open (that puts a file into the preview rail; Reveal assumes
+it is already previewed), select (that is the upload target), locate
+
 ## Chats
 
 **Chat**:

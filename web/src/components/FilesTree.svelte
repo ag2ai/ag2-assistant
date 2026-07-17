@@ -5,6 +5,10 @@
   // switch is a full-page nav, so these reset with it — correct.
   let sessionExpanded = new Set()
   let sessionSelected = ''
+  // The last Reveal request (store `epoch`) this tab has acted on. Module-scoped so it
+  // survives the remount on tab (re)activation — otherwise a lingering reveal request
+  // would re-fire every time the Files tab is opened normally.
+  let handledRevealEpoch = 0
 </script>
 
 <script>
@@ -14,10 +18,11 @@
   // never a background poll. Supports upload (drag OS files or ⤒), New directory,
   // rename/move (inline editor or drag a row onto a Directory), and recursive
   // Directory delete — alongside the agent's own writes.
-  import { onMount } from 'svelte'
-  import { viewer } from '../store.js'
+  import { onMount, tick } from 'svelte'
+  import { openAsideFile, closeAside, route } from '../router.js'
+  import { reveal } from '../store.js'
   import { api } from '../transport/api.js'
-  import { previewable } from '../lib/preview.js'
+  import { ancestorDirs } from '../lib/preview.js'
   import Icon from './Icon.svelte'
 
   let files = $state([])          // flat [{path,name,dir,size,modified}]
@@ -33,19 +38,32 @@
   let selected = $state(sessionSelected)
   $effect(() => { sessionSelected = selected })
 
+  let treeEl                      // the scroll container, for scrolling a revealed row in
+  // Coalescing is scoped to the mount burst ONLY: onMount's load and a Reveal fired at
+  // the same tab-open share a single request (per the Reveal decision — don't
+  // double-fetch). Every post-mount caller (↻ refresh, delete/move/mkdir/upload, and a
+  // Reveal into an already-open tab) forces its own fresh pull, so freshness is never
+  // traded away — a Reveal is guaranteed to see a just-written file.
+  let mounted = false
+  let inflight = null
   async function load() {
+    if (!mounted && inflight) return inflight
     loading = true
     err = ''
-    try {
-      const r = await api.files()
-      files = r.files || []
-      dirs = r.dirs || []
-      root = r.root || ''
-      reconcile()   // drop selection/expansion pointing at Directories that no longer exist
-    } catch (e) {
-      err = String(e.message || e)
-    }
-    loading = false
+    const p = (async () => {
+      try {
+        const r = await api.files()
+        files = r.files || []
+        dirs = r.dirs || []
+        root = r.root || ''
+        reconcile()   // drop selection/expansion pointing at Directories that no longer exist
+      } catch (e) {
+        err = String(e.message || e)
+      }
+      loading = false
+    })()
+    inflight = p
+    try { await p } finally { if (inflight === p) inflight = null }
   }
 
   // Prune stale references to Directories that vanished (deleted here, or removed
@@ -64,7 +82,9 @@
     const kept = [...expanded].filter((p) => live.has(p))
     if (kept.length !== expanded.size) { expanded = new Set(kept); sessionExpanded = expanded }
   }
-  onMount(load)
+  // After the first load resolves, the mount burst is over: coalescing turns off so
+  // every later load is a guaranteed-fresh fetch.
+  onMount(async () => { await load(); mounted = true })
 
   // ---- Tree assembly (directories-first, alphabetical, from the flat lists) ----
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
@@ -103,9 +123,55 @@
   // ---- Open (view/download) ----
   const fmtSize = (n) =>
     n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`
+  // The Active file's path (the row highlighted to match the preview rail). Read
+  // off the URL's aside slot, not a local flag, so it tracks Back/Forward,
+  // chat-opened deliverables, and refresh for free; null when the rail is closed
+  // or holds the Inspector.
+  const activePath = $derived($route.aside?.kind === 'file' ? $route.aside.path : null)
+  // The Active file is in the current listing (a path-less preview marks no row).
+  const activeInTree = $derived(!!activePath && files.some((f) => f.path === activePath))
+  // The shallowest collapsed ancestor Directory of the Active file: the visible
+  // folder that stands in for the hidden file and wears the active pill in its
+  // place. Null when every ancestor is expanded, i.e. the file's own row shows.
+  const activeDir = $derived.by(() => {
+    if (!activeInTree) return null
+    let acc = ''
+    const parts = activePath.split('/')
+    parts.pop()   // drop the filename; only ancestor Directories gate visibility
+    for (const p of parts) {
+      acc = acc ? acc + '/' + p : p
+      if (!expanded.has(acc)) return acc
+    }
+    return null
+  })
+  // The Active file's own row is rendered (passive reveal — all ancestors open).
+  const activeVisible = $derived(activeInTree && activeDir === null)
+  // Open the file in the preview rail; unpreviewable types offer a download there.
+  // Clicking the already-Active file toggles the rail shut.
   function openFile(f) {
-    if (previewable(f.name)) $viewer = { title: f.name, name: f.name, path: f.path }
-    else window.location.assign(api.fileUrl(f.path, true))   // no in-app preview → download
+    if (f.path === activePath) closeAside()
+    else openAsideFile(f.path)
+  }
+
+  // ---- Reveal (locate the Active file where it lives) ----
+  // React to a Reveal request from the preview header: pull a fresh listing (so a
+  // just-written file is present), persistently expand the file's ancestor Directories
+  // (as if the user clicked each chevron), then scroll its highlighted row into view.
+  // The `epoch` nonce re-fires this even for a repeat Reveal of the same path; the
+  // module-scoped guard stops a lingering request re-firing on a plain tab (re)open.
+  $effect(() => {
+    const { path, epoch } = $reveal
+    if (!path || epoch === handledRevealEpoch) return
+    handledRevealEpoch = epoch
+    revealInTree(path)
+  })
+  async function revealInTree(path) {
+    for (const d of ancestorDirs(path)) expanded.add(d)   // from the path string; no listing needed
+    expanded = new Set(expanded)
+    sessionExpanded = expanded
+    await load()          // coalesces with onMount's load when the tab just opened
+    await tick()          // let the expanded rows render before we measure
+    treeEl?.querySelector('.ftrow.active')?.scrollIntoView({ block: 'nearest' })
   }
 
   // ---- Selection (upload target) ----
@@ -175,6 +241,11 @@
     busy = from
     try {
       await api.moveFile(from, to)
+      // Follow the Active preview to its new path: renaming/moving the file the rail
+      // shows must retarget it (title + URL), not strand it on the vanished path.
+      // A moved Directory carries its active descendant along by prefix.
+      if (activePath === from) openAsideFile(to)
+      else if (activePath && activePath.startsWith(from + '/')) openAsideFile(to + activePath.slice(from.length))
       await load()
     } catch (e) { err = String(e.message || e) }   // 409 clash surfaces its message
     busy = ''
@@ -275,6 +346,7 @@
   <!-- The tree body doubles as the root drop zone / deselect surface. -->
   <div
     class="fttree"
+    bind:this={treeEl}
     class:droproot={dropTarget === ''}
     onclick={deselect}
     ondragover={onRootDragOver}
@@ -307,7 +379,8 @@
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div
       class="ftrow ftdir"
-      class:selected={selected === d.path}
+      class:active={d.path === activeDir}
+      class:selected={selected === d.path && !activeVisible && d.path !== activeDir}
       class:drop={dropTarget === d.path}
       style="padding-left:{depth * 14 + 4}px"
       draggable="true"
@@ -340,6 +413,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div
       class="ftrow ftfile"
+      class:active={activePath === f.path}
       style="padding-left:{depth * 14 + 24}px"
       draggable="true"
       ondragstart={(e) => onRowDragStart(e, f.path)}
@@ -414,6 +488,11 @@
   .ftrow { position: relative; display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; cursor: pointer; color: var(--text); user-select: none; }
   .ftrow:hover { background: var(--surface-hover, var(--code)); }
   .ftdir.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  /* The active row — the Active file's own row, or the folder standing in for it
+     when that file is collapsed out of view — is a full-width green row: the same
+     --accent-soft fill + left accent bar as the active chat/task row (.drow.on),
+     edge to edge. After :hover, so the fill holds on hover. */
+  .ftrow.active { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
   .ftrow.drop { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 6px; }
   .ftcaret { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: -2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 4px; }
   .ftcaret:hover { color: var(--text); }
