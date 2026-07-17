@@ -16,11 +16,20 @@ inside the Root. One install hosts many profiles.
 _Avoid_: account, user, persona
 
 **Files** (profile files):
-A profile's working file space — where the agent reads and writes files, including
-deliverables it produces. Lives inside the profile; always read+write to its own
-profile with no Grant needed (Folders govern only paths outside the Root); there
-is no separate visible "workspace" folder outside the Root.
+A profile's working file space — where both the agent and the user read and write
+files: the agent saves deliverables and chat output here, and the user browses,
+uploads, renames, moves, and deletes them from the Files tab. Lives inside the
+profile; always read+write to its own profile with no Grant needed (Folders govern
+only paths outside the Root); there is no separate visible "workspace" folder
+outside the Root.
 _Avoid_: workspace (the retired `~/Documents/AG2 Assistant` level)
+
+**Directory** (in the Files space):
+A nesting level inside a profile's Files space — the expandable nodes of the Files
+tree. Distinct from a **Folder**: a Directory lives *inside* the Root and needs no
+Grant, whereas a Folder is an install-wide registry entry for a path *outside* the
+Root. UI copy says "directory" for these; "folder" is reserved for the Grant system.
+_Avoid_: folder (that is the Grant concept — a path outside the Root)
 
 **Accent**:
 A Profile's visual identity — a single color it is themed with, stored as an

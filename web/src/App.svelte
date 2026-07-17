@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile } from './router.js'
   import { openThread, closeThread } from './controller.js'
-  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, settingsPage, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, settingsPage, memoryOpen, poweredByOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setAccent } from './design/palette.js'
@@ -18,7 +18,6 @@
   import Memory from './components/Memory.svelte'
   import Inspector from './components/Inspector.svelte'
   import PoweredBy from './components/PoweredBy.svelte'
-  import Files from './components/Files.svelte'
   import Notice from './components/Notice.svelte'
 
   // Boot gate: nothing profile-dependent renders until we've resolved the active
@@ -130,7 +129,7 @@
   // when any modal is open or focus is in an editable field (typing "⌘2" in the
   // message box must not switch profiles).
   function anyModalOpen() {
-    return $settingsOpen || $memoryOpen || $poweredByOpen || $filesOpen
+    return $settingsOpen || $memoryOpen || $poweredByOpen
       || $googleOpen || $codexOpen || $voicePickerOpen || !!$viewer || $onboardingOpen
   }
   function editableFocused() {
@@ -193,7 +192,6 @@
     {#if $settingsOpen}<Settings />{/if}
     {#if $memoryOpen}<Memory />{/if}
     {#if $poweredByOpen}<PoweredBy />{/if}
-    {#if $filesOpen}<Files />{/if}
     {#if $googleOpen}<Google />{/if}
     {#if $codexOpen}<Codex />{/if}
     {#if $voicePickerOpen}<VoicePicker />{/if}

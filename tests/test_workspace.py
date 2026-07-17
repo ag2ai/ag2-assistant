@@ -6,9 +6,13 @@ from types import SimpleNamespace
 
 from assistant.workspace import (
     delete,
+    list_all_dirs,
     list_dirs,
     list_files,
+    make_dir,
+    move,
     resolve,
+    save_upload,
     slugify,
     write_deliverable_file,
     write_image,
@@ -60,13 +64,13 @@ def test_list_files(tmp_path):
     assert files[0]["path"] == "ai-headlines/x.md" and files[0]["dir"] == "ai-headlines"
 
 
-def test_delete_removes_file_and_prunes_empty_folder(tmp_path):
+def test_delete_removes_file_and_keeps_now_empty_folder(tmp_path):
     (tmp_path / "ai-headlines").mkdir()
     (tmp_path / "ai-headlines" / "x.md").write_text("hi")
     assert delete(tmp_path, "ai-headlines/x.md") is True
     assert not (tmp_path / "ai-headlines" / "x.md").exists()
-    assert not (tmp_path / "ai-headlines").exists()  # emptied task folder pruned
-    assert tmp_path.exists()  # but never the workspace root
+    assert (tmp_path / "ai-headlines").exists()  # emptied folder is left in place (ADR 0007)
+    assert tmp_path.exists()  # and the workspace root is never touched
 
 
 def test_delete_keeps_nonempty_folder(tmp_path):
@@ -132,3 +136,131 @@ def test_list_dirs_empty_path_defaults_to_home(tmp_path, monkeypatch):
     (tmp_path / "proj").mkdir()
     r = list_dirs("")
     assert r is not None and "proj" in [d["name"] for d in r["dirs"]]
+
+
+# ---- User-writable Files space (ADR 0007) ----
+
+
+def test_save_upload_to_root_preserves_original_name(tmp_path):
+    rel = save_upload(tmp_path, "My Report.PDF", b"pdf-bytes")
+    assert rel == "My Report.PDF"  # original name kept (unlike write_upload's slug)
+    assert (tmp_path / rel).read_bytes() == b"pdf-bytes"
+
+
+def test_save_upload_to_nested_target_directory(tmp_path):
+    (tmp_path / "docs" / "sub").mkdir(parents=True)
+    rel = save_upload(tmp_path, "notes.md", b"hi", target_dir="docs/sub")
+    assert rel == "docs/sub/notes.md"
+    assert (tmp_path / rel).read_text() == "hi"
+
+
+def test_save_upload_creates_missing_target_directory(tmp_path):
+    rel = save_upload(tmp_path, "a.txt", b"x", target_dir="brand/new")
+    assert rel == "brand/new/a.txt" and (tmp_path / rel).exists()
+
+
+def test_save_upload_auto_suffixes_on_clash(tmp_path):
+    assert save_upload(tmp_path, "photo.png", b"a") == "photo.png"
+    assert save_upload(tmp_path, "photo.png", b"b") == "photo (2).png"  # never overwrites
+    assert save_upload(tmp_path, "photo.png", b"c") == "photo (3).png"
+    assert (tmp_path / "photo.png").read_bytes() == b"a"  # original untouched
+
+
+def test_save_upload_suffix_no_extension(tmp_path):
+    assert save_upload(tmp_path, "LICENSE", b"a") == "LICENSE"
+    assert save_upload(tmp_path, "LICENSE", b"b") == "LICENSE (2)"
+
+
+def test_save_upload_rejects_traversal(tmp_path):
+    assert save_upload(tmp_path, "x.txt", b"a", target_dir="../../etc") is None
+    # a filename that tries to climb is reduced to its basename, staying inside
+    rel = save_upload(tmp_path, "../../evil.sh", b"a")
+    assert rel == "evil.sh" and (tmp_path / "evil.sh").exists()
+
+
+def test_make_dir_creates_empty_directory(tmp_path):
+    assert make_dir(tmp_path, "reports") == ("ok", "reports")
+    assert (tmp_path / "reports").is_dir()
+
+
+def test_make_dir_nested_and_shown_by_list_all_dirs(tmp_path):
+    assert make_dir(tmp_path, "a/b/c") == ("ok", "a/b/c")
+    dirs = list_all_dirs(tmp_path)
+    assert "a" in dirs and "a/b" in dirs and "a/b/c" in dirs
+
+
+def test_make_dir_rejects_existing(tmp_path):
+    (tmp_path / "dup").mkdir()
+    assert make_dir(tmp_path, "dup") == ("exists", None)  # no clobber
+
+
+def test_make_dir_rejects_traversal_and_root(tmp_path):
+    assert make_dir(tmp_path, "../escape") == ("invalid", None)
+    assert make_dir(tmp_path, "") == ("invalid", None)  # the root itself
+
+
+def test_delete_directory_recursively(tmp_path):
+    (tmp_path / "d" / "sub").mkdir(parents=True)
+    (tmp_path / "d" / "one.md").write_text("1")
+    (tmp_path / "d" / "sub" / "two.md").write_text("2")
+    assert delete(tmp_path, "d") is True
+    assert not (tmp_path / "d").exists()
+    assert tmp_path.exists()  # never the root
+
+
+def test_delete_directory_rejects_traversal_and_root(tmp_path):
+    assert delete(tmp_path, "../..") is False
+    assert delete(tmp_path, "") is False  # can't delete the root
+
+
+def test_move_renames_file_in_place(tmp_path):
+    (tmp_path / "a.md").write_text("hi")
+    assert move(tmp_path, "a.md", "b.md") == "ok"
+    assert not (tmp_path / "a.md").exists()
+    assert (tmp_path / "b.md").read_text() == "hi"
+
+
+def test_move_file_into_another_directory(tmp_path):
+    (tmp_path / "a.md").write_text("hi")
+    assert move(tmp_path, "a.md", "docs/a.md") == "ok"  # intermediate dir created
+    assert (tmp_path / "docs" / "a.md").read_text() == "hi"
+
+
+def test_move_directory_rewrites_subtree(tmp_path):
+    (tmp_path / "old" / "sub").mkdir(parents=True)
+    (tmp_path / "old" / "sub" / "x.md").write_text("x")
+    assert move(tmp_path, "old", "new") == "ok"
+    assert (tmp_path / "new" / "sub" / "x.md").read_text() == "x"
+    assert not (tmp_path / "old").exists()
+
+
+def test_move_rejects_clash(tmp_path):
+    (tmp_path / "a.md").write_text("a")
+    (tmp_path / "b.md").write_text("b")
+    assert move(tmp_path, "a.md", "b.md") == "exists"  # never overwrites
+    assert (tmp_path / "a.md").read_text() == "a"  # source untouched
+    assert (tmp_path / "b.md").read_text() == "b"  # destination untouched
+
+
+def test_move_missing_source(tmp_path):
+    assert move(tmp_path, "nope.md", "b.md") == "not_found"
+
+
+def test_move_rejects_traversal_on_either_side(tmp_path):
+    (tmp_path / "a.md").write_text("a")
+    assert move(tmp_path, "../../etc/passwd", "b.md") == "invalid"
+    assert move(tmp_path, "a.md", "../../evil.md") == "invalid"
+    assert (tmp_path / "a.md").exists()
+
+
+def test_move_directory_into_own_subtree_rejected(tmp_path):
+    (tmp_path / "d" / "sub").mkdir(parents=True)
+    assert move(tmp_path, "d", "d/sub/d") == "invalid"
+
+
+def test_list_all_dirs_includes_empty_directories(tmp_path):
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "withfile").mkdir()
+    (tmp_path / "withfile" / "f.md").write_text("f")
+    dirs = list_all_dirs(tmp_path)
+    assert "empty" in dirs and "withfile" in dirs

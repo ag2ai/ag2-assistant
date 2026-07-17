@@ -1,0 +1,440 @@
+<script module>
+  // Session-scoped tree state that must survive the component remounting each time
+  // the Files tab is (re)activated: which Directories the user has expanded
+  // (default is collapsed) and the current upload-target selection. A profile
+  // switch is a full-page nav, so these reset with it — correct.
+  let sessionExpanded = new Set()
+  let sessionSelected = ''
+</script>
+
+<script>
+  // The profile's user-writable Files space rendered as an IDE-style Directory
+  // tree (ADR 0007). Built client-side from the flat {files, dirs} listing by
+  // splitting paths. Freshness is pull: loads when the tab opens and on ↻ refresh,
+  // never a background poll. Supports upload (drag OS files or ⤒), New directory,
+  // rename/move (inline editor or drag a row onto a Directory), and recursive
+  // Directory delete — alongside the agent's own writes.
+  import { onMount } from 'svelte'
+  import { viewer } from '../store.js'
+  import { api } from '../transport/api.js'
+  import { previewable } from '../lib/preview.js'
+  import Icon from './Icon.svelte'
+
+  let files = $state([])          // flat [{path,name,dir,size,modified}]
+  let dirs = $state([])           // flat [relpath] — includes empty Directories
+  let root = $state('')
+  let loading = $state(true)
+  let err = $state('')
+
+  // Expanded Directories (a Directory is collapsed unless present here); selected
+  // upload-target Directory ('' = Files-space root). Seeded from session state so
+  // switching tabs preserves the tree's shape.
+  let expanded = $state(sessionExpanded)
+  let selected = $state(sessionSelected)
+  $effect(() => { sessionSelected = selected })
+
+  async function load() {
+    loading = true
+    err = ''
+    try {
+      const r = await api.files()
+      files = r.files || []
+      dirs = r.dirs || []
+      root = r.root || ''
+      reconcile()   // drop selection/expansion pointing at Directories that no longer exist
+    } catch (e) {
+      err = String(e.message || e)
+    }
+    loading = false
+  }
+
+  // Prune stale references to Directories that vanished (deleted here, or removed
+  // out-of-band): a dangling `selected` would otherwise redirect New directory /
+  // Upload into a phantom path. When the selected Directory is gone, fall back to
+  // its nearest surviving ancestor (not the root) so recreating what was just
+  // deleted lands back in the same place instead of colliding at the root.
+  // `dirs` is the authoritative set of existing paths.
+  function reconcile() {
+    const live = new Set(dirs)
+    if (selected && !live.has(selected)) {
+      let p = selected
+      do { p = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '' } while (p && !live.has(p))
+      selected = p
+    }
+    const kept = [...expanded].filter((p) => live.has(p))
+    if (kept.length !== expanded.size) { expanded = new Set(kept); sessionExpanded = expanded }
+  }
+  onMount(load)
+
+  // ---- Tree assembly (directories-first, alphabetical, from the flat lists) ----
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  const tree = $derived.by(() => {
+    const rootNode = { name: '', path: '', dirs: new Map(), files: [] }
+    const ensure = (path) => {
+      let cur = rootNode
+      if (!path) return cur
+      let acc = ''
+      for (const part of path.split('/')) {
+        acc = acc ? acc + '/' + part : part
+        if (!cur.dirs.has(part)) cur.dirs.set(part, { name: part, path: acc, dirs: new Map(), files: [] })
+        cur = cur.dirs.get(part)
+      }
+      return cur
+    }
+    for (const d of dirs) ensure(d)
+    for (const f of files) ensure(f.dir).files.push(f)
+    return rootNode
+  })
+  const subDirs = (node) => [...node.dirs.values()].sort(byName)
+  const subFiles = (node) => [...node.files].sort(byName)
+  const isEmpty = $derived(!files.length && !dirs.length)
+
+  const isOpen = (path) => expanded.has(path)
+  function toggle(path) {
+    if (expanded.has(path)) expanded.delete(path)
+    else expanded.add(path)
+    expanded = new Set(expanded)   // reassign → reactive
+    sessionExpanded = expanded
+  }
+
+  // Files in (and under) a Directory — for the recursive-delete confirm count.
+  const countUnder = (path) => files.filter((f) => f.path === path || f.path.startsWith(path + '/')).length
+
+  // ---- Open (view/download) ----
+  const fmtSize = (n) =>
+    n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`
+  function openFile(f) {
+    if (previewable(f.name)) $viewer = { title: f.name, name: f.name, path: f.path }
+    else window.location.assign(api.fileUrl(f.path, true))   // no in-app preview → download
+  }
+
+  // ---- Selection (upload target) ----
+  const selectDir = (path) => { selected = path }
+  const deselect = () => { selected = '' }
+
+  // ---- Row kebab menu (one at a time, fixed-positioned so the scroll can't clip) ----
+  let menu = $state('')            // node path whose menu is open
+  let menuPos = $state({ x: 0, y: 0 })
+  function toggleMenu(e, path) {
+    e.stopPropagation()
+    if (menu === path) { menu = ''; return }
+    const r = e.currentTarget.getBoundingClientRect()
+    menuPos = { x: r.right, y: r.bottom + 4 }
+    menu = path
+  }
+  function onDocPointer(e) {
+    if (menu && !e.target.closest('.ftmenu') && !e.target.closest('.ftkebab')) menu = ''
+  }
+  function onDocKey(e) {
+    if (e.key === 'Escape') { menu = ''; if (renaming) cancelRename(); if (creating) creating = false }
+  }
+  onMount(() => {
+    document.addEventListener('pointerdown', onDocPointer, true)
+    document.addEventListener('keydown', onDocKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDocPointer, true)
+      document.removeEventListener('keydown', onDocKey)
+    }
+  })
+
+  // ---- Delete (file or Directory, recursive) ----
+  let confirming = $state('')      // path awaiting delete confirmation
+  let busy = $state('')            // path currently mutating
+  async function del(path) {
+    busy = path
+    try {
+      await api.deleteFile(path)
+      await load()
+    } catch (e) { err = String(e.message || e) }
+    busy = ''
+    confirming = ''
+  }
+
+  // ---- Rename / move via inline editor ----
+  // The editor accepts a bare name (rename in place) or a relative path (move,
+  // creating intermediate Directories). parentOf gives the containing Directory.
+  let renaming = $state('')        // path being renamed
+  let renameText = $state('')
+  const parentOf = (path) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
+  function startRename(path, name) {
+    menu = ''
+    renaming = path
+    renameText = name
+  }
+  function cancelRename() { renaming = '' }
+  async function commitRename(fromPath) {
+    if (renaming !== fromPath) return    // already cancelled (Escape) — ignore blur
+    const t = renameText.trim()
+    renaming = ''
+    if (!t) return
+    const to = t.includes('/') ? t : (parentOf(fromPath) ? parentOf(fromPath) + '/' + t : t)
+    if (to === fromPath) return
+    await doMove(fromPath, to)
+  }
+  async function doMove(from, to) {
+    busy = from
+    try {
+      await api.moveFile(from, to)
+      await load()
+    } catch (e) { err = String(e.message || e) }   // 409 clash surfaces its message
+    busy = ''
+  }
+  function focusSelect(node) { node.focus(); node.select() }
+
+  // ---- New Directory ----
+  let creating = $state(false)
+  let newName = $state('')
+  function startCreate() { creating = true; newName = '' }
+  async function commitCreate() {
+    if (!creating) return    // Enter already handled it — ignore the blur that follows unmount
+    creating = false
+    const t = newName.trim()
+    if (!t) return
+    const path = selected ? selected + '/' + t : t
+    busy = path
+    try {
+      await api.mkdir(path)
+      if (selected) { expanded.add(selected); expanded = new Set(expanded) }  // reveal the new child
+      await load()
+    } catch (e) { err = String(e.message || e) }
+    busy = ''
+  }
+
+  // ---- Upload (⤒ picker or OS drag-drop), auto-suffixed server-side ----
+  let fileInput
+  async function upload(fileList, targetDir) {
+    if (!fileList || !fileList.length) return
+    busy = 'upload'
+    try {
+      await api.uploadFiles(fileList, targetDir || '')
+      await load()
+    } catch (e) { err = String(e.message || e) }
+    busy = ''
+  }
+  function onPick(e) {
+    upload(e.target.files, selected)
+    e.target.value = ''            // let the same file be re-picked later
+  }
+
+  // ---- Drag & drop: OS files → upload; an internal row → move ----
+  const DRAG_TYPE = 'application/x-ag2-path'
+  let dropTarget = $state(null)    // Directory path currently hovered as a drop target ('' = root)
+  function onRowDragStart(e, path) {
+    e.dataTransfer.setData(DRAG_TYPE, path)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+  function onDirDragOver(e, path) {
+    e.preventDefault()
+    e.stopPropagation()
+    dropTarget = path
+  }
+  function onRootDragOver(e) { e.preventDefault(); dropTarget = '' }
+  // `targetDir` is a Directory path when a row is the drop target, or null for the
+  // tree body. Body drop: OS files go into the selected Directory (root if none,
+  // per Ticket 02); an internal row moves to the root.
+  async function onDrop(e, targetDir) {
+    e.preventDefault()
+    e.stopPropagation()
+    dropTarget = null
+    if (e.dataTransfer.files && e.dataTransfer.files.length) {
+      await upload(e.dataTransfer.files, targetDir ?? selected)   // OS files → upload
+      return
+    }
+    const from = e.dataTransfer.getData(DRAG_TYPE)                // internal row → move
+    if (!from) return
+    const dir = targetDir ?? ''
+    const name = from.includes('/') ? from.slice(from.lastIndexOf('/') + 1) : from
+    const to = dir ? dir + '/' + name : name
+    if (to === from) return
+    await doMove(from, to)
+  }
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+<div class="ftwrap">
+  <div class="fttoolbar">
+    <span class="ftsel" title="Upload / New directory target">
+    {#if selected}
+        {selected}
+    {:else}
+        Search
+    {/if}
+    </span>
+
+    <span class="ftspacer"></span>
+
+    <button class="fttool" title="Upload into {selected || 'root'}" aria-label="Upload" onclick={() => fileInput.click()}><Icon name="plus" size={15} /></button>
+    <button class="fttool" title="New directory in {selected || 'root'}" aria-label="New directory" onclick={startCreate}><Icon name="folder-plus" size={15} /></button>
+    <button class="fttool" title="Refresh" aria-label="Refresh" onclick={load}><Icon name="rotate-cw" size={15} /></button>
+
+    <input type="file" multiple bind:this={fileInput} onchange={onPick} hidden />
+  </div>
+
+  {#if err}<p class="fterr">{err} <button class="ftlink" onclick={() => (err = '')}>dismiss</button></p>{/if}
+
+  <!-- The tree body doubles as the root drop zone / deselect surface. -->
+  <div
+    class="fttree"
+    class:droproot={dropTarget === ''}
+    onclick={deselect}
+    ondragover={onRootDragOver}
+    ondrop={(e) => onDrop(e, null)}
+  >
+    {#if creating}
+      <div class="ftrow ftnew" style="padding-left:8px">
+        <Icon name="folder" size={14} />
+        <input class="ftinput" placeholder="New directory name" bind:value={newName} use:focusSelect
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => { if (e.key === 'Enter') commitCreate(); else if (e.key === 'Escape') creating = false }}
+          onblur={commitCreate} />
+      </div>
+    {/if}
+
+    {#if loading}
+      <p class="ftmuted">Loading…</p>
+    {:else if isEmpty}
+      <p class="ftmuted ftempty">No files yet — ask the agent to save something, run a task that produces a deliverable, or drag files here (or use&nbsp;⤒) to upload.</p>
+    {:else}
+      {@render level(tree, 0)}
+    {/if}
+  </div>
+
+  <p class="ftcaption" title={root}>{root}</p>
+</div>
+
+{#snippet level(node, depth)}
+  {#each subDirs(node) as d (d.path)}
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+    <div
+      class="ftrow ftdir"
+      class:selected={selected === d.path}
+      class:drop={dropTarget === d.path}
+      style="padding-left:{depth * 14 + 4}px"
+      draggable="true"
+      ondragstart={(e) => onRowDragStart(e, d.path)}
+      ondragover={(e) => onDirDragOver(e, d.path)}
+      ondrop={(e) => onDrop(e, d.path)}
+      onclick={(e) => { e.stopPropagation(); selectDir(d.path); toggle(d.path) }}
+    >
+      <button class="ftcaret" title={isOpen(d.path) ? 'Collapse' : 'Expand'}
+        onclick={(e) => { e.stopPropagation(); toggle(d.path) }}>
+        <Icon name={isOpen(d.path) ? 'chevron-down' : 'chevron-right'} size={13} />
+      </button>
+      <Icon name="folder" size={14} />
+      {#if renaming === d.path}
+        <input class="ftinput" bind:value={renameText} use:focusSelect
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => { if (e.key === 'Enter') commitRename(d.path); else if (e.key === 'Escape') cancelRename() }}
+          onblur={() => commitRename(d.path)} />
+      {:else}
+        <span class="ftname">{d.name}</span>
+      {/if}
+      {@render rowActions(d.path, d.name, true)}
+    </div>
+    {#if isOpen(d.path)}
+      {@render level(d, depth + 1)}
+    {/if}
+  {/each}
+
+  {#each subFiles(node) as f (f.path)}
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+    <div
+      class="ftrow ftfile"
+      style="padding-left:{depth * 14 + 24}px"
+      draggable="true"
+      ondragstart={(e) => onRowDragStart(e, f.path)}
+      onclick={(e) => { e.stopPropagation(); if (renaming !== f.path) openFile(f) }}
+    >
+      <Icon name="file-text" size={14} />
+      {#if renaming === f.path}
+        <input class="ftinput" bind:value={renameText} use:focusSelect
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => { if (e.key === 'Enter') commitRename(f.path); else if (e.key === 'Escape') cancelRename() }}
+          onblur={() => commitRename(f.path)} />
+      {:else}
+        <span class="ftname" title={f.path}>{f.name}</span>
+        <span class="ftmeta">{fmtSize(f.size)}</span>
+      {/if}
+      {@render rowActions(f.path, f.name, false)}
+    </div>
+  {/each}
+{/snippet}
+
+{#snippet rowActions(path, name, isDir)}
+  {#if confirming === path}
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+    <span class="ftconfirm" onclick={(e) => e.stopPropagation()}>
+      <span class="confirm">Delete{#if isDir} {countUnder(path)} file{countUnder(path) === 1 ? '' : 's'}{/if}?</span>
+      <button class="ftlink danger" disabled={busy === path} onclick={(e) => { e.stopPropagation(); del(path) }}>{busy === path ? '…' : 'yes'}</button>
+      <button class="ftlink" onclick={(e) => { e.stopPropagation(); confirming = '' }}>no</button>
+    </span>
+  {:else if renaming !== path}
+    <button class="ftkebab" title="Actions" aria-haspopup="menu" aria-expanded={menu === path}
+      onclick={(e) => toggleMenu(e, path)}><Icon name="ellipsis-vertical" size={14} /></button>
+    {#if menu === path}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="ftmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px" onclick={(e) => e.stopPropagation()}>
+        {#if !isDir}
+          <a class="ftmitem" role="menuitem" href={api.fileUrl(path, true)} onclick={() => (menu = '')}>
+            <Icon name="download" size={14} /> Download
+          </a>
+        {/if}
+        <button class="ftmitem" role="menuitem" onclick={() => startRename(path, name)}>
+          <Icon name="pencil" size={14} /> Rename
+        </button>
+        <div class="ftmdiv"></div>
+        <!-- Files and empty Directories delete immediately; a Directory with files
+             in it confirms first (recursive delete). -->
+        <button class="ftmitem danger" role="menuitem" onclick={() => { menu = ''; if (isDir && countUnder(path)) confirming = path; else del(path) }}>
+          <Icon name="trash" size={14} /> Delete
+        </button>
+      </div>
+    {/if}
+  {/if}
+{/snippet}
+
+<style>
+  .ftwrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .fttoolbar { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .fttool { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; background: none; color: var(--muted); border-radius: 7px; cursor: pointer; }
+  .fttool:hover { color: var(--text); background: var(--code); }
+  .ftspacer { flex: 1; }
+  .ftsel { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--accent); }
+
+  .fterr { margin: 6px 8px 0; color: #d8552f; font-size: 12px; }
+  .ftlink { border: none; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; padding: 0; }
+  .ftlink:hover { text-decoration: underline; }
+  .ftlink.danger { color: var(--muted); }
+  .ftlink.danger:hover { color: #d8552f; }
+  .ftlink.danger:disabled { cursor: default; opacity: .6; }
+
+  .fttree { flex: 1; overflow-y: auto; padding: 4px 0; min-height: 0; }
+  .fttree.droproot { outline: 2px dashed var(--accent); outline-offset: -3px; border-radius: 6px; }
+
+  .ftrow { position: relative; display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; cursor: pointer; color: var(--text); user-select: none; }
+  .ftrow:hover { background: var(--surface-hover, var(--code)); }
+  .ftdir.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .ftrow.drop { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 6px; }
+  .ftcaret { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: -2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 4px; }
+  .ftcaret:hover { color: var(--text); }
+  .ftname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .ftfile .ftname { font-family: var(--mono); }
+  .ftmeta { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .ftinput { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 1px 5px; border: 1px solid var(--accent); border-radius: 5px; background: var(--surface); color: var(--text); }
+
+  .ftconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; margin-left: auto; }
+  .ftconfirm .confirm { color: #d8552f; font-size: 12px; white-space: nowrap; }
+
+  .ftkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-left: auto; border: none; background: none; color: var(--muted); border-radius: 5px; opacity: 0; cursor: pointer; }
+  .ftrow:hover .ftkebab, .ftrow:focus-within .ftkebab { opacity: .55; }
+  .ftkebab:hover { opacity: 1; color: var(--text); }
+  .ftmenu { position: fixed; z-index: var(--z-modal); transform: translateX(-100%); min-width: 150px; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow, 0 8px 28px rgba(0,0,0,.18)); }
+  .ftmitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: none; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; border-radius: 6px; cursor: pointer; }
+  .ftmitem:hover { background: var(--surface-hover, var(--code)); }
+  .ftmitem.danger { color: #d8552f; }
+  .ftmdiv { height: 1px; margin: 4px 6px; background: var(--line); }
+
+  .ftmuted { color: var(--muted); font-size: 13px; padding: 8px 12px; }
+  .ftempty { line-height: 1.5; }
+  .ftcaption { flex: none; margin: 0; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>

@@ -8,6 +8,7 @@ workspace root).
 """
 
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -89,38 +90,104 @@ def write_upload(workspace_dir, filename: str, data: bytes) -> str:
     return str(path.relative_to(root))
 
 
-def resolve(workspace_dir, rel: str) -> Path | None:
-    """Resolve a workspace-relative path to an absolute file path, or None if it
-    escapes the workspace root (path-traversal guard) or isn't a file."""
-    root = _root(workspace_dir)
+def _inside(root: Path, rel: str) -> Path | None:
+    """Resolve `rel` under `root` with the path-traversal guard, not requiring the
+    path to exist or be a file. Returns the absolute path if it stays inside the
+    root, else None."""
     try:
         p = (root / (rel or "")).resolve()
     except Exception:
         return None
-    inside = p == root or root in p.parents
-    return p if inside and p.is_file() else None
+    return p if (p == root or root in p.parents) else None
+
+
+def resolve(workspace_dir, rel: str) -> Path | None:
+    """Resolve a workspace-relative path to an absolute file path, or None if it
+    escapes the workspace root (path-traversal guard) or isn't a file."""
+    p = _inside(_root(workspace_dir), rel)
+    return p if p is not None and p.is_file() else None
+
+
+def save_upload(workspace_dir, filename: str, data: bytes, target_dir: str = "") -> str | None:
+    """Save a user-uploaded file into the Files space under `target_dir` (root when
+    empty), keeping the original filename. A name clash is auto-suffixed
+    ``name (2).ext`` (then `(3)`, …) so nothing is overwritten. Returns the
+    workspace-relative path, or None if `target_dir` escapes the root."""
+    root = _root(workspace_dir)
+    dest = _inside(root, target_dir)
+    if dest is None:
+        return None
+    dest.mkdir(parents=True, exist_ok=True)
+    name = Path(filename or "file").name or "file"  # drop any directory parts
+    stem, dot, ext = name.rpartition(".")
+    base, suffix = (stem, f".{ext}") if dot else (name, "")
+    path = dest / name
+    n = 2
+    while path.exists():
+        path = dest / f"{base} ({n}){suffix}"
+        n += 1
+    path.write_bytes(data)
+    return str(path.relative_to(root))
+
+
+def make_dir(workspace_dir, rel: str) -> tuple[str, str | None]:
+    """Create an empty Directory at `rel` (intermediate Directories created as
+    needed). Returns ``(status, path)``: ``("ok", relpath)`` on success, else
+    ``("exists", None)`` if it already exists (no clobber) or ``("invalid", None)``
+    on a traversal escape / the root itself."""
+    root = _root(workspace_dir)
+    p = _inside(root, rel)
+    if p is None or p == root:
+        return ("invalid", None)
+    if p.exists():
+        return ("exists", None)
+    try:
+        p.mkdir(parents=True, exist_ok=False)
+    except OSError:
+        return ("invalid", None)
+    return ("ok", str(p.relative_to(root)))
+
+
+def move(workspace_dir, src: str, dst: str) -> str:
+    """Move/rename a file or Directory. `dst` may be a new name or a new relative
+    path (intermediate Directories created); a Directory move carries its subtree.
+    Never overwrites an existing `dst`. Returns ``"ok" | "not_found" | "exists" |
+    "invalid"`` (``"invalid"`` = a traversal escape either side, or a Directory moved
+    into its own subtree)."""
+    root = _root(workspace_dir)
+    sp = _inside(root, src)
+    dp = _inside(root, dst)
+    if sp is None or dp is None or sp == root or dp == root:
+        return "invalid"
+    if not sp.exists():
+        return "not_found"
+    if sp == dp:
+        return "ok"  # rename to the same path — no-op
+    if dp.exists():
+        return "exists"
+    if sp.is_dir() and sp in dp.parents:
+        return "invalid"  # a Directory can't move inside itself
+    try:
+        dp.parent.mkdir(parents=True, exist_ok=True)
+        sp.rename(dp)
+    except OSError:
+        return "invalid"
+    return "ok"
 
 
 def delete(workspace_dir, rel: str) -> bool:
-    """Delete one workspace file (same sandbox guard as `resolve`). Returns True on
-    success, False if the path doesn't resolve to a file inside the workspace. Also
-    prunes now-empty parent folders (e.g. an emptied per-task subfolder) up to — but
-    never including — the workspace root."""
-    p = resolve(workspace_dir, rel)
-    if p is None:
-        return False
+    """Delete a workspace file, or a Directory and its contents recursively,
+    sandboxed to the workspace root (never the root itself). Returns False if the
+    path escapes the root, is missing, or is the root. Empty parent Directories are
+    left in place — they're first-class in the Files space (ADR 0007)."""
     root = _root(workspace_dir)
+    p = _inside(root, rel)
+    if p is None or p == root or not p.exists():
+        return False
     try:
-        p.unlink()
+        shutil.rmtree(p) if p.is_dir() else p.unlink()
     except OSError:
         return False
-    parent = p.parent
-    while parent != root and root in parent.parents:
-        try:
-            parent.rmdir()  # only removes if empty
-        except OSError:
-            break
-        parent = parent.parent
     return True
 
 
@@ -147,6 +214,24 @@ def list_files(workspace_dir) -> list[dict]:
             }
         )
     out.sort(key=lambda f: f["modified"], reverse=True)
+    return out
+
+
+def list_all_dirs(workspace_dir) -> list[str]:
+    """Every Directory under the workspace root (recursively), workspace-relative —
+    so the Files tree can show empty Directories that the files-only `list_files`
+    omits (New directory / move can create them). Sorted for a stable tree."""
+    root = _root(workspace_dir)
+    if not root.exists():
+        return []
+    out: list[str] = []
+    for p in root.rglob("*"):
+        try:
+            if p.is_dir():
+                out.append(str(p.relative_to(root)))
+        except OSError:
+            continue
+    out.sort()
     return out
 
 

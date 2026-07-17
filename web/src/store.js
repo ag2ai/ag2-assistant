@@ -10,10 +10,10 @@ export const profiles = writable({ list: [], activeId: null })
 // `{type,data}` events (see project.js). `kind` is 'chat' or 'task'.
 export const thread = writable({ id: null, kind: 'chat', items: [], busy: false })
 
-// Drawer: unified history of chats + tasks.
+// Drawer: unified history of chats + tasks, plus the user-writable Files tree.
 export const chats = writable([])
 export const tasks = writable([])
-export const drawerTab = writable('chats') // 'chats' | 'tasks'
+export const drawerTab = writable('chats') // 'chats' | 'tasks' | 'files'
 
 // Current task's durable panel data (tree/schedule/deliverables), when kind==='task'.
 export const taskPanel = writable(null)
@@ -70,9 +70,6 @@ export const poweredByOpen = writable(false)
 // App version, seeded from the GET /api/profiles boot payload. Shown in the
 // "Powered by AG2" modal footer. Empty until boot completes.
 export const appVersion = writable('')
-
-// Files browser modal (the agent's working file space) open/closed.
-export const filesOpen = writable(false)
 
 // A bounded buffer of the raw {type,data} events the current chat's stream
 // already delivers — the AG2 Inspector renders it to show the live AG2 events

@@ -189,7 +189,9 @@ export const api = {
   healthMcpServer: (name) => j('POST', P(`/settings/mcp/${encodeURIComponent(name)}/health`)),
   getMemory: () => j('GET', P('/memory')),
   setMemory: (text) => j('POST', P('/memory'), { text }),
-  // Workspace files (the agent's working file space)
+  // Workspace files — the profile's user-writable Files space (ADR 0007). files()
+  // returns {root, files:[{path,name,dir,size,modified}], dirs:[relpath]} (dirs
+  // includes empty Directories the files-only list omits — the tree needs them).
   files: () => j('GET', P('/files')),
   fileUrl: (path, download = false) =>
     P('/files/raw?path=' + encodeURIComponent(path) + (download ? '&download=true' : '')),
@@ -198,7 +200,26 @@ export const api = {
     if (!r.ok) throw new Error('file not found')
     return r.text()
   },
+  // Delete a file OR a Directory (recursive) — same route, extended server-side.
   deleteFile: (path) => j('DELETE', P('/files/raw?path=' + encodeURIComponent(path))),
+  // Upload OS files into a target Directory (empty = root). Multipart, so it skips
+  // j()'s JSON envelope; name clashes are auto-suffixed server-side (never overwrites).
+  uploadFiles: async (fileList, dir = '') => {
+    const fd = new FormData()
+    for (const f of fileList) fd.append('files', f, f.name)
+    fd.append('dir', dir)
+    const r = await fetch(P('/files/upload'), { method: 'POST', body: fd })
+    if (!r.ok) {
+      let msg = 'upload failed (' + r.status + ')'
+      try { const b = await r.json(); if (b && b.error) msg = b.error } catch {}
+      throw new Error(msg)
+    }
+    return r.json()
+  },
+  // New empty Directory (409 if it already exists → surfaced as an inline error).
+  mkdir: (path) => j('POST', P('/files/mkdir'), { path }),
+  // Move/rename a file or Directory. 409 if the destination exists (never overwrites).
+  moveFile: (from, to) => j('POST', P('/files/move'), { from, to }),
   usage: () => j('GET', P('/usage')),
   selectVoice: (voice, configId) => j('POST', P('/voice/select'), { voice, config_id: configId || null }),
   previewVoice: async (voice, configId) => {

@@ -1,11 +1,12 @@
 <script>
   import { onMount } from 'svelte'
-  import { chats, tasks, drawerTab, settingsOpen, filesOpen, profiles } from '../store.js'
+  import { chats, tasks, drawerTab, settingsOpen, profiles } from '../store.js'
   import { route, go, newChatId } from '../router.js'
   import { api } from '../transport/api.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
+  import FilesTree from './FilesTree.svelte'
   import { fmtWhen, fmtNextIn, fmtAgoShort, dayRows, fmtDayShort } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
@@ -382,6 +383,7 @@
   <div class="segbar" role="tablist" aria-label="View">
     <button class="seg" class:on={$drawerTab === 'chats'} role="tab" aria-selected={$drawerTab === 'chats'} onclick={() => ($drawerTab = 'chats')}><Icon name="message" size={14} /> Chats</button>
     <button class="seg" class:on={$drawerTab === 'tasks'} role="tab" aria-selected={$drawerTab === 'tasks'} onclick={() => ($drawerTab = 'tasks')}><Icon name="list" size={14} /> Tasks</button>
+    <button class="seg" class:on={$drawerTab === 'files'} role="tab" aria-selected={$drawerTab === 'files'} onclick={() => ($drawerTab = 'files')}><Icon name="folder" size={14} /> Files</button>
   </div>
 
   {#snippet chatRow(s)}
@@ -429,6 +431,9 @@
     </div>
   {/snippet}
 
+  {#if $drawerTab === 'files'}
+    <FilesTree />
+  {:else}
   <div class="dlist" onscroll={() => (menuChat = '')}>
     {#if $drawerTab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
@@ -472,6 +477,7 @@
       {/each}
     {/if}
   </div>
+  {/if}
 
   {#if usageLabel}
     <div class="usagehud" title={usageTitle}>
@@ -479,7 +485,6 @@
     </div>
   {/if}
   <div class="dfoot">
-    <button class="settingsbtn" onclick={() => ($filesOpen = true)}><Icon name="folder" size={15} /> Files</button>
     <button class="settingsbtn" onclick={() => ($settingsOpen = true)}><Icon name="settings" size={15} /> Settings</button>
   </div>
 </div>
