@@ -599,6 +599,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
   .modal, .modal-backdrop { animation: none; }
 }
 .modal h2 { margin: 0; }
+/* Every modal window carries the quiet close × in its top-right corner, so a
+   direct-child title reserves room for it (nested titles, e.g. .viewer .vhead,
+   handle their own spacing). */
+.modal > h2 { padding-right: 34px; }
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
 /* A dialog opened from INSIDE another modal (e.g. Settings → Advanced provider
    config) stacks above it — base modal is z 20/21. */
@@ -617,9 +621,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modal-x:hover { color: var(--ink); background: var(--code); }
 
 .viewer { width: min(820px, 92vw); height: min(84vh, 900px); padding: 0; gap: 0; overflow: hidden; }
-.viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+/* Right padding clears the absolute top-right close × that the viewer shares
+   with every modal window. */
+.viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 48px 16px 22px; border-bottom: 1px solid var(--line); }
 .viewer .vhead h2 { font-size: 18px; margin: 0; flex: 1; overflow-wrap: anywhere; }
-.viewer .vhead .modal-close { align-self: auto; }
 .viewer .vbody { min-height: 0; flex: 1; padding: 20px 26px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .viewer .vhead .dl { font-size: 12px; color: var(--accent); text-decoration: none; }
 .viewer .vhead .dl:hover { text-decoration: underline; }

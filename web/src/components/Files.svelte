@@ -66,6 +66,7 @@
 
 <div class="modal-backdrop" onclick={close}></div>
 <div class="modal files">
+  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Files</h2>
   <p class="muted">The agent's working file space — files it saved (task deliverables land here). <code>{root}</code></p>
   {#if err}<p class="muted" style="color:#d8552f">{err}</p>{/if}
@@ -97,5 +98,4 @@
       {/each}
     {/if}
   </div>
-  <button class="modal-close" onclick={close}>Close</button>
 </div>

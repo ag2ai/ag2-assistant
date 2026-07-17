@@ -33,10 +33,10 @@
 
 <div class="modal-backdrop over" onclick={close}></div>
 <div class="modal viewer over">
+  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <div class="vhead">
     <h2>{$viewer.title || 'Preview'}</h2>
     {#if $viewer.path}<a class="dl" href={api.fileUrl($viewer.path, true)}>download</a>{/if}
-    <button class="modal-close" onclick={close}>Close</button>
   </div>
   <div class="vbody" class:native>
     {#if err}

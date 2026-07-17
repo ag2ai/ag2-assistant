@@ -57,6 +57,7 @@
 <!-- Scoped to a config → stack OVER Settings (.over) rather than replace it. -->
 <div class="modal-backdrop" class:over={!!configId} onclick={close}></div>
 <div class="modal voicepick" class:over={!!configId}>
+  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Voice{provider ? ' — ' + (PROVIDER_LABEL[provider] || provider) : ''}</h2>
   <p class="muted">Pick a voice — it plays a sample and is saved for your chats (applies next voice session).</p>
   <div class="vlist">
@@ -68,5 +69,4 @@
       </button>
     {/each}
   </div>
-  <button class="modal-close" onclick={close}>Close</button>
 </div>
