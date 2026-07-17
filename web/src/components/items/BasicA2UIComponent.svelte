@@ -138,7 +138,11 @@
     {a2uiValue(child(component.child)?.text, data) || 'Continue'}
   </button>
 {:else if type === 'image'}
-  <img class="a2ui-image {component.variant || ''}" src={a2uiValue(component.url, data)} alt={a2uiValue(component.description, data) || ''} style:object-fit={component.fit === 'scaleDown' ? 'scale-down' : component.fit || 'fill'} />
+  <!-- Default fit is `contain`, not `fill`: .a2ui-image clamps the box (width:100% +
+       max-height), so the box rarely matches the image's intrinsic ratio — `fill` then
+       stretches it. `contain` letterboxes against the tile's background instead, which
+       is what that background colour is there for. Matches A2UI/BoxFit's own default. -->
+  <img class="a2ui-image {component.variant || ''}" src={a2uiValue(component.url, data)} alt={a2uiValue(component.description, data) || ''} style:object-fit={component.fit === 'scaleDown' ? 'scale-down' : component.fit || 'contain'} />
 {:else if type === 'icon'}
   <span class="a2ui-icon" title={String(a2uiValue(component.name, data) || '')}><Icon name={iconName} size={22} /></span>
 {:else if type === 'video'}
