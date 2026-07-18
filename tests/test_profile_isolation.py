@@ -335,12 +335,12 @@ def test_voice_system_tool_isolated(monkeypatch):
 async def test_a_scheduler_fires_while_b_active(monkeypatch):
     """Schedule a near-due task in A's runtime, interact with B, and assert A's
     scheduler autonomously fires A's task to a terminal state — deterministic (fake
-    executor, short interval, poll with timeout; no long sleeps)."""
+    agent, short interval, poll with timeout; no long sleeps)."""
     from datetime import datetime, timedelta
 
     from assistant.config import load_config
     from assistant.gateway.core import build_gateway
-    from assistant.tasks import DeliverableStatus, TaskStatus
+    from assistant.tasks.model import RunStatus
 
     use_fake_agent(monkeypatch)
 
@@ -353,6 +353,11 @@ async def test_a_scheduler_fires_while_b_active(monkeypatch):
     b_cfg = load_config().with_profile(b_meta)
     a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True)
     b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True)
+    # build_gateway wires the TaskService into the Gateway's agent tools, but the
+    # reverse wiring (turns/stops for runs) is the caller's job — normally done by
+    # ProfileManager; do it here since this test drives build_gateway directly.
+    a_tasks.set_gateway(a_gw)
+    b_tasks.set_gateway(b_gw)
     # A ticks fast so the test stays deterministic without long sleeps
     a_tasks._scheduler_interval = 0.05
     await a_gw.start()
@@ -360,47 +365,36 @@ async def test_a_scheduler_fires_while_b_active(monkeypatch):
     await a_tasks.start()
     await b_tasks.start()
 
-    fired = asyncio.Event()
-
-    async def fake_executor(task_id, mgr, asker):
-        # produce the task's deliverable so it lands COMPLETED (no LLM)
-        t = await a_tasks.store.get(task_id)
-        for d in t.pending_deliverables():
-            await a_tasks.store.set_deliverable_status(task_id, d["id"], DeliverableStatus.PRODUCED)
-        fired.set()
-
-    a_tasks._manager.executor = fake_executor
-
     try:
-        # seed a PLANNED, near-due SCHEDULED task directly (bypass the LLM planner):
-        # a deliverable makes _is_planned True so _fire submits it to the manager.
+        # seed a near-due one-off task directly on A's store (bypass the tool
+        # layer/LLM); the fake agent (echo) stands in for the run's turn.
         now = datetime.now().astimezone()
-        task = await a_tasks.store.create(
+        task = await a_tasks.store.create_task(
             "due soon",
-            status=TaskStatus.SCHEDULED,
-            scheduled_for=(now - timedelta(seconds=1)).isoformat(),
+            "produce the output",
+            schedule={"kind": "once", "at": (now - timedelta(seconds=1)).isoformat()},
         )
-        await a_tasks.store.add_deliverable(task.id, "the output")
 
         # meanwhile, drive a message through B (B is the "active" profile)
         reply = await b_gw.send_message("busy over here", chat_id="b1")
         assert reply.startswith("echo[")
 
-        # A's scheduler fired A's task autonomously while B was in use
-        await asyncio.wait_for(fired.wait(), timeout=5)
-
-        async def _terminal():
+        # A's scheduler fired A's task autonomously while B was in use — poll for
+        # its run to land in a terminal state (no long sleeps: short interval +
+        # bounded poll).
+        async def _terminal_run():
             for _ in range(100):
-                got = await a_tasks.store.get(task.id)
-                if got.status in TaskStatus.TERMINAL:
-                    return got
+                t = await a_tasks.get_task(task.id)
+                last = t["last_run"] if t else None
+                if last and last["status"] in RunStatus.TERMINAL:
+                    return last
                 await asyncio.sleep(0.05)
-            return await a_tasks.store.get(task.id)
+            return None
 
-        done = await _terminal()
-        assert done.status == TaskStatus.COMPLETED
+        run = await asyncio.wait_for(_terminal_run(), timeout=5)
+        assert run is not None and run["status"] == "completed"
         # B's store never saw the task
-        assert await b_tasks.store.get(task.id) is None
+        assert await b_tasks.store.get_task(task.id) is None
     finally:
         await a_tasks.close()
         await b_tasks.close()

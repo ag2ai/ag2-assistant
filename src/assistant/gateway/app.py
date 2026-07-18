@@ -125,9 +125,9 @@ def _origin_ok(origin: str | None, host: str | None) -> bool:
 _SURFACES = {
     "new_task": (
         "The user is starting a NEW TASK. If their request is clear enough, create "
-        "it now with create_task (or schedule_task if they gave a time / cadence); "
-        "only ask a brief clarifying question if something essential is missing. "
-        "Confirm what you created."
+        "it now with create_task (pass schedule_kind='once'/'cron' with at/cron if "
+        "they gave a time or cadence, otherwise leave it 'manual'); only ask a brief "
+        "clarifying question if something essential is missing. Confirm what you created."
     ),
 }
 

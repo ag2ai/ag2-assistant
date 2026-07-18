@@ -28,6 +28,21 @@ from assistant.events import TurnCancelled
 _TRANSCRIPT_PREFIX = "/transcript/"
 
 
+def _task_summary(t: dict) -> str:
+    """Concise voice-grounding snapshot of a task's current state (TaskService v2's
+    dict shape: name/prompt/model/schedule_desc/paused/runs) — mirrors what the
+    get_task system tool reports, for the voice agent's ambient task_context."""
+    lines = [
+        f"{t['id']} · {t['name']}" + (" · PAUSED" if t["paused"] else ""),
+        f"prompt: {t['prompt']}",
+        f"schedule: {t['schedule_desc']}",
+    ]
+    last = t.get("last_run")
+    if last:
+        lines.append(f"last run: {last['status']} · {last['summary'] or last['error']}")
+    return "\n".join(lines)
+
+
 def _conversation_events() -> tuple:
     """Event types a voice client renders itself as spoken transcript (so they are
     NOT re-forwarded as structured events during voice delegation). Imported lazily
@@ -140,9 +155,9 @@ class Gateway:
             from assistant.settings import profile_settings
             from assistant.system_tools import build_system_tools
 
-            # create/schedule come from the system tools, so we don't also wire
-            # start_task/schedule_task here (that duplicated names). `platform` lets
-            # those tools note (on channels) that follow-up questions go to the web app.
+            # create/update/run/delete come from the system tools, so we don't also
+            # wire duplicate task actions here. `platform` lets those tools note (on
+            # channels) that follow-up questions go to the web app.
             # The voice get/set tools read/write THIS profile's settings.
             settings = profile_settings(cfg.data_dir)
             extra_tools = build_system_tools(
@@ -596,7 +611,6 @@ class Gateway:
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
         from assistant.settings import profile_settings
-        from assistant.system_tools import format_task
         from assistant.voice import build_voice_agent
 
         task_context = ""
@@ -606,7 +620,7 @@ class Gateway:
                 task_context = (
                     "You are currently on a task's page. When the user says "
                     f'"this task" they mean task {task_id}. Current state:\n'
-                    f"{format_task(node)}"
+                    f"{_task_summary(node)}"
                 )
         elif origin_chat:
             recent = await self._recent_transcript(origin_chat)
@@ -620,9 +634,9 @@ class Gateway:
 
         async def _send_capturing(request: str, chat: str, surface: str) -> str:
             # The universal agent's structured events (tool calls, the TaskCreated a
-            # create_task/schedule_task emits, deliverables, …) are forwarded raw via
-            # on_event so the voice client folds them with the same reducer as text —
-            # no separate task-capture path needed.
+            # create_task emits, …) are forwarded raw via on_event so the voice
+            # client folds them with the same reducer as text — no separate
+            # task-capture path needed.
             return await self.send_message(
                 request,
                 chat_id=chat,
@@ -633,7 +647,7 @@ class Gateway:
         async def delegate(request: str) -> str:
             if task_id:
                 node = await self._tasks.get_task(task_id)  # fresh each call
-                snap = format_task(node) if node else f"(task {task_id})"
+                snap = _task_summary(node) if node else f"(task {task_id})"
                 return await _send_capturing(
                     request,
                     f"task:{task_id}",  # share the task's universal stream

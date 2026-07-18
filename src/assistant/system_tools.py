@@ -3,7 +3,7 @@
 These are retrieval + action tools over the whole system (tasks, chats, durable
 HITL questions), so the one agent you talk to anywhere can answer "what tasks do
 I have?" or "what did we discuss in that chat?" without holding all that context,
-and can act — create/schedule/edit/cancel/delete/run tasks, answer questions.
+and can act — create/update/run/delete tasks, answer questions, manage voice.
 
 They wrap the existing `TaskService` (tasks + inquiries) and, optionally, a chats
 provider (the gateway, for conversation history). Each tool returns a concise
@@ -15,7 +15,6 @@ from typing import Annotated
 from ag2 import Context, tool
 from pydantic import Field
 
-_PREVIEW = 240  # chars of a produced asset to surface in a summary
 _CHAT_TAIL_TURNS = 20  # turns of a past conversation read_chat returns
 
 
@@ -43,49 +42,28 @@ async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
         log_suppressed("chat task-card event emit", exc, task_id=task_id, kind=kind)
 
 
-def _fmt_schedule(t: dict) -> str:
-    if not t.get("scheduled_for"):
-        return ""
-    rep = f"repeats {t['recurrence']}" if t.get("recurrence") else "one-off"
-    return f" · ⏰ {t['scheduled_for']} ({rep})"
+def _origin(context) -> tuple[str | None, str | None]:
+    """(platform, platform_chat_id) when the current turn runs on a messaging
+    channel stream ("{platform}:{chat_id}") — run outcomes get pushed back
+    there. (None, None) for web/CLI/task-run streams."""
+    from assistant.channels.base import PUSH_CHANNELS
+
+    sid = str(getattr(getattr(context, "stream", None), "id", "") or "")
+    platform, _, chat = sid.partition(":")
+    if chat and platform in PUSH_CHANNELS:
+        return platform, chat
+    return None, None
 
 
-def _fmt_node(n: dict, depth: int = 0, full: bool = False) -> str:
-    pad = "  " * depth
-    lines = [f"{pad}{n['title']} — {n['status']}{_fmt_schedule(n)}"]
-    if depth == 0 and n.get("objective"):
-        lines.append(f"{pad}objective: {n['objective']}")
-    for d in n.get("deliverables", []):
-        lines.append(f"{pad}  • [{d.get('id', '?')}] {d['description']} [{d['status']}]")
-        asset = d.get("asset")
-        if asset:
-            if full:
-                # full inspection: emit the complete output, never truncated.
-                lines.append(f"{pad}    → {asset}")
-            elif len(asset) > _PREVIEW:
-                preview = asset[:_PREVIEW].replace("\n", " ")
-                lines.append(
-                    f"{pad}    → {preview}… [preview only — {len(asset)} chars; "
-                    f"call get_task for the full output before reporting it]"
-                )
-            else:
-                lines.append(f"{pad}    → {asset.replace(chr(10), ' ')}")
-    prog = n.get("progress") or []
-    if prog:
-        lines.append(f"{pad}  progress: {prog[-1].get('message', '')}")
-    if n.get("error"):
-        lines.append(f"{pad}  error: {n['error']}")
-    for c in n.get("children", []):
-        lines.append(_fmt_node(c, depth + 1, full=full))
-    return "\n".join(lines)
+def _schedule_arg(kind: str, at: str, cron: str) -> dict:
+    kind = (kind or "manual").strip().lower()
+    return {"kind": kind, "at": (at or "").strip() or None, "cron": (cron or "").strip() or None}
 
 
-def format_task(node: dict) -> str:
-    """A concise, readable summary of a task node (id, status, schedule, deliverables
-    with output *previews*, subtasks, progress) — used for ambient surface context.
-    Long outputs are marked as previews so the agent fetches the full text via
-    get_task rather than treating the snippet as the whole deliverable."""
-    return _fmt_node(node)
+def _task_line(t: dict) -> str:
+    state = "paused" if t["paused"] else (t["schedule_desc"] or "manual")
+    last = f" · last run: {t['last_run']['status']}" if t.get("last_run") else ""
+    return f"{t['id']} · {t['name']} · {state}{last}"
 
 
 def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -> list:
@@ -97,179 +75,131 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
     questions are asked in the web app."""
     note = _followup_note(platform)
 
-    # ---- tasks: retrieval ----
+    # ---- tasks: a task is name + prompt + optional model + schedule ----
     @tool
-    async def list_tasks(
-        status: Annotated[
-            str,
-            Field(
-                description="Filter: active, completed, stopped, archived, or empty for all current."
-            ),
-        ] = "",
-    ) -> str:
-        """List tasks (id · status · title · schedule). Use to find a task to act on."""
-        items = await tasks.list_all(status or None)
-        if not items:
-            return "No tasks."
-        return "\n".join(
-            f"{t['id']} · {t['status']} · {t['title']}{_fmt_schedule(t)}" for t in items
-        )
+    async def list_tasks() -> str:
+        """List the user's tasks (id · name · schedule · last run)."""
+        items = await tasks.list_tasks()
+        return "\n".join(_task_line(t) for t in items) if items else "No tasks."
 
     @tool
     async def get_task(
-        task_id: Annotated[str, Field(description="The task id.")],
+        task_id: Annotated[str, Field(description="The task id (task_…).")],
     ) -> str:
-        """Full detail of one task: objective, schedule, deliverables with their
-        COMPLETE output (untruncated), subtasks, progress. Use before acting on or
-        reporting a task — this is the source of truth for what the task produced."""
-        from assistant.tasks import TaskStoreCorruptionError
+        """Full detail of one task: prompt, model, schedule, and its runs."""
+        t = await tasks.get_task(task_id)
+        if t is None:
+            return "Task not found."
+        lines = [
+            f"{t['id']} · {t['name']}" + (" · PAUSED" if t["paused"] else ""),
+            f"prompt: {t['prompt']}",
+            f"model: {t['model'] or 'profile default'}",
+            f"schedule: {t['schedule_desc']}"
+            + (f" (next run {t['next_run_at']})" if t["next_run_at"] else ""),
+        ]
+        for r in t["runs"][:10]:
+            done = r["ended_at"] or ""
+            lines.append(f"  run {r['id']} · {r['status']} · {done} · {r['summary'] or r['error']}")
+        return "\n".join(lines)
 
-        try:
-            node = await tasks.get_task(task_id)
-        except TaskStoreCorruptionError as exc:
-            return f"Task record is corrupt and cannot be read: {exc}"
-        return _fmt_node(node, full=True) if node else "Task not found."
-
-    # ---- tasks: actions ----
     @tool
     async def create_task(
-        request: Annotated[
-            str, Field(description="The full job to carry out as a background task.")
+        name: Annotated[str, Field(description="Short human name for the task.")],
+        prompt: Annotated[
+            str, Field(description="Standing instructions executed on every run.")
         ],
         context: Context,
-    ) -> str:
-        """Start a background task (it clarifies if needed, then runs). For
-        substantial/multi-step work — not quick answers you can give now."""
-        tid = await tasks.submit_request(request)
-        await _emit_task_card(context, tid, request, "task")  # event-stream card
-        return f"Created task {tid}. It will ask any clarifying questions, then run.{note}"
-
-    @tool
-    async def schedule_task(
-        request: Annotated[str, Field(description="The job to run when due.")],
-        when: Annotated[
-            str, Field(description="First run as ISO 8601 datetime (from your env clock).")
-        ],
-        recurrence: Annotated[
+        model_config_id: Annotated[
+            str, Field(description="Optional LLM configuration id; empty = profile default.")
+        ] = "",
+        schedule_kind: Annotated[
+            str,
+            Field(description="manual (on demand) | once (single future run) | cron (recurring)."),
+        ] = "manual",
+        at: Annotated[
+            str, Field(description="ISO 8601 datetime for schedule_kind='once' (from your env clock).")
+        ] = "",
+        cron: Annotated[
             str,
             Field(
-                description="Repeat as standard 5-field cron (minute hour day-of-month "
-                "month day-of-week), e.g. '0 9 * * *' = daily 09:00, '0 4-14 * * 1-5' = "
-                "hourly 04:00–14:00 weekdays, '30 8 * * 6,0' = weekends 08:30; or "
-                "@hourly/@daily/@weekly/@monthly; or empty for one-off."
-            ),
-        ] = "",
-        context: Context = None,
-    ) -> str:
-        """Schedule a task to run later, optionally recurring."""
-        from assistant.tasks.scheduling import describe_cron, validate_schedule
-
-        if err := validate_schedule(when, recurrence, require_when=True):
-            return err  # correctable: the agent sees this and retries with a valid value
-        tid = await tasks.schedule_task(request, when, recurrence or None)
-        await _emit_task_card(context, tid, request, "scheduled")  # event-stream card
-        rep = f" (repeats {recurrence}: {describe_cron(recurrence)})" if recurrence else ""
-        sched = f"Scheduled task {tid} for {when}{rep}."
-        return sched + note
-
-    @tool
-    async def reschedule_task(
-        task_id: Annotated[str, Field(description="The task id.")],
-        when: Annotated[str, Field(description="New ISO datetime, or empty to keep.")] = "",
-        recurrence: Annotated[
-            str,
-            Field(
-                description="New repeat as 5-field cron (see schedule_task), 'off' to stop, or empty to keep."
+                description="5-field cron for schedule_kind='cron', e.g. '0 9 * * *' = daily "
+                "09:00, '0 9 * * 1-5' = weekdays 09:00; or @hourly/@daily/@weekly/@monthly."
             ),
         ] = "",
     ) -> str:
-        """Change when a task runs and/or how it repeats."""
-        from assistant.tasks.scheduling import validate_schedule
-
-        if err := validate_schedule(when, recurrence):
-            return err  # correctable: empty keeps, 'off' stops; bad values rejected
-        return await tasks.reschedule(task_id, when, recurrence)
-
-    @tool
-    async def add_subtask(
-        task_id: Annotated[str, Field(description="Parent task id.")],
-        title: Annotated[str, Field(description="Subtask title.")],
-        description: Annotated[str, Field(description="What it should do.")] = "",
-        capabilities: Annotated[
-            str, Field(description="Comma-separated: web, code, files, calendar, drive.")
-        ] = "web",
-    ) -> str:
-        """Add a subtask. (For a scheduled task this updates the plan; it runs on schedule.)"""
-        return await tasks.add_subtask(task_id, title, description, capabilities)
+        """Create a task. Ask the user anything unclear BEFORE calling this —
+        the prompt is what runs unattended, so it must be self-contained."""
+        platform, chat = _origin(context)
+        try:
+            task = await tasks.create_task(
+                name=name,
+                prompt=prompt,
+                model=model_config_id or None,
+                schedule=_schedule_arg(schedule_kind, at, cron),
+                origin_channel=platform,
+                origin_chat=chat,
+            )
+        except ValueError as exc:
+            return str(exc)  # correctable: retry with a valid schedule/model
+        await _emit_task_card(context, task["id"], name, "task")
+        return f"Created task {task['id']} — {task['schedule_desc']}.{note}"
 
     @tool
-    async def add_deliverable(
+    async def update_task(
         task_id: Annotated[str, Field(description="The task id.")],
-        description: Annotated[str, Field(description="The output to add.")],
-        criteria: Annotated[str, Field(description="How to tell it's acceptable.")] = "",
-    ) -> str:
-        """Add a required output (deliverable) to a task."""
-        return await tasks.add_deliverable(task_id, description, criteria)
-
-    @tool
-    async def remove_deliverable(
-        task_id: Annotated[str, Field(description="The task id.")],
-        deliverable_id: Annotated[
-            str, Field(description="The deliverable id to remove (see get_task for ids).")
-        ],
-    ) -> str:
-        """Remove ONE deliverable from a task by id. Call get_task first to see the ids."""
-        return await tasks.remove_deliverable(task_id, deliverable_id)
-
-    @tool
-    async def set_deliverables(
-        task_id: Annotated[str, Field(description="The task id.")],
-        descriptions: Annotated[
-            list[str],
-            Field(
-                description="The full new set of deliverables — this REPLACES all current "
-                "ones. One short description per item."
-            ),
-        ],
-    ) -> str:
-        """Replace a task's deliverables with a fresh set. Use when RELAXING or re-scoping a
-        task (e.g. 'just one image, any style') so stale requirements don't accumulate and
-        cause duplicate outputs — prefer this over add_deliverable for changing requirements."""
-        return await tasks.set_deliverables(task_id, descriptions)
-
-    @tool
-    async def set_task_objective(
-        task_id: Annotated[str, Field(description="The task id.")],
-        objective: Annotated[str, Field(description="The revised objective.")],
-    ) -> str:
-        """Update what a task is trying to achieve."""
-        return await tasks.set_objective(task_id, objective)
-
-    @tool
-    async def cancel_task(
-        task_id: Annotated[str, Field(description="The task id.")],
-        subtask: Annotated[
-            str, Field(description="Partial title of a subtask to cancel; empty = whole task.")
+        name: Annotated[str, Field(description="New name; empty = keep.")] = "",
+        prompt: Annotated[str, Field(description="New prompt; empty = keep.")] = "",
+        model_config_id: Annotated[
+            str, Field(description="New LLM config id; 'default' = profile default; empty = keep.")
         ] = "",
+        schedule_kind: Annotated[
+            str, Field(description="manual | once | cron to change the schedule; empty = keep.")
+        ] = "",
+        at: Annotated[str, Field(description="ISO datetime for once.")] = "",
+        cron: Annotated[str, Field(description="5-field cron for cron.")] = "",
+        paused: Annotated[str, Field(description="'true' to pause, 'false' to resume; empty = keep.")] = "",
     ) -> str:
-        """Cancel a task (or one subtask). Stops it; for recurring tasks it stops firing."""
-        return await tasks.cancel_target(task_id, subtask)
+        """Edit any field of a task. Empty args keep the current value."""
+        patch: dict = {}
+        if name:
+            patch["name"] = name
+        if prompt:
+            patch["prompt"] = prompt
+        if model_config_id:
+            patch["model"] = None if model_config_id == "default" else model_config_id
+        if schedule_kind:
+            patch["schedule"] = _schedule_arg(schedule_kind, at, cron)
+        if paused:
+            patch["paused"] = paused.strip().lower() == "true"
+        if not patch:
+            return "Nothing to change — pass at least one field."
+        try:
+            t = await tasks.update_task(task_id, **patch)
+        except ValueError as exc:
+            return str(exc)
+        if t is None:
+            return "Task not found."
+        state = "paused" if t["paused"] else t["schedule_desc"]
+        return f"Updated '{t['name']}' — {state}."
+
+    @tool
+    async def run_task_now(
+        task_id: Annotated[str, Field(description="The task id.")],
+        context: Context,
+    ) -> str:
+        """Start a run of the task immediately (its schedule is unchanged)."""
+        run = await tasks.start_run(task_id, trigger="manual")
+        if run is None:
+            return "Task not found."
+        await _emit_task_card(context, task_id, "", "task")
+        return f"Started run {run.id}."
 
     @tool
     async def delete_task(
         task_id: Annotated[str, Field(description="The task id.")],
     ) -> str:
-        """Permanently delete a task and its subtree (cancels it first if running).
-        Irreversible — the record, subtasks, and chat/event streams are removed."""
-        ok, ids = await tasks.delete(task_id)
-        return f"Deleted {len(ids)} task(s)." if ok else "Task not found."
-
-    @tool
-    async def run_task_now(
-        task_id: Annotated[str, Field(description="The task id.")],
-    ) -> str:
-        """Run a task now — a scheduled task runs an occurrence immediately, keeping its schedule."""
-        return await tasks.run_now(task_id)
+        """Permanently delete a task, its runs, and their chats. Irreversible."""
+        return "Deleted." if await tasks.delete_task(task_id) else "Task not found."
 
     # ---- durable HITL questions ----
     @tool
@@ -279,7 +209,9 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         if not pend:
             return "No open questions."
         return "\n".join(
-            f"{p['id']} · task {p['task_id']} · {p['text']}"
+            f"{p['id']} · task {p['root_id']}"
+            + (f" ({p['task_title']})" if p.get("task_title") else "")
+            + f" · {p['text']}"
             + (f"  options: {p['options']}" if p.get("options") else "")
             for p in pend
         )
@@ -318,16 +250,9 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         list_tasks,
         get_task,
         create_task,
-        schedule_task,
-        reschedule_task,
-        add_subtask,
-        add_deliverable,
-        remove_deliverable,
-        set_deliverables,
-        set_task_objective,
-        cancel_task,
-        delete_task,
+        update_task,
         run_task_now,
+        delete_task,
         list_open_questions,
         answer_question,
         list_voices,

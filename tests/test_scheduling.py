@@ -1,34 +1,17 @@
-"""Task scheduling — cron recurrence parsing + the deterministic poll loop."""
+"""Task scheduling — cron recurrence parsing utilities.
+
+Note: the old `validate_schedule`/`first_occurrence` helpers and the
+create(status=..., scheduled_for=...)-shaped `TaskStore`/`TaskStatus` this file
+used to also exercise were removed by the TaskService v2 rewrite (schedules are
+now validated via `normalize_schedule`/`ValueError`, and the `Scheduler`
+poll-loop is covered against the new Task model in test_task_scheduling.py).
+The cron-parsing utilities below (`normalize_cron`, `describe_cron`, `is_due`,
+`next_occurrence`) are unchanged, so their tests stay as-is.
+"""
 
 from datetime import datetime, timedelta
 
-from assistant.tasks import TaskStatus, TaskStore
-from assistant.tasks.scheduling import (
-    Scheduler,
-    describe_cron,
-    first_occurrence,
-    is_due,
-    next_occurrence,
-    normalize_cron,
-    validate_schedule,
-)
-
-
-def test_validate_schedule_accepts_valid_and_rejects_malformed():
-    good = "2030-01-01T09:00:00+10:00"
-    # valid combinations
-    assert validate_schedule(good, "0 9 * * *", require_when=True) is None
-    assert validate_schedule(good, "0 4-14 * * 1-5", require_when=True) is None
-    assert validate_schedule(good, "@daily", require_when=True) is None
-    assert validate_schedule(good, "", require_when=True) is None  # one-off
-    assert validate_schedule("", "off") is None  # reschedule: stop repeating, keep time
-    assert validate_schedule("", "") is None  # reschedule: keep both
-    # malformed when / missing required when / malformed recurrence → correctable error
-    assert "date/time" in (validate_schedule("banana", "", require_when=True) or "")
-    assert "required" in (validate_schedule("", "", require_when=True) or "")
-    assert "cron" in (validate_schedule(good, "every blue moon", require_when=True) or "")
-    assert "cron" in (validate_schedule(good, "daily", require_when=True) or "")  # old grammar
-    assert "cron" in (validate_schedule(good, "99 * * * *", require_when=True) or "")
+from assistant.tasks.scheduling import describe_cron, is_due, next_occurrence, normalize_cron
 
 
 def test_normalize_cron():
@@ -77,44 +60,3 @@ def test_next_occurrence_respects_window_and_days():
     assert next_occurrence("banana", now) is None
 
 
-def test_first_occurrence_snaps_to_cron():
-    # scheduling a weekday cron with a Saturday `when` starts Monday
-    first = first_occurrence("0 5 * * 1-5", "2026-07-11T05:00:00+10:00")  # a Saturday
-    assert first.weekday() == 0 and first.hour == 5
-    assert first.date().isoformat() == "2026-07-13"
-    # a `when` exactly on a cron match is honoured as the first occurrence
-    first = first_occurrence("0 4-14 * * 1-5", "2026-07-10T04:00:00+10:00")
-    assert first.isoformat() == "2026-07-10T04:00:00+10:00"
-    # `when` is a not-before floor for the cron
-    first = first_occurrence("@hourly", "2030-01-01T09:30:00+10:00")
-    assert first.isoformat() == "2030-01-01T10:00:00+10:00"
-    # one-offs are honoured as-is
-    assert (
-        first_occurrence("", "2026-07-11T05:00:00+10:00").isoformat() == "2026-07-11T05:00:00+10:00"
-    )
-
-
-def _store(tmp_path):
-    return TaskStore(path=tmp_path / "tasks.db")
-
-
-async def test_scheduler_tick_fires_due_only(tmp_path):
-    store = _store(tmp_path)
-    now = datetime.now().astimezone()
-    due = await store.create(
-        "due", status=TaskStatus.SCHEDULED, scheduled_for=(now - timedelta(minutes=5)).isoformat()
-    )
-    await store.create(
-        "future", status=TaskStatus.SCHEDULED, scheduled_for=(now + timedelta(hours=1)).isoformat()
-    )
-    await store.create("not scheduled")  # pending, ignored
-
-    fired = []
-
-    async def fire(tid):
-        fired.append(tid)
-
-    sched = Scheduler(store, fire, interval=999)
-    got = await sched.tick(now=now)
-    assert got == [due.id]
-    assert fired == [due.id]
