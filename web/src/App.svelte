@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { route, go, newChatId, redirectToProfile } from './router.js'
+  import { route, go, newChatId, redirectToProfile, closeAside } from './router.js'
   import { openThread, closeThread, switchProfile } from './controller.js'
   import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.js'
@@ -156,9 +156,25 @@
     e.preventDefault()
     switchProfile(target.id)   // in-place (no reload); no-ops on the active one
   }
+  // Escape closes the preview rail when it's the topmost dismissible surface.
+  // Skipped when a modal is stacked over it (the modal owns Escape) or focus is in
+  // an editable field (a rail markdown edit, the composer) — same guards as the
+  // profile shortcuts, since the rail is shell navigation living at this level.
+  // A URL-addressed file strips the aside key (via closeAside → confirmDiscard guard);
+  // a path-less transient body just clears its store.
+  function onEscape(e) {
+    if (e.key !== 'Escape' || !railOpen || anyModalOpen() || editableFocused()) return
+    e.preventDefault()
+    if (railFile) closeAside()
+    else $viewer = null
+  }
   onMount(() => {
     window.addEventListener('keydown', onProfileShortcut)
-    return () => window.removeEventListener('keydown', onProfileShortcut)
+    window.addEventListener('keydown', onEscape)
+    return () => {
+      window.removeEventListener('keydown', onProfileShortcut)
+      window.removeEventListener('keydown', onEscape)
+    }
   })
 
   // React to route changes: open the matching thread. Gated on boot === 'ready'
