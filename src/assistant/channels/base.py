@@ -8,10 +8,16 @@ platform's format.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
     from assistant.gateway.core import Gateway
+
+# Platforms whose adapters can push an unsolicited message (task-run outcomes
+# delivered back to the chat a task came from). Single source of truth: the
+# tuple is derived from the Literal, so the two can't drift.
+PushChannel = Literal["telegram", "discord", "slack"]
+PUSH_CHANNELS: tuple[PushChannel, ...] = get_args(PushChannel)
 
 
 @dataclass

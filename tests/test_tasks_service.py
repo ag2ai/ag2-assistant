@@ -1,0 +1,183 @@
+"""TaskService v2: a run is one agent chat turn on its own stream."""
+
+import asyncio
+
+import pytest
+
+import assistant.gateway.tasks_service as tasks_service_mod
+from assistant.config import Config
+from assistant.gateway.tasks_service import TaskService
+from assistant.hitl import InquiryStore
+from assistant.tasks.model import RunStatus
+from assistant.tasks.store import TaskStore
+
+
+class FakeGateway:
+    def __init__(self, reply="run reply", hang=False):
+        self.sent, self.cancelled, self.deleted = [], [], []
+        self._reply, self._hang = reply, hang
+        self._gate = asyncio.Event()
+
+    async def send_message(self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw):
+        self.sent.append({"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id})
+        if self._hang:
+            await self._gate.wait()
+            return ""  # a user-stopped turn returns "" (TurnCancelled path)
+        return self._reply
+
+    async def cancel_turn(self, chat_id, reason="Stopped"):
+        self.cancelled.append(chat_id)
+        self._gate.set()
+        return True
+
+    async def delete_chat(self, chat_id):
+        self.deleted.append(chat_id)
+        return True
+
+
+async def _svc(tmp_path, gw, monkeypatch):
+    svc = TaskService(
+        config=Config(),
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+    )
+    svc.set_gateway(gw)
+
+    async def fake_summary(config, prompt, reply, agent_factory=None):
+        return "one-liner"
+
+    monkeypatch.setattr(tasks_service_mod, "summarize_run", fake_summary)
+    return svc
+
+
+async def test_create_validates_schedule_and_model(tmp_path, monkeypatch):
+    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+    with pytest.raises(ValueError):
+        await svc.create_task(name="x", prompt="p", schedule={"kind": "cron", "cron": "junk"})
+    with pytest.raises(ValueError):
+        await svc.create_task(name="x", prompt="p", model="cfg_missing")
+    t = await svc.create_task(name="Digest", prompt="collect news")
+    assert t["schedule_desc"] == "manual" and t["last_run"] is None
+
+
+async def test_run_executes_as_chat_turn_with_prior_context(tmp_path, monkeypatch):
+    gw = FakeGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="Digest", prompt="collect news")
+    run = await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert gw.sent[0]["chat_id"] == f"task-run:{run.id}"
+    assert gw.sent[0]["text"] == "collect news"
+    view = await svc.get_run(run.id)
+    assert view["status"] == "completed" and view["summary"] == "one-liner"
+    # second run sees the first run's outcome in its surface
+    run2 = await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert "one-liner" in gw.sent[1]["surface"]
+    detail = await svc.get_task(t["id"])
+    assert [r["id"] for r in detail["runs"]] == [run2.id, run.id]
+
+
+async def test_stop_run_cancels_the_turn(tmp_path, monkeypatch):
+    gw = FakeGateway(hang=True)
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="Long", prompt="dig forever")
+    run = await svc.start_run(t["id"])
+    await asyncio.sleep(0.05)  # let the turn start
+    assert await svc.stop_run(run.id) is True
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert gw.cancelled == [f"task-run:{run.id}"]
+    assert (await svc.get_run(run.id))["status"] == "cancelled"
+
+
+async def test_fire_rearms_cron_and_exhausts_once(tmp_path, monkeypatch):
+    gw = FakeGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="C", prompt="p", schedule={"kind": "cron", "cron": "0 9 * * *"})
+    before = (await svc.get_task(t["id"]))["next_run_at"]
+    await svc._fire(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    after = await svc.get_task(t["id"])
+    assert after["next_run_at"] is not None and after["next_run_at"] != before
+    o = await svc.create_task(
+        name="O", prompt="p", schedule={"kind": "once", "at": "2026-01-01T00:00:00+00:00"}
+    )
+    await svc._fire(o["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    got = await svc.get_task(o["id"])
+    assert got["schedule"]["kind"] == "manual" and got["next_run_at"] is None
+    assert got["runs"][0]["trigger"] == "once"
+
+
+async def test_fire_after_downtime_skips_missed_slots(tmp_path, monkeypatch):
+    """A cron task whose next_run_at went stale during downtime fires ONCE and
+    re-arms into the future — no catch-up run per missed slot."""
+    from datetime import datetime, timedelta
+
+    gw = FakeGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="C", prompt="p", schedule={"kind": "cron", "cron": "0 9 * * *"})
+    stale = (datetime.now().astimezone() - timedelta(days=3)).isoformat()
+    await svc.store.update_task(t["id"], next_run_at=stale)
+    await svc._fire(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    after = await svc.get_task(t["id"])
+    assert after["next_run_at"] > datetime.now().astimezone().isoformat()  # future — not the next stale slot
+    assert len(after["runs"]) == 1
+
+
+async def test_failed_turn_marks_run_failed(tmp_path, monkeypatch):
+    class Boom(FakeGateway):
+        async def send_message(self, *a, **kw):
+            raise RuntimeError("provider down")
+
+    svc = await _svc(tmp_path, Boom(), monkeypatch)
+    t = await svc.create_task(name="F", prompt="p")
+    run = await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    view = await svc.get_run(run.id)
+    assert view["status"] == "failed" and "provider down" in view["error"]
+
+
+async def test_delete_task_purges_runs_and_streams(tmp_path, monkeypatch):
+    gw = FakeGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="D", prompt="p")
+    run = await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert await svc.delete_task(t["id"]) is True
+    assert gw.deleted == [f"task-run:{run.id}"]
+    assert await svc.get_task(t["id"]) is None and await svc.get_run(run.id) is None
+
+
+async def test_list_tasks_carries_last_run_and_unread(tmp_path, monkeypatch):
+    gw = FakeGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="U", prompt="p")
+    run = await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    row = (await svc.list_tasks())[0]
+    assert row["unread"] == 1 and row["last_run"]["id"] == run.id
+    await svc.mark_run_seen(run.id)
+    assert (await svc.list_tasks())[0]["unread"] == 0
+
+
+async def test_notifier_gets_channel_outcomes_only(tmp_path, monkeypatch):
+    gw = FakeGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    pushed = []
+
+    async def notify(platform, chat_id, text):
+        pushed.append((platform, chat_id, text))
+
+    svc.set_notifier(notify)
+    web = await svc.create_task(name="W", prompt="p")  # no origin → no push
+    tg = await svc.create_task(
+        name="T", prompt="p", origin_channel="telegram", origin_chat="42"
+    )
+    await svc.start_run(web["id"])
+    await svc.start_run(tg["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert len(pushed) == 1
+    platform, chat_id, text = pushed[0]
+    assert platform == "telegram" and chat_id == "42" and "one-liner" in text
