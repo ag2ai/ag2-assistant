@@ -2,7 +2,7 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, taskPanel, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch } from './store.js'
+import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
@@ -48,7 +48,7 @@ export function openThread(kind, id) {
   closeThread()
   _suppressStream = false       // a fresh thread always folds its stream
   _replaying = true; _replayBuf = []   // first connect's replay buffers until `ready`
-  const chat = kind === 'task' ? 'task:' + id : id
+  const chat = kind === 'run' ? 'task-run:' + id : id
   thread.set({ id, kind, chat, items: [], busy: false })
   inspectorEvents.set([])       // fresh inspector buffer per thread
 
@@ -82,12 +82,12 @@ export function openThread(kind, id) {
     }),
   }).connect()
 
-  if (kind === 'task') {
-    _markedSeen = false          // arm the "mark seen once finished" latch for this task
-    loadPanel(id)                // also marks it seen if it's already/becomes terminal
-    panelTimer = setInterval(() => loadPanel(id), 3000)
+  if (kind === 'run') {
+    _markedSeen = false
+    loadRun(id)
+    panelTimer = setInterval(() => loadRun(id), 3000)
   } else {
-    taskPanel.set(null)
+    runInfo.set(null)
   }
 }
 
@@ -145,7 +145,7 @@ function resetProfileState() {
   thread.set({ id: null, kind: 'chat', items: [], busy: false })
   chats.set([])
   tasks.set([])
-  taskPanel.set(null)
+  runInfo.set(null)
   inquiries.set([])
   inspectorEvents.set([])
   viewer.set(null)                                     // drop the old profile's transient preview body
@@ -199,7 +199,7 @@ function _voiceTranscript(role, text, final) {
 export async function startVoice() {
   const t = get(thread)
   if (!t.id || _voiceActive) return
-  const query = t.kind === 'task' ? '?task=' + encodeURIComponent(t.id) : '?chat=' + encodeURIComponent(t.chat)
+  const query = '?chat=' + encodeURIComponent(t.chat)
   // capture at the active provider's native rate (Gemini 16 kHz / OpenAI 24 kHz)
   let inputRate = 16000
   try { inputRate = (await api.voices()).input_rate || 16000 } catch {}
@@ -241,18 +241,18 @@ export function stopVoice() {
 const _TERMINAL_TASK = new Set(['completed', 'failed', 'cancelled'])
 let _markedSeen = false   // per-viewed-task latch: mark seen once, only after it finishes
 
-async function loadPanel(id) {
+async function loadRun(id) {
   const epoch = get(profileEpoch)   // drop a poll that resolves after a profile switch
-  let panel
-  try { panel = await api.task(id) } catch { return /* keep last panel on error */ }
+  let run
+  try { run = await api.run(id) } catch { return /* keep last on error */ }
   if (get(profileEpoch) !== epoch) return
-  taskPanel.set(panel)
-  // Clear the unread indicator once the task is finished — whether it was already
+  runInfo.set(run)
+  // Clear the unread indicator once the run is finished — whether it was already
   // done when opened or completed while the user watched. Peeking at a still-running
-  // task deliberately does NOT mark it seen, so its dot still fires when it finishes
-  // if the user has navigated away. Latched so we call markSeen at most once.
-  if (!_markedSeen && panel && _TERMINAL_TASK.has(panel.status)) {
+  // run deliberately does NOT mark it seen, so its dot still fires when it finishes
+  // if the user has navigated away. Latched so we call runSeen at most once.
+  if (!_markedSeen && run && _TERMINAL_TASK.has(run.status)) {
     _markedSeen = true
-    api.markSeen(id).catch(() => {})
+    api.runSeen(id).catch(() => {})
   }
 }

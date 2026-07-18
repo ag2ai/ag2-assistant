@@ -299,3 +299,16 @@ test('resolve: an aside file path with special chars is encoded segment-wise', (
     '/app/work/chats#aside=file:a%20b/c%26d.md',
   )
 })
+
+test('run thread routes parse and resolve', () => {
+  const r = parse('/app/p1/tasks/r/run_9', '')
+  assert.equal(r.name, 'run')
+  assert.equal(r.kind, 'r')
+  assert.equal(r.id, 'run_9')
+  // tab switch keeps the open run thread
+  const url = resolve({ pathname: '/app/p1/tasks/r/run_9', hash: '' }, { type: 'go', path: '/chats' })
+  assert.equal(url, '/app/p1/chats/r/run_9')
+  // /r/ shorthand opens in the current tab
+  const url2 = resolve({ pathname: '/app/p1/tasks', hash: '' }, { type: 'go', path: '/r/run_9' })
+  assert.equal(url2, '/app/p1/tasks/r/run_9')
+})

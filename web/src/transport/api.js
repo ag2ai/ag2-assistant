@@ -161,11 +161,16 @@ export const api = {
   deleteChat: (id) => j('DELETE', P('/chats/' + encodeURIComponent(id))),
   // Partial chat-metadata update: {title?, starred?} (absent = unchanged).
   updateChat: (id, patch) => j('PATCH', P('/chats/' + encodeURIComponent(id)), patch),
-  tasksAll: (status) => j('GET', P('/tasks/all' + (status && status !== 'all' ? '?status=' + status : ''))).then((d) => d.tasks || []),
-  task: (id) => j('GET', P('/tasks/' + id)).then((d) => d.task),
-  cancelTask: (id) => j('POST', P(`/tasks/${id}/cancel`)),
-  markSeen: (id) => j('POST', P(`/tasks/${id}/seen`)),
-  deleteTask: (id) => j('DELETE', P(`/tasks/${encodeURIComponent(id)}`)),
+  // ---- Tasks: config CRUD; runs are chats on stream task-run:{id} ----
+  tasks: () => j('GET', P('/tasks')).then((d) => d.tasks || []),
+  createTask: (body) => j('POST', P('/tasks'), body).then((d) => d.task),
+  task: (id) => j('GET', P('/tasks/' + encodeURIComponent(id))).then((d) => d.task),
+  updateTask: (id, patch) => j('PATCH', P('/tasks/' + encodeURIComponent(id)), patch).then((d) => d.task),
+  deleteTask: (id) => j('DELETE', P('/tasks/' + encodeURIComponent(id))),
+  runTask: (id) => j('POST', P('/tasks/' + encodeURIComponent(id) + '/run')).then((d) => d.run),
+  run: (id) => j('GET', P('/runs/' + encodeURIComponent(id))).then((d) => d.run),
+  stopRun: (id) => j('POST', P('/runs/' + encodeURIComponent(id) + '/stop')),
+  runSeen: (id) => j('POST', P('/runs/' + encodeURIComponent(id) + '/seen')),
   inquiries: () => j('GET', P('/inquiries/pending')).then((d) => d.pending || []),
   answerInquiry: (id, answer) => j('POST', P(`/inquiries/${encodeURIComponent(id)}/answer`), { answer }),
   // Chat-turn permission prompts (run_code/shell/file) live in the HitlServer, a
@@ -183,7 +188,6 @@ export const api = {
   // the agent's context). Active-profile setter (Settings modal).
   setFocuses: (focuses) => j('POST', P('/settings/focuses'), { focuses }),
   setReplyTimeout: (replyTimeoutS) => j('POST', P('/settings/reply-timeout'), { reply_timeout_s: replyTimeoutS }),
-  rerunTask: (id) => j('POST', P(`/tasks/${encodeURIComponent(id)}/rerun`)),
   setVoiceProvider: (provider) => j('POST', P('/settings/voice_provider'), { provider }),
   addMcpServer: (server) => j('POST', P('/settings/mcp'), server),
   deleteMcpServer: (name) => j('DELETE', P(`/settings/mcp/${encodeURIComponent(name)}`)),
