@@ -1,23 +1,27 @@
-"""AG2 Assistant task management — persistent, trackable, nestable tasks."""
+"""AG2 Assistant task management — mid-redesign (Cowork-style tasks).
 
-from assistant.tasks.executor import make_task_executor
-from assistant.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus
-from assistant.tasks.planner import TaskPlan, apply_plan, make_plan, prepare_task, run_intake
-from assistant.tasks.runner import TaskManager
-from assistant.tasks.store import TaskStore, TaskStoreCorruptionError
+Interim package surface: the old machinery (planner/executor/runner/store/
+control/history) targets the pre-redesign model and is replaced over the next
+few plan tasks; until the service rewire lands, only the new domain model is
+importable from the package root.
+"""
+
+from assistant.tasks.model import (
+    Run,
+    RunStatus,
+    RunTrigger,
+    ScheduleKind,
+    Task,
+    manual_schedule,
+    normalize_schedule,
+)
 
 __all__ = [
-    "Deliverable",
-    "DeliverableStatus",
+    "Run",
+    "RunStatus",
+    "RunTrigger",
+    "ScheduleKind",
     "Task",
-    "TaskStatus",
-    "TaskStore",
-    "TaskStoreCorruptionError",
-    "TaskManager",
-    "TaskPlan",
-    "make_plan",
-    "apply_plan",
-    "run_intake",
-    "prepare_task",
-    "make_task_executor",
+    "manual_schedule",
+    "normalize_schedule",
 ]

@@ -19,8 +19,6 @@ from datetime import datetime, timedelta
 
 from cronsim import CronSim, CronSimError
 
-from assistant.tasks.model import TaskStatus
-
 # Standard Vixie-cron nicknames (cronsim itself only takes 5-field expressions).
 _NICKNAMES = {
     "@hourly": "0 * * * *",
@@ -70,7 +68,7 @@ def describe_cron(spec: str | None) -> str | None:
     return desc
 
 
-def _parse_dt(iso: str | None) -> datetime | None:
+def parse_dt(iso: str | None) -> datetime | None:
     if not iso:
         return None
     try:
@@ -84,7 +82,7 @@ def _parse_dt(iso: str | None) -> datetime | None:
 
 def is_due(scheduled_for: str | None, now: datetime) -> bool:
     """True if a scheduled time has arrived."""
-    dt = _parse_dt(scheduled_for)
+    dt = parse_dt(scheduled_for)
     return dt is not None and dt <= now
 
 
@@ -99,7 +97,7 @@ def validate_schedule(
     allows an empty `when` (keep) and `recurrence` "off" (stop) / empty (keep).
     """
     w = (when or "").strip()
-    if w and _parse_dt(w) is None:
+    if w and parse_dt(w) is None:
         return (
             f"Couldn't parse '{when}' as a date/time. Use an ISO 8601 datetime from "
             "your environment clock, e.g. 2026-06-20T17:00:00+10:00."
@@ -131,7 +129,7 @@ def first_occurrence(recurrence: str | None, when: str | None) -> datetime | Non
     weekday-only cron scheduled on a Saturday starts Monday and `when` acts as
     a not-before floor. A past `when` yields a past match — i.e. due now —
     and the re-arm (`next_occurrence` from now) skips the missed slots."""
-    start = _parse_dt(when)
+    start = parse_dt(when)
     if start is None:
         return None
     expr = normalize_cron(recurrence)
@@ -179,7 +177,9 @@ class Scheduler:
         now = now or datetime.now().astimezone()
         fired = []
         for t in await self._store.list_all():
-            if t.status == TaskStatus.SCHEDULED and is_due(t.scheduled_for, now):
+            # Interim: the pre-redesign due check (this tick body is replaced by
+            # the paused/next_run_at scan in plan Task 3).
+            if t.status == "scheduled" and is_due(t.scheduled_for, now):
                 await self._fire(t.id)
                 fired.append(t.id)
         return fired
