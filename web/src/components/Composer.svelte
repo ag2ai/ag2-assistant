@@ -98,6 +98,7 @@
 
   let text = $state('')
   let pending = $state([])  // {name, payload:{name,mime,data(b64)}}
+  let dragging = $state(false)  // an OS-file drag is hovering the composer
   let ta, fileInput
 
   function submit() {
@@ -135,18 +136,74 @@
       r.readAsDataURL(file)
     })
   }
-  async function pick(e) {
-    for (const f of e.target.files) {
+
+  // Give a nameless clipboard/dropped file a MIME-derived extension so the chip
+  // reads sensibly and the backend routes it by extension.
+  const MIME_EXT = {
+    'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp',
+    'application/pdf': 'pdf', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'video/mp4': 'mp4',
+    'video/webm': 'webm', 'text/plain': 'txt',
+  }
+  let pasteSeq = 0  // per-load counter so multiple pasted screenshots don't collide
+  function extFor(mime) {
+    if (MIME_EXT[mime]) return MIME_EXT[mime]
+    const sub = String(mime || '').split('/')[1] || ''
+    return sub.replace(/[^a-z0-9].*$/i, '') || 'bin'  // "image/svg+xml" -> "svg"
+  }
+  function nameFor(f) {
+    if (f.name && /\.[^.]+$/.test(f.name)) return f.name  // real file: has an extension
+    return `pasted-${++pasteSeq}.${extFor(f.type)}`
+  }
+
+  // Shared attachment pipeline for every entry point (picker, paste, drop): encode
+  // each file and add it to the pending row as a transient message Attachment.
+  async function addFiles(files) {
+    for (const f of files) {
       const data = await toB64(f)
-      pending = [...pending, { name: f.name, payload: { name: f.name, mime: f.type, data } }]
+      const name = nameFor(f)
+      pending = [...pending, { name, payload: { name, mime: f.type, data } }]
     }
+  }
+
+  async function pick(e) {
+    await addFiles(e.target.files)
     if (fileInput) fileInput.value = ''
+  }
+
+  // Clipboard with ≥1 file → attachment paste (suppress the text rep); no file →
+  // let the normal text paste run.
+  function paste(e) {
+    const files = [...(e.clipboardData?.items || [])]
+      .filter((it) => it.kind === 'file')
+      .map((it) => it.getAsFile())
+      .filter(Boolean)
+    if (!files.length) return
+    e.preventDefault()
+    addFiles(files)
+  }
+
+  // Drop OS files onto the composer → message Attachment (FilesTree's drop uploads
+  // to the workspace instead). Internal row drags carry no files and are ignored.
+  function dragover(e) {
+    if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); dragging = true }
+  }
+  function dragleave(e) {
+    if (!e.currentTarget.contains(e.relatedTarget)) dragging = false
+  }
+  function drop(e) {
+    const files = e.dataTransfer?.files
+    if (!files || !files.length) return
+    e.preventDefault()
+    dragging = false
+    addFiles(files)
   }
   const removeFile = (i) => { pending = pending.filter((_, j) => j !== i) }
 </script>
 
 <div class="composer">
-  <div class="inputbox" class:busy={$thread.busy}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="inputbox" class:busy={$thread.busy} class:dragging
+       ondragover={dragover} ondragleave={dragleave} ondrop={drop}>
     {#if showFolders && (extraCount || chips.length)}
       <div class="cfolders">
         {#if extraCount}
@@ -184,6 +241,7 @@
       placeholder={placeholder()}
       oninput={grow}
       onkeydown={key}
+      onpaste={paste}
     ></textarea>
     <div class="cbar">
       <button class="cbtn" onclick={() => fileInput.click()} title="Attach files" aria-label="Attach files"><Icon name="plus" size={18} /></button>
@@ -243,6 +301,10 @@
 {/if}
 
 <style>
+  /* Dragging an OS file over the composer highlights it as a drop target for a
+     transient message attachment (mirrors the focus ring). */
+  .inputbox.dragging { border-color: var(--accent-border); box-shadow: var(--focus-ring), var(--shadow-md); }
+
   /* Hover-explain tooltip for the composer's gated buttons (Live mic, Send). Anchored to
      the button's right edge (both live at the right of the composer) so the bubble never
      runs off-screen. The wrapper carries the hover because a disabled button can't. */

@@ -31,6 +31,21 @@ Grant, whereas a Folder is an install-wide registry entry for a path *outside* t
 Root. UI copy says "directory" for these; "folder" is reserved for the Grant system.
 _Avoid_: folder (that is the Grant concept — a path outside the Root)
 
+**Attachment** (message attachment):
+A file bound to a single chat message so the agent sees it *this turn* — encoded
+inline and sent with the message, transient (it is not persisted to the Files
+space). Reached from the composer three ways, all the same pipeline: the `+`
+picker, paste, and dropping a file onto the composer. Distinct from an **Upload**,
+which writes a durable file into the Files space.
+_Avoid_: upload (an Attachment is not written to the Files space)
+
+**Upload** (into Files):
+Writing a durable file into a profile's **Files** space — via the Files tab's
+upload button or by dropping OS files onto the **Files tree**. Persistent, lives
+in the Root. The same drag-and-drop gesture means Upload on the Files tree but
+**Attachment** on the composer — the drop *target* decides.
+_Avoid_: attach (that is the transient, message-scoped Attachment)
+
 **Accent**:
 A Profile's visual identity — a single color it is themed with, stored as an
 `#rrggbb` hex. The user picks it either from the frontend's preset palettes or as
