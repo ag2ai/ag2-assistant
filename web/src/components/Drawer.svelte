@@ -12,7 +12,7 @@
   import ProfileForm from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
   import FilesTree from './FilesTree.svelte'
-  import { fmtWhen, fmtNextIn, fmtAgoShort, dayRows, fmtDayShort } from '../lib/time.js'
+  import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
   import { inkOn } from '../design/palette.js'
@@ -91,7 +91,7 @@
   let statusById = $state({}) // pid -> {busy, running_tasks, unseen_done} from GET /api/status
   // A chip's dot: true when that profile has finished tasks the user hasn't opened
   // yet (rolls up the nav's per-row unread marker to the profile). Clears on the
-  // next 5s poll once the run is opened (markSeen).
+  // next 5s poll once the run is opened (api.runSeen).
   const hasUnseen = (pid) => (statusById[pid]?.unseen_done || 0) > 0
 
   async function refresh() {
@@ -106,7 +106,7 @@
         $chats = [...$chats.filter((s) => !ids.has(s.chat_id)), ...server]
       }
     } catch {}
-    try { const all = await api.tasksAll('all'); if (get(profileEpoch) === epoch) $tasks = all } catch {}
+    try { const all = await api.tasks(); if (get(profileEpoch) === epoch) $tasks = all } catch {}
     // First fetch for this profile has settled — clears the drawer's loading state.
     if (get(profileEpoch) === epoch) loaded = true
     // One global roll-up serves both the active profile's line and the install-wide
@@ -256,69 +256,17 @@
   function focusSelect(node) { node.focus(); node.select() }
 
   // status → Lucide icon name + tooltip label. Colored per-status via the
-  // .statusicon CSS classes; replaces the old emoji/unicode glyphs.
+  // .statusicon CSS classes; replaces the old emoji/unicode glyphs. Keys are
+  // Run statuses (RunStatus.ALL: running/needs_input/completed/failed/cancelled) —
+  // a task row's `last_run.status` is looked up here for its status icon.
   const STATUS = {
-    pending: { icon: 'clock', label: 'pending' },
-    scheduled: { icon: 'clock', label: 'scheduled' },
-    awaiting_input: { icon: 'message', label: 'needs input' },
-    planning: { icon: 'brain', label: 'planning' },
     running: { icon: 'zap', label: 'running' },
+    needs_input: { icon: 'message', label: 'needs input' },
     completed: { icon: 'check', label: 'completed' },
     failed: { icon: 'x', label: 'failed' },
     cancelled: { icon: 'x', label: 'cancelled' },
   }
   const stat = (s) => STATUS[s] || { icon: 'clock', label: s || '' }
-
-  const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
-  const isUnread = (t) => TERMINAL.has(t.status) && !t.seen  // a finished result not yet opened
-
-  // Top-level ordering: what's active now first, then upcoming scheduled tasks by
-  // soonest next run, then finished (completed/failed/cancelled) at the bottom.
-  function taskRank(t) {
-    if (TERMINAL.has(t.status)) return 2 // finished → bottom
-    if (t.status === 'scheduled') return 1 // upcoming → middle, ordered by next run
-    return 0 // running / pending / planning / awaiting input → active now, at top
-  }
-  function compareTasks(a, b) {
-    const ra = taskRank(a), rb = taskRank(b)
-    if (ra !== rb) return ra - rb
-    if (ra === 1) // scheduled: soonest next run first
-      return (a.scheduled_for || '').localeCompare(b.scheduled_for || '')
-    // active-now and finished: most recent first
-    return (b.created_at || '').localeCompare(a.created_at || '')
-  }
-
-  // Group runs (run_of) under their template; templates + standalone tasks are
-  // top-level. Orphan runs (template absent) fall back to top level.
-  const groups = $derived.by(() => {
-    const list = $tasks || []
-    const byParent = new Map()
-    for (const t of list) {
-      if (!t.run_of) continue
-      const arr = byParent.get(t.run_of)
-      if (arr) arr.push(t); else byParent.set(t.run_of, [t])
-    }
-    const topIds = new Set(list.filter((t) => !t.run_of).map((t) => t.id))
-    const tops = list.filter((t) => !t.run_of || !topIds.has(t.run_of))
-    return tops
-      .slice()
-      .sort(compareTasks)
-      .map((t) => {
-        const runs = (byParent.get(t.id) || []).slice().sort((a, b) =>
-          (b.scheduled_for || b.created_at || '').localeCompare(a.scheduled_for || a.created_at || ''))
-        return { task: t, runs, unread: runs.filter(isUnread).length }
-      })
-  })
-
-  // A caught-up recurring task collapses to just its header (title + recurrence +
-  // next run) — the seen ✓ history is noise once read, and the full run list is
-  // always available in the task's detail panel. So in the sidebar we only keep
-  // runs that still want attention: an unread result, a run still in flight, or
-  // whichever run is open right now (opening a run marks it seen; without this it
-  // would vanish from under its parent the instant you clicked it).
-  const needsAttention = (r, openId) =>
-    isUnread(r) || !TERMINAL.has(r.status) || r.id === openId
-  const visibleRuns = (g, openId) => g.runs.filter((r) => needsAttention(r, openId))
 
 </script>
 
@@ -478,33 +426,27 @@
         {@render chatRow(s)}
       {/each}
     {:else}
-      {#if !groups.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
-      {#each groups as g (g.task.id)}
-        {@const nextIn = g.task.status === 'scheduled' ? fmtNextIn(g.task.scheduled_for) : ''}
-        {@const openId = $route.name === 'task' ? $route.id : null}
-        {@const shownRuns = visibleRuns(g, openId)}
-        <div class="drow ttask" class:on={$route.name === 'task' && $route.id === g.task.id}
-             class:unseen={!g.runs.length && isUnread(g.task)} onclick={() => openTask(g.task.id)}>
+      <button class="newrow" onclick={() => openTask('new')}><Icon name="plus" size={15} /> New task</button>
+      {#if !$tasks.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
+      {#each $tasks as t (t.id)}
+        {@const nextIn = !t.paused && t.next_run_at ? fmtNextIn(t.next_run_at) : ''}
+        <div class="drow ttask" class:on={$route.name === 'task' && $route.id === t.id}
+             class:unseen={t.unread > 0} onclick={() => openTask(t.id)}>
           <div class="tline1">
-            <span class="statusicon {g.task.status}" title={stat(g.task.status).label}><Icon name={stat(g.task.status).icon} size={14} /></span>
-            <span class="ttitle">{g.task.title}</span>
-            {#if g.unread}<span class="unreadcount" title="{g.unread} unread">{g.unread}</span>{/if}
+            {#if t.paused}<span class="statusicon" title="Paused"><Icon name="square" size={14} /></span>
+            {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="message" size={14} /></span>
+            {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={t.last_run.status}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
+            {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
+            <span class="ttitle">{t.name}</span>
+            {#if t.unread}<span class="unreadcount" title="{t.unread} unread">{t.unread}</span>{/if}
           </div>
-          {#if g.task.recurrence || nextIn}
+          {#if t.schedule.kind !== 'manual' || nextIn}
             <div class="tmeta">
-              {#if g.task.recurrence}<span class="tag sched" title="{g.task.recurrence}{g.task.recurrence_desc ? ' — ' + g.task.recurrence_desc : ''}">{shortSched(g.task.recurrence_desc) || g.task.recurrence}</span>{/if}
-              {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
+              {#if t.schedule.kind !== 'manual'}<span class="tag sched" title={t.schedule_desc}>{shortSched(t.schedule_desc) || t.schedule_desc}</span>{/if}
+              {#if nextIn}<span class="nextin" title="Next run">{nextIn}</span>{/if}
             </div>
           {/if}
         </div>
-        {#each shownRuns as r (r.id)}
-          <div class="drow child trow" class:on={$route.name === 'task' && $route.id === r.id}
-               class:unseen={isUnread(r)} onclick={() => openTask(r.id)}>
-            <span class="statusicon {r.status}" title={stat(r.status).label}><Icon name={stat(r.status).icon} size={13} /></span>
-            <span class="runwhen">{fmtWhen(r.scheduled_for || r.created_at) || 'run'}</span>
-            {#if isUnread(r)}<span class="dot" title="unread"></span>{/if}
-          </div>
-        {/each}
       {/each}
     {/if}
   </div>

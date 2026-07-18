@@ -10,6 +10,7 @@
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
+  import TaskPage from './components/task/TaskPage.svelte'
   import Hitl from './components/Hitl.svelte'
   import Google from './components/Google.svelte'
   import Codex from './components/Codex.svelte'
@@ -187,9 +188,9 @@
     const key = r.name + ':' + (r.id || '')
     if (key === last) return
     last = key
-    if (r.name === 'task') openThread('task', r.id)
+    if (r.name === 'run') openThread('run', r.id)
     else if (r.name === 'chat') openThread('chat', r.id)
-    else if (r.name === 'tasks' || r.name === 'files') closeThread()
+    else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files') closeThread()
     else { closeThread(); go('/c/' + newChatId()) } // home → a fresh chat
   })
 </script>
@@ -207,12 +208,14 @@
     <Drawer />
     <div class="main">
       <Hitl />
-      {#if $route.name === 'chat' || $route.name === 'task'}
+      {#if $route.name === 'chat' || $route.name === 'run'}
         <Thread />
+      {:else if $route.name === 'task'}
+        <TaskPage />
       {:else if $route.name === 'files'}
         <div class="thread"><div class="empty"><h1>Files</h1>Browse and manage your files from the sidebar.</div></div>
       {:else if $route.name === 'tasks'}
-        <div class="thread"><div class="empty"><h1>Tasks</h1>Pick a task from the sidebar to view its runs.</div></div>
+        <div class="thread"><div class="empty"><h1>Tasks</h1>Pick a task from the sidebar, or create one with New task.</div></div>
       {:else}
         <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
       {/if}

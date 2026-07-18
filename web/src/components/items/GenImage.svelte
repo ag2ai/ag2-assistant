@@ -1,7 +1,7 @@
 <script>
   // An image the agent generated/edited — shown inline as a thumbnail; click for the
   // full-size preview. The bytes live in the workspace (served via /api/files/raw).
-  import { thread, taskPanel } from '../../store.js'
+  import { thread, runInfo } from '../../store.js'
   import { openAsideFile } from '../../router.js'
   import { api } from '../../transport/api.js'
   import { requestContext } from '../../lib/feedback.js'
@@ -10,7 +10,7 @@
 
   let { item } = $props()
   const open = () => openAsideFile(item.path)
-  const request = $derived(requestContext($thread.items, item, $taskPanel))
+  const request = $derived(requestContext($thread.items, item, $runInfo))
   // A thumbnail that fails to load (file moved/deleted) falls back to a chip so
   // the path stays visible instead of the browser's broken-image glyph.
   let broken = $state(false)

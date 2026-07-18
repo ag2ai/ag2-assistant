@@ -1,5 +1,5 @@
 <script>
-  import { viewer, thread, taskPanel } from '../../store.js'
+  import { viewer, thread, runInfo } from '../../store.js'
   import { openAsideFile } from '../../router.js'
   import { api } from '../../transport/api.js'
   import Icon from '../Icon.svelte'
@@ -7,7 +7,7 @@
   import { requestContext } from '../../lib/feedback.js'
   import Feedback from './Feedback.svelte'
   let { item } = $props()
-  const request = $derived(requestContext($thread.items, item, $taskPanel))
+  const request = $derived(requestContext($thread.items, item, $runInfo))
   // The preview is a flattened 240-char teaser (newlines already collapsed at the
   // source), so block markdown can't render — strip the markers for a clean one-liner.
   const teaser = (item.preview || '').replace(/[#*`>_~]/g, '').replace(/\s+/g, ' ').trim()
