@@ -1,6 +1,7 @@
 import { writable, derived } from 'svelte/store'
 import { getActiveProfileId } from './lib/profile.js'
 import { parse, resolve, SETTINGS_PAGE } from './lib/route.js'
+import { confirmDiscard } from './lib/unsavedGuard.js'
 
 // Thin DOM/store shell over the pure route core (lib/route.js). The two dimensions:
 // the PATH is the Page (profile + Tab + optional Thread); the HASH is the open
@@ -76,7 +77,12 @@ export function closeOverlay() {
 // Opening the rail from closed pushes (Back closes it); switching occupant replaces.
 
 function setAside(next) {
-  const wasOpen = read().aside != null
+  const cur = read().aside
+  // Re-pointing the rail at the file it already shows isn't a teardown; any other
+  // occupant change tears a dirty editor down, so guard it first.
+  const sameFile = cur?.kind === 'file' && next?.kind === 'file' && cur.path === next.path
+  if (!sameFile && !confirmDiscard()) return
+  const wasOpen = cur != null
   const full = resolve(current(), { type: wasOpen ? 'replaceAside' : 'openAside', aside: next })
   if (wasOpen) history.replaceState({}, '', full)
   else history.pushState({}, '', full)
@@ -90,6 +96,7 @@ export function openAsideFile(path) { if (path) setAside({ kind: 'file', path })
 export function openAsideInspector() { setAside({ kind: 'inspector' }) }
 
 export function closeAside() {
+  if (!confirmDiscard()) return
   const full = resolve(current(), { type: 'closeAside' })
   history.replaceState({}, '', full)
   route.set(read())
@@ -111,5 +118,6 @@ export function newChatId() {
 
 // popstate covers Back/Forward (Page and Modal); hashchange covers a hash edited
 // directly in the address bar. Both re-derive the route from the URL.
+// Known gap: Back past an open dirty editor is intentionally un-guarded (ticket 04).
 window.addEventListener('popstate', () => route.set(read()))
 window.addEventListener('hashchange', () => route.set(read()))

@@ -645,8 +645,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .viewer .vhead .vtitle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .viewer .vhead .dl { flex: none; display: inline-flex; align-items: center; color: var(--muted); }
 .viewer .vhead .dl:hover { color: var(--text, inherit); }
-/* Preview / raw-source switcher (markdown only) — a two-icon segmented pill;
-   the active side lifts onto the panel colour. */
+/* Preview / Edit switcher (markdown only) — a two-icon segmented pill; the active
+   side lifts onto the panel colour. */
 .viewer .vhead .vseg { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--code); }
 .viewer .vhead .vsegbtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 22px; padding: 0; border: none; border-radius: 6px; background: none; color: var(--text-muted); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
 .viewer .vhead .vsegbtn:hover { color: var(--ink); }
@@ -664,10 +664,36 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
    so it can't use the modal's absolute-corner .modal-x). */
 .viewer .rail-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--text-muted); font-size: 20px; line-height: 1; cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
 .viewer .rail-x:hover { color: var(--ink); background: var(--code); }
+/* Unsaved-changes marker — a small accent dot beside the title; the Save button
+   goes flat/disabled until the draft diverges (ADR 0011). */
+.viewer .vhead .vdirty { flex: none; color: var(--accent); font-size: 10px; line-height: 1; }
+.viewer .vhead .vsave { flex: none; padding: 4px 12px; border: none; border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: opacity var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vsave:hover:not(:disabled) { opacity: 0.9; }
+.viewer .vhead .vsave:disabled { background: var(--code); color: var(--text-muted); cursor: default; }
 .viewer .vbody { min-height: 0; flex: 1; padding: 16px 18px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .viewer .vbody.native { padding: 8px; overflow: hidden; }
+/* Edit mode: a flex column so the plain-text editor fills the rail height and a
+   save error can sit above it. */
+.viewer .vbody.editing { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.viewer .vedit { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; resize: none; border: 1px solid var(--line); border-radius: 6px; background: var(--code); color: var(--ink); padding: 14px; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; white-space: pre; overflow: auto; }
+.viewer .vedit:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.viewer .vsaveerr { flex: none; margin: 0; padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, #d8552f 12%, transparent); color: #d8552f; font-size: 13px; }
+/* The stale-file save clash (ADR 0011): a warning-toned message with two neutral,
+   consequence-labelled choices — Reload (discard mine) / Overwrite (replace disk). */
+.viewer .vconflict { flex: none; display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 12px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.viewer .vconflict-msg { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink); }
+.viewer .vconflict-actions { display: flex; gap: 8px; }
+.viewer .vconflict-btn { flex: 1; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); font: inherit; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out); }
+.viewer .vconflict-btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.viewer .vconflict-btn:disabled { opacity: 0.6; cursor: default; }
+.viewer .vconflict-verb { font-size: 13px; font-weight: 600; }
+.viewer .vconflict-note { font-size: 11.5px; color: var(--muted); }
 .viewer .vframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #fff; }
 .viewer .vimg { display: block; max-width: 100%; max-height: 100%; height: auto; margin: 0 auto; }
+.viewer .vmissing { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: var(--muted); }
+.viewer .vmissing-msg { margin: 0; font-size: 13px; line-height: 1.5; max-width: 42ch; }
+.viewer .vmissing-path { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; color: var(--ink); background: var(--code); padding: 6px 10px; border-radius: 6px; }
+.viewer .vmissing-detail { margin: 0; font-size: 11.5px; color: var(--muted); word-break: break-word; }
 .viewer .vcode { white-space: pre; overflow: auto; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; background: var(--code); padding: 14px; border-radius: 6px; }
 .viewer .vtext { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; background: var(--code); padding: 14px; border-radius: 6px; }
 

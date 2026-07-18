@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from assistant.workspace import (
     delete,
+    etag_for_path,
     list_all_dirs,
     list_dirs,
     list_files,
@@ -16,6 +17,7 @@ from assistant.workspace import (
     slugify,
     write_deliverable_file,
     write_image,
+    write_text,
     write_upload,
 )
 
@@ -293,3 +295,65 @@ def test_list_all_dirs_includes_empty_directories(tmp_path):
     (tmp_path / "withfile" / "f.md").write_text("f")
     dirs = list_all_dirs(tmp_path)
     assert "empty" in dirs and "withfile" in dirs
+
+
+# ---- In-place editable writes: optimistic concurrency via content token (ADR 0011) ----
+
+
+def test_write_text_replaces_existing_and_returns_new_hash(tmp_path):
+    (tmp_path / "notes.md").write_text("old")
+    status, new = write_text(tmp_path, "notes.md", "new body", force=True)
+    assert status == "ok" and isinstance(new, str) and new
+    assert (tmp_path / "notes.md").read_text() == "new body"
+
+
+def test_write_text_matching_token_succeeds(tmp_path):
+    (tmp_path / "a.md").write_text("hello")
+    token = etag_for_path(tmp_path / "a.md")
+    status, new = write_text(tmp_path, "a.md", "goodbye", base_token=token)
+    assert status == "ok"
+    assert (tmp_path / "a.md").read_text() == "goodbye"
+    assert new != token  # the token moves with the content
+
+
+def test_write_text_stale_token_is_conflict_and_leaves_file_untouched(tmp_path):
+    (tmp_path / "a.md").write_text("v1")
+    stale = etag_for_path(tmp_path / "a.md")
+    (tmp_path / "a.md").write_text("v2 — agent wrote underneath us")  # content moved on
+    status, new = write_text(tmp_path, "a.md", "my edit", base_token=stale)
+    assert status == "conflict" and new is None
+    assert (tmp_path / "a.md").read_text() == "v2 — agent wrote underneath us"  # untouched
+
+
+def test_write_text_force_ignores_token(tmp_path):
+    (tmp_path / "a.md").write_text("v1")
+    status, _ = write_text(tmp_path, "a.md", "forced", base_token="totally-stale", force=True)
+    assert status == "ok"
+    assert (tmp_path / "a.md").read_text() == "forced"
+
+
+def test_write_text_missing_path_never_creates(tmp_path):
+    status, new = write_text(tmp_path, "nope.md", "x", force=True)
+    assert status == "not_found" and new is None
+    assert not (tmp_path / "nope.md").exists()  # creation stays Upload's job
+
+
+def test_write_text_rejects_traversal(tmp_path):
+    (tmp_path / "a.md").write_text("keep")
+    status, _ = write_text(tmp_path, "../../evil.md", "x", force=True)
+    assert status == "invalid"
+    assert (tmp_path / "a.md").read_text() == "keep"
+
+
+def test_write_text_rejects_oversized_body(tmp_path):
+    (tmp_path / "a.md").write_text("small")
+    status, _ = write_text(tmp_path, "a.md", "x" * 50, force=True, max_bytes=10)
+    assert status == "too_large"
+    assert (tmp_path / "a.md").read_text() == "small"  # untouched
+
+
+def test_write_read_token_round_trips(tmp_path):
+    (tmp_path / "a.md").write_text("start")
+    _, new = write_text(tmp_path, "a.md", "round-trip", force=True)
+    # the returned token equals what a subsequent read hands out
+    assert etag_for_path(tmp_path / "a.md") == new

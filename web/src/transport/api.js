@@ -6,6 +6,7 @@
 // through G() (→ /api/…). See lib/profile.js.
 
 import { api as P, globalApi as G, pidApi as PID, onProfileGone } from '../lib/profile.js'
+import { parseEtag } from '../lib/fileEdit.js'
 
 async function j(method, path, body) {
   const r = await fetch(path, {
@@ -199,6 +200,34 @@ export const api = {
     const r = await fetch(P('/files/raw?path=' + encodeURIComponent(path)))
     if (!r.ok) throw new Error('file not found')
     return r.text()
+  },
+  // Like fileText but also returns the served file's `ETag` → {text, etag}, unquoted
+  // to match the bare etag saveFile hands back.
+  fileTextWithEtag: async (path) => {
+    const r = await fetch(P('/files/raw?path=' + encodeURIComponent(path)))
+    if (!r.ok) throw new Error('file not found')
+    const text = await r.text()
+    return { text, etag: parseEtag(r.headers.get('ETag')) }
+  },
+  // In-place write (ADR 0011): PUT the UTF-8 body with `If-Match: <etag>`, resolving
+  // to the new etag. A failure throws an Error carrying `.status`/`.body` (409/404/400
+  // distinct); a 404 here is a missing file, not a vanished profile — so not via j().
+  saveFile: async (path, text, etag) => {
+    const r = await fetch(P('/files/raw?path=' + encodeURIComponent(path)), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', ...(etag ? { 'If-Match': `"${etag}"` } : {}) },
+      body: text,
+    })
+    if (!r.ok) {
+      let payload = null
+      try { payload = await r.json() } catch {}
+      const err = new Error((payload && payload.error) || `save failed (${r.status})`)
+      err.status = r.status
+      err.body = payload
+      throw err
+    }
+    const data = await r.json().catch(() => ({}))
+    return data.etag || parseEtag(r.headers.get('ETag'))
   },
   // Delete a file OR a Directory (recursive) — same route, extended server-side.
   deleteFile: (path) => j('DELETE', P('/files/raw?path=' + encodeURIComponent(path))),

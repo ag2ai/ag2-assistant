@@ -2,7 +2,7 @@
   // The docked preview rail: renders the route's `aside` file (or the path-less
   // transient `viewer` body) beside the conversation in the grid's right column.
   // html/image/pdf render natively; md/code/text in-app; unknown types → download.
-  import { onDestroy } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { route, closeAside } from '../router.js'
   import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile } from '../store.js'
   import { api } from '../transport/api.js'
@@ -10,6 +10,8 @@
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'
   import { viewerKind } from '../lib/preview.js'
+  import { saveErrorMessage, isConflict } from '../lib/fileEdit.js'
+  import { setUnsavedGuard } from '../lib/unsavedGuard.js'
 
   // A URL-addressed file wins; a path-less transient body is the fallback when no
   // file is addressed. The rail shows exactly one of them.
@@ -23,8 +25,11 @@
   const url = $derived(path ? api.fileUrl(path) : '')
   const native = $derived(kind === 'html' || kind === 'pdf' || kind === 'image')
   // Offer a copy button for text-backed kinds and html (copy the source), and for
-  // images (copy the pixels). markdown additionally gets a rendered/raw switcher.
+  // images (copy the pixels). markdown additionally gets a Preview/Edit switcher.
   const copyable = $derived(kind === 'markdown' || kind === 'code' || kind === 'text' || kind === 'html' || kind === 'image')
+  // In-place editing (ADR 0011) is offered for path-backed markdown only: the
+  // transient body has nowhere to save, and other kinds don't opt in yet.
+  const editable = $derived(kind === 'markdown' && !!path)
 
   // Close strips the aside key from the URL for a file; clears the store for a
   // transient body (it was never in the URL).
@@ -37,23 +42,49 @@
   // starts docked. A reload skips onDestroy, so a file preview survives it (App boot reconciles).
   onDestroy(resetPreviewView)
 
-  // Text-backed kinds need the file contents; native kinds load the URL directly.
+  // `text` is the last-loaded/last-saved baseline (render + dirty compare); `draft` is
+  // the editor's working copy (also what Preview renders); `etag` its version token.
   let text = $state('')
+  let draft = $state('')
+  let etag = $state(null)
   let err = $state('')
-  let raw = $state(false)   // markdown only: show the source instead of the render
+  let mode = $state('preview')   // markdown only: 'preview' render vs. 'edit' source
+  let saving = $state(false)
+  let saveErr = $state('')
+  // A save clashed with a since-changed file: the rail shows a Reload/Overwrite
+  // choice (ADR 0011) instead of a plain error and keeps the draft until they pick.
+  let conflict = $state(false)
+  // An image whose source failed to load (missing/unreadable file): we draw the
+  // path instead of letting the browser show its default broken-image glyph.
+  let imgErr = $state(false)
+  // Dirty as soon as the working copy diverges from the baseline (edit-capable kinds
+  // only); gates the unsaved marker and the Save affordance.
+  const dirty = $derived(editable && draft !== text)
+  // Expose the editor's dirty state to the router's aside guard while mounted.
+  onMount(() => setUnsavedGuard(() => dirty))
+  onDestroy(() => setUnsavedGuard(null))
   $effect(() => {
-    const p = path, tr = transient
-    text = ''
-    err = ''
-    raw = false             // each newly-opened file starts on the rendered view
-    if (tr) { text = tr.text; return }
-    if (p && (kind === 'markdown' || kind === 'code' || kind === 'text')) {
-      api.fileText(p).then((t) => (text = t)).catch((e) => (err = String(e.message || e)))
+    const p = path, tr = transient, k = kind
+    let stale = false            // a late load for a since-changed file must not land
+    text = ''; draft = ''; etag = null
+    err = ''; saveErr = ''; conflict = false; saving = false
+    imgErr = false               // a fresh source gets a fresh chance to load
+    mode = 'preview'             // each newly-opened file starts on the rendered view
+    if (tr) { text = tr.text; draft = tr.text }
+    else if (p && k === 'markdown') {
+      api.fileTextWithEtag(p)
+        .then(({ text: t, etag: e }) => { if (!stale) { text = t; draft = t; etag = e } })
+        .catch((e) => { if (!stale) err = String(e.message || e) })
+    } else if (p && (k === 'code' || k === 'text')) {
+      api.fileText(p)
+        .then((t) => { if (!stale) { text = t; draft = t } })
+        .catch((e) => { if (!stale) err = String(e.message || e) })
     }
+    return () => { stale = true }
   })
 
   // Copy to the clipboard, with a brief ✓ confirmation: text-backed kinds copy the
-  // source; images copy the pixels.
+  // source (the live editor draft for markdown); images copy the pixels.
   let copied = $state(false)
   async function copy() {
     try {
@@ -63,14 +94,92 @@
         // keeps the call in the user-gesture tick (Safari requires that).
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': imagePng() })])
       } else if (kind === 'html') {
-        // html renders natively (iframe), so its source isn't held in `text` — fetch it.
+        // html renders natively (iframe), so its source isn't held in `draft` — fetch it.
         await navigator.clipboard.writeText(await api.fileText(path))
       } else {
-        await navigator.clipboard.writeText(text || '')
+        await navigator.clipboard.writeText(draft || '')
       }
       copied = true
       setTimeout(() => (copied = false), 1400)
     } catch { /* clipboard blocked / unsupported — no-op */ }
+  }
+
+  // Write the draft against `baseTag` (the open-time etag, or null to force past a
+  // conflict); on success adopt it + the returned etag, a `409` raises the prompt.
+  async function persist(baseTag) {
+    if (saving) return
+    const p = path               // the file this write targets; a mid-flight switch drops the result
+    saving = true
+    saveErr = ''
+    const pending = draft
+    try {
+      const newTag = await api.saveFile(p, pending, baseTag)
+      if (p !== path) return
+      text = pending
+      etag = newTag
+      conflict = false
+    } catch (e) {
+      if (p !== path) return
+      if (isConflict(e)) conflict = true
+      else { saveErr = saveErrorMessage(e); conflict = false }
+    } finally {
+      if (p === path) saving = false
+    }
+  }
+
+  // Explicit Save (button / ⌘S): only when there's something to write and no conflict
+  // is pending (that's Reload/Overwrite's job); checks the open-time token so a
+  // concurrent change becomes a conflict rather than a blind clobber.
+  function save() {
+    if (!editable || !dirty || conflict) return
+    persist(etag)
+  }
+
+  // Overwrite (conflict resolution): re-issue the write with no `If-Match`, replacing
+  // the disk version with the draft and adopting the fresh etag — stays in Edit.
+  function overwrite() {
+    persist(null)
+  }
+
+  // Reload (conflict resolution): discard the draft, load the current disk source and
+  // its fresh etag as the new baseline, and clear the conflict/dirty state.
+  async function reloadFromDisk() {
+    if (saving) return
+    const p = path               // a mid-flight switch drops the reloaded content
+    saving = true
+    saveErr = ''
+    try {
+      const { text: t, etag: e } = await api.fileTextWithEtag(p)
+      if (p !== path) return
+      text = t
+      draft = t
+      etag = e
+      conflict = false
+    } catch (e) {
+      if (p !== path) return
+      // The disk read failed (e.g. the file was deleted): surface the error alone,
+      // not alongside a now-moot conflict chooser.
+      saveErr = saveErrorMessage(e)
+      conflict = false
+    } finally {
+      if (p === path) saving = false
+    }
+  }
+
+  // ⌘/Ctrl-S saves from anywhere while a markdown file is open in the rail.
+  function onKeydown(e) {
+    if (!editable) return
+    if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault()
+      save()
+    }
+  }
+
+  // Refresh / tab-close with unsaved edits triggers the browser's native leave prompt.
+  function onBeforeUnload(e) {
+    if (!dirty) return
+    e.preventDefault()
+    e.returnValue = ''
   }
 
   // Draw the current image onto a canvas and export a PNG blob. The image is
@@ -87,18 +196,31 @@
   }
 </script>
 
+<svelte:window onkeydown={onKeydown} onbeforeunload={onBeforeUnload} />
+
+<!-- Shared "file is gone" panel: any kind whose bytes fail to load draws the path
+     instead of a broken glyph / raw stack trace. `detail` carries the technical error. -->
+{#snippet missing(icon, msg, detail)}
+  <div class="vmissing" role="alert">
+    <Icon name={icon} size={28} />
+    <p class="vmissing-msg">{msg}</p>
+    <code class="vmissing-path">{path}</code>
+    {#if detail}<p class="vmissing-detail">{detail}</p>{/if}
+  </div>
+{/snippet}
+
 <aside class="rail viewer">
   <RailResizer width={previewWidth} onGrab={() => previewExpanded.set(false)} />
   <div class="vhead">
-    {#if kind === 'markdown'}
+    {#if editable}
       <div class="vseg" role="group" aria-label="View mode">
-        <button class="vsegbtn" class:on={!raw} aria-pressed={!raw}
-                title="Preview" aria-label="Preview" onclick={() => (raw = false)}>
+        <button class="vsegbtn" class:on={mode === 'preview'} aria-pressed={mode === 'preview'}
+                title="Preview" aria-label="Preview" onclick={() => (mode = 'preview')}>
           <Icon name="eye" size={14} />
         </button>
-        <button class="vsegbtn" class:on={raw} aria-pressed={raw}
-                title="Raw source" aria-label="Raw source" onclick={() => (raw = true)}>
-          <Icon name="code" size={14} />
+        <button class="vsegbtn" class:on={mode === 'edit'} aria-pressed={mode === 'edit'}
+                title="Edit" aria-label="Edit" onclick={() => (mode = 'edit')}>
+          <Icon name="pencil" size={14} />
         </button>
       </div>
     {/if}
@@ -109,6 +231,18 @@
     {:else}
       <!-- Path-less transient body: no tree row to reveal, so a plain heading. -->
       <h2 title={title}>{title}</h2>
+    {/if}
+    {#if editable}
+      {#if dirty}
+        <span class="vdirty" title="Unsaved changes" aria-label="Unsaved changes">●</span>
+      {/if}
+      <!-- Save belongs to Edit; Preview shows only the dirty marker, never a dead button. -->
+      {#if mode === 'edit'}
+        <button class="vsave" disabled={!dirty || saving || conflict} onclick={save}
+                title="Save (⌘/Ctrl-S)" aria-label="Save">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      {/if}
     {/if}
     {#if copyable}
       <button class="cp" class:copied
@@ -125,16 +259,43 @@
     {#if path}<a class="dl" href={api.fileUrl(path, true)} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></a>{/if}
     <button class="rail-x" aria-label="Close" onclick={close}>×</button>
   </div>
-  <div class="vbody" class:native>
+  <div class="vbody" class:native class:editing={editable && mode === 'edit'}>
+    {#if saveErr}<p class="vsaveerr" role="alert">{saveErr}</p>{/if}
+    {#if conflict}
+      <div class="vconflict" role="alert">
+        <p class="vconflict-msg">This file changed on disk since you opened it — the agent
+          or another window may have rewritten it. Choose whose version to keep:</p>
+        <div class="vconflict-actions">
+          <button class="vconflict-btn" disabled={saving} onclick={reloadFromDisk}>
+            <span class="vconflict-verb">Reload</span>
+            <span class="vconflict-note">discard my edits, load the disk version</span>
+          </button>
+          <button class="vconflict-btn" disabled={saving} onclick={overwrite}>
+            <span class="vconflict-verb">Overwrite</span>
+            <span class="vconflict-note">replace the disk version with mine</span>
+          </button>
+        </div>
+      </div>
+    {/if}
     {#if err}
-      <p class="muted" style="color:#d8552f">{err}</p>
+      <!-- A path-backed load failed (missing/unreadable) → the shared missing panel;
+           a path-less transient body can't go missing, so just show the raw error. -->
+      {#if path}
+        {@render missing('file-x', 'Couldn’t load this file — it may have moved or been deleted.', err)}
+      {:else}
+        <p class="muted" style="color:#d8552f">{err}</p>
+      {/if}
     {:else if kind === 'html'}
       <!-- agent HTML: scripts run but in an opaque origin (no allow-same-origin) -->
       <iframe class="vframe" title={title} src={url} sandbox="allow-scripts"></iframe>
     {:else if kind === 'pdf'}
       <iframe class="vframe" title={title} src={url}></iframe>
     {:else if kind === 'image'}
-      <img class="vimg" src={url} alt={title} />
+      {#if imgErr}
+        {@render missing('image-off', 'Couldn’t load this image — the file may have moved or been deleted.')}
+      {:else}
+        <img class="vimg" src={url} alt={title} onerror={() => (imgErr = true)} />
+      {/if}
     {:else if kind === 'code'}
       <pre class="vcode">{text}</pre>
     {:else if kind === 'text'}
@@ -143,10 +304,11 @@
       <p class="muted">
         No preview for this file type — <a class="dl" href={api.fileUrl(path, true)}>download it</a>.
       </p>
-    {:else if raw}
-      <pre class="vtext">{text}</pre>
+    {:else if editable && mode === 'edit'}
+      <textarea class="vedit" bind:value={draft} spellcheck="false"
+                aria-label={`Edit ${name}`}></textarea>
     {:else}
-      <Markdown {text} />
+      <Markdown text={draft} />
     {/if}
   </div>
 </aside>

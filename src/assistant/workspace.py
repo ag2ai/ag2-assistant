@@ -7,12 +7,18 @@ per-task subfolder, persisting a produced deliverable as a real file, and a
 workspace root).
 """
 
+import hashlib
+import os
 import re
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+# Max byte size of an in-place text write; a larger body is rejected (ADR 0011).
+_MAX_WRITE_BYTES = 5 * 1024 * 1024
 
 
 def slugify(text: str, default: str = "task", maxlen: int = 48) -> str:
@@ -106,6 +112,71 @@ def resolve(workspace_dir, rel: str) -> Path | None:
     escapes the workspace root (path-traversal guard) or isn't a file."""
     p = _inside(_root(workspace_dir), rel)
     return p if p is not None and p.is_file() else None
+
+
+def _hash(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def etag_for_path(p: Path) -> str | None:
+    """The opaque content-version token (ADR 0011) for a resolved file — a hash of
+    its current bytes, equal to the token a matching `write_text` returns — or None
+    if it can't be read."""
+    try:
+        return _hash(p.read_bytes())
+    except OSError:
+        return None
+
+
+def write_text(
+    workspace_dir,
+    rel: str,
+    content: str,
+    *,
+    base_token: str | None = None,
+    force: bool = False,
+    max_bytes: int = _MAX_WRITE_BYTES,
+) -> tuple[str, str | None]:
+    """Overwrite an already-existing file's contents with UTF-8 `content`,
+    optimistically concurrent (ADR 0011); never creates a file. Returns
+    ``(status, new_token)``: ``("ok", <hash>)`` wrote (``<hash>`` is the new
+    content token, equal to a subsequent read's ETag); ``("not_found", None)``
+    path missing or not a file; ``("conflict", None)`` `base_token` != current
+    content hash, file left untouched; ``("invalid", None)`` traversal / the root
+    / OS error; ``("too_large", None)`` body over `max_bytes`. `force=True` skips
+    the token compare and replaces the bytes unconditionally."""
+    root = _root(workspace_dir)
+    p = _inside(root, rel)
+    if p is None or p == root:
+        return ("invalid", None)
+    if not p.is_file():
+        return ("not_found", None)
+    data = content.encode("utf-8")
+    if len(data) > max_bytes:
+        return ("too_large", None)
+    if not force:
+        try:
+            current = _hash(p.read_bytes())
+        except OSError:
+            return ("invalid", None)
+        if base_token != current:
+            return ("conflict", None)
+    # Atomic replace: write a temp file beside the target, then rename over it, so a
+    # concurrent reader or a mid-write crash never sees a torn/half-written file.
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=p.suffix)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, p)
+    except OSError:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return ("invalid", None)
+    return ("ok", _hash(data))
 
 
 def save_upload(workspace_dir, filename: str, data: bytes, target_dir: str = "") -> str | None:

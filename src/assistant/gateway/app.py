@@ -44,7 +44,8 @@ Route map:
     WS   stream, WS voice; GET voice/voices, POST voice/select, POST voice/preview
     GET/POST settings, settings/mcp*, settings/focuses, settings/voice_provider
     GET/POST memory                          -> THIS profile's persona memory (profiles/<id>/profile.db)
-    GET  files (files+dirs), GET/DELETE files/raw (delete: file or Directory, recursive)
+    GET  files (files+dirs), GET/PUT/DELETE files/raw (GET emits ETag; PUT in-place
+         write with If-Match, ADR 0011; delete: file or Directory, recursive)
     POST files/upload (multipart → target dir), files/mkdir, files/move ({from,to}) — ADR 0007
     GET  usage
 """
@@ -167,6 +168,17 @@ class MoveRequest(BaseModel):
     to: str
 
     model_config = {"populate_by_name": True}
+
+
+def _unquote_etag(value: str | None) -> str | None:
+    """The raw content token inside an ``If-Match`` header value — its weak-``W/``
+    prefix and surrounding quotes stripped (ADR 0011), or None when absent."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value.startswith("W/"):
+        value = value[2:]
+    return value.strip('"')
 
 
 class TaskRequest(BaseModel):
@@ -2258,8 +2270,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         path: str, download: bool = False, runtime: ProfileRuntime = Depends(get_runtime)
     ):
         """Serve one workspace file (view inline or download), sandboxed to the
-        workspace root — a path that escapes it is rejected."""
-        from assistant.workspace import resolve
+        workspace root. Carries an ``ETag`` content-version token (ADR 0011) an
+        in-place ``PUT`` echoes back as ``If-Match``."""
+        from assistant.workspace import etag_for_path, resolve
 
         rp = resolve(runtime.config.workspace_dir, path)
         if rp is None:
@@ -2267,7 +2280,55 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         disp = "attachment" if download else "inline"
         # Let FileResponse build Content-Disposition so a non-ASCII filename (user
         # uploads keep their original name) is RFC 5987-encoded, not latin-1 crashed.
-        return FileResponse(rp, filename=rp.name, content_disposition_type=disp)
+        resp = FileResponse(rp, filename=rp.name, content_disposition_type=disp)
+        etag = etag_for_path(rp)
+        if etag is not None:
+            resp.headers["ETag"] = f'"{etag}"'  # RFC 7232 quoted-string
+        return resp
+
+    @p.put("/files/raw")
+    async def write_workspace_file(
+        path: str, request: Request, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Overwrite an existing file's contents in place from the request body
+        (UTF-8), using ``If-Match`` as the base ETag (ADR 0011). ``200`` + the new
+        ``ETag`` on success, ``404`` if the path is missing, ``409`` if ``If-Match``
+        is stale, ``400`` on a traversal/invalid path; omitting ``If-Match`` forces
+        past the compare."""
+        from assistant.workspace import _MAX_WRITE_BYTES, write_text
+
+        # Stream the body under a hard cap so an oversize (or lying Content-Length) PUT
+        # can't buffer unboundedly into memory before the size check (DoS guard).
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > _MAX_WRITE_BYTES:
+                return JSONResponse({"error": "file too large"}, status_code=413)
+            chunks.append(chunk)
+        try:
+            content = b"".join(chunks).decode("utf-8")
+        except UnicodeDecodeError:
+            return JSONResponse({"error": "body must be valid UTF-8"}, status_code=400)
+        if_match = request.headers.get("if-match")
+        base_token = _unquote_etag(if_match)  # strip weak prefix + quotes to the raw token
+        status, new_tag = write_text(
+            runtime.config.workspace_dir,
+            path,
+            content,
+            base_token=base_token,
+            force=if_match is None,  # no If-Match ⇒ forced overwrite (bypass compare)
+        )
+        if status == "ok":
+            headers = {"ETag": f'"{new_tag}"'}
+            return JSONResponse({"ok": True, "etag": new_tag}, headers=headers)
+        code, msg = {
+            "not_found": (404, "file not found"),
+            "conflict": (409, "file changed on disk"),
+            "invalid": (400, "invalid path"),
+            "too_large": (413, "file too large"),
+        }[status]
+        return JSONResponse({"error": msg}, status_code=code)
 
     @p.delete("/files/raw")
     async def delete_workspace_file(
