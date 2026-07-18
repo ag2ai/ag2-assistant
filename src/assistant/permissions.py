@@ -420,8 +420,7 @@ class PermissionManager:
             options.append(GRANT_CHAT)
         options += [GRANT_PROFILE, DENY]
         scope_hint = (
-            "Allow just this once, grant it to this chat, always allow it in "
-            "this profile, or deny."
+            "Allow just this once, grant it to this chat, always allow it in this profile, or deny."
             if self.chat_id
             else "Allow just this once, always allow it in this profile, or deny."
         )

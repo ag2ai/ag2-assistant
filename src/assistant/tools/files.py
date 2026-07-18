@@ -104,14 +104,14 @@ async def list_folder_impl(path: str, permissions: PermissionManager) -> str:
     except OSError as exc:
         return f"Could not list {path}: {exc}"
     names = [
-        (e.name + "/") if e.is_dir() else e.name
-        for e in entries
-        if not e.name.startswith(".")
+        (e.name + "/") if e.is_dir() else e.name for e in entries if not e.name.startswith(".")
     ]
     if not names:
         return f"{target} is empty."
     shown = names[:_MAX_LIST_ENTRIES]
-    suffix = f"\n… ({len(names) - len(shown)} more entries not shown)" if len(names) > len(shown) else ""
+    suffix = (
+        f"\n… ({len(names) - len(shown)} more entries not shown)" if len(names) > len(shown) else ""
+    )
     return f"Contents of {target}:\n" + "\n".join(shown) + suffix
 
 

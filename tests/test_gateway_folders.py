@@ -51,15 +51,29 @@ def test_grant_upsert_and_revoke(monkeypatch, tmp_path):
         grants = next(x for x in r.json()["folders"] if x["id"] == f["id"])["grants"]
         assert len(grants) == 2
         # bad mode → 400; unknown folder → 404
-        assert client.post(f"/api/folders/{f['id']}/grants", json={"profile": pid, "mode": "rw"}).status_code == 400
-        assert client.post("/api/folders/f_nope/grants", json={"profile": pid, "mode": "read"}).status_code == 404
+        assert (
+            client.post(
+                f"/api/folders/{f['id']}/grants", json={"profile": pid, "mode": "rw"}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                "/api/folders/f_nope/grants", json={"profile": pid, "mode": "read"}
+            ).status_code
+            == 404
+        )
         # revoke chat grant only
-        r = client.request("DELETE", f"/api/folders/{f['id']}/grants", json={"profile": pid, "chat_id": "c1"})
+        r = client.request(
+            "DELETE", f"/api/folders/{f['id']}/grants", json={"profile": pid, "chat_id": "c1"}
+        )
         assert r.status_code == 200
         grants = next(x for x in r.json()["folders"] if x["id"] == f["id"])["grants"]
         assert grants == [{"profile": pid, "chat_id": "", "mode": "read"}]
         # revoking a grant that isn't there → 404
-        r = client.request("DELETE", f"/api/folders/{f['id']}/grants", json={"profile": pid, "chat_id": "c1"})
+        r = client.request(
+            "DELETE", f"/api/folders/{f['id']}/grants", json={"profile": pid, "chat_id": "c1"}
+        )
         assert r.status_code == 404
 
 

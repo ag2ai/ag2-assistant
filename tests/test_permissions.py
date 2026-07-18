@@ -138,7 +138,9 @@ async def test_turn_deny_stops_asking_across_tools(tmp_path):
 def _rf_manager(tmp_path, answer=None):
     store = PermissionStore(path=tmp_path / "p.json")
     folders = FolderStore(path=tmp_path / "folders.json")
-    return PermissionManager(store, FakeAsker(answer) if answer else None, folders=folders, profile="p1")
+    return PermissionManager(
+        store, FakeAsker(answer) if answer else None, folders=folders, profile="p1"
+    )
 
 
 async def test_read_file_text_with_permission(tmp_path):
@@ -549,7 +551,7 @@ async def test_allow_once_persists_nothing_but_caches_turn(tmp_path):
     asker = FakeAsker(ALLOW_ONCE)
     m = _manager(tmp_path, asker)
     assert await m.check(d / "f.txt") is True
-    assert await m.check(d / "g.txt") is True   # same folder, same turn: no re-prompt
+    assert await m.check(d / "g.txt") is True  # same folder, same turn: no re-prompt
     assert asker.asked == 1
     assert FolderStore(path=tmp_path / "folders.json").list_folders() == []
 
@@ -559,7 +561,7 @@ async def test_allow_once_read_does_not_cover_write(tmp_path):
     d.mkdir()
     asker = FakeAsker(ALLOW_ONCE)
     m = _manager(tmp_path, asker)
-    assert await m.check(d / "f.txt") is True          # read once
+    assert await m.check(d / "f.txt") is True  # read once
     assert await m.check(d / "f.txt", write=True) is True  # re-prompts, allowed once again
     assert asker.asked == 2
 
@@ -570,7 +572,7 @@ async def test_allow_once_write_covers_later_read(tmp_path):
     asker = FakeAsker(ALLOW_ONCE)
     m = _manager(tmp_path, asker)
     assert await m.check(d / "f.txt", write=True) is True  # write once
-    assert await m.check(d / "g.txt") is True              # read in same folder: covered
+    assert await m.check(d / "g.txt") is True  # read in same folder: covered
     assert asker.asked == 1
 
 

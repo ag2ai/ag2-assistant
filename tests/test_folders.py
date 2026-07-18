@@ -138,7 +138,7 @@ def test_mode_for_chat_grants_union_with_profile(tmp_path):
     b.mkdir()
     fa = store.create_folder(str(a))
     fb = store.create_folder(str(b))
-    store.set_grant(fa["id"], READ, profile="work")               # profile-wide
+    store.set_grant(fa["id"], READ, profile="work")  # profile-wide
     store.set_grant(fb["id"], READ_WRITE, profile="work", chat_id="c1")  # one chat
     # in chat c1: both apply (profile ∪ chat)
     assert store.mode_for(a, "work", chat_id="c1") == READ
@@ -154,11 +154,11 @@ def test_chat_grant_overrides_profile_mode_for_that_chat(tmp_path):
     d = tmp_path / "acme"
     d.mkdir()
     f = store.create_folder(str(d))
-    store.set_grant(f["id"], READ_WRITE, profile="work")             # profile: read+write
-    store.set_grant(f["id"], READ, profile="work", chat_id="c1")     # this chat: narrowed to read
-    assert store.mode_for(d, "work", chat_id="c1") == READ           # chat override wins (narrows)
-    assert store.mode_for(d, "work", chat_id="c2") == READ_WRITE     # other chats untouched
-    assert store.mode_for(d, "work") == READ_WRITE                   # profile grant unchanged
+    store.set_grant(f["id"], READ_WRITE, profile="work")  # profile: read+write
+    store.set_grant(f["id"], READ, profile="work", chat_id="c1")  # this chat: narrowed to read
+    assert store.mode_for(d, "work", chat_id="c1") == READ  # chat override wins (narrows)
+    assert store.mode_for(d, "work", chat_id="c2") == READ_WRITE  # other chats untouched
+    assert store.mode_for(d, "work") == READ_WRITE  # profile grant unchanged
 
 
 def test_chat_none_blocks_profile_folder_for_that_chat_only(tmp_path):
@@ -166,11 +166,11 @@ def test_chat_none_blocks_profile_folder_for_that_chat_only(tmp_path):
     d = tmp_path / "acme"
     d.mkdir()
     f = store.create_folder(str(d))
-    store.set_grant(f["id"], READ, profile="work")                   # profile-wide read
-    store.set_grant(f["id"], NONE, profile="work", chat_id="c1")     # blocked in c1
-    assert store.mode_for(d, "work", chat_id="c1") is None           # this chat: no access
-    assert store.mode_for(d, "work", chat_id="c2") == READ           # other chats keep it
-    assert store.mode_for(d, "work") == READ                         # profile grant intact
+    store.set_grant(f["id"], READ, profile="work")  # profile-wide read
+    store.set_grant(f["id"], NONE, profile="work", chat_id="c1")  # blocked in c1
+    assert store.mode_for(d, "work", chat_id="c1") is None  # this chat: no access
+    assert store.mode_for(d, "work", chat_id="c2") == READ  # other chats keep it
+    assert store.mode_for(d, "work") == READ  # profile grant intact
 
 
 def test_chat_grant_can_widen_profile_mode(tmp_path):
@@ -193,9 +193,13 @@ def test_none_block_on_parent_spares_independent_child_grant(tmp_path):
     f_acme = store.create_folder(str(acme))
     store.set_grant(f_repos["id"], READ, profile="work")
     store.set_grant(f_acme["id"], READ, profile="work")
-    store.set_grant(f_repos["id"], NONE, profile="work", chat_id="c1")  # block only the parent folder
-    assert store.mode_for(repos / "other", "work", chat_id="c1") is None  # covered only by blocked parent
-    assert store.mode_for(acme, "work", chat_id="c1") == READ             # child grant survives
+    store.set_grant(
+        f_repos["id"], NONE, profile="work", chat_id="c1"
+    )  # block only the parent folder
+    assert (
+        store.mode_for(repos / "other", "work", chat_id="c1") is None
+    )  # covered only by blocked parent
+    assert store.mode_for(acme, "work", chat_id="c1") == READ  # child grant survives
 
 
 def test_none_mode_rejected_at_profile_scope(tmp_path):

@@ -257,8 +257,12 @@ def test_permissions_are_global(monkeypatch):
         PermissionStore(root_perm).grant_command("gmail_send")
 
         # visible via BOTH profiles' gateway stores (they share the file)
-        assert "gmail_send" in client.app.state.profiles.get(a).gateway._permissions.granted_commands()
-        assert "gmail_send" in client.app.state.profiles.get(b).gateway._permissions.granted_commands()
+        assert (
+            "gmail_send" in client.app.state.profiles.get(a).gateway._permissions.granted_commands()
+        )
+        assert (
+            "gmail_send" in client.app.state.profiles.get(b).gateway._permissions.granted_commands()
+        )
         # and no per-profile file was created
         assert not (profiles.profile_dir(a) / "permissions.json").exists()
         assert not (profiles.profile_dir(b) / "permissions.json").exists()

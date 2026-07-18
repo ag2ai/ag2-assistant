@@ -136,7 +136,9 @@ def search_corpus(
         if tier is not None:
             parent = str(Path(rel).parent)
             candidates.append(
-                _candidate(tier, name, str(root / rel), "" if parent == "." else parent, "directory")
+                _candidate(
+                    tier, name, str(root / rel), "" if parent == "." else parent, "directory"
+                )
             )
 
     # Granted Folders — access-honoring walk (never surfaces a denied entry).

@@ -79,8 +79,12 @@ class FolderStore:
             return
         raw_folders = data.get("folders")
         raw_grants = data.get("grants")
-        self._folders = [f for f in raw_folders if isinstance(f, dict)] if isinstance(raw_folders, list) else []
-        self._grants = [g for g in raw_grants if isinstance(g, dict)] if isinstance(raw_grants, list) else []
+        self._folders = (
+            [f for f in raw_folders if isinstance(f, dict)] if isinstance(raw_folders, list) else []
+        )
+        self._grants = (
+            [g for g in raw_grants if isinstance(g, dict)] if isinstance(raw_grants, list) else []
+        )
 
     def _refresh(self) -> None:
         if self._path is None:
@@ -137,7 +141,11 @@ class FolderStore:
             "path": f.get("path", ""),
             "exists": Path(f.get("path", "")).is_dir(),
             "grants": [
-                {"profile": g.get("profile", ""), "chat_id": g.get("chat_id", ""), "mode": g.get("mode", READ)}
+                {
+                    "profile": g.get("profile", ""),
+                    "chat_id": g.get("chat_id", ""),
+                    "mode": g.get("mode", READ),
+                }
                 for g in self._grants
                 if g.get("folder_id") == f.get("id")
             ],
@@ -232,10 +240,17 @@ class FolderStore:
             if entry is None:
                 raise KeyError(fid)
             self._grants = [
-                g for g in self._grants
-                if not (g.get("folder_id") == entry["id"] and g.get("profile") == profile and g.get("chat_id", "") == chat_id)
+                g
+                for g in self._grants
+                if not (
+                    g.get("folder_id") == entry["id"]
+                    and g.get("profile") == profile
+                    and g.get("chat_id", "") == chat_id
+                )
             ]
-            self._grants.append({"folder_id": entry["id"], "profile": profile, "chat_id": chat_id, "mode": mode})
+            self._grants.append(
+                {"folder_id": entry["id"], "profile": profile, "chat_id": chat_id, "mode": mode}
+            )
             self._save()
             return self._view(entry)
 
@@ -246,8 +261,13 @@ class FolderStore:
         with self._mutate():
             before = len(self._grants)
             self._grants = [
-                g for g in self._grants
-                if not (g.get("folder_id") == fid and g.get("profile") == profile and g.get("chat_id", "") == chat_id)
+                g
+                for g in self._grants
+                if not (
+                    g.get("folder_id") == fid
+                    and g.get("profile") == profile
+                    and g.get("chat_id", "") == chat_id
+                )
             ]
             if len(self._grants) == before:
                 return False
