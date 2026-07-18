@@ -123,6 +123,17 @@ class DiscordChannel(Channel):
         if self._client.user is not None:
             self._bot_user_id = self._client.user.id
 
+    async def notify(self, chat_id: str, text: str) -> None:
+        """Push a task-run outcome into a Discord channel. Mirrors `on_message`'s
+        send path: same `split_for_limit`/`DISCORD_LIMIT` chunking and
+        `format_outbound`, but resolves the channel object ourselves since there's
+        no inbound `message.channel` to reuse here."""
+        channel = self._client.get_channel(int(chat_id)) or await self._client.fetch_channel(
+            int(chat_id)
+        )
+        for chunk in split_for_limit(self.format_outbound(text), DISCORD_LIMIT):
+            await channel.send(chunk)
+
     async def stop(self) -> None:
         await self._client.close()
         if self._task is not None:

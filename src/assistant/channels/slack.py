@@ -138,6 +138,14 @@ class SlackChannel(Channel):
     def format_outbound(self, text: str) -> str:
         return markdown_to_slack(text)
 
+    async def notify(self, chat_id: str, text: str) -> None:
+        """Push a task-run outcome into a Slack channel. Mirrors `_respond`'s send
+        path — same `split_for_limit`/`SLACK_LIMIT` chunking and `format_outbound`
+        — but posts via `self._app.client` directly since there's no `say()`
+        callback outside of an event handler."""
+        for chunk in split_for_limit(self.format_outbound(text), SLACK_LIMIT):
+            await self._app.client.chat_postMessage(channel=chat_id, text=chunk)
+
     def _mention_inbound(self, event: dict) -> InboundMessage | None:
         text = re.sub(rf"<@{self._bot_user_id}>", "", event.get("text", "")).strip()
         if not text and not event.get("files"):

@@ -65,3 +65,8 @@ class Channel(ABC):
     def format_outbound(self, text: str) -> str:
         """Render the agent's reply for this platform. Default: unchanged."""
         return text
+
+    async def notify(self, chat_id: str, text: str) -> None:
+        """Push an unsolicited message to a platform chat (task-run outcomes).
+        Override per platform; the default says this channel can't push."""
+        raise NotImplementedError(f"{self.platform} channel cannot push messages")
