@@ -194,6 +194,12 @@ export const api = {
   // returns {root, files:[{path,name,dir,size,modified}], dirs:[relpath]} (dirs
   // includes empty Directories the files-only list omits — the tree needs them).
   files: () => j('GET', P('/files')),
+  // Corpus search for the composer's `@`-picker (ADR 0012): matches across the Files
+  // space AND every Folder this profile∪chat can read → {results:[{path (absolute),
+  // name, dir, kind}]}, ranked filename-first and bounded. chatId scopes chat-only
+  // grants; a blank/no-match query yields an empty list.
+  searchFiles: (q, chatId = '') =>
+    j('GET', P('/files/search?q=' + encodeURIComponent(q) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''))),
   fileUrl: (path, download = false) =>
     P('/files/raw?path=' + encodeURIComponent(path) + (download ? '&download=true' : '')),
   fileText: async (path) => {

@@ -108,6 +108,13 @@ class Gateway:
         runtime's workspace/model edits are reflected here after a reload)."""
         return self._config
 
+    @property
+    def folders(self):
+        """This install's Folder/Grant store (the same instance the turn-level
+        ``PermissionManager`` resolves against) — so the ``@``-picker's search can
+        honor exactly the access the agent's own reads would (ADR 0006/0012)."""
+        return self._folders
+
     def usage_today(self) -> dict:
         """Today's token + estimated-cost totals (for the cost & activity HUD)."""
         return self._usage.today()

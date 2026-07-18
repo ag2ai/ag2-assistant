@@ -8,6 +8,7 @@
   import { api } from '../transport/api.js'
   import { getActiveProfileId } from '../lib/profile.js'
   import { chatChips, profileExtraCount, addPlan } from '../lib/chatFolders.js'
+  import { makePick, triggerAt, applyPick, composeMessage, highlightSegments } from '../lib/fileRefs.js'
   import { foldersStore, loadFolders, applyFolders } from '../lib/folders.js'
   import Icon from './Icon.svelte'
   import ModelSwitcher from './composer/ModelSwitcher.svelte'
@@ -99,16 +100,100 @@
   let text = $state('')
   let pending = $state([])  // {name, payload:{name,mime,data(b64)}}
   let dragging = $state(false)  // an OS-file drag is hovering the composer
-  let ta, fileInput
+  let ta, fileInput, hl
+
+  // Cosmetic highlight backdrop: a mirror of the text sitting behind the (transparent)
+  // textarea, with each surviving `@label` wrapped in a <mark>. Metrics match .cinput
+  // exactly so the marks land under their labels; scroll is kept in lockstep below.
+  const hlSegs = $derived(highlightSegments(text, refs))
+  function syncScroll() { if (hl && ta) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft } }
+
+  // ---- `@` File references (ADR 0012): an ordered picks list (source of truth),
+  // a type-to-filter picker over /files/search, and a `Referenced files:` block
+  // appended on send. The inline `@label` is cosmetic; deleting it drops the pick
+  // (reconciled in composeMessage). Structurally parallel to `pending`. ----
+  let refs = $state([])         // ordered File-reference picks
+  let atOpen = $state(false)    // picker visible
+  let atQuery = $state('')      // the text typed after the active `@`
+  let atStart = $state(-1)      // index of the active `@` in `text`
+  let atResults = $state([])    // current search results
+  let atIndex = $state(0)       // highlighted result
+  let atSeq = 0                 // debounce + stale-response guard
+  let atTimer
+  let atList = $state()         // the picker's scroll container
+  let atRows = []               // per-row elements, for scroll-into-view on nav
+
+  // Keep the highlighted row visible as the selection moves — `nearest` only scrolls
+  // when the row is actually out of view, so an in-view move never jumps the list.
+  function atScroll() { atRows[atIndex]?.scrollIntoView({ block: 'nearest' }) }
+  // Rows that fit the visible list, so PageUp/PageDown jump a screenful.
+  function atPage() {
+    const rh = atRows[0]?.offsetHeight || 32
+    return Math.max(1, Math.floor((atList?.clientHeight || rh) / rh))
+  }
+
+  function closeAt() { atOpen = false; atQuery = ''; atStart = -1; atResults = []; atIndex = 0; atSeq++ }
+
+  // Reflect the caret into the `@`-trigger: open+filter when the caret sits in a
+  // fresh `@token`, close otherwise. Runs on input and on caret moves (keyup/click).
+  function syncAt() {
+    if (!ta) return
+    const trig = triggerAt(text, ta.selectionStart)
+    if (!trig) { if (atOpen) closeAt(); return }
+    // Only re-search when the active `@token` actually changed. Arrow-key navigation
+    // fires keyup with the caret pinned (keydown preventDefault'd it), so without this
+    // guard every arrow press would refire the search and reset the highlight to row 0.
+    const changed = !atOpen || trig.start !== atStart || trig.query !== atQuery
+    atStart = trig.start; atQuery = trig.query; atOpen = true
+    if (changed) runAtSearch(trig.query)
+  }
+  function runAtSearch(q) {
+    clearTimeout(atTimer)
+    const seq = ++atSeq
+    atTimer = setTimeout(async () => {
+      try {
+        const res = await api.searchFiles(q, chatId)
+        if (seq !== atSeq) return           // a newer keystroke won
+        atResults = res.results || []; atIndex = 0
+      } catch { if (seq === atSeq) atResults = [] }
+    }, 120)
+  }
+  function choosePick(result) {
+    if (!result) return
+    const caret = ta ? ta.selectionStart : text.length
+    const p = makePick(result)
+    const next = applyPick(text, atStart, caret, p.label)
+    text = next.text
+    refs = [...refs, p]
+    closeAt()
+    // Restore the caret past the inserted label once Svelte flushes the bound value.
+    queueMicrotask(() => { if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = next.caret; grow() } })
+  }
 
   function submit() {
-    const t = text.trim()
-    if (!t && !pending.length) return
-    send(t, pending.map((p) => p.payload))
-    text = ''; pending = []
+    if (!text.trim() && !pending.length) return
+    // Append the reconciled `Referenced files:` block to the text the user wrote —
+    // no change to send()'s (text, attachments) contract (the block rides in text).
+    const outText = composeMessage(text, refs).trim()
+    if (!outText && !pending.length) return
+    send(outText, pending.map((p) => p.payload))
+    text = ''; pending = []; refs = []; closeAt()
     if (ta) ta.style.height = 'auto'
   }
   function key(e) {
+    // The picker owns navigation keys while it's open over a non-empty result set.
+    if (atOpen && atResults.length) {
+      const last = atResults.length - 1
+      const jump = (i) => { e.preventDefault(); atIndex = Math.max(0, Math.min(last, i)); atScroll() }
+      if (e.key === 'ArrowDown') { e.preventDefault(); atIndex = (atIndex + 1) % atResults.length; atScroll(); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); atIndex = (atIndex - 1 + atResults.length) % atResults.length; atScroll(); return }
+      if (e.key === 'PageDown') { jump(atIndex + atPage()); return }
+      if (e.key === 'PageUp') { jump(atIndex - atPage()); return }
+      if (e.key === 'Home') { jump(0); return }
+      if (e.key === 'End') { jump(last); return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); choosePick(atResults[atIndex]); return }
+    }
+    if (atOpen && e.key === 'Escape') { e.preventDefault(); closeAt(); return }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
   }
   // While the agent is working, Enter still sends — the message is fed to the running
@@ -233,16 +318,46 @@
       </div>
     {/if}
     <input type="file" multiple hidden bind:this={fileInput} onchange={pick} />
-    <textarea
-      class="cinput"
-      bind:this={ta}
-      bind:value={text}
-      rows="1"
-      placeholder={placeholder()}
-      oninput={grow}
-      onkeydown={key}
-      onpaste={paste}
-    ></textarea>
+    {#if atOpen}
+      <!-- `@` File-reference picker (ADR 0012): type-to-filter over reachable files.
+           mousedown+preventDefault keeps textarea focus so the pick lands before blur. -->
+      <div class="atpicker" role="listbox" aria-label="Reference a file" bind:this={atList}>
+        {#if atResults.length}
+          {#each atResults as r, i (r.path)}
+            <button type="button" class="atrow" class:sel={i === atIndex} role="option" aria-selected={i === atIndex}
+                    bind:this={atRows[i]}
+                    onmousedown={(e) => { e.preventDefault(); choosePick(r) }}
+                    onmouseenter={() => (atIndex = i)}>
+              <Icon name={r.kind === 'directory' ? 'folder' : 'file-text'} size={14} />
+              <span class="atname">{r.name}</span>
+              {#if r.dir}<span class="atdir">{r.dir}</span>{/if}
+            </button>
+          {/each}
+        {:else}
+          <div class="atempty">{atQuery ? 'No matching files' : 'Type to search files…'}</div>
+        {/if}
+      </div>
+    {/if}
+    <div class="cinput-wrap">
+      <!-- Highlight backdrop: mirrors the text so each `@label` shows a subtle mark
+           behind the real (transparent) textarea glyphs. aria-hidden + pointer-events:
+           none — it's purely decorative; the textarea keeps focus, caret and a11y. -->
+      <div class="cinput-hl" bind:this={hl} aria-hidden="true">{#each hlSegs as s}{#if s.mark}<mark>{s.text}</mark>{:else}{s.text}{/if}{/each}</div>
+      <textarea
+        class="cinput"
+        bind:this={ta}
+        bind:value={text}
+        rows="1"
+        placeholder={placeholder()}
+        oninput={() => { grow(); syncAt(); syncScroll() }}
+        onkeydown={key}
+        onkeyup={syncAt}
+        onclick={syncAt}
+        onscroll={syncScroll}
+        onblur={() => closeAt()}
+        onpaste={paste}
+      ></textarea>
+    </div>
     <div class="cbar">
       <button class="cbtn" onclick={() => fileInput.click()} title="Attach files" aria-label="Attach files"><Icon name="plus" size={18} /></button>
       {#if showFolders}
@@ -304,6 +419,54 @@
   /* Dragging an OS file over the composer highlights it as a drop target for a
      transient message attachment (mirrors the focus ring). */
   .inputbox.dragging { border-color: var(--accent-border); box-shadow: var(--focus-ring), var(--shadow-md); }
+  /* Anchor the floating `@`-picker to the composer box. */
+  .inputbox { position: relative; }
+
+  /* Highlight backdrop for `@` File references. The backdrop renders ALL the visible
+     glyphs (plain text in --ink, each `@label` in the accent colour over a tinted fill);
+     the textarea on top is made fully transparent, contributing only its caret and
+     selection. Every metric here MUST match the global .cinput rule (app.css) or the
+     text drifts off the caret. */
+  .cinput-wrap { position: relative; }
+  .cinput-hl {
+    position: absolute; inset: 0; z-index: 0;
+    margin: 0; padding: 8px 4px 6px;
+    font: inherit; font-size: var(--text-md); color: var(--ink);
+    white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word;
+    overflow: hidden; pointer-events: none; user-select: none;
+  }
+  /* No padding on the mark — horizontal/vertical padding would shift glyph metrics
+     away from the textarea. A tinted, rounded fill (radius is layout-neutral) plus the
+     accent ink is enough; box-decoration-break keeps the ends rounded across a wrap. */
+  .cinput-hl mark {
+    background: var(--accent-soft); color: var(--accent); border-radius: 4px; padding: 0;
+    -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  }
+  /* The textarea sits over the backdrop with transparent glyphs (the backdrop draws
+     them) and a transparent bg (the marks show through); keep the caret + placeholder. */
+  .cinput { position: relative; z-index: 1; background: transparent; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--ink); }
+  .cinput::placeholder { color: var(--text-muted); -webkit-text-fill-color: var(--text-muted); }
+
+  /* `@` File-reference picker — a floating result list above the textarea. Bounded
+     height so a large corpus scrolls rather than growing the composer. */
+  .atpicker {
+    position: absolute; bottom: calc(100% + 6px); left: 0; right: 0;
+    max-height: 240px; overflow-y: auto; z-index: 45;
+    background: var(--surface-elevated); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); padding: 4px;
+  }
+  .atrow {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: none; border: none; border-radius: var(--radius-sm);
+    padding: 6px 8px; font: inherit; color: var(--ink); cursor: pointer;
+  }
+  .atrow.sel { background: var(--surface-sunken, rgba(127, 127, 127, .14)); }
+  .atname { flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+  .atdir {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-align: right; font-size: 12px; color: var(--text-muted);
+  }
+  .atempty { padding: 8px 10px; font-size: 13px; color: var(--text-muted); }
 
   /* Hover-explain tooltip for the composer's gated buttons (Live mic, Send). Anchored to
      the button's right edge (both live at the right of the composer) so the bubble never

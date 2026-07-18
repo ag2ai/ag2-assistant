@@ -20,6 +20,10 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 # Max byte size of an in-place text write; a larger body is rejected (ADR 0011).
 _MAX_WRITE_BYTES = 5 * 1024 * 1024
 
+# Top-N bound on ``@``-picker search results — a huge corpus can't flood the
+# response (search, not enumeration); the user narrows by typing more.
+SEARCH_LIMIT = 20
+
 
 def slugify(text: str, default: str = "task", maxlen: int = 48) -> str:
     """A filesystem-safe slug from arbitrary text."""
@@ -324,6 +328,18 @@ def list_all_dirs(workspace_dir) -> list[str]:
             continue
     out.sort()
     return out
+
+
+def match_rank(query: str, name: str, rel_path: str) -> int | None:
+    """Rank tier for a candidate against an already-lowercased `query`, or ``None``
+    if it doesn't match: ``0`` when the filename matches (ranked first), ``1`` when
+    only the path matches. Shared by the Files space and granted-Folder corpora (see
+    :mod:`assistant.filesearch`) so both rank on one scale."""
+    if query in name.lower():
+        return 0
+    if query in rel_path.lower():
+        return 1
+    return None
 
 
 def list_dirs(path: str) -> dict | None:

@@ -2212,6 +2212,29 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "dirs": list_all_dirs(runtime.config.workspace_dir),
         }
 
+    @p.get("/files/search")
+    async def search_workspace_files(
+        q: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The ``@``-picker's corpus search: a bounded, ranked list of files matching
+        `q` across the profile's Files space **and** every Folder this profile∪chat
+        can read, each with an ABSOLUTE `path` the agent's ``read_file`` can open.
+        Ranked filename-first; a blank/no-match query yields an empty list, not an
+        error. Honors the same ``mode_for`` resolution the agent's reads use, so a
+        denied file is never surfaced (ADR 0006/0012)."""
+        from assistant.filesearch import search_corpus
+
+        gw = runtime.gateway
+        return {
+            "results": search_corpus(
+                runtime.config.workspace_dir,
+                q,
+                folders=gw.folders if gw is not None else None,
+                profile=runtime.config.data_dir.name,
+                chat_id=chat_id,
+            )
+        }
+
     @p.post("/files/upload")
     async def upload_workspace_files(
         files: list[UploadFile] = File(...),

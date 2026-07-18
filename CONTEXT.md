@@ -24,20 +24,42 @@ only paths outside the Root); there is no separate visible "workspace" folder
 outside the Root.
 _Avoid_: workspace (the retired `~/Documents/AG2 Assistant` level)
 
-**Directory** (in the Files space):
-A nesting level inside a profile's Files space — the expandable nodes of the Files
-tree. Distinct from a **Folder**: a Directory lives *inside* the Root and needs no
-Grant, whereas a Folder is an install-wide registry entry for a path *outside* the
-Root. UI copy says "directory" for these; "folder" is reserved for the Grant system.
-_Avoid_: folder (that is the Grant concept — a path outside the Root)
+**Directory**:
+A nesting level in the Files tree — any expandable node, wherever it is rooted. A
+Directory in the profile's **Files** space lives inside the Root and needs no Grant;
+a Directory nested inside a **Folder** lives outside the Root and inherits that
+Folder's Grant (its reachability, and its `read`/`read+write` mode). Distinct from a
+**Folder**, which is the install-wide registry entry / Grant target that *roots* a
+granted subtree in the tree: the Folder is a root node, the Directories are the plain
+nesting nodes beneath it (or in the Files space). UI copy says "directory" for
+nesting nodes; "folder" is reserved for the Grant-target roots.
+_Avoid_: folder (that is the Grant target — the registry entry that roots a subtree,
+not a plain nesting node)
 
 **Attachment** (message attachment):
 A file bound to a single chat message so the agent sees it *this turn* — encoded
 inline and sent with the message, transient (it is not persisted to the Files
 space). Reached from the composer three ways, all the same pipeline: the `+`
 picker, paste, and dropping a file onto the composer. Distinct from an **Upload**,
-which writes a durable file into the Files space.
-_Avoid_: upload (an Attachment is not written to the Files space)
+which writes a durable file into the Files space, and from a **File reference**,
+which points at a file the agent can *already* reach (a path, not inline bytes).
+_Avoid_: upload (an Attachment is not written to the Files space), file reference
+(that carries a path to an already-accessible file, not encoded bytes)
+
+**File reference**:
+An inline `@`-pointer, dropped into a chat message, that names a file or
+**Directory** the agent can *already* access — anything in the profile's **Files**
+space or inside a Folder this chat holds a **Grant** to. Transient and
+message-scoped like an **Attachment**, but it carries a **path**, not encoded
+bytes: at send the reference resolves to an absolute path and is appended to the
+message as a `Referenced files:` block, and the agent opens it itself (`read_file`
+for a file, `list_folder` for a Directory). Picked from a type-to-filter `@`
+picker fed by a chat-aware search over the reachable corpus; a pick shows inline as
+a cosmetic `@label` while the underlying path is tracked in a list. UI copy: "@ a
+file". (ADR 0012)
+_Avoid_: attachment (that encodes bytes for a file the agent *can't* otherwise
+reach; a File reference is a path to one it can), reference (bare — collides with a
+Secret's **Referenced**; always qualify as "File reference"), mention
 
 **Upload** (into Files):
 Writing a durable file into a profile's **Files** space — via the Files tab's
@@ -144,11 +166,13 @@ _Avoid_: page (that is the Tab+Thread view), tab, screen
 
 **Active file**:
 The one file the preview rail is currently showing, reflected back in the Files
-tree as a highlighted row. Derived from the URL's aside slot
-(`aside=file:<path>`), so it is whatever file the rail names — nothing is "active"
-when the rail is closed or holds the Inspector. Distinct from **selected** (the
-Files tree's upload-target Directory) and from **Active** (model): those are
-unrelated senses of the word.
+tree as a highlighted row. Derived from the URL's aside slot (`aside=file:<path>`),
+so it is whatever file the rail names — nothing is "active" when the rail is closed
+or holds the Inspector. The `<path>` is either a **Files**-space-relative path or an
+absolute path into a granted **Folder** (the rail and the raw endpoint tell the two
+apart by absoluteness alone). Distinct from **selected** (the Files tree's
+upload-target Directory) and from **Active** (model): those are unrelated senses of
+the word.
 _Avoid_: selected (that is the upload target), focused, current, open
 
 **Reveal** (a file):
@@ -156,7 +180,9 @@ Surface the **Active file** where it lives in the Files tree: switch to the File
 **Tab**, expand its collapsed ancestor **Directories** (persisting, as if the user
 clicked each chevron), pull a fresh listing so a just-written file is present, and
 scroll its highlighted row into view. Triggered by clicking the filename in the
-preview header (path-backed previews only). A locate-and-surface action: it does
+preview header (path-backed previews only). Works for a **Folder** file too, when
+that Folder is reachable in the currently open **Thread**; a soft no-op if it is not
+(you switched to a Thread without the Grant). A locate-and-surface action: it does
 *not* change what is **Active** (the file is already the Active file) nor the
 **selected** upload target.
 _Avoid_: activate (the file is already Active — Reveal moves the Tab and viewport,
@@ -189,7 +215,12 @@ A named, install-wide registry entry for one directory outside the Root — a na
 and a path, unique by path. The only way disk outside the Root becomes reachable:
 no Folder (or no Grant to it) means no access, with no block/deny concept. Deleting
 a Folder is always allowed and revokes every Grant to it instantly; a Folder whose
-path no longer exists on disk is a badged, repointable state, not an error.
+path no longer exists on disk is a badged, repointable state, not an error. In the
+Files tree a Folder reachable in the currently open **Thread** roots a browsable
+subtree of **Directories** and files — the tree's one Thread-scoped section (the
+Files-space section stays Thread-independent). Its files preview and download, and
+under a `read+write` Grant edit/rename/delete/move within that subtree, exactly as
+Files-space files do.
 _Avoid_: project folder (the retired single read-only mechanism), mount, share,
 directory, workspace
 
@@ -204,8 +235,9 @@ profile Grant stands, and the most permissive surviving covering Grant wins.
 Created by the user — via settings or by approving the agent's runtime request
 (which auto-creates the Folder, auto-named and renameable) — never by the agent itself.
 "Allow once" approves a single turn's access without creating a Folder or a Grant.
-_Avoid_: permission (that is the commands policy), reference (a Secret's concept),
-access rule
+_Avoid_: permission (that is the commands policy), reference (bare — a Secret's
+**Referenced** link and a **File reference** both claim the word; never call a
+Grant a reference), access rule
 
 ## Models
 
@@ -271,7 +303,9 @@ _Avoid_: shared key / provider key (the retired pre-Secret concept), active (tha
 is the models' concept)
 
 **Referenced** (secret):
-The link from one Text or Live model to the Secret it authenticates with. Optional —
+The link from one Text or Live model to the Secret it authenticates with. Distinct
+from a **File reference** (an `@`-pointer to a file) — this is the model→Secret
+sense of the word, and stays qualified as "Referenced (secret)". Optional —
 an empty reference means fallback (Default, then environment). Deleting a Secret is
 always allowed; models referencing it degrade to fallback and their health/key-source
 labelling reports it honestly. In the model form, pasting a raw key mints a new

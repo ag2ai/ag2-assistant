@@ -421,6 +421,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .genimage { margin: 8px 0; }
 .genimage .thumb { max-width: 340px; max-height: 280px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
 .genimage .thumb:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.genimage .filechip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--code); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 11px; font-size: 13px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.genimage .filechip:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 .attach { margin: 8px 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .attach .who { font-size: 11px; color: var(--muted); }
 .attach .thumb { max-width: 260px; max-height: 220px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
