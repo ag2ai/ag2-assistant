@@ -10,9 +10,10 @@
   // non-empty) lists archived profiles with Restore (unarchive + boot) and a
   // type-to-confirm permanent Delete.
   import { onDestroy } from 'svelte'
-  import { profiles, settingsPage, SETTINGS_PAGE } from '../store.js'
+  import { profiles } from '../store.js'
   import { api } from '../transport/api.js'
-  import { getActiveProfileId, setActiveProfileId } from '../lib/profile.js'
+  import { switchProfile, closeThread } from '../controller.js'
+  import { getActiveProfileId } from '../lib/profile.js'
   import { PALETTES, setAccent, getAccent } from '../design/palette.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
@@ -112,15 +113,10 @@
   // Closing Settings (unmount) mid-edit counts as "not saved" → revert the preview.
   onDestroy(() => { if (editing) rollbackAccent() })
 
-  // Switch the active profile (§5.4): a full-page nav to /app/{pid}/, the same
-  // mechanism as the Drawer chips and ⌘1..9 shortcuts. App.svelte's boot adopts
-  // the URL pid, persists it, and applies its palette. No-op on the active one.
-  // Switching reloads the SPA (closing Settings); stash a flag so boot re-opens
-  // Settings on the SAME page — the user stays where they were.
+  // Switch the active profile (§5.4) in place, like the Drawer chips and ⌘1..9.
+  // No-ops on the active one (handled in switchProfile).
   function switchTo(p) {
-    if (p.id === activeId) return
-    try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || SETTINGS_PAGE.PROFILES) } catch {}
-    location.assign('/app/' + p.id + '/')
+    switchProfile(p.id)
   }
 
   async function refetch() {
@@ -179,14 +175,16 @@
     busy = true; err = ''
     const { pid, isActive } = confirmArchive
     try {
+      // Archiving the ACTIVE profile: close our stream first so the server-side
+      // archive (a 4001 socket close) can't trip onProfileGone's recovery reload.
+      if (isActive) closeThread()
       await api.archiveProfile(pid, replacement || undefined)
       if (isActive) {
-        // The active profile is gone — the SPA must reload so boot re-resolves to a
-        // valid one (§5.4). Stash the reopen flag (like switchTo) so Settings comes
-        // back on the same page instead of closing under the user.
-        try { sessionStorage.setItem('ag2-reopen-settings', $settingsPage || SETTINGS_PAGE.PROFILES) } catch {}
-        setActiveProfileId(null)
-        location.assign('/app/')
+        // Switch in place to the replacement, then refetch to drop the archived one.
+        // No valid replacement (shouldn't happen — Archive is hidden at 1 profile):
+        // reboot rather than strand the app on the dead profile.
+        if (replacement) { switchProfile(replacement); await refetch(); confirmArchive = null }
+        else location.assign('/app/' + location.hash)
         return
       }
       confirmArchive = null

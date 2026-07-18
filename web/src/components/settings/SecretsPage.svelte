@@ -119,7 +119,7 @@
         </div>
       </div>
       <button class="linkbtn" disabled={busy || editingId !== null} onclick={() => startEdit(s)}>Edit</button>
-      <button class="linkbtn" disabled={busy || editingId !== null} onclick={() => remove(s)}>Delete</button>
+      <button class="linkbtn danger" disabled={busy || editingId !== null} onclick={() => remove(s)}>Delete</button>
     </div>
   {/if}
 {/each}

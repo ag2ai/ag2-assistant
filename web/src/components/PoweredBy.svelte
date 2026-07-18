@@ -12,6 +12,7 @@
 
 <div class="modal-backdrop" onclick={close}></div>
 <div class="modal poweredby">
+  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Powered by AG2</h2>
   <p class="muted">
     The runtime, event stream, memory, tools, human-in-the-loop, voice and observers
@@ -40,6 +41,5 @@
       <span class="pbver">AG2 Assistant v{$appVersion}</span>
     {/if}
     <a class="open" href={AG2_DOCS} target="_blank" rel="noopener noreferrer">AG2 docs ↗</a>
-    <button class="modal-close" onclick={close}>Close</button>
   </div>
 </div>

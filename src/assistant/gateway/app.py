@@ -44,7 +44,9 @@ Route map:
     WS   stream, WS voice; GET voice/voices, POST voice/select, POST voice/preview
     GET/POST settings, settings/mcp*, settings/focuses, settings/voice_provider
     GET/POST memory                          -> THIS profile's persona memory (profiles/<id>/profile.db)
-    GET  files, GET/DELETE files/raw
+    GET  files (files+dirs), GET/PUT/DELETE files/raw (GET emits ETag; PUT in-place
+         write with If-Match, ADR 0011; delete: file or Directory, recursive)
+    POST files/upload (multipart → target dir), files/mkdir, files/move ({from,to}) — ADR 0007
     GET  usage
 """
 
@@ -61,8 +63,11 @@ from fastapi import (
     APIRouter,
     Depends,
     FastAPI,
+    File,
+    Form,
     HTTPException,
     Request,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -151,6 +156,33 @@ class ChatPatch(BaseModel):
 
 class CredentialsUpload(BaseModel):
     content: str  # raw OAuth client JSON
+
+
+class MkdirRequest(BaseModel):
+    """Create an empty Directory in the Files space (ADR 0007)."""
+
+    path: str  # workspace-relative Directory path
+
+
+class MoveRequest(BaseModel):
+    """Move/rename a file or Directory in the Files space (ADR 0007). `from`/`to`
+    are workspace-relative; `to` may be a new name or a new relative path."""
+
+    from_: str = Field(alias="from")
+    to: str
+
+    model_config = {"populate_by_name": True}
+
+
+def _unquote_etag(value: str | None) -> str | None:
+    """The raw content token inside an ``If-Match`` header value — its weak-``W/``
+    prefix and surrounding quotes stripped (ADR 0011), or None when absent."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value.startswith("W/"):
+        value = value[2:]
+    return value.strip('"')
 
 
 class TaskRequest(BaseModel):
@@ -2206,34 +2238,165 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @p.get("/files")
     async def list_workspace_files(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Files the agent has written in the workspace (for the GUI browser)."""
-        from assistant.workspace import list_files
+        """The profile's Files space — files plus every Directory (so the tree can
+        show empty Directories the files-only listing omits). Shared read+write:
+        agent writes and user uploads land here alike (ADR 0007)."""
+        from assistant.workspace import list_all_dirs, list_files
 
         return {
             "root": str(Path(runtime.config.workspace_dir).expanduser()),
             "files": list_files(runtime.config.workspace_dir),
+            "dirs": list_all_dirs(runtime.config.workspace_dir),
         }
+
+    @p.get("/files/search")
+    async def search_workspace_files(
+        q: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The ``@``-picker's corpus search: a bounded, ranked list of files matching
+        `q` across the profile's Files space **and** every Folder this profile∪chat
+        can read, each with an ABSOLUTE `path` the agent's ``read_file`` can open.
+        Ranked filename-first; a blank/no-match query yields an empty list, not an
+        error. Honors the same ``mode_for`` resolution the agent's reads use, so a
+        denied file is never surfaced (ADR 0006/0012)."""
+        from assistant.filesearch import search_corpus
+
+        gw = runtime.gateway
+        return {
+            "results": search_corpus(
+                runtime.config.workspace_dir,
+                q,
+                folders=gw.folders if gw is not None else None,
+                profile=runtime.config.data_dir.name,
+                chat_id=chat_id,
+            )
+        }
+
+    @p.post("/files/upload")
+    async def upload_workspace_files(
+        files: list[UploadFile] = File(...),
+        dir: str = Form(""),
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ) -> dict:
+        """Upload one or more files into the Files space under `dir` (root when
+        empty), auto-suffixing name clashes so nothing is overwritten (ADR 0007). A
+        `dir` that escapes the workspace root is rejected."""
+        from assistant.workspace import save_upload
+
+        saved: list[str] = []
+        for f in files:
+            data = await f.read()
+            rel = save_upload(runtime.config.workspace_dir, f.filename or "file", data, dir)
+            if rel is None:
+                return JSONResponse({"error": "invalid target directory"}, status_code=400)
+            saved.append(rel)
+        return {"ok": True, "saved": saved}
+
+    @p.post("/files/mkdir")
+    async def mkdir_workspace(
+        req: MkdirRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Create an empty Directory in the Files space. 409 if it already exists
+        (no clobber), 400 on a traversal escape / empty path."""
+        from assistant.workspace import make_dir
+
+        status, rel = make_dir(runtime.config.workspace_dir, req.path)
+        if status == "ok":
+            return {"ok": True, "path": rel}
+        code, msg = (409, "directory exists") if status == "exists" else (400, "invalid path")
+        return JSONResponse({"error": msg}, status_code=code)
+
+    @p.post("/files/move")
+    async def move_workspace(
+        req: MoveRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Move/rename a file or Directory in the Files space. 409 if the
+        destination already exists (never overwrites, ADR 0007), 404 if the source
+        is missing, 400 on a traversal escape."""
+        from assistant.workspace import move
+
+        outcome = move(runtime.config.workspace_dir, req.from_, req.to)
+        if outcome == "ok":
+            return {"ok": True}
+        status, msg = {
+            "exists": (409, "destination exists"),
+            "not_found": (404, "source not found"),
+            "invalid": (400, "invalid path"),
+        }[outcome]
+        return JSONResponse({"error": msg}, status_code=status)
 
     @p.get("/files/raw")
     async def workspace_file(
         path: str, download: bool = False, runtime: ProfileRuntime = Depends(get_runtime)
     ):
         """Serve one workspace file (view inline or download), sandboxed to the
-        workspace root — a path that escapes it is rejected."""
-        from assistant.workspace import resolve
+        workspace root. Carries an ``ETag`` content-version token (ADR 0011) an
+        in-place ``PUT`` echoes back as ``If-Match``."""
+        from assistant.workspace import etag_for_path, resolve
 
         rp = resolve(runtime.config.workspace_dir, path)
         if rp is None:
             return JSONResponse({"error": "file not found"}, status_code=404)
         disp = "attachment" if download else "inline"
-        return FileResponse(rp, headers={"Content-Disposition": f'{disp}; filename="{rp.name}"'})
+        # Let FileResponse build Content-Disposition so a non-ASCII filename (user
+        # uploads keep their original name) is RFC 5987-encoded, not latin-1 crashed.
+        resp = FileResponse(rp, filename=rp.name, content_disposition_type=disp)
+        etag = etag_for_path(rp)
+        if etag is not None:
+            resp.headers["ETag"] = f'"{etag}"'  # RFC 7232 quoted-string
+        return resp
+
+    @p.put("/files/raw")
+    async def write_workspace_file(
+        path: str, request: Request, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Overwrite an existing file's contents in place from the request body
+        (UTF-8), using ``If-Match`` as the base ETag (ADR 0011). ``200`` + the new
+        ``ETag`` on success, ``404`` if the path is missing, ``409`` if ``If-Match``
+        is stale, ``400`` on a traversal/invalid path; omitting ``If-Match`` forces
+        past the compare."""
+        from assistant.workspace import _MAX_WRITE_BYTES, write_text
+
+        # Stream the body under a hard cap so an oversize (or lying Content-Length) PUT
+        # can't buffer unboundedly into memory before the size check (DoS guard).
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > _MAX_WRITE_BYTES:
+                return JSONResponse({"error": "file too large"}, status_code=413)
+            chunks.append(chunk)
+        try:
+            content = b"".join(chunks).decode("utf-8")
+        except UnicodeDecodeError:
+            return JSONResponse({"error": "body must be valid UTF-8"}, status_code=400)
+        if_match = request.headers.get("if-match")
+        base_token = _unquote_etag(if_match)  # strip weak prefix + quotes to the raw token
+        status, new_tag = write_text(
+            runtime.config.workspace_dir,
+            path,
+            content,
+            base_token=base_token,
+            force=if_match is None,  # no If-Match ⇒ forced overwrite (bypass compare)
+        )
+        if status == "ok":
+            headers = {"ETag": f'"{new_tag}"'}
+            return JSONResponse({"ok": True, "etag": new_tag}, headers=headers)
+        code, msg = {
+            "not_found": (404, "file not found"),
+            "conflict": (409, "file changed on disk"),
+            "invalid": (400, "invalid path"),
+            "too_large": (413, "file too large"),
+        }[status]
+        return JSONResponse({"error": msg}, status_code=code)
 
     @p.delete("/files/raw")
     async def delete_workspace_file(
         path: str, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
-        """Delete one workspace file, sandboxed to the workspace root (same guard as
-        serving). Prunes an emptied per-task subfolder afterwards."""
+        """Delete a workspace file — or a Directory and everything in it,
+        recursively (ADR 0007) — sandboxed to the workspace root. Prunes an emptied
+        parent folder afterwards."""
         from assistant.workspace import delete
 
         if not delete(runtime.config.workspace_dir, path):

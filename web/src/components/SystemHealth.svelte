@@ -222,5 +222,5 @@
     padding: 2px; border: none; background: none; color: var(--muted);
     cursor: pointer; border-radius: 5px; transition: color var(--dur-fast) var(--ease-out);
   }
-  .recheck:hover { color: var(--accent); }
+  .recheck:hover { color: var(--text); }
 </style>

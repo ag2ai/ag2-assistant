@@ -7,11 +7,22 @@ per-task subfolder, persisting a produced deliverable as a real file, and a
 workspace root).
 """
 
+import hashlib
+import os
 import re
+import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+# Max byte size of an in-place text write; a larger body is rejected (ADR 0011).
+_MAX_WRITE_BYTES = 5 * 1024 * 1024
+
+# Top-N bound on ``@``-picker search results — a huge corpus can't flood the
+# response (search, not enumeration); the user narrows by typing more.
+SEARCH_LIMIT = 20
 
 
 def slugify(text: str, default: str = "task", maxlen: int = 48) -> str:
@@ -89,35 +100,186 @@ def write_upload(workspace_dir, filename: str, data: bytes) -> str:
     return str(path.relative_to(root))
 
 
-def resolve(workspace_dir, rel: str) -> Path | None:
-    """Resolve a workspace-relative path to an absolute file path, or None if it
-    escapes the workspace root (path-traversal guard) or isn't a file."""
-    root = _root(workspace_dir)
+def _inside(root: Path, rel: str) -> Path | None:
+    """Resolve `rel` under `root` with the path-traversal guard, not requiring the
+    path to exist or be a file. Returns the absolute path if it stays inside the
+    root, else None."""
     try:
         p = (root / (rel or "")).resolve()
     except Exception:
         return None
-    inside = p == root or root in p.parents
-    return p if inside and p.is_file() else None
+    return p if (p == root or root in p.parents) else None
+
+
+def resolve(workspace_dir, rel: str) -> Path | None:
+    """Resolve a workspace-relative path to an absolute file path, or None if it
+    escapes the workspace root (path-traversal guard) or isn't a file."""
+    p = _inside(_root(workspace_dir), rel)
+    return p if p is not None and p.is_file() else None
+
+
+def _hash(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def etag_for_path(p: Path) -> str | None:
+    """The opaque content-version token (ADR 0011) for a resolved file — a hash of
+    its current bytes, equal to the token a matching `write_text` returns — or None
+    if it can't be read."""
+    try:
+        return _hash(p.read_bytes())
+    except OSError:
+        return None
+
+
+def write_text(
+    workspace_dir,
+    rel: str,
+    content: str,
+    *,
+    base_token: str | None = None,
+    force: bool = False,
+    max_bytes: int = _MAX_WRITE_BYTES,
+) -> tuple[str, str | None]:
+    """Overwrite an already-existing file's contents with UTF-8 `content`,
+    optimistically concurrent (ADR 0011); never creates a file. Returns
+    ``(status, new_token)``: ``("ok", <hash>)`` wrote (``<hash>`` is the new
+    content token, equal to a subsequent read's ETag); ``("not_found", None)``
+    path missing or not a file; ``("conflict", None)`` `base_token` != current
+    content hash, file left untouched; ``("invalid", None)`` traversal / the root
+    / OS error; ``("too_large", None)`` body over `max_bytes`. `force=True` skips
+    the token compare and replaces the bytes unconditionally."""
+    root = _root(workspace_dir)
+    p = _inside(root, rel)
+    if p is None or p == root:
+        return ("invalid", None)
+    if not p.is_file():
+        return ("not_found", None)
+    data = content.encode("utf-8")
+    if len(data) > max_bytes:
+        return ("too_large", None)
+    if not force:
+        try:
+            current = _hash(p.read_bytes())
+        except OSError:
+            return ("invalid", None)
+        if base_token != current:
+            return ("conflict", None)
+    # Atomic replace: write a temp file beside the target, then rename over it, so a
+    # concurrent reader or a mid-write crash never sees a torn/half-written file.
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=p.suffix)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, p)
+    except OSError:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return ("invalid", None)
+    return ("ok", _hash(data))
+
+
+def save_upload(workspace_dir, filename: str, data: bytes, target_dir: str = "") -> str | None:
+    """Save a user-uploaded file into the Files space under `target_dir` (root when
+    empty), keeping the original filename. A name clash is auto-suffixed
+    ``name (2).ext`` (then `(3)`, …) so nothing is overwritten. Returns the
+    workspace-relative path, or None if `target_dir` escapes the root."""
+    root = _root(workspace_dir)
+    dest = _inside(root, target_dir)
+    if dest is None:
+        return None
+    dest.mkdir(parents=True, exist_ok=True)
+    name = Path(filename or "file").name or "file"  # drop any directory parts
+    stem, dot, ext = name.rpartition(".")
+    base, suffix = (stem, f".{ext}") if dot else (name, "")
+    path = dest / name
+    n = 2
+    while path.exists():
+        path = dest / f"{base} ({n}){suffix}"
+        n += 1
+    path.write_bytes(data)
+    return str(path.relative_to(root))
+
+
+def make_dir(workspace_dir, rel: str) -> tuple[str, str | None]:
+    """Create an empty Directory at `rel` (intermediate Directories created as
+    needed). Returns ``(status, path)``: ``("ok", relpath)`` on success, else
+    ``("exists", None)`` if it already exists (no clobber) or ``("invalid", None)``
+    on a traversal escape / the root itself."""
+    root = _root(workspace_dir)
+    p = _inside(root, rel)
+    if p is None or p == root:
+        return ("invalid", None)
+    if p.exists():
+        return ("exists", None)
+    try:
+        p.mkdir(parents=True, exist_ok=False)
+    except OSError:
+        return ("invalid", None)
+    return ("ok", str(p.relative_to(root)))
+
+
+def move(workspace_dir, src: str, dst: str) -> str:
+    """Move/rename a file or Directory. `dst` may be a new name or a new relative
+    path (intermediate Directories created); a Directory move carries its subtree.
+    Never overwrites an existing `dst`. Returns ``"ok" | "not_found" | "exists" |
+    "invalid"`` (``"invalid"`` = a traversal escape either side, or a Directory moved
+    into its own subtree)."""
+    root = _root(workspace_dir)
+    sp = _inside(root, src)
+    dp = _inside(root, dst)
+    if sp is None or dp is None or sp == root or dp == root:
+        return "invalid"
+    if not sp.exists():
+        return "not_found"
+    if sp == dp:
+        return "ok"  # rename to the same path — no-op
+    if dp.exists():
+        return "exists"
+    if sp.is_dir() and sp in dp.parents:
+        return "invalid"  # a Directory can't move inside itself
+    try:
+        dp.parent.mkdir(parents=True, exist_ok=True)
+        sp.rename(dp)
+    except OSError:
+        return "invalid"
+    return "ok"
 
 
 def delete(workspace_dir, rel: str) -> bool:
-    """Delete one workspace file (same sandbox guard as `resolve`). Returns True on
-    success, False if the path doesn't resolve to a file inside the workspace. Also
-    prunes now-empty parent folders (e.g. an emptied per-task subfolder) up to — but
-    never including — the workspace root."""
-    p = resolve(workspace_dir, rel)
-    if p is None:
-        return False
+    """Delete a workspace file, or a Directory and its contents recursively,
+    sandboxed to the workspace root (never the root itself). Returns False if the
+    path escapes the root, is missing, or is the root.
+
+    Empty parent Directories the delete *just emptied* are then pruned, walking up
+    to the root and stopping at the first Directory that still holds something. A
+    folder that was already empty before this delete (e.g. one made via New
+    directory) is never touched — it's not on the deleted path's ancestor chain —
+    so intentionally-empty Directories stay first-class (ADR 0007)."""
     root = _root(workspace_dir)
+    p = _inside(root, rel)
+    if p is None or p == root or not p.exists():
+        return False
     try:
-        p.unlink()
+        shutil.rmtree(p) if p.is_dir() else p.unlink()
     except OSError:
         return False
+    # Prune now-empty ancestors of what we deleted, up to (never including) root.
     parent = p.parent
     while parent != root and root in parent.parents:
         try:
-            parent.rmdir()  # only removes if empty
+            next(parent.iterdir())  # still holds a file or Directory — stop here
+            break
+        except StopIteration:
+            pass
+        except OSError:
+            break
+        try:
+            parent.rmdir()
         except OSError:
             break
         parent = parent.parent
@@ -148,6 +310,36 @@ def list_files(workspace_dir) -> list[dict]:
         )
     out.sort(key=lambda f: f["modified"], reverse=True)
     return out
+
+
+def list_all_dirs(workspace_dir) -> list[str]:
+    """Every Directory under the workspace root (recursively), workspace-relative —
+    so the Files tree can show empty Directories that the files-only `list_files`
+    omits (New directory / move can create them). Sorted for a stable tree."""
+    root = _root(workspace_dir)
+    if not root.exists():
+        return []
+    out: list[str] = []
+    for p in root.rglob("*"):
+        try:
+            if p.is_dir():
+                out.append(str(p.relative_to(root)))
+        except OSError:
+            continue
+    out.sort()
+    return out
+
+
+def match_rank(query: str, name: str, rel_path: str) -> int | None:
+    """Rank tier for a candidate against an already-lowercased `query`, or ``None``
+    if it doesn't match: ``0`` when the filename matches (ranked first), ``1`` when
+    only the path matches. Shared by the Files space and granted-Folder corpora (see
+    :mod:`assistant.filesearch`) so both rank on one scale."""
+    if query in name.lower():
+        return 0
+    if query in rel_path.lower():
+        return 1
+    return None
 
 
 def list_dirs(path: str) -> dict | None:

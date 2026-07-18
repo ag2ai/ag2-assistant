@@ -13,7 +13,8 @@
   // Settings sees them too. See docs/adr/0004-shared-llm-config-store.md.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
-  import { settingsOpen, settingsPage, SETTINGS_PAGE } from '../../store.js'
+  import { SETTINGS_PAGE } from '../../store.js'
+  import { openOverlay } from '../../router.js'
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   import Icon from '../Icon.svelte'
 
@@ -38,8 +39,7 @@
 
   function openSettings() {
     open = false
-    settingsPage.set(SETTINGS_PAGE.MODELS)
-    settingsOpen.set(true)
+    openOverlay('settings', SETTINGS_PAGE.MODELS)
   }
 </script>
 

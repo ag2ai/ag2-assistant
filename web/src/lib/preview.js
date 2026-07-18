@@ -51,3 +51,20 @@ export function viewerKind(name) {
 
 // Whether the Files browser / tool card should offer a "view" affordance.
 export const previewable = (name) => viewerKind(name) !== 'download'
+
+// The ancestor Directories of a Files-space path, shallowest first — the folders
+// that must be expanded to Reveal the file's own row. 'a/b/c.md' → ['a', 'a/b'].
+// A root-level file, or an empty/nullish path, has none. Never includes the path
+// itself (only Directories gate a file's visibility).
+export function ancestorDirs(path) {
+  const parts = (path || '').split('/')
+  parts.pop()   // drop the filename; keep only the containing Directories
+  const dirs = []
+  let acc = ''
+  for (const p of parts) {
+    if (!p) continue
+    acc = acc ? acc + '/' + p : p
+    dirs.push(acc)
+  }
+  return dirs
+}

@@ -2,6 +2,7 @@
   // Settings → Advanced: persona memory + the AG2 architecture map and live-view toggle.
   import { getSettings } from './context.svelte.js'
   import { ag2View } from '../../store.js'
+  import { toggleAsideInspector } from '../../router.js'
   import { api } from '../../transport/api.js'
   import Icon from '../Icon.svelte'
 
@@ -53,7 +54,7 @@
   <button class="open" onclick={ctx.openPoweredBy}>View</button>
 </div>
 <label class="setcheck">
-  <input type="checkbox" bind:checked={$ag2View} />
+  <input type="checkbox" checked={$ag2View} onchange={toggleAsideInspector} />
   AG2 view — reveal live AG2 events + per-item provenance
 </label>
 

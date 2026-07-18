@@ -43,6 +43,7 @@
 
 <div class="modal-backdrop" onclick={close}></div>
 <div class="modal memory">
+  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Memory</h2>
   <p class="muted">What the assistant knows about you. Edit freely — your changes become the base it keeps building on.</p>
   {#if err}<p class="muted" style="color:#d8552f">{err}</p>{/if}
@@ -63,6 +64,5 @@
   <div class="mfoot">
     {#if saved}<span class="okmsg">Saved ✓</span>{/if}
     <button class="open" onclick={save} disabled={loading}>Save</button>
-    <button class="modal-close" onclick={close}>Close</button>
   </div>
 </div>

@@ -35,6 +35,7 @@
 
 <div class="modal-backdrop" onclick={close}></div>
 <div class="modal">
+  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Google</h2>
   {#if !st}
     <p class="muted">Loading…</p>
@@ -58,5 +59,4 @@
     {#if st.error}<p class="muted">{st.error}</p>{/if}
     <button class="open" onclick={connect}>Connect Google</button>
   {/if}
-  <button class="modal-close" onclick={close}>Close</button>
 </div>

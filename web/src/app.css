@@ -40,8 +40,8 @@
 /* minmax(0,1fr) pins the single row to the viewport height: without it the row
    auto-sizes to the tallest column (a long chat), the whole document scrolls,
    and the drawer buttons / composer / modals drift out of position. */
-.app { display: grid; grid-template-columns: 270px 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; }
-.drawer { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+.app { display: grid; grid-template-columns: var(--drawer-w, 270px) 1fr; grid-template-rows: minmax(0, 1fr); height: 100vh; }
+.drawer { position: relative; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 .main { display: flex; flex-direction: column; min-width: 0; position: relative; }
 
 .dhead { padding: 14px 16px; display: flex; align-items: center; gap: 9px; }
@@ -237,7 +237,10 @@
 .settings .advtoggle:hover { color: var(--accent); }
 .settings .llmadv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; min-height: 82px; resize: vertical; background: var(--bg); color: var(--ink); }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
-.drow { padding: 9px 11px; border-radius: 9px; cursor: pointer; font-size: 14px; }
+/* Rows break out of the .dlist 6px padding (negative margin, padding bumped to
+   keep content in place) so the active fill is a full-width green row, edge to
+   edge — matching the Files tree. */
+.drow { padding: 9px 17px; margin: 0 -6px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
 /* Active/selected row: accent tint + a left accent bar so the current chat/task
    reads as selected, not just hovered. */
@@ -263,7 +266,7 @@
 .ttask .ttitle { flex: 1; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; }
 .ttask .tmeta { display: flex; align-items: center; gap: 8px; padding-left: 24px; }
 .drow .runwhen { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
-.drow.child { margin-left: 14px; padding-left: 11px; border-left: 2px solid var(--line); border-radius: 0 9px 9px 0; }
+.drow.child { margin-left: 14px; padding-left: 11px; border-left: 2px solid var(--line); }
 .drow .unreadcount { flex: none; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: var(--accent); color: var(--text-on-accent); font-size: 11px; line-height: 17px; text-align: center; }
 .drow.unseen { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .drow.unseen .runwhen, .drow.unseen .ttitle { color: var(--ink); font-weight: 600; }
@@ -396,7 +399,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .fb-save:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .fb-save:disabled { opacity: .5; cursor: default; }
 .fb-x { display: inline-flex; align-items: center; border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
-.fb-x:hover { color: var(--accent); }
+.fb-x:hover { color: var(--ink); }
 
 /* Folder picker — server-driven directory browser for choosing a project folder. */
 .fp { display: flex; flex-direction: column; gap: 8px; }
@@ -437,6 +440,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .genimage { margin: 8px 0; }
 .genimage .thumb { max-width: 340px; max-height: 280px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
 .genimage .thumb:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.genimage .filechip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--code); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 11px; font-size: 13px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.genimage .filechip:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 .attach { margin: 8px 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .attach .who { font-size: 11px; color: var(--muted); }
 .attach .thumb { max-width: 260px; max-height: 220px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
@@ -514,8 +519,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
    (centered) message column is unaffected. */
 .composer { position: absolute; left: 16px; right: 16px; bottom: 0; padding: 28px 20px 16px; background: linear-gradient(to bottom, transparent, var(--bg) 42%); pointer-events: none; }
 .composer > * { pointer-events: auto; }
-.cnote { max-width: var(--thread-max); margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
-/* Scroll-to-latest — floats above the composer, centered, only when unpinned. */
+.cnote { max-width: calc(var(--thread-max) - 40px); margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
+/* Scroll-to-latest — floats above the composer, centered, only when unpinned. Its
+   `bottom` is set inline by Thread.svelte from the measured composer height (the fallback
+   here only applies before that first measurement) so it clears the composer as it grows. */
 .scrolldown { position: absolute; left: 50%; transform: translateX(-50%); bottom: 148px; z-index: 5; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; cursor: pointer; box-shadow: var(--shadow-lg); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .scrolldown:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 /* One rounded input box (Claude-style): textarea on top, a control bar beneath —
@@ -523,7 +530,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* The composer input is one of the most prominent elements on the page: its own
    elevated surface, a stronger hairline, real height, and a soft resting shadow.
    Focus swaps the hairline for the accent ring. */
-.inputbox { max-width: var(--thread-max); margin: 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-elevated); box-shadow: var(--shadow-md); padding: 10px 10px 10px 16px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.inputbox { max-width: calc(var(--thread-max) - 40px); margin: 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-elevated); box-shadow: var(--shadow-md); padding: 10px 10px 10px 16px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
 .inputbox:focus-within { border-color: var(--accent-border); box-shadow: var(--focus-ring), var(--shadow-md); }
 .cinput { display: block; width: 100%; resize: none; border: none; background: none; color: var(--ink); font: inherit; font-size: var(--text-md); padding: 8px 4px 6px; max-height: 200px; }
 .cinput:focus { outline: none; }
@@ -618,6 +625,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
   .modal, .modal-backdrop { animation: none; }
 }
 .modal h2 { margin: 0; }
+/* Every modal window carries the quiet close × in its top-right corner, so a
+   direct-child title reserves room for it (nested titles, e.g. .viewer .vhead,
+   handle their own spacing). */
+.modal > h2 { padding-right: 34px; }
 .modal textarea { min-height: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; background: var(--bg); color: var(--ink); }
 /* A dialog opened from INSIDE another modal (e.g. Settings → Advanced provider
    config) stacks above it — base modal is z 20/21. */
@@ -630,17 +641,80 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 
 .modal-close { display: inline-flex; align-items: center; gap: 6px; align-self: flex-end; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 14px; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .modal-close:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
+/* Quiet close × in a modal's top-right corner (modals are position:fixed, so it
+   anchors to the corner). An alternative to the bottom .modal-close button. */
+.modal-x { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 8px; background: none; color: var(--text-muted); font-size: 22px; line-height: 1; cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.modal-x:hover { color: var(--ink); background: var(--code); }
 
-.viewer { width: min(820px, 92vw); height: min(84vh, 900px); padding: 0; gap: 0; overflow: hidden; }
-.viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
-.viewer .vhead h2 { font-size: 18px; margin: 0; flex: 1; overflow-wrap: anywhere; }
-.viewer .vhead .modal-close { align-self: auto; }
-.viewer .vbody { min-height: 0; flex: 1; padding: 20px 26px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
-.viewer .vhead .dl { font-size: 12px; color: var(--accent); text-decoration: none; }
-.viewer .vhead .dl:hover { text-decoration: underline; }
-.viewer .vbody.native { padding: 10px; }
-.viewer .vframe { width: 100%; height: 74vh; border: 0; border-radius: 6px; background: #fff; }
-.viewer .vimg { display: block; max-width: 100%; max-height: 74vh; height: auto; margin: 0 auto; }
+/* ---- Docked preview rail: the file preview in the grid's right column,
+   mirroring the Inspector rail's frame. ---- */
+.rail.viewer { position: relative; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+/* Left-edge drag handle shared by both rail occupants (RailResizer). Straddles the
+   rail border so it's grabbable; highlights on hover / during a drag. */
+.rail-resizer { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; z-index: 3; cursor: col-resize; touch-action: none; }
+.rail-resizer::after { content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: transparent; transition: background var(--dur-fast) var(--ease-out); }
+.rail-resizer:hover::after, .rail-resizer.dragging::after { background: var(--accent); }
+/* Left-drawer variant: handle straddles the drawer's right edge instead. */
+.rail-resizer.left { left: auto; right: -3px; }
+.rail-resizer.left::after { left: auto; right: 3px; }
+.viewer .vhead { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.viewer .vhead h2 { font-size: 15px; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The filename title as a Reveal-in-Files affordance: looks like the h2 heading but
+   is a real button — pointer cursor, hover underline. Left-aligned, ellipsised. */
+.viewer .vhead .vtitle { font: inherit; font-size: 15px; font-weight: 600; margin: 0; padding: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: none; background: none; color: inherit; cursor: pointer; transition: color var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vtitle:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.viewer .vhead .vtitle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.viewer .vhead .dl { flex: none; display: inline-flex; align-items: center; color: var(--muted); }
+.viewer .vhead .dl:hover { color: var(--text, inherit); }
+/* Preview / Edit switcher (markdown only) — a two-icon segmented pill; the active
+   side lifts onto the panel colour. */
+.viewer .vhead .vseg { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--code); }
+.viewer .vhead .vsegbtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 22px; padding: 0; border: none; border-radius: 6px; background: none; color: var(--text-muted); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vsegbtn:hover { color: var(--ink); }
+.viewer .vhead .vsegbtn.on { color: var(--ink); background: var(--panel); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+/* Copy-to-clipboard — quiet icon button like .exp; flips accent on success. */
+.viewer .vhead .cp { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--text-muted); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.viewer .vhead .cp:hover { color: var(--ink); background: var(--code); }
+.viewer .vhead .cp.copied { color: var(--accent); }
+/* Expand/collapse toggle — maximise the preview to fill the Thread column. Quiet
+   icon button like the close ×; goes accent-coloured while expanded (aria-pressed). */
+.viewer .vhead .exp { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--text-muted); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.viewer .vhead .exp:hover { color: var(--ink); background: var(--code); }
+.viewer .vhead .exp[aria-pressed="true"] { color: var(--accent); }
+/* Quiet close × in the rail header (the rail is a grid child, not position:fixed,
+   so it can't use the modal's absolute-corner .modal-x). */
+.viewer .rail-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--text-muted); font-size: 20px; line-height: 1; cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.viewer .rail-x:hover { color: var(--ink); background: var(--code); }
+/* Unsaved-changes marker — a small accent dot beside the title; the Save button
+   goes flat/disabled until the draft diverges (ADR 0011). */
+.viewer .vhead .vdirty { flex: none; color: var(--accent); font-size: 10px; line-height: 1; }
+.viewer .vhead .vsave { flex: none; padding: 4px 12px; border: none; border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: opacity var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vsave:hover:not(:disabled) { opacity: 0.9; }
+.viewer .vhead .vsave:disabled { background: var(--code); color: var(--text-muted); cursor: default; }
+.viewer .vbody { min-height: 0; flex: 1; padding: 16px 18px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+.viewer .vbody.native { padding: 8px; overflow: hidden; }
+/* Edit mode: a flex column so the plain-text editor fills the rail height and a
+   save error can sit above it. */
+.viewer .vbody.editing { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.viewer .vedit { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; resize: none; border: 1px solid var(--line); border-radius: 6px; background: var(--code); color: var(--ink); padding: 14px; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; white-space: pre; overflow: auto; }
+.viewer .vedit:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.viewer .vsaveerr { flex: none; margin: 0; padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, #d8552f 12%, transparent); color: #d8552f; font-size: 13px; }
+/* The stale-file save clash (ADR 0011): a warning-toned message with two neutral,
+   consequence-labelled choices — Reload (discard mine) / Overwrite (replace disk). */
+.viewer .vconflict { flex: none; display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 12px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.viewer .vconflict-msg { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink); }
+.viewer .vconflict-actions { display: flex; gap: 8px; }
+.viewer .vconflict-btn { flex: 1; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); font: inherit; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out); }
+.viewer .vconflict-btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.viewer .vconflict-btn:disabled { opacity: 0.6; cursor: default; }
+.viewer .vconflict-verb { font-size: 13px; font-weight: 600; }
+.viewer .vconflict-note { font-size: 11.5px; color: var(--muted); }
+.viewer .vframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #fff; }
+.viewer .vimg { display: block; max-width: 100%; max-height: 100%; height: auto; margin: 0 auto; }
+.viewer .vmissing { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: var(--muted); }
+.viewer .vmissing-msg { margin: 0; font-size: 13px; line-height: 1.5; max-width: 42ch; }
+.viewer .vmissing-path { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; color: var(--ink); background: var(--code); padding: 6px 10px; border-radius: 6px; }
+.viewer .vmissing-detail { margin: 0; font-size: 11.5px; color: var(--muted); word-break: break-word; }
 .viewer .vcode { white-space: pre; overflow: auto; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; background: var(--code); padding: 14px; border-radius: 6px; }
 .viewer .vtext { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; background: var(--code); padding: 14px; border-radius: 6px; }
 
@@ -653,15 +727,21 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .vrow .vp { margin-left: auto; font-size: 11px; color: var(--accent); }
 
 /* ---- AG2 view: inspector rail, provenance tags, powered-by map ---- */
-.app.ag2 { grid-template-columns: 270px 1fr 380px; }
+/* Right column (preview aside or Inspector) sized by the drag-resizable --rail-w;
+   the main column flexes (1fr). */
+.app.ag2, .app.rail { grid-template-columns: var(--drawer-w, 270px) 1fr var(--rail-w, 380px); }
+/* Preview expanded: the preview fills the Thread column; the middle collapses to 0
+   but the Thread stays mounted (clipped, not display:none) — see ADR 0009 amendment. */
+.app.rail.railfull { grid-template-columns: var(--drawer-w, 270px) 0 1fr; }
+.app.rail.railfull .main { overflow: hidden; }
 
-.inspector { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.inspector { position: relative; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .insp-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px 4px; }
 .insp-title { font-weight: 700; }
 .insp-head .linklike { margin-left: auto; }
 .linklike { border: none; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; padding: 0; }
 .insp-x { display: inline-flex; align-items: center; border: none; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; transition: color var(--dur-fast) var(--ease-out); }
-.insp-x:hover { color: var(--accent); }
+.insp-x:hover { color: var(--ink); }
 .insp-sub { padding: 0 14px 8px; font-size: 12px; color: var(--muted); line-height: 1.4; }
 .insp-sub code { background: var(--code); padding: 0 4px; border-radius: 4px; }
 .insp-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
@@ -707,15 +787,5 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .usagehud { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line); cursor: default; }
 .usagehud .uhicon { display: inline-flex; align-items: center; }
 .usagehud .uhlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.modal.files { width: min(680px, 94vw); max-height: 86vh; }
-.files .filescroll { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
-.files .setsec { display: flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 10px 0 2px; }
-.files .filerow { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
-.files .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 13px; }
-.files .fmeta { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
-.files .linkbtn { flex: none; border: none; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; padding: 0; text-decoration: none; }
-.files .linkbtn:hover { text-decoration: underline; }
-.files .linkbtn.danger { color: var(--muted); }
-.files .linkbtn.danger:hover { color: #d8552f; }
-.files .linkbtn.danger:disabled { cursor: default; opacity: 0.6; }
-.files .confirm { flex: none; color: #d8552f; font-size: 12px; }
+/* The Files browser now lives in the Drawer as the third tab (FilesTree.svelte,
+   ADR 0007) with its own scoped styles — the old modal's .files styles are gone. */

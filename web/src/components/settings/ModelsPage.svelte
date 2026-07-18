@@ -176,7 +176,7 @@
     >Test</button>
     <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
     <button
-      class="linkbtn" disabled={busy || !!editing}
+      class="linkbtn danger" disabled={busy || !!editing}
       title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
       onclick={(e) => { e.stopPropagation(); remove(c) }}
     >Delete</button>
