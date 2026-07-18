@@ -181,23 +181,23 @@ def _unquote_etag(value: str | None) -> str | None:
     return value.strip('"')
 
 
-class TaskRequest(BaseModel):
-    text: str
-    channel: str = "web"
+class TaskCreate(BaseModel):
+    name: str
+    prompt: str
+    model: str | None = None
+    schedule: dict | None = None
+
+
+class TaskPatch(BaseModel):
+    name: str | None = None
+    prompt: str | None = None
+    model: str | None = None  # "" clears back to the profile default
+    schedule: dict | None = None
+    paused: bool | None = None
 
 
 class AnswerRequest(BaseModel):
     answer: str
-
-
-class TaskChatRequest(BaseModel):
-    text: str
-
-
-class ScheduleRequest(BaseModel):
-    text: str
-    when: str  # ISO 8601 datetime
-    recurrence: str | None = None
 
 
 class OnboardedRequest(BaseModel):
@@ -1722,35 +1722,23 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         reply = await runtime.gateway.send_message(req.text, chat_id=req.chat_id, asker=asker)
         return MessageResponse(reply=reply, chat_id=req.chat_id)
 
-    # ---- Tasks + durable HITL inquiries ----
+    # ---- Tasks (config) + Runs (each run is a chat on stream task-run:<id>) ----
 
     @p.get("/tasks")
     async def list_tasks(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Top-level tasks (newest first) for the Tasks view."""
+        """Task rows for the drawer (needs-input first, then newest)."""
         return {"tasks": await runtime.tasks.list_tasks()}
 
     @p.post("/tasks")
-    async def create_task(req: TaskRequest, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Kick off a task — intake (clarifying questions) runs in the background
-        and surfaces as inquiries to answer."""
-        task_id = await runtime.tasks.submit_request(req.text, channel=req.channel)
-        return {"id": task_id}
-
-    @p.get("/tasks/all")
-    async def list_all_tasks(
-        status: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Full task history for the listing page (newest first). Optional status
-        filter: active / completed / stopped / archived."""
-        return {"tasks": await runtime.tasks.list_all(status)}
-
-    @p.post("/tasks/schedule")
-    async def schedule_task(
-        req: ScheduleRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Schedule a task for a future time (optionally recurring)."""
-        task_id = await runtime.tasks.schedule_task(req.text, req.when, req.recurrence)
-        return {"id": task_id}
+    async def create_task(req: TaskCreate, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Create a task; 422 with {error} on a bad schedule/model."""
+        try:
+            task = await runtime.tasks.create_task(
+                name=req.name, prompt=req.prompt, model=req.model, schedule=req.schedule
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        return {"task": task}
 
     @p.get("/tasks/{task_id}")
     async def get_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
@@ -1764,64 +1752,64 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return Response(status_code=404)
         return {"task": task}
 
-    @p.post("/tasks/{task_id}/cancel")
-    async def cancel_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        ok = await runtime.tasks.cancel(task_id)
-        return {"ok": ok}
-
-    @p.post("/tasks/{task_id}/rerun")
-    async def rerun_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Re-run a finished task from a clean start; returns the new run's id."""
-        result = await runtime.tasks.rerun(task_id)
-        if "error" in result:
-            return JSONResponse(result, status_code=400)
-        return result
-
-    @p.post("/tasks/{task_id}/seen")
-    async def mark_task_seen(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Mark a task/run as opened (clears its unread highlight in the nav)."""
-        ok = await runtime.tasks.mark_seen(task_id)
-        return {"ok": ok}
+    @p.patch("/tasks/{task_id}")
+    async def update_task(
+        task_id: str, req: TaskPatch, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Edit any subset of task fields; model='' clears to the profile default."""
+        patch = {k: v for k, v in req.model_dump().items() if v is not None}
+        if req.model == "":  # explicit clear back to the profile default
+            patch["model"] = None
+        if not patch and req.model != "":
+            return JSONResponse({"error": "empty patch"}, status_code=400)
+        try:
+            task = await runtime.tasks.update_task(task_id, **patch)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        if task is None:
+            return Response(status_code=404)
+        return {"task": task}
 
     @p.delete("/tasks/{task_id}")
     async def delete_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Permanently delete a task + its whole subtree, plus each one's chat/event
-        stream. Cancels an in-flight run first. Irreversible."""
-        ok, ids = await runtime.tasks.delete(task_id)
-        if not ok:
+        """Delete the task, its runs, and their chat streams. Irreversible."""
+        if not await runtime.tasks.delete_task(task_id):
             return Response(status_code=404)
-        # Purge the per-task chat/event streams (task pages use chat "task:<id>").
-        for tid in ids:
-            with contextlib.suppress(Exception):
-                await runtime.gateway.delete_chat(f"task:{tid}")
-        return {"ok": True, "deleted": ids}
+        return {"ok": True}
 
-    @p.post("/tasks/{task_id}/chat")
-    async def task_chat(
-        task_id: str,
-        req: TaskChatRequest,
-        runtime: ProfileRuntime = Depends(get_runtime),
-    ):
-        """Converse about a task — the SAME universal agent, given this task as its
-        surface context (it inspects/steers the task via its system tools)."""
-        from assistant.system_tools import format_task
-
-        node = await runtime.tasks.get_task(task_id)
-        if node is None:
+    @p.post("/tasks/{task_id}/run")
+    async def run_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Run now — start a run immediately; the schedule is unchanged."""
+        run = await runtime.tasks.start_run(task_id, trigger="manual")
+        if run is None:
             return Response(status_code=404)
-        surface = (
-            f"You are on the page for task {task_id}. The user's messages here are "
-            f"usually about THIS task — inspect or steer it with your task tools "
-            f"(its id is {task_id}). Current state:\n{format_task(node)}"
-        )
-        asker = _chat_asker(runtime, f"task:{task_id}")
-        reply = await runtime.gateway.send_message(
-            req.text,
-            chat_id=f"task:{task_id}",
-            asker=asker,
-            surface=surface,
-        )
-        return {"reply": reply}
+        return {"run": await runtime.tasks.get_run(run.id)}
+
+    @p.get("/tasks/{task_id}/runs")
+    async def list_runs(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """The task's run history (newest first), as on the task page."""
+        task = await runtime.tasks.get_task(task_id)
+        if task is None:
+            return Response(status_code=404)
+        return {"runs": task["runs"]}
+
+    @p.get("/runs/{run_id}")
+    async def get_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """One run's durable header (status/summary/task name) for the run page."""
+        run = await runtime.tasks.get_run(run_id)
+        if run is None:
+            return Response(status_code=404)
+        return {"run": run}
+
+    @p.post("/runs/{run_id}/stop")
+    async def stop_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Stop a live run; whatever it already produced stays in its thread."""
+        return {"ok": await runtime.tasks.stop_run(run_id)}
+
+    @p.post("/runs/{run_id}/seen")
+    async def run_seen(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Mark a finished run opened (clears its unread highlight)."""
+        return {"ok": await runtime.tasks.mark_run_seen(run_id)}
 
     @p.get("/inquiries/pending")
     async def inquiries_pending(
@@ -2397,22 +2385,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         runtime.on_close(_on_archive)
 
         chat_id = websocket.query_params.get("chat") or "default"
+        # A run's chat (stream "task-run:<id>") IS a plain chat — TaskService seeds
+        # its task/run framing into the FIRST turn's surface at start_run time, so
+        # this transport needs no per-task branch here; every turn gets the same
+        # surface a normal chat would.
         default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
         bridge = StreamBridge(runtime.gateway, websocket, chat_id)
-
-        async def turn_surface() -> str:
-            # task threads get a fresh task snapshot each turn so "this task" resolves
-            if chat_id.startswith("task:"):
-                tid = chat_id.split(":", 1)[1]
-                node = await runtime.tasks.get_task(tid)
-                if node:
-                    from assistant.system_tools import format_task
-
-                    return (
-                        "The user is viewing this task; act on THIS task when "
-                        f"they refer to it.\n\n{format_task(node)}"
-                    )
-            return default_surface
 
         try:
             await bridge.open()
@@ -2493,7 +2471,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 if not text:
                     continue
                 asker = _chat_asker(runtime, chat_id)
-                surface = await turn_surface()
+                surface = default_surface
                 # Persist uploads into the workspace and tell the agent their paths (via
                 # surface, so the transcript stays clean) — enables editing/reading them.
                 saved = _persist_uploads(runtime.config.workspace_dir, raw_atts)
@@ -2571,11 +2549,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         runtime.on_close(_on_archive)
 
         sid = uuid.uuid4().hex[:8]
-        task_id = websocket.query_params.get("task") or None
+        # A run is a plain chat now, so voice has one binding to make: the chat
+        # it's continuing (its stream carries task/run framing already, same as
+        # any other chat). persist_chat mirrors that stream so spoken transcripts
+        # survive reload and join the shared history (None → bare voice session).
         origin_chat = websocket.query_params.get("chat") or None
-        # persist spoken transcripts onto the surface's stream so they survive reload
-        # and become shared conversation history (None → bare voice session, skip).
-        persist_chat = f"task:{task_id}" if task_id else origin_chat
+        persist_chat = origin_chat
         # Persist spoken turns by ROLE ALTERNATION, not the "completed" event (Gemini
         # doesn't fire it reliably): accumulate each side's chunks and flush a turn
         # when the other side starts speaking → alternating ModelRequest/ModelResponse.
@@ -2615,7 +2594,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         try:
             agent = await runtime.gateway.build_voice_agent(
                 voice_id=sid,
-                task_id=task_id,
                 origin_chat=origin_chat,
                 on_event=forward_event,  # delegated universal-agent events → voice client
                 on_end=end_requested.set,
