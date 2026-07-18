@@ -423,30 +423,26 @@ def _chat_asker(runtime: ProfileRuntime, chat_id: str):
 
 
 async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
-    """Per-profile activity for the chip badges, from a single store scan.
+    """Per-profile activity for the chip badges, from a single store scan (v2:
+    a Task is standing config, a Run is one execution — this scans runs, not tasks).
 
     Returns ``(running, unseen_done)``:
-      * ``running``     — RUNNING tasks (top-level + subtree); kept for API back-compat.
-      * ``unseen_done`` — finished, not-yet-opened root tasks (non-archived): the count
-        behind the chip's "unread results" dot. Mirrors the nav's per-row unread marker
-        (``isUnread`` = terminal status && not seen), rolled up to the profile.
+      * ``running``     — runs not yet in a terminal state (RUNNING or NEEDS_INPUT).
+      * ``unseen_done`` — finished, not-yet-opened runs: the count behind the chip's
+        "unread results" dot. Mirrors the nav's per-row unread marker (``isUnread`` =
+        terminal status && not seen), rolled up to the profile.
     """
     tasks = runtime.tasks
     store = getattr(tasks, "store", None) if tasks is not None else None
     if store is None:
         return 0, 0
     try:
-        from assistant.tasks import TaskStatus
+        from assistant.tasks import RunStatus
 
-        rows = await store.list_all()
-        running = sum(1 for t in rows if t.status == TaskStatus.RUNNING)
+        runs = await store.list_runs()
+        running = sum(1 for r in runs if r.status not in RunStatus.TERMINAL)
         unseen_done = sum(
-            1
-            for t in rows
-            if t.parent_id is None
-            and not getattr(t, "archived", False)
-            and t.status in TaskStatus.TERMINAL
-            and getattr(t, "seen_at", None) is None
+            1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None
         )
         return running, unseen_done
     except Exception:

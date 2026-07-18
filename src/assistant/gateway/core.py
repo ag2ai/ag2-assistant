@@ -40,6 +40,13 @@ def _conversation_events() -> tuple:
 _CONVERSATION_EVENTS = _conversation_events()
 
 
+def is_internal_stream(chat_id: str) -> bool:
+    """Streams that are a thread of something else (a task run) — they render on
+    their own page and must not appear in the Chats list. ``task:`` covers legacy
+    records from the pre-redesign model."""
+    return chat_id.startswith("task-run:") or chat_id.startswith("task:")
+
+
 @dataclass
 class _ActiveTurn:
     """A turn in flight, so other coroutines can steer or stop it.
@@ -94,6 +101,10 @@ class Gateway:
         # chat_id -> live Stream; plus which chats we've hydrated from disk
         self._streams: dict[str, object] = {}
         self._loaded: set[str] = set()
+        # llm_config_id -> its cached per-model Agent (built lazily in _agent_for;
+        # cleared on reload() so a settings/config change doesn't keep serving stale
+        # per-task agents alongside the rebuilt default one).
+        self._model_agents: dict[str, object] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
@@ -119,9 +130,11 @@ class Gateway:
         """Today's token + estimated-cost totals (for the cost & activity HUD)."""
         return self._usage.today()
 
-    def _make_agent(self):
-        """Build the one universal agent: capability + system tools (know/do
-        everything) + compaction. Used by start() and reload()."""
+    def _make_agent(self, cfg=None):
+        """Build a universal agent: capability + system tools (know/do everything) +
+        compaction. Used by start()/reload() for the default agent, and by
+        `_agent_for` (with an overridden ``cfg``) to build a per-task-model agent."""
+        cfg = cfg or self._config
         extra_tools = None
         if self._tasks is not None:
             from assistant.settings import profile_settings
@@ -131,17 +144,45 @@ class Gateway:
             # start_task/schedule_task here (that duplicated names). `platform` lets
             # those tools note (on channels) that follow-up questions go to the web app.
             # The voice get/set tools read/write THIS profile's settings.
-            settings = profile_settings(self._config.data_dir)
+            settings = profile_settings(cfg.data_dir)
             extra_tools = build_system_tools(
                 self._tasks, settings, chats=self, platform=self._platform
             )
         return create_agent(
-            self._config,
+            cfg,
             memory=self._memory,
             platform=self._platform,
             extra_tools=extra_tools,
             compact=self._memory,
         )
+
+    def _agent_for(self, llm_config_id: str | None):
+        """The turn's agent: the profile default, or a cached per-LLM-config agent
+        when a task pins a model. Unknown ids fall back to the default (the task
+        may reference a since-deleted configuration — degrade, don't fail)."""
+        if not llm_config_id:
+            return self._agent
+        agent = self._model_agents.get(llm_config_id)
+        if agent is not None:
+            return agent
+        from assistant import llm_configs
+
+        entry = llm_configs.get_config(llm_config_id)
+        if entry is None:
+            return self._agent
+        import copy
+
+        cfg = copy.deepcopy(self._config)
+        provider = llm_configs.PROVIDER_OF[entry["type"]]
+        cfg.llm.provider = provider
+        cfg.llm.model = entry["model"]
+        cfg.llm.provider_options[provider] = llm_configs.entry_options(entry)
+        cfg.llm.auth_mode = (
+            "subscription" if entry["type"] == "openai_subscription" else "api_key"
+        )
+        agent = self._make_agent(cfg)
+        self._model_agents[llm_config_id] = agent
+        return agent
 
     async def _ensure_subscription_fresh(self) -> None:
         """When OpenAI runs in ChatGPT-subscription mode, refresh the OAuth access
@@ -211,6 +252,9 @@ class Gateway:
         self._config = self._config_factory()
         if self._agent is not None:
             self._agent = self._make_agent()
+        # Stale per-model agents were built from the pre-reload config/keys; a task
+        # run after this point must get a freshly-built one.
+        self._model_agents.clear()
         if self._tasks is not None and hasattr(self._tasks, "reload"):
             await self._tasks.reload()
 
@@ -320,6 +364,7 @@ class Gateway:
         attachments: list | None = None,
         surface: str = "",
         on_event=None,
+        llm_config_id: str | None = None,
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -334,13 +379,18 @@ class Gateway:
         the agent's structured events (tool calls, task cards, deliverables, …) raw
         as they're emitted — the voice channel forwards them so its client folds
         them with the same reducer the text path uses. Conversation/audio events are
-        omitted (voice renders those itself).
+        omitted (voice renders those itself). `llm_config_id` pins the turn to a
+        task's chosen model (a cached per-config agent) instead of the profile
+        default.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
 
         await self._maybe_onboard(asker)
+        # Refresh first: subscription mode may rebuild the default agent with a
+        # rotated OAuth token, and this turn must run on the fresh one.
         await self._ensure_subscription_fresh()
+        agent = self._agent_for(llm_config_id)
 
         extra = self._ask_kwargs(asker, chat_id)
         msg = [text, *(attachments or [])]
@@ -388,7 +438,7 @@ class Gateway:
                 # makes the turn steerable while it runs: `feed_message` enqueues onto
                 # the run's inbox, `cancel_turn` cancels this task — AG2 propagates that
                 # into the turn.
-                async with self._agent.run(
+                async with agent.run(
                     *msg,
                     stream=stream,
                     prompt=prompt,
@@ -765,6 +815,8 @@ class Gateway:
                 from assistant.observability import log_suppressed
 
                 log_suppressed("chat listing transcript read", exc, entry=entry)
+                continue
+            if is_internal_stream(doc.get("chat_id", "")):
                 continue
             msgs = doc.get("messages", [])
             first_user = next((m["text"] for m in msgs if m["role"] == "user"), "")

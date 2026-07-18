@@ -538,6 +538,7 @@ def telegram(
         gateway, tasks = build_gateway(memory=memory, platform="telegram")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
+        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("telegram")
@@ -571,6 +572,7 @@ def discord(
         gateway, tasks = build_gateway(memory=memory, platform="discord")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
+        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("discord")
@@ -603,6 +605,7 @@ def slack(
         gateway, tasks = build_gateway(memory=memory, platform="slack")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
+        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("slack")
