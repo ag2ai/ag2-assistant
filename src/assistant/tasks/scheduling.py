@@ -140,6 +140,35 @@ def first_occurrence(recurrence: str | None, when: str | None) -> datetime | Non
     return next(CronSim(expr, start - timedelta(minutes=1)))
 
 
+def compute_next_run(schedule: dict, now: datetime, *, after_fire: bool = False) -> str | None:
+    """The next fire time (ISO) a schedule implies, or None (manual / exhausted).
+
+    ``after_fire=True`` is the scheduler's re-arm: a 'once' that just fired is
+    exhausted; a cron advances to its next occurrence strictly after `now`.
+    """
+    from assistant.tasks.model import ScheduleKind
+
+    kind = schedule.get("kind")
+    if kind == ScheduleKind.ONCE:
+        return None if after_fire else schedule.get("at")
+    if kind == ScheduleKind.CRON:
+        nxt = next_occurrence(schedule.get("cron"), now)
+        return nxt.isoformat() if nxt is not None else None
+    return None
+
+
+def schedule_text(schedule: dict) -> str:
+    """Short human description of a schedule union, for lists and tool replies."""
+    from assistant.tasks.model import ScheduleKind
+
+    kind = schedule.get("kind")
+    if kind == ScheduleKind.ONCE:
+        return f"once at {schedule.get('at')}"
+    if kind == ScheduleKind.CRON:
+        return describe_cron(schedule.get("cron")) or str(schedule.get("cron"))
+    return "manual"
+
+
 class Scheduler:
     """Polls the store for due SCHEDULED tasks and fires them (deterministic)."""
 
