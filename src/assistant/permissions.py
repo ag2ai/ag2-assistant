@@ -8,11 +8,14 @@ Grants, ADR 0006) — this module's store holds ONLY command grants:
     code/action tools persist a whole-tool rule (bare tool name). The prompt's
     dynamic "always allow" option reads back what will be persisted.
 
-The store is a plain JSON document (schema ``{"commands": [...]}``) —
-hand-editable, rendered directly as Settings rows. It self-refreshes on mtime
-change so a long-lived instance (the gateway) sees grants written by another
-process (the CLI) or the HTTP API, and every mutation is a read-modify-write
-over fresh state.
+The store is a plain JSON document (schema ``{"commands": [...], "task_commands":
+{task_id: [...]}}``) — hand-editable, rendered directly as Settings rows. Global
+rules apply everywhere; a ``task_commands`` set applies only to that task's own
+runs (a task's "always allow" persists across its future runs without leaking
+into other chats/tasks — see ``PermissionManager.task_id``). The store
+self-refreshes on mtime change so a long-lived instance (the gateway) sees
+grants written by another process (the CLI) or the HTTP API, and every
+mutation is a read-modify-write over fresh state.
 """
 
 import contextlib
@@ -186,6 +189,9 @@ class PermissionStore:
         # implicit on-disk location.
         self._path = Path(path) if path is not None else None
         self._commands: set[str] = set()
+        # Task-scoped rules, keyed by task id — a run's PermissionManager checks
+        # BOTH the global set and (if bound to a task) its own set here.
+        self._task_commands: dict[str, set[str]] = {}
         # (st_mtime_ns, st_size) of the file when we last read it — the freshness key
         # for _refresh(). None means "no file loaded" (missing/ephemeral).
         self._stat: tuple[int, int] | None = None
@@ -193,6 +199,7 @@ class PermissionStore:
 
     def _load(self) -> None:
         self._commands = set()
+        self._task_commands = {}
         self._stat = None
         if self._path is None:
             return
@@ -208,6 +215,9 @@ class PermissionStore:
         except Exception:
             return  # exists but corrupt → empty
         self._commands = set(data.get("commands", []))
+        self._task_commands = {
+            tid: set(rules) for tid, rules in data.get("task_commands", {}).items()
+        }
 
     def _refresh(self) -> None:
         """Re-load from disk when the file changed since our last read. Makes a
@@ -253,7 +263,13 @@ class PermissionStore:
         if self._path is None:
             return  # ephemeral store — nothing to persist
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"commands": sorted(self._commands)}, indent=2)
+        doc: dict = {"commands": sorted(self._commands)}
+        # Empty per-task sets are omitted rather than written as `{}` entries — a
+        # task with no grants (the common case) shouldn't clutter the JSON.
+        task_commands = {tid: sorted(rules) for tid, rules in self._task_commands.items() if rules}
+        if task_commands:
+            doc["task_commands"] = task_commands
+        payload = json.dumps(doc, indent=2)
         # Atomic write: temp file in the SAME directory + os.replace, so a concurrent
         # reader never sees a half-written file (torn read). os.replace is atomic only
         # within a filesystem — same-dir guarantees that.
@@ -278,20 +294,13 @@ class PermissionStore:
 
     # ---- commands ----
 
-    def is_command_allowed(self, tool: str, command: str | None) -> bool:
-        """True if a stored rule authorises this invocation. A bare-tool rule matches
-        calls that carry NO shell command (code/action tools); a prefix rule matches
-        only when ``shell_prefix(command)`` equals the rule's prefix — the SAME
-        function used at grant time, so grant and match can't disagree.
-
-        A bare rule deliberately never matches an arbitrary-execution invocation —
-        shell-like (carries a command string) or a host code tool (_NO_BLANKET):
-        "allow everything" must not be mintable for those — not via the API/CLI
-        (they reject it) and not by hand-editing the JSON (this guard). Shell trust
-        is per-prefix only; host code runs are approved per run."""
-        self._refresh()
-        prefix = shell_prefix(command) if command else None
-        for rule in self._commands:
+    @staticmethod
+    def _match(rules, tool: str, command: str | None, prefix: str | None) -> bool:
+        """True if some rule in ``rules`` authorises ``tool``/``command``. Shared by
+        the global and task-scoped sets so the two can never drift in match logic —
+        see ``is_command_allowed`` for the semantics (bare-rule vs prefix-rule,
+        _NO_BLANKET exclusion)."""
+        for rule in rules:
             try:
                 r_tool, r_prefix = parse_command_rule(rule)
             except ValueError:
@@ -306,14 +315,38 @@ class PermissionStore:
                 return True
         return False
 
-    def grant_command(self, rule: str) -> None:
+    def is_command_allowed(self, tool: str, command: str | None, task_id: str = "") -> bool:
+        """True if a stored rule authorises this invocation. A bare-tool rule matches
+        calls that carry NO shell command (code/action tools); a prefix rule matches
+        only when ``shell_prefix(command)`` equals the rule's prefix — the SAME
+        function used at grant time, so grant and match can't disagree.
+
+        A bare rule deliberately never matches an arbitrary-execution invocation —
+        shell-like (carries a command string) or a host code tool (_NO_BLANKET):
+        "allow everything" must not be mintable for those — not via the API/CLI
+        (they reject it) and not by hand-editing the JSON (this guard). Shell trust
+        is per-prefix only; host code runs are approved per run.
+
+        ``task_id`` (a task run's turn) additionally consults that task's own
+        grants — a rule minted during one of its runs applies to all its future
+        runs, without ever authorising a different task or a plain chat."""
+        self._refresh()
+        prefix = shell_prefix(command) if command else None
+        if self._match(self._commands, tool, command, prefix):
+            return True
+        if task_id:
+            return self._match(self._task_commands.get(task_id, ()), tool, command, prefix)
+        return False
+
+    def grant_command(self, rule: str, task_id: str = "") -> None:
         """Persist a command rule, canonicalised via parse→build (so a stray form —
-        extra spaces, etc. — normalises).
+        extra spaces, etc. — normalises). ``task_id`` scopes the grant to that task
+        instead of the global set (survives across that task's runs only).
 
         Raises ``ValueError`` for a bare grant on a shell or host-code tool: that
         rule would be dead at match time (see is_command_allowed) and reads as
         "allow arbitrary execution forever" — reject it here so every mint path
-        (API, CLI, prompt) fails loudly instead."""
+        (API, CLI, prompt, task-scoped or not) fails loudly instead."""
         tool, prefix = parse_command_rule(rule)
         if prefix is None and tool in SHELL_TOOLS:
             raise ValueError(
@@ -326,24 +359,40 @@ class PermissionStore:
                 "always-allowed; each run is approved individually"
             )
         with self._mutate():
-            self._commands.add(command_rule(tool, prefix))
+            if task_id:
+                self._task_commands.setdefault(task_id, set()).add(command_rule(tool, prefix))
+            else:
+                self._commands.add(command_rule(tool, prefix))
             self._save()
 
-    def revoke_command(self, rule: str) -> bool:
+    def revoke_command(self, rule: str, task_id: str = "") -> bool:
         try:
             canonical = command_rule(*parse_command_rule(rule))
         except ValueError:
             canonical = rule.strip()  # unparseable → only matches if literally stored
         with self._mutate():
-            if canonical in self._commands:
-                self._commands.discard(canonical)
+            rules = self._task_commands.get(task_id, set()) if task_id else self._commands
+            if canonical in rules:
+                rules.discard(canonical)
                 self._save()
                 return True
             return False
 
-    def granted_commands(self) -> list[str]:
+    def granted_commands(self, task_id: str = "") -> list[str]:
+        """Global rules, or (when ``task_id`` is given) ONLY that task's own rules —
+        never a union of the two, so Settings can render each scope separately."""
         self._refresh()
+        if task_id:
+            return sorted(self._task_commands.get(task_id, ()))
         return sorted(self._commands)
+
+    def drop_task(self, task_id: str) -> None:
+        """Discard a task's entire rule set (called when the task itself is
+        deleted — its grants would otherwise be an orphaned, unreachable JSON
+        entry)."""
+        with self._mutate():
+            self._task_commands.pop(task_id, None)
+            self._save()
 
 
 class PermissionManager:
@@ -370,6 +419,7 @@ class PermissionManager:
         profile: str = "",
         chat_id: str = "",
         workspace_dir=None,
+        task_id: str = "",
     ) -> None:
         from assistant.folders import FolderStore
 
@@ -379,6 +429,10 @@ class PermissionManager:
         self.sandbox = sandbox
         self.profile = profile
         self.chat_id = (chat_id or "").strip()
+        # Bound when this turn is a task run — command grants this turn mints via
+        # "always allow" persist task-scoped (see check_command) instead of global,
+        # so approvals from unattended runs don't leak into every other chat.
+        self.task_id = (task_id or "").strip()
         # The profile's own Files space (CONTEXT.md "Files"): always read+write,
         # no Grant needed — Folders govern only paths outside the Root.
         self.workspace_dir = _norm(workspace_dir) if workspace_dir else None
@@ -461,7 +515,8 @@ class PermissionManager:
         prefix = shell_prefix(command) if command else None
 
         # Persisted grant wins first — an earlier "always allow" means no prompt.
-        if self.store.is_command_allowed(tool_name, command):
+        # Global first, task-scoped second (is_command_allowed checks both).
+        if self.store.is_command_allowed(tool_name, command, self.task_id):
             return True
 
         # The rule string is our turn-cache key (see __init__): sticky even when the
@@ -512,8 +567,9 @@ class PermissionManager:
 
         if always_label is not None and answer == always_label:
             # Persist (mtime-refresh means live turns see it on their next query) AND
-            # cache for this turn (covers the ephemeral-store case).
-            self.store.grant_command(rule)
+            # cache for this turn (covers the ephemeral-store case). task_id="" mints
+            # globally, as before; a task-run turn mints into that task's own scope.
+            self.store.grant_command(rule, self.task_id)
             self._cmd_allowed.add(rule)
             return True
         if answer == ALLOW_ONCE:

@@ -141,6 +141,11 @@ class Gateway:
         honor exactly the access the agent's own reads would (ADR 0006/0012)."""
         return self._folders
 
+    @property
+    def permissions(self):
+        """Install-wide PermissionStore — task routes/service read task-scoped rules."""
+        return self._permissions
+
     def usage_today(self) -> dict:
         """Today's token + estimated-cost totals (for the cost & activity HUD)."""
         return self._usage.today()
@@ -380,6 +385,7 @@ class Gateway:
         surface: str = "",
         on_event=None,
         llm_config_id: str | None = None,
+        task_id: str | None = None,
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -396,7 +402,9 @@ class Gateway:
         them with the same reducer the text path uses. Conversation/audio events are
         omitted (voice renders those itself). `llm_config_id` pins the turn to a
         task's chosen model (a cached per-config agent) instead of the profile
-        default.
+        default. `task_id`, when this turn is a task run, scopes any command grant
+        the turn mints via "always allow" to that task (survives its future runs)
+        instead of persisting it globally.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -407,7 +415,7 @@ class Gateway:
         await self._ensure_subscription_fresh()
         agent = self._agent_for(llm_config_id)
 
-        extra = self._ask_kwargs(asker, chat_id)
+        extra = self._ask_kwargs(asker, chat_id, task_id or "")
         msg = [text, *(attachments or [])]
 
         async with self._chat_lock(chat_id):
@@ -924,8 +932,10 @@ class Gateway:
             log_suppressed("onboarding", exc)
             # Onboarding is best-effort; never block the actual message.
 
-    def _ask_kwargs(self, asker, chat_id: str = "") -> dict:
-        """Per-turn hitl_hook + dependencies bound to this request's asker and chat."""
+    def _ask_kwargs(self, asker, chat_id: str = "", task_id: str = "") -> dict:
+        """Per-turn hitl_hook + dependencies bound to this request's asker, chat, and
+        (for a task run) task — so an "always allow" this turn mints persists
+        task-scoped rather than globally (see PermissionManager.task_id)."""
         from assistant.permissions import PermissionManager
 
         deps: dict = {
@@ -937,6 +947,7 @@ class Gateway:
                 profile=self._config.data_dir.name,
                 chat_id=chat_id,
                 workspace_dir=self._config.workspace_dir,
+                task_id=task_id,
             )
         }
         out: dict = {"dependencies": deps}

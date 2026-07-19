@@ -595,3 +595,57 @@ async def test_workspace_is_implicit_read_write(tmp_path):
     assert await m.check(ws / "notes.md") is True
     assert await m.check(ws / "sub" / "notes.md", write=True) is True
     assert asker.asked == 0
+
+
+# --- task-scoped command rules (Task 4: task-run always-allow persists per task) ---
+
+
+def test_task_scoped_rules_isolated(tmp_path):
+    """Task-scoped grants live alongside (not instead of) the global set: a task's
+    rule gates only its own turns, a global rule still applies inside a task turn,
+    and drop_task wipes exactly that task's rules."""
+    s = PermissionStore(path=tmp_path / "perm.json")
+    s.grant_command("run_shell_command(git *)", task_id="task-1")
+    assert s.is_command_allowed("run_shell_command", "git status", task_id="task-1")
+    assert not s.is_command_allowed("run_shell_command", "git status")  # not global
+    assert not s.is_command_allowed("run_shell_command", "git status", task_id="task-2")
+    assert s.granted_commands(task_id="task-1") == ["run_shell_command(git *)"]
+    assert s.granted_commands() == []  # global list untouched
+
+    # global rule still applies inside a task turn
+    s.grant_command("run_shell_command(ls *)")
+    assert s.is_command_allowed("run_shell_command", "ls -la", task_id="task-1")
+
+    # revoke + drop
+    assert s.revoke_command("run_shell_command(git *)", task_id="task-1")
+    s.grant_command("run_shell_command(git *)", task_id="task-1")
+    s.drop_task("task-1")
+    assert s.granted_commands(task_id="task-1") == []
+
+
+def test_task_scope_keeps_blanket_refusal(tmp_path):
+    """The _NO_BLANKET refusal (never mint a bare shell/code-tool rule) applies to
+    task-scoped grants too — a task turn must not be able to mint "allow anything"."""
+    import pytest
+
+    s = PermissionStore(path=tmp_path / "perm.json")
+    with pytest.raises(ValueError):
+        s.grant_command("run_shell_command", task_id="task-1")  # bare shell rule stays unmintable
+
+
+async def test_manager_mints_task_scoped_on_always(tmp_path):
+    """A manager bound to a task_id mints its "always allow" grant into that task's
+    scope, not the global one — so it persists across that task's future runs but
+    never leaks into other chats/tasks."""
+    from assistant.hitl.base import Question
+
+    store = PermissionStore(path=tmp_path / "perm.json")
+
+    class _Asker:
+        async def ask(self, q: Question, timeout=None):
+            return next(o for o in q.options if o.startswith("Always"))  # always_allow_command_label
+
+    pm = PermissionManager(store, _Asker(), task_id="task-9")
+    assert await pm.check_command("run_shell_command", '{"command": "git push"}') is True
+    assert store.is_command_allowed("run_shell_command", "git push", task_id="task-9")
+    assert not store.is_command_allowed("run_shell_command", "git push")  # NOT global

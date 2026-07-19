@@ -13,11 +13,12 @@ from assistant.tasks.store import TaskStore
 
 
 class FakeGateway:
-    def __init__(self, reply="run reply", hang=False, folders=None):
+    def __init__(self, reply="run reply", hang=False, folders=None, permissions=None):
         self.sent, self.cancelled, self.deleted = [], [], []
         self._reply, self._hang = reply, hang
         self._gate = asyncio.Event()
         self.folders = folders  # None unless a workdir-grant test wires one in
+        self.permissions = permissions  # None unless a task-scoped-rules test wires one in
 
     async def send_message(self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw):
         self.sent.append({"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id})
@@ -186,6 +187,30 @@ async def test_delete_task_purges_runs_and_streams(tmp_path, monkeypatch):
     assert await svc.delete_task(t["id"]) is True
     assert gw.deleted == [f"task-run:{run.id}"]
     assert await svc.get_task(t["id"]) is None and await svc.get_run(run.id) is None
+
+
+async def test_delete_task_drops_task_scoped_permissions(tmp_path, monkeypatch):
+    """delete_task best-effort drops the deleted task's task-scoped command grants —
+    they'd otherwise be an orphaned, unreachable JSON entry (Task 4)."""
+    from assistant.permissions import PermissionStore
+
+    perms = PermissionStore(path=tmp_path / "perm.json")
+    gw = FakeGateway(permissions=perms)
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="D", prompt="p")
+    perms.grant_command("run_shell_command(git *)", task_id=t["id"])
+    assert perms.granted_commands(task_id=t["id"]) == ["run_shell_command(git *)"]
+
+    assert await svc.delete_task(t["id"]) is True
+    assert perms.granted_commands(task_id=t["id"]) == []
+
+
+async def test_delete_task_tolerates_gateway_without_permissions(tmp_path, monkeypatch):
+    """A gateway stub with no `.permissions` (plain FakeGateway, as most tests use)
+    must not break delete_task — dropping task rules is best-effort."""
+    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+    t = await svc.create_task(name="D2", prompt="p")
+    assert await svc.delete_task(t["id"]) is True
 
 
 async def test_list_tasks_carries_last_run_and_unread(tmp_path, monkeypatch):

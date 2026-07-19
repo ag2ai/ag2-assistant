@@ -286,6 +286,12 @@ class TaskService:
                 with contextlib.suppress(Exception):
                     await self._gateway.delete_chat(r.stream_id)
         await self._store.delete_task(task_id)
+        if self._gateway is not None:
+            # Best-effort: a stub gateway in unit tests may have no `.permissions`
+            # at all, and a real deleted task's grants are gone either way once the
+            # task itself no longer exists.
+            with contextlib.suppress(Exception):
+                self._gateway.permissions.drop_task(task_id)
         return True
 
     async def list_tasks(self) -> list[dict]:
@@ -424,6 +430,7 @@ class TaskService:
                 asker=asker,
                 surface=_run_surface(task, prior),
                 llm_config_id=task.model,
+                task_id=task.id,
             )
         except asyncio.CancelledError:
             await self._finish(run_id, RunStatus.CANCELLED)
