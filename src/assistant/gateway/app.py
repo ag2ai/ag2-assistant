@@ -182,10 +182,14 @@ def _unquote_etag(value: str | None) -> str | None:
 
 
 class TaskCreate(BaseModel):
-    name: str
+    # Empty name triggers the service's cheap-model auto-naming from the prompt.
+    name: str = ""
     prompt: str
     model: str | None = None
     schedule: dict | None = None
+    description: str = ""
+    workdir: str | None = None
+    workdir_access: str | None = None
 
 
 class TaskPatch(BaseModel):
@@ -194,6 +198,9 @@ class TaskPatch(BaseModel):
     model: str | None = None  # "" clears back to the profile default
     schedule: dict | None = None
     paused: bool | None = None
+    description: str | None = None
+    workdir: str | None = None  # "" detaches the folder (service nulls access too)
+    workdir_access: str | None = None
 
 
 class AnswerRequest(BaseModel):
@@ -1731,10 +1738,29 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @p.post("/tasks")
     async def create_task(req: TaskCreate, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Create a task; 422 with {error} on a bad schedule/model."""
+        """Create a task; empty ``name`` auto-generates one from the prompt
+        (service-side). 422 with {error} on a bad schedule/model/workdir_access.
+
+        ``workdir_access`` is validated here directly, same as the PATCH route:
+        the service only normalises/validates it when ``workdir`` is also set, so
+        a bad value sent without a workdir would otherwise be silently discarded
+        to ``None`` by the invariant instead of raising."""
+        from assistant.tasks.model import normalize_workdir_access
+
+        if req.workdir_access is not None:
+            try:
+                normalize_workdir_access(req.workdir_access)
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=422)
         try:
             task = await runtime.tasks.create_task(
-                name=req.name, prompt=req.prompt, model=req.model, schedule=req.schedule
+                name=req.name,
+                prompt=req.prompt,
+                model=req.model,
+                schedule=req.schedule,
+                description=req.description,
+                workdir=req.workdir,
+                workdir_access=req.workdir_access,
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
@@ -1756,10 +1782,23 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def update_task(
         task_id: str, req: TaskPatch, runtime: ProfileRuntime = Depends(get_runtime)
     ):
-        """Edit any subset of task fields; model='' clears to the profile default."""
+        """Edit any subset of task fields; model='' clears to the profile default,
+        workdir='' detaches the folder (the service then nulls workdir_access by
+        its own invariant). workdir_access is validated here directly — the
+        service only re-derives it when a workdir ends up attached, so a bad
+        value sent without a workdir would otherwise pass through unchecked."""
+        from assistant.tasks.model import normalize_workdir_access
+
+        if req.workdir_access is not None:
+            try:
+                normalize_workdir_access(req.workdir_access)
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=422)
         patch = {k: v for k, v in req.model_dump().items() if v is not None}
         if req.model == "":  # explicit clear back to the profile default
             patch["model"] = None
+        if req.workdir == "":  # explicit clear: detach the folder
+            patch["workdir"] = None
         if not patch and req.model != "":
             return JSONResponse({"error": "empty patch"}, status_code=400)
         try:
@@ -1792,6 +1831,30 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if task is None:
             return Response(status_code=404)
         return {"runs": task["runs"]}
+
+    @p.get("/tasks/{task_id}/permissions")
+    async def task_permissions(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """This task's own granted command rules — never the global set (mirrors
+        ``GET /api/permissions``, scoped via ``task_id``). 404 on an unknown task."""
+        if await runtime.tasks.get_task(task_id) is None:
+            return Response(status_code=404)
+        return {"rules": runtime.gateway.permissions.granted_commands(task_id=task_id)}
+
+    @p.delete("/tasks/{task_id}/permissions")
+    async def revoke_task_permission(
+        task_id: str,
+        req: PermissionCommandDeleteRequest,
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
+        """Revoke one of this task's own command rules by its canonical string
+        (mirrors ``DELETE /api/permissions/commands``, scoped via ``task_id``).
+        404 on an unknown task; an absent/already-revoked rule is a plain
+        ``{"ok": false}`` — the task-scoped set is small enough that a client
+        double-revoking isn't an error worth a 404."""
+        if await runtime.tasks.get_task(task_id) is None:
+            return Response(status_code=404)
+        ok = runtime.gateway.permissions.revoke_command(req.rule, task_id=task_id)
+        return {"ok": ok}
 
     @p.get("/runs/{run_id}")
     async def get_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):

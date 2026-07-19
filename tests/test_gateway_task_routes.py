@@ -115,3 +115,102 @@ def test_run_stop_and_seen_http_wiring(monkeypatch):
 
         seen = client.post(api(pid, f"/runs/{run_id}/seen"))
         assert seen.status_code == 200 and seen.json()["ok"] is True
+
+
+# ---- description/workdir fields + per-task permission routes ----
+
+
+def _gateway(client, pid):
+    """The live Gateway backing a booted profile (its ``.permissions`` store is what
+    the task-scoped permission routes read/write) — reached the same way the
+    ``get_runtime`` dependency does, via ``app.state.profiles``."""
+    return client.app.state.profiles.get(pid).gateway
+
+
+def test_create_task_autoname_and_new_fields(monkeypatch, tmp_path):
+    from assistant.gateway import tasks_service as tasks_service_mod
+
+    async def fake_meta(config, prompt, agent_factory=None):
+        return "Auto name", "Auto description."
+
+    monkeypatch.setattr(tasks_service_mod, "suggest_task_meta", fake_meta)
+    client, pid = _client(monkeypatch)
+    with client:
+        wd = tmp_path / "d"
+        wd.mkdir()
+        r = client.post(
+            api(pid, "/tasks"),
+            json={
+                "name": "",
+                "prompt": "collect news",
+                "description": "Daily news roundup",
+                "workdir": str(wd),
+                "workdir_access": "read_write",
+            },
+        )
+        assert r.status_code == 200, r.text
+        t = r.json()["task"]
+        assert t["name"]  # generated (stubbed suggest_task_meta), never empty
+        assert t["description"] == "Daily news roundup"
+        assert t["workdir"] == str(wd) and t["workdir_access"] == "read_write"
+
+
+def test_create_task_bad_workdir_access_without_workdir_is_422(monkeypatch):
+    """A bad workdir_access must 422 even with no workdir attached — the service
+    alone would silently discard it to None via the invariant instead of raising,
+    so the route validates it directly (same fix as the PATCH route)."""
+    client, pid = _client(monkeypatch)
+    with client:
+        r = client.post(
+            api(pid, "/tasks"), json={"name": "A", "prompt": "p", "workdir_access": "bogus"}
+        )
+        assert r.status_code == 422, r.text
+        assert "error" in r.json()
+
+
+def test_patch_workdir_clear_and_bad_access(monkeypatch):
+    client, pid = _client(monkeypatch)
+    with client:
+        created = client.post(api(pid, "/tasks"), json={"name": "A", "prompt": "p"}).json()["task"]
+        tid = created["id"]
+
+        bad = client.patch(api(pid, f"/tasks/{tid}"), json={"workdir_access": "rw"})
+        assert bad.status_code == 422, bad.text
+
+        # "" is the sentinel that detaches the folder — the invariant (no folder ->
+        # no access mode) must hold on both fields after the clear.
+        r2 = client.patch(api(pid, f"/tasks/{tid}"), json={"workdir": ""})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["task"]["workdir"] is None
+        assert r2.json()["task"]["workdir_access"] is None
+
+
+def test_task_permissions_list_and_revoke(monkeypatch):
+    client, pid = _client(monkeypatch)
+    with client:
+        created = client.post(api(pid, "/tasks"), json={"name": "A", "prompt": "p"}).json()["task"]
+        tid = created["id"]
+
+        _gateway(client, pid).permissions.grant_command("run_shell(git *)", task_id=tid)
+        got = client.get(api(pid, f"/tasks/{tid}/permissions"))
+        assert got.status_code == 200, got.text
+        assert got.json()["rules"] == ["run_shell(git *)"]
+
+        ok = client.request(
+            "DELETE", api(pid, f"/tasks/{tid}/permissions"), json={"rule": "run_shell(git *)"}
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["ok"] is True
+        assert client.get(api(pid, f"/tasks/{tid}/permissions")).json()["rules"] == []
+
+
+def test_task_permissions_404_for_unknown_task(monkeypatch):
+    client, pid = _client(monkeypatch)
+    with client:
+        assert client.get(api(pid, "/tasks/task-missing/permissions")).status_code == 404
+        r = client.request(
+            "DELETE",
+            api(pid, "/tasks/task-missing/permissions"),
+            json={"rule": "run_shell(git *)"},
+        )
+        assert r.status_code == 404
