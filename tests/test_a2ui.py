@@ -1,3 +1,6 @@
+from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
+from ag2.a2ui.parser import A2UIResponseParser
+
 from assistant.a2ui import (
     CATALOG_ID,
     assistant_catalog,
@@ -174,8 +177,6 @@ _BARE_ARRAY = (
 
 
 def test_wrap_bare_a2ui_makes_untagged_array_parseable():
-    from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
-    from ag2.a2ui.parser import A2UIResponseParser
 
     text = "Here are the quotes. " + _BARE_ARRAY
     # Baseline: the raw response is NOT recognised by the parser (the live bug).

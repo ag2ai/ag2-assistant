@@ -11,6 +11,7 @@ from assistant.agent import (
     universal_turn_prompt,
 )
 from assistant.config import Config
+from assistant.memory import write_universal
 from assistant.settings import Settings
 
 
@@ -81,7 +82,6 @@ def test_universal_turn_prompt_omits_focuses_when_unset(tmp_path):
 
 
 async def _seed_universal(root_dir, text):
-    from assistant.memory import write_universal
 
     await write_universal(text, root_dir / "user.db")
 

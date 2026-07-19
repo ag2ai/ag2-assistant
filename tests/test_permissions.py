@@ -1,6 +1,13 @@
 """Tests for the folder-permission system and the permission-gated file reader."""
 
+import json
+import threading
+
+import pytest
+from ag2 import ToolResult
+
 from assistant.folders import READ, READ_WRITE, FolderStore
+from assistant.hitl.base import Question
 from assistant.permissions import (
     ALLOW_ONCE,
     DENY,
@@ -8,11 +15,13 @@ from assistant.permissions import (
     GRANT_PROFILE,
     PermissionManager,
     PermissionStore,
+    _command_detail,
     always_allow_command_label,
     command_rule,
     parse_command_rule,
     shell_prefix,
 )
+from assistant.tools.files import read_file_impl
 
 
 class FakeAsker:
@@ -66,7 +75,6 @@ async def test_code_tools_offer_no_persistent_grant(tmp_path):
     """Host code execution (run_code / run_code_local) has arbitrary-shell authority,
     so the prompt never offers a persistent grant: Allow once / Deny only, and
     nothing is written to the store."""
-    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -85,7 +93,6 @@ async def test_code_tools_offer_no_persistent_grant(tmp_path):
 
 async def test_command_prompt_offers_dynamic_label_not_folder(tmp_path):
     """The action-tool prompt offers the dynamic tool label, not folder wording."""
-    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -102,7 +109,6 @@ async def test_command_prompt_offers_dynamic_label_not_folder(tmp_path):
 
 async def test_command_prompt_states_where_it_runs(tmp_path):
     """The prompt tells the user whether a command runs on the host or sandboxed."""
-    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -144,7 +150,6 @@ def _rf_manager(tmp_path, answer=None):
 
 
 async def test_read_file_text_with_permission(tmp_path):
-    from assistant.tools.files import read_file_impl
 
     f = tmp_path / "note.txt"
     f.write_text("hello world")
@@ -153,7 +158,6 @@ async def test_read_file_text_with_permission(tmp_path):
 
 
 async def test_read_file_denied(tmp_path):
-    from assistant.tools.files import read_file_impl
 
     f = tmp_path / "note.txt"
     f.write_text("secret")
@@ -163,16 +167,12 @@ async def test_read_file_denied(tmp_path):
 
 
 async def test_read_file_missing(tmp_path):
-    from assistant.tools.files import read_file_impl
 
     result = await read_file_impl(str(tmp_path / "nope.txt"), _rf_manager(tmp_path))
     assert "not found" in result.lower()
 
 
 async def test_read_file_pdf_returns_document(tmp_path):
-    from ag2 import ToolResult
-
-    from assistant.tools.files import read_file_impl
 
     pdf = tmp_path / "doc.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
@@ -184,7 +184,6 @@ async def test_read_file_pdf_returns_document(tmp_path):
 
 
 def test_command_detail_extracts_code():
-    from assistant.permissions import _command_detail
 
     # run_code-style args: show the code, not the wrapped JSON
     assert _command_detail('{"code": "import os\\nprint(1)"}') == "import os\nprint(1)"
@@ -215,7 +214,6 @@ def test_rule_parse_build_inverses():
 
 
 def test_rule_parse_rejects_garbage():
-    import pytest
 
     for bad in ("", "   ", "has spaces", "run_shell_command()", "run_shell_command( *)", "a(b"):
         with pytest.raises(ValueError):
@@ -269,7 +267,6 @@ def test_store_bare_tool_matches_commandless_calls_only(tmp_path):
 
 
 def test_store_bare_shell_rule_is_dead_even_if_hand_edited(tmp_path):
-    import json
 
     # Simulate a hand-edited permissions.json containing a blanket shell grant —
     # the matcher must never honour it for actual shell commands.
@@ -281,7 +278,6 @@ def test_store_bare_shell_rule_is_dead_even_if_hand_edited(tmp_path):
 
 
 def test_store_grant_command_rejects_bare_shell_rules(tmp_path):
-    import pytest
 
     store = PermissionStore(path=tmp_path / "p.json")
     with pytest.raises(ValueError):
@@ -297,7 +293,6 @@ def test_store_grant_command_rejects_bare_shell_rules(tmp_path):
 def test_store_grant_command_rejects_bare_code_rules(tmp_path):
     """Host code tools execute arbitrary code — same authority class as blanket
     shell, so a persisted whole-tool grant is refused at mint time."""
-    import pytest
 
     store = PermissionStore(path=tmp_path / "p.json")
     for tool in ("run_code", "run_code_local"):
@@ -307,7 +302,6 @@ def test_store_grant_command_rejects_bare_code_rules(tmp_path):
 
 
 def test_store_bare_code_rule_is_dead_even_if_hand_edited(tmp_path):
-    import json
 
     # A hand-edited blanket code grant must never pre-approve code runs.
     path = tmp_path / "p.json"
@@ -322,7 +316,6 @@ def test_store_concurrent_writers_lose_nothing(tmp_path):
     mutations. The mutation lock (flock, refresh-under-lock) makes each read-modify-
     write atomic; flock serialises separate fds even within one process, so two
     threads with independent instances model gateway-vs-CLI faithfully."""
-    import threading
 
     path = tmp_path / "p.json"
     a, b = PermissionStore(path=path), PermissionStore(path=path)
@@ -377,7 +370,6 @@ def test_store_command_mtime_freshness(tmp_path):
 async def test_manager_shell_prompt_persists_prefix_rule(tmp_path):
     """A shell command with a clean first token offers a prefix grant that persists
     as `run_shell_command(git *)` and gates by prefix afterwards."""
-    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -398,7 +390,6 @@ async def test_manager_shell_prompt_persists_prefix_rule(tmp_path):
 async def test_manager_compound_command_offers_allow_once_only(tmp_path):
     """A compound shell command can't be reduced to a prefix → allow-once/deny only,
     nothing persistable is offered."""
-    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -426,7 +417,6 @@ async def test_manager_shell_tool_without_command_offers_no_persist(tmp_path):
     """A shell tool whose args carry no command (degenerate call) must not offer a
     whole-tool 'always allow' — a bare shell grant is never mintable, so offering
     one would crash on grant. Allow once / Deny only."""
-    from assistant.hitl.base import Question
 
     seen = {}
 
@@ -445,7 +435,6 @@ async def test_manager_shell_tool_without_command_offers_no_persist(tmp_path):
 async def test_manager_gmail_send_takes_whole_tool_path(tmp_path):
     """An action tool (no `command`/`code` key → whole-tool) offers the tool-named
     label and persists a bare-tool rule."""
-    from assistant.hitl.base import Question
 
     seen = {}
 

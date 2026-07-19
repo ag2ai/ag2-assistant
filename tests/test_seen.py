@@ -4,7 +4,9 @@ the summary."""
 
 import pytest
 
-from assistant.tasks.model import Task
+from assistant.config import Config
+from assistant.gateway.tasks_service import TaskService
+from assistant.tasks.model import Task, TaskStatus
 
 
 def test_task_seen_at_back_compat():
@@ -15,9 +17,6 @@ def test_task_seen_at_back_compat():
 
 @pytest.mark.asyncio
 async def test_mark_seen_only_after_finished_idempotent_and_summarised(tmp_path):
-    from assistant.config import Config
-    from assistant.gateway.tasks_service import TaskService
-    from assistant.tasks.model import TaskStatus
 
     svc = TaskService(Config(data_dir=tmp_path))
     await svc.start()

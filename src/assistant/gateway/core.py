@@ -21,11 +21,47 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
 
+from ag2.a2ui import A2UIMessageEvent
+from ag2.context import ConversationContext
+from ag2.events import (
+    ModelMessageChunk,
+    ModelRequest,
+    ModelResponse,
+    UsageEvent,
+)
+from ag2.knowledge import SqliteKnowledgeStore
+from ag2.knowledge.constants import LOG_PREFIX
+from ag2.knowledge.log import EventLogWriter
+from ag2.stream import MemoryStream
+
+from assistant import codex_auth, onboarding, secrets
+from assistant import title as title_mod
+from assistant.a2ui import (
+    durable_surfaces_from_messages,
+    tolerant_a2ui_middleware,
+)
+from assistant.a2ui import (
+    runtime as a2ui_runtime_factory,
+)
 from assistant.agent import create_agent, universal_turn_prompt
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled
+from assistant.folders import FolderStore
 from assistant.gateway.repair import repair_stream_history, wait_reply
+from assistant.gateway.tasks_service import TaskService
+from assistant.gateway.wire import is_binary_event
+from assistant.hitl import Asker, build_hitl_hook
+from assistant.observability import (
+    capture_failure,
+    log_suppressed,
+    setup_logging,
+)
+from assistant.permissions import PermissionManager, PermissionStore
+from assistant.settings import profile_settings
 from assistant.storage import SerialStore
+from assistant.system_tools import build_system_tools, format_task
+from assistant.usage import UsageLedger
+from assistant.voice import build_voice_agent
 
 _TRANSCRIPT_PREFIX = "/transcript/"
 
@@ -34,8 +70,6 @@ def _conversation_events() -> tuple:
     """Event types a voice client renders itself as spoken transcript (so they are
     NOT re-forwarded as structured events during voice delegation). Imported lazily
     so a missing optional event type can't break module import."""
-    from ag2.events import ModelMessageChunk, ModelRequest, ModelResponse
-
     return (ModelRequest, ModelMessageChunk, ModelResponse)
 
 
@@ -99,8 +133,6 @@ class Gateway:
         self._locks: dict[str, asyncio.Lock] = {}
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
-        from assistant.usage import UsageLedger
-
         # Per-profile daily token/cost tally for the activity HUD.
         self._usage = UsageLedger(self._config.data_dir / "usage.json")
 
@@ -126,9 +158,6 @@ class Gateway:
         everything) + compaction. Used by start() and reload()."""
         extra_tools = None
         if self._tasks is not None:
-            from assistant.settings import profile_settings
-            from assistant.system_tools import build_system_tools
-
             # create/schedule come from the system tools, so we don't also wire
             # start_task/schedule_task here (that duplicated names). `platform` lets
             # those tools note (on channels) that follow-up questions go to the web app.
@@ -156,8 +185,6 @@ class Gateway:
         cfg = self._config
         if cfg.llm.provider.lower() != "openai" or cfg.llm.auth_mode != "subscription":
             return
-        from assistant import codex_auth
-
         try:
             creds = await asyncio.to_thread(codex_auth.ensure_fresh)
         except codex_auth.CodexAuthError:
@@ -169,10 +196,6 @@ class Gateway:
 
     async def start(self) -> None:
         """Create the shared agent and (optionally) the on-disk chat store."""
-        from assistant import secrets
-        from assistant.observability import setup_logging
-        from assistant.permissions import PermissionStore
-
         secrets.migrate()  # one-shot legacy -> Secret-entity upgrade (idempotent)
         secrets.load_into_env()  # provider keys into env before any agent is built
         setup_logging(self._config)  # rolling log + failure capture for debugging
@@ -182,16 +205,11 @@ class Gateway:
         # grants are global, not per-profile.
         self._permissions = PermissionStore(self._config.root_dir / "permissions.json")
 
-        from assistant.folders import FolderStore
-
         # Install-wide Folder registry (ADR 0006); Grants are per-profile/per-chat,
         # resolved at check time with this profile's id + the turn's chat_id.
         self._folders = FolderStore(self._config.root_dir / "folders.json")
 
         if self._persist:
-            from ag2.knowledge import SqliteKnowledgeStore
-            from ag2.knowledge.log import EventLogWriter
-
             self._config.data_dir.mkdir(parents=True, exist_ok=True)
             self._event_store = SerialStore(
                 SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
@@ -207,8 +225,6 @@ class Gateway:
         the agent). The task service rebuilds its planner/executor too, so scheduled
         work doesn't keep using stale keys. Voice needs no reload (built per voice
         session from env)."""
-        from assistant import secrets
-
         secrets.load_into_env()
         # Re-resolve via the injected factory (a profile runtime's factory re-reads
         # the profile's registry entry + settings; the default is load_config).
@@ -276,29 +292,21 @@ class Gateway:
         """Emit an event onto a chat's stream from outside an agent turn (the
         pattern AG2's own SoundDeviceRecorder uses). It reaches any live bridge
         subscriber and is persisted so it survives reload. Best-effort."""
-        from ag2.context import ConversationContext
-
         stream = await self.stream_for(chat_id)
         try:
             await ConversationContext(stream=stream).send(event)
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("external stream event emit", exc, chat_id=chat_id)
             return
         if self._writer is not None:
             try:
                 await self._writer.persist(chat_id, list(await stream.history.get_events()))
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("external stream event persist", exc, chat_id=chat_id)
                 # Persistence is best-effort; the live event still went out.
 
     async def _get_stream(self, chat_id: str):
         """Return the chat's live Stream, hydrating from disk on first use."""
-        from ag2.stream import MemoryStream
-
         stream = self._streams.get(chat_id)
         if stream is None:
             stream = MemoryStream(id=chat_id)
@@ -309,8 +317,6 @@ class Gateway:
                     if events:
                         await stream.history.replace(events)
                 except Exception as exc:
-                    from assistant.observability import log_suppressed
-
                     log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
                     # A corrupt/absent log just starts a fresh stream.
                 self._loaded.add(chat_id)
@@ -364,8 +370,6 @@ class Gateway:
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             a2ui_runtime = None
             try:
-                from assistant.a2ui import runtime as a2ui_runtime_factory
-
                 a2ui_runtime = a2ui_runtime_factory()
                 prompt = [
                     *prompt,
@@ -373,12 +377,8 @@ class Gateway:
                     a2ui_runtime.capabilities_prompt(None),
                 ]
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("a2ui runtime setup", exc, chat_id=chat_id)
             if a2ui_runtime is not None:
-                from assistant.a2ui import tolerant_a2ui_middleware
-
                 # Append a fallback that recovers surfaces when the model omits the
                 # <a2ui-json> wrapper (fires only when the runtime's own extraction
                 # can't — the two are mutually exclusive per response).
@@ -433,8 +433,6 @@ class Gateway:
                         self._active.pop(chat_id, None)
             except Exception as exc:
                 # snapshot the error + the exact history shape that triggered it
-                from assistant.observability import capture_failure
-
                 await capture_failure(
                     self._config,
                     chat_id=chat_id,
@@ -455,8 +453,6 @@ class Gateway:
     def _watch_usage(self, stream):
         """Subscribe to this turn's UsageEvents; returns (sub_id, collected list).
         Finalized by _record_usage when the turn ends."""
-        from ag2.events import UsageEvent
-
         collected: list = []
 
         async def collect(event):  # event injected positionally by the stream
@@ -479,8 +475,6 @@ class Gateway:
             self._usage.record(self._config.llm.model, prompt, completion, total or None)
 
     def _watch_a2ui(self, stream):
-        from ag2.a2ui import A2UIMessageEvent
-
         collected: list = []
 
         async def collect(event):  # event injected positionally by the stream
@@ -498,11 +492,6 @@ class Gateway:
         _, messages = handle
         if not messages:
             return
-        from ag2.context import ConversationContext
-
-        from assistant.a2ui import durable_surfaces_from_messages
-        from assistant.observability import log_suppressed
-
         context = ConversationContext(stream=stream)
         for surface in durable_surfaces_from_messages(messages):
             try:
@@ -521,7 +510,6 @@ class Gateway:
         with the same reducer the text path uses — tool chips/cards, task cards,
         deliverables, inquiries all appear without per-field plumbing.
         """
-        from assistant.gateway.wire import is_binary_event
 
         async def report(event):  # event injected positionally by the stream
             if isinstance(event, _CONVERSATION_EVENTS) or is_binary_event(event):
@@ -529,8 +517,6 @@ class Gateway:
             try:
                 await on_event(event)
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("voice event forward", exc, event=type(event).__name__)
 
         sub_id = stream.subscribe(report)
@@ -563,10 +549,6 @@ class Gateway:
         agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
-        from assistant.settings import profile_settings
-        from assistant.system_tools import format_task
-        from assistant.voice import build_voice_agent
-
         task_context = ""
         if task_id:
             node = await self._tasks.get_task(task_id)
@@ -638,8 +620,6 @@ class Gateway:
         try:
             msgs = await self.transcript(chat_id)
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("recent transcript load", exc, chat_id=chat_id)
             return ""
         out = []
@@ -658,8 +638,6 @@ class Gateway:
             await self._writer.persist(chat_id, list(await stream.history.get_events()))
             await self._append_transcript(chat_id, user_text, reply_text)
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("turn persistence", exc, chat_id=chat_id)
             # Persistence is best-effort; never fail the user's turn.
 
@@ -690,8 +668,6 @@ class Gateway:
             }
             await self._event_store.write(path, json.dumps(doc))
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("transcript stub write", exc, chat_id=chat_id)
 
     async def _append_transcript(self, chat_id, user_text, reply_text) -> None:
@@ -701,8 +677,6 @@ class Gateway:
             try:
                 doc = json.loads(await self._event_store.read(path))
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("existing transcript read", exc, chat_id=chat_id)
         doc["chat_id"] = chat_id
         msgs = doc.get("messages", [])
@@ -727,13 +701,9 @@ class Gateway:
 
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
-        from assistant.title import generate_title
-
         try:
-            title = await generate_title(self._config, user_text, reply_text)
+            title = await title_mod.generate_title(self._config, user_text, reply_text)
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("chat title generation", exc, chat_id=chat_id)
             return
         if not title:
@@ -750,8 +720,6 @@ class Gateway:
                 doc["title"] = title
                 await self._event_store.write(path, json.dumps(doc))
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("chat title persist", exc, chat_id=chat_id)
 
     async def transcript(self, chat_id: str) -> list[dict]:
@@ -764,8 +732,6 @@ class Gateway:
         try:
             return json.loads(await self._event_store.read(path)).get("messages", [])
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("transcript read", exc, chat_id=chat_id)
             return []
 
@@ -780,8 +746,6 @@ class Gateway:
             try:
                 doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry))
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("chat listing transcript read", exc, entry=entry)
                 continue
             msgs = doc.get("messages", [])
@@ -811,8 +775,6 @@ class Gateway:
         """
         if self._event_store is None:
             return False
-        from ag2.knowledge.constants import LOG_PREFIX
-
         async with self._chat_lock(chat_id):
             removed = False
             paths = [self._transcript_path(chat_id), f"{LOG_PREFIX}{chat_id}.jsonl"]
@@ -864,22 +826,16 @@ class Gateway:
         if self._onboarding_done or not self._onboard or not self._memory or asker is None:
             return
         self._onboarding_done = True  # set first: never double-prompt, even on error
-        from assistant.onboarding import needs_onboarding, run_onboarding
-
         user_store_path = self._config.root_dir / "user.db"  # shared universal memory
         try:
-            if await needs_onboarding(user_store_path):
-                await run_onboarding(asker, user_store_path)
+            if await onboarding.needs_onboarding(user_store_path):
+                await onboarding.run_onboarding(asker, user_store_path)
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("onboarding", exc)
             # Onboarding is best-effort; never block the actual message.
 
     def _ask_kwargs(self, asker, chat_id: str = "") -> dict:
         """Per-turn hitl_hook + dependencies bound to this request's asker and chat."""
-        from assistant.permissions import PermissionManager
-
         deps: dict = {
             PermissionManager: PermissionManager(
                 self._permissions,
@@ -893,8 +849,6 @@ class Gateway:
         }
         out: dict = {"dependencies": deps}
         if asker is not None:
-            from assistant.hitl import Asker, build_hitl_hook
-
             # ask_user pulls the turn's asker from dependencies so the model can
             # pose option-carrying Questions (context.input is string-only).
             deps[Asker] = asker
@@ -936,8 +890,6 @@ def build_gateway(
     their ``reload()`` re-resolves config the same way — a profile runtime passes one
     that re-reads that profile's registry + settings (§4.1); when omitted both fall
     back to ``load_config`` (the profile-agnostic root config)."""
-    from assistant.gateway.tasks_service import TaskService
-
     config = config or load_config()
     tasks = TaskService(config=config, config_factory=config_factory)
     gateway = Gateway(

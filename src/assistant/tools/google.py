@@ -10,6 +10,9 @@ agent only gets these tools when the user is signed in (`ag2-assistant google lo
 
 import asyncio
 import base64
+import io
+import re
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from typing import Annotated
 
@@ -175,7 +178,6 @@ async def calendar_list_events(
     max_results: Annotated[int, Field(description="Max events.")] = _MAX,
 ) -> str:
     """List upcoming Google Calendar events in a time window."""
-    from datetime import datetime, timezone
 
     def _run():
         svc = _svc("calendar", "v3")
@@ -274,8 +276,6 @@ async def drive_search(
 
 def _extract_drive_id(value: str) -> str:
     """Accept a raw Drive file id or a Docs/Sheets/Drive URL and return the id."""
-    import re
-
     if "http" in value or "/" in value:
         m = re.search(r"/d/([a-zA-Z0-9_-]+)", value) or re.search(r"[?&]id=([a-zA-Z0-9_-]+)", value)
         if m:
@@ -291,9 +291,7 @@ _TEXTUAL_MIMES = frozenset(
 
 def _pdf_text(data: bytes) -> str | None:
     """Extract a PDF's text, or None if it has no extractable text (e.g. scanned)."""
-    import io
-
-    from pypdf import PdfReader
+    from pypdf import PdfReader  # local: optional [google] extra
 
     pages = [(page.extract_text() or "").strip() for page in PdfReader(io.BytesIO(data)).pages]
     return "\n\n".join(p for p in pages if p) or None

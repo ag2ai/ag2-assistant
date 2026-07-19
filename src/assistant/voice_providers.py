@@ -10,10 +10,15 @@ Each provider lazily imports its SDK inside its builders, so importing this modu
 provider you actually use needs its package installed and key set.
 """
 
+import asyncio
 import os
 import struct
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+
+from ag2.live import OpenAITTSConfig, gemini
+from ag2.live import openai as oai
+from openai import AsyncOpenAI
 
 from assistant.config import Config
 
@@ -132,8 +137,7 @@ def _gemini_key(api_key: str, config: Config) -> str:
 
 
 def _gemini_realtime(config: Config, voice: str, model: str, api_key: str = ""):
-    from ag2.live import gemini
-    from google.genai import Client
+    from google.genai import Client  # local: lazy Gemini GenAI SDK
 
     client = Client(api_key=_gemini_key(api_key, config))
     return gemini.RealTimeConfig(
@@ -145,9 +149,7 @@ def _gemini_realtime(config: Config, voice: str, model: str, api_key: str = ""):
 
 
 async def _gemini_preview(config: Config, voice: str, text: str, api_key: str = "") -> bytes:
-    import asyncio
-
-    from google.genai import Client, types
+    from google.genai import Client, types  # local: lazy Gemini GenAI SDK
 
     client = Client(api_key=_gemini_key(api_key, config))
 
@@ -172,9 +174,7 @@ async def _gemini_preview(config: Config, voice: str, text: str, api_key: str = 
 
 async def _gemini_check(api_key: str) -> None:
     """Cheap key probe: list models (one page). Raises on a bad/absent key."""
-    import asyncio
-
-    from google.genai import Client
+    from google.genai import Client  # local: lazy Gemini GenAI SDK
 
     client = Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
     await asyncio.to_thread(lambda: next(iter(client.models.list()), None))
@@ -205,9 +205,6 @@ def _openai_key(api_key: str = "") -> str:
 
 
 def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
-    from ag2.live import openai as oai
-    from openai import AsyncOpenAI
-
     # Minimal config matching AG2's known-working tool-calling example: model + voice,
     # everything else (24 kHz audio, semantic-VAD turn detection) left at the defaults.
     return oai.RealTimeConfig(
@@ -218,9 +215,6 @@ def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
 
 
 async def _openai_preview(config: Config, voice: str, text: str, api_key: str = "") -> bytes:
-    from ag2.live import OpenAITTSConfig
-    from openai import AsyncOpenAI
-
     tts = OpenAITTSConfig(
         _OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key(api_key))
     )
@@ -230,8 +224,6 @@ async def _openai_preview(config: Config, voice: str, text: str, api_key: str = 
 
 async def _openai_check(api_key: str) -> None:
     """Cheap key probe: list models. Raises on a bad/absent key."""
-    from openai import AsyncOpenAI
-
     await AsyncOpenAI(api_key=_openai_key(api_key)).models.list()
 
 

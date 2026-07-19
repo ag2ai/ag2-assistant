@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from assistant.gateway.core import Gateway
+    from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
 
 
 @dataclass

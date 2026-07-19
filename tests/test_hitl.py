@@ -4,8 +4,10 @@ import asyncio
 
 import httpx
 import pytest
+from ag2.events import HumanInputRequest
 
 from assistant.hitl import DesktopAsker, HitlServer, Question, build_hitl_hook
+from assistant.hitl.desktop import _render_body
 
 
 async def test_build_hitl_hook_adapts_asker():
@@ -15,14 +17,11 @@ async def test_build_hitl_hook_adapts_asker():
 
     hook = build_hitl_hook(FakeAsker())
 
-    from ag2.events import HumanInputRequest
-
     msg = await hook(HumanInputRequest(content="What is your name?"))
     assert msg.content == "answer-to:What is your name?"
 
 
 def test_render_body_options_and_freetext():
-    from assistant.hitl.desktop import _render_body
 
     opts = _render_body(
         Question("Allow access?", options=["Allow once", "Deny"], kind="permission")
@@ -38,7 +37,6 @@ def test_render_body_options_and_freetext():
 def test_render_body_onclick_is_escaped():
     """Regression: option buttons must not put raw double-quotes in onclick="…"
     (that collision broke the page JS so clicks never resolved)."""
-    from assistant.hitl.desktop import _render_body
 
     html_out = _render_body(Question("Pick", options=["Allow once"], kind="permission"))
     assert 'onclick="answer("' not in html_out  # raw quote collision = broken

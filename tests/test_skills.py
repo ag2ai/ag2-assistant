@@ -1,11 +1,16 @@
 """Tests for the skills plugin + registry install wiring."""
 
+import tempfile
+
 import pytest
+from ag2.tools.skills import LocalRuntime
 
 from assistant.agent import (
+    ask,
     build_skills_install_tools,
     build_skills_plugin,
     build_skills_runtime,
+    bundled_skills_dir,
     create_agent,
 )
 from assistant.config import Config
@@ -35,11 +40,6 @@ def test_skills_plugin_injects_catalog(tmp_path):
 
 def test_bundled_skills_are_discoverable(tmp_path):
     """First-party skills ship with AG2 Assistant and are available without installing."""
-    import tempfile
-
-    from ag2.tools.skills import LocalRuntime
-
-    from assistant.agent import bundled_skills_dir
 
     d = bundled_skills_dir()
     assert d.exists()
@@ -78,7 +78,6 @@ def test_agent_without_skills_builds(tmp_path):
 @pytest.mark.integration
 async def test_agent_can_search_skills(tmp_path):
     """Integration: the agent searches the registry for a skill (hits skills.sh)."""
-    from assistant.agent import ask
 
     config = Config()
     config.skills_dir = tmp_path / "skills"

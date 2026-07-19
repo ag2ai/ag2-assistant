@@ -5,6 +5,10 @@
   // switch is a full-page nav, so these reset with it — correct.
   let sessionExpanded = new Set()
   let sessionSelected = ''
+  // Which granted-Folder Directories the user has expanded (absolute paths, kept apart
+  // from the Files-space `sessionExpanded` so the Files-space reconcile never prunes
+  // them). Module-scoped to survive the tab-remount; re-scoped when the Thread changes.
+  let sessionFolderExpanded = new Set()
   // The last Reveal request (store `epoch`) this tab has acted on. Module-scoped so it
   // survives the remount on tab (re)activation — otherwise a lingering reveal request
   // would re-fire every time the Files tab is opened normally.
@@ -18,11 +22,14 @@
   // never a background poll. Supports upload (drag OS files or ⤒), New directory,
   // rename/move (inline editor or drag a row onto a Directory), and recursive
   // Directory delete — alongside the agent's own writes.
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { openAsideFile, closeAside, route } from '../router.js'
-  import { reveal } from '../store.js'
+  import { reveal, thread } from '../store.js'
+  import { foldersStore } from '../lib/folders.js'
   import { api } from '../transport/api.js'
   import { ancestorDirs } from '../lib/preview.js'
+  import { modeLabel, isFolderPath, folderAncestorDirs, folderAffordances } from '../lib/folderFiles.js'
+  import { clearsTreeTarget } from '../lib/filesTree.js'
   import Icon from './Icon.svelte'
 
   let files = $state([])          // flat [{path,name,dir,size,modified}]
@@ -74,7 +81,9 @@
   // `dirs` is the authoritative set of existing paths.
   function reconcile() {
     const live = new Set(dirs)
-    if (selected && !live.has(selected)) {
+    // A Folder (absolute) target lives in the Thread-scoped section, not `dirs`, so the
+    // Files-space reconcile leaves it alone (soft-degrades on its own if it vanishes).
+    if (selected && !isFolderPath(selected) && !live.has(selected)) {
       let p = selected
       do { p = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '' } while (p && !live.has(p))
       selected = p
@@ -153,6 +162,84 @@
     else openAsideFile(f.path)
   }
 
+  // ---- Granted Folders (a Thread-scoped section beneath the Files-space tree, ADR 0013) ----
+  // The Folder roots reachable in the OPEN THREAD (chat overrides/blocks applied), each
+  // lazy-expanded one Directory level at a time. `chatId` is the open Thread's id ('' when
+  // none is open → profile-level grants only); it re-scopes the whole section on a switch.
+  const chatId = $derived($thread.chat || '')
+  let folderRoots = $state([])                 // [{id,name,path,mode,exists}]
+  let folderErr = $state('')
+  let folderLevels = $state(new Map())         // abs dir path -> {dirs:[{name,path}], files:[{name,path,size}], err?}
+  let folderExpanded = $state(sessionFolderExpanded)
+  let folderLoading = $state(new Set())
+
+  async function loadFolderRoots() {
+    folderErr = ''
+    try {
+      const r = await api.folderRoots(chatId)
+      folderRoots = r.roots || []
+    } catch (e) {
+      folderErr = String(e.message || e)
+      folderRoots = []
+    }
+  }
+  // Fetch one Directory level; a moved/revoked path soft-degrades to an empty, flagged
+  // level (the rail's "not reachable" philosophy, ADR 0012) rather than throwing.
+  async function loadFolderLevel(path) {
+    folderLoading.add(path); folderLoading = new Set(folderLoading)
+    try {
+      const r = await api.folderList(path, chatId)
+      // `mode` is THIS level's own resolved Grant mode (server-side), so its rows'
+      // affordances track the Grant that actually covers this Directory, not just the
+      // hosting root's (ticket 04).
+      folderLevels.set(path, { dirs: r.dirs || [], files: r.files || [], mode: r.mode || '' })
+    } catch {
+      folderLevels.set(path, { dirs: [], files: [], err: true })
+    } finally {
+      folderLevels = new Map(folderLevels)
+      folderLoading.delete(path); folderLoading = new Set(folderLoading)
+    }
+  }
+  function toggleFolder(path) {
+    if (folderExpanded.has(path)) folderExpanded.delete(path)
+    else { folderExpanded.add(path); if (!folderLevels.has(path)) loadFolderLevel(path) }
+    folderExpanded = new Set(folderExpanded)
+    sessionFolderExpanded = folderExpanded
+  }
+  // Re-pull the Folder section after a Folder mutation (delete/rename/move/mkdir/upload,
+  // tickets 04–05): refresh the roots (a mode may have changed) and every currently-
+  // expanded level IN PLACE, so the mutated file appears/disappears without collapsing
+  // the tree. The Files-space `load()` never touches these levels, and vice-versa.
+  async function reloadFolders() {
+    await loadFolderRoots()
+    for (const p of folderExpanded) await loadFolderLevel(p)
+  }
+  // Re-scope on Thread switch: re-resolve the roots against the new chat's grants and
+  // drop every cached level (a root may have vanished or changed mode), then re-hydrate
+  // the still-expanded Directories. `chatId` is the SOLE tracked dependency — the rest is
+  // untracked so a plain expand/collapse (which mutates folderExpanded/folderLevels) never
+  // re-fires this and wipes the tree.
+  $effect(() => {
+    chatId
+    untrack(() => {
+      folderLevels = new Map()
+      loadFolderRoots()
+      for (const p of folderExpanded) loadFolderLevel(p)
+    })
+  })
+  // The Folder registry + Grants are shared (lib/folders.js): flipping a grant from the
+  // ChatFolders modal, Settings, or the composer pushes a new snapshot to `foldersStore`.
+  // Re-resolve THIS Thread's Folder section against it so the roots' mode badges and the
+  // rows' write affordances track the change live, not just on a Thread switch (ADR 0013).
+  // First run is skipped (onMount + the chatId effect already load); untrack inside so a
+  // plain expand/collapse never re-fires it. reloadFolders() never writes the store — no loop.
+  let foldersHydrated = false
+  $effect(() => {
+    $foldersStore
+    if (!foldersHydrated) { foldersHydrated = true; return }
+    untrack(() => reloadFolders())
+  })
+
   // ---- Reveal (locate the Active file where it lives) ----
   // React to a Reveal request from the preview header: pull a fresh listing (so a
   // just-written file is present), persistently expand the file's ancestor Directories
@@ -160,33 +247,108 @@
   // The `epoch` nonce re-fires this even for a repeat Reveal of the same path; the
   // module-scoped guard stops a lingering request re-firing on a plain tab (re)open.
   $effect(() => {
-    const { path, epoch } = $reveal
+    const { path, kind, epoch } = $reveal
     if (!path || epoch === handledRevealEpoch) return
     handledRevealEpoch = epoch
-    revealInTree(path)
+    revealInTree(path, kind)
   })
-  async function revealInTree(path) {
+  async function revealInTree(path, kind) {
+    // A Folder (absolute) file/directory lives in the Thread-scoped Folder section,
+    // not the Files-space tree; expand it there instead.
+    if (isFolderPath(path)) return revealInFolder(path, kind)
     for (const d of ancestorDirs(path)) expanded.add(d)   // from the path string; no listing needed
+    // A directory reveal also opens the directory itself, so its contents show and the
+    // row it stands on is the one we scroll to (a file's own row is the scroll target).
+    // Selecting it makes it the upload/mkdir target too, and highlights the row.
+    if (kind === 'directory') { expanded.add(path); selected = path }
     expanded = new Set(expanded)
     sessionExpanded = expanded
     await load()          // coalesces with onMount's load when the tab just opened
     await tick()          // let the expanded rows render before we measure
+    scrollRevealed(path, kind)
+  }
+  // Reveal a Folder file/directory: re-resolve this Thread's roots, expand the hosting
+  // root's ancestors down to it (each level pulled fresh), scroll it in; no host → no-op.
+  // A directory reveal also expands the directory itself so its listing is visible.
+  async function revealInFolder(path, kind) {
+    await loadFolderRoots()
+    let dirs = null
+    for (const r of folderRoots) {
+      if (!r.exists) continue
+      // A directory names itself; folderAncestorDirs stops at the parent, so append the
+      // directory so it (and, once loaded, its contents) is expanded too. The hosting
+      // root mentioned directly resolves to just [root].
+      if (r.path === path) { dirs = [r.path]; break }
+      const d = folderAncestorDirs(r.path, path)
+      if (d.length) { dirs = kind === 'directory' ? [...d, path] : d; break }
+    }
+    if (!dirs) return
+    for (const d of dirs) folderExpanded.add(d)
+    folderExpanded = new Set(folderExpanded)
+    sessionFolderExpanded = folderExpanded
+    if (kind === 'directory') selected = path   // highlight it + make it the mutation target
+    for (const d of dirs) await loadFolderLevel(d)
+    await tick()
+    scrollRevealed(path, kind)
+  }
+  // Scroll the revealed row into view: a file rides the active pill (.ftrow.active); a
+  // directory has no active state, so target its row by path.
+  function scrollRevealed(path, kind) {
+    if (kind === 'directory') {
+      for (const el of treeEl?.querySelectorAll('[data-path]') || [])
+        if (el.dataset.path === path) return void el.scrollIntoView({ block: 'nearest' })
+      return
+    }
     treeEl?.querySelector('.ftrow.active')?.scrollIntoView({ block: 'nearest' })
   }
 
   // ---- Selection (upload target) ----
   const selectDir = (path) => { selected = path }
-  const deselect = () => { selected = '' }
+  // The tree body clears the target only on a BACKGROUND click, not one that bubbled
+  // up from a row — one guard in the surface that owns the rule (mirroring
+  // onDocPointer's closest() menu check), so no row handler needs its own
+  // stopPropagation and a new row type can't silently reintroduce the wipe.
+  const onTreeBodyClick = (e) => { if (clearsTreeTarget(e.target)) selected = '' }
+
+  // Scroll a just-created Directory / just-uploaded file into view by its path
+  // (block:'nearest' → only when it's off-screen). Rows carry `data-path`; matched
+  // exactly, so odd characters in a path need no CSS.escape. No-op if the row isn't
+  // rendered (ancestor collapsed / not yet loaded).
+  function revealRow(path) {
+    for (const el of treeEl?.querySelectorAll('[data-path]') || [])
+      if (el.dataset.path === path) return void el.scrollIntoView({ block: 'nearest' })
+  }
 
   // ---- Row kebab menu (one at a time, fixed-positioned so the scroll can't clip) ----
   let menu = $state('')            // node path whose menu is open
-  let menuPos = $state({ x: 0, y: 0 })
+  let menuAnchor = $state(null)    // kebab rect the open menu is positioned against
   function toggleMenu(e, path) {
     e.stopPropagation()
     if (menu === path) { menu = ''; return }
     const r = e.currentTarget.getBoundingClientRect()
-    menuPos = { x: r.right, y: r.bottom + 4 }
+    menuAnchor = { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
     menu = path
+  }
+  // Place the menu against the kebab, then flip/clamp it so it never spills off a
+  // screen edge: right-aligned by default, opening upward when the bottom is tight.
+  function positionMenu(el, anchor) {
+    const m = 8  // keep this much gap from every viewport edge
+    const place = (a) => {
+      if (!a) return
+      const { width: w, height: h } = el.getBoundingClientRect()
+      const vw = window.innerWidth, vh = window.innerHeight
+      let left = a.right - w                       // right edge aligns with the kebab
+      if (left < m) left = a.left                  // too tight on the left → open rightward
+      left = Math.max(m, Math.min(left, vw - w - m))
+      let top = a.bottom + 4                        // open below by default
+      if (top + h > vh - m && a.top - 4 - h >= m) top = a.top - 4 - h  // flip above
+      top = Math.max(m, Math.min(top, vh - h - m))
+      el.style.left = `${left}px`
+      el.style.top = `${top}px`
+      el.style.transform = 'none'
+    }
+    place(anchor)
+    return { update: place }
   }
   function onDocPointer(e) {
     if (menu && !e.target.closest('.ftmenu') && !e.target.closest('.ftkebab')) menu = ''
@@ -209,8 +371,9 @@
   async function del(path) {
     busy = path
     try {
-      await api.deleteFile(path)
-      await load()
+      await api.deleteFile(path, chatId)
+      if (isFolderPath(path)) await reloadFolders()
+      else await load()
     } catch (e) { err = String(e.message || e) }
     busy = ''
     confirming = ''
@@ -240,13 +403,14 @@
   async function doMove(from, to) {
     busy = from
     try {
-      await api.moveFile(from, to)
+      await api.moveFile(from, to, chatId)
       // Follow the Active preview to its new path: renaming/moving the file the rail
       // shows must retarget it (title + URL), not strand it on the vanished path.
       // A moved Directory carries its active descendant along by prefix.
       if (activePath === from) openAsideFile(to)
       else if (activePath && activePath.startsWith(from + '/')) openAsideFile(to + activePath.slice(from.length))
-      await load()
+      if (isFolderPath(from)) await reloadFolders()
+      else await load()
     } catch (e) { err = String(e.message || e) }   // 409 clash surfaces its message
     busy = ''
   }
@@ -264,9 +428,19 @@
     const path = selected ? selected + '/' + t : t
     busy = path
     try {
-      await api.mkdir(path)
-      if (selected) { expanded.add(selected); expanded = new Set(expanded) }  // reveal the new child
-      await load()
+      await api.mkdir(path, chatId)
+      if (isFolderPath(path)) {
+        folderExpanded.add(selected); folderExpanded = new Set(folderExpanded)  // reveal the new child
+        await reloadFolders()
+      } else {
+        if (selected) { expanded.add(selected); expanded = new Set(expanded) }  // reveal the new child
+        await load()
+      }
+      // Make the new Directory the next target and bring it into view, so an
+      // immediate upload / nested mkdir lands inside it without a second click.
+      selected = path
+      await tick()
+      revealRow(path)
     } catch (e) { err = String(e.message || e) }
     busy = ''
   }
@@ -277,8 +451,29 @@
     if (!fileList || !fileList.length) return
     busy = 'upload'
     try {
-      await api.uploadFiles(fileList, targetDir || '')
-      await load()
+      const res = await api.uploadFiles(fileList, targetDir || '', chatId)
+      const saved = res?.saved || []
+      if (isFolderPath(targetDir)) {
+        folderExpanded.add(targetDir); folderExpanded = new Set(folderExpanded)  // reveal the drop dir
+        await reloadFolders()
+      } else {
+        if (targetDir) { expanded.add(targetDir); expanded = new Set(expanded) }  // reveal the drop dir
+        await load()
+      }
+      // Select the first uploaded file the way a file CAN be selected — make it the
+      // Active file (open it in the preview rail, highlighting its row) and scroll it
+      // in. A file isn't a valid upload target, so `selected` stays on the directory.
+      // A Folder upload's `saved` path is relative to the Folder ROOT, but the file
+      // lands in `targetDir`, so its row path is targetDir + the (suffixed) basename.
+      const first = saved[0]
+      if (first) {
+        const rowPath = isFolderPath(targetDir)
+          ? targetDir.replace(/\/+$/, '') + '/' + first.split('/').pop()
+          : first
+        openAsideFile(rowPath)
+        await tick()
+        revealRow(rowPath)
+      }
     } catch (e) { err = String(e.message || e) }
     busy = ''
   }
@@ -343,12 +538,13 @@
 
   {#if err}<p class="fterr">{err} <button class="ftlink" onclick={() => (err = '')}>dismiss</button></p>{/if}
 
-  <!-- The tree body doubles as the root drop zone / deselect surface. -->
+  <!-- The tree body doubles as the root drop zone / clear-target surface (a
+       background click clears the upload target; a row click is guarded out). -->
   <div
     class="fttree"
     bind:this={treeEl}
     class:droproot={dropTarget === ''}
-    onclick={deselect}
+    onclick={onTreeBodyClick}
     ondragover={onRootDragOver}
     ondrop={(e) => onDrop(e, null)}
   >
@@ -369,6 +565,16 @@
     {:else}
       {@render level(tree, 0)}
     {/if}
+
+    <!-- Granted Folders (Thread-scoped, ADR 0013): a distinct section beneath the
+         Files-space tree, each root badged with its mode + missing state, lazy-expanded. -->
+    {#if folderErr}<p class="fterr">{folderErr} <button class="ftlink" onclick={() => (folderErr = '')}>dismiss</button></p>{/if}
+    {#if folderRoots.length}
+      <div class="ftsection">Folders</div>
+      {#each folderRoots as r (r.path)}
+        {@render folderRoot(r)}
+      {/each}
+    {/if}
   </div>
 
   <p class="ftcaption" title={root}>{root}</p>
@@ -379,6 +585,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div
       class="ftrow ftdir"
+      data-path={d.path}
       class:active={d.path === activeDir}
       class:selected={selected === d.path && !activeVisible && d.path !== activeDir}
       class:drop={dropTarget === d.path}
@@ -387,7 +594,7 @@
       ondragstart={(e) => onRowDragStart(e, d.path)}
       ondragover={(e) => onDirDragOver(e, d.path)}
       ondrop={(e) => onDrop(e, d.path)}
-      onclick={(e) => { e.stopPropagation(); selectDir(d.path); toggle(d.path) }}
+      onclick={() => { selectDir(d.path); toggle(d.path) }}
     >
       <button class="ftcaret" title={isOpen(d.path) ? 'Collapse' : 'Expand'}
         onclick={(e) => { e.stopPropagation(); toggle(d.path) }}>
@@ -413,11 +620,12 @@
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div
       class="ftrow ftfile"
+      data-path={f.path}
       class:active={activePath === f.path}
       style="padding-left:{depth * 14 + 24}px"
       draggable="true"
       ondragstart={(e) => onRowDragStart(e, f.path)}
-      onclick={(e) => { e.stopPropagation(); if (renaming !== f.path) openFile(f) }}
+      onclick={() => { if (renaming !== f.path) openFile(f) }}
     >
       <Icon name="file-text" size={14} />
       {#if renaming === f.path}
@@ -434,11 +642,106 @@
   {/each}
 {/snippet}
 
+{#snippet folderRoot(r)}
+  {@const aff = folderAffordances(r.mode)}
+  <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+  <div
+    class="ftrow ftdir ftfolder"
+    class:missing={!r.exists}
+    class:drop={dropTarget === r.path}
+    class:selected={r.exists && selected === r.path}
+    style="padding-left:4px"
+    title={r.path}
+    ondragover={aff.move && r.exists ? (e) => onDirDragOver(e, r.path) : null}
+    ondrop={aff.move && r.exists ? (e) => onDrop(e, r.path) : null}
+    onclick={() => { if (r.exists) { if (aff.move) selectDir(r.path); toggleFolder(r.path) } }}
+  >
+    <button class="ftcaret" title={folderExpanded.has(r.path) ? 'Collapse' : 'Expand'}
+      disabled={!r.exists} onclick={(e) => { e.stopPropagation(); if (r.exists) toggleFolder(r.path) }}>
+      <Icon name={folderExpanded.has(r.path) ? 'chevron-down' : 'chevron-right'} size={13} />
+    </button>
+    <Icon name="folder" size={14} />
+    <span class="ftname">{r.name}</span>
+    {#if modeLabel(r.mode)}<span class="ftbadge" class:rw={r.mode === 'read_write'}>{modeLabel(r.mode)}</span>{/if}
+    {#if !r.exists}<span class="ftbadge warn" title="This folder's path no longer exists — repoint it in Settings → Folders">missing</span>{/if}
+  </div>
+  {#if r.exists && folderExpanded.has(r.path)}
+    {@render folderLevel(r.path, 1, r.mode)}
+  {/if}
+{/snippet}
+
+<!-- A Folder Directory level (lazy-loaded). `mode` is the hosting root's resolved Grant
+     mode threaded down: under a read_write Grant its rows gain the full mutation set
+     (rename/delete/move + drop target), matching the Files-space tree; a read root shows
+     none — preview/download only (ticket 04). The server enforces the same truth. -->
+{#snippet folderLevel(path, depth, mode)}
+  {@const lvl = folderLevels.get(path)}
+  <!-- Prefer this level's own server-resolved mode; fall back to the parent's until the
+       listing loads. So a nested Directory whose Grant differs from the root resolves
+       its own affordances (ticket 04). -->
+  {@const aff = folderAffordances(lvl?.mode ?? mode)}
+  {#if !lvl && folderLoading.has(path)}
+    <p class="ftmuted" style="padding-left:{depth * 14 + 24}px">Loading…</p>
+  {:else if lvl}
+    {#each lvl.dirs as d (d.path)}
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+      <div class="ftrow ftdir" data-path={d.path} class:drop={dropTarget === d.path} class:selected={selected === d.path}
+        style="padding-left:{depth * 14 + 4}px" title={d.path}
+        draggable={aff.move}
+        ondragstart={aff.move ? (e) => onRowDragStart(e, d.path) : null}
+        ondragover={aff.move ? (e) => onDirDragOver(e, d.path) : null}
+        ondrop={aff.move ? (e) => onDrop(e, d.path) : null}
+        onclick={() => { if (renaming !== d.path) { if (aff.move) selectDir(d.path); toggleFolder(d.path) } }}>
+        <button class="ftcaret" title={folderExpanded.has(d.path) ? 'Collapse' : 'Expand'}
+          onclick={(e) => { e.stopPropagation(); toggleFolder(d.path) }}>
+          <Icon name={folderExpanded.has(d.path) ? 'chevron-down' : 'chevron-right'} size={13} />
+        </button>
+        <Icon name="folder" size={14} />
+        {#if renaming === d.path}
+          <input class="ftinput" bind:value={renameText} use:focusSelect
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => { if (e.key === 'Enter') commitRename(d.path); else if (e.key === 'Escape') cancelRename() }}
+            onblur={() => commitRename(d.path)} />
+        {:else}
+          <span class="ftname">{d.name}</span>
+        {/if}
+        {#if aff.rename || aff.delete}{@render rowActions(d.path, d.name, true)}{/if}
+      </div>
+      {#if folderExpanded.has(d.path)}
+        {@render folderLevel(d.path, depth + 1, lvl?.mode ?? mode)}
+      {/if}
+    {/each}
+    {#each lvl.files as f (f.path)}
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+      <div class="ftrow ftfile" data-path={f.path} class:active={activePath === f.path}
+        style="padding-left:{depth * 14 + 24}px" title={f.path}
+        draggable={aff.move}
+        ondragstart={aff.move ? (e) => onRowDragStart(e, f.path) : null}
+        onclick={() => { if (renaming !== f.path) openFile(f) }}>
+        <Icon name="file-text" size={14} />
+        {#if renaming === f.path}
+          <input class="ftinput" bind:value={renameText} use:focusSelect
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => { if (e.key === 'Enter') commitRename(f.path); else if (e.key === 'Escape') cancelRename() }}
+            onblur={() => commitRename(f.path)} />
+        {:else}
+          <span class="ftname">{f.name}</span>
+          <span class="ftmeta">{fmtSize(f.size)}</span>
+        {/if}
+        {#if aff.rename || aff.delete}{@render rowActions(f.path, f.name, false)}{/if}
+      </div>
+    {/each}
+    {#if !lvl.dirs.length && !lvl.files.length}
+      <p class="ftmuted" style="padding-left:{depth * 14 + 24}px">{lvl.err ? 'Not reachable' : 'Empty'}</p>
+    {/if}
+  {/if}
+{/snippet}
+
 {#snippet rowActions(path, name, isDir)}
   {#if confirming === path}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <span class="ftconfirm" onclick={(e) => e.stopPropagation()}>
-      <span class="confirm">Delete{#if isDir} {countUnder(path)} file{countUnder(path) === 1 ? '' : 's'}{/if}?</span>
+      <span class="confirm">Delete{#if isDir}{#if isFolderPath(path)} this folder{:else} {countUnder(path)} file{countUnder(path) === 1 ? '' : 's'}{/if}{/if}?</span>
       <button class="ftlink danger" disabled={busy === path} onclick={(e) => { e.stopPropagation(); del(path) }}>{busy === path ? '…' : 'yes'}</button>
       <button class="ftlink" onclick={(e) => { e.stopPropagation(); confirming = '' }}>no</button>
     </span>
@@ -447,9 +750,9 @@
       onclick={(e) => toggleMenu(e, path)}><Icon name="ellipsis-vertical" size={14} /></button>
     {#if menu === path}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="ftmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px" onclick={(e) => e.stopPropagation()}>
+      <div class="ftmenu" role="menu" tabindex="-1" use:positionMenu={menuAnchor} onclick={(e) => e.stopPropagation()}>
         {#if !isDir}
-          <a class="ftmitem" role="menuitem" href={api.fileUrl(path, true)} onclick={() => (menu = '')}>
+          <a class="ftmitem" role="menuitem" href={api.fileUrl(path, true, chatId)} onclick={() => (menu = '')}>
             <Icon name="download" size={14} /> Download
           </a>
         {/if}
@@ -457,9 +760,10 @@
           <Icon name="pencil" size={14} /> Rename
         </button>
         <div class="ftmdiv"></div>
-        <!-- Files and empty Directories delete immediately; a Directory with files
-             in it confirms first (recursive delete). -->
-        <button class="ftmitem danger" role="menuitem" onclick={() => { menu = ''; if (isDir && countUnder(path)) confirming = path; else del(path) }}>
+        <!-- Files and empty Files-space Directories delete immediately; a Directory with
+             files in it (or any Folder Directory, whose count we haven't listed) confirms
+             first (recursive delete). -->
+        <button class="ftmitem danger" role="menuitem" onclick={() => { menu = ''; if (isDir && (isFolderPath(path) || countUnder(path))) confirming = path; else del(path) }}>
           <Icon name="trash" size={14} /> Delete
         </button>
       </div>
@@ -507,7 +811,7 @@
   .ftkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-left: auto; border: none; background: none; color: var(--muted); border-radius: 5px; opacity: 0; cursor: pointer; }
   .ftrow:hover .ftkebab, .ftrow:focus-within .ftkebab { opacity: .55; }
   .ftkebab:hover { opacity: 1; color: var(--text); }
-  .ftmenu { position: fixed; z-index: var(--z-modal); transform: translateX(-100%); min-width: 150px; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow, 0 8px 28px rgba(0,0,0,.18)); }
+  .ftmenu { position: fixed; z-index: var(--z-modal); min-width: 150px; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow, 0 8px 28px rgba(0,0,0,.18)); }
   .ftmitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: none; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; border-radius: 6px; cursor: pointer; }
   .ftmitem:hover { background: var(--surface-hover, var(--code)); }
   .ftmitem.danger { color: #d8552f; }
@@ -515,5 +819,14 @@
 
   .ftmuted { color: var(--muted); font-size: 13px; padding: 8px 12px; }
   .ftempty { line-height: 1.5; }
+
+  /* Granted-Folder section (Thread-scoped, ADR 0013): a labelled divider, folder-root
+     rows with a mode/missing badge, sitting beneath the Files-space tree. */
+  .ftsection { margin: 8px 8px 2px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .ftfolder.missing { color: var(--muted); }
+  .ftfolder.missing .ftcaret { opacity: .4; cursor: default; }
+  .ftbadge { flex: none; margin-left: auto; padding: 1px 6px; border-radius: 999px; background: var(--code); color: var(--muted); font-size: 10px; font-family: var(--mono); white-space: nowrap; }
+  .ftbadge.rw { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .ftbadge.warn { margin-left: 6px; background: color-mix(in srgb, #d8552f 16%, transparent); color: #d8552f; }
   .ftcaption { flex: none; margin: 0; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

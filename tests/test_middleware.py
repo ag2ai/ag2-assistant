@@ -10,7 +10,10 @@ Covers three layers:
 import asyncio
 
 from ag2 import Agent
-from ag2.config import ModelConfig
+from ag2.config import ModelConfig, ModelProvider
+from ag2.context import ConversationContext
+from ag2.stream import MemoryStream
+from ag2.tools.subagents.run_task import run_task
 
 from assistant.middleware import (
     LLMCallTimeout,
@@ -18,6 +21,7 @@ from assistant.middleware import (
     LLMTimeoutMiddleware,
     _is_transient,
 )
+from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
 
 
 class _HangingClient:
@@ -30,7 +34,7 @@ class _HangingClient:
 class _HangingConfig(ModelConfig):
     """Minimal ModelConfig that hands back a never-resolving client."""
 
-    provider = "gemini"
+    provider = ModelProvider.GEMINI
     model = "hang"
 
     def copy(self):
@@ -84,11 +88,6 @@ async def test_executor_path_marks_task_failed_when_all_attempts_time_out(tmp_pa
     (agent.ask timeout → run_task → RuntimeError → recorded crash) while asserting
     the new "a crash = one attempt" behaviour: the loop runs MAX_ATTEMPTS times.
     """
-    from ag2.context import ConversationContext
-    from ag2.stream import MemoryStream
-    from ag2.tools.subagents.run_task import run_task
-
-    from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
 
     store = TaskStore(path=tmp_path / "tasks.db")
     t = await store.create("hung research")

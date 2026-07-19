@@ -5,10 +5,14 @@ HOME is isolated by the autouse conftest fixture, so each test gets its own empt
 """
 
 import json
+import os
 
 import pytest
+import yaml
 
-from assistant import llm_configs, secrets
+from assistant import codex_auth, llm_configs, secrets
+from assistant.agent import cheap_model
+from assistant.config import Config, default_config_path, load_config
 
 # ---- CRUD + validation --------------------------------------------------------
 
@@ -114,7 +118,6 @@ def test_entry_options_chat_and_ollama_and_gemini():
 
 
 def test_apply_active_empty_store_is_noop():
-    from assistant.config import Config
 
     cfg = Config()
     cfg.llm.provider = "sentinel"
@@ -123,7 +126,6 @@ def test_apply_active_empty_store_is_noop():
 
 
 def test_apply_active_derives_and_env_still_wins(monkeypatch):
-    from assistant.config import load_config
 
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
@@ -144,8 +146,6 @@ def test_apply_active_derives_and_env_still_wins(monkeypatch):
 def test_apply_active_base_url_suppresses_cheap_aggregate(monkeypatch):
     """An active config pointing at an OpenAI-compatible server (base_url) suppresses
     the cheap-tier aggregate default — its OpenAI model name wouldn't exist there."""
-    from assistant.agent import cheap_model
-    from assistant.config import load_config
 
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
@@ -217,7 +217,6 @@ def test_image_entry_none_when_no_capable():
 
 
 def test_secret_reference_flows_to_options_not_env(monkeypatch):
-    import os
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)  # a real dev key must not leak in
     s = secrets.create_secret("K", "sk-4242-4242")
@@ -250,9 +249,6 @@ def test_set_secret_id():
 
 
 def test_store_lives_in_global_config_yaml():
-    import yaml
-
-    from assistant.config import default_config_path
 
     # Seed an unrelated key to prove the store preserves neighbours in the shared file.
     p = default_config_path()
@@ -313,7 +309,6 @@ def test_subscription_strips_endpoint_fields_and_options():
 
 
 def test_subscription_apply_active_sets_and_resets_auth_mode():
-    from assistant.config import Config
 
     sub = llm_configs.save_config(
         {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"}
@@ -335,7 +330,6 @@ def test_subscription_apply_active_sets_and_resets_auth_mode():
 
 
 def test_subscription_usable_and_key_source_track_sign_in(monkeypatch):
-    from assistant import codex_auth
 
     e = llm_configs.save_config({"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"})
     assert llm_configs.key_source(e) == "subscription"  # never key-based
@@ -349,7 +343,6 @@ def test_subscription_usable_and_key_source_track_sign_in(monkeypatch):
 def test_subscription_usable_never_raises(monkeypatch):
     # A missing/broken codex_auth must read as "not signed in", never propagate into
     # the health/usable path.
-    from assistant import codex_auth
 
     def _boom():
         raise RuntimeError("codex_auth exploded")
@@ -360,7 +353,6 @@ def test_subscription_usable_never_raises(monkeypatch):
 
 
 def test_subscription_is_image_capable(monkeypatch):
-    from assistant import codex_auth
 
     monkeypatch.setattr(codex_auth, "is_signed_in", lambda: True)
     sub = llm_configs.save_config(

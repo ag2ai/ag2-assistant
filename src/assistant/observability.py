@@ -22,6 +22,8 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+from ag2.middleware import LoggingMiddleware
+
 _CONFIGURED = False
 
 
@@ -74,8 +76,6 @@ def profile_logger(pid: str) -> logging.LoggerAdapter:
 
 def agent_logging_middleware():
     """AG2-native LoggingMiddleware routed to the `ag2assistant.agent` logger (per-turn LLM/tool)."""
-    from ag2.middleware import LoggingMiddleware
-
     return LoggingMiddleware(logger=logging.getLogger("ag2assistant.agent"))
 
 

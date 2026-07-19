@@ -16,6 +16,7 @@ import re
 
 import discord
 
+from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import split_for_limit
 from assistant.hitl.base import Asker, PendingGuard, Question
@@ -28,8 +29,6 @@ _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 async def _download_attachments(message: "discord.Message") -> list:
     """Download a Discord message's attachments and build AG2 multimodal inputs."""
-    from assistant.attachments import build_input
-
     inputs = []
     for att in message.attachments:
         if att.size and att.size > _MAX_ATTACHMENT_BYTES:

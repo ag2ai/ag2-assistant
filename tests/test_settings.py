@@ -5,9 +5,10 @@ so there is no shared global settings state.
 """
 
 import pytest
+import yaml
 
 from assistant import voice_providers
-from assistant.settings import Settings
+from assistant.settings import Settings, profile_settings
 
 
 @pytest.fixture
@@ -16,7 +17,6 @@ def settings(tmp_path):
 
 
 def test_settings_preserve_overlay_sections(tmp_path):
-    import yaml
 
     path = tmp_path / "config.yaml"
     path.write_text("llm:\n  model: overlay\n")
@@ -28,7 +28,6 @@ def test_settings_preserve_overlay_sections(tmp_path):
 
 
 def test_profile_settings_accessor(tmp_path):
-    from assistant.settings import profile_settings
 
     s = profile_settings(tmp_path)
     assert s._path == tmp_path / "config.yaml"

@@ -1,10 +1,10 @@
 """Packaging checks for files needed by an installed checkout."""
 
+import tomllib
 from pathlib import Path
 
 
 def test_gateway_static_app_bundle_is_in_package_data():
-    import tomllib
 
     root = Path(__file__).resolve().parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text())

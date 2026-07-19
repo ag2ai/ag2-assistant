@@ -53,22 +53,6 @@ def _candidate(tier: int, name: str, abs_path: str, dir_label: str, kind: str) -
     )
 
 
-def _readable_roots(store, profile: str, chat_id: str) -> list[Path]:
-    """The top-level granted-Folder paths readable for this profile∪chat.
-
-    A Folder is included iff ``mode_for`` resolves it to a non-``None`` mode. Roots
-    nested under another readable root are dropped so nothing is walked twice."""
-    readable: list[Path] = []
-    for f in store.list_folders():
-        try:
-            p = Path(f.get("path", "")).expanduser().resolve()
-        except (OSError, ValueError):
-            continue
-        if p.is_dir() and store.mode_for(p, profile, chat_id) is not None:
-            readable.append(p)
-    return [p for p in readable if not any(p != o and o in p.parents for o in readable)]
-
-
 def _walk_folder(root: Path, query: str, out: list, scanned: list) -> None:
     """Append candidates for files and Directories under ``root`` matching ``query``,
     pruning ``SKIP_DIRS`` and stopping at ``WALK_CAP``. ``dir`` labels are rooted at
@@ -96,6 +80,38 @@ def _walk_folder(root: Path, query: str, out: list, scanned: list) -> None:
             tier = match_rank(query, name, f"{dir_label}/{name}")
             if tier is not None:
                 out.append(_candidate(tier, name, str(Path(dirpath) / name), dir_label, kind))
+
+
+def list_folder_dir(path) -> dict | None:
+    """One Directory level inside a granted Folder: `path`'s immediate subdirs and files
+    (noise pruned, absolute paths), or None if `path` isn't a readable directory."""
+    try:
+        p = Path(path).expanduser().resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if not p.is_dir():
+        return None
+    dirs: list[dict] = []
+    files: list[dict] = []
+    try:
+        for item in p.iterdir():
+            name = item.name
+            try:
+                if item.is_dir():
+                    if name in SKIP_DIRS:
+                        continue
+                    dirs.append({"name": name, "path": str(item)})
+                elif item.is_file():
+                    if name in SKIP_FILES:
+                        continue
+                    files.append({"name": name, "path": str(item), "size": item.stat().st_size})
+            except OSError:
+                continue  # unreadable entry (broken symlink, race) — skip, never crash
+    except (PermissionError, OSError):
+        return None
+    dirs.sort(key=lambda d: d["name"].lower())
+    files.sort(key=lambda f: f["name"].lower())
+    return {"path": str(p), "dirs": dirs, "files": files}
 
 
 def search_corpus(
@@ -144,7 +160,7 @@ def search_corpus(
     # Granted Folders — access-honoring walk (never surfaces a denied entry).
     if folders is not None:
         scanned = [0]
-        for froot in _readable_roots(folders, profile, chat_id):
+        for froot in folders.readable_roots(profile, chat_id):
             _walk_folder(froot, q, candidates, scanned)
 
     # Rank filename-first (tier), then a deterministic tiebreak; dedup by absolute

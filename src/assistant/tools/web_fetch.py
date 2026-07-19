@@ -3,7 +3,9 @@
 Uses httpx for fetching and BeautifulSoup for content extraction.
 """
 
+import httpx
 from ag2 import tool
+from bs4 import BeautifulSoup
 
 
 def web_fetch(url: str, max_chars: int = 10000) -> str:
@@ -16,9 +18,6 @@ def web_fetch(url: str, max_chars: int = 10000) -> str:
     Returns:
         The extracted text content from the page.
     """
-    import httpx
-    from bs4 import BeautifulSoup
-
     try:
         response = httpx.get(
             url,

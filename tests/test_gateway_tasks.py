@@ -5,11 +5,16 @@ service wiring, serialisation, and the REST surface the Tasks GUI drives.
 """
 
 import asyncio
+from datetime import datetime, timedelta
 
+from fastapi.testclient import TestClient
+
+import assistant.tasks.planner as planner_mod
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
-from tests.conftest import FakeRunMixin
+from assistant.tasks.planner import ClarifyQuestion, PlanDeliverable, TaskPlan
+from tests.conftest import FakeRunMixin, api, make_profile_app, use_fake_agent
 
 
 def _service(tmp_path, executor, planner=None):
@@ -121,7 +126,6 @@ async def test_pending_and_answer_inquiry(tmp_path):
 async def test_submit_request_runs_intake_and_inquiries(tmp_path):
     """submit_request drives intake in the background; a clarifying question shows
     up as a pending inquiry, and answering it lets the task proceed to run."""
-    from assistant.tasks.planner import ClarifyQuestion, PlanDeliverable, TaskPlan
 
     ran = {}
 
@@ -193,9 +197,6 @@ def _runtime_tasks(client, pid):
 
 
 def test_task_rest_endpoints(monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from tests.conftest import api, make_profile_app, use_fake_agent
 
     use_fake_agent(monkeypatch, lambda *a, **k: object())
     app, pid = make_profile_app()
@@ -256,9 +257,6 @@ async def test_delete_removes_task_and_subtree(tmp_path):
 
 
 def test_delete_and_all_rest_endpoints(monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from tests.conftest import api, make_profile_app, use_fake_agent
 
     use_fake_agent(monkeypatch, lambda *a, **k: object())
     app, pid = make_profile_app()
@@ -315,7 +313,6 @@ async def test_fire_one_shot_runs_the_task(tmp_path):
 
 
 async def test_fire_recurring_spawns_run_and_rearms(tmp_path):
-    from datetime import datetime
 
     async def executor(task_id, mgr, asker):
         pass
@@ -363,7 +360,6 @@ async def test_template_detail_lists_its_runs(tmp_path):
 async def test_scheduled_runs_skip_clarification(tmp_path, monkeypatch):
     """An unattended scheduled run plans WITHOUT asking clarifying questions (no
     one to answer), so it never gets abandoned — intake is called with asker=None."""
-    import assistant.tasks.planner as planner_mod
 
     async def executor(task_id, mgr, asker):
         pass
@@ -388,9 +384,6 @@ async def test_scheduled_runs_skip_clarification(tmp_path, monkeypatch):
 async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
     """Scheduling clarifies + plans NOW; firing a recurring template clones the
     baked plan into a fresh run and EXECUTES it (no re-planning at run time)."""
-    from datetime import datetime, timedelta
-
-    from assistant.tasks.planner import PlanDeliverable, TaskPlan
 
     async def executor(task_id, mgr, asker):
         pass
@@ -443,9 +436,6 @@ async def test_schedule_plans_up_front_then_fire_executes(tmp_path):
 
 
 def test_schedule_rest_endpoint(monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from tests.conftest import api, make_profile_app, use_fake_agent
 
     use_fake_agent(monkeypatch, lambda *a, **k: object())
     app, pid = make_profile_app()
@@ -499,9 +489,6 @@ async def test_chat_routes_to_control_agent(tmp_path):
 def test_task_chat_routes_to_universal_agent_with_surface(monkeypatch):
     """The task page talks to the SAME gateway agent, given the task as surface
     context (id + snapshot) — not a separate controller."""
-    from fastapi.testclient import TestClient
-
-    from tests.conftest import api, make_profile_app, use_fake_agent
 
     seen = {}
 

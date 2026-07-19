@@ -15,10 +15,13 @@ local timezone, so "0 4-14 * * 1-5" is hourly 04:00–14:00 on weekdays.
 """
 
 import asyncio
+import contextlib
 from datetime import datetime, timedelta
 
+from cron_descriptor import ExpressionDescriptor, Options
 from cronsim import CronSim, CronSimError
 
+from assistant.observability import log_suppressed
 from assistant.tasks.model import TaskStatus
 
 # Standard Vixie-cron nicknames (cronsim itself only takes 5-field expressions).
@@ -54,8 +57,6 @@ def describe_cron(spec: str | None) -> str | None:
     expr = normalize_cron(spec)
     if expr is None:
         return None
-    from cron_descriptor import ExpressionDescriptor, Options
-
     opts = Options()
     opts.use_24hour_time_format = True
     try:
@@ -169,8 +170,6 @@ class Scheduler:
             try:
                 await self.tick()
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("scheduler tick", exc)
                 # A bad record must never kill the loop.
 
@@ -188,8 +187,6 @@ class Scheduler:
         self._stop.set()
         if self._task is not None:
             self._task.cancel()
-            import contextlib
-
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None

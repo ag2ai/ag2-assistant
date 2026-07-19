@@ -7,7 +7,10 @@ plan's H1/H4/H5/H8/H10/H11 findings.
 
 import asyncio
 
+from ag2.knowledge import MemoryKnowledgeStore
+
 from assistant.config import Config
+from assistant.gateway.tasks_service import TaskService
 from assistant.storage import SerialStore
 from assistant.tasks import history
 from assistant.tasks.model import Task, TaskStatus
@@ -15,13 +18,11 @@ from assistant.tasks.store import TaskStore
 
 
 def _store() -> TaskStore:
-    from ag2.knowledge import MemoryKnowledgeStore
 
     return TaskStore(store=SerialStore(MemoryKnowledgeStore()))
 
 
 def _km():
-    from ag2.knowledge import MemoryKnowledgeStore
 
     return MemoryKnowledgeStore()
 
@@ -263,7 +264,6 @@ async def test_record_digest_leaves_absent_on_failure_for_backfill(tmp_path, mon
 
 
 def _service(tmp_path, store):
-    from assistant.gateway.tasks_service import TaskService
 
     cfg = Config()
     cfg.data_dir = tmp_path

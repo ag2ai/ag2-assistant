@@ -2,13 +2,17 @@
 
 import pytest
 
-from assistant.tasks import TaskStatus, TaskStore
+from assistant.agent import create_agent
+from assistant.config import load_config
+from assistant.tasks import TaskManager, TaskStatus, TaskStore, make_task_executor
 from assistant.tasks.planner import (
+    _MAX_INTAKE_ROUNDS,
     ClarifyQuestion,
     PlanDeliverable,
     PlanSubtask,
     TaskPlan,
     apply_plan,
+    make_plan,
     prepare_task,
     run_intake,
 )
@@ -208,7 +212,6 @@ async def test_prepare_abandons_when_user_stops_answering(tmp_path):
 async def test_prepare_caps_clarification_rounds(tmp_path):
     """A request that never stops generating questions still terminates: after the
     round cap we proceed with what we have rather than looping forever."""
-    from assistant.tasks.planner import _MAX_INTAKE_ROUNDS
 
     store = _store(tmp_path)
     t = await store.create("vague forever")
@@ -226,9 +229,6 @@ async def test_prepare_caps_clarification_rounds(tmp_path):
 
 @pytest.mark.integration
 async def test_make_plan_real_llm(tmp_path):
-    from assistant.agent import create_agent
-    from assistant.config import load_config
-    from assistant.tasks.planner import make_plan
 
     agent = create_agent(load_config(), memory=False, skills=False)
     plan = await make_plan(agent, "Find any unread emails from today")
@@ -239,10 +239,6 @@ async def test_make_plan_real_llm(tmp_path):
 @pytest.mark.integration
 async def test_task_end_to_end_real(tmp_path):
     """Plan a simple task, then run it with the real executor → completed."""
-    from assistant.agent import create_agent
-    from assistant.config import load_config
-    from assistant.tasks import TaskManager, TaskStatus, make_task_executor
-    from assistant.tasks.planner import prepare_task
 
     cfg = load_config()
     store = TaskStore(path=tmp_path / "tasks.db")

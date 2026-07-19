@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from assistant.profiles import ProfileMeta
+    from assistant.profiles import ProfileMeta  # type-only
 
 load_dotenv()
 
@@ -352,7 +352,7 @@ def load_config(path: Path | None = None) -> Config:
     # Lazy import breaks the cycle (llm_configs imports config.data_dir); a malformed
     # store is swallowed like a malformed config.json — the flat defaults then apply.
     try:
-        from assistant import llm_configs
+        from assistant import llm_configs  # local: import cycle (llm_configs imports config)
 
         llm_configs.apply_active(cfg)
     except Exception:

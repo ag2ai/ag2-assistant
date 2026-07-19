@@ -12,12 +12,54 @@ store, so resolution always arrives via `InquiryStore.answer()`.
 """
 
 import asyncio
+import logging
+from collections import defaultdict
 from collections.abc import Callable
+from datetime import datetime
 
+from ag2 import Agent
+from ag2.events import TaskCancelled, TaskCompleted, TaskFailed, TaskStarted
+from ag2.stream import MemoryStream
+
+from assistant.agent import create_agent, model_config
 from assistant.config import Config, load_config
+from assistant.events import (
+    DeliverableProduced,
+    InquiryAnswered,
+    InquiryRaised,
+    TaskScheduled,
+)
 from assistant.gateway.repair import repair_stream_history
-from assistant.hitl import NullAsker
-from assistant.tasks.scheduling import describe_cron
+from assistant.hitl import DurableAsker, InquiryStore, NullAsker
+from assistant.hitl.inquiry import InquiryStatus
+from assistant.observability import log_suppressed
+from assistant.scheduler_lock import SchedulerLock
+from assistant.tasks import (
+    TaskManager,
+    TaskStatus,
+    TaskStore,
+    history,
+    make_task_executor,
+    planner,
+)
+from assistant.tasks.control import (
+    build_task_tools,
+    do_add_deliverable,
+    do_add_subtask,
+    do_cancel,
+    do_remove_deliverable,
+    do_reschedule,
+    do_set_deliverables,
+    do_set_objective,
+    render_task,
+)
+from assistant.tasks.scheduling import (
+    Scheduler,
+    describe_cron,
+    first_occurrence,
+    next_occurrence,
+)
+from assistant.tools import available_capabilities
 
 _CONTROL_PROMPT = (
     "You manage ONE task for the user. When they ask for a change — add or cancel "
@@ -106,15 +148,6 @@ class TaskService:
         await self._maybe_enqueue_digest(task_id, status)
         if self._emit is None:
             return
-        from ag2.events import (
-            TaskCancelled,
-            TaskCompleted,
-            TaskFailed,
-            TaskStarted,
-        )
-
-        from assistant.tasks import TaskStatus
-
         t = await self._store.get(task_id)
         if t is None:
             return
@@ -143,8 +176,6 @@ class TaskService:
             try:
                 await self._emit(f"task:{task_id}", ev)
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("task lifecycle event emit", exc, task_id=task_id, status=status)
 
     # --- recurring-run history: bounded, best-effort digest pipeline ------------ #
@@ -158,16 +189,12 @@ class TaskService:
             self._digest_q.put_nowait(run_id)
             self._digest_inflight.add(run_id)
         except asyncio.QueueFull:
-            import logging
-
             logging.getLogger("ag2assistant.tasks").warning(
                 "digest queue full; skipping digest for %s (stub still used)", run_id
             )
 
     async def _maybe_enqueue_digest(self, task_id: str, status: str) -> None:
         """Enqueue a digest when an occurrence root completes (parent_id None + run_of)."""
-        from assistant.tasks import TaskStatus
-
         if status != TaskStatus.COMPLETED or self._digest_q is None:
             return
         try:
@@ -193,8 +220,6 @@ class TaskService:
 
     async def _record_history(self, run_id: str) -> None:
         """Distil one completed run into its per-template digest cache. Best-effort."""
-        from assistant.tasks import history
-
         run = await self._store.get(run_id)
         template_id = getattr(run, "run_of", None) if run is not None else None
         if run is None or not template_id:
@@ -205,8 +230,6 @@ class TaskService:
 
     async def _digest_worker(self) -> None:
         """Pull run ids and digest them, one at a time per worker, each time-boxed."""
-        import logging
-
         assert self._digest_q is not None
         while True:
             run_id = await self._digest_q.get()
@@ -222,8 +245,6 @@ class TaskService:
                     "digest timed out for %s (stub still used)", run_id
                 )
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("digest worker", exc, task_id=run_id)
             finally:
                 self._digest_inflight.discard(run_id)
@@ -233,10 +254,6 @@ class TaskService:
         """Regenerate digests for completed occurrence roots whose episode is missing
         (dropped/cancelled by a prior shutdown), so a thin recap self-heals. Bounded:
         recent window per template, enqueued on the same overflow-safe queue."""
-        from collections import defaultdict
-
-        from assistant.tasks import TaskStatus, history
-
         # Wait before the first scan so startup never races other store users — same
         # rationale as Scheduler's delayed first tick (a TaskStore op on this loop
         # while another loop holds the shared lock deadlocks cross-loop).
@@ -247,8 +264,6 @@ class TaskService:
         try:
             all_tasks = await self._store.list_all()
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("digest backfill scan", exc)
             return
         by_template: dict[str, list] = defaultdict(list)
@@ -276,8 +291,6 @@ class TaskService:
         """A produced deliverable → DeliverableProduced on the task's stream."""
         if self._emit is None:
             return
-        from assistant.events import DeliverableProduced
-
         try:
             await self._emit(
                 f"task:{task_id}",
@@ -290,8 +303,6 @@ class TaskService:
                 ),
             )
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed(
                 "deliverable event emit",
                 exc,
@@ -306,8 +317,6 @@ class TaskService:
         try:
             await self._emit(f"task:{task_id}", event)
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("task raw event emit", exc, task_id=task_id, event=type(event).__name__)
 
     async def _emit_inquiry(self, inquiry, kind) -> None:
@@ -317,9 +326,6 @@ class TaskService:
         chat — so the question renders inline wherever it was raised."""
         if self._emit is None:
             return
-        from assistant.events import InquiryAnswered, InquiryRaised
-        from assistant.hitl.inquiry import InquiryStatus
-
         sid = inquiry.chat or (f"task:{inquiry.task_id}" if inquiry.task_id else None)
         if not sid:
             return
@@ -349,8 +355,6 @@ class TaskService:
                     ),
                 )
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("inquiry event emit", exc, inquiry_id=inquiry.id, kind=kind, chat=sid)
 
     async def start(self, *, scheduler: bool = True) -> None:
@@ -360,9 +364,6 @@ class TaskService:
         the polling loop so only one process ticks the shared ``tasks.db``. A
         cross-process lock enforces a single live scheduler even with ``True``.
         """
-        from assistant.hitl import InquiryStore
-        from assistant.tasks import TaskManager, TaskStore, make_task_executor
-
         d = self._config.data_dir
         d.mkdir(parents=True, exist_ok=True)
         if self._store is None:
@@ -393,9 +394,6 @@ class TaskService:
                 for _ in range(max(1, self._config.tasks.digest_concurrency))
             ]
         if scheduler and self._scheduler is None:
-            from assistant.scheduler_lock import SchedulerLock
-            from assistant.tasks.scheduling import Scheduler
-
             lock = SchedulerLock(d / "scheduler.lock")
             if lock.acquire():
                 self._scheduler_lock = lock
@@ -409,8 +407,6 @@ class TaskService:
                 self._bg.add(bf)
                 bf.add_done_callback(self._bg.discard)
             else:
-                import logging
-
                 logging.getLogger("ag2assistant.tasks").info(
                     "scheduler not started — another process already owns %s",
                     d / "scheduler.lock",
@@ -421,8 +417,6 @@ class TaskService:
         change. The manager's executor reference is swapped so new runs use it while
         in-flight runs (tracked in the manager) finish on the old one; the planner is
         reset for a lazy rebuild. Stores and the scheduler are unaffected."""
-        from assistant.tasks import make_task_executor
-
         self._config = self._config_factory()
         self._planner = None  # rebuilt lazily by _planner_agent() with fresh config
         self._executor = make_task_executor(self._config)
@@ -441,8 +435,6 @@ class TaskService:
         # Built lazily on first use so merely starting the gateway never
         # constructs an LLM agent (keeps unit tests / idle startup light).
         if self._planner is None:
-            from assistant.agent import create_agent
-
             self._planner = create_agent(self._config, memory=False, skills=False)
         return self._planner
 
@@ -454,18 +446,13 @@ class TaskService:
         at run time, so we plan best-effort rather than abandoning the run; the
         task still gets durable HITL for any execution-time permission prompt.
         """
-        from assistant.hitl import DurableAsker
-        from assistant.tasks import TaskStatus
-        from assistant.tasks.planner import prepare_task
-        from assistant.tools import available_capabilities
-
         try:
             intake_asker = (
                 DurableAsker(_ParkingAsker(), self._inquiries, task_id=task_id, channel=channel)
                 if clarify
                 else None
             )
-            await prepare_task(
+            await planner.prepare_task(
                 self._store,
                 task_id,
                 self._planner_agent(),
@@ -504,9 +491,6 @@ class TaskService:
         Clarification + planning happen NOW (while the user is here), so the plan
         is baked into the task; the deterministic Scheduler then just *executes*
         that plan at each occurrence — no run-time questions."""
-        from assistant.tasks import TaskStatus
-        from assistant.tasks.scheduling import first_occurrence
-
         # recurring tasks snap to the first cron match (e.g. weekday-only crons
         # scheduled on a Saturday start Monday)
         first = first_occurrence(recurrence, when)
@@ -521,8 +505,6 @@ class TaskService:
             recurrence=recurrence or None,
         )
         if self._emit is not None:
-            from assistant.events import TaskScheduled
-
             try:
                 await self._emit(
                     f"task:{task.id}",
@@ -534,8 +516,6 @@ class TaskService:
                     ),
                 )
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("scheduled task event emit", exc, task_id=task.id)
         bg = asyncio.create_task(self._plan_for_schedule(task.id, channel, when))
         self._bg.add(bg)
@@ -544,11 +524,6 @@ class TaskService:
 
     async def _plan_for_schedule(self, task_id: str, channel: str, when: str) -> None:
         """Run intake (clarify + plan) up front, then re-arm the task as SCHEDULED."""
-        from assistant.hitl import DurableAsker
-        from assistant.tasks import TaskStatus
-        from assistant.tasks.planner import prepare_task
-        from assistant.tools import available_capabilities
-
         try:
             asker = DurableAsker(
                 _ParkingAsker(),
@@ -556,7 +531,7 @@ class TaskService:
                 task_id=task_id,
                 channel=channel,
             )
-            await prepare_task(
+            await planner.prepare_task(
                 self._store,
                 task_id,
                 self._planner_agent(),
@@ -572,8 +547,6 @@ class TaskService:
                     scheduled_for=when,
                 )
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("scheduled task upfront planning", exc, task_id=task_id)
             # Planning is best-effort; the run can still plan on fire as a fallback.
 
@@ -620,11 +593,6 @@ class TaskService:
 
     async def _fire(self, task_id: str) -> None:
         """Scheduler callback: execute a due task's prepared plan; re-arm recurring."""
-        from datetime import datetime
-
-        from assistant.tasks import TaskStatus
-        from assistant.tasks.scheduling import next_occurrence
-
         t = await self._store.get(task_id)
         if t is None or t.status != TaskStatus.SCHEDULED:
             return
@@ -763,48 +731,32 @@ class TaskService:
     # --- action wrappers (thin; the universal agent's system tools call these) ---
 
     async def add_subtask(self, task_id, title, description="", capabilities="web") -> str:
-        from assistant.tasks.control import do_add_subtask
-
         return await do_add_subtask(
             self._store, self._manager, task_id, title, description, capabilities
         )
 
     async def add_deliverable(self, task_id, description, criteria="") -> str:
-        from assistant.tasks.control import do_add_deliverable
-
         return await do_add_deliverable(self._store, self._manager, task_id, description, criteria)
 
     async def remove_deliverable(self, task_id, deliverable_id) -> str:
-        from assistant.tasks.control import do_remove_deliverable
-
         return await do_remove_deliverable(self._store, self._manager, task_id, deliverable_id)
 
     async def set_deliverables(self, task_id, descriptions) -> str:
-        from assistant.tasks.control import do_set_deliverables
-
         return await do_set_deliverables(self._store, self._manager, task_id, descriptions)
 
     async def set_objective(self, task_id, objective) -> str:
-        from assistant.tasks.control import do_set_objective
-
         return await do_set_objective(self._store, task_id, objective)
 
     async def reschedule(self, task_id, when="", recurrence="") -> str:
-        from assistant.tasks.control import do_reschedule
-
         return await do_reschedule(self._store, task_id, when, recurrence)
 
     async def cancel_target(self, task_id, subtask="") -> str:
         """Cancel the task or a named subtask (controller-style, returns a message)."""
-        from assistant.tasks.control import do_cancel
-
         return await do_cancel(self._store, self._manager, task_id, subtask)
 
     async def run_now(self, task_id: str) -> str:
         """Run a scheduled task's occurrence immediately (keeping its schedule), or
         (re)run any other task now."""
-        from assistant.tasks import TaskStatus
-
         t = await self._store.get(task_id)
         if t is None:
             return "Task not found."
@@ -827,8 +779,6 @@ class TaskService:
         original record is left untouched as history. Returns ``{id}`` of the new run
         (or ``{error}``). Grouped as a sibling occurrence (under the recurring
         template if this was a run, else under the task itself)."""
-        from assistant.tasks import TaskStatus
-
         t = await self._store.get(task_id)
         if t is None:
             return {"error": "Task not found."}
@@ -846,12 +796,6 @@ class TaskService:
         """A cached, task-scoped controller agent (+ its conversation stream)."""
         entry = self._control_agents.get(task_id)
         if entry is None:
-            from ag2 import Agent
-            from ag2.stream import MemoryStream
-
-            from assistant.agent import model_config
-            from assistant.tasks.control import build_task_tools
-
             agent = Agent(
                 "task-controller",
                 prompt=_CONTROL_PROMPT,
@@ -864,8 +808,6 @@ class TaskService:
 
     async def chat(self, task_id: str, text: str) -> str | None:
         """Converse about a task — the controller agent edits it via its tools."""
-        from assistant.tasks.control import render_task
-
         if await self._store.get(task_id) is None:
             return None
         agent, stream = self._control(task_id)
@@ -987,8 +929,6 @@ class TaskService:
         if t is None:
             return False
         if t.is_terminal and getattr(t, "seen_at", None) is None:
-            from datetime import datetime
-
             await self._store.update(task_id, seen_at=datetime.now().astimezone().isoformat())
         return True
 

@@ -1,6 +1,8 @@
 """The event bridge replays history, forwards live events as {type,data}, skips
 binary audio, and runs turns through the gateway."""
 
+from ag2.events.voice import SynthesizedAudioEvent
+
 from assistant.events import TaskCreated
 from assistant.gateway.stream_bridge import StreamBridge
 
@@ -70,7 +72,6 @@ async def test_bridge_replays_then_forwards_and_runs_turns():
 
 
 async def test_bridge_skips_binary_audio_events():
-    from ag2.events.voice import SynthesizedAudioEvent
 
     stream = _Stream([])
     bridge = StreamBridge(_GW(stream), (ws := _WS()), "s1")

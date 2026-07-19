@@ -8,9 +8,13 @@ Open Sauce body, signature coral accent).
 
 import asyncio
 import html
+import json
 import uuid
 import webbrowser
 
+import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from assistant.hitl.base import PendingGuard, Question
@@ -126,8 +130,6 @@ def _render_body(question: Question) -> str:
 
 def _js_str(s: str) -> str:
     """Safely embed a Python string as a JS string literal."""
-    import json
-
     return json.dumps(s)
 
 
@@ -152,7 +154,6 @@ def add_hitl_routes(app, registry: "HitlServer") -> None:
     so a running gateway serves the same `/hitl/{id}` pages a UI client can drive.
     `registry` only needs `question_for(id)` and `answer(id, text)`.
     """
-    from fastapi.responses import HTMLResponse, JSONResponse
 
     @app.get("/hitl/{req_id}", response_class=HTMLResponse)
     async def hitl_page(req_id: str):
@@ -193,8 +194,6 @@ class HitlServer:
         return self._server is not None and getattr(self._server, "started", False)
 
     def _build_app(self):
-        from fastapi import FastAPI
-
         app = FastAPI()
         add_hitl_routes(app, self)
         return app
@@ -236,8 +235,6 @@ class HitlServer:
         async with self._lock:
             if self.started:
                 return
-            import uvicorn
-
             config = uvicorn.Config(
                 self._build_app(), host=self.host, port=self.port, log_level="warning"
             )

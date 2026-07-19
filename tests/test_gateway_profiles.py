@@ -8,14 +8,19 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
+import assistant.secrets as secrets_mod
+from assistant import __version__, profiles
+from assistant import profiles as profiles_mod
+from assistant.gateway.app import create_app
+from assistant.gateway.profile_manager import ProfileManager
+from assistant.usage import _today as t
 from tests.conftest import api, use_fake_agent
 
 
 def _app(monkeypatch, **kw):
     """A create_app around a fresh (zero-profile) ProfileManager."""
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     use_fake_agent(monkeypatch)
     return create_app(ProfileManager(memory=False, persist=False), **kw)
@@ -27,8 +32,6 @@ def _app(monkeypatch, **kw):
 def test_profiles_zero_state_contract(monkeypatch):
     """GET /api/profiles on a fresh install: {[], null, false}; /api/p/* 404s."""
     with TestClient(_app(monkeypatch)) as client:
-        from assistant import __version__
-
         body = client.get("/api/profiles").json()
         assert body == {
             "profiles": [],
@@ -91,7 +94,6 @@ def test_unknown_pid_404_archived_410(monkeypatch):
 
 
 def test_onboarded_endpoint_flips_registry_flag(monkeypatch):
-    from assistant import profiles
 
     with TestClient(_app(monkeypatch)) as client:
         assert client.get("/api/profiles").json()["onboarded"] is False
@@ -109,9 +111,6 @@ def test_onboarded_endpoint_flips_registry_flag(monkeypatch):
 
 def test_secrets_key_reloads_all_runtimes(monkeypatch):
     """POST /api/secrets/key calls manager.reload on every runtime (observed via a spy)."""
-    import assistant.secrets as secrets_mod
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     use_fake_agent(monkeypatch)
     monkeypatch.setattr(secrets_mod, "set_key", lambda provider, value: True)
@@ -141,7 +140,6 @@ def test_secrets_key_reloads_all_runtimes(monkeypatch):
 
 
 def test_workspace_is_derived_under_profile_dir(monkeypatch):
-    from assistant import profiles as profiles_mod
 
     with TestClient(_app(monkeypatch)) as client:
         r = client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -263,7 +261,6 @@ def test_restore_unknown_404(monkeypatch):
 
 def test_purge_requires_archive_first_409(monkeypatch):
     """Archive-first: a live profile cannot be hard-deleted (409), and it is untouched."""
-    from assistant import profiles
 
     with TestClient(_app(monkeypatch)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -276,7 +273,6 @@ def test_purge_requires_archive_first_409(monkeypatch):
 
 
 def test_purge_archived_profile(monkeypatch):
-    from assistant import profiles
 
     with TestClient(_app(monkeypatch)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -305,7 +301,6 @@ def test_purge_unknown_404(monkeypatch):
 
 def test_stream_ws_closed_4001_on_archive(monkeypatch):
     """An open /stream socket is closed with code 4001 when its profile is archived."""
-    from starlette.websockets import WebSocketDisconnect
 
     with TestClient(_app(monkeypatch)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -345,7 +340,6 @@ def _seed_usage(client, pid: str, day: str, entry: dict) -> None:
     """Write a profile's usage.json directly on disk (UsageLedger's file schema:
     {day: {prompt, completion, total, cost, priced, by_model}}) and reload the live
     ledger from it, so GET /api/usage sees the seeded totals."""
-    from assistant import profiles
 
     path = profiles.profile_dir(pid) / "usage.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -354,7 +348,6 @@ def _seed_usage(client, pid: str, day: str, entry: dict) -> None:
 
 
 def _today() -> str:
-    from assistant.usage import _today as t
 
     return t()
 

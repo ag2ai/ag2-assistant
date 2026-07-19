@@ -1,9 +1,14 @@
 """Gateway HTTP routes for ChatGPT-subscription auth (/api/codex/*) and the
 subscription named-LLM configuration (/api/llm-configs, type openai_subscription)."""
 
+import base64
+import json
+
+import httpx
 import pytest
 
-from assistant import codex_auth
+from assistant import codex_auth, llm_configs
+from assistant.config import load_config
 
 
 @pytest.fixture(autouse=True)
@@ -20,8 +25,6 @@ def _no_real_loopback(monkeypatch):
 
 
 def _fake_jwt_acc(acc: str) -> str:
-    import base64
-    import json
 
     h = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
     b = (
@@ -70,8 +73,6 @@ def test_codex_submit_exchanges_pasted_code(profile_app, monkeypatch):
         def json(self):
             return {"access_token": "AX", "refresh_token": "RX", "expires_in": 3600}
 
-    import httpx
-
     monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResp())
     r = client.post("/api/codex/submit", json={"state": state, "code": "the-code"})
     assert r.status_code == 200 and r.json()["ok"] is True
@@ -110,8 +111,6 @@ def test_subscription_config_not_usable_until_signed_in(profile_app):
 def test_subscription_config_activation_sets_auth_mode(profile_app, monkeypatch):
     """Activating an openai_subscription config makes it active and derives
     auth_mode=subscription in a fresh load_config; GET /settings surfaces sign-in."""
-    from assistant import llm_configs
-    from assistant.config import load_config
 
     monkeypatch.delenv("AG2ASSISTANT_OPENAI_AUTH_MODE", raising=False)
     client, pid = profile_app

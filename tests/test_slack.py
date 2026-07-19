@@ -2,9 +2,10 @@
 
 import pytest
 
+from assistant.channels.slack import SlackChannel
+
 
 def _slack_channel():
-    from assistant.channels.slack import SlackChannel
 
     ch = SlackChannel(bot_token="xoxb-fake", app_token="xapp-fake")
     ch._bot_user_id = "UBOT"
@@ -14,7 +15,6 @@ def _slack_channel():
 def test_requires_both_tokens(monkeypatch):
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
     monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
-    from assistant.channels.slack import SlackChannel
 
     with pytest.raises(ValueError):
         SlackChannel()

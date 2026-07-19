@@ -7,9 +7,42 @@ around a ``ProfileManager`` with one profile and routes live under
 """
 
 import asyncio
+import base64
 
+import ag2.testing
 import pytest
+from ag2.context import ConversationContext
+from ag2.events import (
+    ModelMessage,
+    ModelMessageChunk,
+    ModelResponse,
+    ToolCallEvent,
+    ToolCallsEvent,
+)
+from ag2.knowledge.constants import LOG_PREFIX
+from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+from starlette.websockets import WebSocketDisconnect
 
+import assistant.gateway.core as core_mod
+import assistant.onboarding as onboarding
+import assistant.profiles as profiles_mod
+import assistant.secrets as secrets
+import assistant.title as title_mod
+from assistant import codex_auth, llm_configs, profiles
+from assistant.agent import model_config
+from assistant.config import Config, load_config
+from assistant.events import Attachment, TurnCancelled
+from assistant.gateway import app as app_mod
+from assistant.gateway.app import _decode_attachments, _origin_ok, create_app
+from assistant.gateway.core import Gateway
+from assistant.gateway.profile_manager import ProfileManager
+from assistant.hitl import GatewayAsker, HitlServer
+from assistant.hitl.base import Question
+from assistant.memory import PROFILE_PATH, build_profile_store
+from assistant.onboarding import needs_onboarding
+from assistant.permissions import DENY
+from assistant.profiles import create_profile, profile_dir
 from tests.conftest import (
     FakeAgent,
     FakeReply,
@@ -23,7 +56,6 @@ from tests.conftest import (
 @pytest.fixture
 def fake_gateway(monkeypatch):
     """A Gateway whose agent is a deterministic fake (no LLM, no persistence)."""
-    from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False, persist=False)
     gw._agent = FakeAgent()
@@ -39,13 +71,6 @@ async def test_forwarding_events_passes_structured_events_not_transcript(fake_ga
     """`_forwarding_events` forwards the agent's structured events verbatim
     (so a voice client folds them with the text reducer) while OMITTING the
     conversation events it renders itself as transcript — and always unsubscribes."""
-    from ag2.events import (
-        ModelMessage,
-        ModelMessageChunk,
-        ModelResponse,
-        ToolCallEvent,
-        ToolCallsEvent,
-    )
 
     captured: dict = {}
 
@@ -83,7 +108,6 @@ async def test_forwarding_events_passes_structured_events_not_transcript(fake_ga
 
 async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
     """First message with an asker triggers onboarding exactly once."""
-    import assistant.onboarding as onboarding
 
     calls = {"check": 0, "run": 0}
 
@@ -110,7 +134,6 @@ async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
 
 
 async def test_gateway_skips_onboarding_without_asker(fake_gateway, monkeypatch):
-    import assistant.onboarding as onboarding
 
     async def boom(*a, **k):
         raise AssertionError("should not be called without an asker")
@@ -143,9 +166,6 @@ def test_status_shape(fake_gateway):
 
 async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     """A new Gateway over the same data dir sees prior chats (resumable)."""
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
-    from assistant.gateway.core import Gateway
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
 
@@ -199,11 +219,6 @@ async def test_replay_and_chat_reads_share_one_sqlite_connection(tmp_path, monke
 async def test_delete_chat_removes_transcript_and_event_log(tmp_path, monkeypatch):
     """Deleting a chat drops BOTH artifacts — the display transcript AND the AG2
     event log — so it neither lists nor resumes, even on a fresh Gateway."""
-    from ag2.knowledge.constants import LOG_PREFIX
-
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
-    from assistant.gateway.core import Gateway
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
 
@@ -252,9 +267,6 @@ class _SlowAgent(FakeRunMixin):
 
 
 async def _persistent_gateway(tmp_path, monkeypatch, agent):
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
-    from assistant.gateway.core import Gateway
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: agent)
     gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
@@ -295,7 +307,6 @@ async def test_inflight_stub_completed_in_place_no_duplicate(tmp_path, monkeypat
     """(b)+(c) After the turn completes the entry has the reply, one turn, a title,
     and the user message is NOT duplicated by the completion write; a second turn
     threads on without duplicating either (multi-turn stub is a no-op)."""
-    import assistant.title as title_mod
 
     async def fake_title(config, user_text, reply_text):
         return "Named Chat"
@@ -340,7 +351,6 @@ async def test_inflight_chat_stream_replay_returns_user_event(tmp_path, monkeypa
     the stream bridge shows the history so far and attaches live. Here the user event
     is emitted onto the chat stream before the (blocked) turn, exactly as the WS
     stream path does for a real message; a fresh bridge open() must replay it."""
-    from assistant.events import Attachment  # any persisted, replayable chat event
 
     slow = _SlowAgent()
     gw = await _persistent_gateway(tmp_path, monkeypatch, slow)
@@ -395,11 +405,6 @@ def test_rest_message_endpoint(profile_app):
 
 def test_unknown_and_archived_profile_status(monkeypatch):
     """A prefixed route on an unknown pid 404s; on an archived pid 410s."""
-    from fastapi.testclient import TestClient
-
-    from assistant import profiles
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     use_fake_agent(monkeypatch)
     work = profiles.create_profile("Work", "#109e91")
@@ -450,11 +455,6 @@ def test_mcp_settings_endpoints(profile_app):
 def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
     """POST settings/focuses persists the (normalised) focuses, surfaces them in GET
     settings, and reference-swap reloads the runtime so the context line takes effect."""
-    from fastapi.testclient import TestClient
-
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
-    from assistant.profiles import create_profile, profile_dir
 
     use_fake_agent(monkeypatch)
     meta = create_profile("Work", "#109e91")
@@ -493,11 +493,6 @@ def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
 
 
 def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
-    from assistant.profiles import create_profile, profile_dir
 
     use_fake_agent(monkeypatch)
     meta = create_profile("Work", "#109e91")
@@ -530,7 +525,6 @@ def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(monkeypatc
 
 
 def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
 
     (tmp_path / "alpha").mkdir()
     (tmp_path / "beta").mkdir()
@@ -558,7 +552,6 @@ def test_stream_roundtrip(profile_app):
 
 def test_stream_unknown_profile_ws_closed(profile_app):
     """A stream WS on an unknown pid is closed before accept (code 4404)."""
-    from starlette.websockets import WebSocketDisconnect
 
     client, _pid = profile_app
     with pytest.raises(WebSocketDisconnect) as exc:
@@ -595,12 +588,6 @@ def test_favicon_served(profile_app):
 async def test_hitl_routes_served_by_gateway(monkeypatch):
     """The global /hitl page dispatches to the profile whose registry holds the id;
     the profile-scoped /hitl/pending lists that profile's questions."""
-    from httpx import ASGITransport, AsyncClient
-
-    from assistant import profiles
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
-    from assistant.hitl.base import Question
 
     use_fake_agent(monkeypatch)
     meta = profiles.create_profile("Test", "#109e91")
@@ -632,9 +619,6 @@ async def test_hitl_routes_served_by_gateway(monkeypatch):
 
 
 def test_decode_attachments():
-    import base64
-
-    from assistant.gateway.app import _decode_attachments
 
     data = base64.b64encode(b"hello").decode()
     out = _decode_attachments([{"name": "a.png", "mime": "image/png", "data": data}])
@@ -645,7 +629,6 @@ def test_decode_attachments():
 
 def test_stream_timeout_sends_error_frame(monkeypatch):
     """A turn that exceeds the configured reply timeout surfaces an error frame on the stream WS."""
-    from fastapi.testclient import TestClient
 
     class _HangAgent(FakeRunMixin):
         tools = []
@@ -675,7 +658,6 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
 def test_stream_cancel_stops_the_turn(monkeypatch):
     """A `cancel` frame stops the running turn: AG2 propagates the cancellation into
     the run, a TurnCancelled event comes back out on the stream, and the turn ends."""
-    from fastapi.testclient import TestClient
 
     class _HangAgent(FakeRunMixin):
         tools = []
@@ -755,7 +737,6 @@ async def test_feed_message_is_false_when_nothing_is_running(fake_gateway):
 
 async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
     """Stopping a turn keeps the events it already put on the stream, and marks the stop."""
-    from assistant.events import TurnCancelled
 
     started = asyncio.Event()
 
@@ -763,8 +744,6 @@ async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
         tools = []
 
         async def ask(self, *msg, stream=None, **k):
-            from ag2.context import ConversationContext
-            from ag2.events import ModelMessage, ModelResponse
 
             await ConversationContext(stream=stream).send(
                 ModelResponse(message=ModelMessage(content="partial work"))
@@ -786,9 +765,6 @@ async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
 
 
 async def test_gateway_asker_timeout_denies():
-    from assistant.hitl import GatewayAsker, HitlServer
-    from assistant.hitl.base import Question
-    from assistant.permissions import DENY
 
     asker = GatewayAsker(HitlServer(), timeout=0.05)
     answer = await asker.ask(Question(text="?", options=["Allow once", "Deny"]))
@@ -798,7 +774,6 @@ async def test_gateway_asker_timeout_denies():
 @pytest.mark.integration
 async def test_gateway_real_agent_multiturn_and_isolation():
     """End-to-end with the real agent: multi-turn recall + chat isolation."""
-    from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False)
     await gw.start()
@@ -819,8 +794,6 @@ async def test_gateway_real_agent_multiturn_and_isolation():
 @pytest.mark.integration
 async def test_conversation_resumes_across_restart(tmp_path):
     """A brand-new Gateway over the same data dir keeps full conversation context."""
-    from assistant.config import load_config
-    from assistant.gateway.core import Gateway
 
     cfg = load_config()
     cfg.data_dir = tmp_path  # isolate the chat store
@@ -844,7 +817,6 @@ async def test_conversation_resumes_across_restart(tmp_path):
 
 def test_origin_ok_unit(monkeypatch):
     """The same-origin rule: no-Origin and same host:port pass; others don't."""
-    from assistant.gateway.app import _origin_ok
 
     monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
     assert _origin_ok(None, "127.0.0.1:8800")  # non-browser caller
@@ -856,7 +828,6 @@ def test_origin_ok_unit(monkeypatch):
 
 def test_origin_allowlist_env(monkeypatch):
     """AG2ASSISTANT_ALLOWED_ORIGINS adds extra accepted origins for proxied demos."""
-    from assistant.gateway.app import _origin_ok
 
     monkeypatch.setenv("AG2ASSISTANT_ALLOWED_ORIGINS", "https://demo.example, http://foo")
     assert _origin_ok("https://demo.example", "127.0.0.1:8800")
@@ -865,8 +836,6 @@ def test_origin_allowlist_env(monkeypatch):
 
 def test_cross_origin_requests_rejected(monkeypatch):
     """Cross-origin REST and WebSocket attempts are refused; same-origin works."""
-    from fastapi.testclient import TestClient
-    from starlette.websockets import WebSocketDisconnect
 
     monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
     use_fake_agent(monkeypatch)
@@ -905,14 +874,11 @@ def test_cross_origin_requests_rejected(monkeypatch):
 
 
 def _identity_app():
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     return create_app(ProfileManager(memory=False, persist=False))
 
 
 def test_identity_endpoint_seeds_when_empty():
-    from fastapi.testclient import TestClient
 
     app = _identity_app()
     with TestClient(app) as client:
@@ -930,7 +896,6 @@ def test_identity_endpoint_seeds_when_empty():
 
 
 def test_identity_endpoint_refuses_to_clobber_existing_doc():
-    from fastapi.testclient import TestClient
 
     app = _identity_app()
     with TestClient(app) as client:
@@ -947,7 +912,6 @@ def test_identity_endpoint_refuses_to_clobber_existing_doc():
 
 
 def test_identity_endpoint_noops_when_all_empty():
-    from fastapi.testclient import TestClient
 
     app = _identity_app()
     with TestClient(app) as client:
@@ -963,10 +927,6 @@ def test_identity_endpoint_noops_when_all_empty():
 async def test_identity_seed_disables_interview_gate():
     """After the endpoint seeds the universal store, the in-chat interview gate is
     closed — a web-onboarded user's first chat won't trigger it."""
-    from fastapi.testclient import TestClient
-
-    from assistant.config import load_config
-    from assistant.onboarding import needs_onboarding
 
     user_store_path = load_config().root_dir / "user.db"
     assert await needs_onboarding(user_store_path) is True  # fresh install: gate open
@@ -981,11 +941,6 @@ async def test_identity_seed_disables_interview_gate():
 async def test_identity_document_endpoint_parity():
     """The endpoint's stored doc is byte-identical to run_onboarding's for the same
     answers — both go through identity_document, the single formatter."""
-    from fastapi.testclient import TestClient
-
-    from assistant import onboarding
-    from assistant.config import load_config
-    from assistant.memory import PROFILE_PATH, build_profile_store
 
     answers = {"name": "Ada", "location": "London", "hours": "9am–6pm", "style": "Short & direct"}
 
@@ -1030,7 +985,6 @@ def test_profile_health_ok_and_down(profile_app, monkeypatch):
     """The cheap health aggregate: healthy when the agent is up and the configured
     provider has a key; 'down' (agent can't run) when the key is missing. The dot
     reads `overall`; the panel reads `checks`."""
-    import assistant.secrets as secrets
 
     client, pid = profile_app
 
@@ -1057,8 +1011,6 @@ def test_profile_health_ok_and_down(profile_app, monkeypatch):
 def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
     """A messaging channel bound to this profile that failed to start (start error
     recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
-    import assistant.profiles as profiles_mod
-    import assistant.secrets as secrets
 
     client, pid = profile_app
 
@@ -1081,7 +1033,6 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
     """Create/update/use/delete named configs; the raw key of a referenced Secret is
     never echoed (only its view with a hint), and deleting a config leaves the
     Secret in place (they're independent entities)."""
-    from assistant import secrets
 
     client, pid = profile_app
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1187,54 +1138,60 @@ def test_llm_config_env_override_surfaced(profile_app, monkeypatch):
     }
 
 
+def _use_test_client(monkeypatch, *, client=None, reply="PONG", captured=None):
+    """Drive the /test round-trip through the REAL ``ag2.Agent`` — replacing only the
+    LLM client with an ``ag2.testing.TestClient`` (canned reply), never the Agent.
+
+    ``model_config`` still runs for real (so its built config can be ``captured`` for
+    assertions); a ``TestConfig`` then stands in as the agent's config so ``.create()``
+    yields a ``TestClient`` instead of a network client. Pass ``client`` to inject a
+    raising/hanging double."""
+
+    class _Cfg(ag2.testing.TestConfig):
+        def create(self):
+            return client if client is not None else ag2.testing.TestClient(reply)
+
+    def fake(cfg):
+        built = model_config(cfg)
+        if captured is not None:
+            captured["config"] = built
+        return _Cfg()
+
+    monkeypatch.setattr(app_mod, "model_config", fake)
+
+
 def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
-    """The /test endpoint runs a real PONG round-trip (agent faked here): a reply →
-    {ok, reply, latency_ms}; any exception or a timeout → 502 {ok:false, error}."""
-    import ag2
-
-    from assistant.gateway import app as app_mod
-
+    """The /test endpoint runs a real PONG round-trip (LLM client canned via
+    ag2.testing.TestClient, real Agent): a reply → {ok, reply, latency_ms}; any
+    exception or a timeout → 502 {ok:false, error}."""
     client, pid = profile_app
     entry = client.post(
         "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
     ).json()["config"]
 
-    class _OkAgent(FakeRunMixin):
-        def __init__(self, *a, **k):
-            pass
-
-        async def ask(self, *a, **k):
-            return FakeReply("PONG")
-
-    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    _use_test_client(monkeypatch, reply="PONG")
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True and body["reply"] == "PONG"
     assert isinstance(body["latency_ms"], int)
 
-    class _BoomAgent(FakeRunMixin):
-        def __init__(self, *a, **k):
-            pass
-
-        async def ask(self, *a, **k):
+    class _Boom(ag2.testing.TestClient):
+        async def __call__(self, messages, context, **k):
             raise RuntimeError("nope-boom")
 
-    monkeypatch.setattr(ag2, "Agent", _BoomAgent)
+    _use_test_client(monkeypatch, client=_Boom())
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
     assert r.status_code == 502
     assert "nope-boom" in r.json()["error"]
 
     # a wedged call trips the (monkeypatched-tiny) timeout → 502
-    class _HangAgent(FakeRunMixin):
-        def __init__(self, *a, **k):
-            pass
-
-        async def ask(self, *a, **k):
+    class _Hang(ag2.testing.TestClient):
+        async def __call__(self, messages, context, **k):
             await asyncio.sleep(0.5)
-            return FakeReply("late")
+            return await super().__call__(messages, context, **k)
 
-    monkeypatch.setattr(ag2, "Agent", _HangAgent)
+    _use_test_client(monkeypatch, client=_Hang())
     monkeypatch.setattr(app_mod, "_LLM_TEST_TIMEOUT_S", 0.01)
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
     assert r.status_code == 502
@@ -1248,22 +1205,10 @@ def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
     a typed api_key is used for the call, a blank one resolves the draft's
     ``secret_id`` reference, and validation errors come back as 400 (the literal
     "test" segment must not be captured by the /{cid} update route)."""
-    import ag2
-
-    from assistant import llm_configs
-
     client, pid = profile_app
 
     captured = {}
-
-    class _OkAgent(FakeRunMixin):
-        def __init__(self, name, config=None, **k):
-            captured["config"] = config
-
-        async def ask(self, *a, **k):
-            return FakeReply("PONG")
-
-    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    _use_test_client(monkeypatch, captured=captured)
 
     # pure draft (no id): tested and NOT saved
     r = client.post(
@@ -1308,7 +1253,6 @@ def test_llm_config_subscription_entry_view_signed_in(profile_app, monkeypatch):
     """An openai_subscription config's row/chip need the live ChatGPT sign-in state and
     a 'subscription' key_source so the UI can label it honestly without a 2nd fetch.
     Endpoint fields are stripped for this type (codex_auth owns the endpoint)."""
-    from assistant import codex_auth
 
     client, pid = profile_app
     entry = client.post(
@@ -1335,10 +1279,6 @@ def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monke
     """Testing a subscription draft flows through model_config's subscription branch:
     the probe carries auth_mode=subscription, so the built client points at the ChatGPT
     backend with the codex token and server-side storage disabled."""
-    import ag2
-
-    from assistant import codex_auth
-
     client, pid = profile_app
     monkeypatch.setattr(
         codex_auth,
@@ -1347,15 +1287,7 @@ def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monke
     )
 
     captured = {}
-
-    class _OkAgent(FakeRunMixin):
-        def __init__(self, name, config=None, **k):
-            captured["config"] = config
-
-        async def ask(self, *a, **k):
-            return FakeReply("PONG")
-
-    monkeypatch.setattr(ag2, "Agent", _OkAgent)
+    _use_test_client(monkeypatch, captured=captured)
     r = client.post(
         "/api/llm-configs/test",
         json={"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"},
@@ -1401,7 +1333,6 @@ def test_secrets_crud_endpoints(profile_app):
     # POST /api/secrets/key still routes to the provider-key handler (not /{sid})
     r = client.post("/api/secrets/key", json={"provider": "openai", "value": "sk-ob-1"})
     assert r.status_code == 200
-    from assistant import secrets
 
     assert secrets.default_secret("openai")["hint"] == "…" + "sk-ob-1"[-4:]
 

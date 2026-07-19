@@ -9,6 +9,16 @@ from pathlib import Path
 
 import pytest
 
+import assistant.gateway.core as core_mod
+from assistant import llm_configs, profiles
+from assistant.config import load_config
+from assistant.gateway.profile_manager import (
+    ArchivedProfile,
+    ProfileManager,
+    UnknownProfile,
+    config_factory,
+    resolve_active_profile,
+)
 from tests.conftest import FakeRunMixin
 
 
@@ -28,13 +38,11 @@ class _FakeAgent(FakeRunMixin):
 @pytest.fixture(autouse=True)
 def _fake_agent(monkeypatch):
     """Every runtime's gateway builds a fake agent instead of a real one."""
-    import assistant.gateway.core as core_mod
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
 
 def _root() -> Path:
-    from assistant.config import load_config
 
     return load_config().root_dir
 
@@ -43,7 +51,6 @@ def _root() -> Path:
 
 
 async def test_zero_profile_start_is_noop():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -52,8 +59,6 @@ async def test_zero_profile_start_is_noop():
 
 
 async def test_boot_skips_archived():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ProfileManager
 
     a = profiles.create_profile("Work", "#109e91")
     b = profiles.create_profile("Personal", "#f95339")
@@ -67,12 +72,6 @@ async def test_boot_skips_archived():
 
 
 async def test_get_raises_unknown_archived_and_not_running():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import (
-        ArchivedProfile,
-        ProfileManager,
-        UnknownProfile,
-    )
 
     a = profiles.create_profile("Work", "#109e91")
     b = profiles.create_profile("Personal", "#f95339")
@@ -98,7 +97,6 @@ async def test_get_raises_unknown_archived_and_not_running():
 
 
 async def test_create_boots_live():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -108,8 +106,6 @@ async def test_create_boots_live():
         assert mgr.get("work") is runtime
         assert runtime.gateway is not None
         # the profile dir was created
-        from assistant import profiles
-
         assert profiles.profile_dir("work").exists()
     finally:
         await mgr.close()
@@ -119,7 +115,6 @@ async def test_create_boots_live():
 
 
 async def test_archive_refuses_last_profile():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -132,8 +127,6 @@ async def test_archive_refuses_last_profile():
 
 
 async def test_archive_requires_new_default_when_archiving_active():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -150,8 +143,6 @@ async def test_archive_requires_new_default_when_archiving_active():
         await mgr.archive(a.pid, new_default=b.pid)
         assert mgr.active_default == b.pid
         assert profiles.get_profile(a.pid).archived is True
-        from assistant.gateway.profile_manager import ArchivedProfile
-
         with pytest.raises(ArchivedProfile):
             mgr.get(a.pid)
         assert {r.pid for r in mgr.runtimes()} == {b.pid}
@@ -162,8 +153,6 @@ async def test_archive_requires_new_default_when_archiving_active():
 async def test_restart_after_archive_stays_gone(monkeypatch):
     """§6.6: archive B → close manager → new ProfileManager.start() → B not booted
     (get raises ArchivedProfile), absent from list_profiles(), folder intact on disk."""
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ArchivedProfile, ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -190,7 +179,6 @@ async def test_restart_after_archive_stays_gone(monkeypatch):
 
 
 async def test_archive_bad_new_default_rejected():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -207,8 +195,6 @@ async def test_archive_bad_new_default_rejected():
 
 
 async def test_restore_boots_live():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -228,7 +214,6 @@ async def test_restore_boots_live():
 
 
 async def test_restore_unknown_raises():
-    from assistant.gateway.profile_manager import ProfileManager, UnknownProfile
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -240,7 +225,6 @@ async def test_restore_unknown_raises():
 
 
 async def test_restore_non_archived_rejected():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -257,11 +241,6 @@ async def test_restore_non_archived_rejected():
 async def test_restore_rolls_back_on_boot_failure(monkeypatch):
     """§4.9 (Q9): if boot fails, the profile stays cleanly archived — never left in the
     unarchived-but-not-running limbo the manager treats as a server bug."""
-    from assistant import profiles
-    from assistant.gateway.profile_manager import (
-        ArchivedProfile,
-        ProfileManager,
-    )
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -290,8 +269,6 @@ async def test_restore_rolls_back_on_boot_failure(monkeypatch):
 
 
 async def test_purge_deletes_dir_and_registry_entry():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -312,7 +289,6 @@ async def test_purge_deletes_dir_and_registry_entry():
 
 
 async def test_purge_unknown_raises():
-    from assistant.gateway.profile_manager import ProfileManager, UnknownProfile
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -325,8 +301,6 @@ async def test_purge_unknown_raises():
 
 async def test_purge_refuses_unarchived_profile():
     """Archive-first (Q4/ADR 0003): a live profile cannot be hard-deleted directly."""
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -346,8 +320,6 @@ async def test_purge_refuses_unarchived_profile():
 
 
 def test_config_factory_derives_workspace_under_profile_dir():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import config_factory
 
     meta = profiles.create_profile("Work", "#109e91")
     factory = config_factory(meta.id)
@@ -359,8 +331,6 @@ def test_config_factory_derives_active_llm_config(monkeypatch):
     """The LLM is install-wide now: config_factory doesn't overlay per-profile
     settings — it just carries whatever load_config() derived from the active named
     LLM config (common across every profile)."""
-    from assistant import llm_configs, profiles
-    from assistant.gateway.profile_manager import config_factory
 
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
@@ -379,8 +349,6 @@ def test_config_factory_derives_active_llm_config(monkeypatch):
 
 
 def test_config_factory_env_wins_over_active_config(monkeypatch):
-    from assistant import llm_configs, profiles
-    from assistant.gateway.profile_manager import config_factory
 
     meta = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
@@ -395,7 +363,6 @@ def test_config_factory_env_wins_over_active_config(monkeypatch):
 
 
 def test_config_factory_unknown_profile_raises():
-    from assistant.gateway.profile_manager import UnknownProfile, config_factory
 
     with pytest.raises(UnknownProfile):
         config_factory("ghost")()
@@ -405,15 +372,12 @@ def test_config_factory_unknown_profile_raises():
 
 
 def test_resolve_active_profile_zero_profiles_raises():
-    from assistant.gateway.profile_manager import UnknownProfile, resolve_active_profile
 
     with pytest.raises(UnknownProfile):
         resolve_active_profile()
 
 
 def test_resolve_active_profile_defaults_to_active():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import resolve_active_profile
 
     meta = profiles.create_profile("Work", "#109e91")
     pid, cfg, factory = resolve_active_profile()
