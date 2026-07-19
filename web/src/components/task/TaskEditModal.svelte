@@ -13,13 +13,17 @@
 
   // Local editable copy — snapshotted once at mount (this modal is remounted fresh
   // each time it opens, so there's no need to react to `task` changing underneath).
-  let name = $state(task?.name || '')
-  let description = $state(task?.description || '')
-  let prompt = $state(task?.prompt || '')
-  let model = $state(task?.model ?? null)
-  let schedule = $state(task ? structuredClone(task.schedule) : { kind: 'manual', at: null, cron: null })
-  let workdir = $state(task?.workdir || '')
-  let access = $state(task?.workdir_access || 'read')
+  // svelte-ignore state_referenced_locally
+  const initial = task
+  let name = $state(initial?.name || '')
+  let description = $state(initial?.description || '')
+  let prompt = $state(initial?.prompt || '')
+  let model = $state(initial?.model ?? null)
+  // $state.snapshot, not structuredClone: `task` arrives as a $state proxy from
+  // TaskPage, and structuredClone throws DataCloneError on proxies.
+  let schedule = $state(initial ? $state.snapshot(initial.schedule) : { kind: 'manual', at: null, cron: null })
+  let workdir = $state(initial?.workdir || '')
+  let access = $state(initial?.workdir_access || 'read')
 
   let pickerOpen = $state(false)   // inline FolderPicker section, only relevant while no folder is set
   let models = $state([])          // llm_configs entries for the model dropdown

@@ -101,15 +101,16 @@
         </div>
         <div class="tpactions">
           <button class="iconbtn" title="Edit" onclick={() => (editOpen = true)}><Icon name="pencil" size={15} /></button>
-          {#if confirmDel}
-            <span class="delconfirm">
-              <span class="confirm">Delete permanently?</span>
-              <button class="open danger" onclick={del}>Yes, delete</button>
-              <button class="open" onclick={() => (confirmDel = false)}>Cancel</button>
-            </span>
-          {:else}
-            <button class="iconbtn" title="Delete" onclick={() => (confirmDel = true)}><Icon name="trash" size={15} /></button>
-          {/if}
+          <span class="delwrap">
+            <button class="iconbtn" title="Delete" onclick={() => (confirmDel = !confirmDel)}><Icon name="trash" size={15} /></button>
+            {#if confirmDel}
+              <span class="delconfirm">
+                <span class="confirm">Delete permanently?</span>
+                <button class="open danger" onclick={del}>Yes, delete</button>
+                <button class="open" onclick={() => (confirmDel = false)}>Cancel</button>
+              </span>
+            {/if}
+          </span>
           <button class="open primary" disabled={running} onclick={runNow}>
             <Icon name="play" size={14} /> {running ? 'Starting…' : 'Run now'}
           </button>
@@ -242,7 +243,15 @@
      treatment already used for Codex's single primary action. */
   .taskpage .open.primary { border-color: var(--accent); color: var(--accent); }
   .taskpage .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
-  .delconfirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* Delete confirm is a popover anchored under the trash button (not inline in
+     .tpactions) so opening it never widens the header row / shifts the layout. */
+  .delwrap { position: relative; display: inline-flex; flex: none; }
+  .delconfirm {
+    position: absolute; top: calc(100% + 8px); right: 0; z-index: 5;
+    display: flex; align-items: center; gap: 8px; white-space: nowrap;
+    padding: 8px 10px; background: var(--surface-elevated); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+  }
   .delconfirm .confirm { color: #d8552f; font-size: 13px; }
   .taskerror { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 8px; padding: 9px 11px; font-size: var(--text-sm); line-height: var(--leading-snug); color: var(--ag2-observer); background: color-mix(in srgb, var(--ag2-observer) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ag2-observer) 28%, transparent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
   .statusicon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--muted); }
