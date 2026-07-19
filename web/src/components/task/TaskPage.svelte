@@ -5,7 +5,7 @@
   // same page with the modal open over an empty view — one route, one component,
   // for both create and edit. Each run opens as a chat thread at /r/{id}.
   import { api } from '../../transport/api.js'
-  import { go, route } from '../../router.js'
+  import { go, goTab, route } from '../../router.js'
   import Icon from '../Icon.svelte'
   import TaskEditModal from './TaskEditModal.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.js'
@@ -60,7 +60,7 @@
 
   async function del() {
     if (!task) return
-    try { await api.deleteTask(task.id); go('/tasks') } catch (e) { error = e.message }
+    try { await api.deleteTask(task.id); goTab('tasks') } catch (e) { error = e.message }
   }
 
   async function revoke(rule) {
@@ -72,7 +72,7 @@
   // isNew: closing/saving the modal has nowhere else to land on but /tasks / the
   // new task's own page. Editing: the modal just closes back over this page,
   // with the fresh copy from the save swapped straight into `task`.
-  function closeModal() { if (isNew) go('/tasks'); else editOpen = false }
+  function closeModal() { if (isNew) goTab('tasks'); else editOpen = false }
   function onModalSaved(t) { if (isNew) go('/t/' + t.id); else { task = t; editOpen = false } }
 
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
@@ -81,7 +81,7 @@
 
 <div class="thread taskpage">
   <div class="inner">
-    <div class="crumbs"><button onclick={() => go('/tasks')}>Tasks</button> / {task?.name || (isNew ? 'New task' : '')}</div>
+    <div class="crumbs"><button onclick={() => goTab('tasks')}>Tasks</button> / {task?.name || (isNew ? 'New task' : '')}</div>
 
     {#if error}<div class="taskerror"><Icon name="x" size={13} /> {error}</div>{/if}
 
@@ -191,12 +191,12 @@
   .badge.paused { border-color: var(--line); background: var(--surface); color: var(--muted); }
   .muted { color: var(--muted); font-size: 13px; }
 
-  .tpcols { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; margin-top: 24px; align-items: start; }
+  .tpcols { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; margin-top: 24px; align-items: start; }
   @media (max-width: 760px) { .tpcols { grid-template-columns: 1fr; } }
   .tpcols h2 { margin: 20px 0 8px; font-size: 12px; font-weight: var(--fw-semibold); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .tpcols section > h2:first-child { margin-top: 0; }
-  .tpprompt { white-space: pre-wrap; font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0; }
-  .tpmeta { font-size: 13px; color: var(--ink); margin: 0; }
+  .tpprompt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0; }
+  .tpmeta { overflow-wrap: anywhere; font-size: 13px; color: var(--ink); margin: 0; }
 
   .permrow { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 10px; margin-bottom: 6px; }
   .permrow code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

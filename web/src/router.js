@@ -39,6 +39,16 @@ export function go(path, pid = currentPid()) {
   route.set(read())
 }
 
+// Navigate to a bare Tab, CLOSING the open Thread — go('/tasks') would keep it
+// (that contract exists so Tab switches don't close your chat); deleting/leaving
+// a thread needs the opposite: land on the Tab's own empty page, not back on the
+// (now-gone) Thread. Preserves the hash, same as go().
+export function goTab(tab, pid = currentPid()) {
+  const full = resolve(current(), { type: 'goTab', tab, pid })
+  if (location.pathname + location.hash !== full) history.pushState({}, '', full)
+  route.set(read())
+}
+
 // Replace the current URL with /app/{pid}/ (used on boot to canonicalise a bare
 // /app/ or a stale pid into the resolved profile). Preserves the hash so cold
 // deep-links (`/app/#settings=…`) and the profile-switch reload survive. replaceState

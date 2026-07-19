@@ -155,6 +155,8 @@ function normalizePath(path, r) {
 // Path and hash are orthogonal, and within the hash the Modal and `aside` keys are
 // orthogonal too: each intent touches one key and preserves the other verbatim.
 //   • go                — path nav (normalize against current); preserves the whole hash.
+//   • goTab             — bare Tab nav that CLOSES any open Thread (no suffix-keeping,
+//                          unlike go('/tasks')); preserves the whole hash.
 //   • openOverlay       — set the Modal key; preserves the aside key.   (shell pushes)
 //   • replaceOverlay    — same URL as openOverlay.                      (shell replaces)
 //   • closeOverlay      — drop the Modal key; preserves the aside key.
@@ -170,6 +172,12 @@ export function resolve(current, intent) {
     case 'go': {
       const pid = intent.pid || r.pid
       return BASE + '/' + pid + normalizePath(intent.path, r) + hash
+    }
+    case 'goTab': {
+      // Unlike 'go', deliberately skips normalizePath: no Thread suffix is kept,
+      // so an open Thread (e.g. a deleted task's page) actually closes.
+      const pid = intent.pid || r.pid
+      return BASE + '/' + pid + '/' + intent.tab + hash
     }
     case 'openOverlay':
     case 'replaceOverlay':

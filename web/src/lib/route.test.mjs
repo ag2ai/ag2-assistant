@@ -300,6 +300,22 @@ test('resolve: an aside file path with special chars is encoded segment-wise', (
   )
 })
 
+test('resolve: goTab switches to a bare Tab and drops any open Thread suffix', () => {
+  // Unlike 'go', which keeps an open Thread as a suffix across a Tab switch,
+  // 'goTab' is for leaving/closing a Thread entirely (e.g. after deleting it).
+  assert.equal(
+    resolve({ pathname: '/app/p1/tasks/t/task-9', hash: '' }, { type: 'goTab', tab: 'tasks' }),
+    '/app/p1/tasks',
+  )
+})
+
+test('resolve: goTab preserves the current hash', () => {
+  assert.equal(
+    resolve({ pathname: '/app/p1/tasks/t/task-9', hash: '#settings=models' }, { type: 'goTab', tab: 'tasks' }),
+    '/app/p1/tasks#settings=models',
+  )
+})
+
 test('run thread routes parse and resolve', () => {
   const r = parse('/app/p1/tasks/r/run_9', '')
   assert.equal(r.name, 'run')
