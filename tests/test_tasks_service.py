@@ -226,6 +226,45 @@ async def test_on_inquiry_flips_run_needs_input_and_back(tmp_path, monkeypatch):
     assert (await svc.get_run(run.id))["status"] == "running"
 
 
+async def test_create_task_autonames_when_name_empty(tmp_path, monkeypatch):
+    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+
+    async def fake_meta(config, prompt, agent_factory=None):
+        return "Auto name", "Auto description."
+
+    monkeypatch.setattr(tasks_service_mod, "suggest_task_meta", fake_meta)
+    t = await svc.create_task(name="", prompt="do things", schedule=None)
+    assert t["name"] == "Auto name" and t["description"] == "Auto description."
+    t2 = await svc.create_task(name="Manual", prompt="p", schedule=None, description="given")
+    assert t2["name"] == "Manual" and t2["description"] == "given"
+
+
+async def test_create_task_enforces_workdir_access_invariant(tmp_path, monkeypatch):
+    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+    folder = tmp_path / "work"
+    folder.mkdir()
+
+    t = await svc.create_task(name="x", prompt="p", workdir=str(folder))
+    assert t["workdir"] == str(folder) and t["workdir_access"] == "read"
+
+    t2 = await svc.create_task(name="y", prompt="p")
+    assert t2["workdir"] is None and t2["workdir_access"] is None
+
+    with pytest.raises(ValueError):
+        await svc.create_task(name="z", prompt="p", workdir=str(folder), workdir_access="bogus")
+
+
+async def test_update_task_clearing_workdir_clears_access(tmp_path, monkeypatch):
+    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+    folder = tmp_path / "work"
+    folder.mkdir()
+    t = await svc.create_task(name="x", prompt="p", workdir=str(folder), workdir_access="read_write")
+    assert t["workdir_access"] == "read_write"
+
+    updated = await svc.update_task(t["id"], workdir=None)
+    assert updated["workdir"] is None and updated["workdir_access"] is None
+
+
 async def test_notifier_gets_channel_outcomes_only(tmp_path, monkeypatch):
     gw = FakeGateway()
     svc = await _svc(tmp_path, gw, monkeypatch)

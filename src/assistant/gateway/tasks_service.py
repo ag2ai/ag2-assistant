@@ -15,13 +15,23 @@ import asyncio
 import contextlib
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 from assistant.channels.base import PUSH_CHANNELS
 from assistant.config import Config, load_config
 from assistant.hitl import NullAsker
-from assistant.tasks.model import Run, RunStatus, RunTrigger, ScheduleKind, Task, manual_schedule, normalize_schedule
+from assistant.tasks.model import (
+    Run,
+    RunStatus,
+    RunTrigger,
+    ScheduleKind,
+    Task,
+    manual_schedule,
+    normalize_schedule,
+    normalize_workdir_access,
+)
 from assistant.tasks.scheduling import compute_next_run, parse_dt, schedule_text
-from assistant.tasks.summary import summarize_run
+from assistant.tasks.summary import suggest_task_meta, summarize_run
 
 
 def _run_surface(task: Task, prior: list[str]) -> str:
@@ -61,6 +71,9 @@ def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> 
         "name": t.name,
         "prompt": t.prompt,
         "model": t.model,
+        "description": t.description,
+        "workdir": t.workdir,
+        "workdir_access": t.workdir_access,
         "schedule": t.schedule,
         "schedule_desc": schedule_text(t.schedule),
         "paused": t.paused,
@@ -183,6 +196,11 @@ class TaskService:
                 "configured LLM configurations (or omit for the profile default)"
             )
 
+    @staticmethod
+    def _normalize_workdir(workdir: str | None) -> str | None:
+        workdir = (workdir or "").strip()
+        return str(Path(workdir).expanduser()) if workdir else None
+
     async def create_task(
         self,
         name: str,
@@ -191,10 +209,24 @@ class TaskService:
         schedule: dict | None = None,
         origin_channel: str | None = None,
         origin_chat: str | None = None,
+        description: str = "",
+        workdir: str | None = None,
+        workdir_access: str | None = None,
     ) -> dict:
-        """Create a task. Raises ValueError on a bad schedule/model (callers map
-        it to HTTP 422 or a correctable tool reply)."""
+        """Create a task. Raises ValueError on a bad schedule/model/workdir_access
+        (callers map it to HTTP 422 or a correctable tool reply). An empty ``name``
+        triggers cheap-model auto-naming (and, unless given, auto-description) from
+        the prompt. The workdir/workdir_access invariant (access is set iff a
+        folder is attached) is enforced here regardless of what the caller passed."""
         self._validate_model(model)
+        name = (name or "").strip()
+        description = (description or "").strip()
+        if not name:
+            gen_name, gen_desc = await suggest_task_meta(self._config, prompt)
+            name = gen_name
+            description = description or gen_desc
+        workdir = self._normalize_workdir(workdir)
+        workdir_access = normalize_workdir_access(workdir_access) if workdir else None
         task = await self._store.create_task(
             name=name,
             prompt=prompt,
@@ -202,6 +234,9 @@ class TaskService:
             schedule=normalize_schedule(schedule),
             origin_channel=origin_channel,
             origin_chat=origin_chat,
+            description=description,
+            workdir=workdir,
+            workdir_access=workdir_access,
         )
         return _task_row(task, None, 0, False)
 
@@ -210,6 +245,27 @@ class TaskService:
             patch["schedule"] = normalize_schedule(patch["schedule"])
         if "model" in patch:
             self._validate_model(patch["model"])
+        if "name" in patch:
+            patch["name"] = (patch["name"] or "").strip()
+        if "description" in patch:
+            patch["description"] = (patch["description"] or "").strip()
+        if "workdir" in patch or "workdir_access" in patch:
+            # Invariant (workdir is None ⟺ workdir_access is None) must hold after
+            # the patch even when the caller only touches one of the two fields —
+            # so when either is in the patch, resolve the OTHER from the current
+            # task rather than assuming it is unset.
+            current = await self._store.get_task(task_id)
+            if current is None:
+                return None
+            new_workdir = (
+                self._normalize_workdir(patch["workdir"]) if "workdir" in patch else current.workdir
+            )
+            patch["workdir"] = new_workdir
+            if new_workdir:
+                raw_access = patch.get("workdir_access") if "workdir_access" in patch else current.workdir_access
+                patch["workdir_access"] = normalize_workdir_access(raw_access)
+            else:
+                patch["workdir_access"] = None
         task = await self._store.update_task(task_id, **patch)
         return None if task is None else await self.get_task(task_id)
 

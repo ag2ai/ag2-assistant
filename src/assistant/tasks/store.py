@@ -59,6 +59,9 @@ class TaskStore:
         schedule: dict | None = None,
         origin_channel: str | None = None,
         origin_chat: str | None = None,
+        description: str = "",
+        workdir: str | None = None,
+        workdir_access: str | None = None,
     ) -> Task:
         sched = schedule or manual_schedule()
         task = Task(
@@ -69,6 +72,9 @@ class TaskStore:
             schedule=sched,
             origin_channel=origin_channel,
             origin_chat=origin_chat,
+            description=description,
+            workdir=workdir,
+            workdir_access=workdir_access,
             next_run_at=compute_next_run(sched, _now_dt()),
             created_at=now_iso(),
             updated_at=now_iso(),
