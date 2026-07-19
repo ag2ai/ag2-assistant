@@ -55,11 +55,13 @@ export const voicePickerConfig = writable(null)
 // (Path-backed previews live in the URL — router.openAsideFile.)
 export const viewer = writable(null)
 
-// A one-shot Reveal request: locate the Active file where it lives in the Files tree.
-// `path` is the file to surface; `epoch` bumps on every request so FilesTree re-fires
-// its expand+scroll even for a repeat Reveal of the same path. Transient — never
-// persisted, never in the URL (the expanded tree shape is session view-state).
-export const reveal = writable({ path: null, epoch: 0 })
+// A one-shot Reveal request: locate a file or directory where it lives in the Files
+// tree. `path` is the row to surface; `kind` is 'file' (expand ancestors, scroll the
+// file's row) or 'directory' (also expand the directory itself, so its contents show);
+// `epoch` bumps on every request so FilesTree re-fires its expand+scroll even for a
+// repeat Reveal of the same path. Transient — never persisted, never in the URL (the
+// expanded tree shape is session view-state).
+export const reveal = writable({ path: null, kind: 'file', epoch: 0 })
 
 // Reveal the given file in the Files tree: record the request (bumping the epoch) and
 // switch to the Files Tab. FilesTree reacts — pull a fresh listing, persistently expand
@@ -67,7 +69,16 @@ export const reveal = writable({ path: null, epoch: 0 })
 // (aside) Active file and the upload-target selection untouched. A blank path is a no-op.
 export function revealFile(path) {
   if (!path) return
-  reveal.update((r) => ({ path, epoch: r.epoch + 1 }))
+  reveal.update((r) => ({ path, kind: 'file', epoch: r.epoch + 1 }))
+  go('/files')
+}
+
+// Reveal (and expand) a Directory in the Files tree: same as revealFile but FilesTree
+// also opens the directory itself so its contents are visible. A folder has no preview
+// rail (it isn't a file), so a mentioned folder browses here instead (ADR 0012).
+export function revealFolder(path) {
+  if (!path) return
+  reveal.update((r) => ({ path, kind: 'directory', epoch: r.epoch + 1 }))
   go('/files')
 }
 

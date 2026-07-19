@@ -247,38 +247,58 @@
   // The `epoch` nonce re-fires this even for a repeat Reveal of the same path; the
   // module-scoped guard stops a lingering request re-firing on a plain tab (re)open.
   $effect(() => {
-    const { path, epoch } = $reveal
+    const { path, kind, epoch } = $reveal
     if (!path || epoch === handledRevealEpoch) return
     handledRevealEpoch = epoch
-    revealInTree(path)
+    revealInTree(path, kind)
   })
-  async function revealInTree(path) {
-    // A Folder (absolute) file lives in the Thread-scoped Folder section, not the
-    // Files-space tree; expand it there instead.
-    if (isFolderPath(path)) return revealInFolder(path)
+  async function revealInTree(path, kind) {
+    // A Folder (absolute) file/directory lives in the Thread-scoped Folder section,
+    // not the Files-space tree; expand it there instead.
+    if (isFolderPath(path)) return revealInFolder(path, kind)
     for (const d of ancestorDirs(path)) expanded.add(d)   // from the path string; no listing needed
+    // A directory reveal also opens the directory itself, so its contents show and the
+    // row it stands on is the one we scroll to (a file's own row is the scroll target).
+    // Selecting it makes it the upload/mkdir target too, and highlights the row.
+    if (kind === 'directory') { expanded.add(path); selected = path }
     expanded = new Set(expanded)
     sessionExpanded = expanded
     await load()          // coalesces with onMount's load when the tab just opened
     await tick()          // let the expanded rows render before we measure
-    treeEl?.querySelector('.ftrow.active')?.scrollIntoView({ block: 'nearest' })
+    scrollRevealed(path, kind)
   }
-  // Reveal a Folder file: re-resolve this Thread's roots, expand the hosting root's
-  // ancestors down to the file (each level pulled fresh), scroll it in; no host → no-op.
-  async function revealInFolder(path) {
+  // Reveal a Folder file/directory: re-resolve this Thread's roots, expand the hosting
+  // root's ancestors down to it (each level pulled fresh), scroll it in; no host → no-op.
+  // A directory reveal also expands the directory itself so its listing is visible.
+  async function revealInFolder(path, kind) {
     await loadFolderRoots()
     let dirs = null
     for (const r of folderRoots) {
       if (!r.exists) continue
+      // A directory names itself; folderAncestorDirs stops at the parent, so append the
+      // directory so it (and, once loaded, its contents) is expanded too. The hosting
+      // root mentioned directly resolves to just [root].
+      if (r.path === path) { dirs = [r.path]; break }
       const d = folderAncestorDirs(r.path, path)
-      if (d.length) { dirs = d; break }
+      if (d.length) { dirs = kind === 'directory' ? [...d, path] : d; break }
     }
     if (!dirs) return
     for (const d of dirs) folderExpanded.add(d)
     folderExpanded = new Set(folderExpanded)
     sessionFolderExpanded = folderExpanded
+    if (kind === 'directory') selected = path   // highlight it + make it the mutation target
     for (const d of dirs) await loadFolderLevel(d)
     await tick()
+    scrollRevealed(path, kind)
+  }
+  // Scroll the revealed row into view: a file rides the active pill (.ftrow.active); a
+  // directory has no active state, so target its row by path.
+  function scrollRevealed(path, kind) {
+    if (kind === 'directory') {
+      for (const el of treeEl?.querySelectorAll('[data-path]') || [])
+        if (el.dataset.path === path) return void el.scrollIntoView({ block: 'nearest' })
+      return
+    }
     treeEl?.querySelector('.ftrow.active')?.scrollIntoView({ block: 'nearest' })
   }
 
@@ -629,7 +649,7 @@
     class="ftrow ftdir ftfolder"
     class:missing={!r.exists}
     class:drop={dropTarget === r.path}
-    class:selected={aff.move && r.exists && selected === r.path}
+    class:selected={r.exists && selected === r.path}
     style="padding-left:4px"
     title={r.path}
     ondragover={aff.move && r.exists ? (e) => onDirDragOver(e, r.path) : null}
@@ -665,7 +685,7 @@
   {:else if lvl}
     {#each lvl.dirs as d (d.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-      <div class="ftrow ftdir" data-path={d.path} class:drop={dropTarget === d.path} class:selected={aff.move && selected === d.path}
+      <div class="ftrow ftdir" data-path={d.path} class:drop={dropTarget === d.path} class:selected={selected === d.path}
         style="padding-left:{depth * 14 + 4}px" title={d.path}
         draggable={aff.move}
         ondragstart={aff.move ? (e) => onRowDragStart(e, d.path) : null}
