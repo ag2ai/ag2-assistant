@@ -13,7 +13,12 @@
 </script>
 
 {#if $runInfo}
-  <div class="runbanner">
+  <!-- .panel is the app's generic thread-column card (app.css) — the same shell
+       Hitl's question cards and TaskCard use, centered to --thread-max and sitting
+       right where those cards would. Its descendant selectors (`.panel .open`,
+       `.panel .taskerror`, `.panel .runlink`) already style everything below for
+       free; `.runbanner` only adds the row layout on top. -->
+  <div class="runbanner panel">
     <button class="runlink" onclick={() => go('/t/' + $runInfo.task_id)}>
       <Icon name="list" size={13} /> {$runInfo.task_name || 'Task'}
     </button>
@@ -22,28 +27,15 @@
       <button class="open danger" onclick={() => api.stopRun($runInfo.id)}><Icon name="x" size={13} /> Stop run</button>
     {/if}
     {#if $runInfo.status === 'failed' && $runInfo.error}
-      <span class="taskerror">{$runInfo.error}</span>
+      <span class="taskerror"><Icon name="x" size={13} /> {$runInfo.error}</span>
     {/if}
   </div>
 {/if}
 
 <style>
-  .runbanner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-               padding: 8px 16px; border-bottom: 1px solid var(--line); font-size: var(--text-sm); }
+  .runbanner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: var(--text-sm); }
   .runmeta { color: var(--muted); }
-
-  /* Same rationale as TaskPage.svelte: these were app.css rules scoped to an
-     ancestor (.panel/.modal) TaskPanel.svelte supplied — RunBanner's root has
-     neither class, so reproduce them here, Svelte-scoped to this component. */
-  .runlink { background: none; border: none; padding: 0; color: var(--accent, #d8552f); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; display: inline-flex; align-items: center; gap: 5px; }
-  .open {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
-    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
-    border-radius: var(--radius-sm); padding: 7px 14px;
-    transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
-  }
-  .open.danger { border-color: color-mix(in srgb, #d8552f 55%, var(--line)); color: #d8552f; background: none; }
-  .open.danger:hover { border-color: #d8552f; color: #fff; background: #d8552f; }
-  .taskerror { display: flex; align-items: flex-start; gap: 7px; font-size: var(--text-sm); line-height: var(--leading-snug); color: var(--ag2-observer); background: color-mix(in srgb, var(--ag2-observer) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ag2-observer) 28%, transparent); border-radius: var(--radius-sm); padding: 6px 10px; overflow-wrap: anywhere; }
+  /* .panel .runlink (app.css) only resets the button chrome — add the icon+text
+     row layout on top, same as every other icon-leading link/button in the app. */
+  .runlink { display: inline-flex; align-items: center; gap: 5px; }
 </style>

@@ -47,7 +47,7 @@
 </script>
 
 <div class="schedfield">
-  <select bind:value={preset} onchange={apply}>
+  <select class="chpick" bind:value={preset} onchange={apply}>
     {#each PRESETS as p}<option value={p.id}>{p.label}</option>{/each}
   </select>
   {#if ['daily', 'weekly', 'weekdays'].includes(preset)}
@@ -60,6 +60,19 @@
 </div>
 
 <style>
-  .schedfield { display: flex; gap: 8px; align-items: center; }
-  .schedfield select, .schedfield input { font: inherit; padding: 6px 8px; }
+  /* Same field-control recipe as TaskPage's .tpfield (which this select+input row
+     sits inside, as the Schedule field) — a bordered control on the base surface,
+     matching Settings' .llmfield inputs. Kept local since this component has no
+     .settings/.tpfield ancestor class to inherit from. */
+  .schedfield { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .schedfield select, .schedfield input {
+    font: inherit; font-size: 13px; color: var(--ink);
+    min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+    background-color: var(--bg);
+  }
+  .schedfield select { flex: none; padding-right: 30px; } /* clears the shared chevron */
+  .schedfield input { flex: 1; min-width: 140px; }
+  .schedfield select:focus, .schedfield input:focus {
+    outline: none; border-color: var(--accent); box-shadow: var(--focus-ring);
+  }
 </style>

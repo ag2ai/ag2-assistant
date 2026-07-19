@@ -99,84 +99,122 @@
 </script>
 
 <div class="thread taskpage">
-  <div class="tphead">
-    <h1>{isNew ? 'New task' : (task?.name || '…')}</h1>
+  <div class="inner">
+    <div class="tphead">
+      <h1>{isNew ? 'New task' : (task?.name || '…')}</h1>
+      {#if !isNew && task}
+        <div class="tpactions">
+          <button class="open" disabled={running} onclick={runNow}>
+            <Icon name="chevron-right" size={14} /> {running ? 'Starting…' : 'Run now'}
+          </button>
+          <button class="open" disabled={pausing} onclick={togglePause}>
+            <Icon name={task.paused ? 'chevron-right' : 'square'} size={14} />
+            {pausing ? (task.paused ? 'Resuming…' : 'Pausing…') : task.paused ? 'Resume' : 'Pause'}
+          </button>
+          {#if confirmDel}
+            <span class="delconfirm">
+              <span class="confirm">Delete permanently?</span>
+              <button class="open danger" onclick={del}>Yes, delete</button>
+              <button class="open" onclick={() => (confirmDel = false)}>Cancel</button>
+            </span>
+          {:else}
+            <button class="open danger" onclick={() => (confirmDel = true)}><Icon name="trash" size={14} /> Delete</button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
+    {#if error}<div class="taskerror"><Icon name="x" size={13} /> {error}</div>{/if}
+
+    {#if draft}
+      <div class="tpconfig">
+        <label class="tpfield">Name
+          <input type="text" bind:value={draft.name} placeholder="Daily digest" />
+        </label>
+        <label class="tpfield">Prompt
+          <textarea rows="6" bind:value={draft.prompt}
+            placeholder="What should the agent do on every run? Be specific — it runs unattended."></textarea>
+        </label>
+        <label class="tpfield">Model
+          <select class="chpick" bind:value={draft.model}>
+            <option value={null}>Profile default</option>
+            {#each models as m (m.id)}<option value={m.id}>{m.name} ({m.model})</option>{/each}
+          </select>
+        </label>
+        <label class="tpfield">Schedule
+          <ScheduleField bind:schedule={draft.schedule} />
+        </label>
+        {#if task?.next_run_at && !task.paused}<div class="tphint">Next run: {fmtStamp(task.next_run_at)}</div>{/if}
+        <div>
+          <button class="open primary" disabled={!dirty || saving || !draft.name.trim() || !draft.prompt.trim()} onclick={save}>
+            {saving ? 'Saving…' : isNew ? 'Create task' : 'Save changes'}
+          </button>
+        </div>
+      </div>
+    {/if}
+
     {#if !isNew && task}
-      <div class="tpactions">
-        <button class="open" disabled={running} onclick={runNow}>
-          <Icon name="chevron-right" size={14} /> {running ? 'Starting…' : 'Run now'}
-        </button>
-        <button class="open" disabled={pausing} onclick={togglePause}>
-          <Icon name={task.paused ? 'chevron-right' : 'square'} size={14} />
-          {pausing ? (task.paused ? 'Resuming…' : 'Pausing…') : task.paused ? 'Resume' : 'Pause'}
-        </button>
-        {#if confirmDel}
-          <span class="delconfirm">
-            <span class="confirm">Delete permanently?</span>
-            <button class="open danger" onclick={del}>Yes, delete</button>
-            <button class="open" onclick={() => (confirmDel = false)}>Cancel</button>
-          </span>
-        {:else}
-          <button class="open danger" onclick={() => (confirmDel = true)}><Icon name="trash" size={14} /> Delete</button>
-        {/if}
+      <div class="ptitle" style="margin-top:20px">Runs</div>
+      {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
+      <div class="runslist">
+        {#each task.runs as r (r.id)}
+          <button class="runrow" class:unseen={TERMINAL.includes(r.status) && !r.seen} onclick={() => go('/r/' + r.id)}>
+            <span class="statusicon {r.status}"><Icon name={STAT_ICON[r.status] || 'clock'} size={13} /></span>
+            <span class="runwhen">{fmtStamp(r.started_at)}</span>
+            <span class="runsum">{r.summary || r.error || r.status}</span>
+          </button>
+        {/each}
       </div>
     {/if}
   </div>
-
-  {#if error}<div class="taskerror"><Icon name="x" size={13} /> {error}</div>{/if}
-
-  {#if draft}
-    <div class="tpconfig">
-      <label>Name
-        <input type="text" bind:value={draft.name} placeholder="Daily digest" />
-      </label>
-      <label>Prompt
-        <textarea rows="6" bind:value={draft.prompt}
-          placeholder="What should the agent do on every run? Be specific — it runs unattended."></textarea>
-      </label>
-      <label>Model
-        <select bind:value={draft.model}>
-          <option value={null}>Profile default</option>
-          {#each models as m (m.id)}<option value={m.id}>{m.name} ({m.model})</option>{/each}
-        </select>
-      </label>
-      <label>Schedule
-        <ScheduleField bind:schedule={draft.schedule} />
-      </label>
-      {#if task?.next_run_at && !task.paused}<div class="note">Next run: {fmtStamp(task.next_run_at)}</div>{/if}
-      <div>
-        <button class="open primary" disabled={!dirty || saving || !draft.name.trim() || !draft.prompt.trim()} onclick={save}>
-          {saving ? 'Saving…' : isNew ? 'Create task' : 'Save changes'}
-        </button>
-      </div>
-    </div>
-  {/if}
-
-  {#if !isNew && task}
-    <div class="ptitle" style="margin-top:16px">Runs</div>
-    {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
-    {#each task.runs as r (r.id)}
-      <button class="runrow" class:unseen={TERMINAL.includes(r.status) && !r.seen} onclick={() => go('/r/' + r.id)}>
-        <span class="statusicon {r.status}"><Icon name={STAT_ICON[r.status] || 'clock'} size={13} /></span>
-        <span class="runwhen">{fmtStamp(r.started_at)}</span>
-        <span class="runsum">{r.summary || r.error || r.status}</span>
-      </button>
-    {/each}
-  {/if}
 </div>
 
 <style>
-  .taskpage { padding: 20px 24px; overflow-y: auto; }
+  /* Reuses the .thread/.inner shell (Thread.svelte) so the page reads as the same
+     scrolling column with the same max-width/centering as the chat/run thread,
+     instead of a bespoke full-bleed panel. */
+  .taskpage { padding: 28px 0 60px; overflow-y: auto; }
   .tphead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .tphead h1 { font-size: var(--text-2xl); color: var(--ink); }
   .tpactions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .tpconfig { display: flex; flex-direction: column; gap: 12px; max-width: 720px; margin-top: 12px; }
-  .tpconfig label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-sm); color: var(--muted); }
-  .tpconfig input[type="text"], .tpconfig textarea, .tpconfig select { font: inherit; padding: 8px 10px; }
-  .runrow { display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left;
-            padding: 8px 10px; background: none; border: none; cursor: pointer; }
-  .runrow:hover { background: var(--surface-2, rgba(128,128,128,.08)); }
-  .runrow.unseen .runsum { font-weight: var(--fw-semibold); }
-  .runsum { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tpconfig { display: flex; flex-direction: column; gap: 14px; max-width: 640px; margin-top: 20px; }
+  /* Field shape mirrors Settings' .llmfield (LlmConfigForm.svelte): stacked label +
+     control, 12px semibold muted label, bordered control on the sunk/base surface,
+     accent border + focus ring on focus. Reproduced locally (no ancestor .settings
+     class here) rather than inventing new metrics. */
+  .tpfield { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .tpfield input, .tpfield textarea, .tpfield select {
+    font: inherit; font-size: 13px; font-weight: var(--fw-regular); color: var(--ink);
+    min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+    background-color: var(--bg);
+  }
+  .tpfield textarea { line-height: 1.5; resize: vertical; }
+  .tpfield select { padding-right: 30px; } /* clears the shared chevron (.chpick, app.css) */
+  .tpfield input:focus, .tpfield textarea:focus, .tpfield select:focus {
+    outline: none; border-color: var(--accent); box-shadow: var(--focus-ring);
+  }
+  /* Next-run meta line under the Schedule field — same voice as Settings' .llmhint. */
+  .tphint { font-size: 11px; color: var(--muted); margin-top: -6px; }
+  /* The one CTA that matters (Create task / Save changes) gets the accent-outlined
+     ".open.primary" treatment already used for Codex's single primary action. */
+  .taskpage .open.primary { border-color: var(--accent); color: var(--accent); }
+  .taskpage .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
+
+  /* Run rows: same bordered-card row vocabulary as Settings' .llmrow / .mcprow
+     (border + radius-sm + hover fill), with the .drow.unseen accent-tint treatment
+     for runs the user hasn't opened yet. */
+  .runslist { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .runrow {
+    display: flex; gap: 10px; align-items: center; width: 100%; text-align: left;
+    border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
+    padding: 9px 12px; cursor: pointer; font: inherit;
+    transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  }
+  .runrow:hover { background: var(--code); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .runrow:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .runrow.unseen { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .runrow.unseen .runsum { color: var(--ink); font-weight: var(--fw-semibold); }
+  .runsum { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* The following were app.css rules scoped to an ancestor (.panel/.modal/.drow)
      that TaskPanel.svelte's root supplied — TaskPage's root carries neither class,
