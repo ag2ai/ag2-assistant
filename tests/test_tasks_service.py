@@ -162,6 +162,70 @@ async def test_list_tasks_carries_last_run_and_unread(tmp_path, monkeypatch):
     assert (await svc.list_tasks())[0]["unread"] == 0
 
 
+class _AskingGateway(FakeGateway):
+    """A gateway whose turn blocks on the run's own asker (a durable inquiry) —
+    used to exercise stop/delete against a run parked on `DurableAsker.ask`."""
+
+    async def send_message(self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw):
+        self.sent.append({"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id})
+        from assistant.hitl.base import Question
+
+        await asker.ask(Question(text="proceed?"))
+        return "done"  # never reached in these tests — the ask() is cancelled first
+
+    async def cancel_turn(self, chat_id, reason="Stopped"):
+        # Not handled at the transport level (no live channel to cancel) — mirrors
+        # an orphaned/needs_input run: TaskService falls back to cancelling the job.
+        self.cancelled.append(chat_id)
+        return False
+
+
+async def test_stop_run_releases_pending_inquiry(tmp_path, monkeypatch):
+    gw = _AskingGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="Ask", prompt="need input")
+    run = await svc.start_run(t["id"])
+    await asyncio.sleep(0.05)  # let the turn start and raise its inquiry
+    pending = await svc.pending_inquiries()
+    assert len(pending) == 1 and pending[0]["run_id"] == run.id
+
+    assert await svc.stop_run(run.id) is True
+    await asyncio.wait_for(svc._jobs_done(), 5)
+
+    assert (await svc.get_run(run.id))["status"] == "cancelled"
+    assert await svc.pending_inquiries() == []  # the strip no longer strands it
+
+
+async def test_delete_task_releases_pending_inquiry(tmp_path, monkeypatch):
+    gw = _AskingGateway()
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="Ask2", prompt="need input")
+    run = await svc.start_run(t["id"])
+    await asyncio.sleep(0.05)  # let the turn start and raise its inquiry
+    assert len(await svc.pending_inquiries()) == 1
+
+    assert await svc.delete_task(t["id"]) is True
+    await asyncio.wait_for(svc._jobs_done(), 5)
+
+    assert await svc.pending_inquiries() == []
+
+
+async def test_on_inquiry_flips_run_needs_input_and_back(tmp_path, monkeypatch):
+    """A raised inquiry flips its RUNNING run to NEEDS_INPUT; answering it flips
+    the run back to RUNNING — TaskService._on_inquiry, exercised through the
+    real InquiryStore (create/answer), not a mock of the hook itself."""
+    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+    t = await svc.create_task(name="Ask3", prompt="p")
+    run = await svc.store.create_run(t["id"])  # RUNNING by default; no job attached
+    assert (await svc.get_run(run.id))["status"] == "running"
+
+    inq = await svc.inquiries.create("proceed?", task_id=run.id, channel="web", chat=run.stream_id)
+    assert (await svc.get_run(run.id))["status"] == "needs_input"
+
+    assert await svc.answer_inquiry(inq.id, "yes") is True
+    assert (await svc.get_run(run.id))["status"] == "running"
+
+
 async def test_notifier_gets_channel_outcomes_only(tmp_path, monkeypatch):
     gw = FakeGateway()
     svc = await _svc(tmp_path, gw, monkeypatch)

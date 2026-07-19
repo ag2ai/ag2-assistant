@@ -15,6 +15,7 @@
   let models = $state([])          // llm_configs entries for the model dropdown
   let saving = $state(false)
   let running = $state(false)
+  let pausing = $state(false)
   let confirmDel = $state(false)
   let error = $state('')
 
@@ -26,19 +27,30 @@
     return t && { name: t.name, prompt: t.prompt, model: t.model, schedule: t.schedule, paused: t.paused }
   }
 
+  // Monotonic token: fast task-A → task-B navigation can let A's load() await
+  // resolve after B's has started. Each call claims the next token and checks
+  // it's still current before committing ANY state — `task`/`draft` are always
+  // written together from a locally-held result, never from a bare awaited
+  // value, so a superseded call can't leave `task` = A while `draft` = B (the
+  // pair save()/togglePause()/del() key off task.id).
+  let _loadSeq = 0
   async function load(id) {
+    const seq = ++_loadSeq
     error = ''
     confirmDel = false
     try { models = ((await api.llmConfigs()).configs) || [] } catch { models = [] }
+    if (seq !== _loadSeq) return   // superseded mid-flight — this is a stale nav's data
     if (id === 'new') {
       task = null
       draft = { name: '', prompt: '', model: null, schedule: { kind: 'manual', at: null, cron: null }, paused: false }
       return
     }
     try {
-      task = await api.task(id)
-      draft = structuredClone(strip(task))
-    } catch { error = 'Task not found.'; task = null; draft = null }
+      const t = await api.task(id)
+      if (seq !== _loadSeq) return
+      task = t
+      draft = structuredClone(strip(t))
+    } catch { if (seq === _loadSeq) { error = 'Task not found.'; task = null; draft = null } }
   }
   // reload when the route's id changes
   let _lastId = ''
@@ -50,10 +62,10 @@
     error = ''
     try {
       if (isNew) {
-        const created = await api.createTask({ name: draft.name, prompt: draft.prompt, model: draft.model, schedule: draft.schedule })
+        const created = await api.createTask({ name: draft.name, prompt: draft.prompt, model: draft.model ?? '', schedule: draft.schedule })
         go('/t/' + created.id)
       } else {
-        task = await api.updateTask(task.id, strip(draft))
+        task = await api.updateTask(task.id, { ...strip(draft), model: draft.model ?? '' })
         draft = structuredClone(strip(task))
       }
     } catch (e) { error = e.message || 'save failed' } finally { saving = false }
@@ -67,9 +79,12 @@
   }
 
   async function togglePause() {
-    if (isNew) return
-    task = await api.updateTask(task.id, { paused: !task.paused })
-    draft = structuredClone(strip(task))
+    if (isNew || pausing) return
+    pausing = true
+    try {
+      task = await api.updateTask(task.id, { paused: !task.paused })
+      draft = structuredClone(strip(task))
+    } catch (e) { error = e.message || 'pause failed' } finally { pausing = false }
   }
 
   async function del() {
@@ -91,8 +106,9 @@
         <button class="open" disabled={running} onclick={runNow}>
           <Icon name="chevron-right" size={14} /> {running ? 'Starting…' : 'Run now'}
         </button>
-        <button class="open" onclick={togglePause}>
-          <Icon name={task.paused ? 'chevron-right' : 'square'} size={14} /> {task.paused ? 'Resume' : 'Pause'}
+        <button class="open" disabled={pausing} onclick={togglePause}>
+          <Icon name={task.paused ? 'chevron-right' : 'square'} size={14} />
+          {pausing ? (task.paused ? 'Resuming…' : 'Pausing…') : task.paused ? 'Resume' : 'Pause'}
         </button>
         {#if confirmDel}
           <span class="delconfirm">

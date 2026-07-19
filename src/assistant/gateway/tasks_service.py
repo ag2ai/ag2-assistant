@@ -366,6 +366,18 @@ class TaskService:
     async def _finish(self, run_id: str, status: str, **fields) -> None:
         self._stopping.discard(run_id)
         await self._store.set_run_status(run_id, status, **fields)
+        # A run cancelled while parked on DurableAsker.ask (stop/delete/shutdown)
+        # never reaches its own expire() — CancelledError propagates straight past
+        # it — so release any inquiry it still owns here, or it strands the
+        # "Needs your input" strip forever. Best-effort: a terminal run must settle
+        # even if the inquiry store hiccups.
+        if self._inquiries is not None:
+            try:
+                await self._inquiries.cancel_for_task(run_id)
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("pending inquiry release on run finish", exc, run_id=run_id)
 
     async def stop_run(self, run_id: str) -> bool:
         """Stop a live run: cancel its turn (keeps what it already produced on the

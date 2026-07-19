@@ -30,12 +30,12 @@ AG2 main genuinely doesn't reach yet (durable scheduled tasks, durable HITL).
 Each conversation surface — a web chat, each task, a voice session — is a
 per-chat AG2 **`Stream`** keyed by `chat_id`:
 
-| Chat id             | Surface                          |
-| ------------------- | -------------------------------- |
-| `web-<uuid>`        | a web chat                       |
-| `task:<task_id>`    | a background task's own stream   |
-| `voice:<id>`        | a realtime voice session         |
-| `default`           | CLI single-shot                  |
+| Chat id             | Surface                                    |
+| ------------------- | ------------------------------------------- |
+| `web-<uuid>`        | a web chat                                  |
+| `task-run:<run_id>` | one run of a task — a real chat, own stream |
+| `voice:<id>`        | a realtime voice session                    |
+| `default`           | CLI single-shot                             |
 
 A stream's event history *is* the conversation. After each turn the events are
 persisted with AG2's `EventLogWriter` to `~/.ag2assistant/chats.db` and reloaded
@@ -46,7 +46,7 @@ what `EventLogWriter` persists:
 
 ```json
 { "type": "ag2.events.types.ModelResponse", "data": { … } }
-{ "type": "ag2assistant.events.DeliverableProduced",  "data": { … } }
+{ "type": "ag2assistant.events.TaskCreated",  "data": { … } }
 ```
 
 The same representation is used to **persist, replay, and live-stream**, so *history
@@ -164,60 +164,68 @@ replacing the retired auto-seeded `repo-files` MCP.
 
 ### 5.5 Task subsystem — `src/assistant/tasks/*`, `gateway/tasks_service.py`
 
-Durable background work with deliverables, scheduling, and subtask orchestration.
+A **Task** is standing configuration — name, prompt, optional per-task model,
+schedule, paused — nothing more. A **Run** is one execution of it, and its
+transcript is an ordinary chat on the run's own stream (`task-run:{run_id}`):
+a run *is* a chat the user can open live, steer mid-run with a normal message,
+stop, or keep talking to after it finishes. There is no separate planner,
+subtask tree, deliverable, or intake step — a run is one agent turn.
 
-- **`TaskStore`** (`tasks/store.py`) — CRUD + tree over `/tasks/{id}.json` in
-  `tasks.db`, serialized by `SerialStore`. `get()` raises `TaskStoreCorruptionError`
-  on a corrupt record; `list_all()` logs-and-skips so one bad record can't blank the
-  list. `Task` model in `tasks/model.py` (`title`, `description` = raw request,
-  `objective` = definition of done, `deliverables`, `status`, `recurrence`, …).
-- **`TaskManager`** (`tasks/runner.py`) — concurrency-limited runner (semaphore,
-  `MAX_CONCURRENT` default 3, `MAX_ATTEMPTS` 3). Executes a task, runs subtasks,
-  gates completion on deliverables, and cascades cancellation to descendants. Emits
-  status/progress/event/deliverable callbacks.
+- **`Task` / `Run`** (`tasks/model.py`) — plain dataclasses, JSON-serializable.
+  `Task.schedule` is a `{kind, at, cron}` union (`manual` / `once` / `cron`; the
+  UI's hourly/daily/weekly/weekdays presets all serialize to `cron`, custom cron
+  passes through as-is). `Run.status` is `running` / `needs_input` / `completed`
+  / `failed` / `cancelled`; `Run.trigger` records what started it (`schedule` /
+  `once` / `manual`); `Run.summary` is a cheap-model one-liner of the outcome.
+- **`TaskStore`** (`tasks/store.py`) — CRUD over two doc kinds in one
+  `tasks.db` (`/tasks/{id}.json`, `/runs/{id}.json`), serialized by
+  `SerialStore`. `get_task()`/`get_run()` raise `TaskStoreCorruptionError` on a
+  corrupt record; the listers log-and-skip so one bad record can't blank the
+  list. `last_summaries()` returns a task's recent completed-run summaries,
+  fed into the *next* run's prompt so a recurring task doesn't repeat itself.
 - **`Scheduler`** (`tasks/scheduling.py`) — deterministic poll loop (`interval`
-  default **30.0s**). `tick()` fires every due `SCHEDULED` task; recurrence is
-  interval-based and anchored to `scheduled_for` ("daily", "hourly", "every N
-  units", weekday patterns). A bad record logs but never kills the loop.
-  **Single-owner:** exactly one scheduler runs per data dir — `TaskService.start`
-  takes `scheduler=` (channel commands pass `False`; they keep the task tools but
-  not the loop), backed by a cross-process `flock` leader lock
-  (`scheduler_lock.py`, `~/.ag2assistant/scheduler.lock`). This prevents the
-  multi-process race where N schedulers fire the same `tasks.db` tasks. The
-  network-native evolution of this is one core with thin front-ends over AG2 `WsLink`.
-- **Executor** (`tasks/executor.py`) — `make_task_executor()` runs a **visible
-  subagent** per deliverable (archetype persona: researcher/operator/coder/worker),
-  cheap model for leaf subtasks, main model for root synthesis. Inner subagent events
-  are forwarded to the task stream as `SubagentTrace`. A **deliverable verifier**
-  (cheap model, `_Verdict{satisfied, reason}`) rejects plans/menus that don't meet
-  the acceptance criteria. Deliverable files are written to the shared workspace
-  (best-effort; inline content still stands on write failure).
-- **Planner** (`tasks/planner.py`) — `make_plan()` classifies trivial vs non-trivial,
-  produces a `TaskPlan{title, objective, questions, deliverables, subtasks,
-  capabilities}`, and drives an intake clarification loop (≤5 questions, ≤4 rounds).
-- **Controller** (per-task chat) — `gateway/tasks_service.py` builds a cached
-  `task-controller` agent with task-editing tools so a user can converse about/modify
-  a task on its page (`tasks/control.py` tools: add/cancel subtask, set objective…).
-- **`TaskService`** (`gateway/tasks_service.py`) — the bridge: owns store + manager +
-  scheduler + planner, translates lifecycle transitions into AG2 task events on the
-  task's stream (`_emit_status`, `_emit_deliverable`, `_emit_task_event`), and backs
-  the task REST endpoints. `set_emitter(gateway.emit_event)` wires task events onto
-  the shared event spine. `rerun()` clones a terminal task for a clean re-run.
+  default **30.0s**); `tick()` fires every armed, unpaused task whose
+  `next_run_at` has passed. Recurrence is standard 5-field cron (`cronsim`) plus
+  `@nicknames`, described for humans via `cron-descriptor`. **Single-owner:**
+  exactly one scheduler runs per data dir — `TaskService.start` takes
+  `scheduler=` (channel commands pass `False`; they keep the task tools but not
+  the loop), backed by a cross-process `flock` leader lock (`scheduler_lock.py`,
+  `~/.ag2assistant/scheduler.lock`), preventing the multi-process race where N
+  schedulers fire the same `tasks.db` tasks.
+- **`TaskService`** (`gateway/tasks_service.py`) — the bridge: owns the store +
+  scheduler and runs each turn through the same `Gateway.send_message()` path a
+  chat uses (`chat_id=run.stream_id`, `llm_config_id=task.model` picks the
+  task's own cached per-model agent when set, `surface=` frames it as an
+  unattended run and appends recent outcomes). `_fire()` (the scheduler
+  callback) re-arms a `cron` task's `next_run_at` — or disarms a spent `once`
+  back to `manual` — **before** running, so a slow run can never double-fire
+  its slot. After a run finishes, `tasks/summary.py` distills a one-line
+  outcome (cheap model), stored on the run and, for a task created from
+  Telegram/Slack/Discord, pushed back to that chat (`_deliver()` /
+  `set_notifier`). `stop_run()` cancels the run's turn
+  (`Gateway.cancel_turn`), keeping whatever it already produced on the stream.
+  `delete_task()` stops and deletes every run and its chat stream —
+  irreversible.
 
 ### 5.6 HITL (human-in-the-loop) — `src/assistant/hitl/*`
 
 Two stores, two lifetimes:
 
 - **Durable task inquiries** — `hitl/inquiry.py` (`Inquiry`, `InquiryStore` →
-  `inquiries.db`). Clarifications/permissions raised during task intake/execution;
-  survive restarts; answerable out-of-band from any surface. Surfaced as
-  `InquiryRaised`/`InquiryAnswered` events and via `/api/inquiries/*`.
+  `inquiries.db`). Clarifications/permissions raised during a task run (the
+  inquiry's `task_id` field actually carries the *run* id); survive restarts;
+  answerable out-of-band from any surface. A raised inquiry flips its run to
+  `needs_input`; answering flips it back to `running`
+  (`TaskService._on_inquiry`). Surfaced as `InquiryRaised`/`InquiryAnswered`
+  events on the run's stream and via `/api/inquiries/*`; unanswered ones also
+  show in the web app's "Needs your input" strip.
 - **Transient chat-turn prompts** — `hitl/gateway.py` (`GatewayAsker` + an in-memory
   `HitlServer` registry). Permission/clarification prompts during a chat turn;
   answered inline (WS `answer` frame) or via the styled `/hitl/{id}` page.
-- Asker variants: `NullAsker` (block until answered — tasks), `ChannelAsker`
-  (Telegram/Discord/Slack), `DesktopAsker` (browser popup). `build_hitl_hook()` turns
-  an asker into the AG2 `hitl_hook` dependency injected per turn.
+- Asker variants: `NullAsker` wrapped in `DurableAsker` (task runs — always
+  durable, regardless of which channel the task came from), per-channel askers
+  (Telegram/Discord/Slack), `DesktopAsker` (browser popup, CLI). `build_hitl_hook()`
+  turns an asker into the AG2 `hitl_hook` dependency injected per turn.
 
 ### 5.7 Memory — `src/assistant/memory.py`, `observers.py`
 
@@ -274,9 +282,10 @@ All channels share the one agent.
   per-chat Grants (`read` / `read_write`) at `root_dir/folders.json` (ADR 0006).
 - **`usage.py`** — `UsageLedger` (daily tokens + estimated cost → `usage.json`,
   priced from `pricing.json`).
-- **`workspace.py`** — sandbox-safe file I/O: `write_deliverable_file` (shared
-  `deliverables/`), `write_image` (`images/`), `write_upload` (`uploads/`),
-  `resolve()` (no traversal escape), `list_files()`, `list_dirs()` (folder picker).
+- **`workspace.py`** — sandbox-safe file I/O: `write_image` (`images/`),
+  `write_upload` (`uploads/`), `resolve()` (no traversal escape), `list_files()`,
+  `list_dirs()` (folder picker). A task run's output lives in its chat
+  transcript (`task-run:{run_id}`), not a workspace file.
 - **`observability.py`** — `setup_logging()` (rotating `ag2assistant.log`),
   `agent_logging_middleware()`, `log_suppressed()` (best-effort warnings),
   `capture_failure()` (JSON snapshot under `debug/`).
@@ -291,21 +300,23 @@ Every model-backed call in the backend. Two model tiers: **main**
 
 | # | Agent / call            | File                         | Tier  | Trigger                              | Structured output            |
 | - | ----------------------- | ---------------------------- | ----- | ------------------------------------ | ---------------------------- |
-| 1 | **Universal agent**     | `agent.py:320` (`create_agent`) | main  | every user turn (`agent.ask`)        | — (conversational)           |
+| 1 | **Universal agent**     | `agent.py:320` (`create_agent`) | main  | every user turn (`agent.ask`) — also every task **run**, on the run's stream | — (conversational) |
 | 2 | **Chat title**          | `title.py`                   | cheap | after first exchange (fire-and-forget) | `ChatTitle{title}`         |
 | 3 | **Feedback learner**    | `feedback.py`                | cheap | on 👍/👎 (fire-and-forget)            | `FeedbackMemory{note, remove}` |
-| 4 | **Task planner**        | `tasks/planner.py`           | main  | task intake / before each scheduled run | `TaskPlan{…}`             |
-| 5 | **Executor subagents**  | `tasks/executor.py`          | cheap (leaf) / main (root) | each deliverable        | — (free-form deliverable)    |
-| 6 | **Deliverable verifier**| `tasks/executor.py`          | cheap | after each subagent finishes         | `_Verdict{satisfied, reason}`|
-| 7 | **Task controller**     | `gateway/tasks_service.py`   | main  | user chats on a task page (cached per task) | — |
-| 8 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
-| 9 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
-| 10| **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
-| 11| **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
+| 4 | **Run summarizer**      | `tasks/summary.py`           | cheap | after a task run completes            | `RunSummary{summary}`        |
+| 5 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
+| 6 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
+| 7 | **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
+| 8 | **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
+
+A task run is not a distinct agent — it's the same universal agent (row 1),
+optionally pinned to the task's own model via a cached per-model agent
+(`Gateway._agent_for`, §5.1), given a "you're running unattended" system
+surface and the task's recent run outcomes (§5.5).
 
 Onboarding (`onboarding.py`) is **not** an LLM call — it's a fixed 4-question HITL
 sequence that seeds the profile. The **reload** mechanism (§5.1) reference-swaps
-agents 1/4/7 without dropping streams.
+the shared agent(s) without dropping streams.
 
 ---
 
@@ -324,22 +335,25 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | POST | `/api/message` | send a message, blocking → `{reply, chat_id}` |
 | WS   | `/api/stream?chat=&surface=` | **event stream**: replay + live (frames below) |
 
-### Tasks / inquiries
+### Tasks / runs / inquiries
+
+A task is standing config; a run is one execution of it, and its own chat is
+what `/api/stream?chat=task-run:{run_id}` opens.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET  | `/api/tasks` | top-level tasks for the Tasks view |
-| POST | `/api/tasks` | start a task (intake runs in background) |
-| GET  | `/api/tasks/all?status=` | full history (active/completed/stopped/archived) |
-| POST | `/api/tasks/schedule` | schedule (optionally recurring) |
-| GET  | `/api/tasks/{id}` | task detail (`404`; `500` on corrupt record) |
-| POST | `/api/tasks/{id}/cancel` | cancel a running task |
-| POST | `/api/tasks/{id}/rerun` | clone + re-run from clean state |
-| POST | `/api/tasks/{id}/seen` | clear unread highlight |
-| POST | `/api/tasks/{id}/archive` | set archived flag |
-| POST | `/api/tasks/{id}/chat` | converse about a task (controller agent) |
-| GET  | `/api/inquiries/pending?task_id=` | open durable HITL inquiries |
-| POST | `/api/inquiries/{id}/answer` | answer a durable inquiry (out-of-band) |
+| GET    | `/api/tasks` | list tasks |
+| POST   | `/api/tasks` | create a task (`422` with `{error}` on a bad schedule/model) |
+| GET    | `/api/tasks/{id}` | task detail incl. its runs (`404`; `500` on corrupt record) |
+| PATCH  | `/api/tasks/{id}` | edit any subset of fields (name/prompt/model/schedule/paused) |
+| DELETE | `/api/tasks/{id}` | delete the task, its runs, and their chat streams — irreversible |
+| POST   | `/api/tasks/{id}/run` | run now — start a run immediately, schedule unchanged |
+| GET    | `/api/tasks/{id}/runs` | the task's run history (newest first) |
+| GET    | `/api/runs/{id}` | one run's status/summary/task name |
+| POST   | `/api/runs/{id}/stop` | stop a live run (keeps what it already produced) |
+| POST   | `/api/runs/{id}/seen` | clear a finished run's unread highlight |
+| GET    | `/api/inquiries/pending?task_id=` | open durable HITL inquiries (clarifications/approvals) |
+| POST   | `/api/inquiries/{id}/answer` | answer a durable inquiry (out-of-band) |
 
 ### HITL (chat-turn prompts)
 
@@ -432,9 +446,7 @@ All extend `AssistantEvent(BaseEvent)` and serialize as
 
 | Event | Key fields | Rendered as |
 | ----- | ---------- | ----------- |
-| `TaskCreated` | `task_id, title, kind` | task card in the thread |
-| `TaskScheduled` | `task_id, scheduled_for, recurrence` | schedule note |
-| `DeliverableProduced` | `task_id, deliverable_id, description, preview` | deliverable item (asset via REST) |
+| `TaskCreated` | `task_id, title, kind` | task card in the thread, linking to the task page |
 | `Attachment` | `path, name, media_type` | uploaded-file thumbnail / chip |
 | `ImageGenerated` | `path, prompt, media_type` | inline clickable thumbnail |
 | `SubagentTrace` | `subagent_id, inner{type,data}` | nested event under a subagent card |
@@ -477,7 +489,7 @@ Gateway.send_message()                          (gateway/core.py)
 Universal Agent.ask(stream, prompt)             (agent.py)
    • model call (provider config)
    • tool calls (web/code/files/image/google/skills/MCP)
-   • system tools → TaskCreated / TaskScheduled / InquiryRaised
+   • system tools → TaskCreated / InquiryRaised
    • observers → ObserverAlert
       ▼
 Stream emits events ──► EventLogWriter ──► chats.db   (persist)
@@ -486,8 +498,10 @@ Stream emits events ──► EventLogWriter ──► chats.db   (persist)
 Frontend foldEvent(items, wire) → thread items → Svelte components  (web/src/project.js)
 
 Side flows:
-   • Tasks: TaskService.run → planner → runner → executor subagents → verifier,
-     emitting on task:<id> stream; deliverable files → workspace.
+   • Tasks: Scheduler._fire()/"Run now" → TaskService.start_run() → the same
+     Gateway.send_message() turn above, on the run's own task-run:<run_id>
+     stream; a cheap-model summary feeds the next run and (for a channel-
+     origin task) the origin chat.
    • Memory: aggregator every N turns + feedback.learn() on 👍/👎 → profile.db.
    • Resume: stream_for() hydrates from chats.db; replay == live (same wire).
 ```
@@ -498,13 +512,12 @@ Side flows:
 
 `web/src/project.js` `foldEvent(items, wire)` is a pure reducer mapping each
 `{type,data}` to renderable thread items (`user`, `agent` (streaming-aware),
-`tools`, `taskcard`, `deliverable`, `genimage`, `attachment`, `inquiry`, `note`,
-subagent cards). It stamps `item.at ??= data.created_at` (AG2's auto timestamp) and
-folds `FeedbackGiven` retroactively onto its target by stable key (message → `at`,
-image → `path`, deliverable → `deliverableId`). `web/src/lib/ag2map.js` maps event
-type → subsystem; `web/src/transport/` holds the WS client (`/api/stream`) and the
-REST client (`api.js`). The GUI never holds parallel state — it is a projection of
-the log.
+`tools`, `taskcard`, `genimage`, `attachment`, `inquiry`, `note`, subagent
+cards). It stamps `item.at ??= data.created_at` (AG2's auto timestamp) and folds
+`FeedbackGiven` retroactively onto its target by stable key (message → `at`,
+image → `path`). `web/src/lib/ag2map.js` maps event type → subsystem;
+`web/src/transport/` holds the WS client (`/api/stream`) and the REST client
+(`api.js`). The GUI never holds parallel state — it is a projection of the log.
 
 ---
 
@@ -515,7 +528,7 @@ Under `~/.ag2assistant/`:
 | File | Holds |
 | ---- | ----- |
 | `chats.db` | event log for all chats (via `EventLogWriter`) + display transcripts |
-| `tasks.db` | task records, deliverables, progress, schedule |
+| `tasks.db` | task configs (name/prompt/model/schedule) + run records (status/summary) |
 | `inquiries.db` | durable HITL inquiries (clarifications/permissions) |
 | `profile.db` | learned user profile (`/memory/working.md` inside) |
 | `config.yaml` (global) | Config overrides + the `llm_configs:` section (named models + active); env still wins |
@@ -527,9 +540,9 @@ Under `~/.ag2assistant/`:
 | `ag2assistant.log` | rotating application log (2 MB × 3) |
 | `debug/<ts>-<chat>.json` | failure snapshots (error + traceback + event tail) |
 
-Generated artifacts (images, deliverables, uploads) live in the **workspace**
-(`~/Documents/AG2 Assistant/` by default), in shared `images/`, `deliverables/`,
-`uploads/` folders.
+Generated artifacts (images, uploads) live in the **workspace**
+(`~/Documents/AG2 Assistant/` by default), in shared `images/`, `uploads/`
+folders. A run's own output lives in its chat transcript, not the workspace.
 
 ---
 

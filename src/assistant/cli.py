@@ -542,6 +542,12 @@ def telegram(
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("telegram")
+
+        async def notify(platform: str, chat_id: str, text: str) -> None:
+            if platform == "telegram":
+                await channel.notify(chat_id, text)
+
+        tasks.set_notifier(notify)  # run outcomes -> this channel
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Telegram. Press Ctrl+C to stop.")
         try:
@@ -576,6 +582,12 @@ def discord(
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("discord")
+
+        async def notify(platform: str, chat_id: str, text: str) -> None:
+            if platform == "discord":
+                await channel.notify(chat_id, text)
+
+        tasks.set_notifier(notify)  # run outcomes -> this channel
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Discord. Press Ctrl+C to stop.")
         try:
@@ -609,6 +621,12 @@ def slack(
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("slack")
+
+        async def notify(platform: str, chat_id: str, text: str) -> None:
+            if platform == "slack":
+                await channel.notify(chat_id, text)
+
+        tasks.set_notifier(notify)  # run outcomes -> this channel
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Slack. Press Ctrl+C to stop.")
         try:
