@@ -19,8 +19,12 @@ class FakeGateway:
         self.folders = folders  # None unless a workdir-grant test wires one in
         self.permissions = permissions  # None unless a task-scoped-rules test wires one in
 
-    async def send_message(self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw):
-        self.sent.append({"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id})
+    async def send_message(
+        self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw
+    ):
+        self.sent.append(
+            {"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id}
+        )
         if self._hang:
             await self._gate.wait()
             return ""  # a user-stopped turn returns "" (TurnCancelled path)
@@ -160,7 +164,9 @@ async def test_fire_after_downtime_skips_missed_slots(tmp_path, monkeypatch):
     await svc._fire(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
     after = await svc.get_task(t["id"])
-    assert after["next_run_at"] > datetime.now().astimezone().isoformat()  # future — not the next stale slot
+    assert (
+        after["next_run_at"] > datetime.now().astimezone().isoformat()
+    )  # future — not the next stale slot
     assert len(after["runs"]) == 1
 
 
@@ -228,8 +234,12 @@ class _AskingGateway(FakeGateway):
     """A gateway whose turn blocks on the run's own asker (a durable inquiry) —
     used to exercise stop/delete against a run parked on `DurableAsker.ask`."""
 
-    async def send_message(self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw):
-        self.sent.append({"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id})
+    async def send_message(
+        self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw
+    ):
+        self.sent.append(
+            {"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id}
+        )
         from assistant.hitl.base import Question
 
         await asker.ask(Question(text="proceed?"))
@@ -320,7 +330,9 @@ async def test_update_task_clearing_workdir_clears_access(tmp_path, monkeypatch)
     svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
     folder = tmp_path / "work"
     folder.mkdir()
-    t = await svc.create_task(name="x", prompt="p", workdir=str(folder), workdir_access="read_write")
+    t = await svc.create_task(
+        name="x", prompt="p", workdir=str(folder), workdir_access="read_write"
+    )
     assert t["workdir_access"] == "read_write"
 
     updated = await svc.update_task(t["id"], workdir=None)
@@ -337,9 +349,7 @@ async def test_notifier_gets_channel_outcomes_only(tmp_path, monkeypatch):
 
     svc.set_notifier(notify)
     web = await svc.create_task(name="W", prompt="p")  # no origin → no push
-    tg = await svc.create_task(
-        name="T", prompt="p", origin_channel="telegram", origin_chat="42"
-    )
+    tg = await svc.create_task(name="T", prompt="p", origin_channel="telegram", origin_chat="42")
     await svc.start_run(web["id"])
     await svc.start_run(tg["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)

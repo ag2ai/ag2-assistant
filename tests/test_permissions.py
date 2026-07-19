@@ -643,7 +643,9 @@ async def test_manager_mints_task_scoped_on_always(tmp_path):
 
     class _Asker:
         async def ask(self, q: Question, timeout=None):
-            return next(o for o in q.options if o.startswith("Always"))  # always_allow_command_label
+            return next(
+                o for o in q.options if o.startswith("Always")
+            )  # always_allow_command_label
 
     pm = PermissionManager(store, _Asker(), task_id="task-9")
     assert await pm.check_command("run_shell_command", '{"command": "git push"}') is True

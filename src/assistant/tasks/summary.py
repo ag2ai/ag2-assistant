@@ -61,9 +61,7 @@ async def summarize_run(config: Config, task_prompt: str, reply: str, agent_fact
         return ""
 
 
-async def suggest_task_meta(
-    config: Config, prompt: str, agent_factory=None
-) -> tuple[str, str]:
+async def suggest_task_meta(config: Config, prompt: str, agent_factory=None) -> tuple[str, str]:
     """(name, description) for a task created without a name, distilled from its
     prompt by the cheap model. On any LLM/parsing failure, falls back to the
     first 40 characters of the prompt as the name and an empty description —

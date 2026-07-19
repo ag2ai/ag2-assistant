@@ -111,9 +111,7 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
     @tool
     async def create_task(
         name: Annotated[str, Field(description="Short human name for the task.")],
-        prompt: Annotated[
-            str, Field(description="Standing instructions executed on every run.")
-        ],
+        prompt: Annotated[str, Field(description="Standing instructions executed on every run.")],
         context: Context,
         model_config_id: Annotated[
             str, Field(description="Optional LLM configuration id; empty = profile default.")
@@ -123,7 +121,8 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
             Field(description="manual (on demand) | once (single future run) | cron (recurring)."),
         ] = "manual",
         at: Annotated[
-            str, Field(description="ISO 8601 datetime for schedule_kind='once' (from your env clock).")
+            str,
+            Field(description="ISO 8601 datetime for schedule_kind='once' (from your env clock)."),
         ] = "",
         cron: Annotated[
             str,
@@ -132,13 +131,13 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
                 "09:00, '0 9 * * 1-5' = weekdays 09:00; or @hourly/@daily/@weekly/@monthly."
             ),
         ] = "",
-        description: Annotated[str, Field(description="Optional task description; empty = none.")] = "",
+        description: Annotated[
+            str, Field(description="Optional task description; empty = none.")
+        ] = "",
         workdir: Annotated[
             str, Field(description="Absolute folder path the task works in; empty = none.")
         ] = "",
-        workdir_access: Annotated[
-            str, Field(description="read | read_write.")
-        ] = "",
+        workdir_access: Annotated[str, Field(description="read | read_write.")] = "",
     ) -> str:
         """Create a task. Ask the user anything unclear BEFORE calling this —
         the prompt is what runs unattended, so it must be self-contained."""
@@ -173,14 +172,14 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         ] = "",
         at: Annotated[str, Field(description="ISO datetime for once.")] = "",
         cron: Annotated[str, Field(description="5-field cron for cron.")] = "",
-        paused: Annotated[str, Field(description="'true' to pause, 'false' to resume; empty = keep.")] = "",
+        paused: Annotated[
+            str, Field(description="'true' to pause, 'false' to resume; empty = keep.")
+        ] = "",
         description: Annotated[str, Field(description="New description; empty = keep.")] = "",
         workdir: Annotated[
             str, Field(description="New folder path; 'none' = detach; empty = keep.")
         ] = "",
-        workdir_access: Annotated[
-            str, Field(description="read | read_write; empty = keep.")
-        ] = "",
+        workdir_access: Annotated[str, Field(description="read | read_write; empty = keep.")] = "",
     ) -> str:
         """Edit any field of a task. Empty args keep the current value."""
         patch: dict = {}

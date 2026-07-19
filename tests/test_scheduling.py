@@ -58,5 +58,3 @@ def test_next_occurrence_respects_window_and_days():
     assert next_occurrence("0 4-14 * * 1-5", fri_last).isoformat() == "2026-07-13T04:00:00+10:00"
     assert next_occurrence(None, now) is None  # not recurring
     assert next_occurrence("banana", now) is None
-
-

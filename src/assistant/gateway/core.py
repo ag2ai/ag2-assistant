@@ -197,9 +197,7 @@ class Gateway:
         cfg.llm.provider = provider
         cfg.llm.model = entry["model"]
         cfg.llm.provider_options[provider] = llm_configs.entry_options(entry)
-        cfg.llm.auth_mode = (
-            "subscription" if entry["type"] == "openai_subscription" else "api_key"
-        )
+        cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
         agent = self._make_agent(cfg)
         self._model_agents[llm_config_id] = agent
         return agent

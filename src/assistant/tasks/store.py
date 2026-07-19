@@ -155,7 +155,9 @@ class TaskStore:
         await self.save_run(run)
         return run
 
-    async def last_summaries(self, task_id: str, n: int = 3, before: str | None = None) -> list[str]:
+    async def last_summaries(
+        self, task_id: str, n: int = 3, before: str | None = None
+    ) -> list[str]:
         """Non-empty summaries of the task's most recent completed runs
         (oldest-first, so they read chronologically in a prompt). ``before``
         excludes the currently-executing run."""

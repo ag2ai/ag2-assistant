@@ -52,6 +52,8 @@ async def test_suggest_task_meta_returns_name_and_description():
 
 async def test_suggest_task_meta_falls_back_on_llm_failure():
     prompt = "x" * 100
-    name, desc = await suggest_task_meta(Config(), prompt, agent_factory=lambda: _FakeAgent(boom=True))
+    name, desc = await suggest_task_meta(
+        Config(), prompt, agent_factory=lambda: _FakeAgent(boom=True)
+    )
     assert name == "x" * 40
     assert desc == ""

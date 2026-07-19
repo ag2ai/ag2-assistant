@@ -119,6 +119,7 @@ async def test_durable_asker_rebind_tags_subtask(tmp_path):
     await child.ask(Question(text="q"))
     assert (await store.list_all())[0].task_id == "child"
 
+
 # Note: the old TaskManager/DeliverableStatus/TaskStatus integration tests that
 # used to live here exercised task-executor machinery removed by the TaskService
 # v2 rewrite (a run is now one ordinary chat turn, executed by the gateway itself

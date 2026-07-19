@@ -46,7 +46,9 @@ def test_schedule_arg_shapes():
     assert _schedule_arg("", "", "") == {"kind": "manual", "at": None, "cron": None}
     assert _schedule_arg("cron", "", "@daily") == {"kind": "cron", "at": None, "cron": "@daily"}
     assert _schedule_arg("once", "2026-08-01T09:00:00", "") == {
-        "kind": "once", "at": "2026-08-01T09:00:00", "cron": None,
+        "kind": "once",
+        "at": "2026-08-01T09:00:00",
+        "cron": None,
     }
 
 
@@ -57,7 +59,14 @@ async def test_create_update_run_delete_via_tools(tmp_path):
         pass
 
     tools = _tools(svc, _Settings())
-    for name in ("create_task", "update_task", "list_tasks", "get_task", "run_task_now", "delete_task"):
+    for name in (
+        "create_task",
+        "update_task",
+        "list_tasks",
+        "get_task",
+        "run_task_now",
+        "delete_task",
+    ):
         assert name in tools, f"missing tool {name}"
     ctx = _Ctx("telegram:42")
     msg = await tools["create_task"](
@@ -71,7 +80,9 @@ async def test_create_update_run_delete_via_tools(tmp_path):
     raw = await svc.store.get_task(tid)
     assert raw.origin_channel == "telegram" and raw.origin_chat == "42"
     # bad cron comes back as a correctable message, not an exception
-    bad = await tools["create_task"](name="X", prompt="p", schedule_kind="cron", cron="junk", context=ctx)
+    bad = await tools["create_task"](
+        name="X", prompt="p", schedule_kind="cron", cron="junk", context=ctx
+    )
     assert "cron" in bad
     out = await tools["update_task"](task_id=tid, paused="true")
     assert "paused" in out.lower()

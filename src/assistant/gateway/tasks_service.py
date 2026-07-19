@@ -164,7 +164,9 @@ class TaskService:
             lock = SchedulerLock(d / "scheduler.lock")
             if lock.acquire():
                 self._scheduler_lock = lock
-                self._scheduler = Scheduler(self._store, self._fire, interval=self._scheduler_interval)
+                self._scheduler = Scheduler(
+                    self._store, self._fire, interval=self._scheduler_interval
+                )
                 await self._scheduler.start()
 
     async def reload(self) -> None:
@@ -266,7 +268,11 @@ class TaskService:
             )
             patch["workdir"] = new_workdir
             if new_workdir:
-                raw_access = patch.get("workdir_access") if "workdir_access" in patch else current.workdir_access
+                raw_access = (
+                    patch.get("workdir_access")
+                    if "workdir_access" in patch
+                    else current.workdir_access
+                )
                 patch["workdir_access"] = normalize_workdir_access(raw_access)
             else:
                 patch["workdir_access"] = None
@@ -306,9 +312,7 @@ class TaskService:
                 unread[r.task_id] = unread.get(r.task_id, 0) + 1
             if r.status == RunStatus.NEEDS_INPUT:
                 needs.add(r.task_id)
-        out = [
-            _task_row(t, latest.get(t.id), unread.get(t.id, 0), t.id in needs) for t in tasks
-        ]
+        out = [_task_row(t, latest.get(t.id), unread.get(t.id, 0), t.id in needs) for t in tasks]
         out.sort(key=lambda v: 0 if v["needs_input"] else 1)  # stable; list is newest-first
         return out
 

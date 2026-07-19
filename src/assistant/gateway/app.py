@@ -448,9 +448,7 @@ async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
 
         runs = await store.list_runs()
         running = sum(1 for r in runs if r.status not in RunStatus.TERMINAL)
-        unseen_done = sum(
-            1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None
-        )
+        unseen_done = sum(1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None)
         return running, unseen_done
     except Exception:
         return 0, 0
