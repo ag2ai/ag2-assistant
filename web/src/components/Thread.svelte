@@ -105,7 +105,7 @@
 </script>
 
 <div class="mhead">
-  <button class="back" onclick={() => go('/c/' + newChatId())}><Icon name="chevron-left" size={15} /> Chat</button>
+  <button class="back" onclick={() => go($thread.kind === 'run' ? ($runInfo?.task_id ? '/t/' + $runInfo.task_id : '/tasks') : '/c/' + newChatId())}><Icon name="chevron-left" size={15} /> {$thread.kind === 'run' ? 'Task' : 'Chat'}</button>
   <span class="titles">
     <span class="title">
       {#if $thread.kind === 'run'}{($runInfo && $runInfo.task_name) || 'Task'}{:else}Conversation{/if}
