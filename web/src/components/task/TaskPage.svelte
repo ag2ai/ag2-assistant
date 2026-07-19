@@ -91,11 +91,8 @@
     try { await api.deleteTask(task.id); go('/tasks') } catch (e) { error = e.message }
   }
 
-  // Icon.svelte's PATHS set doesn't include loader/help-circle/slash/circle/play/pause —
-  // substituted for the nearest available glyph, matching Drawer.svelte's Task 11
-  // conventions (running→zap, needs_input→message; the paused-status square doubles
-  // here as the "stop" action icon) and 'chevron-right' standing in for a play triangle.
-  const STAT_ICON = { running: 'zap', needs_input: 'message', completed: 'check', failed: 'x', cancelled: 'square' }
+  // Status → icon, matching Drawer.svelte's status-glyph conventions.
+  const STAT_ICON = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
 </script>
 
 <div class="thread taskpage">
@@ -105,10 +102,10 @@
       {#if !isNew && task}
         <div class="tpactions">
           <button class="open" disabled={running} onclick={runNow}>
-            <Icon name="chevron-right" size={14} /> {running ? 'Starting…' : 'Run now'}
+            <Icon name="play" size={14} /> {running ? 'Starting…' : 'Run now'}
           </button>
           <button class="open" disabled={pausing} onclick={togglePause}>
-            <Icon name={task.paused ? 'chevron-right' : 'square'} size={14} />
+            <Icon name={task.paused ? 'play' : 'pause'} size={14} />
             {pausing ? (task.paused ? 'Resuming…' : 'Pausing…') : task.paused ? 'Resume' : 'Pause'}
           </button>
           {#if confirmDel}

@@ -168,6 +168,10 @@ export const api = {
   updateTask: (id, patch) => j('PATCH', P('/tasks/' + encodeURIComponent(id)), patch).then((d) => d.task),
   deleteTask: (id) => j('DELETE', P('/tasks/' + encodeURIComponent(id))),
   runTask: (id) => j('POST', P('/tasks/' + encodeURIComponent(id) + '/run')).then((d) => d.run),
+  // Per-task command permission rules (mirrors the global commands store, scoped to
+  // one task) → {rules:[...]}. deleteTaskPermission takes a DELETE with a JSON body.
+  taskPermissions: (id) => j('GET', P('/tasks/' + encodeURIComponent(id) + '/permissions')).then((d) => d.rules || []),
+  deleteTaskPermission: (id, rule) => j('DELETE', P('/tasks/' + encodeURIComponent(id) + '/permissions'), { rule }),
   run: (id) => j('GET', P('/runs/' + encodeURIComponent(id))).then((d) => d.run),
   stopRun: (id) => j('POST', P('/runs/' + encodeURIComponent(id) + '/stop')),
   runSeen: (id) => j('POST', P('/runs/' + encodeURIComponent(id) + '/seen')),

@@ -260,11 +260,11 @@
   // Run statuses (RunStatus.ALL: running/needs_input/completed/failed/cancelled) —
   // a task row's `last_run.status` is looked up here for its status icon.
   const STATUS = {
-    running: { icon: 'zap', label: 'running' },
-    needs_input: { icon: 'message', label: 'needs input' },
+    running: { icon: 'spinner', label: 'running' },
+    needs_input: { icon: 'help-circle', label: 'needs input' },
     completed: { icon: 'check', label: 'completed' },
     failed: { icon: 'x', label: 'failed' },
-    cancelled: { icon: 'x', label: 'cancelled' },
+    cancelled: { icon: 'slash', label: 'cancelled' },
   }
   const stat = (s) => STATUS[s] || { icon: 'clock', label: s || '' }
 
@@ -433,8 +433,8 @@
         <div class="drow ttask" class:on={$route.name === 'task' && $route.id === t.id}
              class:unseen={t.unread > 0} onclick={() => openTask(t.id)}>
           <div class="tline1">
-            {#if t.paused}<span class="statusicon" title="Paused"><Icon name="square" size={14} /></span>
-            {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="message" size={14} /></span>
+            {#if t.paused}<span class="statusicon" title="Paused"><Icon name="pause" size={14} /></span>
+            {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
             {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={t.last_run.status}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
             {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
             <span class="ttitle">{t.name}</span>
