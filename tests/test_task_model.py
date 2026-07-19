@@ -9,6 +9,7 @@ from assistant.tasks.model import (
     Task,
     manual_schedule,
     normalize_schedule,
+    normalize_workdir_access,
 )
 
 
@@ -51,3 +52,26 @@ def test_run_stream_id_and_terminal_states():
     assert r.status == RunStatus.RUNNING
     assert RunStatus.TERMINAL == {"completed", "failed", "cancelled"}
     assert Run.from_dict(r.to_dict()).task_id == "task_1"
+
+
+def test_new_fields_default_and_roundtrip():
+    t = Task(id="task_1", name="X", prompt="p")
+    assert t.description == "" and t.workdir is None and t.workdir_access is None
+    t2 = Task.from_dict(t.to_dict())
+    assert (t2.description, t2.workdir, t2.workdir_access) == ("", None, None)
+    # records persisted before these fields existed still load
+    d = t.to_dict()
+    for k in ("description", "workdir", "workdir_access"):
+        d.pop(k)
+    t3 = Task.from_dict(d)
+    assert t3.workdir is None and t3.workdir_access is None
+
+
+def test_normalize_workdir_access():
+    assert normalize_workdir_access("read") == "read"
+    assert normalize_workdir_access("READ_WRITE ") == "read_write"
+    assert normalize_workdir_access("") == "read"
+    assert normalize_workdir_access(None) == "read"
+
+    with pytest.raises(ValueError):
+        normalize_workdir_access("rw")
