@@ -8,7 +8,6 @@ import assistant.gateway.tasks_service as tasks_service_mod
 from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
-from assistant.tasks.model import RunStatus
 from assistant.tasks.store import TaskStore
 
 
@@ -263,7 +262,7 @@ async def test_delete_task_releases_pending_inquiry(tmp_path, monkeypatch):
     gw = _AskingGateway()
     svc = await _svc(tmp_path, gw, monkeypatch)
     t = await svc.create_task(name="Ask2", prompt="need input")
-    run = await svc.start_run(t["id"])
+    await svc.start_run(t["id"])
     await asyncio.sleep(0.05)  # let the turn start and raise its inquiry
     assert len(await svc.pending_inquiries()) == 1
 
