@@ -13,10 +13,11 @@ from assistant.tasks.store import TaskStore
 
 
 class FakeGateway:
-    def __init__(self, reply="run reply", hang=False):
+    def __init__(self, reply="run reply", hang=False, folders=None):
         self.sent, self.cancelled, self.deleted = [], [], []
         self._reply, self._hang = reply, hang
         self._gate = asyncio.Event()
+        self.folders = folders  # None unless a workdir-grant test wires one in
 
     async def send_message(self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw):
         self.sent.append({"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id})
@@ -76,6 +77,43 @@ async def test_run_executes_as_chat_turn_with_prior_context(tmp_path, monkeypatc
     assert "one-liner" in gw.sent[1]["surface"]
     detail = await svc.get_task(t["id"])
     assert [r["id"] for r in detail["runs"]] == [run2.id, run.id]
+
+
+async def test_run_with_workdir_mints_chat_grant_and_surface(tmp_path, monkeypatch):
+    """A run of a task with an attached workdir mints a chat-scoped grant on the
+    run's own stream before the turn, and the surface tells the agent about the
+    folder + its access level."""
+    from assistant.folders import READ_WRITE, FolderStore
+
+    folders = FolderStore(path=tmp_path / "folders.json")
+    gw = FakeGateway(folders=folders)
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    wd = tmp_path / "proj"
+    wd.mkdir()
+    t = await svc.create_task(
+        name="W", prompt="p", schedule=None, workdir=str(wd), workdir_access="read_write"
+    )
+    run = await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert folders.mode_for(wd, svc._config.data_dir.name, f"task-run:{run.id}") == READ_WRITE
+    assert f"Working folder: {wd} (read-write)" in gw.sent[0]["surface"]
+
+
+async def test_run_with_missing_workdir_notes_it_in_surface(tmp_path, monkeypatch):
+    """A workdir that no longer exists on disk (deleted/unmounted since the task
+    was created) still runs — the surface just flags it so the agent doesn't
+    silently assume the folder is there."""
+    from assistant.folders import FolderStore
+
+    gw = FakeGateway(folders=FolderStore(path=tmp_path / "folders.json"))
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    missing = tmp_path / "gone"
+    t = await svc.create_task(
+        name="M", prompt="p", schedule=None, workdir=str(missing), workdir_access="read"
+    )
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert "— path is missing" in gw.sent[0]["surface"]
 
 
 async def test_stop_run_cancels_the_turn(tmp_path, monkeypatch):

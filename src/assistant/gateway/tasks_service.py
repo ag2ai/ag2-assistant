@@ -48,6 +48,10 @@ def _run_surface(task: Task, prior: list[str]) -> str:
     if prior:
         lines.append("Outcomes of this task's most recent runs (do not repeat them):")
         lines += [f"- {s}" for s in prior]
+    if task.workdir:
+        access = "read-write" if task.workdir_access == "read_write" else "read-only"
+        note = "" if Path(task.workdir).is_dir() else " — path is missing"
+        lines.append(f"Working folder: {task.workdir} ({access}){note}.")
     return "\n".join(lines)
 
 
@@ -398,6 +402,21 @@ class TaskService:
             chat=run.stream_id,
         )
         prior = await self._store.last_summaries(task.id, n=3, before=run_id)
+        if task.workdir:
+            # Chat-scoped grant on the run's own stream — the turn's PermissionManager
+            # (resolved with this profile + chat_id) honors it without a runtime HITL
+            # prompt. Best-effort: a grant hiccup must not sink the run.
+            from assistant.folders import READ, READ_WRITE
+
+            mode = READ_WRITE if task.workdir_access == "read_write" else READ
+            try:
+                self._gateway.folders.grant_path(
+                    task.workdir, mode, self._config.data_dir.name, chat_id=run.stream_id
+                )
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("task workdir grant", exc, task_id=task.id)
         try:
             reply = await self._gateway.send_message(
                 task.prompt,
