@@ -97,6 +97,12 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
             f"schedule: {t['schedule_desc']}"
             + (f" (next run {t['next_run_at']})" if t["next_run_at"] else ""),
         ]
+        if t.get("description"):
+            lines.append(f"desc: {t['description']}")
+        if t.get("workdir"):
+            mode = t.get("workdir_access") or "read-only"
+            mode = "read-write" if mode == "read_write" else "read-only"
+            lines.append(f"folder: {t['workdir']} ({mode})")
         for r in t["runs"][:10]:
             done = r["ended_at"] or ""
             lines.append(f"  run {r['id']} · {r['status']} · {done} · {r['summary'] or r['error']}")
@@ -126,6 +132,13 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
                 "09:00, '0 9 * * 1-5' = weekdays 09:00; or @hourly/@daily/@weekly/@monthly."
             ),
         ] = "",
+        description: Annotated[str, Field(description="Optional task description; empty = none.")] = "",
+        workdir: Annotated[
+            str, Field(description="Absolute folder path the task works in; empty = none.")
+        ] = "",
+        workdir_access: Annotated[
+            str, Field(description="read | read_write.")
+        ] = "",
     ) -> str:
         """Create a task. Ask the user anything unclear BEFORE calling this —
         the prompt is what runs unattended, so it must be self-contained."""
@@ -138,6 +151,9 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
                 schedule=_schedule_arg(schedule_kind, at, cron),
                 origin_channel=platform,
                 origin_chat=chat,
+                description=description or None,
+                workdir=workdir or None,
+                workdir_access=workdir_access or None,
             )
         except ValueError as exc:
             return str(exc)  # correctable: retry with a valid schedule/model
@@ -158,6 +174,13 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         at: Annotated[str, Field(description="ISO datetime for once.")] = "",
         cron: Annotated[str, Field(description="5-field cron for cron.")] = "",
         paused: Annotated[str, Field(description="'true' to pause, 'false' to resume; empty = keep.")] = "",
+        description: Annotated[str, Field(description="New description; empty = keep.")] = "",
+        workdir: Annotated[
+            str, Field(description="New folder path; 'none' = detach; empty = keep.")
+        ] = "",
+        workdir_access: Annotated[
+            str, Field(description="read | read_write; empty = keep.")
+        ] = "",
     ) -> str:
         """Edit any field of a task. Empty args keep the current value."""
         patch: dict = {}
@@ -171,6 +194,12 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
             patch["schedule"] = _schedule_arg(schedule_kind, at, cron)
         if paused:
             patch["paused"] = paused.strip().lower() == "true"
+        if description:
+            patch["description"] = description
+        if workdir:
+            patch["workdir"] = None if workdir.strip().lower() == "none" else workdir
+        if workdir_access:
+            patch["workdir_access"] = workdir_access
         if not patch:
             return "Nothing to change — pass at least one field."
         try:

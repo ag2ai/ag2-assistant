@@ -79,3 +79,38 @@ async def test_create_update_run_delete_via_tools(tmp_path):
     assert "Digest" in listing and tid in listing
     assert tid in await tools["get_task"](task_id=tid)
     assert "Deleted" in await tools["delete_task"](task_id=tid)
+
+
+async def test_task_tools_carry_workdir_and_description(tmp_path):
+    """Task tools carry description, workdir, and access mode to/from service."""
+    svc = _svc(tmp_path)
+
+    class _Settings:
+        pass
+
+    tools = _tools(svc, _Settings())
+    wd = tmp_path / "w"
+    wd.mkdir()
+    msg = await tools["create_task"](
+        name="N",
+        prompt="p",
+        description="short desc",
+        workdir=str(wd),
+        workdir_access="read_write",
+        context=_Ctx("web-1"),
+    )
+    assert "Created task task-" in msg
+    tid = msg.split("Created task ")[1].split(" ")[0].rstrip(".—").strip()
+    detail = await tools["get_task"](task_id=tid)
+    assert "short desc" in detail and str(wd) in detail and "read-write" in detail
+    # update with workdir="none" detaches
+    out = await tools["update_task"](task_id=tid, workdir="none")
+    assert "Updated" in out
+    assert (await svc.get_task(tid))["workdir"] is None
+    # bad workdir_access with a workdir comes back as error string
+    wd2 = tmp_path / "w2"
+    wd2.mkdir()
+    bad = await tools["create_task"](
+        name="Bad", prompt="p", workdir=str(wd2), workdir_access="invalid", context=_Ctx("web-1")
+    )
+    assert "read_write" in bad  # error message shows valid options
