@@ -19,6 +19,7 @@ from telegram.ext import (
     filters,
 )
 
+from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import markdown_to_plain
 from assistant.hitl.base import Asker, Question
@@ -36,8 +37,6 @@ def _has_attachment(msg) -> bool:
 
 async def _download_attachments(msg, bot) -> list:
     """Download a Telegram message's media and build AG2 multimodal inputs."""
-    from assistant.attachments import build_input
-
     # (file_id, filename, mime) for each supported attachment on the message.
     specs: list[tuple[str, str, str | None]] = []
     if msg.document:

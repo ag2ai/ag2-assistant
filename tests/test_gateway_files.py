@@ -3,6 +3,7 @@ move, and recursive Directory delete on the profile-scoped ``/files`` routes. Th
 by design — the mutation rules live in ``test_workspace.py``; here we lock the
 route wiring, status codes, and per-profile scoping."""
 
+from assistant.workspace import _MAX_WRITE_BYTES
 from tests.conftest import api
 
 
@@ -154,7 +155,6 @@ def test_forced_put_without_if_match_overwrites(profile_app):
 
 
 def test_put_oversize_body_is_413(profile_app):
-    from assistant.workspace import _MAX_WRITE_BYTES
 
     client, pid = profile_app
     client.post(api(pid, "/files/upload"), files=[("files", ("n.md", b"old", "text/plain"))])

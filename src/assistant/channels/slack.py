@@ -12,6 +12,11 @@ import contextlib
 import os
 import re
 
+import aiohttp
+from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
+from slack_bolt.app.async_app import AsyncApp
+
+from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import markdown_to_slack, split_for_limit
 from assistant.hitl.base import Asker, Question
@@ -29,10 +34,6 @@ async def _download_attachments(event: dict, bot_token: str) -> list:
     Slack file URLs are private — they require an `Authorization: Bearer` header
     with the bot token, and the `files:read` scope.
     """
-    import aiohttp
-
-    from assistant.attachments import build_input
-
     files = event.get("files") or []
     if not files:
         return []
@@ -116,9 +117,6 @@ class SlackChannel(Channel):
         return SlackAsker(self._app.client, channel_id, self._pending)
 
     async def start(self, gateway) -> None:
-        from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
-        from slack_bolt.app.async_app import AsyncApp
-
         self._gateway = gateway
         self._app = AsyncApp(token=self._bot_token)
         self._app.event("app_mention")(self._handle_app_mention)

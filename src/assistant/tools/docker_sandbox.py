@@ -18,7 +18,9 @@ import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
 
+from ag2.tools.sandbox.adapter import ShellAdapter
 from ag2.tools.sandbox.base import ExecResult, SandboxBase
+from ag2.tools.skills import LocalRuntime
 
 _DEFAULT_IMAGE = "python:3.12-slim"
 _DEFAULT_WORKDIR = "/workspace"
@@ -140,8 +142,6 @@ def build_docker_skill_runtime(
     bind-mounted Docker container (the skill's `scripts/` dir is the only host
     path it can see). Storage/discovery stay local — only execution is sandboxed.
     """
-    from ag2.tools.sandbox.adapter import ShellAdapter
-    from ag2.tools.skills import LocalRuntime
 
     class _DockerSkillRuntime(LocalRuntime):
         def shell(self, scripts_dir: Path) -> "ShellAdapter":

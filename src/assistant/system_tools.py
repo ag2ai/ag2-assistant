@@ -15,6 +15,11 @@ from typing import Annotated
 from ag2 import Context, tool
 from pydantic import Field
 
+from assistant.events import TaskCreated
+from assistant.observability import log_suppressed
+from assistant.tasks import TaskStoreCorruptionError
+from assistant.tasks.scheduling import describe_cron, validate_schedule
+
 _PREVIEW = 240  # chars of a produced asset to surface in a summary
 _CHAT_TAIL_TURNS = 20  # turns of a past conversation read_chat returns
 
@@ -33,13 +38,9 @@ async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
     client shows a task card. Best-effort."""
     if context is None:
         return
-    from assistant.events import TaskCreated
-
     try:
         await context.send(TaskCreated(task_id, title=title, kind=kind))
     except Exception as exc:
-        from assistant.observability import log_suppressed
-
         log_suppressed("chat task-card event emit", exc, task_id=task_id, kind=kind)
 
 
@@ -122,8 +123,6 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         """Full detail of one task: objective, schedule, deliverables with their
         COMPLETE output (untruncated), subtasks, progress. Use before acting on or
         reporting a task — this is the source of truth for what the task produced."""
-        from assistant.tasks import TaskStoreCorruptionError
-
         try:
             node = await tasks.get_task(task_id)
         except TaskStoreCorruptionError as exc:
@@ -162,8 +161,6 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         context: Context = None,
     ) -> str:
         """Schedule a task to run later, optionally recurring."""
-        from assistant.tasks.scheduling import describe_cron, validate_schedule
-
         if err := validate_schedule(when, recurrence, require_when=True):
             return err  # correctable: the agent sees this and retries with a valid value
         tid = await tasks.schedule_task(request, when, recurrence or None)
@@ -184,8 +181,6 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         ] = "",
     ) -> str:
         """Change when a task runs and/or how it repeats."""
-        from assistant.tasks.scheduling import validate_schedule
-
         if err := validate_schedule(when, recurrence):
             return err  # correctable: empty keeps, 'off' stops; bad values rejected
         return await tasks.reschedule(task_id, when, recurrence)

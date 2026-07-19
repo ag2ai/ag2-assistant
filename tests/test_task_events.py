@@ -5,15 +5,33 @@ it onto the task's stream (`task:<id>`); scheduling emits a custom `TaskSchedule
 We capture via a fake emitter so no gateway/LLM is needed.
 """
 
-from ag2.events import TaskCompleted, TaskStarted
+import asyncio
+from types import SimpleNamespace
 
-from assistant.events import TaskScheduled
+import ag2.tools.subagents.run_task as run_task_mod
+from ag2.context import ConversationContext
+from ag2.events import TaskCancelled, TaskCompleted, TaskStarted
+
+import assistant.agent as agent_mod
+from assistant.config import Config, load_config
+from assistant.events import (
+    DeliverableProduced,
+    ImageGenerated,
+    InquiryAnswered,
+    InquiryRaised,
+    SubagentTrace,
+    TaskCreated,
+    TaskScheduled,
+)
 from assistant.gateway.tasks_service import TaskService
+from assistant.hitl import DurableAsker, HitlServer, NullAsker, Question
+from assistant.hitl.inquiry import InquiryStatus
+from assistant.system_tools import _emit_task_card
+from assistant.tasks.executor import _run_visible_subagent
 
 
 def _service(tmp_path):
     cfg_dir = tmp_path / "d"
-    from assistant.config import load_config
 
     cfg = load_config()
     cfg.data_dir = cfg_dir
@@ -84,7 +102,6 @@ async def test_schedule_emits_task_scheduled(tmp_path):
 
 
 async def test_deliverable_produced_emits_event(tmp_path):
-    from assistant.events import DeliverableProduced
 
     svc, emitted = await _started(tmp_path)
     await svc._manager.deliverable_produced(
@@ -108,15 +125,6 @@ async def test_raw_subagent_event_emits_on_task_stream(tmp_path):
 
 
 async def test_visible_subagent_emits_cancelled_when_interrupted(monkeypatch):
-    import asyncio
-    from types import SimpleNamespace
-
-    import ag2.tools.subagents.run_task as run_task_mod
-    from ag2.events import TaskCancelled
-
-    import assistant.agent as agent_mod
-    from assistant.config import Config
-    from assistant.tasks.executor import _run_visible_subagent
 
     events = []
 
@@ -153,15 +161,6 @@ async def test_visible_subagent_emits_cancelled_when_interrupted(monkeypatch):
 async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
     """The subagent's inner events ride to the parent task as SubagentTrace, so the
     GUI can nest them under the card (and a nested lifecycle nests recursively)."""
-    from types import SimpleNamespace
-
-    import ag2.tools.subagents.run_task as run_task_mod
-    from ag2.events import TaskStarted
-
-    import assistant.agent as agent_mod
-    from assistant.config import Config
-    from assistant.events import SubagentTrace
-    from assistant.tasks.executor import _run_visible_subagent
 
     events = []
 
@@ -177,7 +176,6 @@ async def test_visible_subagent_forwards_inner_work_as_trace(monkeypatch):
         agent, objective, *, parent_context, context="", stream=None, task_id=None, **kw
     ):
         # Simulate inner work: a nested subagent's lifecycle on the work stream.
-        from ag2.context import ConversationContext
 
         ev = TaskStarted(task_id="task-1:worker:deep", agent_name="researcher", objective="dig")
         await stream.send(ev, ConversationContext(stream=stream))
@@ -204,14 +202,6 @@ async def test_visible_subagent_surfaces_generated_image_bare(monkeypatch):
     """An ImageGenerated event from a task subagent is user-facing output, not a
     trace — it rides the task stream BARE (never wrapped in SubagentTrace), so the
     GUI renders the same inline thumbnail + viewer as a chat-generated image."""
-    from types import SimpleNamespace
-
-    import ag2.tools.subagents.run_task as run_task_mod
-
-    import assistant.agent as agent_mod
-    from assistant.config import Config
-    from assistant.events import ImageGenerated, SubagentTrace
-    from assistant.tasks.executor import _run_visible_subagent
 
     events = []
 
@@ -226,7 +216,6 @@ async def test_visible_subagent_surfaces_generated_image_bare(monkeypatch):
     async def fake_run_task(
         agent, objective, *, parent_context, context="", stream=None, task_id=None, **kw
     ):
-        from ag2.context import ConversationContext
 
         ev = ImageGenerated("images/sunrise.jpg", prompt="a sunrise", media_type="image/jpeg")
         await stream.send(ev, ConversationContext(stream=stream))
@@ -254,10 +243,6 @@ async def test_chat_inquiry_surfaces_on_its_chat_stream(tmp_path):
     """A durable inquiry bound to a chat emits InquiryRaised on THAT chat's
     stream (so it renders inline in the chat), and answering it out of band resolves
     the asker — durable, inline chat HITL with no separate live channel."""
-    import asyncio
-
-    from assistant.events import InquiryRaised
-    from assistant.hitl import DurableAsker, NullAsker, Question
 
     svc, emitted = await _started(tmp_path)
     asker = DurableAsker(NullAsker(), svc.inquiries, chat="web-chat-1")
@@ -280,8 +265,6 @@ async def test_inline_answer_falls_back_to_inquiry_store(tmp_path):
     """Answering inline on a task page sends the InquiryStore id over the WS. The
     HitlServer won't know it (different id space), so the gateway falls back to the
     inquiry store — which is what actually resolves a durable task inquiry."""
-    from assistant.hitl import HitlServer
-    from assistant.hitl.inquiry import InquiryStatus
 
     svc, _ = await _started(tmp_path)
     inq = await svc.inquiries.create(
@@ -300,7 +283,6 @@ async def test_inline_answer_falls_back_to_inquiry_store(tmp_path):
 
 
 async def test_inquiry_raised_then_answered_emit(tmp_path):
-    from assistant.events import InquiryAnswered, InquiryRaised
 
     svc, emitted = await _started(tmp_path)
     inq = await svc.inquiries.create(
@@ -320,7 +302,6 @@ async def test_inquiry_expire_and_cancel_emit_resolution(tmp_path):
     """Expiry and task-cancel are terminal resolutions too — each must emit an
     InquiryAnswered carrying its status, so the GUI can retire the card instead of
     leaving live-looking buttons that answer nothing (the stranded-permission bug)."""
-    from assistant.events import InquiryAnswered
 
     svc, emitted = await _started(tmp_path)
     exp = await svc.inquiries.create("Run it?", task_id="task-e", kind="permission")
@@ -335,8 +316,6 @@ async def test_inquiry_expire_and_cancel_emit_resolution(tmp_path):
 
 
 async def test_emit_task_card_helper(tmp_path):
-    from assistant.events import TaskCreated
-    from assistant.system_tools import _emit_task_card
 
     sent = []
 

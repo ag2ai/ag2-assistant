@@ -425,7 +425,7 @@ def migrate() -> None:
     if _SECRETS_FIELD in data:
         return
     # Lazy imports: both stores import assistant.secrets at module level.
-    from assistant import live_configs, llm_configs
+    from assistant import live_configs, llm_configs  # local: import cycle (configs import secrets)
 
     items: list[dict] = []
     by_value: dict[str, dict] = {}

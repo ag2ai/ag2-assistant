@@ -1,5 +1,6 @@
 <script>
   import { parseMessage, highlightSegments } from '../../lib/fileRefs.js'
+  import { openAsideFile } from '../../router.js'
 
   let { item } = $props()
 
@@ -16,7 +17,7 @@
 </script>
 
 <div class="msg user" class:queued={item.queued}>
-  <div class="bubble" class:voice={item.voice}>{#each segs as s}{#if s.mark}<mark class="fileref" title={pathFor.get(s.text)?.join('\n')}>{s.text}</mark>{:else}{s.text}{/if}{/each}</div>
+  <div class="bubble" class:voice={item.voice}>{#each segs as s}{#if s.mark}{@const paths = pathFor.get(s.text) || []}<button type="button" class="fileref" title={paths.join('\n')} onclick={() => paths[0] && openAsideFile(paths[0])}>{s.text}</button>{:else}{s.text}{/if}{/each}</div>
   {#if item.queued}
     <!-- Fed into the running turn. AG2 hands it to the agent when the turn drains its
          inbox — its next step, which can be a whole tool round away — so say so instead
@@ -26,11 +27,15 @@
 </div>
 
 <style>
-  /* Cosmetic File-reference mention — matches the composer's accent pill so a sent
-     `@label` reads the same in the transcript as it did while typing. */
+  /* File-reference mention — matches the composer's accent pill so a sent `@label`
+     reads the same in the transcript as it did while typing. It's a button: clicking
+     opens the referenced file in the preview rail (ADR 0012). Reset the native button
+     chrome so it stays inline with the sentence and inherits the bubble's type. */
   .fileref {
+    font: inherit; border: 0; cursor: pointer;
     background: var(--accent-soft); color: var(--accent);
     border-radius: 4px; padding: 0 2px;
     -webkit-box-decoration-break: clone; box-decoration-break: clone;
   }
+  .fileref:hover { text-decoration: underline; }
 </style>

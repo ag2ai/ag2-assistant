@@ -41,7 +41,7 @@ from ag2.events import (
 from ag2.observers import BaseObserver, LoopDetector
 
 try:  # ObserverStarted/Completed bracket a turn; used to scope silence to in-turn.
-    from ag2.events import ObserverCompleted, ObserverStarted
+    from ag2.events import ObserverCompleted, ObserverStarted  # local: version-guarded ag2 events
 except ImportError:  # pragma: no cover - older AG2 without the lifecycle events
     ObserverStarted = ObserverCompleted = ()  # type: ignore[assignment,misc]
 from ag2.watch import EventWatch

@@ -11,11 +11,14 @@ The behaviour lives in plain async functions (testable without the agent); the
 """
 
 import asyncio
+from datetime import datetime
 from typing import Annotated
 
 from ag2 import tool
 from pydantic import Field
 
+from assistant.tasks.model import TaskStatus
+from assistant.tasks.scheduling import describe_cron, next_occurrence, normalize_cron
 from assistant.tools import capability_catalogue
 
 # Rendered from the capability registry so this field can never drift from the groups
@@ -57,8 +60,6 @@ async def render_task(store, task_id: str) -> str:
 def _is_scheduled(t) -> bool:
     """A scheduled task (template) — its plan changes apply to future runs; it must
     NOT be executed on edit, only when the scheduler fires it."""
-    from assistant.tasks.model import TaskStatus
-
     return t.status == TaskStatus.SCHEDULED or bool(t.scheduled_for and not t.is_terminal)
 
 
@@ -133,11 +134,6 @@ async def do_set_deliverables(store, manager, task_id, descriptions) -> str:
 
 async def do_reschedule(store, task_id, when="", recurrence="") -> str:
     """Change a task's run time and/or repeat; (re-)arms it as SCHEDULED."""
-    from datetime import datetime
-
-    from assistant.tasks.model import TaskStatus
-    from assistant.tasks.scheduling import describe_cron, next_occurrence, normalize_cron
-
     t = await store.get(task_id)
     if t is None:
         return "Task not found."

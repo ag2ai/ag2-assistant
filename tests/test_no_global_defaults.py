@@ -17,6 +17,7 @@ Three static guards (no runtime, pure source scan):
 import re
 from pathlib import Path
 
+from assistant import profiles
 from assistant.config import Config
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "assistant"
@@ -117,7 +118,6 @@ def test_with_profile_overrides_every_path_field():
     """Iterate Config's Path model fields; with_profile() must change each one away
     from its legacy root-level value, EXCEPT the intentional exception ``root_dir``
     (which by design still carries the root)."""
-    from assistant import profiles
 
     meta = profiles.create_profile("Work", "#109e91")
     base = Config()

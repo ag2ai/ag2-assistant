@@ -5,10 +5,19 @@ These cover credential-state helpers, tool construction, gating of writes, and
 conditional inclusion in the agent's tool list.
 """
 
-import pytest
+import io
 
+import pytest
+import pytest as _pytest
+from fastapi.testclient import TestClient
+
+import assistant.integrations.google_auth as ga
+import assistant.tools as tools_mod
+from assistant.agent import GOOGLE_GUIDANCE, turn_prompt
+from assistant.config import Config
 from assistant.integrations import google_auth
-from assistant.tools.google import build_google_tools
+from assistant.tools.google import _decode_drive_content, _extract_drive_id, build_google_tools
+from tests.conftest import FakeRunMixin, make_profile_app, use_fake_agent
 
 
 @pytest.fixture
@@ -41,7 +50,6 @@ def test_logout_removes_token(google_paths):
 
 
 def test_extract_drive_id_from_url_or_id():
-    from assistant.tools.google import _extract_drive_id
 
     assert (
         _extract_drive_id("https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0")
@@ -52,9 +60,6 @@ def test_extract_drive_id_from_url_or_id():
 
 
 def test_google_guidance_in_turn_prompt_when_signed_in(monkeypatch):
-    import assistant.integrations.google_auth as ga
-    from assistant.agent import GOOGLE_GUIDANCE, turn_prompt
-    from assistant.config import Config
 
     monkeypatch.setattr(ga, "has_token", lambda: True)
     assert GOOGLE_GUIDANCE in " ".join(turn_prompt(Config()))
@@ -86,12 +91,9 @@ def test_drive_read_decodes_text_and_extracts_pdf_but_never_raw_binary():
     decode, PDFs get real text extraction, and anything else binary gets an
     honest 'can't read this' message (the regression was a PDF decoded raw,
     poisoning the chat with garbage)."""
-    import io
 
     pypdf = pytest.importorskip("pypdf")  # google extra; CI installs it
     PdfWriter = pypdf.PdfWriter
-
-    from assistant.tools.google import _decode_drive_content
 
     # text/* and textual application mimes decode as UTF-8
     assert _decode_drive_content("notes.txt", "text/plain", b"hello") == "hello"
@@ -133,7 +135,6 @@ def test_save_credentials_validates(google_paths):
     google_auth.save_credentials_json('{"installed": {"client_id": "x"}}')
     assert creds.exists()
     # garbage is rejected
-    import pytest as _pytest
 
     with _pytest.raises(Exception):
         google_auth.save_credentials_json("not json")
@@ -145,9 +146,6 @@ def test_save_credentials_validates(google_paths):
 
 
 def _client(monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from tests.conftest import FakeRunMixin, make_profile_app, use_fake_agent
 
     class _FakeAgent(FakeRunMixin):
         tools = []
@@ -164,7 +162,6 @@ def _client(monkeypatch):
 
 
 def test_google_status_endpoint(monkeypatch):
-    from assistant.integrations import google_auth as ga
 
     monkeypatch.setattr(ga, "is_configured", lambda: True)
     monkeypatch.setattr(ga, "has_token", lambda: True)
@@ -175,7 +172,6 @@ def test_google_status_endpoint(monkeypatch):
 
 
 def test_google_login_url_and_callback(monkeypatch):
-    from assistant.integrations import google_auth as ga
 
     monkeypatch.setattr(ga, "is_configured", lambda: True)
     sentinel_flow = object()
@@ -211,7 +207,6 @@ def test_google_login_url_and_callback(monkeypatch):
 
 
 def test_google_credentials_upload_endpoint(monkeypatch, tmp_path):
-    from assistant.integrations import google_auth as ga
 
     monkeypatch.setattr(ga, "credentials_path", lambda: tmp_path / "creds.json")
     with _client(monkeypatch) as client:
@@ -225,8 +220,6 @@ def test_google_credentials_upload_endpoint(monkeypatch, tmp_path):
 
 
 def test_agent_tools_include_google_only_when_signed_in(monkeypatch):
-    import assistant.integrations.google_auth as ga
-    import assistant.tools as tools_mod
 
     monkeypatch.setattr(ga, "has_token", lambda: False)
     base = [t.name for t in tools_mod.build_agent_tools(provider="gemini")]

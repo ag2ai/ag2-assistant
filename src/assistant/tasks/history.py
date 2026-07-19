@@ -25,11 +25,15 @@ and carried under an explicit "untrusted recap" frame by the consumer.
 
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
+
+from ag2 import Agent
 
 # Reuse AG2's documented episodic path convention (producer/consumer contract in
 # ag2/knowledge/constants.py) so the store stays AG2-native.
-from ag2.knowledge import CONVERSATIONS_PREFIX
+from ag2.knowledge import CONVERSATIONS_PREFIX, SqliteKnowledgeStore
 
+from assistant.agent import model_config
 from assistant.observability import log_suppressed
 from assistant.tasks.model import TaskStatus
 
@@ -143,10 +147,6 @@ def episodic_store_for(config, template_id: str):
 
     One store per template so its `/memory/conversations/` namespace holds only
     that template's episodes — mirrors how memory.py isolates per-profile DBs."""
-    from pathlib import Path
-
-    from ag2.knowledge import SqliteKnowledgeStore
-
     path = Path(config.data_dir) / "task_history" / f"{template_id}.db"
     path.parent.mkdir(parents=True, exist_ok=True)
     return SqliteKnowledgeStore(str(path))
@@ -178,10 +178,6 @@ async def _summarise(config, run, deliverable_outputs: list[str]) -> str:
     combined = "\n\n".join(o for o in deliverable_outputs if o).strip()
     if not combined:
         return ""
-    from ag2 import Agent
-
-    from assistant.agent import model_config
-
     model = config.llm.aggregate_model or config.llm.model
     agent = Agent("run-digester", config=model_config(config, model))
     prompt = _DIGEST_PROMPT.format(

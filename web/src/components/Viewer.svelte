@@ -4,7 +4,7 @@
   // html/image/pdf render natively; md/code/text in-app; unknown types → download.
   import { onMount, onDestroy } from 'svelte'
   import { route, closeAside } from '../router.js'
-  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile } from '../store.js'
+  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, thread } from '../store.js'
   import { api } from '../transport/api.js'
   import Markdown from './Markdown.svelte'
   import RailResizer from './RailResizer.svelte'
@@ -12,6 +12,7 @@
   import { viewerKind } from '../lib/preview.js'
   import { saveErrorMessage, isConflict } from '../lib/fileEdit.js'
   import { setUnsavedGuard } from '../lib/unsavedGuard.js'
+  import { isFolderPath, folderAffordances } from '../lib/folderFiles.js'
 
   // A URL-addressed file wins; a path-less transient body is the fallback when no
   // file is addressed. The rail shows exactly one of them.
@@ -22,14 +23,25 @@
   const name = $derived(path ? path.split('/').pop() : null)
   const title = $derived(file ? (name || 'Preview') : (transient?.title || 'Preview'))
   const kind = $derived(path ? viewerKind(name) : 'markdown')
-  const url = $derived(path ? api.fileUrl(path) : '')
+  // The open Thread's chat_id scopes a Folder (absolute) file's Grant resolution
+  // (ADR 0013); a Files-space (relative) path ignores it. rawQuery decides per-path.
+  const chatId = $derived($thread.chat || '')
+  const url = $derived(path ? api.fileUrl(path, false, chatId) : '')
   const native = $derived(kind === 'html' || kind === 'pdf' || kind === 'image')
   // Offer a copy button for text-backed kinds and html (copy the source), and for
   // images (copy the pixels). markdown additionally gets a Preview/Edit switcher.
   const copyable = $derived(kind === 'markdown' || kind === 'code' || kind === 'text' || kind === 'html' || kind === 'image')
+  // The served file's resolved Grant mode (`X-File-Mode`), captured from the markdown
+  // load: null until it arrives, then read | read_write. A Files-space file reads back
+  // read_write; a Folder file carries its Thread-scoped Grant mode (ticket 04).
+  let fileMode = $state(null)
   // In-place editing (ADR 0011) is offered for path-backed markdown only: the
-  // transient body has nowhere to save, and other kinds don't opt in yet.
-  const editable = $derived(kind === 'markdown' && !!path)
+  // transient body has nowhere to save, and other kinds don't opt in yet. A Folder
+  // (absolute) file additionally needs a read_write Grant — a read-only Folder file
+  // is preview + download only (the server would 403 a write anyway; ticket 04).
+  const editable = $derived(
+    kind === 'markdown' && !!path && (isFolderPath(path) ? folderAffordances(fileMode).edit : true)
+  )
 
   // Close strips the aside key from the URL for a file; clears the store for a
   // transient body (it was never in the URL).
@@ -49,6 +61,15 @@
   let etag = $state(null)
   let err = $state('')
   let mode = $state('preview')   // markdown only: 'preview' render vs. 'edit' source
+  // The unknown/"download" kind gets an on-demand raw view: 'preview' shows the
+  // download message, 'raw' shows the bytes as text — most extensionless/dotfile
+  // "unknown" files (.skillignore, Dockerfile, .env) are really text. The bytes are
+  // fetched lazily on the first switch (once per file) so a genuine binary that the
+  // user only means to download is never pulled down needlessly.
+  let dlView = $state('preview')
+  let rawText = $state('')
+  let rawErr = $state('')
+  let rawLoaded = $state(false)
   let saving = $state(false)
   let saveErr = $state('')
   // A save clashed with a since-changed file: the rail shows a Reload/Overwrite
@@ -64,24 +85,42 @@
   onMount(() => setUnsavedGuard(() => dirty))
   onDestroy(() => setUnsavedGuard(null))
   $effect(() => {
-    const p = path, tr = transient, k = kind
+    const p = path, tr = transient, k = kind, cid = chatId
     let stale = false            // a late load for a since-changed file must not land
     text = ''; draft = ''; etag = null
     err = ''; saveErr = ''; conflict = false; saving = false
     imgErr = false               // a fresh source gets a fresh chance to load
     mode = 'preview'             // each newly-opened file starts on the rendered view
+    dlView = 'preview'; rawText = ''; rawErr = ''; rawLoaded = false  // unknown-kind raw view resets per file
+    fileMode = null              // re-resolve the Grant mode for the newly-opened file
     if (tr) { text = tr.text; draft = tr.text }
     else if (p && k === 'markdown') {
-      api.fileTextWithEtag(p)
-        .then(({ text: t, etag: e }) => { if (!stale) { text = t; draft = t; etag = e } })
+      api.fileTextWithEtag(p, cid)
+        .then(({ text: t, etag: e, mode: m }) => { if (!stale) { text = t; draft = t; etag = e; fileMode = m } })
         .catch((e) => { if (!stale) err = String(e.message || e) })
     } else if (p && (k === 'code' || k === 'text')) {
-      api.fileText(p)
+      api.fileText(p, cid)
         .then((t) => { if (!stale) { text = t; draft = t } })
         .catch((e) => { if (!stale) err = String(e.message || e) })
     }
     return () => { stale = true }
   })
+
+  // Switch the unknown-kind view to raw and lazily fetch the bytes as text on the
+  // first switch. A mid-flight file switch drops the result (guarded on `path`);
+  // rawLoaded gates against refetching (an empty file legitimately reads back '').
+  async function showRaw() {
+    dlView = 'raw'
+    if (rawLoaded) return
+    rawLoaded = true
+    const p = path, cid = chatId
+    try {
+      const t = await api.fileText(p, cid)
+      if (p === path) rawText = t
+    } catch (e) {
+      if (p === path) rawErr = String(e.message || e)
+    }
+  }
 
   // Copy to the clipboard, with a brief ✓ confirmation: text-backed kinds copy the
   // source (the live editor draft for markdown); images copy the pixels.
@@ -95,7 +134,7 @@
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': imagePng() })])
       } else if (kind === 'html') {
         // html renders natively (iframe), so its source isn't held in `draft` — fetch it.
-        await navigator.clipboard.writeText(await api.fileText(path))
+        await navigator.clipboard.writeText(await api.fileText(path, chatId))
       } else {
         await navigator.clipboard.writeText(draft || '')
       }
@@ -113,7 +152,7 @@
     saveErr = ''
     const pending = draft
     try {
-      const newTag = await api.saveFile(p, pending, baseTag)
+      const newTag = await api.saveFile(p, pending, baseTag, chatId)
       if (p !== path) return
       text = pending
       etag = newTag
@@ -149,7 +188,7 @@
     saving = true
     saveErr = ''
     try {
-      const { text: t, etag: e } = await api.fileTextWithEtag(p)
+      const { text: t, etag: e } = await api.fileTextWithEtag(p, chatId)
       if (p !== path) return
       text = t
       draft = t
@@ -223,6 +262,19 @@
           <Icon name="pencil" size={14} />
         </button>
       </div>
+    {:else if kind === 'download'}
+      <!-- Unknown type: let the user peek at the bytes as text instead of only
+           offering a download (many "unknown" files are really text). -->
+      <div class="vseg" role="group" aria-label="View mode">
+        <button class="vsegbtn" class:on={dlView === 'preview'} aria-pressed={dlView === 'preview'}
+                title="Preview" aria-label="Preview" onclick={() => (dlView = 'preview')}>
+          <Icon name="eye" size={14} />
+        </button>
+        <button class="vsegbtn" class:on={dlView === 'raw'} aria-pressed={dlView === 'raw'}
+                title="View as raw text" aria-label="View as raw text" onclick={showRaw}>
+          <Icon name="file-text" size={14} />
+        </button>
+      </div>
     {/if}
     {#if path}
       <!-- A path-backed preview: the filename Reveals the file in the Files tree
@@ -256,7 +308,7 @@
             onclick={() => previewExpanded.update((v) => !v)}>
       <Icon name={$previewExpanded ? 'minimize-2' : 'maximize-2'} size={15} />
     </button>
-    {#if path}<a class="dl" href={api.fileUrl(path, true)} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></a>{/if}
+    {#if path}<a class="dl" href={api.fileUrl(path, true, chatId)} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></a>{/if}
     <button class="rail-x" aria-label="Close" onclick={close}>×</button>
   </div>
   <div class="vbody" class:native class:editing={editable && mode === 'edit'}>
@@ -301,9 +353,18 @@
     {:else if kind === 'text'}
       <pre class="vtext">{text}</pre>
     {:else if kind === 'download'}
-      <p class="muted">
-        No preview for this file type — <a class="dl" href={api.fileUrl(path, true)}>download it</a>.
-      </p>
+      {#if dlView === 'raw'}
+        {#if rawErr}
+          {@render missing('file-x', 'Couldn’t load this file as text — it may have moved or been deleted.', rawErr)}
+        {:else}
+          <pre class="vtext">{rawText}</pre>
+        {/if}
+      {:else}
+        <p class="muted">
+          No preview for this file type — <button type="button" class="vlink" onclick={showRaw}>view it as raw text</button>
+          or <a class="dl" href={api.fileUrl(path, true, chatId)}>download it</a>.
+        </p>
+      {/if}
     {:else if editable && mode === 'edit'}
       <textarea class="vedit" bind:value={draft} spellcheck="false"
                 aria-label={`Edit ${name}`}></textarea>

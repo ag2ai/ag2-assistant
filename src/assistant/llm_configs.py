@@ -67,7 +67,7 @@ def _subscription_signed_in() -> bool:
     missing or broken ``codex_auth`` module must never raise into the usable()/health
     path, so any import or call failure reads as "not signed in"."""
     try:
-        from assistant import codex_auth
+        from assistant import codex_auth  # local: import cycle (codex_auth)
 
         return bool(codex_auth.is_signed_in())
     except Exception:

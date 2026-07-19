@@ -23,13 +23,17 @@ There are TWO memory layers:
     manual edits. See ``read_universal`` / ``write_universal`` at the bottom.
 """
 
+import sqlite3
 from pathlib import Path
 
 from ag2 import KnowledgeConfig
 from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
+from ag2.compact import CompactTrigger, SummarizeCompact
 from ag2.config import ModelConfig
-from ag2.knowledge import SqliteKnowledgeStore
+from ag2.knowledge import MemoryKnowledgeStore, SqliteKnowledgeStore
 from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
+
+from assistant.config import load_config
 
 # Path inside the knowledge store where the rolling profile lives.
 PROFILE_PATH = "/memory/working.md"
@@ -208,8 +212,10 @@ def _default_aggregate_config() -> ModelConfig:
     didn't pass one: the user's configured provider, on its cheap aggregate
     model when one is known (falling back to their main model). Imported
     lazily — agent.py imports this module at load time."""
-    from assistant.agent import cheap_model, model_config
-    from assistant.config import load_config
+    from assistant.agent import (  # local: import cycle (assistant.agent imports memory)
+        cheap_model,
+        model_config,
+    )
 
     config = load_config()
     return model_config(config, cheap_model(config))
@@ -253,8 +259,6 @@ def build_knowledge_config(
 
     compact_kwargs: dict = {}
     if compact:
-        from ag2.compact import CompactTrigger, SummarizeCompact
-
         compact_kwargs = {
             "compact": SummarizeCompact(target=60, config=aggregate_config),
             "compact_trigger": CompactTrigger(max_tokens=compact_max_tokens),
@@ -283,9 +287,6 @@ def build_compaction_config(
     events (an LLM call on the cheap model) once the stream crosses `max_tokens`.
     Backed by an ephemeral in-memory store — nothing persists, no knowledge tool,
     no event log; the KnowledgeConfig exists purely to carry the compactor."""
-    from ag2.compact import CompactTrigger, SummarizeCompact
-    from ag2.knowledge import MemoryKnowledgeStore
-
     if aggregate_config is None:
         aggregate_config = _default_aggregate_config()
 
@@ -330,8 +331,6 @@ def read_profile_sync(store_path: Path) -> str:
     (same ``entries(path, content, …)`` schema the store uses) so the per-turn,
     synchronous prompt builders can inject the universal document without spinning up
     the async store. Never raises on a missing/locked/corrupt DB — returns ""."""
-    import sqlite3
-
     store_path = Path(store_path)
     if not store_path.exists():
         return ""

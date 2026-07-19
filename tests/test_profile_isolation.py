@@ -12,11 +12,22 @@ Also covers §6.4 concurrency: A's scheduler fires while B is active.
 
 import asyncio
 from contextlib import AsyncExitStack
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
-from assistant import profiles
+from assistant import profiles, voice_providers
+from assistant.agent import build_memory_tool, universal_memory_guidance
+from assistant.config import load_config
+from assistant.gateway.app import create_app
+from assistant.gateway.core import build_gateway
+from assistant.gateway.profile_manager import ProfileManager
+from assistant.permissions import PermissionStore
+from assistant.settings import Settings
+from assistant.system_tools import build_system_tools
+from assistant.tasks import DeliverableStatus, TaskStatus
+from assistant.tools import build_agent_tools
 from tests.conftest import api, use_fake_agent
 
 
@@ -31,8 +42,6 @@ async def _run_tool(tool, **kwargs):
 def _two_profile_client(monkeypatch):
     """A started app with two live profiles A (work) and B (personal); returns
     ``(client_ctx, )`` — use as ``with _two_profile_client(mp) as client:``."""
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     use_fake_agent(monkeypatch)
     manager = ProfileManager(memory=False, persist=True)
@@ -78,7 +87,6 @@ def test_remember_tool_isolated(monkeypatch):
     """Invoke the built memory tool the way agent.py wires it (build_memory_tool over
     A's profile + universal store paths). A profile-scoped note lands in A's profile.db;
     B's memory endpoint stays empty."""
-    from assistant.agent import build_memory_tool
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
@@ -106,7 +114,6 @@ def test_remember_tool_universal_scope_shared(monkeypatch):
     """A remember(scope="universal") writes the shared root/user.db — readable via the
     GLOBAL /api/memory and injected into BOTH profiles' contexts. A remember(scope=
     "profile") stays in that one profile's profile.db and is NOT visible universally."""
-    from assistant.agent import build_memory_tool, universal_memory_guidance
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
@@ -165,7 +172,6 @@ def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
     exercises the same reload path.) Regression for the load_config() bug: after the
     reload A's runtime config still resolves A's data_dir (paths didn't revert to
     root/B) and reflects the new setting."""
-    from assistant.settings import Settings
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
@@ -242,7 +248,6 @@ def test_permissions_are_global(monkeypatch):
     """Permissions moved from per-profile to a single install-wide store at
     config.root_dir/permissions.json — a grant made against one runtime's store is
     visible to the other, and no per-profile permissions.json is ever created."""
-    from assistant.permissions import PermissionStore
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
@@ -287,7 +292,6 @@ def test_mcp_server_isolated(monkeypatch):
         # exercise the tools/__init__.py per-profile settings path: A's agent tool
         # build (mcp capability) includes the server's toolkit, B's does not. Building
         # the toolkit object does not launch the stdio process.
-        from assistant.tools import build_agent_tools
 
         a_cfg = client.app.state.profiles.get(a).config
         b_cfg = client.app.state.profiles.get(b).config
@@ -303,9 +307,6 @@ def test_mcp_server_isolated(monkeypatch):
 def test_voice_system_tool_isolated(monkeypatch):
     """Use the voice get/set system tools built for A (build_system_tools with A's
     Settings) — setting a voice writes A's settings.json, not B's (§4.8 system_tools row)."""
-    from assistant import voice_providers
-    from assistant.settings import Settings
-    from assistant.system_tools import build_system_tools
 
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
@@ -336,11 +337,6 @@ async def test_a_scheduler_fires_while_b_active(monkeypatch):
     """Schedule a near-due task in A's runtime, interact with B, and assert A's
     scheduler autonomously fires A's task to a terminal state — deterministic (fake
     executor, short interval, poll with timeout; no long sleeps)."""
-    from datetime import datetime, timedelta
-
-    from assistant.config import load_config
-    from assistant.gateway.core import build_gateway
-    from assistant.tasks import DeliverableStatus, TaskStatus
 
     use_fake_agent(monkeypatch)
 

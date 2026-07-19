@@ -3,7 +3,7 @@
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.settings import Settings
-from assistant.system_tools import _fmt_node, build_system_tools, format_task
+from assistant.system_tools import _fmt_node, _followup_note, build_system_tools, format_task
 from assistant.tasks import TaskManager, TaskStatus, TaskStore
 
 
@@ -61,7 +61,6 @@ def test_tool_set_without_chats(tmp_path):
 
 
 def test_followup_note_only_on_channels():
-    from assistant.system_tools import _followup_note
 
     assert _followup_note("gateway") == ""  # web: questions surface inline
     assert "web app" in _followup_note("telegram")

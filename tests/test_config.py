@@ -3,7 +3,19 @@
 import json
 from pathlib import Path
 
-from assistant.config import AgentConfig, Config, LLMConfig, load_config
+import pytest
+
+from assistant.agent import model_config
+from assistant.config import (
+    AgentConfig,
+    Config,
+    LLMConfig,
+    default_config_path,
+    load_config,
+    read_yaml,
+    write_yaml,
+)
+from assistant.profiles import ProfileMeta
 
 
 def test_default_config():
@@ -112,7 +124,6 @@ def test_malformed_json_falls_back_to_defaults(tmp_path):
 
 
 def _meta(tmp_path, pid="work"):
-    from assistant.profiles import ProfileMeta
 
     return ProfileMeta(
         id=pid,
@@ -174,13 +185,11 @@ def test_malformed_yaml_falls_back_to_defaults(tmp_path):
 
 
 def test_default_config_path_is_yaml():
-    from assistant.config import default_config_path
 
     assert default_config_path().name == "config.yaml"
 
 
 def test_yaml_roundtrip_helpers(tmp_path):
-    from assistant.config import read_yaml, write_yaml
 
     p = tmp_path / "nested" / "config.yaml"
     write_yaml(p, {"a": 1, "b": {"c": "х"}})  # unicode survives
@@ -191,7 +200,6 @@ def test_yaml_roundtrip_helpers(tmp_path):
 
 
 def test_model_config_gemini_and_aggregate_override():
-    from assistant.agent import model_config
 
     cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.5-flash"))
     mc = model_config(cfg)
@@ -206,17 +214,14 @@ def test_model_config_gemini_and_aggregate_override():
 
 
 def test_model_config_respects_streaming_disabled():
-    from assistant.agent import model_config
 
     cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.5-flash", streaming=False))
     assert model_config(cfg).streaming is False
 
 
 def test_model_config_dispatches_anthropic(monkeypatch):
-    import pytest
 
     pytest.importorskip("anthropic")  # needs `pip install ag2[anthropic]`
-    from assistant.agent import model_config
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     cfg = Config(

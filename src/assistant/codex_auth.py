@@ -21,11 +21,17 @@ mirroring ``integrations.google_auth``.
 
 import base64
 import contextlib
+import contextlib as _contextlib
 import hashlib
+import http.server
 import json
 import os
 import secrets as _secrets
+import socket
 import time
+import time as _time
+import urllib.parse
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
@@ -236,8 +242,6 @@ def extract_auth_code(raw: str) -> str:
     ``http://localhost:1455/auth/callback?code=...&state=...``. Accept both: if it
     looks like a URL (or a bare ``code=...&...`` query), pull out the ``code`` param;
     otherwise return it stripped as-is."""
-    import urllib.parse
-
     raw = (raw or "").strip()
     if "code=" in raw:
         query = urllib.parse.urlsplit(raw).query or raw
@@ -392,8 +396,6 @@ def _bind_callback_server(handler):
     (::1). This matters because ``localhost`` resolves to ``::1`` first on macOS —
     an IPv4-only listener there yields "connection refused" on the redirect. Prefer a
     dual-stack IPv6 socket (V6ONLY off → also accepts IPv4-mapped); fall back to IPv4."""
-    import http.server
-    import socket
 
     class _DualStack(http.server.HTTPServer):
         address_family = socket.AF_INET6
@@ -415,11 +417,6 @@ def _capture_code(state: str, timeout_s: float = 300.0) -> str:
     once OpenAI redirects back. Keeps serving (ignoring stray hits — favicon probes,
     IPv4/IPv6 retries) until the real ``/auth/callback`` arrives or the deadline
     passes. Raises CodexAuthError on timeout / OAuth error / state mismatch."""
-    import contextlib as _contextlib
-    import http.server
-    import time as _time
-    import urllib.parse
-
     captured: dict[str, str] = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -489,8 +486,6 @@ def run_local_login(open_browser: bool = True) -> Creds:
     state = _secrets.token_urlsafe(24)
     url = build_authorize_url(challenge, state)
     if open_browser:
-        import webbrowser
-
         webbrowser.open(url)
     code = _capture_code(state)
     return exchange_code(code, verifier)

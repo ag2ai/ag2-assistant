@@ -17,9 +17,22 @@ the channel that triggered the task (no extra access, nothing swallowed).
 
 import asyncio
 
+import ag2.tools.subagents.run_task as run_task_mod
+from ag2 import Agent
+from ag2.context import ConversationContext
+from ag2.events import TaskCancelled
+from ag2.stream import MemoryStream
 from pydantic import BaseModel
 
+import assistant.agent as agent_mod
+from assistant.agent import cheap_model, model_config, turn_prompt
+from assistant.events import SubagentTrace
+from assistant.folders import FolderStore
+from assistant.observability import log_suppressed
+from assistant.permissions import PermissionManager, PermissionStore
 from assistant.tasks.model import DeliverableStatus
+from assistant.tools import capability_catalogue
+from assistant.workspace import write_deliverable_file
 
 _MAX_ASSET_CHARS = 50_000
 # The verifier judges whether a deliverable is FINISHED, so > max
@@ -62,8 +75,6 @@ _ARCHETYPE_NAMES = (
 def _subagent_archetype(caps: list[str]) -> tuple[str, str]:
     """Name and persona for a task subagent, derived from the capabilities it was
     scoped to — so a new capability needs no new branch here."""
-    from assistant.tools import capability_catalogue
-
     name = next((label for cap, label in _ARCHETYPE_NAMES if cap in caps), "worker")
     scope = capability_catalogue(caps)
     persona = (
@@ -91,14 +102,6 @@ async def _run_visible_subagent(
     final attempt. When None, leaf subtasks (those with a parent) run on the
     cheaper/faster model and the root synthesis on the main model, as before.
     """
-    from ag2.context import ConversationContext
-    from ag2.stream import MemoryStream
-    from ag2.tools.subagents.run_task import run_task
-
-    from assistant.agent import cheap_model, create_agent, turn_prompt
-    from assistant.folders import FolderStore
-    from assistant.permissions import PermissionManager, PermissionStore
-
     name, archetype_prompt = _subagent_archetype(caps)
     sub_config = config.model_copy(deep=True)
     sub_config.agent.name = name
@@ -121,7 +124,7 @@ async def _run_visible_subagent(
     # Leaf subtasks run cheap; the root synthesis runs on the main model. `model`
     # (set on the final attempt) overrides that, escalating a struggling leaf.
     sub_model = model or (cheap_model(config) if task.parent_id else None)
-    agent = create_agent(
+    agent = agent_mod.create_agent(
         sub_config,
         memory=False,
         skills=skills,
@@ -131,8 +134,7 @@ async def _run_visible_subagent(
         compact=True,
     )
 
-    from assistant.events import SubagentTrace
-    from assistant.gateway.wire import to_wire
+    from assistant.gateway.wire import to_wire  # local: import cycle (gateway <-> tasks)
 
     subagent_task_id = f"{task.id}:{name}"
 
@@ -179,7 +181,7 @@ async def _run_visible_subagent(
         )
         objective = f"Produce deliverables for: {task.title}"
         try:
-            return await run_task(
+            return await run_task_mod.run_task(
                 agent,
                 objective,
                 parent_context=context,
@@ -188,8 +190,6 @@ async def _run_visible_subagent(
                 task_id=subagent_task_id,
             )
         except asyncio.CancelledError:
-            from ag2.events import TaskCancelled
-
             await manager.emit_event(
                 task.id,
                 TaskCancelled(
@@ -207,10 +207,6 @@ async def _run_visible_subagent(
 
 async def _verify_deliverable(config, deliverable: dict, output: str) -> "_Verdict":
     """Strictly check produced output against a deliverable's criteria (cheap model)."""
-    from ag2 import Agent
-
-    from assistant.agent import model_config
-
     model = config.llm.aggregate_model or config.llm.model
     verifier = Agent("deliverable-verifier", config=model_config(config, model))
     prompt = (
@@ -337,7 +333,9 @@ def make_task_executor(config, skills: bool = True):
         # leaves the prompt byte-identical. Injected into the context/user prompt, never
         # the system prompt, under an explicit untrusted-recap frame.
         try:
-            from assistant.tasks import history
+            from assistant.tasks import (
+                history,  # local: package init order (tasks/__init__ imports executor)
+            )
 
             template_id = await history.template_id_for(store, task)
             if template_id:
@@ -352,8 +350,6 @@ def make_task_executor(config, skills: bool = True):
                 if brief:
                     prompt = f"{prompt}\n\n{brief}"
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("prior-run history injection", exc, task_id=task_id)
 
         await manager.progress(task_id, f"working on {len(pending)} deliverable(s)")
@@ -363,8 +359,6 @@ def make_task_executor(config, skills: bool = True):
         # cheap ≠ main — the root synthesis already uses the main model, and if
         # they're configured equal there's nothing to escalate (skip silently, no
         # duplicate note). The runner marks the in-flight attempt as final.
-        from assistant.agent import cheap_model
-
         escalate_model = None
         if task.parent_id and manager.is_final_attempt(task_id):
             main = config.llm.model
@@ -392,13 +386,9 @@ def make_task_executor(config, skills: bool = True):
                     "content": output[:_MAX_ASSET_CHARS],
                 }
                 try:
-                    from assistant.workspace import write_deliverable_file
-
                     asset["path"] = write_deliverable_file(config.workspace_dir, task, d, output)
                     asset["kind"] = "file"
                 except Exception as exc:
-                    from assistant.observability import log_suppressed
-
                     log_suppressed(
                         "deliverable file write",
                         exc,

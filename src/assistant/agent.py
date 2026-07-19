@@ -2,12 +2,42 @@
 
 import os
 from datetime import datetime
+from pathlib import Path
+from typing import Annotated, Literal
 
-from ag2 import Agent
+from ag2 import Agent, tool
+from ag2.config import (
+    AnthropicConfig,
+    OllamaConfig,
+    OpenAIConfig,
+    OpenAIResponsesConfig,
+)
+from ag2.config.gemini import GeminiConfig
+from ag2.policies import AlertPolicy
+from ag2.tools import SkillSearchToolkit
+from ag2.tools.skills import LocalRuntime, SkillPlugin
+from pydantic import Field
 
+from assistant import codex_auth
 from assistant.config import Config, load_config
-from assistant.memory import build_compaction_config, build_knowledge_config, profile_assembly
+from assistant.folders import FolderStore
+from assistant.hitl import Asker, build_hitl_hook
+from assistant.integrations import google_auth
+from assistant.memory import (
+    build_compaction_config,
+    build_knowledge_config,
+    profile_assembly,
+    read_profile_sync,
+    remember_note,
+)
+from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
+from assistant.observability import agent_logging_middleware, log_suppressed
+from assistant.observers import build_observers
+from assistant.permissions import PermissionManager, PermissionStore
+from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
+from assistant.settings import profile_settings
 from assistant.tools import build_agent_tools
+from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 
 # Commands skill scripts must never run (defense-in-depth; skills can ship code).
 _SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
@@ -38,15 +68,11 @@ def model_config(config: Config, model: str | None = None):
     set or overridden. A base_url is what points the OpenAI/Anthropic clients at
     OpenAI-API-compatible servers (llama.cpp, vLLM, LM Studio, LiteLLM).
     """
-    from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
-
     model = model or config.llm.model
     provider = config.llm.provider.lower()
     api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     opts = dict(config.llm.provider_options.get(provider) or {})
     if provider == "anthropic":
-        from ag2.config import AnthropicConfig
-
         return AnthropicConfig(
             **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
         )
@@ -57,10 +83,6 @@ def model_config(config: Config, model: str | None = None):
             # The OAuth access token rides as api_key (SDK → Authorization: Bearer);
             # the account id + Codex headers go via default_headers. See codex_auth
             # (unofficial / gray-area vs OpenAI ToS). ensure_fresh refreshes the token.
-            from ag2.config import OpenAIResponsesConfig
-
-            from assistant import codex_auth
-
             # best-effort (never raises) — building the agent must not 500 a reload
             # when the token can't be refreshed; the turn then fails with the real
             # OpenAI error (e.g. unsupported_country) instead.
@@ -96,15 +118,9 @@ def model_config(config: Config, model: str | None = None):
             raise ValueError(f'openai option "api" must be "responses" or "chat", not {api!r}')
         kwargs = {"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
         if api == "responses":
-            from ag2.config import OpenAIResponsesConfig
-
             return OpenAIResponsesConfig(**kwargs)
-        from ag2.config import OpenAIConfig
-
         return OpenAIConfig(**kwargs)
     if provider == "ollama":
-        from ag2.config import OllamaConfig
-
         return OllamaConfig(
             **{
                 "model": model,
@@ -113,8 +129,6 @@ def model_config(config: Config, model: str | None = None):
                 **opts,
             }
         )
-    from ag2.config.gemini import GeminiConfig
-
     # Generous output budget so long research notes / briefings aren't truncated
     # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
     # this must cover reasoning plus the full report text.
@@ -146,8 +160,6 @@ def cheap_model(config: Config) -> str | None:
 
 def bundled_skills_dir():
     """Directory of first-party skills shipped with AG2 Assistant (read-only)."""
-    from pathlib import Path
-
     return Path(__file__).parent / "skills"
 
 
@@ -166,11 +178,6 @@ def build_skills_runtime(config: Config):
     extra = [str(bundled_skills_dir())]
 
     if config.tools.sandbox == "docker":
-        from assistant.tools.docker_sandbox import (
-            build_docker_skill_runtime,
-            docker_available,
-        )
-
         if docker_available():
             return build_docker_skill_runtime(
                 install_dir=config.skills_dir,
@@ -179,8 +186,6 @@ def build_skills_runtime(config: Config):
                 network=config.tools.docker_network,
                 extra_paths=extra,
             )
-
-    from ag2.tools.skills import LocalRuntime
 
     return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
 
@@ -198,8 +203,6 @@ def build_skills_plugin(config: Config, runtime):
     in `skills-lock.json` but isn't loadable until the next agent build picks it
     up. Install now, use next session.
     """
-    from ag2.tools.skills import SkillPlugin
-
     return SkillPlugin(runtime)
 
 
@@ -212,8 +215,6 @@ def build_skills_install_tools(config: Config, runtime) -> list:
     registry tools to avoid registering duplicates. They share the plugin's
     `runtime`, so an install writes to the same store the plugin reads from.
     """
-    from ag2.tools import SkillSearchToolkit
-
     toolkit = SkillSearchToolkit(runtime)
     return [toolkit.search_skills(), toolkit.install_skill(), toolkit.remove_skill()]
 
@@ -303,10 +304,6 @@ def build_memory_tool(store_path, user_store_path):
         "who the user is" memory read by EVERY profile.
     The tool closes over both so a "remember this" lands in exactly one, never
     leaking a persona preference into the shared layer (or vice versa)."""
-    from typing import Annotated, Literal
-
-    from ag2 import tool
-    from pydantic import Field
 
     @tool
     async def remember(
@@ -348,8 +345,6 @@ def build_memory_tool(store_path, user_store_path):
         this persona's own preferences. What you save is injected into future
         conversations and is viewable/editable by the user in Settings → Memory.
         """
-        from assistant.memory import remember_note
-
         target = user_store_path if scope == "universal" else store_path
         try:
             await remember_note(target, note, category)
@@ -384,8 +379,6 @@ def universal_memory_guidance(config: Config) -> str:
     ``focuses_guidance``'s read-settings-per-turn pattern) so an edit or a
     remember(scope="universal") shows up on the next turn without a reload — and so
     EVERY profile's agent injects the same identity facts. Empty doc → no section."""
-    from assistant.memory import read_profile_sync
-
     try:
         doc = read_profile_sync(config.root_dir / "user.db")
     except Exception:
@@ -402,8 +395,6 @@ def focuses_guidance(config: Config) -> str:
     persisted to that profile's ``config.yaml``. Read here (mirroring core.py's
     ``profile_settings(config.data_dir)`` pattern) so a reference-swap reload picks up
     changes on the next turn. Empty focuses → no line at all."""
-    from assistant.settings import profile_settings
-
     try:
         focuses = profile_settings(config.data_dir).get_focuses()
     except Exception:
@@ -459,13 +450,9 @@ def turn_prompt(
     if workspace:
         parts.append(workspace_guidance(config))
     try:
-        from assistant.integrations.google_auth import has_token
-
-        if has_token() if google is None else google:
+        if google_auth.has_token() if google is None else google:
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
-        from assistant.observability import log_suppressed
-
         log_suppressed("google token check for turn prompt", exc)
     parts.append(environment_context(config))
     return parts
@@ -494,13 +481,9 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
     if focuses:
         parts.append(focuses)
     try:
-        from assistant.integrations.google_auth import has_token
-
-        if has_token():
+        if google_auth.has_token():
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
-        from assistant.observability import log_suppressed
-
         log_suppressed("google token check for universal prompt", exc)
     if surface:
         parts.append(surface)
@@ -602,9 +585,6 @@ def create_agent(
     if memory:
         tools.append(build_memory_tool(config.data_dir / "profile.db", config.root_dir / "user.db"))
 
-    from assistant.folders import FolderStore
-    from assistant.permissions import PermissionManager, PermissionStore
-
     # One injected authority for all permission decisions (knows the sandbox mode
     # so prompts can say where a command actually runs — host vs container).
     # Commands: the install-wide permissions.json. Folder access: the install-wide
@@ -623,21 +603,11 @@ def create_agent(
     if asker is not None:
         # The ask_user tool pulls the turn's asker from dependencies so the model
         # can pose option-carrying Questions (context.input is string-only).
-        from assistant.hitl import Asker
-
         dependencies[Asker] = asker
 
     hitl_hook = None
     if asker is not None:
-        from assistant.hitl import build_hitl_hook
-
         hitl_hook = build_hitl_hook(asker)
-
-    from ag2.policies import AlertPolicy
-
-    from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
-    from assistant.observability import agent_logging_middleware
-    from assistant.observers import build_observers
 
     # AlertPolicy delivers observer alerts to the model and, on a FATAL alert,
     # emits a HaltEvent that AG2's halt middleware turns into a short-circuited

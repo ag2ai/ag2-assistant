@@ -9,6 +9,7 @@ so the agent does not have to guess the banner condition.
 import json
 from urllib.parse import quote
 
+import httpx
 from ag2 import tool
 
 from assistant.a2ui import WEATHER_CONDITIONS
@@ -209,8 +210,6 @@ def get_weather(location: str, units: str = "celsius") -> str:
     Returns:
         JSON string: {"location", "condition", "summary", "rows": [{"label","value"}, …]}.
     """
-    import httpx
-
     # j1 (not j2) — only j1 carries the 3-hourly slots that give rain chance and timing.
     url = f"https://wttr.in/{quote(location.strip())}?format=j1"
     try:

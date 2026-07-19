@@ -293,6 +293,67 @@ class FolderStore:
 
     # --- the enforcement query ---
 
+    def _resolved_folders(self, profile: str, chat_id: str = ""):
+        """Yield ``(resolved path, folder entry, effective mode)`` for every granted
+        Folder resolving to a non-``None`` mode for this profile∪chat."""
+        self._refresh()
+        for f in self._folders:
+            try:
+                p = Path(f.get("path", "")).expanduser().resolve()
+            except (OSError, ValueError, RuntimeError):
+                continue
+            mode = self.mode_for(p, profile, chat_id)
+            if mode is not None:
+                yield p, f, mode
+
+    def readable_roots(self, profile: str, chat_id: str = "") -> list[Path]:
+        """On-disk, top-level granted-Folder paths readable for this profile∪chat:
+        every non-``None`` ``mode_for``, minus roots nested under another readable root."""
+        readable = [p for p, _, _ in self._resolved_folders(profile, chat_id) if p.is_dir()]
+        return [p for p in readable if not any(p != o and o in p.parents for o in readable)]
+
+    def granted_roots(self, profile: str, chat_id: str = "") -> list[dict]:
+        """Folder roots browsable for this profile∪chat as ``{id, name, path, mode,
+        exists}`` — non-``None`` ``mode_for``, deduped under existing roots, keeping missing paths."""
+        granted = [
+            (
+                p,
+                {
+                    "id": f.get("id", ""),
+                    "name": f.get("name", ""),
+                    "path": str(p),
+                    "mode": mode,
+                    "exists": p.is_dir(),
+                },
+            )
+            for p, f, mode in self._resolved_folders(profile, chat_id)
+        ]
+        existing = [p for p, v in granted if v["exists"]]
+        return [v for p, v in granted if not any(o in p.parents for o in existing)]
+
+    def mode_for_path(
+        self, abs_path: str | os.PathLike[str], profile: str, chat_id: str = ""
+    ) -> str | None:
+        """Effective mode for an absolute path (``read_write`` | ``read`` | None):
+        ``None`` unless it resolves inside a readable Folder root (traversal guard)."""
+        return self.resolve_within(abs_path, profile, chat_id)[1]
+
+    def resolve_within(
+        self, abs_path: str | os.PathLike[str], profile: str, chat_id: str = ""
+    ) -> tuple[Path | None, str | None]:
+        """For an absolute path, ``(containing readable Folder root, effective mode)``
+        or ``(None, None)`` if it resolves under no granted root — the shared resolver."""
+        try:
+            p = Path(abs_path).expanduser().resolve()
+        except (OSError, ValueError, RuntimeError):
+            return None, None
+        root = next(
+            (r for r in self.readable_roots(profile, chat_id) if p == r or r in p.parents), None
+        )
+        if root is None:
+            return None, None
+        return root, self.mode_for(p, profile, chat_id)
+
     def mode_for(self, folder, profile: str, chat_id: str = "") -> str | None:
         """The effective mode for ``folder`` in ``profile`` (and optionally one
         chat): ``read_write`` | ``read`` | None. Per Folder, a chat-scoped Grant

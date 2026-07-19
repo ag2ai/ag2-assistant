@@ -6,9 +6,17 @@ the surface that triggered it (#12). These verify the wiring deterministically,
 plus a real end-to-end deny.
 """
 
+import tempfile
+from pathlib import Path
+
 import pytest
 
+import assistant.tasks.executor as exec_mod
+from assistant.agent import cheap_model
+from assistant.config import Config, load_config
+from assistant.permissions import DENY, PermissionManager, PermissionStore
 from assistant.tasks import TaskManager, TaskStatus, TaskStore, make_task_executor
+from assistant.tasks.executor import _Verdict
 
 
 def _store(tmp_path):
@@ -60,10 +68,7 @@ async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
     PermissionManager/HITL are bound to the triggering surface (no extra access)."""
     captured = {}
 
-    import assistant.tasks.executor as exec_mod
-
     # keep verification deterministic (no real LLM in this unit test)
-    from assistant.tasks.executor import _Verdict
 
     class _Result:
         completed = True
@@ -80,8 +85,6 @@ async def test_executor_binds_task_asker_to_agent(tmp_path, monkeypatch):
 
     monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
-
-    from assistant.config import Config
 
     store = _store(tmp_path)
     t = await store.create("do work")
@@ -102,9 +105,6 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
     so a leaf doesn't work blind (e.g. it knows the trip is to Lisbon)."""
     prompts: list[str] = []
 
-    import assistant.tasks.executor as exec_mod
-    from assistant.tasks.executor import _Verdict
-
     class _Result:
         completed = True
         result = "done"
@@ -120,8 +120,6 @@ async def test_subtask_prompt_inherits_parent_context(tmp_path, monkeypatch):
 
     monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
-
-    from assistant.config import Config
 
     store = _store(tmp_path)
     parent = await store.create("trip prep")
@@ -149,9 +147,6 @@ async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
     the executor prompt — the objective is only a paraphrase and would lose it."""
     prompts: list[str] = []
 
-    import assistant.tasks.executor as exec_mod
-    from assistant.tasks.executor import _Verdict
-
     class _Result:
         completed = True
         result = "done"
@@ -167,8 +162,6 @@ async def test_executor_prompt_includes_original_request(tmp_path, monkeypatch):
 
     monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _ok)
-
-    from assistant.config import Config
 
     store = _store(tmp_path)
     secret = "The mitochondrion is the powerhouse of the cell."
@@ -188,8 +181,6 @@ async def test_leaf_final_attempt_escalates_to_main_model(tmp_path, monkeypatch)
     """A leaf subtask that keeps getting rejected runs the cheap model on early
     attempts and escalates to the MAIN model on the final one, with a matching
     'escalating' progress note."""
-    import assistant.tasks.executor as exec_mod
-    from assistant.tasks.executor import _Verdict
 
     class _Result:
         completed = True
@@ -208,9 +199,6 @@ async def test_leaf_final_attempt_escalates_to_main_model(tmp_path, monkeypatch)
 
     monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _reject)
-
-    from assistant.agent import cheap_model
-    from assistant.config import Config
 
     config = Config()
     assert cheap_model(config) != config.llm.model  # precondition: cheap != main
@@ -239,8 +227,6 @@ async def test_no_escalation_when_cheap_equals_main(tmp_path, monkeypatch):
     """When the cheap and main models are configured equal, the final attempt has
     nothing to escalate to — no model override, no escalation note (skipped
     silently)."""
-    import assistant.tasks.executor as exec_mod
-    from assistant.tasks.executor import _Verdict
 
     class _Result:
         completed = True
@@ -259,9 +245,6 @@ async def test_no_escalation_when_cheap_equals_main(tmp_path, monkeypatch):
 
     monkeypatch.setattr(exec_mod, "_run_visible_subagent", fake_run)
     monkeypatch.setattr(exec_mod, "_verify_deliverable", _reject)
-
-    from assistant.agent import cheap_model
-    from assistant.config import Config
 
     config = Config()
     # Pin cheap == main so escalation is a no-op.
@@ -288,10 +271,6 @@ async def test_no_escalation_when_cheap_equals_main(tmp_path, monkeypatch):
 async def test_no_asker_means_no_extra_access():
     """A task with no asker (e.g. unattended/scheduled) can't get permission for
     gated resources — the PermissionManager denies when there's no one to ask."""
-    import tempfile
-    from pathlib import Path
-
-    from assistant.permissions import PermissionManager, PermissionStore
 
     store = PermissionStore(path=Path(tempfile.mkdtemp()) / "p.json")
     mgr = PermissionManager(store, asker=None)
@@ -303,8 +282,6 @@ async def test_no_asker_means_no_extra_access():
 async def test_task_respects_permission_deny(tmp_path):
     """End-to-end: a task asked to read an ungranted file gets a permission prompt
     on its OWN asker, and a deny keeps the file contents out of the deliverable."""
-    from assistant.config import load_config
-    from assistant.permissions import DENY
 
     secret_dir = tmp_path / "vault"
     secret_dir.mkdir()

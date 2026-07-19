@@ -22,6 +22,7 @@ call site fall back to the profile's legacy ``voice_provider``/voice, exactly li
 empty ``llm_configs`` falling back to the flat ``llm:`` defaults.
 """
 
+import os
 from secrets import token_hex
 
 from assistant import secrets, voice_providers
@@ -197,8 +198,6 @@ def resolve_key(entry: dict) -> str:
 
 
 def _shared_key(provider: str) -> str:
-    import os
-
     return os.environ.get(KEY_ENV.get(provider, ""), "")
 
 

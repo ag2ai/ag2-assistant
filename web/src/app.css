@@ -647,6 +647,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .viewer .vhead .vtitle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .viewer .vhead .dl { flex: none; display: inline-flex; align-items: center; color: var(--muted); }
 .viewer .vhead .dl:hover { color: var(--text, inherit); }
+/* Inline link-styled button inside the "no preview" message — reveals the raw view
+   without the header switcher; looks like an anchor, is a real button. */
+.viewer .vlink { font: inherit; padding: 0; border: none; background: none; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.viewer .vlink:hover { color: var(--accent); opacity: 0.8; }
 /* Preview / Edit switcher (markdown only) — a two-icon segmented pill; the active
    side lifts onto the panel colour. */
 .viewer .vhead .vseg { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--code); }

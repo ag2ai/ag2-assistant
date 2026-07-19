@@ -15,6 +15,9 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 
+from assistant.hitl.inquiry import DurableAsker, InquiryStatus
+from assistant.observability import log_suppressed
+from assistant.permissions import DENY
 from assistant.tasks.model import TaskStatus
 from assistant.tasks.store import TaskStore
 
@@ -75,8 +78,6 @@ class TaskManager:
         if hasattr(asker, "rebind"):
             return asker.rebind(task_id)
         if self._inquiry_store is not None:
-            from assistant.hitl.inquiry import DurableAsker
-
             return DurableAsker(asker, self._inquiry_store, task_id=task_id)
         return asker
 
@@ -92,8 +93,6 @@ class TaskManager:
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("task status callback", exc, task_id=task_id, status=status)
 
     async def submit(self, task_id: str, asker=None) -> asyncio.Task:
@@ -234,8 +233,6 @@ class TaskManager:
                     task_id, d["id"], d.get("status", "pending"), notes=note
                 )
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("crash note write", exc, task_id=task_id)
 
     async def _permission_block_reason(self, task_id: str) -> str | None:
@@ -249,9 +246,6 @@ class TaskManager:
         """
         if self._inquiry_store is None:
             return None
-        from assistant.hitl.inquiry import InquiryStatus
-        from assistant.permissions import DENY
-
         denied = [
             i
             for i in await self._inquiry_store.list_all()
@@ -307,8 +301,6 @@ class TaskManager:
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("task progress callback", exc, task_id=task_id)
 
     async def emit_event(self, task_id: str, event) -> None:
@@ -319,8 +311,6 @@ class TaskManager:
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed(
                     "task event callback", exc, task_id=task_id, event=type(event).__name__
                 )
@@ -335,8 +325,6 @@ class TaskManager:
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed(
                     "task deliverable callback",
                     exc,

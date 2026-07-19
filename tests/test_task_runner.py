@@ -2,6 +2,10 @@
 
 import asyncio
 
+from ag2.events import TaskStarted
+
+from assistant.hitl import InquiryStore
+from assistant.permissions import DENY
 from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
 
 
@@ -132,7 +136,6 @@ async def test_mixed_rejection_and_crash_consumes_attempts(tmp_path):
 
 
 async def test_manager_forwards_raw_ag2_events(tmp_path):
-    from ag2.events import TaskStarted
 
     store = _store(tmp_path)
     seen = []
@@ -220,7 +223,6 @@ async def test_teardown_cancel_resolves_pending_inquiries(tmp_path):
     """A run cancelled by teardown (its asyncio task cancelled directly, NOT via
     mgr.cancel) must still retire the prompt blocking on it — otherwise it's left
     PENDING forever and the GUI shows a dead permission card."""
-    from assistant.hitl import InquiryStore
 
     store = _store(tmp_path)
     inquiries = InquiryStore(path=tmp_path / "inquiries.db")
@@ -248,8 +250,6 @@ async def test_fails_fast_on_denied_permission(tmp_path):
     """A run whose deliverable is blocked by a denied/expired permission settles
     FAILED after ONE attempt (not MAX_ATTEMPTS) with a legible, actionable reason —
     re-asking would only be denied again."""
-    from assistant.hitl import InquiryStore
-    from assistant.permissions import DENY
 
     store = _store(tmp_path)
     inquiries = InquiryStore(path=tmp_path / "inquiries.db")
@@ -277,7 +277,6 @@ async def test_fails_fast_on_denied_permission(tmp_path):
 
 async def test_expired_permission_also_fails_fast(tmp_path):
     """Timed-out (expired) permission prompts are a wall too, reported as such."""
-    from assistant.hitl import InquiryStore
 
     store = _store(tmp_path)
     inquiries = InquiryStore(path=tmp_path / "inquiries.db")
@@ -300,8 +299,6 @@ async def test_expired_permission_also_fails_fast(tmp_path):
 async def test_denied_permission_does_not_fail_if_worked_around(tmp_path):
     """A denial only fails the task when it actually blocks a deliverable. If the
     agent produced the deliverable anyway (found another path), it still COMPLETES."""
-    from assistant.hitl import InquiryStore
-    from assistant.permissions import DENY
 
     store = _store(tmp_path)
     inquiries = InquiryStore(path=tmp_path / "inquiries.db")

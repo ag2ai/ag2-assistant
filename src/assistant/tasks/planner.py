@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from assistant.hitl.base import Question
 from assistant.tasks.model import TaskStatus
 from assistant.tasks.store import TaskStore
+from assistant.tools import CAPABILITIES, available_capabilities, capability_catalogue
 
 
 class ClarifyQuestion(BaseModel):
@@ -89,8 +90,6 @@ User request:
 
 async def make_plan(agent, request: str, capabilities: list[str] | None = None) -> TaskPlan:
     """Ask the agent for a structured plan (LLM call)."""
-    from assistant.tools import available_capabilities, capability_catalogue
-
     caps = capabilities if capabilities is not None else available_capabilities()
     prompt = _PLAN_PROMPT.format(request=request, capabilities=capability_catalogue(caps))
     reply = await agent.ask(prompt, response_schema=TaskPlan)
@@ -113,8 +112,6 @@ async def run_intake(store: TaskStore, task_id: str, plan: TaskPlan, asker) -> d
 
 
 def _valid_caps(caps: list[str]) -> list[str]:
-    from assistant.tools import CAPABILITIES
-
     return [c for c in caps if c in CAPABILITIES]
 
 
