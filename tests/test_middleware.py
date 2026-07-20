@@ -10,7 +10,7 @@ Covers three layers:
 import asyncio
 
 from ag2 import Agent
-from ag2.config import ModelConfig
+from ag2.config import ModelConfig, ModelProvider
 from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
 from ag2.tools.subagents.run_task import run_task
@@ -34,8 +34,7 @@ class _HangingClient:
 class _HangingConfig(ModelConfig):
     """Minimal ModelConfig that hands back a never-resolving client."""
 
-    # string, not ModelProvider.GEMINI: the enum is ag2 git-main only, absent from released ag2 (CI)
-    provider = "gemini"
+    provider = ModelProvider.GEMINI
     model = "hang"
 
     def copy(self):
