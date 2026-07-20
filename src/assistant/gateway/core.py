@@ -57,6 +57,7 @@ from assistant.observability import (
 )
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.settings import profile_settings
+from assistant.storage import SerialStore
 from assistant.system_tools import build_system_tools, format_task
 from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
@@ -209,7 +210,9 @@ class Gateway:
 
         if self._persist:
             self._config.data_dir.mkdir(parents=True, exist_ok=True)
-            self._event_store = SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
+            self._event_store = SerialStore(
+                SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
+            )
             self._writer = EventLogWriter(self._event_store)
 
     async def reload(self) -> None:
