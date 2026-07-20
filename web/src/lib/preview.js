@@ -52,6 +52,48 @@ export function viewerKind(name) {
 // Whether the Files browser / tool card should offer a "view" affordance.
 export const previewable = (name) => viewerKind(name) !== 'download'
 
+// Icon name (an Icon.svelte glyph) for a file row, by extension. Resolution order,
+// most specific first: exact well-known filename → extension refinements the render
+// KIND can't distinguish (csv is 'text', archives are 'download') → the render KIND
+// → the generic `file`. Icon-only: never widens what's previewable.
+const ICON_BY_NAME = {
+  dockerfile: 'file-code',
+  makefile: 'file-code',
+  '.gitignore': 'file-code',
+  '.env': 'file-code',
+}
+const ICON_BY_EXT = {
+  csv: 'file-spreadsheet',
+  tsv: 'file-spreadsheet',
+  zip: 'file-archive',
+  tar: 'file-archive',
+  gz: 'file-archive',
+  tgz: 'file-archive',
+  bz2: 'file-archive',
+  rar: 'file-archive',
+  '7z': 'file-archive',
+  mp4: 'file-play',
+  mov: 'file-play',
+  webm: 'file-play',
+  mkv: 'file-play',
+  avi: 'file-play',
+  m4v: 'file-play',
+  mp3: 'file-music',
+  wav: 'file-music',
+  flac: 'file-music',
+  ogg: 'file-music',
+  m4a: 'file-music',
+  aac: 'file-music',
+}
+const ICON_BY_KIND = { code: 'file-code', html: 'file-code', image: 'file-image' }
+
+export function iconForFile(name) {
+  const base = (name || '').toLowerCase()
+  if (ICON_BY_NAME[base]) return ICON_BY_NAME[base]
+  const ext = base.split('.').pop()
+  return ICON_BY_EXT[ext] || ICON_BY_KIND[viewerKind(name)] || 'file'
+}
+
 // The ancestor Directories of a Files-space path, shallowest first — the folders
 // that must be expanded to Reveal the file's own row. 'a/b/c.md' → ['a', 'a/b'].
 // A root-level file, or an empty/nullish path, has none. Never includes the path
