@@ -43,14 +43,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.13"
-          cache: pip
-      - name: Install package
-        run: pip install -e ".[dev,google]"
+          version: "0.11.28" # matches the pin in Dockerfile
+      # Install from the committed uv.lock, which pins ag2 to git-main (rev=main) —
+      # the same ag2 the Dockerfile and local dev already use. The prior
+      # `pip install -e` resolved ag2 from RELEASED PyPI (>=1.0.0b0), so main-only
+      # ag2 APIs (e.g. ModelProvider) passed locally but failed only here.
+      - name: Install (ag2 from git-main via uv.lock)
+        run: uv sync --frozen --extra dev --extra google
       - name: Unit tests
-        run: pytest -m "not integration" -q
+        run: uv run pytest -m "not integration" -q
 
   bundle-fresh:
     name: SPA bundle is up to date
