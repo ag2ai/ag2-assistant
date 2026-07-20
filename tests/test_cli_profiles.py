@@ -247,6 +247,51 @@ def test_permissions_allow_command_rejects_bare_exec_tools():
         assert tool not in listing.output
 
 
+# --- folders (task-scope label + --task grant/revoke) ---
+
+
+def test_folders_list_shows_task_scope_label(tmp_path):
+    add = runner.invoke(app, ["folders", "add", str(tmp_path)])
+    assert add.exit_code == 0, add.output
+    folder_id = add.output.split()[1].rstrip(":")
+
+    grant = runner.invoke(app, ["folders", "grant", folder_id, "work", "--task", "task-1"])
+    assert grant.exit_code == 0, grant.output
+    assert "(task task-1)" in grant.output
+
+    listing = runner.invoke(app, ["folders", "list"])
+    assert listing.exit_code == 0, listing.output
+    assert "(task task-1): read" in listing.output
+
+
+def test_folders_grant_and_revoke_task_scope(tmp_path):
+    add = runner.invoke(app, ["folders", "add", str(tmp_path)])
+    folder_id = add.output.split()[1].rstrip(":")
+
+    grant = runner.invoke(app, ["folders", "grant", folder_id, "work", "--task", "task-2"])
+    assert grant.exit_code == 0, grant.output
+
+    revoke = runner.invoke(app, ["folders", "revoke", folder_id, "work", "--task", "task-2"])
+    assert revoke.exit_code == 0, revoke.output
+    assert "Revoked." in revoke.output
+
+    # gone: a second revoke of the same grant is a miss
+    miss = runner.invoke(app, ["folders", "revoke", folder_id, "work", "--task", "task-2"])
+    assert miss.exit_code == 1
+    assert "No such grant." in miss.output
+
+
+def test_folders_grant_rejects_chat_and_task_together(tmp_path):
+    add = runner.invoke(app, ["folders", "add", str(tmp_path)])
+    folder_id = add.output.split()[1].rstrip(":")
+
+    result = runner.invoke(
+        app, ["folders", "grant", folder_id, "work", "--chat", "c1", "--task", "t1"]
+    )
+    assert result.exit_code == 1
+    assert "not both" in result.output
+
+
 def test_data_dir_flag_redirects_root(tmp_path, monkeypatch):
     monkeypatch.setenv("AG2ASSISTANT_DATA_DIR", str(tmp_path))
     result = runner.invoke(app, ["--data-dir", str(tmp_path), "profiles", "create", "Work"])

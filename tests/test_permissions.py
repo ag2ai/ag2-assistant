@@ -1,11 +1,14 @@
 """Tests for the folder-permission system and the permission-gated file reader."""
 
+import asyncio
+
 from assistant.folders import READ, READ_WRITE, FolderStore
 from assistant.permissions import (
     ALLOW_ONCE,
     DENY,
     GRANT_CHAT,
     GRANT_PROFILE,
+    GRANT_TASK,
     PermissionManager,
     PermissionStore,
     always_allow_command_label,
@@ -595,6 +598,53 @@ async def test_workspace_is_implicit_read_write(tmp_path):
     assert await m.check(ws / "notes.md") is True
     assert await m.check(ws / "sub" / "notes.md", write=True) is True
     assert asker.asked == 0
+
+
+def test_check_honors_task_scope_grant_without_prompt(tmp_path):
+    d = tmp_path / "data"
+    d.mkdir()
+    folders = FolderStore(tmp_path / "folders.json")
+    f = folders.create_folder(d)
+    folders.set_grant(f["id"], "read_write", profile="work", task_id="task-1")
+    pm = PermissionManager(
+        PermissionStore(path=None), None, folders=folders,
+        profile="work", chat_id="task-run:r1", task_id="task-1",
+    )
+    assert asyncio.run(pm.check(d / "x.txt", write=True))
+    # без task_id тот же путь не покрыт (asker=None → deny)
+    pm2 = PermissionManager(
+        PermissionStore(path=None), None, folders=folders,
+        profile="work", chat_id="task-run:r1",
+    )
+    assert not asyncio.run(pm2.check(d / "x.txt", write=True))
+
+
+def test_prompt_offers_and_mints_task_grant(tmp_path):
+    d = tmp_path / "data"
+    d.mkdir()
+    folders = FolderStore(tmp_path / "folders.json")
+    asker = FakeAsker(GRANT_TASK)
+    pm = PermissionManager(
+        PermissionStore(path=None), asker, folders=folders,
+        profile="work", chat_id="task-run:r1", task_id="task-1",
+    )
+    assert asyncio.run(pm.check(d / "x.txt"))
+    assert GRANT_TASK in asker.last.options
+    # грант лёг task-скоупом: виден этой таске, не виден профилю/чужим таскам
+    assert folders.mode_for(d, "work", task_id="task-1") == "read"
+    assert folders.mode_for(d, "work") is None
+
+
+def test_prompt_without_task_id_has_no_task_option(tmp_path):
+    asker = FakeAsker(ALLOW_ONCE)
+    d = tmp_path / "data"
+    d.mkdir()
+    pm = PermissionManager(
+        PermissionStore(path=None), asker, folders=FolderStore(tmp_path / "folders.json"),
+        profile="work", chat_id="web-1",
+    )
+    asyncio.run(pm.check(d / "x.txt"))
+    assert GRANT_TASK not in asker.last.options
 
 
 # --- task-scoped command rules (Task 4: task-run always-allow persists per task) ---

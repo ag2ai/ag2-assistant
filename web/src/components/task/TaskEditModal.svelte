@@ -4,10 +4,14 @@
   // + .modal + .modal-x, Esc-to-close) rather than inventing new modal mechanics.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
+  import { profiles } from '../../store.js'
+  import { getActiveProfileId } from '../../lib/profile.js'
+  import { applyFolders } from '../../lib/folders.js'
   import Icon from '../Icon.svelte'
   import FolderPicker from '../FolderPicker.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
   import ScheduleField from './ScheduleField.svelte'
+  import TaskFolders from './TaskFolders.svelte'
 
   let { task = null, onSaved, onClose } = $props()
 
@@ -22,27 +26,32 @@
   // $state.snapshot, not structuredClone: `task` arrives as a $state proxy from
   // TaskPage, and structuredClone throws DataCloneError on proxies.
   let schedule = $state(initial ? $state.snapshot(initial.schedule) : { kind: 'manual', at: null, cron: null })
-  let workdir = $state(initial?.workdir || '')
-  let access = $state(initial?.workdir_access || 'read')
 
-  let pickerOpen = $state(false)   // inline FolderPicker section, only relevant while no folder is set
-  let models = $state([])          // llm_configs entries for the model dropdown
-  let roots = $state({})           // fs roots for the FolderPicker (cwd/home/workspace)
+  // Create-mode folder buffer: there's no task id to grant against until createTask
+  // returns, so folders picked here are held as {path, mode} and minted afterwards.
+  // Edit-mode grants live folders directly through <TaskFolders>.
+  let pendingFolders = $state([])   // [{ path, mode }]
+  let pickerOpen = $state(false)    // inline FolderPicker (create mode only)
+  let models = $state([])           // llm_configs entries for the model dropdown
+  let roots = $state({})            // fs roots for the FolderPicker (cwd/home/workspace)
   let saving = $state(false)
   let error = $state('')
+  const pid = $derived($profiles.activeId || getActiveProfileId())
 
   onMount(async () => {
     try { models = (await api.llmConfigs()).configs || [] } catch { models = [] }
     try { roots = (await api.settings()).fs || {} } catch { roots = {} }
   })
 
-  // AccessSwitch cycles Read → Read+write → Off → Read; "Off" is this control's
-  // built-in way of saying "no access", which for a task's single folder slot means
-  // detaching it entirely — so it also clears `workdir`, dropping back to the
-  // "Add working folder" button instead of leaving an access-less folder set.
-  function onAccessChange(next) {
-    if (next === null) workdir = ''
-    else access = next
+  function addPending(path) {
+    if (!path || pendingFolders.some((p) => p.path === path)) { pickerOpen = false; return }
+    pendingFolders = [...pendingFolders, { path, mode: 'read' }]
+    pickerOpen = false
+  }
+  // AccessSwitch cycles Read → Read+write → Off; Off (null) drops the row entirely.
+  function onPendingAccess(p, next) {
+    if (next === null) pendingFolders = pendingFolders.filter((x) => x !== p)
+    else pendingFolders = pendingFolders.map((x) => (x === p ? { ...x, mode: next } : x))
   }
 
   async function save() {
@@ -58,22 +67,32 @@
           prompt: p,
           model: model ?? '',
           schedule,
-          workdir: workdir || null,
-          workdir_access: workdir ? access : null,
         })
+        // Attach the buffered folders now that we have a task id. Best-effort: the
+        // task is already saved, so a folder failure must not sink the whole save.
+        for (const pf of pendingFolders) {
+          try {
+            let snap, folder
+            try {
+              snap = await api.createFolder(pf.path)
+              folder = (snap.folders || []).find((f) => f.path === pf.path)
+            } catch (e) {
+              if (e.status === 409 && e.body?.existing?.id) {
+                snap = await api.folders()
+                folder = (snap.folders || []).find((f) => f.id === e.body.existing.id)
+              } else throw e
+            }
+            if (folder) snap = await api.setGrant(folder.id, pid, pf.mode, '', created.id)
+            applyFolders(snap)
+          } catch { /* folder attach is best-effort; the task itself is saved */ }
+        }
         onSaved(created)
       } else {
-        // workdir: '' is the PATCH route's explicit detach sentinel (null means
-        // "leave unchanged") — only send it when a folder was set before and the
-        // user has since removed it; otherwise null correctly means "no change".
-        const removedFolder = !workdir && !!task.workdir
         const patch = {
           prompt: p,
           description: description.trim(),
           model: model ?? '',
           schedule,
-          workdir: workdir || (removedFolder ? '' : null),
-          workdir_access: workdir ? access : null,
         }
         const n = name.trim()
         if (n) patch.name = n   // blank name on edit leaves the existing name alone (auto-naming is create-only)
@@ -105,32 +124,41 @@
       placeholder="What should the agent do on every run? Be specific — it runs unattended."></textarea>
   </label>
 
-  <div class="terow">
-    {#if workdir}
-      <span class="tefolder" title={workdir}><Icon name="folder" size={14} /> {workdir}</span>
-      <AccessSwitch mode={access} onchange={onAccessChange} />
-    {:else}
-      <button class="open" onclick={() => (pickerOpen = !pickerOpen)}>
-        <Icon name="folder" size={14} /> Add working folder
-      </button>
-    {/if}
-    <label class="tefield temodel">Model
-      <select class="chpick" bind:value={model}>
-        <option value={null}>Profile default</option>
-        {#each models as m (m.id)}<option value={m.id}>{m.name} ({m.model})</option>{/each}
-      </select>
-    </label>
-  </div>
-
-  {#if pickerOpen && !workdir}
-    <div class="tepicker">
-      <FolderPicker {roots} start={roots.cwd || roots.home || ''} bind:selected={workdir} />
-    </div>
-  {/if}
+  <label class="tefield">Model
+    <select class="chpick" bind:value={model}>
+      <option value={null}>Profile default</option>
+      {#each models as m (m.id)}<option value={m.id}>{m.name} ({m.model})</option>{/each}
+    </select>
+  </label>
 
   <label class="tefield">Repeats
     <ScheduleField bind:schedule />
   </label>
+
+  <div class="tefolders">
+    <div class="tflabel">Folders</div>
+    {#if task}
+      <TaskFolders taskId={task.id} />
+    {:else}
+      <!-- Create mode: no task id yet, so buffer picks and mint them after save. -->
+      {#if pendingFolders.length}
+        {#each pendingFolders as p (p.path)}
+          <div class="terow tefolderrow">
+            <span class="tefolder" title={p.path}><Icon name="folder" size={14} /> {p.path}</span>
+            <AccessSwitch mode={p.mode} onchange={(m) => onPendingAccess(p, m)} />
+          </div>
+        {/each}
+      {/if}
+      <button class="open" onclick={() => (pickerOpen = !pickerOpen)}>
+        <Icon name="folder" size={14} /> Add working folder
+      </button>
+      {#if pickerOpen}
+        <div class="tepicker">
+          <FolderPicker {roots} start={roots.cwd || roots.home || ''} onUse={addPending} />
+        </div>
+      {/if}
+    {/if}
+  </div>
 
   <div class="tefoot">
     <button class="open" onclick={onClose}>Cancel</button>
@@ -159,10 +187,14 @@
     outline: none; border-color: var(--accent); box-shadow: var(--focus-ring);
   }
 
-  .terow { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
-  .terow .temodel { flex: 1; min-width: 160px; }
+  /* Folders block: a small uppercase section label over the picker/TaskFolders panel,
+     matching the muted section headers used on TaskPage. */
+  .tefolders { display: flex; flex-direction: column; gap: 8px; }
+  .tflabel { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .terow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .tefolderrow { justify-content: space-between; }
   .tefolder {
-    display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 220px;
+    display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
     font-size: 13px; color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
     padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     background: var(--bg); height: 33px; box-sizing: border-box;

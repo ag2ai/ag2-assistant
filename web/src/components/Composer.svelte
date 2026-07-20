@@ -1,13 +1,13 @@
 <script>
   import { onMount } from 'svelte'
-  import { thread, SETTINGS_PAGE, profiles } from '../store.js'
+  import { thread, SETTINGS_PAGE, profiles, runInfo } from '../store.js'
   import { openOverlay } from '../router.js'
   import { send, stop, startVoice, stopVoice, voice } from '../controller.js'
   import { liveConfigs, loadLiveConfigs } from '../lib/live.js'
   import { llmConfigs } from '../lib/llm.js'
   import { api } from '../transport/api.js'
   import { getActiveProfileId } from '../lib/profile.js'
-  import { chatChips, profileExtraCount, addPlan } from '../lib/chatFolders.js'
+  import { chatChips, inheritedCount, addPlan } from '../lib/chatFolders.js'
   import { makePick, triggerAt, applyPick, composeMessage, highlightSegments } from '../lib/fileRefs.js'
   import { foldersStore, loadFolders, applyFolders } from '../lib/folders.js'
   import Icon from './Icon.svelte'
@@ -30,11 +30,18 @@
   })
 
   // Per-chat Folder access (CONTEXT.md "Grant"): only the chat-scoped layer shows
-  // as removable chips; profile reach shows as a "+N profile folder" note.
+  // as removable chips; profile/task reach shows as a "+N inherited folder" note.
   const pid = $derived($profiles.activeId || getActiveProfileId())
   const chatId = $derived($thread.chat)
+  // Тред рана несёт таску: её task-scope папки наследуются в этот чат (см. spec
+  // 2026-07-20). runInfo грузится опросом — до первого ответа taskId пуст, и
+  // страйп временно показывает только профильный/чатовый уровни. Defense-in-depth:
+  // openThread resets runInfo on navigation, but only trust it here if it still
+  // belongs to the currently open run — a stale value from the previous run must
+  // never leak into this thread's folder grants.
+  const taskId = $derived($thread.kind === 'run' && $runInfo?.id === $thread.id ? ($runInfo.task_id || '') : '')
   // An empty chatId means PROFILE scope in setGrant, so never expose it without one.
-  const showFolders = $derived($thread.kind === 'chat' && !!chatId)
+  const showFolders = $derived(($thread.kind === 'chat' || $thread.kind === 'run') && !!chatId)
 
   const folders = $derived($foldersStore.folders)   // shared snapshot {id,name,path,exists,grants[]}
   let fsRoots = $state({})
@@ -44,8 +51,8 @@
   let folderErr = $state('')
   let folderNote = $state('')
 
-  const chips = $derived(showFolders ? chatChips(folders, pid, chatId) : [])
-  const extraCount = $derived(showFolders ? profileExtraCount(folders, pid, chatId) : 0)
+  const chips = $derived(showFolders ? chatChips(folders, pid, chatId, taskId) : [])
+  const extraCount = $derived(showFolders ? inheritedCount(folders, pid, chatId, taskId) : 0)
 
   // Busy/error wrapper for a folder op; leaves `folders` to the op itself.
   async function folderOp(fn) {
@@ -72,10 +79,10 @@
       } else throw e
     }
     if (!folder) throw new Error('Could not resolve that folder')
-    const plan = addPlan(folder, pid, chatId)
+    const plan = addPlan(folder, pid, chatId, taskId)
     if (plan.status === 'grant') snap = await api.setGrant(folder.id, pid, 'read', chatId)
-    else if (plan.status === 'unblock') { snap = await api.revokeGrant(folder.id, pid, chatId); folderNote = `"${plan.name}" is available from the profile again.` }
-    else if (plan.status === 'covered') folderNote = `"${plan.name}" is already available from the profile.`
+    else if (plan.status === 'unblock') { snap = await api.revokeGrant(folder.id, pid, chatId); folderNote = `"${plan.name}" is available here again.` }
+    else if (plan.status === 'covered') folderNote = `"${plan.name}" is already available here.`
     else if (plan.status === 'exists') folderNote = `"${folder.name}" is already in this chat.`
     applyFolders(snap)
     picking = false
@@ -292,7 +299,7 @@
     {#if showFolders && (extraCount || chips.length)}
       <div class="cfolders">
         {#if extraCount}
-          <button class="cfmore" title="Folder access from your profile" onclick={() => (foldersModal = true)}>+{extraCount} profile folder{extraCount === 1 ? '' : 's'}</button>
+          <button class="cfmore" title="Folder access inherited here" onclick={() => (foldersModal = true)}>+{extraCount} inherited folder{extraCount === 1 ? '' : 's'}</button>
         {/if}
         {#each chips as f (f.id)}
           <span class="chip folder" class:missing={!f.exists}>
@@ -412,7 +419,7 @@
   </div>
 {/if}
 {#if foldersModal}
-  <ChatFolders {chatId} onClose={closeFoldersModal} />
+  <ChatFolders {chatId} {taskId} onClose={closeFoldersModal} />
 {/if}
 
 <style>

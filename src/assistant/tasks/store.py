@@ -60,8 +60,6 @@ class TaskStore:
         origin_channel: str | None = None,
         origin_chat: str | None = None,
         description: str = "",
-        workdir: str | None = None,
-        workdir_access: str | None = None,
     ) -> Task:
         sched = schedule or manual_schedule()
         task = Task(
@@ -73,8 +71,6 @@ class TaskStore:
             origin_channel=origin_channel,
             origin_chat=origin_chat,
             description=description,
-            workdir=workdir,
-            workdir_access=workdir_access,
             next_run_at=compute_next_run(sched, _now_dt()),
             created_at=now_iso(),
             updated_at=now_iso(),
@@ -95,6 +91,32 @@ class TaskStore:
         tasks = await self._read_all(_TASKS, Task)
         tasks.sort(key=lambda t: t.created_at, reverse=True)
         return tasks
+
+    async def strip_workdirs(self) -> list[tuple[str, str, str]]:
+        """One-time migration (2026-07-20 task-folders): pop the legacy
+        workdir/workdir_access keys off every persisted task record and return
+        ``(task_id, workdir, access)`` for each task that had a folder attached.
+        Idempotent — a second call finds nothing to strip."""
+        moved: list[tuple[str, str, str]] = []
+        for entry in await self._store.list(_TASKS):
+            if not entry.endswith(".json"):
+                continue
+            path = _TASKS + entry
+            try:
+                data = json.loads(await self._store.read(path))
+            except Exception:
+                continue  # corrupt records are _read_all's problem, not the migration's
+            if "workdir" not in data and "workdir_access" not in data:
+                continue
+            wd = data.pop("workdir", None)
+            access = data.pop("workdir_access", None)
+            await self._store.write(path, json.dumps(data))
+            task_id = data.get("id", "")
+            # id-less record → no valid task to attach a grant to; skip it rather
+            # than mint a PROFILE-scope grant (privilege widening) with task_id="".
+            if wd and task_id:
+                moved.append((task_id, wd, access or "read"))
+        return moved
 
     async def update_task(self, task_id: str, **fields) -> Task | None:
         """Patch task fields. ``id``/``created_at`` are protected; ``updated_at``

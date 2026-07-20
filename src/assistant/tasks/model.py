@@ -14,10 +14,6 @@ from typing import Literal
 # slot, or an explicit "Run now" (UI button / agent tool).
 RunTrigger = Literal["schedule", "once", "manual"]
 
-# Access mode for an attached working folder — values mirror
-# folders.READ / folders.READ_WRITE. None on Task = no folder attached.
-WorkdirAccess = Literal["read", "read_write"]
-
 
 class RunStatus:
     """Run lifecycle states (string constants for easy JSON round-trip)."""
@@ -80,20 +76,6 @@ def normalize_schedule(raw: dict | None) -> dict:
     return {"kind": ScheduleKind.CRON, "at": None, "cron": cron}
 
 
-def normalize_workdir_access(raw: str | None) -> WorkdirAccess:
-    """Canonical access mode for a task's working folder ('read' when unset).
-
-    Only meaningful when a folder is attached — callers keep the invariant
-    ``workdir is None ⟺ workdir_access is None`` themselves.
-    """
-    v = (raw or "").strip().lower()
-    if not v:
-        return "read"
-    if v not in ("read", "read_write"):
-        raise ValueError(f"workdir_access must be read or read_write, got {raw!r}")
-    return v  # type: ignore[return-value]
-
-
 @dataclass
 class Task:
     """Standing task configuration — what to run, on what model, when."""
@@ -111,8 +93,6 @@ class Task:
     origin_chat: str | None = None
 
     description: str = ""
-    workdir: str | None = None
-    workdir_access: WorkdirAccess | None = None  # access is None exactly when no folder is attached
 
     next_run_at: str | None = None  # ISO; derived from schedule (None: manual/paused)
     created_at: str = ""

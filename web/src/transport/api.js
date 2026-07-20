@@ -138,17 +138,17 @@ export const api = {
   grantCommand:  (tool, prefix) => j('POST', G('/permissions/commands'), { tool, prefix }),
   revokeCommand: (rule) => j('DELETE', G('/permissions/commands'), { rule }),
   // ---- Folders + Grants (install-wide registry; CONTEXT.md "Folders", ADR 0006).
-  // Snapshot shape: {folders:[{id,name,path,exists,grants:[{profile,chat_id,mode}]}]}.
+  // Snapshot shape: {folders:[{id,name,path,exists,grants:[{profile,chat_id,task_id,mode}]}]}.
   // createFolder 409s with err.body.existing when the path is already registered.
   // mode: 'read' | 'read_write'. Empty chatId = profile-scope grant.
   folders: () => j('GET', G('/folders')),
   createFolder: (path, name = '') => j('POST', G('/folders'), { path, name }),
   updateFolder: (id, patch) => j('POST', G('/folders/' + encodeURIComponent(id)), patch),
   deleteFolder: (id) => j('DELETE', G('/folders/' + encodeURIComponent(id))),
-  setGrant: (id, profile, mode, chatId = '') =>
-    j('POST', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, mode }),
-  revokeGrant: (id, profile, chatId = '') =>
-    j('DELETE', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId }),
+  setGrant: (id, profile, mode, chatId = '', taskId = '') =>
+    j('POST', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, task_id: taskId, mode }),
+  revokeGrant: (id, profile, chatId = '', taskId = '') =>
+    j('DELETE', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, task_id: taskId }),
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
   // Cheap subsystem health for the status dot: {overall, checks:[{id,label,state,detail,…}]}.

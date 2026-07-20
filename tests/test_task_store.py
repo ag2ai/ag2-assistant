@@ -60,6 +60,59 @@ async def test_runs_lifecycle_and_summaries(tmp_path):
     assert await st.get_run(r3.id) is None
 
 
+def test_strip_workdirs_pops_legacy_fields_and_reports_them(tmp_path):
+    import asyncio
+    import json
+
+    from assistant.tasks.store import _TASKS
+
+    async def _run():
+        store = TaskStore(path=tmp_path / "tasks.db")
+        t1 = await store.create_task(name="A", prompt="p")
+        t2 = await store.create_task(name="B", prompt="p")
+        # legacy records: workdir lives only in the raw JSON (Task has no such field)
+        for tid, wd in ((t1.id, "/data/media"), (t2.id, None)):
+            raw = json.loads(await store._store.read(f"{_TASKS}{tid}.json"))
+            if wd:
+                raw["workdir"] = wd
+                raw["workdir_access"] = "read_write"
+            await store._store.write(f"{_TASKS}{tid}.json", json.dumps(raw))
+        moved = await store.strip_workdirs()
+        assert moved == [(t1.id, "/data/media", "read_write")]
+        raw = json.loads(await store._store.read(f"{_TASKS}{t1.id}.json"))
+        assert "workdir" not in raw and "workdir_access" not in raw
+        assert await store.strip_workdirs() == []  # idempotent
+
+    asyncio.run(_run())
+
+
+def test_strip_workdirs_skips_id_less_record_from_moved(tmp_path):
+    """A record missing its id (corrupt/legacy) must still be stripped on disk, but
+    must NOT be reported in `moved` — an empty task_id would otherwise mint a
+    PROFILE-scope grant downstream (privilege widening), not a task-scope one."""
+    import asyncio
+    import json
+
+    from assistant.tasks.store import _TASKS
+
+    async def _run():
+        store = TaskStore(path=tmp_path / "tasks.db")
+        t = await store.create_task(name="A", prompt="p")
+        raw = json.loads(await store._store.read(f"{_TASKS}{t.id}.json"))
+        raw["workdir"] = "/data/media"
+        raw["workdir_access"] = "read_write"
+        del raw["id"]
+        await store._store.write(f"{_TASKS}{t.id}.json", json.dumps(raw))
+
+        moved = await store.strip_workdirs()
+        assert moved == []  # id-less → not reported, no grant should be minted
+
+        raw_after = json.loads(await store._store.read(f"{_TASKS}{t.id}.json"))
+        assert "workdir" not in raw_after and "workdir_access" not in raw_after
+
+    asyncio.run(_run())
+
+
 def test_compute_next_run_and_schedule_text():
     now = datetime.fromisoformat("2026-07-18T10:00:00+03:00")
     assert compute_next_run(manual_schedule(), now) is None

@@ -83,10 +83,25 @@ async def test_run_executes_as_chat_turn_with_prior_context(tmp_path, monkeypatc
     assert [r["id"] for r in detail["runs"]] == [run2.id, run.id]
 
 
-async def test_run_with_workdir_mints_chat_grant_and_surface(tmp_path, monkeypatch):
-    """A run of a task with an attached workdir mints a chat-scoped grant on the
-    run's own stream before the turn, and the surface tells the agent about the
-    folder + its access level."""
+async def test_run_turn_does_not_mint_chat_grant(tmp_path, monkeypatch):
+    """A run no longer mints a chat-scoped folder grant on its own stream — folder
+    access is task-scoped now (task-run streams derive the task_id), so a run leaves
+    the FolderStore untouched."""
+    from assistant.folders import FolderStore
+
+    folders = FolderStore(path=tmp_path / "folders.json")
+    gw = FakeGateway(folders=folders)
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    t = await svc.create_task(name="R", prompt="p")
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    grants = [g for f in folders.list_folders() for g in f["grants"]]
+    assert grants == []  # nothing minted at all
+
+
+async def test_run_surface_lists_task_scope_folders(tmp_path, monkeypatch):
+    """The run's surface lists the task's own folders resolved from live task-scope
+    grants (not a stored workdir) so the unattended agent knows where to work."""
     from assistant.folders import READ_WRITE, FolderStore
 
     folders = FolderStore(path=tmp_path / "folders.json")
@@ -94,30 +109,119 @@ async def test_run_with_workdir_mints_chat_grant_and_surface(tmp_path, monkeypat
     svc = await _svc(tmp_path, gw, monkeypatch)
     wd = tmp_path / "proj"
     wd.mkdir()
-    t = await svc.create_task(
-        name="W", prompt="p", schedule=None, workdir=str(wd), workdir_access="read_write"
-    )
-    run = await svc.start_run(t["id"])
+    t = await svc.create_task(name="W", prompt="p")
+    folders.grant_path(str(wd), READ_WRITE, svc._config.data_dir.name, task_id=t["id"])
+    await svc.start_run(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
-    assert folders.mode_for(wd, svc._config.data_dir.name, f"task-run:{run.id}") == READ_WRITE
     assert f"Working folder: {wd} (read-write)" in gw.sent[0]["surface"]
 
 
-async def test_run_with_missing_workdir_notes_it_in_surface(tmp_path, monkeypatch):
-    """A workdir that no longer exists on disk (deleted/unmounted since the task
-    was created) still runs — the surface just flags it so the agent doesn't
-    silently assume the folder is there."""
+async def test_migration_turns_workdir_into_task_scope_grant(tmp_path, monkeypatch):
+    """start() migrates a legacy single-workdir task into a task-scope Folder Grant
+    exactly once (idempotent — a second start() adds no duplicate)."""
+    import json
+
     from assistant.folders import FolderStore
 
-    gw = FakeGateway(folders=FolderStore(path=tmp_path / "folders.json"))
-    svc = await _svc(tmp_path, gw, monkeypatch)
-    missing = tmp_path / "gone"
-    t = await svc.create_task(
-        name="M", prompt="p", schedule=None, workdir=str(missing), workdir_access="read"
+    root = tmp_path / "root"
+    data = root / "profiles" / "p1"
+    data.mkdir(parents=True)
+    cfg = Config(root_dir=root, data_dir=data)
+    store = TaskStore(path=data / "tasks.db")
+    svc = TaskService(
+        config=cfg, store=store, inquiry_store=InquiryStore(path=data / "inq.db")
     )
-    await svc.start_run(t["id"])
-    await asyncio.wait_for(svc._jobs_done(), 5)
-    assert "— path is missing" in gw.sent[0]["surface"]
+    t = await store.create_task(name="W", prompt="p")
+    wd = tmp_path / "proj"
+    wd.mkdir()
+    from assistant.tasks.store import _TASKS
+
+    raw = json.loads(await store._store.read(f"{_TASKS}{t.id}.json"))
+    raw["workdir"] = str(wd)
+    raw["workdir_access"] = "read_write"
+    await store._store.write(f"{_TASKS}{t.id}.json", json.dumps(raw))
+
+    await svc.start(scheduler=False)
+    folders = FolderStore(root / "folders.json")
+    assert folders.mode_for(wd, "p1", task_id=t.id) == "read_write"
+
+    await svc.start(scheduler=False)  # idempotent
+    folders = FolderStore(root / "folders.json")
+    grants = [g for f in folders.list_folders() for g in f["grants"]]
+    assert len(grants) == 1
+
+
+async def test_migration_grant_failure_does_not_drop_later_tasks(tmp_path, monkeypatch):
+    """A grant_path hiccup on one legacy task must not sink the whole migration —
+    the next legacy task's grant is still minted."""
+    import json
+
+    from assistant.folders import FolderStore
+
+    root = tmp_path / "root"
+    data = root / "profiles" / "p1"
+    data.mkdir(parents=True)
+    cfg = Config(root_dir=root, data_dir=data)
+    store = TaskStore(path=data / "tasks.db")
+    svc = TaskService(config=cfg, store=store, inquiry_store=InquiryStore(path=data / "inq.db"))
+
+    t1 = await store.create_task(name="W1", prompt="p")
+    t2 = await store.create_task(name="W2", prompt="p")
+    wd1, wd2 = tmp_path / "proj1", tmp_path / "proj2"
+    wd1.mkdir()
+    wd2.mkdir()
+    from assistant.tasks.store import _TASKS
+
+    for tid, wd in ((t1.id, wd1), (t2.id, wd2)):
+        raw = json.loads(await store._store.read(f"{_TASKS}{tid}.json"))
+        raw["workdir"] = str(wd)
+        raw["workdir_access"] = "read_write"
+        await store._store.write(f"{_TASKS}{tid}.json", json.dumps(raw))
+
+    real_grant_path = FolderStore.grant_path
+
+    def flaky_grant_path(self, path, mode, profile, chat_id="", task_id=""):
+        if task_id == t1.id:
+            raise RuntimeError("boom")
+        return real_grant_path(self, path, mode, profile, chat_id=chat_id, task_id=task_id)
+
+    monkeypatch.setattr(FolderStore, "grant_path", flaky_grant_path)
+
+    await svc.start(scheduler=False)
+
+    folders = FolderStore(root / "folders.json")
+    assert folders.mode_for(wd1, "p1", task_id=t1.id) is None  # lost — grant_path raised
+    assert folders.mode_for(wd2, "p1", task_id=t2.id) == "read_write"  # still minted
+    await svc.close()
+    await svc.close()
+
+
+async def test_delete_task_drops_task_scope_folder_grants(tmp_path, monkeypatch):
+    """delete_task best-effort drops the deleted task's task-scope folder grants,
+    and survives a folders store that raises (dropping grants is best-effort)."""
+    from assistant.folders import READ_WRITE, FolderStore
+
+    folders = FolderStore(path=tmp_path / "folders.json")
+    gw = FakeGateway(folders=folders)
+    svc = await _svc(tmp_path, gw, monkeypatch)
+    profile = svc._config.data_dir.name
+    t = await svc.create_task(name="D", prompt="p")
+    wd = tmp_path / "proj"
+    wd.mkdir()
+    folders.grant_path(str(wd), READ_WRITE, profile, task_id=t["id"])
+    assert folders.mode_for(wd, profile, task_id=t["id"]) == READ_WRITE
+
+    assert await svc.delete_task(t["id"]) is True
+    assert folders.mode_for(wd, profile, task_id=t["id"]) is None
+
+    # a folders store that throws must not sink delete_task
+    class _BoomFolders:
+        def drop_task(self, task_id):
+            raise RuntimeError("boom")
+
+    gw.folders = _BoomFolders()
+    t2 = await svc.create_task(name="D2", prompt="p")
+    assert await svc.delete_task(t2["id"]) is True
 
 
 async def test_stop_run_cancels_the_turn(tmp_path, monkeypatch):
@@ -309,34 +413,6 @@ async def test_create_task_autonames_when_name_empty(tmp_path, monkeypatch):
     assert t["name"] == "Auto name" and t["description"] == "Auto description."
     t2 = await svc.create_task(name="Manual", prompt="p", schedule=None, description="given")
     assert t2["name"] == "Manual" and t2["description"] == "given"
-
-
-async def test_create_task_enforces_workdir_access_invariant(tmp_path, monkeypatch):
-    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
-    folder = tmp_path / "work"
-    folder.mkdir()
-
-    t = await svc.create_task(name="x", prompt="p", workdir=str(folder))
-    assert t["workdir"] == str(folder) and t["workdir_access"] == "read"
-
-    t2 = await svc.create_task(name="y", prompt="p")
-    assert t2["workdir"] is None and t2["workdir_access"] is None
-
-    with pytest.raises(ValueError):
-        await svc.create_task(name="z", prompt="p", workdir=str(folder), workdir_access="bogus")
-
-
-async def test_update_task_clearing_workdir_clears_access(tmp_path, monkeypatch):
-    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
-    folder = tmp_path / "work"
-    folder.mkdir()
-    t = await svc.create_task(
-        name="x", prompt="p", workdir=str(folder), workdir_access="read_write"
-    )
-    assert t["workdir_access"] == "read_write"
-
-    updated = await svc.update_task(t["id"], workdir=None)
-    assert updated["workdir"] is None and updated["workdir_access"] is None
 
 
 async def test_notifier_gets_channel_outcomes_only(tmp_path, monkeypatch):

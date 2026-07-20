@@ -402,7 +402,10 @@ class Gateway:
         task's chosen model (a cached per-config agent) instead of the profile
         default. `task_id`, when this turn is a task run, scopes any command grant
         the turn mints via "always allow" to that task (survives its future runs)
-        instead of persisting it globally.
+        instead of persisting it globally; when omitted it is auto-resolved from
+        `chat_id` for a run's thread (``task-run:{run_id}``), so a manual reply
+        typed there is scoped the same as the run itself, and this also feeds
+        folder-grant resolution for that turn.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -413,6 +416,9 @@ class Gateway:
         await self._ensure_subscription_fresh()
         agent = self._agent_for(llm_config_id)
 
+        # A reply typed into a run's thread arrives without task context — resolve
+        # it so task-scoped folder/command grants cover manual turns too.
+        task_id = task_id or await self._task_for_stream(chat_id)
         extra = self._ask_kwargs(asker, chat_id, task_id or "")
         msg = [text, *(attachments or [])]
 
@@ -929,6 +935,18 @@ class Gateway:
 
             log_suppressed("onboarding", exc)
             # Onboarding is best-effort; never block the actual message.
+
+    async def _task_for_stream(self, chat_id: str) -> str:
+        """The task behind a run stream (``task-run:{run_id}``) — '' for anything
+        else, or when the run/task is gone: a manual reply in an orphaned run's
+        thread then resolves like a plain chat instead of erroring."""
+        if not chat_id.startswith("task-run:") or self._tasks is None:
+            return ""
+        try:
+            run = await self._tasks.get_run(chat_id.removeprefix("task-run:"))
+        except Exception:
+            return ""
+        return (run or {}).get("task_id") or ""
 
     def _ask_kwargs(self, asker, chat_id: str = "", task_id: str = "") -> dict:
         """Per-turn hitl_hook + dependencies bound to this request's asker, chat, and

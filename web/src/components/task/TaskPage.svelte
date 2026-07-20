@@ -4,8 +4,12 @@
   // Editing config lives in TaskEditModal, opened over this page. `/t/new` is the
   // same page with the modal open over an empty view — one route, one component,
   // for both create and edit. Each run opens as a chat thread at /r/{id}.
+  import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
   import { go, goTab, route } from '../../router.js'
+  import { profiles } from '../../store.js'
+  import { getActiveProfileId } from '../../lib/profile.js'
+  import { foldersStore, loadFolders } from '../../lib/folders.js'
   import Icon from '../Icon.svelte'
   import TaskEditModal from './TaskEditModal.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.js'
@@ -21,6 +25,16 @@
   let error = $state('')
 
   const isNew = $derived($route.id === 'new')
+
+  // Live Folder snapshot — TaskEditModal / TaskFolders mutate the same store, so
+  // this list refreshes when folders are attached/detached. Only this task's
+  // task-scope grants that actually grant access (mode !== 'none') are listed.
+  const pid = $derived($profiles.activeId || getActiveProfileId())
+  onMount(() => { if (!$foldersStore.loaded) loadFolders() })
+  const tGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.task_id === task.id && !g.chat_id)
+  const taskFolderRows = $derived(!task ? [] : ($foldersStore.folders || []).filter(
+    (f) => { const g = tGrant(f); return g && g.mode !== 'none' }
+  ))
 
   // Monotonic token: fast task-A → task-B navigation can let A's load() await
   // resolve after B's has started. Each call claims the next token and checks
@@ -134,8 +148,15 @@
         <section>
           <h2>Instructions</h2>
           <p class="tpprompt">{task.prompt}</p>
-          <h2>Working folder</h2>
-          <p class="tpmeta">{task.workdir ? `${task.workdir} (${task.workdir_access === 'read_write' ? 'read-write' : 'read-only'})` : '—'}</p>
+          <h2>Folders</h2>
+          {#if taskFolderRows.length}
+            {#each taskFolderRows as f (f.id)}
+              {@const g = tGrant(f)}
+              <p class="tpmeta" title={f.path}>{f.name} ({g.mode === 'read_write' ? 'read-write' : 'read-only'}){f.exists === false ? ' — path is missing' : ''}</p>
+            {/each}
+          {:else}
+            <p class="tpmeta">—</p>
+          {/if}
           <h2>Repeats</h2>
           <p class="tpmeta">{task.schedule_desc}</p>
           <h2>Always allowed</h2>

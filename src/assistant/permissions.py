@@ -57,6 +57,7 @@ else:
 
 ALLOW_ONCE = "Allow once"
 GRANT_CHAT = "Allow for this chat"
+GRANT_TASK = "Always allow for this task"
 GRANT_PROFILE = "Always allow in this profile"
 DENY = "Deny"
 
@@ -429,9 +430,11 @@ class PermissionManager:
         self.sandbox = sandbox
         self.profile = profile
         self.chat_id = (chat_id or "").strip()
-        # Bound when this turn is a task run — command grants this turn mints via
-        # "always allow" persist task-scoped (see check_command) instead of global,
-        # so approvals from unattended runs don't leak into every other chat.
+        # Bound when this turn is a task run — scopes BOTH command grants (see
+        # check_command) and folder access (see check): "always allow" this turn
+        # mints task-scoped instead of global/profile-wide, and mode_for resolves
+        # this task's own Grants, so approvals from unattended runs don't leak
+        # into every other chat/task.
         self.task_id = (task_id or "").strip()
         # The profile's own Files space (CONTEXT.md "Files"): always read+write,
         # no Grant needed — Folders govern only paths outside the Root.
@@ -447,7 +450,7 @@ class PermissionManager:
         """Ensure access to ``target``'s folder at the needed mode, prompting if
         needed (turn-scoped). ``write=True`` requires a read_write Grant; plain
         reads accept either mode (write implies read). Approving the prompt at
-        chat/profile scope auto-creates the Folder + Grant (ADR 0006)."""
+        chat/task/profile scope auto-creates the Folder + Grant (ADR 0006)."""
         from assistant.folders import READ, READ_WRITE
 
         target = Path(target).expanduser()
@@ -457,7 +460,7 @@ class PermissionManager:
             folder == self.workspace_dir or self.workspace_dir in folder.parents
         ):
             return True
-        mode = self.folders.mode_for(folder, self.profile, self.chat_id)
+        mode = self.folders.mode_for(folder, self.profile, self.chat_id, self.task_id)
         if mode == READ_WRITE or (mode == READ and not write):
             return True
         key = str(folder)
@@ -472,12 +475,16 @@ class PermissionManager:
         options = [ALLOW_ONCE]
         if self.chat_id:
             options.append(GRANT_CHAT)
+        if self.task_id:
+            options.append(GRANT_TASK)
         options += [GRANT_PROFILE, DENY]
-        scope_hint = (
-            "Allow just this once, grant it to this chat, always allow it in this profile, or deny."
-            if self.chat_id
-            else "Allow just this once, always allow it in this profile, or deny."
-        )
+        pieces = ["Allow just this once"]
+        if self.chat_id:
+            pieces.append("grant it to this chat")
+        if self.task_id:
+            pieces.append("grant it to this task")
+        pieces.append("always allow it in this profile, or deny")
+        scope_hint = ", ".join(pieces) + "."
         answer = await self.asker.ask(
             Question(
                 text=f"Allow AG2 Assistant to {verb} {folder.name or folder}?",
@@ -496,6 +503,9 @@ class PermissionManager:
             return True
         if answer == GRANT_CHAT and self.chat_id:
             self.folders.grant_path(folder, minted, self.profile, self.chat_id)
+            return True
+        if answer == GRANT_TASK and self.task_id:
+            self.folders.grant_path(folder, minted, self.profile, task_id=self.task_id)
             return True
         if answer == ALLOW_ONCE:
             self._once[key] = write or self._once.get(key, False)

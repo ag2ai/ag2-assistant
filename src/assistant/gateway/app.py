@@ -188,8 +188,6 @@ class TaskCreate(BaseModel):
     model: str | None = None
     schedule: dict | None = None
     description: str = ""
-    workdir: str | None = None
-    workdir_access: str | None = None
 
 
 class TaskPatch(BaseModel):
@@ -199,8 +197,6 @@ class TaskPatch(BaseModel):
     schedule: dict | None = None
     paused: bool | None = None
     description: str | None = None
-    workdir: str | None = None  # "" detaches the folder (service nulls access too)
-    workdir_access: str | None = None
 
 
 class AnswerRequest(BaseModel):
@@ -362,12 +358,14 @@ class FolderUpdateRequest(BaseModel):
 class FolderGrantRequest(BaseModel):
     profile: str
     chat_id: str = ""
+    task_id: str = ""
     mode: str
 
 
 class FolderGrantDeleteRequest(BaseModel):
     profile: str
     chat_id: str = ""
+    task_id: str = ""
 
 
 class PermissionCommandAddRequest(BaseModel):
@@ -1285,10 +1283,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/folders/{fid}/grants")
     async def set_folder_grant(fid: str, req: FolderGrantRequest):
-        """Upsert one Grant: (profile, chat_id) → mode. Empty chat_id = profile-scope."""
+        """Upsert one Grant: (profile, task, chat) → mode. Empty chat_id+task_id = profile-scope."""
         store = _folder_store()
         try:
-            store.set_grant(fid, req.mode, profile=req.profile, chat_id=req.chat_id)
+            store.set_grant(
+                fid, req.mode, profile=req.profile, chat_id=req.chat_id, task_id=req.task_id
+            )
         except KeyError:
             return JSONResponse({"error": f"unknown folder: {fid}"}, status_code=404)
         except ValueError as exc:
@@ -1297,9 +1297,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.delete("/api/folders/{fid}/grants")
     async def revoke_folder_grant(fid: str, req: FolderGrantDeleteRequest):
-        """Revoke one Grant. 404 when no such Grant exists."""
+        """Revoke one Grant: (profile, task, chat) → mode. Empty chat_id+task_id = profile-scope.
+        404 when no such Grant exists."""
         store = _folder_store()
-        if not store.revoke_grant(fid, profile=req.profile, chat_id=req.chat_id):
+        if not store.revoke_grant(
+            fid, profile=req.profile, chat_id=req.chat_id, task_id=req.task_id
+        ):
             return JSONResponse({"error": "no such grant"}, status_code=404)
         return {"ok": True, **_folders_snapshot(store)}
 
@@ -1737,19 +1740,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @p.post("/tasks")
     async def create_task(req: TaskCreate, runtime: ProfileRuntime = Depends(get_runtime)):
         """Create a task; empty ``name`` auto-generates one from the prompt
-        (service-side). 422 with {error} on a bad schedule/model/workdir_access.
-
-        ``workdir_access`` is validated here directly, same as the PATCH route:
-        the service only normalises/validates it when ``workdir`` is also set, so
-        a bad value sent without a workdir would otherwise be silently discarded
-        to ``None`` by the invariant instead of raising."""
-        from assistant.tasks.model import normalize_workdir_access
-
-        if req.workdir_access is not None:
-            try:
-                normalize_workdir_access(req.workdir_access)
-            except ValueError as exc:
-                return JSONResponse({"error": str(exc)}, status_code=422)
+        (service-side). 422 with {error} on a bad schedule/model."""
         try:
             task = await runtime.tasks.create_task(
                 name=req.name,
@@ -1757,8 +1748,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 model=req.model,
                 schedule=req.schedule,
                 description=req.description,
-                workdir=req.workdir,
-                workdir_access=req.workdir_access,
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
@@ -1780,23 +1769,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def update_task(
         task_id: str, req: TaskPatch, runtime: ProfileRuntime = Depends(get_runtime)
     ):
-        """Edit any subset of task fields; model='' clears to the profile default,
-        workdir='' detaches the folder (the service then nulls workdir_access by
-        its own invariant). workdir_access is validated here directly — the
-        service only re-derives it when a workdir ends up attached, so a bad
-        value sent without a workdir would otherwise pass through unchecked."""
-        from assistant.tasks.model import normalize_workdir_access
-
-        if req.workdir_access is not None:
-            try:
-                normalize_workdir_access(req.workdir_access)
-            except ValueError as exc:
-                return JSONResponse({"error": str(exc)}, status_code=422)
+        """Edit any subset of task fields; model='' clears to the profile default."""
         patch = {k: v for k, v in req.model_dump().items() if v is not None}
         if req.model == "":  # explicit clear back to the profile default
             patch["model"] = None
-        if req.workdir == "":  # explicit clear: detach the folder
-            patch["workdir"] = None
         if not patch and req.model != "":
             return JSONResponse({"error": "empty patch"}, status_code=400)
         try:
@@ -2262,7 +2238,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         q: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
         """The ``@``-picker's corpus search: a bounded, ranked list of files matching
-        `q` across the profile's Files space **and** every Folder this profile∪chat
+        `q` across the profile's Files space **and** every Folder this profile∪task∪chat
         can read, each with an ABSOLUTE `path` the agent's ``read_file`` can open.
         Ranked filename-first; a blank/no-match query yields an empty list, not an
         error. Honors the same ``mode_for`` resolution the agent's reads use, so a
@@ -2270,6 +2246,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         from assistant.filesearch import search_corpus
 
         gw = runtime.gateway
+        # A run's thread carries its task only via chat_id (``task-run:{run_id}``) —
+        # resolve it so the picker sees the run's task-scoped Folder grants too.
+        task_id = ""
+        if chat_id.startswith("task-run:"):
+            with contextlib.suppress(Exception):
+                run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
+                task_id = (run or {}).get("task_id") or ""
         return {
             "results": search_corpus(
                 runtime.config.workspace_dir,
@@ -2277,6 +2260,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 folders=gw.folders if gw is not None else None,
                 profile=runtime.config.data_dir.name,
                 chat_id=chat_id,
+                task_id=task_id,
             )
         }
 

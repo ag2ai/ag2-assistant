@@ -48,7 +48,7 @@
   function focusSelect(node) { node.focus(); node.select() }
 
   // Profile-scope grant for profile pid on folder f (chat grants live elsewhere).
-  const grantOf = (f, pid) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id)
+  const grantOf = (f, pid) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
   function setMode(f, pid, mode) {
     const cur = grantOf(f, pid)
     if (!mode) { if (cur) run(() => api.revokeGrant(f.id, pid)); return }

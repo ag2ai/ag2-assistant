@@ -9,7 +9,6 @@ from assistant.tasks.model import (
     Task,
     manual_schedule,
     normalize_schedule,
-    normalize_workdir_access,
 )
 
 
@@ -56,22 +55,13 @@ def test_run_stream_id_and_terminal_states():
 
 def test_new_fields_default_and_roundtrip():
     t = Task(id="task_1", name="X", prompt="p")
-    assert t.description == "" and t.workdir is None and t.workdir_access is None
+    assert t.description == ""
     t2 = Task.from_dict(t.to_dict())
-    assert (t2.description, t2.workdir, t2.workdir_access) == ("", None, None)
-    # records persisted before these fields existed still load
+    assert t2.description == ""
+    # records persisted before/after schema changes still load; unknown keys
+    # (e.g. the retired workdir fields) are ignored rather than crashing the loader
     d = t.to_dict()
-    for k in ("description", "workdir", "workdir_access"):
-        d.pop(k)
+    d.pop("description")
+    d["workdir"] = "/legacy/path"  # retired field lingering in an old record
     t3 = Task.from_dict(d)
-    assert t3.workdir is None and t3.workdir_access is None
-
-
-def test_normalize_workdir_access():
-    assert normalize_workdir_access("read") == "read"
-    assert normalize_workdir_access("READ_WRITE ") == "read_write"
-    assert normalize_workdir_access("") == "read"
-    assert normalize_workdir_access(None) == "read"
-
-    with pytest.raises(ValueError):
-        normalize_workdir_access("rw")
+    assert t3.description == "" and not hasattr(t3, "workdir")

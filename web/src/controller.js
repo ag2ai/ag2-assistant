@@ -84,6 +84,10 @@ export function openThread(kind, id) {
 
   if (kind === 'run') {
     _markedSeen = false
+    // Clear the previous run's data before the fetch lands — loadRun keeps the
+    // last value on error, so a stale runInfo could otherwise leak into this
+    // thread's folder panel and point "Move to task" at the wrong task.
+    runInfo.set(null)
     loadRun(id)
     panelTimer = setInterval(() => loadRun(id), 3000)
   } else {
@@ -246,6 +250,12 @@ async function loadRun(id) {
   let run
   try { run = await api.run(id) } catch { return /* keep last on error */ }
   if (get(profileEpoch) !== epoch) return
+  // Thread-correlation guard: a fast run-A → run-B navigation can leave this
+  // call's fetch resolving after the thread has already moved on. Without this,
+  // A's late response would overwrite B's runInfo and could fire api.runSeen(A)
+  // through the reset `_markedSeen` latch. Bail unless the thread is still `id`.
+  const t = get(thread)
+  if (!(t.kind === 'run' && t.id === id)) return
   runInfo.set(run)
   // Clear the unread indicator once the run is finished — whether it was already
   // done when opened or completed while the user watched. Peeking at a still-running

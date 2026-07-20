@@ -28,15 +28,15 @@ from assistant.tasks.model import (
     Task,
     manual_schedule,
     normalize_schedule,
-    normalize_workdir_access,
 )
 from assistant.tasks.scheduling import compute_next_run, parse_dt, schedule_text
 from assistant.tasks.summary import suggest_task_meta, summarize_run
 
 
-def _run_surface(task: Task, prior: list[str]) -> str:
+def _run_surface(task: Task, prior: list[str], folder_lines: list[str]) -> str:
     """Surface paragraph for a run's turn: unattended-execution framing + the
-    outcomes of recent runs so a recurring task doesn't repeat itself."""
+    outcomes of recent runs so a recurring task doesn't repeat itself + the task's
+    own working folders (resolved from live task-scope grants)."""
     lines = [
         f'You are executing the background task "{task.name}" (task id {task.id}) as an '
         "unattended scheduled run.",
@@ -48,11 +48,32 @@ def _run_surface(task: Task, prior: list[str]) -> str:
     if prior:
         lines.append("Outcomes of this task's most recent runs (do not repeat them):")
         lines += [f"- {s}" for s in prior]
-    if task.workdir:
-        access = "read-write" if task.workdir_access == "read_write" else "read-only"
-        note = "" if Path(task.workdir).is_dir() else " — path is missing"
-        lines.append(f"Working folder: {task.workdir} ({access}){note}.")
+    lines += folder_lines
     return "\n".join(lines)
+
+
+def _task_folder_lines(folders, profile: str, task_id: str) -> list[str]:
+    """Surface lines for the task's own folders (task-scope grants) — resolved at
+    turn start so the unattended agent knows where to work. Profile folders are
+    ambient (every chat has them) and are not repeated here."""
+    lines = []
+    for f in folders.list_folders():
+        g = next(
+            (
+                g
+                for g in f.get("grants", [])
+                if g.get("profile") == profile
+                and g.get("task_id", "") == task_id
+                and not g.get("chat_id", "")
+            ),
+            None,
+        )
+        if g is None or g.get("mode") == "none":
+            continue
+        access = "read-write" if g.get("mode") == "read_write" else "read-only"
+        note = "" if Path(f.get("path", "")).is_dir() else " — path is missing"
+        lines.append(f"Working folder: {f['path']} ({access}){note}.")
+    return lines
 
 
 def _run_view(r: Run) -> dict:
@@ -76,8 +97,6 @@ def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> 
         "prompt": t.prompt,
         "model": t.model,
         "description": t.description,
-        "workdir": t.workdir,
-        "workdir_access": t.workdir_access,
         "schedule": t.schedule,
         "schedule_desc": schedule_text(t.schedule),
         "paused": t.paused,
@@ -157,6 +176,7 @@ class TaskService:
             self._store = TaskStore(path=d / "tasks.db")
         if self._inquiries is None:
             self._inquiries = InquiryStore(path=d / "inquiries.db", on_change=self._on_inquiry)
+        await self._migrate_workdirs()
         if scheduler and self._scheduler is None:
             from assistant.scheduler_lock import SchedulerLock
             from assistant.tasks import Scheduler
@@ -168,6 +188,28 @@ class TaskService:
                     self._store, self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+
+    async def _migrate_workdirs(self) -> None:
+        """Legacy single-workdir tasks → task-scope Folder Grants (spec 2026-07-20).
+        Best-effort and idempotent: strip_workdirs mutates records exactly once, so
+        a grant hiccup on one task loses at most THAT one legacy attachment —
+        never data, and never the rest of the batch."""
+        from assistant.folders import READ, READ_WRITE, FolderStore
+
+        try:
+            moved = await self._store.strip_workdirs()
+            if not moved:
+                return
+            folders = FolderStore(self._config.root_dir / "folders.json")
+            profile = self._config.data_dir.name
+            for task_id, wd, access in moved:
+                mode = READ_WRITE if access == "read_write" else READ
+                with contextlib.suppress(Exception):
+                    folders.grant_path(wd, mode, profile, task_id=task_id)
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("task workdir migration", exc)
 
     async def reload(self) -> None:
         """Re-resolve config after a settings change (model set per turn — nothing
@@ -202,11 +244,6 @@ class TaskService:
                 "configured LLM configurations (or omit for the profile default)"
             )
 
-    @staticmethod
-    def _normalize_workdir(workdir: str | None) -> str | None:
-        workdir = (workdir or "").strip()
-        return str(Path(workdir).expanduser()) if workdir else None
-
     async def create_task(
         self,
         name: str,
@@ -216,14 +253,12 @@ class TaskService:
         origin_channel: str | None = None,
         origin_chat: str | None = None,
         description: str = "",
-        workdir: str | None = None,
-        workdir_access: str | None = None,
     ) -> dict:
-        """Create a task. Raises ValueError on a bad schedule/model/workdir_access
-        (callers map it to HTTP 422 or a correctable tool reply). An empty ``name``
-        triggers cheap-model auto-naming (and, unless given, auto-description) from
-        the prompt. The workdir/workdir_access invariant (access is set iff a
-        folder is attached) is enforced here regardless of what the caller passed."""
+        """Create a task. Raises ValueError on a bad schedule/model (callers map it
+        to HTTP 422 or a correctable tool reply). An empty ``name`` triggers
+        cheap-model auto-naming (and, unless given, auto-description) from the
+        prompt. A task's working folders are managed separately as task-scope
+        Folder Grants (Folders UI), not stored on the task."""
         self._validate_model(model)
         name = (name or "").strip()
         description = (description or "").strip()
@@ -231,8 +266,6 @@ class TaskService:
             gen_name, gen_desc = await suggest_task_meta(self._config, prompt)
             name = gen_name
             description = description or gen_desc
-        workdir = self._normalize_workdir(workdir)
-        workdir_access = normalize_workdir_access(workdir_access) if workdir else None
         task = await self._store.create_task(
             name=name,
             prompt=prompt,
@@ -241,8 +274,6 @@ class TaskService:
             origin_channel=origin_channel,
             origin_chat=origin_chat,
             description=description,
-            workdir=workdir,
-            workdir_access=workdir_access,
         )
         return _task_row(task, None, 0, False)
 
@@ -255,27 +286,6 @@ class TaskService:
             patch["name"] = (patch["name"] or "").strip()
         if "description" in patch:
             patch["description"] = (patch["description"] or "").strip()
-        if "workdir" in patch or "workdir_access" in patch:
-            # Invariant (workdir is None ⟺ workdir_access is None) must hold after
-            # the patch even when the caller only touches one of the two fields —
-            # so when either is in the patch, resolve the OTHER from the current
-            # task rather than assuming it is unset.
-            current = await self._store.get_task(task_id)
-            if current is None:
-                return None
-            new_workdir = (
-                self._normalize_workdir(patch["workdir"]) if "workdir" in patch else current.workdir
-            )
-            patch["workdir"] = new_workdir
-            if new_workdir:
-                raw_access = (
-                    patch.get("workdir_access")
-                    if "workdir_access" in patch
-                    else current.workdir_access
-                )
-                patch["workdir_access"] = normalize_workdir_access(raw_access)
-            else:
-                patch["workdir_access"] = None
         task = await self._store.update_task(task_id, **patch)
         return None if task is None else await self.get_task(task_id)
 
@@ -298,6 +308,8 @@ class TaskService:
             # task itself no longer exists.
             with contextlib.suppress(Exception):
                 self._gateway.permissions.drop_task(task_id)
+            with contextlib.suppress(Exception):
+                self._gateway.folders.drop_task(task_id)
         return True
 
     async def list_tasks(self) -> list[dict]:
@@ -412,27 +424,18 @@ class TaskService:
             chat=run.stream_id,
         )
         prior = await self._store.last_summaries(task.id, n=3, before=run_id)
-        if task.workdir:
-            # Chat-scoped grant on the run's own stream — the turn's PermissionManager
-            # (resolved with this profile + chat_id) honors it without a runtime HITL
-            # prompt. Best-effort: a grant hiccup must not sink the run.
-            from assistant.folders import READ, READ_WRITE
-
-            mode = READ_WRITE if task.workdir_access == "read_write" else READ
-            try:
-                self._gateway.folders.grant_path(
-                    task.workdir, mode, self._config.data_dir.name, chat_id=run.stream_id
+        folder_lines: list[str] = []
+        if self._gateway is not None:
+            with contextlib.suppress(Exception):
+                folder_lines = _task_folder_lines(
+                    self._gateway.folders, self._config.data_dir.name, task.id
                 )
-            except Exception as exc:
-                from assistant.observability import log_suppressed
-
-                log_suppressed("task workdir grant", exc, task_id=task.id)
         try:
             reply = await self._gateway.send_message(
                 task.prompt,
                 chat_id=run.stream_id,
                 asker=asker,
-                surface=_run_surface(task, prior),
+                surface=_run_surface(task, prior, folder_lines),
                 llm_config_id=task.model,
                 task_id=task.id,
             )

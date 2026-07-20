@@ -1,18 +1,19 @@
 """Folder registry + Grants (CONTEXT.md "Folders", ADR 0006).
 
 A FOLDER is an install-wide, named registry entry for one directory outside the
-Root — a name and a path, unique by resolved path. A GRANT links one profile or
-one chat to a Folder with a mode: ``read`` or ``read_write`` (write implies
-read; write-only is unrepresentable), plus ``none`` — a chat-only mode that
-blocks a profile-granted Folder for that one chat. No Folder (or no covering
-Grant) still means no access.
+Root — a name and a path, unique by resolved path. A GRANT links one profile, one
+task, or one chat to a Folder with a mode: ``read`` or ``read_write`` (write
+implies read; write-only is unrepresentable), plus ``none`` — an override-only
+mode that blocks a profile-granted Folder for that one task or chat. No Folder
+(or no covering Grant) still means no access.
 
-Resolution (ADR 0006, amended): a chat-scoped Grant OVERRIDES the profile-scope
-Grant on the same Folder for that chat — it may widen it (``read`` →
-``read_write``), narrow it (``read_write`` → ``read``), or block it entirely
-(``none``), affecting only that chat and never the install-wide profile Grant.
-With no chat override the profile Grant stands. Across nested Folders that all
-cover a path, the most permissive surviving Grant wins.
+Resolution (ADR 0006, amended): per Folder the override chain is chat > task >
+profile — a task-scoped Grant overrides the profile-scope Grant for that task,
+and a chat-scoped Grant overrides both for that chat. Each level may widen
+(``read`` → ``read_write``), narrow (``read_write`` → ``read``), or block
+entirely (``none``) the one it inherits, affecting only its own scope and never
+the wider one. With no override the next level down stands. Across nested
+Folders that all cover a path, the most permissive surviving Grant wins.
 
 One install-wide JSON document (``root_dir/folders.json``) with the same
 concurrency machinery as the permission store: mtime self-refresh (a long-lived
@@ -33,7 +34,7 @@ from assistant.permissions import _lock_exclusive, _norm, _unlock
 
 READ = "read"
 READ_WRITE = "read_write"
-NONE = "none"  # chat-scope only: block a profile-granted Folder for this chat
+NONE = "none"  # override-only (chat/task scope): block an inherited Folder
 MODES = (READ, READ_WRITE)
 
 
@@ -48,7 +49,8 @@ class DuplicatePath(ValueError):
 
 
 class FolderStore:
-    """Persistent record of Folders and the Grants profiles/chats hold on them."""
+    """Persistent record of Folders and the Grants profiles, tasks and chats hold
+    on them."""
 
     def __init__(self, path: Path | None) -> None:
         # ``path`` is REQUIRED (no global default). Pass ``None`` only for an
@@ -144,6 +146,7 @@ class FolderStore:
                 {
                     "profile": g.get("profile", ""),
                     "chat_id": g.get("chat_id", ""),
+                    "task_id": g.get("task_id", ""),
                     "mode": g.get("mode", READ),
                 }
                 for g in self._grants
@@ -222,15 +225,22 @@ class FolderStore:
 
     # --- grants ---
 
-    def set_grant(self, fid: str, mode: str, *, profile: str, chat_id: str = "") -> dict:
-        """Upsert the Grant (folder, profile, chat) → mode. An empty chat_id is a
-        profile-scope Grant. ``none`` is a chat-only mode (blocks a profile-granted
-        Folder for this chat). KeyError unknown folder; ValueError bad mode/profile."""
+    def set_grant(
+        self, fid: str, mode: str, *, profile: str, chat_id: str = "", task_id: str = ""
+    ) -> dict:
+        """Upsert the Grant (folder, profile, task, chat) → mode. Empty chat_id and
+        task_id = profile-scope; a task_id (no chat_id) = task-scope; a chat_id =
+        chat-scope. Never both. ``none`` is an override-only mode (blocks an
+        inherited Folder for that one chat/task). KeyError unknown folder;
+        ValueError bad mode/profile/scope."""
         profile = (profile or "").strip()
         chat_id = (chat_id or "").strip()
+        task_id = (task_id or "").strip()
+        if chat_id and task_id:
+            raise ValueError("a grant is chat-scoped or task-scoped, not both")
         if mode == NONE:
-            if not chat_id:
-                raise ValueError("mode 'none' is only valid for a chat-scoped grant")
+            if not (chat_id or task_id):
+                raise ValueError("mode 'none' is only valid for a chat- or task-scoped grant")
         elif mode not in MODES:
             raise ValueError(f"mode must be one of {', '.join(MODES)}")
         if not profile:
@@ -246,18 +256,26 @@ class FolderStore:
                     g.get("folder_id") == entry["id"]
                     and g.get("profile") == profile
                     and g.get("chat_id", "") == chat_id
+                    and g.get("task_id", "") == task_id
                 )
             ]
             self._grants.append(
-                {"folder_id": entry["id"], "profile": profile, "chat_id": chat_id, "mode": mode}
+                {
+                    "folder_id": entry["id"],
+                    "profile": profile,
+                    "chat_id": chat_id,
+                    "task_id": task_id,
+                    "mode": mode,
+                }
             )
             self._save()
             return self._view(entry)
 
-    def revoke_grant(self, fid: str, *, profile: str, chat_id: str = "") -> bool:
+    def revoke_grant(self, fid: str, *, profile: str, chat_id: str = "", task_id: str = "") -> bool:
         fid = (fid or "").strip()
         profile = (profile or "").strip()
         chat_id = (chat_id or "").strip()
+        task_id = (task_id or "").strip()
         with self._mutate():
             before = len(self._grants)
             self._grants = [
@@ -267,6 +285,7 @@ class FolderStore:
                     g.get("folder_id") == fid
                     and g.get("profile") == profile
                     and g.get("chat_id", "") == chat_id
+                    and g.get("task_id", "") == task_id
                 )
             ]
             if len(self._grants) == before:
@@ -274,7 +293,7 @@ class FolderStore:
             self._save()
             return True
 
-    def grant_path(self, path, mode: str, profile: str, chat_id: str = "") -> dict:
+    def grant_path(self, path, mode: str, profile: str, chat_id: str = "", task_id: str = "") -> dict:
         """Find-or-create the Folder for ``path`` and upsert a Grant on it — the
         HITL mint path (approving a runtime prompt auto-creates the Folder,
         auto-named from the directory's basename, renameable later)."""
@@ -289,21 +308,36 @@ class FolderStore:
                 }
                 self._folders.append(entry)
                 self._save()
-        return self.set_grant(entry["id"], mode, profile=profile, chat_id=chat_id)
+        return self.set_grant(entry["id"], mode, profile=profile, chat_id=chat_id, task_id=task_id)
+
+    def drop_task(self, task_id: str) -> None:
+        """Remove every task-scope Grant of ``task_id`` — task deletion revokes the
+        task's folder access everywhere at once (mirrors delete_folder)."""
+        task_id = (task_id or "").strip()
+        if not task_id:
+            return
+        with self._mutate():
+            before = len(self._grants)
+            self._grants = [g for g in self._grants if g.get("task_id", "") != task_id]
+            if len(self._grants) != before:
+                self._save()
 
     # --- the enforcement query ---
 
-    def mode_for(self, folder, profile: str, chat_id: str = "") -> str | None:
-        """The effective mode for ``folder`` in ``profile`` (and optionally one
-        chat): ``read_write`` | ``read`` | None. Per Folder, a chat-scoped Grant
-        OVERRIDES the profile-scope Grant for that chat — widening, narrowing, or
-        (``none``) blocking it; with no override the profile Grant stands. A Grant
+    def mode_for(
+        self, folder, profile: str, chat_id: str = "", task_id: str = ""
+    ) -> str | None:
+        """The effective mode for ``folder`` in ``profile`` (optionally within one
+        task and/or one chat): ``read_write`` | ``read`` | None. Per Folder the
+        override chain is chat > task > profile — each level may widen, narrow, or
+        (``none``) block the inherited one, affecting only its own scope. A Grant
         covers its folder and every subpath; across covering Folders the most
         permissive surviving Grant wins (ADR 0006, amended)."""
         self._refresh()
         f = _norm(folder)
         profile = (profile or "").strip()
         chat_id = (chat_id or "").strip()
+        task_id = (task_id or "").strip()
         rank = {READ: 1, READ_WRITE: 2}
         best: str | None = None
         for entry in self._folders:
@@ -311,16 +345,21 @@ class FolderStore:
             if f != gp and gp not in f.parents:
                 continue
             fid = entry.get("id")
-            chat_mode = prof_mode = None
+            chat_mode = task_mode = prof_mode = None
             for g in self._grants:
                 if g.get("profile") != profile or g.get("folder_id") != fid:
                     continue
                 g_chat = g.get("chat_id", "")
+                g_task = g.get("task_id", "")
                 if chat_id and g_chat == chat_id:
                     chat_mode = g.get("mode")
-                elif not g_chat:
+                elif task_id and g_task == task_id and not g_chat:
+                    task_mode = g.get("mode")
+                elif not g_chat and not g_task:
                     prof_mode = g.get("mode")
-            eff = chat_mode if chat_mode is not None else prof_mode
+            eff = chat_mode if chat_mode is not None else (
+                task_mode if task_mode is not None else prof_mode
+            )
             if eff is None or eff == NONE:
                 continue
             if eff == READ_WRITE:
