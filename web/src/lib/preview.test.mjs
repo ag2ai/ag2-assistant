@@ -22,6 +22,8 @@ test('iconForFile: maps by kind, extension refinement, and well-known name', () 
   assert.equal(iconForFile('logo.SVG'), 'file-image')   // image kind, case-insensitive
   assert.equal(iconForFile('data.csv'), 'file-spreadsheet') // ext refinement (kind is 'text')
   assert.equal(iconForFile('bundle.tar.gz'), 'file-archive') // ext refinement (kind is 'download')
+  assert.equal(iconForFile('clip.mp4'), 'file-play')    // video → play glyph
+  assert.equal(iconForFile('song.MP3'), 'file-music')   // audio, case-insensitive
   assert.equal(iconForFile('Dockerfile'), 'file-code')  // well-known filename, no extension
   assert.equal(iconForFile('index.html'), 'file-code')  // html kind → code icon
   assert.equal(iconForFile('notes.md'), 'file')         // known-but-unrefined → generic

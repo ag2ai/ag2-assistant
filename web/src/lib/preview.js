@@ -72,6 +72,18 @@ const ICON_BY_EXT = {
   bz2: 'file-archive',
   rar: 'file-archive',
   '7z': 'file-archive',
+  mp4: 'file-play',
+  mov: 'file-play',
+  webm: 'file-play',
+  mkv: 'file-play',
+  avi: 'file-play',
+  m4v: 'file-play',
+  mp3: 'file-music',
+  wav: 'file-music',
+  flac: 'file-music',
+  ogg: 'file-music',
+  m4a: 'file-music',
+  aac: 'file-music',
 }
 const ICON_BY_KIND = { code: 'file-code', html: 'file-code', image: 'file-image' }
 
