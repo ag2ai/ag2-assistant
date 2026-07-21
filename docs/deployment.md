@@ -9,7 +9,7 @@ you want to run it.
 | [Contributor](#contributor-clone--editable) | developing the code | clone + `pip install -e ".[dev]"` |
 | [CLI user](#cli-user-pipx--uv-tool) | running it locally without cloning | `uv tool install` / `pipx install` from git |
 | [Self-hosted](#self-hosted-docker) | an always-on instance / server | Docker + Compose |
-| [PyPI](#pypi-later) | `pip install ag2-assistant` | not yet — see below |
+| [PyPI](#pypi) | released versions | `uv tool install ag2-assistant` (from the first release) |
 
 All tiers store state under a data directory (`~/.ag2assistant` by default, `/data` in the
 container) and give the agent a file workspace (`~/Documents/AG2 Assistant` by default,
@@ -39,20 +39,36 @@ Open <http://localhost:8800/> and complete onboarding. See the main
 
 ---
 
-## CLI user (pipx / uv tool)
+## CLI user (install script / pipx / uv tool)
 
-Install the CLI globally in its own isolated environment without cloning. Because the AG2
-dependency is a direct git reference, install AG2 Assistant from git too (not PyPI — see
-[below](#pypi-later)):
+Install the CLI globally in its own isolated environment without cloning. The install
+script is the easiest path — it installs uv first if needed (and uv downloads a compatible
+Python, so no system Python 3.12 is required):
 
 ```bash
-# uv (recommended)
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/ag2ai/ag2-assistant/main/scripts/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/ag2ai/ag2-assistant/main/scripts/install.ps1 | iex"
+
+ag2-assistant run
+```
+
+Re-running the script upgrades to the latest commit (as does
+`uv tool upgrade ag2-assistant`). The script takes environment overrides:
+`AG2_ASSISTANT_REF` (branch/tag), `AG2_ASSISTANT_EXTRAS` (e.g. `google`), and
+`AG2_ASSISTANT_REPO` (a fork URL).
+
+If you already have uv or pipx, the direct equivalent (installing from git gets the latest
+commit; released versions come from [PyPI](#pypi) instead):
+
+```bash
+# uv
 uv tool install "git+https://github.com/ag2ai/ag2-assistant.git"
 
 # …or pipx
 pipx install "git+https://github.com/ag2ai/ag2-assistant.git"
-
-ag2-assistant run
 ```
 
 Add extras like Google integration with `"git+https://github.com/ag2ai/ag2-assistant.git#egg=ag2-assistant[google]"`.
@@ -126,10 +142,26 @@ See `.env.example` for the full list.
 
 ---
 
-## PyPI (later)
+## PyPI
 
-`pip install ag2-assistant` from PyPI is **not available yet**. AG2 Assistant tracks AG2's
-`main` via a direct git dependency, and PyPI rejects packages that carry direct-URL/VCS
-dependencies. Once AG2 publishes a pinnable PyPI release, the dependency graduates to a
-version range and AG2 Assistant can publish wheels — targeted for the 1.0 line. Until then,
-use the git-based install (CLI tier) or Docker.
+Publishing a GitHub release (created from a `vX.Y.Z` tag) uploads the sdist + wheel to PyPI
+(`.github/workflows/pypi-publish.yml`, PyPI trusted publishing — same pattern as
+ag2-classic's `python-package.yml`). From the first release onwards:
+
+```bash
+uv tool install ag2-assistant        # or: pipx install ag2-assistant / pip install ag2-assistant
+```
+
+Release flow: pushing the tag publishes the Docker image; publishing the GitHub release from
+that tag publishes to PyPI. The workflow refuses to publish if the tag doesn't match
+`pyproject.toml`'s version.
+
+The published package depends on the released `ag2` from PyPI (`>=1.0.0b0`). Development
+installs are different on purpose: `[tool.uv.sources]` in `pyproject.toml` points `uv sync`
+(and the Docker build) at AG2's git `main`, and that overlay never reaches the built wheel's
+metadata. So contributors track AG2 main; PyPI users get reproducible releases.
+
+One-time setup before the first publish: on pypi.org, add a pending trusted publisher under
+the **ag2ai organization** (project `ag2-assistant`, this repository, workflow
+`pypi-publish.yml`, environment `package`), and create the `package` environment in the
+repo settings.
