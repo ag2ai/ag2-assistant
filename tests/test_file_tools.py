@@ -2,6 +2,7 @@
 
 from assistant.folders import READ, READ_WRITE, FolderStore
 from assistant.permissions import PermissionManager, PermissionStore
+from assistant.tools import build_agent_tools
 from assistant.tools.files import list_folder_impl, write_file_impl
 
 
@@ -62,7 +63,6 @@ async def test_write_file_relative_escape_needs_grant(tmp_path):
 def test_toolkit_write_file_dropped_for_host_tool(tmp_path):
     """With a workspace present (toolkit branch active), build_agent_tools must
     expose exactly one write_file (the host one) and no toolkit read_file."""
-    from assistant.tools import build_agent_tools
 
     tools = build_agent_tools(capabilities=["files"], workspace_dir=str(tmp_path))
     names = [t.name if hasattr(t, "name") else t.__name__ for t in tools]

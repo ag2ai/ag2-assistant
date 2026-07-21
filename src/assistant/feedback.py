@@ -15,6 +15,7 @@ just the reason, so it generalises correctly (topic vs format vs instruction-fol
 from pydantic import BaseModel, Field
 
 from assistant.config import Config
+from assistant.memory import read_profile, record_preference, remember_note
 
 
 class FeedbackMemory(BaseModel):
@@ -66,8 +67,6 @@ async def learn(
 ) -> None:
     """Distil one feedback into the memory profile. Safe to fire-and-forget — swallows all
     errors and falls back to appending the raw reason so the signal is never lost."""
-    from assistant.memory import read_profile, record_preference, remember_note
-
     store_path = config.data_dir / "profile.db"  # this profile's learned memory
     down = sentiment == "down"
     category = (
@@ -76,9 +75,12 @@ async def learn(
     thumb = "a thumbs-DOWN (disliked it)" if down else "a thumbs-UP (liked it)"
     polarity = "dislike" if down else "preference (a like)"
     try:
-        from ag2 import Agent
+        from ag2 import Agent  # local: lazy heavy import, guarded
 
-        from assistant.agent import cheap_model, model_config
+        from assistant.agent import (  # local: import cycle (assistant.agent)
+            cheap_model,
+            model_config,
+        )
 
         profile = (await read_profile(store_path)) or "(nothing yet)"
         cfg = model_config(config, cheap_model(config))

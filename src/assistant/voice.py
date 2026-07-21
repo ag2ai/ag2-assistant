@@ -18,11 +18,17 @@ model's speech leaves as `SynthesizedAudioEvent` on the same conversation stream
 import os
 from typing import TYPE_CHECKING
 
+from ag2 import tool
+from ag2.live import LiveAgent
+
+from assistant import live_configs, voice_providers
+from assistant.agent import environment_context
 from assistant.config import Config
+from assistant.system_tools import build_system_tools
 from assistant.voice_providers import PREVIEW_TEXT
 
 if TYPE_CHECKING:
-    from assistant.settings import Settings
+    from assistant.settings import Settings  # type-only
 
 # Basic tools the voice agent may run itself: quick, low-context reads/answers.
 # Everything else is delegated to the universal agent via ask_assistant.
@@ -79,8 +85,6 @@ def voice_realtime_config(
     `AG2ASSISTANT_VOICE_MODEL` still overrides the model. Input transcription is enabled
     per provider so the user's speech arrives as text for the on-screen bubbles.
     """
-    from assistant import live_configs, voice_providers
-
     active = None if provider else live_configs.active_config()
     if active:
         p = voice_providers.get(active["provider"])
@@ -111,8 +115,6 @@ async def synthesize_preview(
     profile's legacy provider. A voice the provider's TTS doesn't offer raises, and the
     caller falls back (live preview / skip the sample).
     """
-    from assistant import live_configs, voice_providers
-
     if provider is None:
         active = live_configs.active_config()
         if active:
@@ -145,12 +147,6 @@ def build_voice_agent(
     of the universal assistant's tool names — surfaced in the prompt so the voice
     agent knows what it can delegate via ask_assistant.
     """
-    from ag2 import tool
-    from ag2.live import LiveAgent
-
-    from assistant.agent import environment_context
-    from assistant.system_tools import build_system_tools
-
     basic = [t for t in build_system_tools(tasks, settings) if t.name in _BASIC_VOICE_TOOLS]
     # A realtime session's prompt is fixed at connect, so the injected clock would
     # drift on a long call — pair it with a tool the agent can call for fresh time.

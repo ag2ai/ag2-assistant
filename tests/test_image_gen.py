@@ -1,5 +1,6 @@
 """Provider-aware image generation tool wiring (the model call itself is live)."""
 
+from assistant import codex_auth, llm_configs
 from assistant.config import Config
 from assistant.tools.image_gen import _image_agent, build_image_tool
 
@@ -37,7 +38,6 @@ def test_image_agent_follows_active_config_only(monkeypatch, tmp_path):
     images are unavailable even when a capable one sits in the list; switching the
     active config to it enables images."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    from assistant import llm_configs
 
     active = llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
     llm_configs.set_active(active["id"])
@@ -49,7 +49,6 @@ def test_image_agent_follows_active_config_only(monkeypatch, tmp_path):
 
 def test_image_agent_none_when_store_has_no_capable_entry(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    from assistant import llm_configs
 
     llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
     llm_configs.save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
@@ -61,7 +60,6 @@ def test_image_agent_subscription_routes_to_chatgpt_backend(monkeypatch, tmp_pat
     ChatGPT backend with the OAuth token — streaming forced on, storage off, and
     the native image tool attached (same rules as model_config's branch)."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    from assistant import codex_auth, llm_configs
 
     sub = llm_configs.save_config(
         {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.6-luna"}

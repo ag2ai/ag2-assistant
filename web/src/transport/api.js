@@ -7,6 +7,7 @@
 
 import { api as P, globalApi as G, pidApi as PID, onProfileGone } from '../lib/profile.js'
 import { parseEtag } from '../lib/fileEdit.js'
+import { rawQuery } from '../lib/folderFiles.js'
 
 async function j(method, path, body) {
   const r = await fetch(path, {
@@ -202,32 +203,51 @@ export const api = {
   // returns {root, files:[{path,name,dir,size,modified}], dirs:[relpath]} (dirs
   // includes empty Directories the files-only list omits — the tree needs them).
   files: () => j('GET', P('/files')),
+  // The Folder roots browsable in the open Thread — the tree's Thread-scoped Folder
+  // section (ADR 0013) → {roots:[{id, name, path (absolute), mode, exists}]}. chatId
+  // scopes chat-only grants / blocks; empty = profile-level grants only.
+  folderRoots: (chatId = '') =>
+    j('GET', P('/folders/roots' + (chatId ? '?chat_id=' + encodeURIComponent(chatId) : ''))),
+  // One Directory level inside a granted Folder (lazy-expand) → {path, dirs:[{name,
+  // path}], files:[{name, path, size}], mode}, noise pruned, authorized + chatId-scoped
+  // server-side. `mode` is THIS level's resolved Grant mode (read | read_write) — the
+  // tree derives its rows' write affordances from it (ticket 04). `path` is absolute (a
+  // Folder Directory); 404 throws via j().
+  folderList: (path, chatId = '') =>
+    j('GET', P('/files?path=' + encodeURIComponent(path) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''))),
   // Corpus search for the composer's `@`-picker (ADR 0012): matches across the Files
   // space AND every Folder this profile∪chat can read → {results:[{path (absolute),
   // name, dir, kind}]}, ranked filename-first and bounded. chatId scopes chat-only
   // grants; a blank/no-match query yields an empty list.
   searchFiles: (q, chatId = '') =>
     j('GET', P('/files/search?q=' + encodeURIComponent(q) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''))),
-  fileUrl: (path, download = false) =>
-    P('/files/raw?path=' + encodeURIComponent(path) + (download ? '&download=true' : '')),
-  fileText: async (path) => {
-    const r = await fetch(P('/files/raw?path=' + encodeURIComponent(path)))
+  // A Folder (absolute) `path` carries `chatId` so the server resolves the Grant for
+  // THIS Thread; a Files-space (relative) path ignores it (rawQuery decides — ADR 0013).
+  fileUrl: (path, download = false, chatId = '') =>
+    P('/files/raw?' + rawQuery(path, { download, chatId })),
+  fileText: async (path, chatId = '') => {
+    const r = await fetch(P('/files/raw?' + rawQuery(path, { chatId })))
     if (!r.ok) throw new Error('file not found')
     return r.text()
   },
-  // Like fileText but also returns the served file's `ETag` → {text, etag}, unquoted
-  // to match the bare etag saveFile hands back.
-  fileTextWithEtag: async (path) => {
-    const r = await fetch(P('/files/raw?path=' + encodeURIComponent(path)))
+  // Like fileText but also returns the served file's `ETag` → {text, etag, mode},
+  // unquoted to match the bare etag saveFile hands back. `mode` is the server's
+  // `X-File-Mode` (read | read_write) — the resolved Grant mode a Folder file's
+  // edit affordance gates on (ADR 0013, ticket 04); a Files-space file reads back
+  // read_write (the user owns their space).
+  fileTextWithEtag: async (path, chatId = '') => {
+    const r = await fetch(P('/files/raw?' + rawQuery(path, { chatId })))
     if (!r.ok) throw new Error('file not found')
     const text = await r.text()
-    return { text, etag: parseEtag(r.headers.get('ETag')) }
+    return { text, etag: parseEtag(r.headers.get('ETag')), mode: r.headers.get('X-File-Mode') || '' }
   },
   // In-place write (ADR 0011): PUT the UTF-8 body with `If-Match: <etag>`, resolving
   // to the new etag. A failure throws an Error carrying `.status`/`.body` (409/404/400
   // distinct); a 404 here is a missing file, not a vanished profile — so not via j().
-  saveFile: async (path, text, etag) => {
-    const r = await fetch(P('/files/raw?path=' + encodeURIComponent(path)), {
+  // A Folder (absolute) path carries `chatId` so the server resolves its read_write
+  // Grant for THIS Thread (a read-only Folder file is 403 — ticket 04).
+  saveFile: async (path, text, etag, chatId = '') => {
+    const r = await fetch(P('/files/raw?' + rawQuery(path, { chatId })), {
       method: 'PUT',
       headers: { 'Content-Type': 'text/plain; charset=utf-8', ...(etag ? { 'If-Match': `"${etag}"` } : {}) },
       body: text,
@@ -243,14 +263,18 @@ export const api = {
     const data = await r.json().catch(() => ({}))
     return data.etag || parseEtag(r.headers.get('ETag'))
   },
-  // Delete a file OR a Directory (recursive) — same route, extended server-side.
-  deleteFile: (path) => j('DELETE', P('/files/raw?path=' + encodeURIComponent(path))),
+  // Delete a file OR a Directory (recursive) — same route, extended server-side. A
+  // Folder (absolute) path carries `chatId` for its read_write Grant (ticket 04).
+  deleteFile: (path, chatId = '') => j('DELETE', P('/files/raw?' + rawQuery(path, { chatId }))),
   // Upload OS files into a target Directory (empty = root). Multipart, so it skips
   // j()'s JSON envelope; name clashes are auto-suffixed server-side (never overwrites).
-  uploadFiles: async (fileList, dir = '') => {
+  // An ABSOLUTE `dir` uploads into a Folder Directory under a read_write Grant, scoped
+  // by `chatId` (a read-only Folder is 403 — ticket 05).
+  uploadFiles: async (fileList, dir = '', chatId = '') => {
     const fd = new FormData()
     for (const f of fileList) fd.append('files', f, f.name)
     fd.append('dir', dir)
+    if (chatId) fd.append('chat_id', chatId)
     const r = await fetch(P('/files/upload'), { method: 'POST', body: fd })
     if (!r.ok) {
       let msg = 'upload failed (' + r.status + ')'
@@ -259,10 +283,14 @@ export const api = {
     }
     return r.json()
   },
-  // New empty Directory (409 if it already exists → surfaced as an inline error).
-  mkdir: (path) => j('POST', P('/files/mkdir'), { path }),
+  // New empty Directory (409 if it already exists → surfaced as an inline error). An
+  // ABSOLUTE `path` creates a Folder Directory under a read_write Grant scoped by
+  // `chatId` (ticket 05).
+  mkdir: (path, chatId = '') => j('POST', P('/files/mkdir'), { path, chat_id: chatId }),
   // Move/rename a file or Directory. 409 if the destination exists (never overwrites).
-  moveFile: (from, to) => j('POST', P('/files/move'), { from, to }),
+  // A Folder move (absolute `from`/`to`) carries `chatId` and is confined to the
+  // source's readable root server-side — a cross-Root target is rejected (ticket 04).
+  moveFile: (from, to, chatId = '') => j('POST', P('/files/move'), { from, to, chat_id: chatId }),
   usage: () => j('GET', P('/usage')),
   selectVoice: (voice, configId) => j('POST', P('/voice/select'), { voice, config_id: configId || null }),
   previewVoice: async (voice, configId) => {

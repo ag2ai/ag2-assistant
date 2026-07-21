@@ -2,12 +2,36 @@
 
 import asyncio
 import os
+import secrets as _secrets
 from pathlib import Path
 
 import typer
+import uvicorn
 
+from assistant import __version__, codex_auth, profiles
 from assistant.agent import ask
-from assistant.config import Config
+from assistant.channels import get_channel
+from assistant.config import Config, load_config
+from assistant.folders import DuplicatePath, FolderStore
+from assistant.gateway.app import create_app
+from assistant.gateway.core import Gateway, build_gateway
+from assistant.gateway.profile_manager import (
+    ArchivedProfile,
+    ProfileManager,
+    UnknownProfile,
+    resolve_active_profile,
+)
+from assistant.hitl import DesktopAsker
+from assistant.integrations.google_auth import (
+    credentials_path,
+    has_token,
+    is_configured,
+    login,
+    logout,
+)
+from assistant.memory import clear_profile, read_profile
+from assistant.onboarding import needs_onboarding, run_onboarding
+from assistant.permissions import PermissionStore, command_rule, parse_command_rule
 
 app = typer.Typer(
     name="ag2-assistant",
@@ -36,12 +60,6 @@ def _resolve_profile_config(profile: str | None) -> Config:
     and ArchivedProfile, print a friendly message, and exit 1. Returns the profile's
     derived config so callers read profile-owned paths off ``config.data_dir``.
     """
-    from assistant.gateway.profile_manager import (
-        ArchivedProfile,
-        UnknownProfile,
-        resolve_active_profile,
-    )
-
     try:
         _, config, _ = resolve_active_profile(profile)
     except ArchivedProfile as exc:
@@ -78,13 +96,9 @@ def agent(
     async def run() -> str:
         asker = None
         if permissions:
-            from assistant.hitl import DesktopAsker
-
             asker = DesktopAsker()
         try:
             if asker is not None and memory:
-                from assistant.onboarding import needs_onboarding, run_onboarding
-
                 user_store_path = config.root_dir / "user.db"  # shared universal memory
                 if await needs_onboarding(user_store_path):
                     typer.echo("First time here — a few quick questions (all skippable):")
@@ -108,9 +122,6 @@ def onboard(
 
     Seeds the UNIVERSAL "who the user is" memory (``root_dir/user.db``), shared by
     every profile — so this is install-wide, not per-profile."""
-    from assistant.hitl import DesktopAsker
-    from assistant.onboarding import needs_onboarding, run_onboarding
-
     user_store_path = _resolve_profile_config(profile).root_dir / "user.db"
 
     async def run() -> None:
@@ -148,13 +159,6 @@ def chat(
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
-    from assistant.gateway.core import Gateway
-    from assistant.gateway.profile_manager import (
-        ArchivedProfile,
-        UnknownProfile,
-        resolve_active_profile,
-    )
-
     try:
         _, chat_config, factory = resolve_active_profile(profile)
     except ArchivedProfile as exc:
@@ -167,8 +171,6 @@ def chat(
     async def main() -> None:
         asker = None
         if permissions:
-            from assistant.hitl import DesktopAsker
-
             asker = DesktopAsker()
         gateway = Gateway(
             config=chat_config, memory=memory, platform=platform, config_factory=factory
@@ -210,8 +212,6 @@ def profile_show(
     ),
 ) -> None:
     """Show the user profile AG2 Assistant has learned so far."""
-    from assistant.memory import read_profile
-
     store_path = _resolve_profile_config(profile).data_dir / "profile.db"
     text = asyncio.run(read_profile(store_path))
     typer.echo(text or "(no profile learned yet)")
@@ -225,8 +225,6 @@ def profile_clear(
     ),
 ) -> None:
     """Delete the learned user profile."""
-    from assistant.memory import clear_profile
-
     store_path = _resolve_profile_config(profile).data_dir / "profile.db"
     if not yes:
         confirm = typer.confirm(f"Delete the learned profile at {store_path}?")
@@ -263,8 +261,6 @@ def profiles_create(
     NOT boot a runtime (a later `run`/`chat` picks it up). The first profile created
     becomes the active default automatically.
     """
-    from assistant import profiles
-
     try:
         meta = profiles.create_profile(name, accent)
     except ValueError as exc:
@@ -286,8 +282,6 @@ def profiles_list(
     ),
 ) -> None:
     """List registered profiles (active default marked with *)."""
-    from assistant import profiles
-
     metas = profiles.list_profiles(include_archived=show_all)
     if not metas:
         typer.echo("(no profiles yet — create one with 'ag2-assistant profiles create <name>')")
@@ -311,9 +305,6 @@ def _permissions_store():
 
     Grants are global now — one store, not per-profile — so these commands work even
     with zero profiles (no profile resolution needed)."""
-    from assistant.config import load_config
-    from assistant.permissions import PermissionStore
-
     return PermissionStore(load_config().root_dir / "permissions.json")
 
 
@@ -333,8 +324,6 @@ def permissions_allow_command(
     ),
 ) -> None:
     """Permanently allow a tool/command rule."""
-    from assistant.permissions import command_rule, parse_command_rule
-
     try:
         tool, prefix = parse_command_rule(rule)
         canonical = command_rule(tool, prefix)
@@ -354,8 +343,6 @@ def permissions_revoke_command(
     rule: str = typer.Argument(help="Command rule to revoke (as shown by 'list')."),
 ) -> None:
     """Revoke a previously allowed command rule."""
-    from assistant.permissions import command_rule, parse_command_rule
-
     try:
         canonical = command_rule(*parse_command_rule(rule))
     except ValueError:
@@ -373,9 +360,6 @@ app.add_typer(folders_app, name="folders")
 
 
 def _folder_store():
-    from assistant.config import load_config
-    from assistant.folders import FolderStore
-
     return FolderStore(load_config().root_dir / "folders.json")
 
 
@@ -405,8 +389,6 @@ def folders_add(
     name: str = typer.Option("", help="Display name (default: the directory's basename)."),
 ) -> None:
     """Register a directory as a Folder."""
-    from assistant.folders import DuplicatePath
-
     try:
         v = _folder_store().create_folder(path, name=name)
     except DuplicatePath as exc:
@@ -478,12 +460,6 @@ def google_login(
     ),
 ) -> None:
     """Authorise AG2 Assistant to access your Google account (opens a browser once)."""
-    from assistant.integrations.google_auth import (
-        credentials_path,
-        is_configured,
-        login,
-    )
-
     if not is_configured():
         typer.echo(f"Missing OAuth client file at {credentials_path()}.")
         typer.echo(
@@ -502,16 +478,12 @@ def google_login(
 @google_app.command("logout")
 def google_logout() -> None:
     """Remove the stored Google token."""
-    from assistant.integrations.google_auth import logout
-
     typer.echo("Signed out of Google." if logout() else "Not signed in.")
 
 
 @google_app.command("status")
 def google_status() -> None:
     """Show Google integration status."""
-    from assistant.integrations.google_auth import has_token, is_configured
-
     typer.echo(f"OAuth client configured: {is_configured()}")
     typer.echo(f"Signed in: {has_token()}")
 
@@ -526,11 +498,6 @@ def gateway(
 
     Serves every unarchived profile under ``/api/p/{pid}/…`` (create_app owns the
     ProfileManager lifecycle). Equivalent to ``run`` for the REST surface."""
-    import uvicorn
-
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
-
     typer.echo(f"AG2 Assistant gateway starting on http://{host}:{port}")
     typer.echo(f"  Web UI  http://{host}:{port}/")
     typer.echo(f"  API     http://{host}:{port}/api/p/{{pid}}/…")
@@ -542,10 +509,6 @@ def telegram(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
     """Run AG2 Assistant on Telegram (long-polling). Needs TELEGRAM_BOT_TOKEN in env/.env."""
-    import asyncio
-
-    from assistant.channels import get_channel
-    from assistant.gateway.core import build_gateway
 
     async def run() -> None:
         gateway, tasks = build_gateway(memory=memory, platform="telegram")
@@ -582,10 +545,6 @@ def discord(
 ) -> None:
     """Run AG2 Assistant on Discord. Needs DISCORD_BOT_TOKEN in env/.env and the
     Message Content Intent enabled in the Discord Developer Portal."""
-    import asyncio
-
-    from assistant.channels import get_channel
-    from assistant.gateway.core import build_gateway
 
     async def run() -> None:
         gateway, tasks = build_gateway(memory=memory, platform="discord")
@@ -621,10 +580,6 @@ def slack(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
     """Run AG2 Assistant on Slack (Socket Mode). Needs SLACK_BOT_TOKEN and SLACK_APP_TOKEN."""
-    import asyncio
-
-    from assistant.channels import get_channel
-    from assistant.gateway.core import build_gateway
 
     async def run() -> None:
         gateway, tasks = build_gateway(memory=memory, platform="slack")
@@ -679,11 +634,6 @@ def run(
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
-    import uvicorn
-
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
-
     manager = ProfileManager(memory=memory)
 
     if not rest:
@@ -719,8 +669,6 @@ def run(
 @app.command()
 def version() -> None:
     """Show AG2 Assistant version."""
-    from assistant import __version__
-
     typer.echo(f"ag2-assistant {__version__}")
 
 
@@ -742,15 +690,11 @@ def auth_login(
     restricted. To use it, also set the provider to OpenAI in subscription mode:
     `AG2ASSISTANT_LLM_PROVIDER=openai AG2ASSISTANT_OPENAI_AUTH_MODE=subscription`.
     """
-    from assistant import codex_auth
-
     typer.echo("⚠️  Unofficial — this uses your ChatGPT subscription in a way OpenAI")
     typer.echo("   does not officially support; your account could be rate-limited.\n")
     try:
         if no_browser:
             verifier, challenge = codex_auth.generate_pkce()
-            import secrets as _secrets
-
             state = _secrets.token_urlsafe(24)
             url = codex_auth.build_authorize_url(challenge, state)
             typer.echo("Open this URL, sign in, then paste the `code` from the redirect URL:\n")
@@ -771,16 +715,12 @@ def auth_login(
 @auth_app.command("logout")
 def auth_logout() -> None:
     """Remove the stored ChatGPT-subscription tokens."""
-    from assistant import codex_auth
-
     typer.echo("Signed out." if codex_auth.logout() else "Not signed in.")
 
 
 @auth_app.command("status")
 def auth_status() -> None:
     """Show whether you're signed in with ChatGPT."""
-    from assistant import codex_auth
-
     st = codex_auth.status()
     if st.get("signed_in"):
         typer.echo(f"Signed in ✓ (account: {st.get('account_id') or 'unknown'})")

@@ -10,6 +10,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from ag2.knowledge import SqliteKnowledgeStore
+
 from assistant.storage import SerialStore as _SerialStore
 from assistant.storage import new_id, now_iso
 from assistant.tasks.model import Run, RunStatus, RunTrigger, Task, manual_schedule
@@ -41,8 +43,6 @@ class TaskStore:
         if store is not None:
             self._store = store
         else:
-            from ag2.knowledge import SqliteKnowledgeStore
-
             if path is None:
                 raise ValueError("TaskStore needs an explicit `path` (or a `store`)")
             path = Path(path)

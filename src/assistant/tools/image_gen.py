@@ -17,9 +17,16 @@ import os
 from typing import Annotated
 
 from ag2 import Agent, Context, tool
+from ag2.config import OpenAIResponsesConfig
+from ag2.config.gemini import GeminiConfig
+from ag2.tools import ImageGenerationTool
 from pydantic import Field
 
+from assistant import codex_auth, llm_configs, secrets
 from assistant.attachments import build_input
+from assistant.events import ImageGenerated
+from assistant.secrets import KEY_ENV
+from assistant.workspace import resolve, write_image
 
 # Default image models (overridable via env so they track provider deprecations).
 DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-lite-image"
@@ -35,9 +42,6 @@ def _image_agent(config):
     When the store is empty, falls back to the flat ``config.llm.provider`` with the
     provider's env key. Built directly (not via model_config) to sidestep an import
     cycle."""
-    from assistant import llm_configs, secrets
-    from assistant.secrets import KEY_ENV
-
     entry = None
     if llm_configs.list_configs():
         entry = llm_configs.image_entry()
@@ -62,11 +66,6 @@ def _image_agent(config):
         # live — AG2 captures the streamed image on reply.files). Same construction
         # rules as model_config's subscription branch: token as bearer, Codex headers,
         # streaming forced on, storage forced off.
-        from ag2.config import OpenAIResponsesConfig
-        from ag2.tools import ImageGenerationTool
-
-        from assistant import codex_auth
-
         creds = codex_auth.creds_best_effort()
         cfg = OpenAIResponsesConfig(
             model=model,
@@ -79,17 +78,12 @@ def _image_agent(config):
         return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
 
     if provider == "gemini":
-        from ag2.config.gemini import GeminiConfig
-
         image_model = os.environ.get("AG2ASSISTANT_IMAGE_MODEL") or DEFAULT_GEMINI_IMAGE_MODEL
         cfg = GeminiConfig(
             model=image_model, api_key=_key("gemini"), response_modalities=["TEXT", "IMAGE"]
         )
         return Agent("imager", config=cfg)
     if provider == "openai":
-        from ag2.config import OpenAIResponsesConfig
-        from ag2.tools import ImageGenerationTool
-
         cfg = OpenAIResponsesConfig(model=model, api_key=_key("openai"))
         return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
     return None  # anthropic / ollama: no image generation
@@ -125,8 +119,6 @@ def build_image_tool(config, workspace_dir):
         """Generate an image from a description, or edit one you already made. Saves the
         image into the workspace and returns its path. To modify an image, call again
         with source_image set to that image's path."""
-        from assistant.workspace import resolve, write_image
-
         agent = _image_agent(config)
         if agent is None:
             return (
@@ -155,8 +147,6 @@ def build_image_tool(config, workspace_dir):
         # lives in the result, not the call args, so a card alone can't show it).
         emitted = False
         if context is not None:
-            from assistant.events import ImageGenerated
-
             with contextlib.suppress(Exception):
                 await context.send(ImageGenerated(rel, prompt=prompt, media_type=media))
                 emitted = True

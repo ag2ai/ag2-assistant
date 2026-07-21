@@ -15,10 +15,11 @@ import os
 import shutil
 from collections.abc import Callable, Iterator
 
-from assistant import profiles
+from assistant import channels, profiles
 from assistant.config import Config, load_config
 from assistant.gateway.core import Gateway, build_gateway
-from assistant.observability import setup_logging
+from assistant.hitl import HitlServer
+from assistant.observability import log_suppressed, profile_logger, setup_logging
 from assistant.profiles import ProfileMeta
 
 # Platform → env vars that must ALL be present for its channel to run. Canonical
@@ -102,11 +103,7 @@ class ProfileRuntime:
         # This profile's own HITL registry (permission/question prompts). Its request
         # ids are globally unique, so the global /hitl/{id} dispatcher (app.py) can
         # find the right profile by asking each runtime's registry in turn (§4.1).
-        from assistant.hitl import HitlServer
-
         self.hitl = HitlServer()
-        from assistant.observability import profile_logger
-
         self.log = profile_logger(meta.id)
         # Close callbacks WP4's WS handlers subscribe to; fired on archive so open
         # sockets get closed with 4001. Also an Event peers can await.
@@ -177,15 +174,11 @@ class ProfileRuntime:
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("profile close callback", exc, profile=self.pid)
         for ch in list(self.channels.values()):
             try:
                 await ch.stop()
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("channel stop", exc, profile=self.pid)
         self.channels.clear()
         if self.tasks is not None:
@@ -234,8 +227,6 @@ class ProfileManager:
                 continue
             runtime = self._runtimes.get(pid)
             if runtime is None:
-                from assistant.observability import profile_logger
-
                 profile_logger("default").warning(
                     "channel '%s' bound to '%s' which is not booted; skipping", platform, pid
                 )
@@ -255,14 +246,12 @@ class ProfileManager:
             msg = f"no token configured for {platform}"
             self.channel_errors[platform] = msg
             return False, msg
-        from assistant.channels import get_channel
-
         # A channel's start() talks to the platform (Telegram get_me, Discord/Slack
         # connect) and RAISES on a bad token / network failure — as does get_channel
         # when a token is missing. Never let that propagate: it would 500 the endpoint
         # and crash boot. Record the reason, stay inactive.
         try:
-            channel = get_channel(platform)
+            channel = channels.get_channel(platform)
             await channel.start(runtime.gateway)
         except Exception as exc:
             # Platform libraries embed the raw token in some error messages
@@ -286,8 +275,6 @@ class ProfileManager:
         try:
             await channel.stop()
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("channel stop", exc, profile=runtime.pid)
         runtime.log.info("channel '%s' stopped for profile '%s'", platform, runtime.pid)
         return True
@@ -448,8 +435,6 @@ class ProfileManager:
                 try:
                     await runtime.tasks.cancel_all(reason="profile-archived")
                 except Exception as exc:
-                    from assistant.observability import log_suppressed
-
                     log_suppressed("archive cancel_all", exc, profile=pid)
             await runtime.close()
             self._runtimes.pop(pid, None)

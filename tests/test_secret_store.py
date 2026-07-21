@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from assistant import secrets
+from assistant import live_configs, llm_configs, secrets
 from assistant.config import data_dir
 
 
@@ -174,7 +174,6 @@ def test_load_into_env_defaults_and_env_only_survives(monkeypatch):
 
 
 def test_migrate_legacy_provider_and_config_keys():
-    from assistant import live_configs, llm_configs
 
     c1 = llm_configs.save_config({"name": "GPT", "type": "openai", "model": "gpt-4o"})
     c2 = llm_configs.save_config({"name": "Mini", "type": "openai", "model": "o4-mini"})

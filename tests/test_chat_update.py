@@ -2,14 +2,15 @@
 
 import pytest
 
+import assistant.gateway.core as core_mod
+import assistant.title
+from assistant.config import Config
+from assistant.gateway.core import Gateway
 from tests.conftest import FakeAgent, api
 
 
 @pytest.fixture
 async def gw(tmp_path, monkeypatch):
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
-    from assistant.gateway.core import Gateway
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
     gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
@@ -19,9 +20,6 @@ async def gw(tmp_path, monkeypatch):
 
 
 async def test_update_chat_title_persists_across_instances(gw, tmp_path, monkeypatch):
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
-    from assistant.gateway.core import Gateway
 
     await gw.send_message("hello", chat_id="c1")
     assert await gw.update_chat("c1", title="Renamed by user") is True
@@ -71,7 +69,6 @@ async def test_update_unknown_chat_returns_false(gw):
 
 async def test_user_rename_wins_over_auto_titler(gw, monkeypatch):
     """The auto-titler skips already-titled chats, so a user rename sticks."""
-    import assistant.title
 
     async def fake_generate_title(*a, **k):
         return "LLM title"

@@ -3,6 +3,12 @@
 import asyncio
 
 import pytest
+from fastapi.testclient import TestClient
+
+import assistant.gateway.core as core_mod
+from assistant import profiles
+from assistant.gateway.app import create_app
+from assistant.gateway.profile_manager import ProfileManager
 
 
 class FakeReply:
@@ -81,7 +87,6 @@ class FakeAgent(FakeRunMixin):
 
 def use_fake_agent(monkeypatch, agent_factory=None):
     """Patch the agent factory the gateway core looks up, so no runtime touches an LLM."""
-    import assistant.gateway.core as core_mod
 
     factory = agent_factory or (lambda *a, **k: FakeAgent())
     monkeypatch.setattr(core_mod, "create_agent", factory)
@@ -94,9 +99,6 @@ def make_profile_app(*, name="Test", accent="#109e91", persist=False, memory=Fal
     registry + profile dir land under the test's tmp root. The profile is created
     in the registry before start() so lifespan boots it; hit ``/api/p/{pid}/…``.
     """
-    from assistant import profiles
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     meta = profiles.create_profile(name, accent)
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
@@ -114,7 +116,6 @@ def api(pid: str, path: str = "") -> str:
 def profile_app(monkeypatch):
     """A started single-profile app + its pid, agent faked. Yields ``(client, pid)``
     inside a TestClient context (lifespan boots the runtime)."""
-    from fastapi.testclient import TestClient
 
     use_fake_agent(monkeypatch)
     app, pid = make_profile_app(persist=True)
@@ -138,7 +139,7 @@ def _isolate_ag2assistant_home(monkeypatch, tmp_path):
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     try:
-        import assistant.integrations.google_auth as ga
+        import assistant.integrations.google_auth as ga  # local: guarded (google_auth may be absent)
 
         monkeypatch.setattr(ga, "token_path", lambda: tmp_path / "no_token.json")
         monkeypatch.setattr(ga, "credentials_path", lambda: tmp_path / "no_creds.json")

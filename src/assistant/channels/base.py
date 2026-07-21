@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
-    from assistant.gateway.core import Gateway
+    from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
 
 # Platforms whose adapters can push an unsolicited message (task-run outcomes
 # delivered back to the chat a task came from). Single source of truth: the

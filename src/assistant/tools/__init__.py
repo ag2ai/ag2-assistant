@@ -20,17 +20,28 @@ cleanly. Anthropic permits mixing server-side and function tools, so it gets the
 native one.
 """
 
+import warnings
+from pathlib import Path
+
 from ag2.tools import (
     DuckDuckSearchTool,
+    FilesystemToolkit,
     LocalEnvironment,
     SandboxCodeTool,
     SandboxShellTool,
     WebFetchTool,
 )
 
+from assistant.integrations import google_auth
+from assistant.settings import profile_settings
+from assistant.tools import docker_sandbox
 from assistant.tools.approval import require_command_approval
+from assistant.tools.ask import ask_user
 from assistant.tools.files import list_folder, read_file, write_file
 from assistant.tools.finance import get_quotes
+from assistant.tools.google import build_google_tools
+from assistant.tools.image_gen import build_image_tool
+from assistant.tools.mcp import build_mcp_tools
 from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch, web_fetch_tool
 
@@ -85,10 +96,8 @@ _GOOGLE_GROUPS = {
 
 def available_capabilities() -> list[str]:
     """Capabilities currently usable (Google ones only when signed in)."""
-    from assistant.integrations.google_auth import has_token
-
     caps = ["web", "code", "files", "images", "skills", "mcp"]
-    if has_token():
+    if google_auth.has_token():
         caps += ["gmail", "calendar", "drive"]
     return caps
 
@@ -119,8 +128,6 @@ def build_agent_tools(
         # Chat only: option-carrying user questions via the durable HITL channel
         # (tasks keep their scoped toolsets and their own inquiry path). Degrades
         # to a no-op message when the turn has no asker.
-        from assistant.tools.ask import ask_user
-
         tools.append(ask_user)
 
     if want("web"):
@@ -132,12 +139,8 @@ def build_agent_tools(
     if want("code"):
         use_docker = False
         if sandbox == "docker":
-            from assistant.tools.docker_sandbox import docker_available
-
-            use_docker = docker_available()
+            use_docker = docker_sandbox.docker_available()
             if not use_docker:
-                import warnings
-
                 warnings.warn(
                     "Docker sandbox requested but Docker is unavailable; "
                     "falling back to the local sandbox with approval prompts.",
@@ -149,7 +152,9 @@ def build_agent_tools(
             # Distinct names are required (providers reject duplicate tool names).
             # The agent is steered by the descriptions below, not the prompt — so when
             # only one runner exists (no Docker, below) there's nothing to confuse it.
-            from ag2.extensions.docker import DockerEnvironment
+            from ag2.extensions.docker import (
+                DockerEnvironment,  # local: lazy optional Docker backend
+            )
 
             # AG2's official Docker backend: a long-lived, cached container with no
             # host mount — code/shell can't touch the user's files, which is why these
@@ -210,8 +215,6 @@ def build_agent_tools(
     if want("images") and config is not None:
         # generate_image: provider-aware image generation + editing → saved to the
         # workspace. Needs `config` (provider/keys) so it's skipped when unavailable.
-        from assistant.tools.image_gen import build_image_tool
-
         tools.append(build_image_tool(config, workspace_dir))
 
     if want("files"):
@@ -221,34 +224,23 @@ def build_agent_tools(
         # toolkit's write_file is dropped alongside its read_file (name clashes).
         tools += [read_file, list_folder, write_file]
         if workspace_dir:
-            from pathlib import Path
-
-            from ag2.tools import FilesystemToolkit
-
             wd = Path(workspace_dir).expanduser()
             wd.mkdir(parents=True, exist_ok=True)
             fk = FilesystemToolkit(base_path=wd)
             tools += [t for t in fk.tools if t.name not in ("read_file", "write_file")]
 
     # Google tools (only when signed in), per requested group.
-    from assistant.integrations.google_auth import has_token
-
-    if has_token():
+    if google_auth.has_token():
         keep: set[str] = set()
         for cap, names in _GOOGLE_GROUPS.items():
             if want(cap):
                 keep |= names
         if keep:
-            from assistant.tools.google import build_google_tools
-
             tools += [t for t in build_google_tools() if t.name in keep]
 
     if want("mcp") and config is not None:
         # Read THIS profile's MCP server list (config.data_dir is the profile dir),
         # so an agent only loads the MCP servers configured in its own profile.
-        from assistant.settings import profile_settings
-        from assistant.tools.mcp import build_mcp_tools
-
         settings = profile_settings(config.data_dir)
         tools += build_mcp_tools(settings.list_mcp_servers(include_env=True))
 

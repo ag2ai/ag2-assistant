@@ -31,7 +31,7 @@ from assistant.hitl.base import Asker, Question
 # POSIX has flock; Windows locks a byte range via msvcrt (LK_LOCK retries for ~10s
 # then raises — loop so contention waits instead of failing a mutation).
 if os.name == "nt":  # pragma: no cover — exercised only on Windows
-    import msvcrt
+    import msvcrt  # local: Windows-only module
 
     def _lock_exclusive(fh) -> None:
         while True:
@@ -46,7 +46,7 @@ if os.name == "nt":  # pragma: no cover — exercised only on Windows
         fh.seek(0)
         msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
 else:
-    import fcntl
+    import fcntl  # local: POSIX-only module
 
     def _lock_exclusive(fh) -> None:
         fcntl.flock(fh, fcntl.LOCK_EX)
@@ -422,7 +422,9 @@ class PermissionManager:
         workspace_dir=None,
         task_id: str = "",
     ) -> None:
-        from assistant.folders import FolderStore
+        from assistant.folders import (
+            FolderStore,  # local: import cycle (folders imports permissions)
+        )
 
         self.store = store if store is not None else PermissionStore(path=None)
         self.folders = folders if folders is not None else FolderStore(path=None)
@@ -451,7 +453,10 @@ class PermissionManager:
         needed (turn-scoped). ``write=True`` requires a read_write Grant; plain
         reads accept either mode (write implies read). Approving the prompt at
         chat/task/profile scope auto-creates the Folder + Grant (ADR 0006)."""
-        from assistant.folders import READ, READ_WRITE
+        from assistant.folders import (  # local: import cycle (folders imports permissions)
+            READ,
+            READ_WRITE,
+        )
 
         target = Path(target).expanduser()
         folder = _norm(target if target.is_dir() else target.parent)

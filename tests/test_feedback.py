@@ -8,6 +8,7 @@ points the config's data_dir at a tmp dir and reads that profile's store.
 
 import pytest
 
+import assistant.agent as agent_mod
 from assistant import feedback, memory
 from assistant.config import load_config
 
@@ -26,7 +27,6 @@ def _store_path(cfg):
 async def test_feedback_routes_by_sentiment_via_fallback(cfg, monkeypatch):
     # Force the LLM path to raise so we hit the fallback (which writes the raw reason
     # under the sentiment's heading) — no network/model needed.
-    import assistant.agent as agent_mod
 
     def _boom(*a, **k):
         raise RuntimeError("no model in test")
@@ -47,7 +47,6 @@ async def test_feedback_routes_by_sentiment_via_fallback(cfg, monkeypatch):
 
 
 async def test_feedback_empty_reason_writes_nothing(cfg, monkeypatch):
-    import assistant.agent as agent_mod
 
     monkeypatch.setattr(
         agent_mod, "model_config", lambda *a, **k: (_ for _ in ()).throw(RuntimeError())

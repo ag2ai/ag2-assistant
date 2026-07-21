@@ -33,7 +33,7 @@ class GatewayAsker:
         try:
             return await asyncio.wait_for(fut, timeout=timeout or self._timeout)
         except asyncio.TimeoutError:
-            from assistant.permissions import DENY
+            from assistant.permissions import DENY  # local: import cycle (permissions <-> hitl)
 
             return DENY  # unanswered → deny (safe default for permission prompts)
         finally:

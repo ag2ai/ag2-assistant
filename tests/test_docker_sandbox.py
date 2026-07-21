@@ -6,8 +6,11 @@ one-shot mounted sandbox for skill scripts. Unit tests never touch Docker
 when Docker isn't available.
 """
 
+import ag2.extensions.docker as agdoc
 import pytest
 
+import assistant.tools as tools_mod
+import assistant.tools.docker_sandbox as ds
 from assistant.tools.docker_sandbox import (
     DockerMountSandbox,
     build_docker_skill_runtime,
@@ -18,8 +21,6 @@ from assistant.tools.docker_sandbox import (
 
 
 def test_build_tools_falls_back_when_docker_unavailable(monkeypatch):
-    import assistant.tools as tools_mod
-    import assistant.tools.docker_sandbox as ds
 
     monkeypatch.setattr(ds, "docker_available", lambda: False)
     calls = {"approval": 0}
@@ -41,8 +42,6 @@ def test_build_tools_offers_sandboxed_and_local_when_docker(monkeypatch):
     """With Docker available the agent gets BOTH a sandboxed runner (no approval)
     and a host runner (approval-gated) for code AND shell, and chooses per call."""
     pytest.importorskip("docker")  # AG2's DockerEnvironment needs the docker lib
-    import assistant.tools as tools_mod
-    import assistant.tools.docker_sandbox as ds
 
     monkeypatch.setattr(ds, "docker_available", lambda: True)
     calls = {"approval": 0}
@@ -75,10 +74,6 @@ def test_build_tools_wires_ag2_docker_environment(monkeypatch):
     """The docker path uses AG2's official DockerEnvironment, passing our image and
     network through (network_mode), rather than a custom sandbox."""
     pytest.importorskip("docker")  # AG2's DockerEnvironment needs the docker lib
-    import ag2.extensions.docker as agdoc
-
-    import assistant.tools as tools_mod
-    import assistant.tools.docker_sandbox as ds
 
     monkeypatch.setattr(ds, "docker_available", lambda: True)
     captured = {}

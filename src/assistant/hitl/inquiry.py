@@ -20,6 +20,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from ag2.knowledge import SqliteKnowledgeStore
+
 from assistant.hitl.base import Asker, Question
 from assistant.storage import SerialStore, new_id, now_iso
 
@@ -85,8 +87,6 @@ class InquiryStore:
         if store is not None:
             self._store = store
         else:
-            from ag2.knowledge import SqliteKnowledgeStore
-
             if path is None:
                 raise ValueError("InquiryStore needs an explicit `path` (or a `store`)")
             path = Path(path)
@@ -309,6 +309,6 @@ class DurableAsker:
         if resolved is not None and resolved.status == InquiryStatus.ANSWERED:
             return resolved.answer or ""
         await self._store.expire(inq.id)
-        from assistant.permissions import DENY
+        from assistant.permissions import DENY  # local: import cycle (permissions <-> hitl)
 
         return DENY if inq.kind == "permission" else ""

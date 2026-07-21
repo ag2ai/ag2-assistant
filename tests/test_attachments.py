@@ -5,6 +5,7 @@ from ag2 import ImageInput
 from ag2.events import BinaryType, TextInput
 
 from assistant.attachments import build_input
+from assistant.gateway.core import Gateway
 from tests.conftest import FakeRunMixin
 
 
@@ -93,7 +94,6 @@ class _CapturingAgent(FakeRunMixin):
 
 
 async def test_gateway_passes_attachments_as_positional_inputs():
-    from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False, onboard=False)
     agent = _CapturingAgent()

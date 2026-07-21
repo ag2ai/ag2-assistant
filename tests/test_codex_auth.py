@@ -298,7 +298,6 @@ def test_creds_best_effort_never_raises():
     d = codex_auth._read()
     d["expires_at"] = time.time() - 10
     codex_auth._write(d)
-    import httpx
 
     class FakeResp:
         status_code = 403

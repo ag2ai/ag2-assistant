@@ -1,13 +1,20 @@
 """Tests for AG2 Assistant persistent user-profile memory."""
 
 import pytest
+from ag2.knowledge import SqliteKnowledgeStore
 
+import assistant.agent as agent_mod
+from assistant.agent import ask
+from assistant.config import Config, LLMConfig, load_config
 from assistant.memory import (
     PROFILE_PATH,
     build_knowledge_config,
     build_profile_prompt,
     clear_profile,
     read_profile,
+    read_profile_sync,
+    read_universal,
+    write_universal,
 )
 
 
@@ -60,8 +67,6 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
     """The CLI single-shot path enables on_end so one turn still gets learned."""
     captured = {}
 
-    import assistant.agent as agent_mod
-
     real = agent_mod.build_knowledge_config
 
     def spy(*args, **kwargs):
@@ -69,7 +74,6 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
-    from assistant.config import Config
 
     cfg = Config()
     agent_mod.create_agent(cfg, memory=True, skills=False, single_shot=True)
@@ -80,7 +84,6 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
 def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
     """On Gemini with no explicit aggregate_model, the pass uses the cheaper one."""
     captured = {}
-    import assistant.agent as agent_mod
 
     real = agent_mod.build_knowledge_config
 
@@ -89,7 +92,6 @@ def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
-    from assistant.config import Config
 
     agent_mod.create_agent(Config(), memory=True, skills=False)
     assert captured["aggregate_config"].model == agent_mod._DEFAULT_AGGREGATE_MODEL["gemini"]
@@ -97,8 +99,6 @@ def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
 
 def test_explicit_aggregate_model_wins(monkeypatch):
     captured = {}
-    import assistant.agent as agent_mod
-    from assistant.config import Config, LLMConfig
 
     real = agent_mod.build_knowledge_config
     monkeypatch.setattr(
@@ -117,7 +117,6 @@ async def test_read_profile_empty(tmp_path):
 
 
 async def test_read_and_clear_profile_roundtrip(tmp_path):
-    from ag2.knowledge import SqliteKnowledgeStore
 
     store_path = tmp_path / "profile.db"
     store = SqliteKnowledgeStore(str(store_path))
@@ -138,7 +137,6 @@ async def test_universal_roundtrip_and_sync_read(tmp_path):
     """write_universal persists to user.db; read_universal reads it back; the
     synchronous read_profile_sync (used by the per-turn prompt builders) sees the
     same content, and returns '' for a missing DB."""
-    from assistant.memory import read_profile_sync, read_universal, write_universal
 
     user_db = tmp_path / "user.db"
     assert read_profile_sync(user_db) == ""  # missing file → empty, no raise
@@ -154,8 +152,6 @@ async def test_universal_roundtrip_and_sync_read(tmp_path):
 async def test_profile_learned_after_conversation(tmp_path):
     """End-to-end: a conversation should produce a persisted profile in this
     profile's store (config.data_dir / profile.db)."""
-    from assistant.agent import ask
-    from assistant.config import load_config
 
     config = load_config()
     config.data_dir = tmp_path  # this profile's learned memory lands here

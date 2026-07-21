@@ -11,6 +11,7 @@ from ag2.events import (
     ToolCallEvent,
     ToolCallsEvent,
 )
+from ag2.observers import LoopDetector
 from ag2.stream import MemoryStream
 
 from assistant.observers import SilenceWatchdog, ToolChurnObserver, build_observers
@@ -45,7 +46,6 @@ async def test_tool_churn_resets_after_a_final_response():
 
 
 def test_build_observers_includes_loop_churn_and_watchdog():
-    from ag2.observers import LoopDetector
 
     obs = build_observers()
     kinds = {type(o).__name__ for o in obs}

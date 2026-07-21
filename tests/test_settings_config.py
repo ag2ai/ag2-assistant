@@ -1,15 +1,20 @@
 """API-key secrets store, settings LLM selection, and model_config provider mapping."""
 
+import json
 import os
 import stat
 
 import pytest
 
+from assistant import secrets
+from assistant.agent import cheap_model, model_config
+from assistant.config import Config, data_dir, load_config
+from assistant.gateway.core import Gateway
+
 
 def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))  # data_dir → tmp/.ag2assistant
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # empty = "no key" (load_dotenv won't override)
-    from assistant import secrets
 
     assert secrets.status()["anthropic"]["set"] is False
 
@@ -30,7 +35,6 @@ def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
 
 def test_ollama_base_url(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    from assistant import secrets
 
     assert secrets.set_key("ollama", "http://host:1234")
     secrets.load_into_env()
@@ -43,12 +47,10 @@ def test_load_config_no_longer_overlays_settings(monkeypatch, tmp_path):
     assistant model is the install-wide named-config store now. load_config() derives
     only defaults ← config.yaml ← active llm config ← env; with no store it stays on
     the flat gemini defaults, ignoring any stray profile-settings llm block."""
-    import json
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
-    from assistant.config import data_dir, load_config
 
     # A stray legacy llm block written straight into a settings.json is ignored.
     settings_file = data_dir() / "settings.json"
@@ -66,7 +68,6 @@ def test_load_config_no_longer_overlays_settings(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_gateway_reload_swaps_agent(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    from assistant.gateway.core import Gateway
 
     g = Gateway(memory=False, persist=False)
     await g.start()
@@ -78,8 +79,6 @@ async def test_gateway_reload_swaps_agent(monkeypatch, tmp_path):
 
 def test_model_config_key_env_by_provider(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    from assistant.agent import model_config
-    from assistant.config import Config
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
     cfg = Config()
@@ -95,8 +94,6 @@ def test_model_config_provider_options_openai_compatible(monkeypatch, tmp_path):
     servers rarely implement /v1/responses); "api": "responses" pins it back."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("OPENAI_API_KEY", "")
-    from assistant.agent import model_config
-    from assistant.config import Config
 
     cfg = Config()
     cfg.llm.provider = "openai"
@@ -126,8 +123,6 @@ def test_provider_options_suppress_default_aggregate_model(monkeypatch, tmp_path
     """With a custom base_url the cheap-tier default (an OpenAI model name) would
     not exist on the server — fall back to the main model, like Ollama does."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    from assistant.agent import cheap_model
-    from assistant.config import Config
 
     cfg = Config()
     cfg.llm.provider = "openai"

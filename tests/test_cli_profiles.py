@@ -5,10 +5,15 @@ The autouse conftest fixture points HOME at a tmp dir, so the registry, profile
 dirs, and stores resolve under disposable space.
 """
 
+import asyncio
+
 import pytest
 from typer.testing import CliRunner
 
+from assistant import profiles
 from assistant.cli import _DEFAULT_ACCENT, app
+from assistant.config import load_config
+from assistant.memory import write_profile
 
 runner = CliRunner()
 
@@ -22,8 +27,6 @@ def test_create_default_accent():
     # no --accent → the single fallback hex (backend keeps no palette catalogue)
     assert f"accent    {_DEFAULT_ACCENT}" in result.output
     assert "Created profile 'work'" in result.output
-
-    from assistant import profiles
 
     meta = profiles.get_profile("work")
     assert meta is not None
@@ -40,8 +43,6 @@ def test_create_explicit_accent():
     # normalised to lowercase on store + echo
     assert "accent    #7a52ec" in result.output
 
-    from assistant import profiles
-
     assert profiles.get_profile("work").accent == "#7a52ec"
 
 
@@ -50,8 +51,6 @@ def test_create_duplicate_accent_allowed():
     runner.invoke(app, ["profiles", "create", "Work", "--accent", "#109e91"])
     result = runner.invoke(app, ["profiles", "create", "Personal", "--accent", "#109e91"])
     assert result.exit_code == 0, result.output
-
-    from assistant import profiles
 
     assert profiles.get_profile("personal").accent == "#109e91"
 
@@ -65,8 +64,6 @@ def test_create_invalid_accent_errors():
 def test_create_workspace_derived():
     result = runner.invoke(app, ["profiles", "create", "Work"])
     assert result.exit_code == 0, result.output
-
-    from assistant import profiles
 
     meta = profiles.get_profile("work")
     # workspace is derived from the profile dir (not user-chosen) and echoed on create.
@@ -104,7 +101,6 @@ def test_list_marks_active_default():
 def test_list_hides_archived_unless_all():
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
-    from assistant import profiles
 
     profiles.archive_profile("personal")
 
@@ -149,7 +145,6 @@ def test_unknown_profile_exits_with_guidance():
 def test_archived_profile_targeting_reports_archived():
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
-    from assistant import profiles
 
     profiles.archive_profile("personal")
     result = runner.invoke(app, ["profile", "show", "-p", "personal"])
@@ -161,8 +156,6 @@ def test_archived_profile_targeting_reports_archived():
 
 
 async def _seed(pid: str, text: str) -> None:
-    from assistant import profiles
-    from assistant.memory import write_profile
 
     d = profiles.profile_dir(pid)
     d.mkdir(parents=True, exist_ok=True)
@@ -170,7 +163,6 @@ async def _seed(pid: str, text: str) -> None:
 
 
 def test_profile_show_targets_the_named_profile():
-    import asyncio
 
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
@@ -189,7 +181,6 @@ def test_profile_show_targets_the_named_profile():
 
 
 def test_profile_show_defaults_to_active():
-    import asyncio
 
     runner.invoke(app, ["profiles", "create", "Work"])  # active default
     asyncio.run(_seed("work", "WORK-MEMORY"))
@@ -201,7 +192,6 @@ def test_profile_show_defaults_to_active():
 def test_permissions_are_global_and_need_no_profile():
     """Permissions are install-wide now: `permissions` commands take no --profile,
     work with zero profiles, and a grant lands in the shared root store."""
-    from assistant.config import load_config
 
     # zero profiles: list still works (no §3.5 guidance, no exit 1)
     empty = runner.invoke(app, ["permissions", "list"])
