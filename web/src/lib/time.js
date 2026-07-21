@@ -160,6 +160,15 @@ export function fmtWhen(v) {
   return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
 }
 
+// A task's place in the drawer's recency list — the task analogue of a chat's
+// `updated`. Its last run's end time, or its start when the run is still
+// running/waiting (no end yet), falling back to creation for a task that never
+// ran. Pure, so the drawer's grouping and its tests share one source of truth.
+export function taskRecencyAt(task) {
+  const r = task.last_run
+  return (r && (r.ended_at || r.started_at)) || task.created_at
+}
+
 // Relative future until a scheduled time — "Next in 3 mins" / "Due now". Recomputed
 // on each drawer refresh so it ticks down.
 // Compact "time until next run" for the task list — e.g. "in 2h", "in 5m",

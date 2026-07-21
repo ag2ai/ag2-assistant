@@ -1,14 +1,13 @@
 <script>
-  import { thread, taskPanel, ag2View, profile, profiles } from '../store.js'
+  import { thread, runInfo, profile, profiles } from '../store.js'
   import { llmConfigs } from '../lib/llm.js'
-  import { go, newChatId, toggleAsideInspector } from '../router.js'
+  import { go, newChatId } from '../router.js'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
   import Thinking from './items/Thinking.svelte'
-  import TaskPanel from './task/TaskPanel.svelte'
+  import RunBanner from './task/RunBanner.svelte'
   import Icon from './Icon.svelte'
-  import ThemeToggle from './ThemeToggle.svelte'
-  import SystemHealth from './SystemHealth.svelte'
+  import AppBar from './AppBar.svelte'
   import { dayRows } from '../lib/time.js'
 
   let scroller
@@ -104,26 +103,17 @@
   })
 </script>
 
-<div class="mhead">
-  <button class="back" onclick={() => go('/c/' + newChatId())}><Icon name="chevron-left" size={15} /> Chat</button>
-  <span class="titles">
-    <span class="title">
-      {#if $thread.kind === 'task'}{($taskPanel && $taskPanel.title) || 'Task'}{:else}Conversation{/if}
-    </span>
-    {#if subtitle}<span class="msub">{subtitle}</span>{/if}
-  </span>
-  {#if $thread.kind === 'task' && $taskPanel}<span class="badge">{$taskPanel.status}</span>{/if}
-  <div class="hactions">
-    <SystemHealth />
-    <ThemeToggle />
-    <button class="ag2toggle" class:on={$ag2View} class:ag2-glow={$ag2View} onclick={toggleAsideInspector}
-            title="AG2 view — reveal the live AG2 events powering the UI"><Icon name="code" size={14} /> AG2</button>
-  </div>
-</div>
+<AppBar
+  back={{ label: $thread.kind === 'run' ? 'Task' : 'Chat',
+          onClick: () => go($thread.kind === 'run' ? ($runInfo?.task_id ? '/t/' + $runInfo.task_id : '/tasks') : '/c/' + newChatId()) }}
+  title={$thread.kind === 'run' ? (($runInfo && $runInfo.task_name) || 'Task') : 'Conversation'}
+  {subtitle}>
+  {#if $thread.kind === 'run' && $runInfo}<span class="badge">{$runInfo.status}</span>{/if}
+</AppBar>
 
 <div class="thread" bind:this={scroller} onscroll={onScroll}>
   <div class="inner">
-    {#if $thread.kind === 'task'}<TaskPanel />{/if}
+    {#if $thread.kind === 'run'}<RunBanner />{/if}
     {#if !$thread.items.length && $thread.kind === 'chat'}
       <div class="empty"><h1>How can I help{$profile.name ? `, ${$profile.name}` : ''}?</h1>Ask me anything — I can search, run code, manage tasks, and more.</div>
     {/if}

@@ -4,7 +4,7 @@
 //
 // Two dimensions live in the URL:
 //   • the PATH carries the Page (profile + Tab + optional open Thread):
-//     /app/{pid}/{tab}[/{c|t}/{id}] — Tab and Thread are orthogonal.
+//     /app/{pid}/{tab}[/{c|t|r}/{id}] — Tab and Thread are orthogonal.
 //   • the HASH carries two orthogonal, client-side-only overlay slots as a
 //     multi-key fragment (`#k1=v1&k2=v2`, `&`-separated, each pair split on the
 //     first `=`): the open Modal (`settings=<section>`) and the right-rail
@@ -31,9 +31,10 @@ const SECTIONS = new Set(Object.values(SETTINGS_PAGE))
 
 // The main-pane driver, derived from what Thread (if any) is open, INDEPENDENT of
 // the Tab: an open Thread stays open while you switch drawer Tabs. With a Thread →
-// 'chat'/'task'; otherwise the Tab's own empty page ('files'/'tasks') or 'home'
+// 'chat'/'task'/'run'; otherwise the Tab's own empty page ('files'/'tasks') or 'home'
 // (boot spins up a fresh chat) for chats.
 function threadName(tab, kind) {
+  if (kind === 'r') return 'run'
   if (kind === 't') return 'task'
   if (kind === 'c') return 'chat'
   if (tab === 'files') return 'files'
@@ -113,15 +114,15 @@ function parseHash(hash) {
 
 // parse(pathname, hash) → route. Routes carry the profile id, the drawer Tab, an
 // optional open Thread, and the open Modal slot:
-//   /app/{pid}/{tab}[/{c|t}/{id}]#<modal>=<value>
-// tab ∈ chats|tasks|files is the drawer (left rail); the trailing c|t + id is the
+//   /app/{pid}/{tab}[/{c|t|r}/{id}]#<modal>=<value>
+// tab ∈ chats|tasks|files is the drawer (left rail); the trailing c|t|r + id is the
 // Thread in the main pane, preserved across Tab switches. Legacy
 // /app/{pid}/c/{id} and /t/{id} still parse (resolve() canonicalises them).
 export function parse(pathname, hash) {
   const p = pathname
   const o = parseHash(hash)
   let m
-  if ((m = p.match(/^\/app\/([^/]+)\/(chats|tasks|files)(?:\/(c|t)\/(.+?))?\/?$/))) {
+  if ((m = p.match(/^\/app\/([^/]+)\/(chats|tasks|files)(?:\/(c|t|r)\/(.+?))?\/?$/))) {
     const tab = m[2], kind = m[3] || null, id = m[4] ? dec(m[4]) : null
     return { name: threadName(tab, kind), tab, kind, id, pid: dec(m[1]), ...o }
   }
@@ -136,14 +137,16 @@ export function parse(pathname, hash) {
 // independent:
 //   • '/chats' | '/tasks' | '/files' (bare Tab) → switch the drawer but KEEP the
 //     open Thread as a suffix, so tabbing to Files doesn't close your chat.
-//   • '/c/{id}' | '/t/{id}' (thread shorthand) → open that Thread in the CURRENT
-//     Tab, so every existing go('/c/'…)/go('/t/'…) call site keeps working.
+//   • '/c/{id}' | '/t/{id}' | '/r/{id}' (thread shorthand) → open that Thread in
+//     the CURRENT Tab, so every existing go('/c/'…)/go('/t/'…)/go('/r/'…) call
+//     site keeps working.
 function normalizePath(path, r) {
   if (path === '/chats' || path === '/tasks' || path === '/files') {
     return path + (r.kind && r.id ? '/' + r.kind + '/' + r.id : '')
   }
   if (path.startsWith('/c/')) return '/' + r.tab + '/c/' + path.slice(3)
   if (path.startsWith('/t/')) return '/' + r.tab + '/t/' + path.slice(3)
+  if (path.startsWith('/r/')) return '/' + r.tab + '/r/' + path.slice(3)
   return path
 }
 
@@ -152,6 +155,8 @@ function normalizePath(path, r) {
 // Path and hash are orthogonal, and within the hash the Modal and `aside` keys are
 // orthogonal too: each intent touches one key and preserves the other verbatim.
 //   • go                — path nav (normalize against current); preserves the whole hash.
+//   • goTab             — bare Tab nav that CLOSES any open Thread (no suffix-keeping,
+//                          unlike go('/tasks')); preserves the whole hash.
 //   • openOverlay       — set the Modal key; preserves the aside key.   (shell pushes)
 //   • replaceOverlay    — same URL as openOverlay.                      (shell replaces)
 //   • closeOverlay      — drop the Modal key; preserves the aside key.
@@ -167,6 +172,12 @@ export function resolve(current, intent) {
     case 'go': {
       const pid = intent.pid || r.pid
       return BASE + '/' + pid + normalizePath(intent.path, r) + hash
+    }
+    case 'goTab': {
+      // Unlike 'go', deliberately skips normalizePath: no Thread suffix is kept,
+      // so an open Thread (e.g. a deleted task's page) actually closes.
+      const pid = intent.pid || r.pid
+      return BASE + '/' + pid + '/' + intent.tab + hash
     }
     case 'openOverlay':
     case 'replaceOverlay':

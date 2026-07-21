@@ -11,8 +11,8 @@ function call …". The fixes under test:
   2. `wait_reply(coro, timeout, hitl_pending=…)` — a turn timeout whose clock
      pauses while a human-in-the-loop prompt is open and restarts once it's
      answered.
-  3. Wiring — poisoned sessions are repaired at turn start (gateway chat and the
-     task controller chat), and every blocking asker reports `has_pending()`.
+  3. Wiring — poisoned sessions are repaired at turn start (gateway chat, which
+     task runs also go through), and every blocking asker reports `has_pending()`.
 """
 
 import asyncio
@@ -26,16 +26,13 @@ from ag2.events import (
     ToolResultsEvent,
 )
 from ag2.events.tool_events import ToolResult, ToolResultEvent
-from ag2.stream import MemoryStream
 
 from assistant.gateway.core import Gateway
 from assistant.gateway.repair import repair_dangling_tool_calls, wait_reply
-from assistant.gateway.tasks_service import TaskService
 from assistant.hitl.base import Question
 from assistant.hitl.desktop import HitlServer
 from assistant.hitl.gateway import GatewayAsker
 from assistant.hitl.inquiry import DurableAsker, InquiryStore, NullAsker
-from assistant.tasks import TaskManager, TaskStore
 from tests.conftest import FakeAgent
 
 
@@ -294,38 +291,3 @@ async def test_send_message_repairs_poisoned_session(fake_gateway):
         and any(r.parent_id == "call_dangling" for r in e.results)
     ]
     assert len(synthetic) == 1
-
-
-async def test_task_control_chat_repairs_poisoned_stream(tmp_path):
-    """The task page's controller chat heals its cached stream like the gateway does."""
-
-    async def executor(task_id, mgr, asker):
-        pass
-
-    store = TaskStore(path=tmp_path / "tasks.db")
-    svc = TaskService(
-        store=store,
-        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
-        manager=TaskManager(store, executor),
-        executor=executor,
-        planner_agent=object(),
-    )
-    t = await svc.store.create("research", objective="obj")
-
-    class _Reply:
-        body = "ok"
-
-    class _Agent:
-        async def ask(self, text, stream=None, prompt=None, **k):
-            return _Reply()
-
-    stream = MemoryStream(id=f"taskctl:{t.id}")
-    await stream.history.replace([_response_with_calls("call_ctl")])
-    svc._control_agents[t.id] = (_Agent(), stream)
-
-    assert await svc.chat(t.id, "hi") == "ok"
-    events = list(await stream.history.get_events())
-    assert any(
-        isinstance(e, ToolResultsEvent) and any(r.parent_id == "call_ctl" for r in e.results)
-        for e in events
-    )

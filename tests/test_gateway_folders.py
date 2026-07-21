@@ -69,12 +69,43 @@ def test_grant_upsert_and_revoke(monkeypatch, tmp_path):
         )
         assert r.status_code == 200
         grants = next(x for x in r.json()["folders"] if x["id"] == f["id"])["grants"]
-        assert grants == [{"profile": pid, "chat_id": "", "mode": "read"}]
+        assert grants == [{"profile": pid, "chat_id": "", "task_id": "", "mode": "read"}]
         # revoking a grant that isn't there → 404
         r = client.request(
             "DELETE", f"/api/folders/{f['id']}/grants", json={"profile": pid, "chat_id": "c1"}
         )
         assert r.status_code == 404
+
+
+def test_task_scope_grant_roundtrip(monkeypatch, tmp_path):
+    d = tmp_path / "acme"
+    d.mkdir()
+    client, pid = _client(monkeypatch)
+    with client:
+        fid = client.post("/api/folders", json={"path": str(d)}).json()["folder"]["id"]
+        r = client.post(
+            f"/api/folders/{fid}/grants",
+            json={"profile": "work", "task_id": "task-1", "mode": "read_write"},
+        )
+        assert r.status_code == 200
+        grants = [g for f in r.json()["folders"] if f["id"] == fid for g in f["grants"]]
+        assert {
+            "profile": "work",
+            "chat_id": "",
+            "task_id": "task-1",
+            "mode": "read_write",
+        } in grants
+        # both scopes at once → 400
+        r = client.post(
+            f"/api/folders/{fid}/grants",
+            json={"profile": "work", "chat_id": "c1", "task_id": "t1", "mode": "read"},
+        )
+        assert r.status_code == 400
+        # revoke is precise about scope
+        r = client.request(
+            "DELETE", f"/api/folders/{fid}/grants", json={"profile": "work", "task_id": "task-1"}
+        )
+        assert r.status_code == 200
 
 
 def test_folder_permission_routes_are_gone(monkeypatch):

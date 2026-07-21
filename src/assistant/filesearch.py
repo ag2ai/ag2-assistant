@@ -53,6 +53,22 @@ def _candidate(tier: int, name: str, abs_path: str, dir_label: str, kind: str) -
     )
 
 
+def _readable_roots(store, profile: str, chat_id: str, task_id: str = "") -> list[Path]:
+    """The top-level granted-Folder paths readable for this profile∪task∪chat.
+
+    A Folder is included iff ``mode_for`` resolves it to a non-``None`` mode. Roots
+    nested under another readable root are dropped so nothing is walked twice."""
+    readable: list[Path] = []
+    for f in store.list_folders():
+        try:
+            p = Path(f.get("path", "")).expanduser().resolve()
+        except (OSError, ValueError):
+            continue
+        if p.is_dir() and store.mode_for(p, profile, chat_id, task_id) is not None:
+            readable.append(p)
+    return [p for p in readable if not any(p != o and o in p.parents for o in readable)]
+
+
 def _walk_folder(root: Path, query: str, out: list, scanned: list) -> None:
     """Append candidates for files and Directories under ``root`` matching ``query``,
     pruning ``SKIP_DIRS`` and stopping at ``WALK_CAP``. ``dir`` labels are rooted at
@@ -121,15 +137,16 @@ def search_corpus(
     folders=None,
     profile: str = "",
     chat_id: str = "",
+    task_id: str = "",
     limit: int = SEARCH_LIMIT,
 ) -> list[dict]:
     """Search the reachable corpus for `query` (case-insensitive substring on an
     entry's name or relative path), ranked filename-first and bounded to `limit`.
 
     The corpus is the Files space at `workspace_dir` plus — when a `folders` store is
-    given — every Folder readable for `profile`∪`chat_id`. Each result carries an
-    ABSOLUTE `path`, a `name`, a `dir` display label, and a `kind`. A blank query
-    matches nothing, not an error."""
+    given — every Folder readable for `profile`∪`task_id`∪`chat_id`. Each result
+    carries an ABSOLUTE `path`, a `name`, a `dir` display label, and a `kind`. A
+    blank query matches nothing, not an error."""
     # Strip surrounding slashes so a path-style query (``@/media``) still matches the
     # ``media`` entry; interior slashes stay, for path-segment matches (``src/utils``).
     q = (query or "").strip().strip("/").lower()
@@ -160,7 +177,7 @@ def search_corpus(
     # Granted Folders — access-honoring walk (never surfaces a denied entry).
     if folders is not None:
         scanned = [0]
-        for froot in folders.readable_roots(profile, chat_id):
+        for froot in _readable_roots(folders, profile, chat_id, task_id):
             _walk_folder(froot, q, candidates, scanned)
 
     # Rank filename-first (tier), then a deterministic tiebreak; dedup by absolute

@@ -1,53 +1,72 @@
-"""Run 'seen' tracking: mark_seen only stamps a *finished* task (a peek at a still-
-running task must not pre-empt its unread indicator), is idempotent, and surfaces in
-the summary."""
+"""Run 'seen' tracking: mark_run_seen only stamps a *finished* run (a peek at a
+still-running run must not pre-empt its unread indicator), is idempotent, and
+survives old records that predate the field."""
 
-import pytest
+import asyncio
 
 from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
-from assistant.tasks.model import Task, TaskStatus
+from assistant.hitl import InquiryStore
+from assistant.tasks.model import Run
+from assistant.tasks.store import TaskStore
 
 
-def test_task_seen_at_back_compat():
-    # an existing task JSON without seen_at loads fine (defaults to None)
-    t = Task.from_dict({"id": "t1", "title": "old task"})
-    assert t.seen_at is None
+class _HangingGateway:
+    """A gateway whose turn never resolves on its own — mirrors FakeGateway's
+    `hang=True` mode in test_tasks_service.py so the run stays RUNNING until
+    explicitly stopped."""
+
+    def __init__(self):
+        self._gate = asyncio.Event()
+
+    async def send_message(self, *a, **kw):
+        await self._gate.wait()
+        return ""  # a user-stopped turn returns "" (TurnCancelled path)
+
+    async def cancel_turn(self, chat_id, reason="Stopped"):
+        self._gate.set()
+        return True
+
+    async def delete_chat(self, chat_id):
+        return True
 
 
-@pytest.mark.asyncio
-async def test_mark_seen_only_after_finished_idempotent_and_summarised(tmp_path):
+def test_run_seen_at_back_compat():
+    # an existing run JSON without seen_at loads fine (defaults to None)
+    r = Run.from_dict({"id": "run-1", "task_id": "task-1"})
+    assert r.seen_at is None
 
-    svc = TaskService(Config(data_dir=tmp_path))
-    await svc.start()
+
+async def test_mark_run_seen_only_after_finished_idempotent(tmp_path):
+    svc = TaskService(
+        config=Config(),
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+    )
+    svc.set_gateway(_HangingGateway())
     try:
-        task = await svc.store.create("a one-off task")  # PENDING
-        # not seen yet
-        rows = {r["id"]: r for r in await svc.list_all("all")}
-        assert rows[task.id]["seen"] is False
+        task = await svc.create_task(name="digest", prompt="p")
+        run = await svc.start_run(task["id"])
+        await asyncio.sleep(0.05)  # let the turn start (still running)
 
         # Peeking while it is still running must NOT stamp seen_at — otherwise the
-        # unread indicator would never fire once the task finishes. mark_seen still
-        # reports success (the task exists) but records nothing.
-        assert await svc.mark_seen(task.id) is True
-        assert (await svc.store.get(task.id)).seen_at is None
-        rows = {r["id"]: r for r in await svc.list_all("all")}
-        assert rows[task.id]["seen"] is False
+        # unread indicator would never fire once the run finishes. mark_run_seen
+        # still reports success (the run exists) but records nothing.
+        assert await svc.mark_run_seen(run.id) is True
+        assert (await svc.store.get_run(run.id)).seen_at is None
 
-        # Once finished, opening it stamps seen_at.
-        await svc.store.set_status(task.id, TaskStatus.COMPLETED)
-        assert await svc.mark_seen(task.id) is True
-        first = (await svc.store.get(task.id)).seen_at
+        # Once finished (stopped → a terminal status), opening it stamps seen_at.
+        assert await svc.stop_run(run.id) is True
+        await asyncio.wait_for(svc._jobs_done(), 5)
+        assert await svc.mark_run_seen(run.id) is True
+        first = (await svc.store.get_run(run.id)).seen_at
         assert first is not None
 
         # idempotent: a second call doesn't overwrite the timestamp
-        assert await svc.mark_seen(task.id) is True
-        assert (await svc.store.get(task.id)).seen_at == first
+        assert await svc.mark_run_seen(run.id) is True
+        assert (await svc.store.get_run(run.id)).seen_at == first
 
-        rows = {r["id"]: r for r in await svc.list_all("all")}
-        assert rows[task.id]["seen"] is True
-
-        # unknown task → False
-        assert await svc.mark_seen("nope") is False
+        # unknown run → False
+        assert await svc.mark_run_seen("nope") is False
     finally:
         await svc.close()

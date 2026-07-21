@@ -1,136 +1,137 @@
-"""The Task primitive — a tracked, nestable unit of work.
+"""Task + Run — the two task-subsystem primitives (Cowork-style).
 
-Mirrors AG2's task lifecycle (created/running/completed/failed/cancelled) and adds
-the states AG2 Assistant needs for its user-facing flow (scheduled, awaiting_input,
-planning). Serialises to/from a plain dict for JSON persistence.
+A Task is standing configuration: name + prompt + optional model + schedule +
+paused. A Run is one execution of it; its transcript is an ordinary chat
+stream (``task-run:{run_id}`` in chats.db), so a run is a chat you can open,
+steer while it works, and keep talking to afterwards. Both serialise to plain
+dicts for JSON persistence, mirroring how chats are stored.
 """
 
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from typing import Literal
+
+# What started a run: the scheduler's regular firing, an exhausted one-shot
+# slot, or an explicit "Run now" (UI button / agent tool).
+RunTrigger = Literal["schedule", "once", "manual"]
 
 
-class DeliverableStatus:
-    """Lifecycle of a single deliverable (a concrete promised output)."""
+class RunStatus:
+    """Run lifecycle states (string constants for easy JSON round-trip)."""
 
-    PENDING = "pending"  # not produced yet
-    PRODUCED = "produced"  # the agent produced it (asset attached) — awaiting check
-    ACCEPTED = "accepted"  # verified against criteria (auto) or signed off (user)
-    REJECTED = "rejected"  # failed criteria / user asked for rework
-
-
-@dataclass
-class Deliverable:
-    """A concrete expected output with its own acceptance criteria + state.
-
-    Stored on a Task as a plain dict (see `Task.deliverables`); this class is a
-    typed helper for creating/serialising them.
-    """
-
-    id: str
-    description: str
-    criteria: str = ""  # definition of done for THIS deliverable
-    status: str = DeliverableStatus.PENDING
-    asset: dict | None = None  # the produced artifact {name, path, kind}
-    notes: str = ""
-
-    @staticmethod
-    def new(description: str, criteria: str = "") -> dict:
-        return Deliverable(
-            id="dlv-" + uuid.uuid4().hex[:8], description=description, criteria=criteria
-        ).__dict__
-
-
-class TaskStatus:
-    """Task lifecycle states (string constants for easy JSON/round-trip)."""
-
-    PENDING = "pending"  # created, not yet started
-    SCHEDULED = "scheduled"  # waiting for a scheduled time
-    AWAITING_INPUT = "awaiting_input"  # paused on a HITL intake/permission prompt
-    PLANNING = "planning"  # forming the plan / subtasks
     RUNNING = "running"
+    NEEDS_INPUT = "needs_input"  # blocked on a durable inquiry answer
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
     TERMINAL = frozenset({COMPLETED, FAILED, CANCELLED})
-    ACTIVE = frozenset({PENDING, SCHEDULED, AWAITING_INPUT, PLANNING, RUNNING})
-    ALL = frozenset(ACTIVE | TERMINAL)
+    ALL = frozenset({RUNNING, NEEDS_INPUT} | TERMINAL)
+
+
+class ScheduleKind:
+    """Schedule union tags (string constants for easy JSON round-trip)."""
+
+    MANUAL = "manual"
+    ONCE = "once"
+    CRON = "cron"
+
+    ALL = (MANUAL, ONCE, CRON)  # order = order in the validation error message
+
+
+def manual_schedule() -> dict:
+    return {"kind": ScheduleKind.MANUAL, "at": None, "cron": None}
+
+
+def normalize_schedule(raw: dict | None) -> dict:
+    """Canonical ``{kind, at, cron}`` for a schedule union.
+
+    Raises ``ValueError`` with a user/agent-correctable message on bad input —
+    callers map it to HTTP 422 or a tool reply.
+    """
+    from assistant.tasks.scheduling import normalize_cron, parse_dt
+
+    if raw is None:
+        return manual_schedule()
+    kind = str(raw.get("kind") or "").strip().lower()
+    if kind not in ScheduleKind.ALL:
+        raise ValueError(
+            f"schedule.kind must be one of {', '.join(ScheduleKind.ALL)}, not {kind!r}"
+        )
+    if kind == ScheduleKind.MANUAL:
+        return manual_schedule()
+    if kind == ScheduleKind.ONCE:
+        at = str(raw.get("at") or "").strip()
+        if not at or parse_dt(at) is None:
+            raise ValueError(
+                "schedule.at must be an ISO 8601 datetime for kind='once', "
+                "e.g. 2026-08-01T09:00:00+03:00"
+            )
+        return {"kind": ScheduleKind.ONCE, "at": at, "cron": None}
+    cron = normalize_cron(str(raw.get("cron") or ""))
+    if cron is None:
+        raise ValueError(
+            "schedule.cron must be standard 5-field cron (minute hour dom month dow), "
+            "e.g. '0 9 * * *' = daily 09:00, or @hourly/@daily/@weekly/@monthly"
+        )
+    return {"kind": ScheduleKind.CRON, "at": None, "cron": cron}
 
 
 @dataclass
 class Task:
-    """A unit of work. Roots have `parent_id is None`; subtasks reference a parent."""
+    """Standing task configuration — what to run, on what model, when."""
 
     id: str
-    title: str
-    description: str = ""  # the raw request
-    objective: str = ""  # definition of done — what success looks like
-    status: str = TaskStatus.PENDING
-    parent_id: str | None = None
+    name: str
+    prompt: str = ""
+    model: str | None = None  # llm_configs entry id; None = profile default
+    schedule: dict = field(default_factory=manual_schedule)
+    paused: bool = False
+    starred: bool = False  # user pin → lifts the task into the drawer's Starred section
 
-    # deliverables = concrete promised outputs that gate completion (list of
-    # Deliverable dicts). auto_accept=True → a PRODUCED deliverable counts as done
-    # once it meets criteria; False → needs explicit user acceptance (HITL).
-    deliverables: list[dict] = field(default_factory=list)
-    auto_accept: bool = True
-
-    created_at: str = ""
-    started_at: str | None = None
-    ended_at: str | None = None
-
-    # scheduling
-    scheduled_for: str | None = None  # one-shot ISO datetime
-    recurrence: str | None = None  # e.g. "daily@09:00" (later phase)
-
-    # execution detail
-    progress: list[dict] = field(default_factory=list)  # {at, message, pct?}
-    result: str | None = None
-    error: str | None = None
-    plan: list[str] = field(default_factory=list)
-    intake: dict = field(default_factory=dict)  # clarifying Q&A
-    capability: str | None = None  # tag for recall
-    capabilities: list[str] = field(default_factory=list)  # tool groups this task may use
-    assets: list[dict] = field(default_factory=list)  # {name, path, kind}
-
-    # origin / routing
+    # delivery routing: the messaging channel (and its native chat id) the task
+    # was created from, so run outcomes can be pushed back there. None for web.
     origin_channel: str | None = None
     origin_chat: str | None = None
-    hitl_channel: str | None = None  # where to ask (override; default=origin)
 
-    stream_id: str | None = None  # per-task event-log id
-    run_of: str | None = None  # template id, set on a recurring task's per-occurrence run
-    seen_at: str | None = None  # when the user opened this task/run (drives unread highlight)
+    description: str = ""
 
-    # run-history (see docs/task-run-history-plan.md): `summary` is this run's own
-    # distilled digest of what it delivered (an enrichment cache; the durable record
-    # stays the deliverables). `history_runs` optionally overrides the config default
-    # for how many prior runs of this template feed the next run's context.
-    summary: str = ""
-    history_runs: int | None = None
-
-    @property
-    def is_terminal(self) -> bool:
-        return self.status in TaskStatus.TERMINAL
-
-    def deliverable_done(self, d: dict) -> bool:
-        """A deliverable counts as done when accepted (or produced + auto_accept)."""
-        st = d.get("status")
-        if st == DeliverableStatus.ACCEPTED:
-            return True
-        return st == DeliverableStatus.PRODUCED and self.auto_accept
-
-    def deliverables_satisfied(self) -> bool:
-        """True if every deliverable is done (vacuously true if none defined)."""
-        return all(self.deliverable_done(d) for d in self.deliverables)
-
-    def pending_deliverables(self) -> list[dict]:
-        return [d for d in self.deliverables if not self.deliverable_done(d)]
+    next_run_at: str | None = None  # ISO; derived from schedule (None: manual/paused)
+    created_at: str = ""
+    updated_at: str = ""
 
     def to_dict(self) -> dict:
-        return dict(self.__dict__)
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Task":
-        # ignore unknown keys so the store survives schema growth
+        # ignore unknown keys so the store survives schema growth (and old records)
+        known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
+        return cls(**known)
+
+
+@dataclass
+class Run:
+    """One execution of a Task. The transcript lives on the run's chat stream;
+    this record is just durable metadata for listing and cross-run context."""
+
+    id: str
+    task_id: str
+    status: str = RunStatus.RUNNING
+    trigger: RunTrigger = "manual"
+    started_at: str = ""
+    ended_at: str | None = None
+    summary: str = ""  # one-line outcome (cheap-model distilled)
+    error: str | None = None
+    seen_at: str | None = None  # drives the unread highlight
+
+    @property
+    def stream_id(self) -> str:
+        return f"task-run:{self.id}"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Run":
         known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
         return cls(**known)

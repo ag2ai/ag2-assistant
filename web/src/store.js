@@ -30,8 +30,14 @@ export const tasks = writable([])
 // The active drawer Tab ('chats' | 'tasks' | 'files') is not a store — it is the
 // `tab` field of the current route (see router.js); read $route.tab.
 
-// Current task's durable panel data (tree/schedule/deliverables), when kind==='task'.
-export const taskPanel = writable(null)
+// The open run's durable header data ({id, task_id, task_name, status, …}),
+// polled while a run thread is open; null otherwise.
+export const runInfo = writable(null)
+
+// A one-shot request to open a task's edit modal once its page loads. Set by the
+// Drawer's task-row "Edit" action (which navigates to /t/{id} first), consumed and
+// cleared by TaskPage when the matching task has loaded. Null when no request pending.
+export const pendingTaskEdit = writable(null)
 
 // Durable HITL: pending questions/permissions across all tasks, answerable
 // anywhere (polled). Survives restarts — backed by the InquiryStore.

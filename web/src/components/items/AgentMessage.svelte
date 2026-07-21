@@ -3,7 +3,7 @@
   import { a2uiComposingSurfaceId, splitA2UIText } from '../../lib/a2ui.js'
   import A2UIComposing from './A2UIComposing.svelte'
   import { go, openAsideFile } from '../../router.js'
-  import { thread, taskPanel } from '../../store.js'
+  import { thread, runInfo } from '../../store.js'
   import { requestContext } from '../../lib/feedback.js'
   import Feedback from './Feedback.svelte'
   let { item } = $props()
@@ -26,7 +26,7 @@
   })
   // Rate only finalized, non-empty replies that carry a stable key (created_at).
   const canRate = $derived(!item.streaming && !item.empty && displayText && item.at != null)
-  const request = $derived(requestContext($thread.items, item, $taskPanel))
+  const request = $derived(requestContext($thread.items, item, $runInfo))
 </script>
 
 <!-- An A2UI-only reply (payload, no prose) has nothing to put in the bubble yet. -->

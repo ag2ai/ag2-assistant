@@ -374,7 +374,12 @@ def folders_list() -> None:
         badge = "" if v["exists"] else "  (path not found)"
         typer.echo(f"{v['id']}  {v['name']}  {v['path']}{badge}")
         for g in v["grants"]:
-            scope = f"chat {g['chat_id']}" if g["chat_id"] else "profile"
+            if g.get("chat_id"):
+                scope = f"chat {g['chat_id']}"
+            elif g.get("task_id"):
+                scope = f"task {g['task_id']}"
+            else:
+                scope = "profile"
             typer.echo(f"    {g['profile']} ({scope}): {g['mode']}")
 
 
@@ -410,17 +415,19 @@ def folders_grant(
     profile: str = typer.Argument(help="Profile id the Grant belongs to."),
     mode: str = typer.Option("read", help="read or read_write."),
     chat: str = typer.Option("", help="Chat id for a chat-scoped Grant (default: whole profile)."),
+    task: str = typer.Option("", help="Task id for a task-scoped Grant (default: whole profile)."),
 ) -> None:
-    """Grant a profile (or one chat) access to a Folder."""
+    """Grant a profile (or one chat/task) access to a Folder."""
     try:
-        _folder_store().set_grant(folder_id, mode, profile=profile, chat_id=chat)
+        _folder_store().set_grant(folder_id, mode, profile=profile, chat_id=chat, task_id=task)
     except KeyError:
         typer.echo(f"Unknown folder: {folder_id}")
         raise typer.Exit(1)
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(1)
-    typer.echo(f"Granted {mode} on {folder_id} to {profile}" + (f" (chat {chat})" if chat else ""))
+    scope = f" (chat {chat})" if chat else (f" (task {task})" if task else "")
+    typer.echo(f"Granted {mode} on {folder_id} to {profile}" + scope)
 
 
 @folders_app.command("revoke")
@@ -428,9 +435,17 @@ def folders_revoke(
     folder_id: str = typer.Argument(help="Folder id."),
     profile: str = typer.Argument(help="Profile id."),
     chat: str = typer.Option("", help="Chat id of a chat-scoped Grant."),
+    task: str = typer.Option("", help="Task id of a task-scoped Grant."),
 ) -> None:
     """Revoke one Grant."""
-    if not _folder_store().revoke_grant(folder_id, profile=profile, chat_id=chat):
+    try:
+        revoked = _folder_store().revoke_grant(
+            folder_id, profile=profile, chat_id=chat, task_id=task
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1)
+    if not revoked:
         typer.echo("No such grant.")
         raise typer.Exit(1)
     typer.echo("Revoked.")
@@ -526,9 +541,16 @@ def telegram(
         gateway, tasks = build_gateway(memory=memory, platform="telegram")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
+        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("telegram")
+
+        async def notify(platform: str, chat_id: str, text: str) -> None:
+            if platform == "telegram":
+                await channel.notify(chat_id, text)
+
+        tasks.set_notifier(notify)  # run outcomes -> this channel
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Telegram. Press Ctrl+C to stop.")
         try:
@@ -555,9 +577,16 @@ def discord(
         gateway, tasks = build_gateway(memory=memory, platform="discord")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
+        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("discord")
+
+        async def notify(platform: str, chat_id: str, text: str) -> None:
+            if platform == "discord":
+                await channel.notify(chat_id, text)
+
+        tasks.set_notifier(notify)  # run outcomes -> this channel
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Discord. Press Ctrl+C to stop.")
         try:
@@ -583,9 +612,16 @@ def slack(
         gateway, tasks = build_gateway(memory=memory, platform="slack")
         await gateway.start()
         tasks.set_emitter(gateway.emit_event)
+        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
         channel = get_channel("slack")
+
+        async def notify(platform: str, chat_id: str, text: str) -> None:
+            if platform == "slack":
+                await channel.notify(chat_id, text)
+
+        tasks.set_notifier(notify)  # run outcomes -> this channel
         await channel.start(gateway)
         typer.echo("AG2 Assistant is live on Slack. Press Ctrl+C to stop.")
         try:

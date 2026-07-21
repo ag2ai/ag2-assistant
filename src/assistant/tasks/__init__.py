@@ -1,23 +1,38 @@
-"""AG2 Assistant task management — persistent, trackable, nestable tasks."""
+"""Task subsystem — Cowork-style tasks (config) and runs (chats)."""
 
-from assistant.tasks.executor import make_task_executor
-from assistant.tasks.model import Deliverable, DeliverableStatus, Task, TaskStatus
-from assistant.tasks.planner import TaskPlan, apply_plan, make_plan, prepare_task, run_intake
-from assistant.tasks.runner import TaskManager
+from assistant.tasks.model import (
+    Run,
+    RunStatus,
+    RunTrigger,
+    ScheduleKind,
+    Task,
+    manual_schedule,
+    normalize_schedule,
+)
+from assistant.tasks.scheduling import (
+    Scheduler,
+    compute_next_run,
+    describe_cron,
+    normalize_cron,
+    schedule_text,
+)
 from assistant.tasks.store import TaskStore, TaskStoreCorruptionError
+from assistant.tasks.summary import summarize_run
 
 __all__ = [
-    "Deliverable",
-    "DeliverableStatus",
+    "Run",
+    "RunStatus",
+    "RunTrigger",
+    "ScheduleKind",
+    "Scheduler",
     "Task",
-    "TaskStatus",
     "TaskStore",
     "TaskStoreCorruptionError",
-    "TaskManager",
-    "TaskPlan",
-    "make_plan",
-    "apply_plan",
-    "run_intake",
-    "prepare_task",
-    "make_task_executor",
+    "compute_next_run",
+    "describe_cron",
+    "manual_schedule",
+    "normalize_cron",
+    "normalize_schedule",
+    "schedule_text",
+    "summarize_run",
 ]

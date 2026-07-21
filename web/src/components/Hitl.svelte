@@ -10,10 +10,13 @@
   let seen = new Set()   // inquiry ids already surfaced — chime only on genuinely new ones
   let first = true
 
-  // The stream the open page renders inline: a task page → "task:<id>", a chat
-  // page → the chat id (mirrors controller.js's chat mapping).
+  // The stream the open page renders inline: a run thread → "task-run:<id>"
+  // (mirrors controller.js's openThread chat mapping), a chat page → the chat
+  // id. A task page (route.name === 'task') is config + a run list, not a
+  // chat — it has no inline stream, so it maps to null (nothing to dedupe
+  // against; its inquiries stay in the strip).
   const pageChat = $derived(
-    $route.name === 'task' ? 'task:' + $route.id : $route.name === 'chat' ? $route.id : null,
+    $route.name === 'run' ? 'task-run:' + $route.id : $route.name === 'chat' ? $route.id : null,
   )
 
   // An inquiry the open page already renders inline (its InquiryRaised rides that

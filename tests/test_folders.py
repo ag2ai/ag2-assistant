@@ -78,7 +78,7 @@ def test_grants_upsert_and_revoke(tmp_path):
     store.set_grant(f["id"], READ, profile="work")
     store.set_grant(f["id"], READ_WRITE, profile="work")  # upsert, not duplicate
     grants = store.get_folder(f["id"])["grants"]
-    assert grants == [{"profile": "work", "chat_id": "", "mode": READ_WRITE}]
+    assert grants == [{"profile": "work", "chat_id": "", "task_id": "", "mode": READ_WRITE}]
     assert store.revoke_grant(f["id"], profile="work") is True
     assert store.revoke_grant(f["id"], profile="work") is False
     with pytest.raises(KeyError):
@@ -250,3 +250,100 @@ def test_ephemeral_store_persists_nothing(tmp_path):
     store.set_grant(f["id"], READ, profile="work")
     assert store.mode_for(d, "work") == READ
     assert not (tmp_path / "folders.json").exists()
+
+
+def test_task_grant_applies_to_task_scope_only(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "data"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ_WRITE, profile="work", task_id="task-1")
+    assert store.mode_for(d, "work", task_id="task-1") == READ_WRITE
+    assert store.mode_for(d, "work") is None  # профиль без гранта
+    assert store.mode_for(d, "work", task_id="task-2") is None  # другая таска
+    assert store.mode_for(d, "work", chat_id="web-1") is None  # чат вне таски
+
+
+def test_resolution_chain_chat_over_task_over_profile(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "data"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work")  # профиль: read
+    store.set_grant(f["id"], READ_WRITE, profile="work", task_id="task-1")  # таска расширяет
+    assert store.mode_for(d, "work", chat_id="task-run:r1", task_id="task-1") == READ_WRITE
+    store.set_grant(f["id"], NONE, profile="work", chat_id="task-run:r1")  # чат блокирует
+    assert store.mode_for(d, "work", chat_id="task-run:r1", task_id="task-1") is None
+    # другой ран той же таски не затронут чатовым override'ом
+    assert store.mode_for(d, "work", chat_id="task-run:r2", task_id="task-1") == READ_WRITE
+
+
+def test_task_none_blocks_profile_folder_for_that_task(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "data"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work")
+    store.set_grant(f["id"], NONE, profile="work", task_id="task-1")
+    assert store.mode_for(d, "work", task_id="task-1") is None
+    assert store.mode_for(d, "work") == READ  # профиль не пострадал
+    assert store.mode_for(d, "work", task_id="task-2") == READ
+
+
+def test_grant_rejects_both_chat_and_task_scope(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "data"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    with pytest.raises(ValueError):
+        store.set_grant(f["id"], READ, profile="work", chat_id="c1", task_id="t1")
+
+
+def test_none_valid_for_task_scope_but_not_profile(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "data"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], NONE, profile="work", task_id="task-1")  # ок
+    with pytest.raises(ValueError):
+        store.set_grant(f["id"], NONE, profile="work")  # профиль-скоуп — нет
+
+
+def test_grant_views_carry_task_id(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "data"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work", task_id="task-1")
+    store.set_grant(f["id"], READ, profile="work")
+    grants = store.get_folder(f["id"])["grants"]
+    assert {(g["chat_id"], g["task_id"]) for g in grants} == {("", "task-1"), ("", "")}
+
+
+def test_revoke_is_scope_exact(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "data"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work")
+    store.set_grant(f["id"], READ, profile="work", task_id="task-1")
+    assert store.revoke_grant(f["id"], profile="work", task_id="task-1")
+    assert store.mode_for(d, "work") == READ  # профильный жив
+    assert not store.revoke_grant(f["id"], profile="work", task_id="task-1")  # уже нет
+
+
+def test_drop_task_removes_only_that_tasks_grants(tmp_path):
+    store = _store(tmp_path)
+    d1 = tmp_path / "a"
+    d1.mkdir()
+    d2 = tmp_path / "b"
+    d2.mkdir()
+    f1 = store.create_folder(str(d1))
+    f2 = store.create_folder(str(d2))
+    store.set_grant(f1["id"], READ, profile="work", task_id="task-1")
+    store.set_grant(f2["id"], READ, profile="work", task_id="task-2")
+    store.set_grant(f1["id"], READ, profile="work")
+    store.drop_task("task-1")
+    assert store.mode_for(d1, "work", task_id="task-1") == READ  # профильный ещё покрывает
+    assert not any(g["task_id"] == "task-1" for g in store.get_folder(f1["id"])["grants"])
+    assert store.mode_for(d2, "work", task_id="task-2") == READ  # чужая таска цела
