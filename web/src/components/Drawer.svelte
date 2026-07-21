@@ -12,7 +12,7 @@
   import ProfileForm from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
   import FilesTree from './FilesTree.svelte'
-  import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort } from '../lib/time.js'
+  import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
   import { inkOn } from '../design/palette.js'
@@ -192,6 +192,19 @@
     dayRows($chats.filter((c) => !c.starred).map((s) => ({ ...s, at: s.updated })), fmtDayShort)
   )
 
+  // Tasks mirror the chats list: a "Starred" section pinned on top, then the rest
+  // under date-group headers ("Recent"/"Yesterday"/date). Both are keyed by
+  // taskRecencyAt (last run's time, else creation) — the task analogue of a chat's
+  // last-message `updated` — newest-first; a starred task shows ONLY in Starred.
+  const byRecent = (a, b) => new Date(taskRecencyAt(b)) - new Date(taskRecencyAt(a))
+  const starredTasks = $derived($tasks.filter((t) => t.starred).sort(byRecent))
+  const taskRows = $derived(
+    dayRows(
+      $tasks.filter((t) => !t.starred).sort(byRecent).map((t) => ({ ...t, at: taskRecencyAt(t) })),
+      fmtDayShort,
+    )
+  )
+
   const openChat = (id) => go('/c/' + id)
   const openTask = (id) => go('/t/' + id)
   const newChat = () => go('/c/' + newChatId())
@@ -284,6 +297,16 @@
     $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: next } : x))
     try { await api.updateTask(t.id, { paused: next }) } catch {
       $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: !next } : x))
+    }
+  }
+
+  // Star/Unstar = flip the task's starred flag (mirrors chats' toggleStar).
+  async function toggleTaskStar(t) {
+    menuTask = ''
+    const next = !t.starred
+    $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, starred: next } : x))
+    try { await api.updateTask(t.id, { starred: next }) } catch {
+      $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, starred: !next } : x))
     }
   }
 
@@ -477,6 +500,75 @@
     </div>
   {/snippet}
 
+  {#snippet taskRow(t)}
+    {@const nextIn = !t.paused && t.next_run_at ? fmtNextIn(t.next_run_at) : ''}
+    <div class="drow ttask" class:on={$route.name === 'task' && $route.id === t.id}
+         class:unseen={t.unread > 0} onclick={() => openTask(t.id)}>
+      <div class="tline1">
+        {#if t.paused}<span class="statusicon" title="Paused"><Icon name="pause" size={14} /></span>
+        {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
+        {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={t.last_run.status}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
+        {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
+        {#if renameTask === t.id}
+          <input class="renamein" value={renameTaskText} use:focusSelect
+            oninput={(e) => (renameTaskText = e.target.value)}
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => { if (e.key === 'Enter') commitTaskRename(t); else if (e.key === 'Escape') renameTask = '' }}
+            onblur={() => commitTaskRename(t)} />
+        {:else}
+          <span class="ttitle">{t.name}</span>
+          <!-- Right slot mirrors a chat row's last-activity stamp: the unread-results
+               count when there are unseen runs, else the previous run's time. The
+               status itself is the line's left icon; here we add the "when". -->
+          {#if t.unread}
+            <span class="unreadcount" title="{t.unread} unread">{t.unread}</span>
+          {:else if t.last_run}
+            <span class="rowtime lastrun {t.last_run.status}" title="Last run: {stat(t.last_run.status).label}">{fmtAgoShort(t.last_run.ended_at || t.last_run.started_at)}</span>
+          {/if}
+        {/if}
+        {#if confirmTask === t.id}
+          <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+            <span class="confirm">Delete?</span>
+            <button class="linkbtn danger" disabled={busyTask === t.id}
+              onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : 'yes'}</button>
+            <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmTask = '' }}>no</button>
+          </span>
+        {:else if renameTask !== t.id}
+          <button class="rowkebab" title="Task actions" aria-haspopup="menu" aria-expanded={menuTask === t.id}
+            onclick={(e) => toggleTaskMenu(e, t)}><Icon name="ellipsis-vertical" size={14} /></button>
+          {#if menuTask === t.id}
+            <div class="chatmenu taskmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
+              onclick={(e) => e.stopPropagation()}>
+              <button class="cmitem" role="menuitem" onclick={() => toggleTaskStar(t)}>
+                <Icon name="star" size={14} /> {t.starred ? 'Unstar' : 'Star'}
+              </button>
+              <button class="cmitem" role="menuitem" onclick={() => startTaskRename(t)}>
+                <Icon name="pencil" size={14} /> Rename
+              </button>
+              <button class="cmitem" role="menuitem" onclick={() => toggleTaskPause(t)}>
+                <Icon name={t.paused ? 'play' : 'pause'} size={14} /> {t.paused ? 'Enable' : 'Disable'}
+              </button>
+              <button class="cmitem" role="menuitem" onclick={() => editTask(t)}>
+                <Icon name="pencil" size={14} /> Edit…
+              </button>
+              <div class="cmdiv"></div>
+              <button class="cmitem danger" role="menuitem"
+                onclick={() => { menuTask = ''; confirmTask = t.id }}>
+                <Icon name="trash" size={14} /> Delete
+              </button>
+            </div>
+          {/if}
+        {/if}
+      </div>
+      {#if (t.schedule.kind !== 'manual' || nextIn) && renameTask !== t.id}
+        <div class="tmeta">
+          {#if t.schedule.kind !== 'manual'}<span class="tag sched" title={t.schedule_desc}>{shortSched(t.schedule_desc) || t.schedule_desc}</span>{/if}
+          {#if nextIn}<span class="nextin" title="Next run">{nextIn}</span>{/if}
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#if $route.tab === 'files'}
     <FilesTree />
   {:else}
@@ -495,63 +587,13 @@
     {:else}
       <button class="newrow" onclick={() => openTask('new')}><Icon name="plus" size={15} /> New task</button>
       {#if !$tasks.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
-      {#each $tasks as t (t.id)}
-        {@const nextIn = !t.paused && t.next_run_at ? fmtNextIn(t.next_run_at) : ''}
-        <div class="drow ttask" class:on={$route.name === 'task' && $route.id === t.id}
-             class:unseen={t.unread > 0} onclick={() => openTask(t.id)}>
-          <div class="tline1">
-            {#if t.paused}<span class="statusicon" title="Paused"><Icon name="pause" size={14} /></span>
-            {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
-            {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={t.last_run.status}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
-            {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
-            {#if renameTask === t.id}
-              <input class="renamein" value={renameTaskText} use:focusSelect
-                oninput={(e) => (renameTaskText = e.target.value)}
-                onclick={(e) => e.stopPropagation()}
-                onkeydown={(e) => { if (e.key === 'Enter') commitTaskRename(t); else if (e.key === 'Escape') renameTask = '' }}
-                onblur={() => commitTaskRename(t)} />
-            {:else}
-              <span class="ttitle">{t.name}</span>
-              {#if t.unread}<span class="unreadcount" title="{t.unread} unread">{t.unread}</span>{/if}
-            {/if}
-            {#if confirmTask === t.id}
-              <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
-                <span class="confirm">Delete?</span>
-                <button class="linkbtn danger" disabled={busyTask === t.id}
-                  onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : 'yes'}</button>
-                <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmTask = '' }}>no</button>
-              </span>
-            {:else if renameTask !== t.id}
-              <button class="rowkebab" title="Task actions" aria-haspopup="menu" aria-expanded={menuTask === t.id}
-                onclick={(e) => toggleTaskMenu(e, t)}><Icon name="ellipsis-vertical" size={14} /></button>
-              {#if menuTask === t.id}
-                <div class="chatmenu taskmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
-                  onclick={(e) => e.stopPropagation()}>
-                  <button class="cmitem" role="menuitem" onclick={() => startTaskRename(t)}>
-                    <Icon name="pencil" size={14} /> Rename
-                  </button>
-                  <button class="cmitem" role="menuitem" onclick={() => toggleTaskPause(t)}>
-                    <Icon name={t.paused ? 'play' : 'pause'} size={14} /> {t.paused ? 'Enable' : 'Disable'}
-                  </button>
-                  <button class="cmitem" role="menuitem" onclick={() => editTask(t)}>
-                    <Icon name="pencil" size={14} /> Edit…
-                  </button>
-                  <div class="cmdiv"></div>
-                  <button class="cmitem danger" role="menuitem"
-                    onclick={() => { menuTask = ''; confirmTask = t.id }}>
-                    <Icon name="trash" size={14} /> Delete
-                  </button>
-                </div>
-              {/if}
-            {/if}
-          </div>
-          {#if (t.schedule.kind !== 'manual' || nextIn) && renameTask !== t.id}
-            <div class="tmeta">
-              {#if t.schedule.kind !== 'manual'}<span class="tag sched" title={t.schedule_desc}>{shortSched(t.schedule_desc) || t.schedule_desc}</span>{/if}
-              {#if nextIn}<span class="nextin" title="Next run">{nextIn}</span>{/if}
-            </div>
-          {/if}
-        </div>
+      {#if starredTasks.length}
+        <div class="datesep">Starred</div>
+        {#each starredTasks as t (t.id)}{@render taskRow(t)}{/each}
+      {/if}
+      {#each taskRows as { item: t, sep } (t.id)}
+        {#if sep}<div class="datesep">{sep}</div>{/if}
+        {@render taskRow(t)}
       {/each}
     {/if}
   </div>
@@ -673,7 +715,12 @@
   /* Last-activity stamp, right-aligned; the hover swaps it for the delete
      affordance so the row's right slot never doubles up. */
   .rowtime { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .chatrow:hover .rowtime, .chatrow:focus-within .rowtime { display: none; }
+  .chatrow:hover .rowtime, .chatrow:focus-within .rowtime,
+  .ttask:hover .rowtime, .ttask:focus-within .rowtime { display: none; }
+  /* Task last-run stamp: faint by default, but a failed/waiting last run tints
+     the time so a bad outcome reads at a glance even with the row unopened. */
+  .lastrun.failed { color: #d8552f; }
+  .lastrun.needs_input { color: var(--accent); }
   .rowconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; }
   .rowconfirm .confirm { color: #d8552f; font-size: 12px; }
   .rowconfirm .linkbtn { border: none; background: none; font: inherit; font-size: 12px; cursor: pointer; padding: 0; color: var(--accent); }

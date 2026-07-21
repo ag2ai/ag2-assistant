@@ -100,6 +100,7 @@ def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> 
         "schedule": t.schedule,
         "schedule_desc": schedule_text(t.schedule),
         "paused": t.paused,
+        "starred": t.starred,
         "next_run_at": t.next_run_at,
         "created_at": t.created_at,
         "updated_at": t.updated_at,

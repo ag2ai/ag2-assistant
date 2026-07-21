@@ -86,6 +86,7 @@ class Task:
     model: str | None = None  # llm_configs entry id; None = profile default
     schedule: dict = field(default_factory=manual_schedule)
     paused: bool = False
+    starred: bool = False  # user pin → lifts the task into the drawer's Starred section
 
     # delivery routing: the messaging channel (and its native chat id) the task
     # was created from, so run outcomes can be pushed back there. None for web.

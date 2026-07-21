@@ -32,6 +32,22 @@ async def test_update_task_patch_semantics(tmp_path):
     assert await svc.update_task("task-missing", name="X") is None
 
 
+async def test_starred_defaults_false_and_round_trips(tmp_path):
+    svc = TaskService(
+        config=Config(),
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+    )
+    t = await svc.create_task(name="A", prompt="p")
+    assert t["starred"] is False  # absent on a fresh task
+    out = await svc.update_task(t["id"], starred=True)
+    assert out["starred"] is True
+    # the row the drawer lists carries the flag through
+    row = next(r for r in await svc.list_tasks() if r["id"] == t["id"])
+    assert row["starred"] is True
+    assert (await svc.update_task(t["id"], starred=False))["starred"] is False
+
+
 # ---- HTTP-level: /api/p/{pid}/tasks* and /runs* ----
 
 
@@ -85,6 +101,20 @@ def test_patch_task_http_model_empty_clears_to_default(monkeypatch):
         r = client.patch(api(pid, f"/tasks/{tid}"), json={"model": ""})
         assert r.status_code == 200, r.text
         assert r.json()["task"]["model"] is None
+
+
+def test_patch_task_http_starred_toggles(monkeypatch):
+    client, pid = _client(monkeypatch)
+    with client:
+        created = client.post(api(pid, "/tasks"), json={"name": "S", "prompt": "p"}).json()["task"]
+        assert created["starred"] is False
+        tid = created["id"]
+        r = client.patch(api(pid, f"/tasks/{tid}"), json={"starred": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["task"]["starred"] is True
+        r = client.patch(api(pid, f"/tasks/{tid}"), json={"starred": False})
+        assert r.status_code == 200, r.text
+        assert r.json()["task"]["starred"] is False
 
 
 def test_patch_task_http_bad_schedule_is_422(monkeypatch):

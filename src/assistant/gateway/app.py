@@ -267,6 +267,7 @@ class TaskPatch(BaseModel):
     model: str | None = None  # "" clears back to the profile default
     schedule: dict | None = None
     paused: bool | None = None
+    starred: bool | None = None
     description: str | None = None
 
 
