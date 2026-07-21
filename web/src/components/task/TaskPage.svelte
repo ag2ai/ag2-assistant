@@ -1,19 +1,23 @@
 <script>
   // The task's page: a Cowork-style read-only view (name / description / status /
-  // instructions / working folder / schedule / approvals) + its run history.
-  // Editing config lives in TaskEditModal, opened over this page. `/t/new` is the
-  // same page with the modal open over an empty view — one route, one component,
-  // for both create and edit. Each run opens as a chat thread at /r/{id}.
+  // instructions / model / working folders / schedule / approvals) + its run history,
+  // that edits ITSELF inline (ADR 0014). The pencil flips the whole page into a form;
+  // Save commits every field — including folder Grants — atomically; Cancel discards
+  // all. `/t/new` is the same page opened directly in edit state (single column), where
+  // Save POSTs instead of PATCHes. No modal. Each run opens as a chat thread at /r/{id}.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
   import { go, goTab, route } from '../../router.js'
   import { profiles, tasks, pendingTaskEdit } from '../../store.js'
   import { getActiveProfileId } from '../../lib/profile.js'
-  import { foldersStore, loadFolders } from '../../lib/folders.js'
+  import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.js'
   import { llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { folderGrantDiff, taskEditPatch } from '../../lib/taskEdit.js'
   import Icon from '../Icon.svelte'
   import AppBar from '../AppBar.svelte'
-  import TaskEditModal from './TaskEditModal.svelte'
+  import AccessSwitch from '../AccessSwitch.svelte'
+  import FolderPicker from '../FolderPicker.svelte'
+  import ScheduleField from './ScheduleField.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.js'
 
   const TERMINAL = ['completed', 'failed', 'cancelled']
@@ -23,51 +27,92 @@
   let running = $state(false)
   let pausing = $state(false)
   let confirmDel = $state(false)
-  let editOpen = $state(false)
   let error = $state('')
 
-  const isNew = $derived($route.id === 'new')
+  // Edit state (ADR 0014). `editing` flips the whole page into a form; on `/t/new` it
+  // is on from the moment the route loads. All field edits — scalars and folders —
+  // buffer here and write to the server only on Save.
+  let editing = $state(false)
+  let saving = $state(false)
+  let ename = $state('')
+  let edesc = $state('')
+  let eprompt = $state('')
+  let emodel = $state(null)
+  let eschedule = $state({ kind: 'manual', at: null, cron: null })
+  let efolders = $state([])   // intended folder set: [{ id, path, name, exists, profileMode, mode }]
+  let pickerOpen = $state(false)
+  let roots = $state({})      // fs roots for the FolderPicker (cwd/home/workspace)
+  let _createFoldersSeeded = false
 
-  // Live Folder snapshot — TaskEditModal / TaskFolders mutate the same store, so
-  // this list refreshes when folders are attached/detached. Mirror TaskFolders'
-  // effective-access model exactly: a task reaches its own task-scope folders AND
-  // the profile folders, with a task-scope grant overriding the profile mode (a
-  // task 'none' override blocks a profile folder). Listing only task-scope grants
-  // (as this preview used to) drops profile folders the task can actually read.
+  const isNew = $derived($route.id === 'new')
+  // Whether the page shows the form. `/t/new` is always a form — driven off `isNew`
+  // directly (not just the `editing` flag), so the very first render can't fall into
+  // the read-only branch and dereference the still-null `task` before load() runs.
+  const inEdit = $derived(editing || isNew)
+
+  // Live Folder snapshot — mirror TaskFolders' effective-access model exactly: a task
+  // reaches its own task-scope folders AND the profile folders, with a task-scope grant
+  // overriding the profile mode (a task 'none' override blocks a profile folder).
   const pid = $derived($profiles.activeId || getActiveProfileId())
   onMount(() => {
     if (!$foldersStore.loaded) loadFolders()
     if (!$llmConfigs.loaded) loadLlmConfigs()   // no composer here to seed the config list
+    api.settings().then((s) => { roots = s.fs || {} }).catch(() => {})
   })
 
-  // App-bar subtitle: "Profile • Model", matching the run bar (Thread.svelte). The
-  // task's own model wins; without one it falls back to the install's active default.
+  // App-bar subtitle: "Profile • Model", matching the run bar (Thread.svelte). While
+  // editing, mirror the buffered model so the header stays an accurate reflection; the
+  // task's own model wins, falling back to the install's active default.
   const activeProfile = $derived(($profiles.list || []).find((p) => p.id === $profiles.activeId))
-  const taskModel = $derived($llmConfigs.configs.find((c) => c.id === (task?.model || $llmConfigs.active)))
+  const effModelId = $derived(inEdit ? emodel : task?.model)
+  const taskModel = $derived($llmConfigs.configs.find((c) => c.id === (effModelId || $llmConfigs.active)))
   const subtitle = $derived([activeProfile?.name, taskModel?.name].filter(Boolean).join(' • '))
+  // The Model row's read-only label: the task's chosen config, else "Profile default".
+  const modelRowLabel = $derived(
+    task?.model ? ($llmConfigs.configs.find((c) => c.id === task.model)?.name || task.model) : 'Profile default'
+  )
+
   const tGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.task_id === task.id && !g.chat_id)
   const profileGrant = (f) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
   const effMode = (f) => { const t = tGrant(f); return t ? t.mode : profileGrant(f)?.mode }
-  // Split into the modal's two groups (Task folders / Profile folders), read-only:
-  // task-only folders that grant access, and profile folders the task can still
-  // reach (a task 'none' override drops them here). Same layout, minus the controls.
+  // Split into the two read-only groups (Task folders / Profile folders): task-only
+  // folders that grant access, and profile folders the task can still reach (a task
+  // 'none' override drops them here). Same layout, minus the controls.
   const _folders = $derived($foldersStore.folders || [])
   const taskFolders = $derived(!task ? [] : _folders.filter((f) => { const t = tGrant(f); return t && t.mode !== 'none' && !profileGrant(f) }))
   const profileFolders = $derived(!task ? [] : _folders.filter((f) => profileGrant(f) && effMode(f) !== 'none'))
   const hasFolders = $derived(taskFolders.length > 0 || profileFolders.length > 0)
   const modeLabel = (m) => (m === 'read_write' ? 'Read + write' : 'Read')
 
+  // The task's CURRENT grant reality for this profile — every folder carrying a
+  // profile- or task-scope grant, with both modes. This is the `current` side of
+  // folderGrantDiff and the seed for the edit buffer.
+  function currentFolderState() {
+    if (!task) return []
+    return _folders
+      .filter((f) => profileGrant(f) || tGrant(f))
+      .map((f) => ({
+        id: f.id, path: f.path, name: f.name, exists: f.exists !== false,
+        profileMode: profileGrant(f)?.mode ?? null,
+        taskMode: tGrant(f)?.mode ?? null,
+      }))
+  }
+
+  // The edit-buffer folder groups (task-only vs profile), derived from `efolders`.
+  const eTaskFolders = $derived(efolders.filter((f) => f.profileMode == null))
+  const eProfileFolders = $derived(efolders.filter((f) => f.profileMode != null))
+
   // Monotonic token: fast task-A → task-B navigation can let A's load() await
   // resolve after B's has started. Each call claims the next token and checks
-  // it's still current before committing ANY state — `task`/`perms` are always
-  // written together from locally-held results, never from a bare awaited
-  // value, so a superseded call can't leave `task` = A while `perms` = B.
+  // it's still current before committing ANY state.
   let _loadSeq = 0
   async function load(id) {
     const seq = ++_loadSeq
     error = ''
     confirmDel = false
-    if (id === 'new') { task = null; perms = []; return }
+    editing = false
+    _createFoldersSeeded = false
+    if (id === 'new') { task = null; perms = []; seedBuffer(null); editing = true; return }
     try {
       const [t, p] = await Promise.all([api.task(id), api.taskPermissions(id).catch(() => [])])
       if (seq !== _loadSeq) return
@@ -84,17 +129,26 @@
   $effect(() => { const id = $route.id; if (id !== _lastId) { _lastId = id; load(id) } })
 
   // Honour a one-shot "open Edit" request from the Drawer's task-row menu: it sets
-  // pendingTaskEdit then navigates here, so open the modal once the matching task
+  // pendingTaskEdit then navigates here, so enter edit state once the matching task
   // has loaded (guarded on id so a stale request can't pop Edit on the wrong task).
+  // Wait for the folder snapshot before entering edit — seedBuffer captures the
+  // effective grant set from it, and a Save against an empty (unloaded) seed would
+  // diff every current grant to nothing and revoke it.
   $effect(() => {
-    if (task && $pendingTaskEdit === task.id) { pendingTaskEdit.set(null); editOpen = true }
+    if (task && $foldersStore.loaded && $pendingTaskEdit === task.id) { pendingTaskEdit.set(null); startEdit() }
+  })
+
+  // The folder snapshot can still be loading when `/t/new` first seeds its buffer;
+  // re-seed the create folder list once it arrives (before that the section is empty
+  // and un-editable, so nothing the user did is lost). One-shot per create session.
+  $effect(() => {
+    if (isNew && $foldersStore.loaded && !_createFoldersSeeded) { _createFoldersSeeded = true; efolders = createFolderSeed() }
   })
 
   // Reflect drawer-side edits (rename / enable-disable) on the open page: those patch
   // the shared $tasks store, not this page's own detailed copy. Merge back only the
   // summary fields the drawer can change, so richer local data (runs, prompt, grants)
-  // is preserved. One-directional (store → page); this page's own edits already write
-  // through via patchTaskInStore, so the merge is a no-op for them.
+  // is preserved.
   $effect(() => {
     if (!task) return
     const row = $tasks.find((x) => x.id === task.id)
@@ -102,6 +156,113 @@
       task = { ...task, name: row.name, paused: row.paused }
     }
   })
+
+  // --- Edit state -----------------------------------------------------------------
+
+  // Snapshot the task (and its effective folder set) into the local buffer. `t` may be
+  // null for create. $state.snapshot, not structuredClone: `task` is a $state proxy and
+  // structuredClone throws DataCloneError on proxies.
+  function seedBuffer(t) {
+    ename = t?.name || ''
+    edesc = t?.description || ''
+    eprompt = t?.prompt || ''
+    emodel = t?.model ?? null
+    eschedule = t ? $state.snapshot(t.schedule) : { kind: 'manual', at: null, cron: null }
+    efolders = t ? currentFolderState().map((g) => ({ ...g, mode: g.taskMode ?? g.profileMode })) : createFolderSeed()
+    pickerOpen = false
+  }
+  // Create has no task yet (no task-scope grants), but the profile's own folders should
+  // still be editable up front — pick them at their profile mode so a change becomes a
+  // task override on Save (folderGrantDiff turns mode≠profile into a set-grant against
+  // the new task; an unchanged one is a no-op).
+  function createFolderSeed() {
+    return _folders
+      .filter((f) => profileGrant(f))
+      .map((f) => ({ id: f.id, path: f.path, name: f.name, exists: f.exists !== false, profileMode: profileGrant(f).mode, taskMode: null, mode: profileGrant(f).mode }))
+  }
+  function startEdit() { if (!task) return; seedBuffer(task); error = ''; editing = true }
+  // Edit only — create has no Cancel (you leave a New task by navigating away, not by
+  // cancelling). Discard the buffer and return to the read-only page.
+  function cancel() { editing = false; error = '' }
+
+  // Buffered folder mutations — nothing hits the server until Save. A task-only folder
+  // switched Off is dropped from the buffer (removed); a profile folder switched Off
+  // becomes a task `none` block (kept, so it can be re-enabled).
+  function setFolderMode(entry, next) {
+    if (entry.profileMode == null) {
+      if (next === null) efolders = efolders.filter((x) => x !== entry)
+      else efolders = efolders.map((x) => (x === entry ? { ...x, mode: next } : x))
+    } else {
+      efolders = efolders.map((x) => (x === entry ? { ...x, mode: next ?? 'none' } : x))
+    }
+  }
+  function addFolder(path) {
+    pickerOpen = false
+    if (!path || efolders.some((x) => x.path === path)) return
+    efolders = [...efolders, { id: null, path, name: path, exists: true, profileMode: null, mode: 'read' }]
+  }
+
+  // Apply the ordered op list from folderGrantDiff against `taskId`, resolving
+  // freshly-created folders by path. 409 on create means the path is already a Folder —
+  // fall back to the existing snapshot. Mirrors TaskFolders / the old modal's grant glue.
+  async function applyFolderOps(ops, taskId) {
+    const byPath = {}
+    for (const op of ops) {
+      if (op.kind === 'create-folder') {
+        let snap, folder
+        try {
+          snap = await api.createFolder(op.path)
+          folder = (snap.folders || []).find((f) => f.path === op.path)
+        } catch (e) {
+          if (e.status === 409 && e.body?.existing?.id) {
+            snap = await api.folders()
+            folder = (snap.folders || []).find((f) => f.id === e.body.existing.id)
+          } else throw e
+        }
+        if (folder) { byPath[op.path] = folder.id; applyFolders(snap) }
+      } else if (op.kind === 'set-grant') {
+        const id = op.id ?? byPath[op.path]
+        if (id) applyFolders(await api.setGrant(id, pid, op.mode, '', taskId))
+      } else if (op.kind === 'revoke') {
+        const id = op.id ?? byPath[op.path]
+        if (id) applyFolders(await api.revokeGrant(id, pid, '', taskId))
+      }
+    }
+  }
+
+  async function save() {
+    if (!eprompt.trim() || saving) return
+    saving = true
+    error = ''
+    try {
+      if (isNew) {
+        // Create: POST (auto-names from the prompt when name is blank), then mint the
+        // buffered folders against the new id. Folder attach is best-effort — the task
+        // is already saved, so a folder failure must not sink the create.
+        const created = await api.createTask({
+          name: ename.trim(),
+          description: edesc.trim(),
+          prompt: eprompt.trim(),
+          model: emodel ?? '',
+          schedule: $state.snapshot(eschedule),
+        })
+        patchTaskInStore(created)
+        try { await applyFolderOps(folderGrantDiff([], $state.snapshot(efolders)), created.id) } catch { /* task saved */ }
+        go('/t/' + created.id)
+      } else {
+        // Edit: build a minimal PATCH of changed task fields, then reconcile folders.
+        const patch = taskEditPatch(task, { name: ename, description: edesc, prompt: eprompt, model: emodel, schedule: $state.snapshot(eschedule) })
+        const updated = Object.keys(patch).length ? await api.updateTask(task.id, patch) : task
+        task = updated
+        patchTaskInStore(updated)
+        // Task is saved; apply the folder diff. A folder failure surfaces without
+        // corrupting the saved task (we stay in edit mode with the error shown).
+        await applyFolderOps(folderGrantDiff(currentFolderState(), $state.snapshot(efolders)), task.id)
+        editing = false
+      }
+    } catch (e) { error = e.message || 'save failed' }
+    finally { saving = false }
+  }
 
   async function runNow() {
     if (running || !task) return
@@ -111,9 +272,7 @@
   }
 
   // Patch the shared task-list store so the drawer's paused glyph (and any other
-  // $tasks reader) reflects the toggle immediately, rather than waiting up to 5s
-  // for Drawer's poll to re-sync. The server copy is authoritative — merge the
-  // whole returned row, not just `paused`.
+  // $tasks reader) reflects the toggle immediately. The server copy is authoritative.
   function patchTaskInStore(t) {
     tasks.update((list) => list.map((x) => (x.id === t.id ? t : x)))
   }
@@ -141,76 +300,139 @@
     catch (e) { error = e.message || 'revoke failed' }
   }
 
-  // isNew: closing/saving the modal has nowhere else to land on but /tasks / the
-  // new task's own page. Editing: the modal just closes back over this page,
-  // with the fresh copy from the save swapped straight into `task`.
-  function closeModal() { if (isNew) goTab('tasks'); else editOpen = false }
-  function onModalSaved(t) { patchTaskInStore(t); if (isNew) go('/t/' + t.id); else { task = t; editOpen = false } }
-
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
   const STAT_ICON = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
 </script>
 
 <AppBar
   back={{ label: 'Tasks', onClick: () => goTab('tasks') }}
-  title={task?.name || (isNew ? 'New task' : 'Task')}
+  title={inEdit ? (ename || (isNew ? 'New task' : task?.name) || 'Task') : (task?.name || 'Task')}
   {subtitle} />
 
 <div class="thread taskpage">
   <div class="inner">
     {#if error}<div class="taskerror"><Icon name="x" size={13} /> {error}</div>{/if}
 
-    {#if task}
+    {#if task || isNew}
       <div class="tphead">
-        <div>
-          <h1>{task.name}</h1>
-          {#if task.description}<div class="tpdesc">{task.description}</div>{/if}
-          <div class="tpstatus">
-            <label class="tpswitch">
-              <input type="checkbox" checked={!task.paused} disabled={pausing} onchange={togglePause} />
-              <span class="tpknob"></span>
-            </label>
-            <span class="badge" class:paused={task.paused}>{task.paused ? 'Paused' : 'Active'}</span>
-            {#if task.next_run_at && !task.paused}<span class="muted">Next run: {fmtNextIn(task.next_run_at)}</span>{/if}
-          </div>
+        <div class="tpheadmain">
+          {#if inEdit}
+            <input class="tpnameinput" bind:value={ename} placeholder="Name — generated from the prompt if blank" />
+            <input class="tpdescinput" bind:value={edesc} placeholder="Description (optional)" />
+          {:else}
+            <h1>{task.name}</h1>
+            {#if task.description}<div class="tpdesc">{task.description}</div>{/if}
+            <div class="tpstatus">
+              <label class="tpswitch">
+                <input type="checkbox" checked={!task.paused} disabled={pausing} onchange={togglePause} />
+                <span class="tpknob"></span>
+              </label>
+              <span class="badge" class:paused={task.paused}>{task.paused ? 'Paused' : 'Active'}</span>
+              {#if task.next_run_at && !task.paused}<span class="muted">Next run: {fmtNextIn(task.next_run_at)}</span>{/if}
+            </div>
+          {/if}
         </div>
         <div class="tpactions">
-          <button class="iconbtn" title="Edit" onclick={() => (editOpen = true)}><Icon name="pencil" size={15} /></button>
-          <span class="delwrap">
-            <button class="iconbtn" title="Delete" onclick={() => (confirmDel = !confirmDel)}><Icon name="trash" size={15} /></button>
-            {#if confirmDel}
-              <span class="delconfirm">
-                <span class="confirm">Delete permanently?</span>
-                <button class="open danger" onclick={del}>Yes, delete</button>
-                <button class="open" onclick={() => (confirmDel = false)}>Cancel</button>
-              </span>
+          {#if inEdit}
+            {#if !isNew}
+              <button class="open" disabled={saving} onclick={cancel}>Cancel</button>
             {/if}
-          </span>
-          <button class="open primary" disabled={running} onclick={runNow}>
-            <Icon name="play" size={14} /> {running ? 'Starting…' : 'Run now'}
-          </button>
+            <button class="open primary" disabled={!eprompt.trim() || saving} onclick={save}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          {:else}
+            <button class="iconbtn" title="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
+            <span class="delwrap">
+              <button class="iconbtn" title="Delete" onclick={() => (confirmDel = !confirmDel)}><Icon name="trash" size={15} /></button>
+              {#if confirmDel}
+                <span class="delconfirm">
+                  <span class="confirm">Delete permanently?</span>
+                  <button class="open danger" onclick={del}>Yes, delete</button>
+                  <button class="open" onclick={() => (confirmDel = false)}>Cancel</button>
+                </span>
+              {/if}
+            </span>
+            <button class="open primary" disabled={running} onclick={runNow}>
+              <Icon name="play" size={14} /> {running ? 'Starting…' : 'Run now'}
+            </button>
+          {/if}
         </div>
       </div>
 
-      <div class="tpcols">
-        <section>
-          <h2>History</h2>
-          {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
-          <div class="runslist">
-            {#each task.runs as r (r.id)}
-              <button class="runrow" class:unseen={TERMINAL.includes(r.status) && !r.seen} onclick={() => go('/r/' + r.id)}>
-                <span class="statusicon {r.status}"><Icon name={STAT_ICON[r.status] || 'clock'} size={13} /></span>
-                <span class="runwhen">{fmtStamp(r.started_at)}</span>
-                <span class="runsum">{r.summary || r.error || r.status}</span>
-              </button>
-            {/each}
-          </div>
-        </section>
+      <div class="tpcols" class:single={isNew}>
+        {#if !isNew}
+          <section>
+            <h2>History</h2>
+            {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
+            <div class="runslist">
+              {#each task.runs as r (r.id)}
+                <button class="runrow" class:unseen={TERMINAL.includes(r.status) && !r.seen} onclick={() => go('/r/' + r.id)}>
+                  <span class="statusicon {r.status}"><Icon name={STAT_ICON[r.status] || 'clock'} size={13} /></span>
+                  <span class="runwhen">{fmtStamp(r.started_at)}</span>
+                  <span class="runsum">{r.summary || r.error || r.status}</span>
+                </button>
+              {/each}
+            </div>
+          </section>
+        {/if}
         <section>
           <h2>Instructions</h2>
-          <p class="tpprompt">{task.prompt}</p>
+          {#if inEdit}
+            <textarea class="tpinput tpprompt-input" rows="6" bind:value={eprompt}
+              placeholder="What should the agent do on every run? Be specific — it runs unattended."></textarea>
+          {:else}
+            <p class="tpprompt">{task.prompt}</p>
+          {/if}
+
+          <h2>Model</h2>
+          {#if inEdit}
+            <select class="tpinput chpick" bind:value={emodel}>
+              <option value={null}>Profile default</option>
+              {#each $llmConfigs.configs as m (m.id)}<option value={m.id}>{m.name} ({m.model})</option>{/each}
+            </select>
+          {:else}
+            <p class="tpmeta">{modelRowLabel}</p>
+          {/if}
+
           <h2>Folders</h2>
-          {#if hasFolders}
+          {#if inEdit}
+            {#if eTaskFolders.length}
+              <div class="fsec">Task folders</div>
+              {#each eTaskFolders as f (f.path)}
+                <div class="frow">
+                  <span class="fico"><Icon name="folder" size={14} /></span>
+                  <span class="fname" title={f.path}>{f.name}</span>
+                  <!-- Task-only folders can't be "Off" (that's removal), so they get a
+                       2-position Read/Read+write toggle + an explicit Delete, not the
+                       3-position switch profile folders use. Mirrors TaskFolders. -->
+                  <div class="fctl">
+                    <span class="tglstate">{modeLabel(f.mode)}</span>
+                    <button class="tgl" class:on={f.mode === 'read_write'} role="switch" aria-checked={f.mode === 'read_write'} aria-label="Allow writing"
+                      onclick={() => setFolderMode(f, f.mode === 'read_write' ? 'read' : 'read_write')}></button>
+                    <button class="iconbtn" title="Remove folder" aria-label="Remove folder" onclick={() => setFolderMode(f, null)}><Icon name="trash" size={14} /></button>
+                  </div>
+                </div>
+              {/each}
+            {/if}
+            {#if eProfileFolders.length}
+              <div class="fsec">Profile folders</div>
+              {#each eProfileFolders as f (f.path)}
+                <div class="frow">
+                  <span class="fico"><Icon name="folder" size={14} /></span>
+                  <span class="fname" title={f.path}>{f.name}</span>
+                  <AccessSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
+                </div>
+              {/each}
+            {/if}
+            <button class="open addfolder" onclick={() => (pickerOpen = !pickerOpen)}>
+              <Icon name="folder" size={14} /> Add working folder
+            </button>
+            {#if pickerOpen}
+              <div class="tppicker">
+                <FolderPicker {roots} start={roots.cwd || roots.home || ''} onUse={addFolder} />
+              </div>
+            {/if}
+          {:else if hasFolders}
             {#if taskFolders.length}
               <div class="fsec">Task folders</div>
               {#each taskFolders as f (f.id)}
@@ -234,18 +456,26 @@
           {:else}
             <p class="tpmeta">—</p>
           {/if}
+
           <h2>Repeats</h2>
-          <p class="tpmeta">{task.schedule_desc}</p>
-          <h2>Always allowed</h2>
-          {#if perms.length}
-            {#each perms as rule (rule)}
-              <div class="permrow">
-                <code>{rule}</code>
-                <button class="iconbtn" title="Revoke" onclick={() => revoke(rule)}><Icon name="x" size={13} /></button>
-              </div>
-            {/each}
+          {#if inEdit}
+            <ScheduleField bind:schedule={eschedule} />
           {:else}
-            <p class="muted">Approvals you grant during a run appear here.</p>
+            <p class="tpmeta">{task.schedule_desc}</p>
+          {/if}
+
+          {#if !isNew}
+            <h2>Always allowed</h2>
+            {#if perms.length}
+              {#each perms as rule (rule)}
+                <div class="permrow">
+                  <code>{rule}</code>
+                  <button class="iconbtn" title="Revoke" onclick={() => revoke(rule)}><Icon name="x" size={13} /></button>
+                </div>
+              {/each}
+            {:else}
+              <p class="muted">Approvals you grant during a run appear here.</p>
+            {/if}
           {/if}
         </section>
       </div>
@@ -255,10 +485,6 @@
   </div>
 </div>
 
-{#if editOpen || isNew}
-  <TaskEditModal task={isNew ? null : task} onSaved={onModalSaved} onClose={closeModal} />
-{/if}
-
 <style>
   /* Reuses the .thread/.inner shell (Thread.svelte) so the page reads as the same
      scrolling column with the same max-width/centering as the chat/run thread,
@@ -266,10 +492,25 @@
   .taskpage { padding: 28px 0 60px; overflow-y: auto; }
 
   .tphead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .tpheadmain { flex: 1; min-width: 0; }
   .tphead h1 { margin: 0 0 4px; font-size: var(--text-2xl); color: var(--ink); }
   .tpdesc { color: var(--muted); font-size: 13px; margin-bottom: 8px; max-width: 60ch; }
   .tpstatus { display: flex; align-items: center; gap: 10px; }
   .tpactions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+  /* Edit-mode name/description live where the heading was (spec story 4) — the name
+     input carries the h1's size/weight so the swap is in-place, not a form pop-in. */
+  .tpnameinput, .tpdescinput { display: block; width: 100%; font: inherit; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--bg); }
+  .tpnameinput { font-size: var(--text-2xl); font-weight: var(--fw-semibold); margin-bottom: 8px; }
+  .tpdescinput { font-size: 13px; color: var(--muted); max-width: 60ch; }
+  .tpnameinput:focus, .tpdescinput:focus, .tpinput:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+
+  /* Shared shape for the edit-mode field controls (prompt textarea, model select). */
+  .tpinput { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--bg); }
+  .tpprompt-input { line-height: 1.5; resize: vertical; }
+  .tpinput.chpick { padding-right: 30px; } /* clears the shared chevron (.chpick, app.css) */
 
   /* A 2-position pill toggle for Active/Paused — same knob-on-a-track vocabulary
      as AccessSwitch's .sw3, simplified to a plain checkbox (no cycling states). */
@@ -287,6 +528,9 @@
   .muted { color: var(--muted); font-size: 13px; }
 
   .tpcols { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; margin-top: 24px; align-items: start; }
+  /* Create (`/t/new`): the task does not exist yet, so no History / Always-allowed —
+     a single centered column keeps the focus on the fields being filled (spec story 15). */
+  .tpcols.single { grid-template-columns: minmax(0, 1fr); max-width: 640px; }
   @media (max-width: 760px) { .tpcols { grid-template-columns: 1fr; } }
   .tpcols h2 { margin: 20px 0 8px; font-size: 12px; font-weight: var(--fw-semibold); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .tpcols section > h2:first-child { margin-top: 0; }
@@ -294,9 +538,9 @@
   .tpmeta { overflow-wrap: anywhere; font-size: 13px; color: var(--ink); margin: 0; }
 
   /* Folder rows mirror TaskFolders.svelte's .cfsec/.cfrow layout so the preview and
-     the edit modal read as one surface — read-only here, so the mode is a muted
-     label instead of the modal's switch. The section header breaks .frow adjacency,
-     so the last row of each group carries no trailing divider. */
+     the edit form read as one surface — read-only shows a muted mode label; edit mode
+     swaps in an AccessSwitch. The section header breaks .frow adjacency, so the last
+     row of each group carries no trailing divider. */
   .fsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 14px 0 4px; }
   .fsec:first-of-type { margin-top: 0; }
   .frow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
@@ -304,6 +548,22 @@
   .fico { flex: none; display: inline-flex; color: var(--muted); }
   .fname { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fmode { flex: none; font-size: 13px; color: var(--muted); }
+
+  /* Task-folder edit control: the label + 2-position toggle (Read / Read+write) and a
+     trash button, copied from TaskFolders so both surfaces read identically. */
+  .fctl { flex: none; display: inline-flex; align-items: center; gap: 10px; }
+  .tglstate { min-width: 74px; text-align: right; font-size: 13px; color: var(--ink); }
+  /* 2-position iOS switch (off = Read, green; on = Read+write, warn) — soft tinted fill
+     + a hairline tinted border (inset shadow, so the knob geometry is untouched). */
+  .tgl { position: relative; flex: none; width: 38px; height: 22px; padding: 0; border: none; border-radius: 999px; cursor: pointer;
+    background: color-mix(in srgb, var(--success) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 32%, var(--line));
+    transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+  .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur-fast) var(--ease-out); }
+  .tgl.on { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 32%, var(--line)); }
+  .tgl.on::after { transform: translateX(16px); }
+
+  .addfolder { margin-top: 12px; }
+  .tppicker { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px; background: var(--surface-sunk, var(--bg)); }
 
   .permrow { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 10px; margin-bottom: 6px; }
   .permrow code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -345,7 +605,7 @@
   .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
   .open.danger { border-color: color-mix(in srgb, #d8552f 55%, var(--line)); color: #d8552f; background: none; }
   .open.danger:hover { border-color: #d8552f; color: #fff; background: #d8552f; }
-  /* The one CTA that matters (Run now) gets the accent-outlined ".open.primary"
+  /* The one CTA that matters (Run now / Save) gets the accent-outlined ".open.primary"
      treatment already used for Codex's single primary action. */
   .taskpage .open.primary { border-color: var(--accent); color: var(--accent); }
   .taskpage .open.primary:hover:not(:disabled) { background: var(--accent-soft); }

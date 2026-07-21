@@ -200,7 +200,7 @@
   .tfpicker { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px; background: var(--surface-sunk, var(--bg)); }
 
   /* .open isn't in scope here (no .modal/.panel ancestor supplies it) — reproduce
-     the same bordered button used across TaskPage/TaskEditModal. */
+     the same bordered button used across TaskPage. */
   .open {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;

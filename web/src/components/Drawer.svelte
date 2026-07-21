@@ -310,7 +310,7 @@
     }
   }
 
-  // Full edit: hand off to TaskPage's modal via the one-shot pendingTaskEdit signal.
+  // Full edit: hand off to TaskPage's inline edit state via the one-shot pendingTaskEdit signal.
   function editTask(t) {
     menuTask = ''
     pendingTaskEdit.set(t.id)
