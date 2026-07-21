@@ -439,7 +439,9 @@ def folders_revoke(
 ) -> None:
     """Revoke one Grant."""
     try:
-        revoked = _folder_store().revoke_grant(folder_id, profile=profile, chat_id=chat, task_id=task)
+        revoked = _folder_store().revoke_grant(
+            folder_id, profile=profile, chat_id=chat, task_id=task
+        )
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(1)

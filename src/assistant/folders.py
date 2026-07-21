@@ -293,7 +293,9 @@ class FolderStore:
             self._save()
             return True
 
-    def grant_path(self, path, mode: str, profile: str, chat_id: str = "", task_id: str = "") -> dict:
+    def grant_path(
+        self, path, mode: str, profile: str, chat_id: str = "", task_id: str = ""
+    ) -> dict:
         """Find-or-create the Folder for ``path`` and upsert a Grant on it — the
         HITL mint path (approving a runtime prompt auto-creates the Folder,
         auto-named from the directory's basename, renameable later)."""
@@ -385,9 +387,7 @@ class FolderStore:
             return None, None
         return root, self.mode_for(p, profile, chat_id)
 
-    def mode_for(
-        self, folder, profile: str, chat_id: str = "", task_id: str = ""
-    ) -> str | None:
+    def mode_for(self, folder, profile: str, chat_id: str = "", task_id: str = "") -> str | None:
         """The effective mode for ``folder`` in ``profile`` (optionally within one
         task and/or one chat): ``read_write`` | ``read`` | None. Per Folder the
         override chain is chat > task > profile — each level may widen, narrow, or
@@ -418,8 +418,10 @@ class FolderStore:
                     task_mode = g.get("mode")
                 elif not g_chat and not g_task:
                     prof_mode = g.get("mode")
-            eff = chat_mode if chat_mode is not None else (
-                task_mode if task_mode is not None else prof_mode
+            eff = (
+                chat_mode
+                if chat_mode is not None
+                else (task_mode if task_mode is not None else prof_mode)
             )
             if eff is None or eff == NONE:
                 continue

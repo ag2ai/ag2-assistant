@@ -595,14 +595,21 @@ def test_check_honors_task_scope_grant_without_prompt(tmp_path):
     f = folders.create_folder(d)
     folders.set_grant(f["id"], "read_write", profile="work", task_id="task-1")
     pm = PermissionManager(
-        PermissionStore(path=None), None, folders=folders,
-        profile="work", chat_id="task-run:r1", task_id="task-1",
+        PermissionStore(path=None),
+        None,
+        folders=folders,
+        profile="work",
+        chat_id="task-run:r1",
+        task_id="task-1",
     )
     assert asyncio.run(pm.check(d / "x.txt", write=True))
     # без task_id тот же путь не покрыт (asker=None → deny)
     pm2 = PermissionManager(
-        PermissionStore(path=None), None, folders=folders,
-        profile="work", chat_id="task-run:r1",
+        PermissionStore(path=None),
+        None,
+        folders=folders,
+        profile="work",
+        chat_id="task-run:r1",
     )
     assert not asyncio.run(pm2.check(d / "x.txt", write=True))
 
@@ -613,8 +620,12 @@ def test_prompt_offers_and_mints_task_grant(tmp_path):
     folders = FolderStore(tmp_path / "folders.json")
     asker = FakeAsker(GRANT_TASK)
     pm = PermissionManager(
-        PermissionStore(path=None), asker, folders=folders,
-        profile="work", chat_id="task-run:r1", task_id="task-1",
+        PermissionStore(path=None),
+        asker,
+        folders=folders,
+        profile="work",
+        chat_id="task-run:r1",
+        task_id="task-1",
     )
     assert asyncio.run(pm.check(d / "x.txt"))
     assert GRANT_TASK in asker.last.options
@@ -628,8 +639,11 @@ def test_prompt_without_task_id_has_no_task_option(tmp_path):
     d = tmp_path / "data"
     d.mkdir()
     pm = PermissionManager(
-        PermissionStore(path=None), asker, folders=FolderStore(tmp_path / "folders.json"),
-        profile="work", chat_id="web-1",
+        PermissionStore(path=None),
+        asker,
+        folders=FolderStore(tmp_path / "folders.json"),
+        profile="work",
+        chat_id="web-1",
     )
     asyncio.run(pm.check(d / "x.txt"))
     assert GRANT_TASK not in asker.last.options

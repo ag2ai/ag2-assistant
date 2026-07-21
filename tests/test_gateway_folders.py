@@ -89,7 +89,12 @@ def test_task_scope_grant_roundtrip(monkeypatch, tmp_path):
         )
         assert r.status_code == 200
         grants = [g for f in r.json()["folders"] if f["id"] == fid for g in f["grants"]]
-        assert {"profile": "work", "chat_id": "", "task_id": "task-1", "mode": "read_write"} in grants
+        assert {
+            "profile": "work",
+            "chat_id": "",
+            "task_id": "task-1",
+            "mode": "read_write",
+        } in grants
         # both scopes at once → 400
         r = client.post(
             f"/api/folders/{fid}/grants",

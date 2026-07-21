@@ -69,7 +69,6 @@ def _readable_roots(store, profile: str, chat_id: str, task_id: str = "") -> lis
     return [p for p in readable if not any(p != o and o in p.parents for o in readable)]
 
 
-
 def _walk_folder(root: Path, query: str, out: list, scanned: list) -> None:
     """Append candidates for files and Directories under ``root`` matching ``query``,
     pruning ``SKIP_DIRS`` and stopping at ``WALK_CAP``. ``dir`` labels are rooted at

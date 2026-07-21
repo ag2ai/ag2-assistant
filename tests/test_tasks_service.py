@@ -128,9 +128,7 @@ async def test_migration_turns_workdir_into_task_scope_grant(tmp_path, monkeypat
     data.mkdir(parents=True)
     cfg = Config(root_dir=root, data_dir=data)
     store = TaskStore(path=data / "tasks.db")
-    svc = TaskService(
-        config=cfg, store=store, inquiry_store=InquiryStore(path=data / "inq.db")
-    )
+    svc = TaskService(config=cfg, store=store, inquiry_store=InquiryStore(path=data / "inq.db"))
     t = await store.create_task(name="W", prompt="p")
     wd = tmp_path / "proj"
     wd.mkdir()
