@@ -11,6 +11,7 @@
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
   import TaskPage from './components/task/TaskPage.svelte'
+import AppBar from './components/AppBar.svelte'
   import Hitl from './components/Hitl.svelte'
   import Google from './components/Google.svelte'
   import Codex from './components/Codex.svelte'
@@ -213,10 +214,13 @@
       {:else if $route.name === 'task'}
         <TaskPage />
       {:else if $route.name === 'files'}
+        <AppBar title="Files" />
         <div class="thread"><div class="empty"><h1>Files</h1>Browse and manage your files from the sidebar.</div></div>
       {:else if $route.name === 'tasks'}
+        <AppBar title="Tasks" />
         <div class="thread"><div class="empty"><h1>Tasks</h1>Pick a task from the sidebar, or create one with New task.</div></div>
       {:else}
+        <AppBar title="AG2 Assistant" />
         <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
       {/if}
     </div>

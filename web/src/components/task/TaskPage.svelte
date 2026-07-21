@@ -10,7 +10,9 @@
   import { profiles, tasks, pendingTaskEdit } from '../../store.js'
   import { getActiveProfileId } from '../../lib/profile.js'
   import { foldersStore, loadFolders } from '../../lib/folders.js'
+  import { llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   import Icon from '../Icon.svelte'
+  import AppBar from '../AppBar.svelte'
   import TaskEditModal from './TaskEditModal.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.js'
 
@@ -33,7 +35,16 @@
   // task 'none' override blocks a profile folder). Listing only task-scope grants
   // (as this preview used to) drops profile folders the task can actually read.
   const pid = $derived($profiles.activeId || getActiveProfileId())
-  onMount(() => { if (!$foldersStore.loaded) loadFolders() })
+  onMount(() => {
+    if (!$foldersStore.loaded) loadFolders()
+    if (!$llmConfigs.loaded) loadLlmConfigs()   // no composer here to seed the config list
+  })
+
+  // App-bar subtitle: "Profile • Model", matching the run bar (Thread.svelte). The
+  // task's own model wins; without one it falls back to the install's active default.
+  const activeProfile = $derived(($profiles.list || []).find((p) => p.id === $profiles.activeId))
+  const taskModel = $derived($llmConfigs.configs.find((c) => c.id === (task?.model || $llmConfigs.active)))
+  const subtitle = $derived([activeProfile?.name, taskModel?.name].filter(Boolean).join(' • '))
   const tGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.task_id === task.id && !g.chat_id)
   const profileGrant = (f) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
   const effMode = (f) => { const t = tGrant(f); return t ? t.mode : profileGrant(f)?.mode }
@@ -140,10 +151,13 @@
   const STAT_ICON = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
 </script>
 
+<AppBar
+  back={{ label: 'Tasks', onClick: () => goTab('tasks') }}
+  title={task?.name || (isNew ? 'New task' : 'Task')}
+  {subtitle} />
+
 <div class="thread taskpage">
   <div class="inner">
-    <div class="crumbs"><button onclick={() => goTab('tasks')}>Tasks</button> / {task?.name || (isNew ? 'New task' : '')}</div>
-
     {#if error}<div class="taskerror"><Icon name="x" size={13} /> {error}</div>{/if}
 
     {#if task}
@@ -250,10 +264,6 @@
      scrolling column with the same max-width/centering as the chat/run thread,
      instead of a bespoke full-bleed panel. */
   .taskpage { padding: 28px 0 60px; overflow-y: auto; }
-
-  .crumbs { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
-  .crumbs button { border: none; background: none; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
-  .crumbs button:hover { color: var(--accent); }
 
   .tphead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   .tphead h1 { margin: 0 0 4px; font-size: var(--text-2xl); color: var(--ink); }
