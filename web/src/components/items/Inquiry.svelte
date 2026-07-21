@@ -7,7 +7,7 @@
   // and says HOW it resolved — answered / expired / cancelled — with its buttons
   // disabled, so a timed-out or task-ended prompt never leaves dead live controls.
   import { answer } from '../../controller.js'
-  import { taskPanel } from '../../store.js'
+  import { runInfo } from '../../store.js'
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   let { item } = $props()
   let text = $state('')
@@ -18,7 +18,7 @@
   // A card is retired once its inquiry resolves OR its owning task reaches a
   // terminal state (belt-and-suspenders: catches prompts stranded before the
   // resolution event existed — answering them is a server-side no-op anyway).
-  let onTerminalTask = $derived(!!$taskPanel && TERMINAL.has($taskPanel.status))
+  let onTerminalTask = $derived(!!$runInfo && TERMINAL.has($runInfo.status))
   let retired = $derived(!!item.resolved || onTerminalTask)
   // How it resolved: explicit resolution wins; a real answer implies "answered";
   // otherwise a retired-by-terminal-task prompt was simply never answered.

@@ -584,6 +584,39 @@ AG2 Assistant maintains conversation history per user per channel. When you mess
 
 Chats are persisted locally in `~/.ag2assistant/chats.db`.
 
+## Tasks — standing jobs on a schedule
+
+A **task** is just a name, a prompt, an optional per-task model, and a schedule
+— **manual** (on demand only), **once** (a single future run), or **cron**
+(recurring), with UI presets for hourly/daily/weekly/weekdays plus a raw cron
+field for anything else. Create one from the **Tasks** tab in the web app, or
+ask the agent to do it from any chat or channel (see below).
+
+Every **run** of a task is a real chat, on its own stream
+(`task-run:{run_id}`): open it to watch the agent work live, send a message
+mid-run to steer it, hit **Stop** to end it early (keeping whatever it already
+produced), or keep chatting in it after it finishes. Recent runs' summaries
+feed into the next run's prompt, so a recurring task doesn't repeat itself.
+
+The task page is inline-editable — change the name, prompt, model, or schedule
+and save, no separate settings screen — with every run listed underneath it,
+each showing a status and a one-line summary. **Run now** starts a run
+immediately without touching the schedule; **Pause** stops a `once`/`cron` task
+from firing again (a paused task never auto-resumes); **Delete** removes the
+task, its runs, and their chats — irreversible.
+
+If a run needs your input — a clarifying question or a permission approval —
+it appears inline in that run's own chat if you're already watching it, or in
+the **Needs your input** strip anywhere else in the web app. Tasks created
+from Telegram, Slack, or Discord report their outcome back to the chat they
+came from when the run finishes.
+
+Just ask, from the web UI or any connected channel: *"Set up a daily task that
+sends me a morning news digest at 8am"*, or *"Run my news digest task now"* —
+the agent manages tasks with the same six operations (list, get, create,
+update, run now, delete) the UI uses. (This is a gateway/channel capability;
+the single-shot `ag2-assistant agent` CLI command doesn't carry task tools.)
+
 ## How It Works
 
 1. You send a message on any connected platform (or CLI)

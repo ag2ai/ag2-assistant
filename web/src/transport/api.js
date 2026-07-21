@@ -139,17 +139,17 @@ export const api = {
   grantCommand:  (tool, prefix) => j('POST', G('/permissions/commands'), { tool, prefix }),
   revokeCommand: (rule) => j('DELETE', G('/permissions/commands'), { rule }),
   // ---- Folders + Grants (install-wide registry; CONTEXT.md "Folders", ADR 0006).
-  // Snapshot shape: {folders:[{id,name,path,exists,grants:[{profile,chat_id,mode}]}]}.
+  // Snapshot shape: {folders:[{id,name,path,exists,grants:[{profile,chat_id,task_id,mode}]}]}.
   // createFolder 409s with err.body.existing when the path is already registered.
   // mode: 'read' | 'read_write'. Empty chatId = profile-scope grant.
   folders: () => j('GET', G('/folders')),
   createFolder: (path, name = '') => j('POST', G('/folders'), { path, name }),
   updateFolder: (id, patch) => j('POST', G('/folders/' + encodeURIComponent(id)), patch),
   deleteFolder: (id) => j('DELETE', G('/folders/' + encodeURIComponent(id))),
-  setGrant: (id, profile, mode, chatId = '') =>
-    j('POST', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, mode }),
-  revokeGrant: (id, profile, chatId = '') =>
-    j('DELETE', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId }),
+  setGrant: (id, profile, mode, chatId = '', taskId = '') =>
+    j('POST', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, task_id: taskId, mode }),
+  revokeGrant: (id, profile, chatId = '', taskId = '') =>
+    j('DELETE', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, task_id: taskId }),
 
   // ---- Profile-scoped (/api/p/{pid}/…) ----
   // Cheap subsystem health for the status dot: {overall, checks:[{id,label,state,detail,…}]}.
@@ -162,11 +162,20 @@ export const api = {
   deleteChat: (id) => j('DELETE', P('/chats/' + encodeURIComponent(id))),
   // Partial chat-metadata update: {title?, starred?} (absent = unchanged).
   updateChat: (id, patch) => j('PATCH', P('/chats/' + encodeURIComponent(id)), patch),
-  tasksAll: (status) => j('GET', P('/tasks/all' + (status && status !== 'all' ? '?status=' + status : ''))).then((d) => d.tasks || []),
-  task: (id) => j('GET', P('/tasks/' + id)).then((d) => d.task),
-  cancelTask: (id) => j('POST', P(`/tasks/${id}/cancel`)),
-  markSeen: (id) => j('POST', P(`/tasks/${id}/seen`)),
-  deleteTask: (id) => j('DELETE', P(`/tasks/${encodeURIComponent(id)}`)),
+  // ---- Tasks: config CRUD; runs are chats on stream task-run:{id} ----
+  tasks: () => j('GET', P('/tasks')).then((d) => d.tasks || []),
+  createTask: (body) => j('POST', P('/tasks'), body).then((d) => d.task),
+  task: (id) => j('GET', P('/tasks/' + encodeURIComponent(id))).then((d) => d.task),
+  updateTask: (id, patch) => j('PATCH', P('/tasks/' + encodeURIComponent(id)), patch).then((d) => d.task),
+  deleteTask: (id) => j('DELETE', P('/tasks/' + encodeURIComponent(id))),
+  runTask: (id) => j('POST', P('/tasks/' + encodeURIComponent(id) + '/run')).then((d) => d.run),
+  // Per-task command permission rules (mirrors the global commands store, scoped to
+  // one task) → {rules:[...]}. deleteTaskPermission takes a DELETE with a JSON body.
+  taskPermissions: (id) => j('GET', P('/tasks/' + encodeURIComponent(id) + '/permissions')).then((d) => d.rules || []),
+  deleteTaskPermission: (id, rule) => j('DELETE', P('/tasks/' + encodeURIComponent(id) + '/permissions'), { rule }),
+  run: (id) => j('GET', P('/runs/' + encodeURIComponent(id))).then((d) => d.run),
+  stopRun: (id) => j('POST', P('/runs/' + encodeURIComponent(id) + '/stop')),
+  runSeen: (id) => j('POST', P('/runs/' + encodeURIComponent(id) + '/seen')),
   inquiries: () => j('GET', P('/inquiries/pending')).then((d) => d.pending || []),
   answerInquiry: (id, answer) => j('POST', P(`/inquiries/${encodeURIComponent(id)}/answer`), { answer }),
   // Chat-turn permission prompts (run_code/shell/file) live in the HitlServer, a
@@ -184,7 +193,6 @@ export const api = {
   // the agent's context). Active-profile setter (Settings modal).
   setFocuses: (focuses) => j('POST', P('/settings/focuses'), { focuses }),
   setReplyTimeout: (replyTimeoutS) => j('POST', P('/settings/reply-timeout'), { reply_timeout_s: replyTimeoutS }),
-  rerunTask: (id) => j('POST', P(`/tasks/${encodeURIComponent(id)}/rerun`)),
   setVoiceProvider: (provider) => j('POST', P('/settings/voice_provider'), { provider }),
   addMcpServer: (server) => j('POST', P('/settings/mcp'), server),
   deleteMcpServer: (name) => j('DELETE', P(`/settings/mcp/${encodeURIComponent(name)}`)),

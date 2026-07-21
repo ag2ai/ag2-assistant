@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { foldEvent } from '../project.js'
-import { dayKey, fmtDay, fmtDayShort, dayRows } from './time.js'
+import { dayKey, fmtDay, fmtDayShort, dayRows, taskRecencyAt } from './time.js'
 
 // Local noon of (today + offset), as Unix seconds — matches AG2 `created_at`.
 // Anchored at noon so a message never sits near midnight and flips its day.
@@ -153,4 +153,24 @@ test('chats list: a chat with a blank `updated` gets no header and rides under t
   const rows = dayRows([chat('a', 0), { chat_id: 'b', at: '' }], fmtDayShort)
   const seps = rows.map((r) => r.sep)
   assert.deepEqual(seps, ['Recent', null]) // blank-updated chat: no header
+})
+
+// --- Tasks-list recency key (taskRecencyAt) -----------------------------------
+// The task analogue of a chat's `updated`: the last run's end time, or its start
+// when still running/waiting, falling back to creation for a task that never ran.
+test('taskRecencyAt: a finished run keys off its ended_at', () => {
+  const t = { created_at: isoAt(-9), last_run: { ended_at: isoAt(-1), started_at: isoAt(-1) } }
+  assert.equal(taskRecencyAt(t), t.last_run.ended_at)
+})
+test('taskRecencyAt: a run with no end (running/waiting) keys off started_at', () => {
+  const t = { created_at: isoAt(-9), last_run: { ended_at: null, started_at: isoAt(0) } }
+  assert.equal(taskRecencyAt(t), t.last_run.started_at)
+})
+test('taskRecencyAt: a never-run task falls back to created_at', () => {
+  const t = { created_at: isoAt(-3), last_run: null }
+  assert.equal(taskRecencyAt(t), t.created_at)
+})
+test('taskRecencyAt: a run with neither timestamp falls back to created_at', () => {
+  const t = { created_at: isoAt(-3), last_run: { ended_at: null, started_at: null } }
+  assert.equal(taskRecencyAt(t), t.created_at)
 })

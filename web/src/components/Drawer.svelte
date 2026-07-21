@@ -1,8 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { chats, tasks, profiles, profileEpoch } from '../store.js'
-  import { route, go, newChatId, openOverlay } from '../router.js'
+  import { chats, tasks, profiles, profileEpoch, pendingTaskEdit } from '../store.js'
+  import { route, go, goTab, newChatId, openOverlay } from '../router.js'
   import { api } from '../transport/api.js'
   import { switchProfile } from '../controller.js'
   import Icon from './Icon.svelte'
@@ -12,7 +12,7 @@
   import ProfileForm from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
   import FilesTree from './FilesTree.svelte'
-  import { fmtWhen, fmtNextIn, fmtAgoShort, dayRows, fmtDayShort } from '../lib/time.js'
+  import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.js'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
   import { inkOn } from '../design/palette.js'
@@ -62,11 +62,13 @@
   function onDocPointer(e) {
     if (pickerOpen && !e.target.closest('.profchips')) pickerOpen = false
     if (menuChat && !e.target.closest('.chatmenu') && !e.target.closest('.rowkebab')) menuChat = ''
+    if (menuTask && !e.target.closest('.taskmenu') && !e.target.closest('.rowkebab')) menuTask = ''
   }
   function onDocKey(e) {
     if (createOpen && e.key === 'Escape') { createOpen = false; return }
     if (pickerOpen && e.key === 'Escape') pickerOpen = false
     if (menuChat && e.key === 'Escape') menuChat = ''
+    if (menuTask && e.key === 'Escape') menuTask = ''
   }
 
   // "+" chip → profile-creation modal (§5.4). Reuses ProfileForm (same form as
@@ -91,7 +93,7 @@
   let statusById = $state({}) // pid -> {busy, running_tasks, unseen_done} from GET /api/status
   // A chip's dot: true when that profile has finished tasks the user hasn't opened
   // yet (rolls up the nav's per-row unread marker to the profile). Clears on the
-  // next 5s poll once the run is opened (markSeen).
+  // next 5s poll once the run is opened (api.runSeen).
   const hasUnseen = (pid) => (statusById[pid]?.unseen_done || 0) > 0
 
   async function refresh() {
@@ -106,7 +108,7 @@
         $chats = [...$chats.filter((s) => !ids.has(s.chat_id)), ...server]
       }
     } catch {}
-    try { const all = await api.tasksAll('all'); if (get(profileEpoch) === epoch) $tasks = all } catch {}
+    try { const all = await api.tasks(); if (get(profileEpoch) === epoch) $tasks = all } catch {}
     // First fetch for this profile has settled — clears the drawer's loading state.
     if (get(profileEpoch) === epoch) loaded = true
     // One global roll-up serves both the active profile's line and the install-wide
@@ -190,6 +192,19 @@
     dayRows($chats.filter((c) => !c.starred).map((s) => ({ ...s, at: s.updated })), fmtDayShort)
   )
 
+  // Tasks mirror the chats list: a "Starred" section pinned on top, then the rest
+  // under date-group headers ("Recent"/"Yesterday"/date). Both are keyed by
+  // taskRecencyAt (last run's time, else creation) — the task analogue of a chat's
+  // last-message `updated` — newest-first; a starred task shows ONLY in Starred.
+  const byRecent = (a, b) => new Date(taskRecencyAt(b)) - new Date(taskRecencyAt(a))
+  const starredTasks = $derived($tasks.filter((t) => t.starred).sort(byRecent))
+  const taskRows = $derived(
+    dayRows(
+      $tasks.filter((t) => !t.starred).sort(byRecent).map((t) => ({ ...t, at: taskRecencyAt(t) })),
+      fmtDayShort,
+    )
+  )
+
   const openChat = (id) => go('/c/' + id)
   const openTask = (id) => go('/t/' + id)
   const newChat = () => go('/c/' + newChatId())
@@ -255,70 +270,93 @@
   }
   function focusSelect(node) { node.focus(); node.select() }
 
+  // ── Task row actions (Rename / Enable-Disable / Edit / Delete) ──────────────
+  // Same idioms as the chat row above, one level over: a hover-revealed kebab opens
+  // a fixed-position menu; Rename is inline; Delete swaps to a "Delete? yes/no"
+  // confirm. All mutations patch $tasks optimistically (with rollback) so the row —
+  // and every other $tasks reader — updates without waiting for the 5s poll.
+  let menuTask = $state('')       // task id whose menu is open
+  let renameTask = $state('')     // task id being renamed
+  let renameTaskText = $state('')
+  let confirmTask = $state('')    // task id awaiting delete confirmation
+  let busyTask = $state('')       // task id currently being deleted
+
+  function toggleTaskMenu(e, t) {
+    e.stopPropagation()
+    menuChat = ''
+    if (menuTask === t.id) { menuTask = ''; return }
+    const r = e.currentTarget.getBoundingClientRect()
+    menuPos = { x: r.right, y: r.bottom + 4 }
+    menuTask = t.id
+  }
+
+  // Enable/Disable = flip the task's paused flag (the same toggle as TaskPage).
+  async function toggleTaskPause(t) {
+    menuTask = ''
+    const next = !t.paused
+    $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: next } : x))
+    try { await api.updateTask(t.id, { paused: next }) } catch {
+      $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: !next } : x))
+    }
+  }
+
+  // Star/Unstar = flip the task's starred flag (mirrors chats' toggleStar).
+  async function toggleTaskStar(t) {
+    menuTask = ''
+    const next = !t.starred
+    $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, starred: next } : x))
+    try { await api.updateTask(t.id, { starred: next }) } catch {
+      $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, starred: !next } : x))
+    }
+  }
+
+  // Full edit: hand off to TaskPage's inline edit state via the one-shot pendingTaskEdit signal.
+  function editTask(t) {
+    menuTask = ''
+    pendingTaskEdit.set(t.id)
+    openTask(t.id)
+  }
+
+  function startTaskRename(t) {
+    menuTask = ''
+    renameTask = t.id
+    renameTaskText = t.name || ''
+  }
+  async function commitTaskRename(t) {
+    if (renameTask !== t.id) return // Escape already cancelled; ignore the blur
+    renameTask = ''
+    const name = renameTaskText.trim()
+    if (!name || name === t.name) return
+    const prev = t.name
+    $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, name } : x))
+    try { await api.updateTask(t.id, { name }) } catch {
+      $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, name: prev } : x))
+    }
+  }
+
+  async function delTask(id) {
+    busyTask = id
+    try {
+      await api.deleteTask(id)
+      $tasks = $tasks.filter((x) => x.id !== id)
+      if ($route.name === 'task' && $route.id === id) goTab('tasks')
+    } catch {}
+    busyTask = ''
+    confirmTask = ''
+  }
+
   // status → Lucide icon name + tooltip label. Colored per-status via the
-  // .statusicon CSS classes; replaces the old emoji/unicode glyphs.
+  // .statusicon CSS classes; replaces the old emoji/unicode glyphs. Keys are
+  // Run statuses (RunStatus.ALL: running/needs_input/completed/failed/cancelled) —
+  // a task row's `last_run.status` is looked up here for its status icon.
   const STATUS = {
-    pending: { icon: 'clock', label: 'pending' },
-    scheduled: { icon: 'clock', label: 'scheduled' },
-    awaiting_input: { icon: 'message', label: 'needs input' },
-    planning: { icon: 'brain', label: 'planning' },
-    running: { icon: 'zap', label: 'running' },
+    running: { icon: 'spinner', label: 'running' },
+    needs_input: { icon: 'help-circle', label: 'needs input' },
     completed: { icon: 'check', label: 'completed' },
     failed: { icon: 'x', label: 'failed' },
-    cancelled: { icon: 'x', label: 'cancelled' },
+    cancelled: { icon: 'slash', label: 'cancelled' },
   }
   const stat = (s) => STATUS[s] || { icon: 'clock', label: s || '' }
-
-  const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
-  const isUnread = (t) => TERMINAL.has(t.status) && !t.seen  // a finished result not yet opened
-
-  // Top-level ordering: what's active now first, then upcoming scheduled tasks by
-  // soonest next run, then finished (completed/failed/cancelled) at the bottom.
-  function taskRank(t) {
-    if (TERMINAL.has(t.status)) return 2 // finished → bottom
-    if (t.status === 'scheduled') return 1 // upcoming → middle, ordered by next run
-    return 0 // running / pending / planning / awaiting input → active now, at top
-  }
-  function compareTasks(a, b) {
-    const ra = taskRank(a), rb = taskRank(b)
-    if (ra !== rb) return ra - rb
-    if (ra === 1) // scheduled: soonest next run first
-      return (a.scheduled_for || '').localeCompare(b.scheduled_for || '')
-    // active-now and finished: most recent first
-    return (b.created_at || '').localeCompare(a.created_at || '')
-  }
-
-  // Group runs (run_of) under their template; templates + standalone tasks are
-  // top-level. Orphan runs (template absent) fall back to top level.
-  const groups = $derived.by(() => {
-    const list = $tasks || []
-    const byParent = new Map()
-    for (const t of list) {
-      if (!t.run_of) continue
-      const arr = byParent.get(t.run_of)
-      if (arr) arr.push(t); else byParent.set(t.run_of, [t])
-    }
-    const topIds = new Set(list.filter((t) => !t.run_of).map((t) => t.id))
-    const tops = list.filter((t) => !t.run_of || !topIds.has(t.run_of))
-    return tops
-      .slice()
-      .sort(compareTasks)
-      .map((t) => {
-        const runs = (byParent.get(t.id) || []).slice().sort((a, b) =>
-          (b.scheduled_for || b.created_at || '').localeCompare(a.scheduled_for || a.created_at || ''))
-        return { task: t, runs, unread: runs.filter(isUnread).length }
-      })
-  })
-
-  // A caught-up recurring task collapses to just its header (title + recurrence +
-  // next run) — the seen ✓ history is noise once read, and the full run list is
-  // always available in the task's detail panel. So in the sidebar we only keep
-  // runs that still want attention: an unread result, a run still in flight, or
-  // whichever run is open right now (opening a run marks it seen; without this it
-  // would vanish from under its parent the instant you clicked it).
-  const needsAttention = (r, openId) =>
-    isUnread(r) || !TERMINAL.has(r.status) || r.id === openId
-  const visibleRuns = (g, openId) => g.runs.filter((r) => needsAttention(r, openId))
 
 </script>
 
@@ -462,10 +500,79 @@
     </div>
   {/snippet}
 
+  {#snippet taskRow(t)}
+    {@const nextIn = !t.paused && t.next_run_at ? fmtNextIn(t.next_run_at) : ''}
+    <div class="drow ttask" class:on={$route.name === 'task' && $route.id === t.id}
+         class:unseen={t.unread > 0} onclick={() => openTask(t.id)}>
+      <div class="tline1">
+        {#if t.paused}<span class="statusicon" title="Paused"><Icon name="pause" size={14} /></span>
+        {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
+        {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={t.last_run.status}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
+        {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
+        {#if renameTask === t.id}
+          <input class="renamein" value={renameTaskText} use:focusSelect
+            oninput={(e) => (renameTaskText = e.target.value)}
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => { if (e.key === 'Enter') commitTaskRename(t); else if (e.key === 'Escape') renameTask = '' }}
+            onblur={() => commitTaskRename(t)} />
+        {:else}
+          <span class="ttitle">{t.name}</span>
+          <!-- Right slot mirrors a chat row's last-activity stamp: the unread-results
+               count when there are unseen runs, else the previous run's time. The
+               status itself is the line's left icon; here we add the "when". -->
+          {#if t.unread}
+            <span class="unreadcount" title="{t.unread} unread">{t.unread}</span>
+          {:else if t.last_run}
+            <span class="rowtime lastrun {t.last_run.status}" title="Last run: {stat(t.last_run.status).label}">{fmtAgoShort(t.last_run.ended_at || t.last_run.started_at)}</span>
+          {/if}
+        {/if}
+        {#if confirmTask === t.id}
+          <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+            <span class="confirm">Delete?</span>
+            <button class="linkbtn danger" disabled={busyTask === t.id}
+              onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : 'yes'}</button>
+            <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmTask = '' }}>no</button>
+          </span>
+        {:else if renameTask !== t.id}
+          <button class="rowkebab" title="Task actions" aria-haspopup="menu" aria-expanded={menuTask === t.id}
+            onclick={(e) => toggleTaskMenu(e, t)}><Icon name="ellipsis-vertical" size={14} /></button>
+          {#if menuTask === t.id}
+            <div class="chatmenu taskmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
+              onclick={(e) => e.stopPropagation()}>
+              <button class="cmitem" role="menuitem" onclick={() => toggleTaskStar(t)}>
+                <Icon name="star" size={14} /> {t.starred ? 'Unstar' : 'Star'}
+              </button>
+              <button class="cmitem" role="menuitem" onclick={() => startTaskRename(t)}>
+                <Icon name="pencil" size={14} /> Rename
+              </button>
+              <button class="cmitem" role="menuitem" onclick={() => toggleTaskPause(t)}>
+                <Icon name={t.paused ? 'play' : 'pause'} size={14} /> {t.paused ? 'Enable' : 'Disable'}
+              </button>
+              <button class="cmitem" role="menuitem" onclick={() => editTask(t)}>
+                <Icon name="pencil" size={14} /> Edit…
+              </button>
+              <div class="cmdiv"></div>
+              <button class="cmitem danger" role="menuitem"
+                onclick={() => { menuTask = ''; confirmTask = t.id }}>
+                <Icon name="trash" size={14} /> Delete
+              </button>
+            </div>
+          {/if}
+        {/if}
+      </div>
+      {#if (t.schedule.kind !== 'manual' || nextIn) && renameTask !== t.id}
+        <div class="tmeta">
+          {#if t.schedule.kind !== 'manual'}<span class="tag sched" title={t.schedule_desc}>{shortSched(t.schedule_desc) || t.schedule_desc}</span>{/if}
+          {#if nextIn}<span class="nextin" title="Next run">{nextIn}</span>{/if}
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#if $route.tab === 'files'}
     <FilesTree />
   {:else}
-  <div class="dlist" onscroll={() => (menuChat = '')}>
+  <div class="dlist" onscroll={() => { menuChat = ''; menuTask = '' }}>
     {#if $route.tab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
       {#if !$chats.length}<div class="none">{loaded ? 'No conversations yet.' : 'Loading…'}</div>{/if}
@@ -478,33 +585,15 @@
         {@render chatRow(s)}
       {/each}
     {:else}
-      {#if !groups.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
-      {#each groups as g (g.task.id)}
-        {@const nextIn = g.task.status === 'scheduled' ? fmtNextIn(g.task.scheduled_for) : ''}
-        {@const openId = $route.name === 'task' ? $route.id : null}
-        {@const shownRuns = visibleRuns(g, openId)}
-        <div class="drow ttask" class:on={$route.name === 'task' && $route.id === g.task.id}
-             class:unseen={!g.runs.length && isUnread(g.task)} onclick={() => openTask(g.task.id)}>
-          <div class="tline1">
-            <span class="statusicon {g.task.status}" title={stat(g.task.status).label}><Icon name={stat(g.task.status).icon} size={14} /></span>
-            <span class="ttitle">{g.task.title}</span>
-            {#if g.unread}<span class="unreadcount" title="{g.unread} unread">{g.unread}</span>{/if}
-          </div>
-          {#if g.task.recurrence || nextIn}
-            <div class="tmeta">
-              {#if g.task.recurrence}<span class="tag sched" title="{g.task.recurrence}{g.task.recurrence_desc ? ' — ' + g.task.recurrence_desc : ''}">{shortSched(g.task.recurrence_desc) || g.task.recurrence}</span>{/if}
-              {#if nextIn}<span class="nextin" title="Next run {fmtWhen(g.task.scheduled_for)}">{nextIn}</span>{/if}
-            </div>
-          {/if}
-        </div>
-        {#each shownRuns as r (r.id)}
-          <div class="drow child trow" class:on={$route.name === 'task' && $route.id === r.id}
-               class:unseen={isUnread(r)} onclick={() => openTask(r.id)}>
-            <span class="statusicon {r.status}" title={stat(r.status).label}><Icon name={stat(r.status).icon} size={13} /></span>
-            <span class="runwhen">{fmtWhen(r.scheduled_for || r.created_at) || 'run'}</span>
-            {#if isUnread(r)}<span class="dot" title="unread"></span>{/if}
-          </div>
-        {/each}
+      <button class="newrow" onclick={() => openTask('new')}><Icon name="plus" size={15} /> New task</button>
+      {#if !$tasks.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
+      {#if starredTasks.length}
+        <div class="datesep">Starred</div>
+        {#each starredTasks as t (t.id)}{@render taskRow(t)}{/each}
+      {/if}
+      {#each taskRows as { item: t, sep } (t.id)}
+        {#if sep}<div class="datesep">{sep}</div>{/if}
+        {@render taskRow(t)}
       {/each}
     {/if}
   </div>
@@ -626,7 +715,12 @@
   /* Last-activity stamp, right-aligned; the hover swaps it for the delete
      affordance so the row's right slot never doubles up. */
   .rowtime { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .chatrow:hover .rowtime, .chatrow:focus-within .rowtime { display: none; }
+  .chatrow:hover .rowtime, .chatrow:focus-within .rowtime,
+  .ttask:hover .rowtime, .ttask:focus-within .rowtime { display: none; }
+  /* Task last-run stamp: faint by default, but a failed/waiting last run tints
+     the time so a bad outcome reads at a glance even with the row unopened. */
+  .lastrun.failed { color: #d8552f; }
+  .lastrun.needs_input { color: var(--accent); }
   .rowconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; }
   .rowconfirm .confirm { color: #d8552f; font-size: 12px; }
   .rowconfirm .linkbtn { border: none; background: none; font: inherit; font-size: 12px; cursor: pointer; padding: 0; color: var(--accent); }
@@ -637,7 +731,10 @@
 
   /* Kebab: hover-revealed like the old trash; swaps with the timestamp. */
   .rowkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; width: 0; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-  .chatrow:hover .rowkebab, .chatrow:focus-within .rowkebab { opacity: .55; width: auto; }
+  .chatrow:hover .rowkebab, .chatrow:focus-within .rowkebab,
+  .ttask:hover .rowkebab, .ttask:focus-within .rowkebab { opacity: .55; width: auto; }
+  /* An open menu keeps its kebab visible even once the pointer leaves the row. */
+  .rowkebab[aria-expanded='true'] { opacity: 1 !important; width: auto; color: var(--text); }
   .rowkebab:hover { opacity: 1; color: var(--text); }
 
   /* Row action menu: fixed-position (escapes the scrolling list), right edge

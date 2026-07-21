@@ -202,10 +202,15 @@ conversation
 _Note_: a Chat opened in the main pane is a **Thread** (the chat-or-task union) —
 "thread" names that union, never the persisted Chat entity itself.
 
-**Starred** (chat):
-A user-set flag on a Chat that lifts it into the Starred section pinned at the
-top of the chat history. Toggleable at any time; unstarring returns the Chat to
-its natural date group. No effect on the Chat's content or last-update time.
+**Starred**:
+A user-set flag on a listed **Chat** or **Task** that lifts it into a "Starred"
+section pinned at the top of its **Tab**'s rail — the chat history, or the task
+list. Toggleable at any time from the row's kebab menu; a starred item shows
+*only* in the Starred section, never also in its natural group below (a Chat's
+date group, a Task's newest-first list). Purely a display pin: no effect on the
+item's content, last-update time, scheduling, or runs. For a Task the pin also
+outranks the needs-input float — a starred task that needs input stays in the
+Starred section, its row's status icon still signalling the request.
 _Avoid_: pinned, favorite
 
 ## Folders

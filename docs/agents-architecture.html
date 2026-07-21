@@ -59,6 +59,16 @@
   <p class="sub">The LLM agents in AG2 Assistant — who they are, their tools, their prompts, and where the design is currently disconnected. A working note for review (June 2026).</p>
 </header>
 
+<div class="warn"><b>Superseded (July 2026).</b> The task subsystem described below
+(chat agent → planner → executor(s) → verifier → controller, with plans, subtasks,
+deliverables, and an intake step) was replaced by the Cowork-style tasks redesign:
+a Task is just standing config (name + prompt + optional model + schedule), and each
+Run is a single ordinary turn of the one universal agent on its own chat stream
+(<code>task-run:&lt;run_id&gt;</code>) — no planner, no subtask tree, no verifier, no
+separate controller agent. See <a href="architecture.md">architecture.md</a> (§5.5
+"Task subsystem" and §6 "Agents &amp; LLM calls") for the current design; this page
+is kept as the historical note that motivated the redesign.</div>
+
 <p>AG2 Assistant runs <b>five distinct LLM agents</b> (plus two non-conversational passes), each created in a
 different module with its own model, tools, and prompt. Work flows between them as a relay — and because
 each is a fresh agent with a partial view, capabilities like <i>scheduling</i> are known to some and

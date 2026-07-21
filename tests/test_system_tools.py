@@ -1,137 +1,112 @@
-"""System tools — the universal agent's retrieval + action surface."""
+"""The 6 task tools mirror the UI/REST surface exactly."""
 
+from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
-from assistant.settings import Settings
-from assistant.system_tools import _fmt_node, _followup_note, build_system_tools, format_task
-from assistant.tasks import TaskManager, TaskStatus, TaskStore
+from assistant.system_tools import _origin, _schedule_arg, build_system_tools
+from assistant.tasks.store import TaskStore
 
 
-def _settings(tmp_path):
-    return Settings(tmp_path / "config.yaml")
+class _Stream:
+    def __init__(self, id):
+        self.id = id
 
 
-def _service(tmp_path):
-    store = TaskStore(path=tmp_path / "t.db")
-    inq = InquiryStore(path=tmp_path / "i.db")
+class _Ctx:
+    def __init__(self, sid):
+        self.stream = _Stream(sid)
 
-    async def executor(task_id, mgr, asker):
+    async def send(self, event):
         pass
 
-    mgr = TaskManager(store, executor, inquiry_store=inq)
+
+def _svc(tmp_path):
     return TaskService(
-        store=store, inquiry_store=inq, manager=mgr, executor=executor, planner_agent=object()
+        config=Config(),
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )
 
 
-class _Chats:
-    async def list_chats(self):
-        return [{"chat_id": "web-1", "turns": 2, "preview": "hi there"}]
+def _tools(*args, **kwargs):
+    """Map tool-name -> the underlying async callable (bypassing the ag2 `@tool`
+    FunctionTool wrapper, which exposes `.name` rather than `__name__` and expects
+    a ToolCallEvent rather than plain kwargs — its `.model.call` is the original
+    function, still callable directly with normal kwargs)."""
+    return {t.name: t.model.call for t in build_system_tools(*args, **kwargs)}
 
-    async def transcript(self, sid):
-        return [{"role": "user", "text": "hello"}, {"role": "agent", "text": "hi"}]
+
+def test_origin_detects_channel_streams():
+    assert _origin(_Ctx("telegram:42")) == ("telegram", "42")
+    assert _origin(_Ctx("web-abc")) == (None, None)
+    assert _origin(_Ctx("task-run:run_1")) == (None, None)
 
 
-def test_tool_set_covers_retrieval_and_actions(tmp_path):
-    names = {
-        t.name for t in build_system_tools(_service(tmp_path), _settings(tmp_path), chats=_Chats())
+def test_schedule_arg_shapes():
+    assert _schedule_arg("", "", "") == {"kind": "manual", "at": None, "cron": None}
+    assert _schedule_arg("cron", "", "@daily") == {"kind": "cron", "at": None, "cron": "@daily"}
+    assert _schedule_arg("once", "2026-08-01T09:00:00", "") == {
+        "kind": "once",
+        "at": "2026-08-01T09:00:00",
+        "cron": None,
     }
-    assert {
+
+
+async def test_create_update_run_delete_via_tools(tmp_path):
+    svc = _svc(tmp_path)
+
+    class _Settings:  # the task tools never touch settings; voice tools do
+        pass
+
+    tools = _tools(svc, _Settings())
+    for name in (
+        "create_task",
+        "update_task",
         "list_tasks",
         "get_task",
-        "create_task",
-        "schedule_task",
-        "reschedule_task",
-        "add_subtask",
-        "add_deliverable",
-        "set_task_objective",
-        "cancel_task",
-        "delete_task",
         "run_task_now",
-        "list_open_questions",
-        "answer_question",
-        "list_chats",
-        "read_chat",
-    } <= names
-
-
-def test_tool_set_without_chats(tmp_path):
-    names = {t.name for t in build_system_tools(_service(tmp_path), _settings(tmp_path))}
-    assert "list_chats" not in names and "list_tasks" in names
-
-
-def test_followup_note_only_on_channels():
-
-    assert _followup_note("gateway") == ""  # web: questions surface inline
-    assert "web app" in _followup_note("telegram")
-    assert "web app" in _followup_note("multi")
-
-
-def test_build_system_tools_accepts_platform(tmp_path):
-    # channels still get the full task toolset (platform only tunes confirmations)
-    names = {
-        t.name
-        for t in build_system_tools(
-            _service(tmp_path), _settings(tmp_path), chats=_Chats(), platform="telegram"
-        )
-    }
-    assert {"create_task", "schedule_task", "get_task"} <= names
-
-
-async def test_format_task_is_concise(tmp_path):
-    svc = _service(tmp_path)
-    t = await svc.store.create(
-        "Trip",
-        objective="plan a trip",
-        status=TaskStatus.SCHEDULED,
-        scheduled_for="2030-01-01T09:00:00",
-        recurrence="0 9 * * 1-5",
+        "delete_task",
+    ):
+        assert name in tools, f"missing tool {name}"
+    ctx = _Ctx("telegram:42")
+    msg = await tools["create_task"](
+        name="Digest", prompt="collect news", schedule_kind="cron", cron="0 9 * * *", context=ctx
     )
-    await svc.store.add_deliverable(t.id, "itinerary")
-    await svc.store.add_subtask(t.id, "book flights", reopen_parent=False)
-    node = await svc.get_task(t.id)
-    text = format_task(node)
-    assert "Trip" in text and "scheduled" in text and "0 9 * * 1-5" in text
-    assert "itinerary" in text and "book flights" in text
-
-
-async def test_get_task_returns_full_asset_surface_previews(tmp_path):
-    """The surface summary previews long output (clearly marked), but the get_task
-    tool returns the COMPLETE deliverable so follow-ups are faithful."""
-    svc = _service(tmp_path)
-    t = await svc.store.create("News digest")
-    d = await svc.store.add_deliverable(t.id, "headlines")
-    body = "RBA holds rates.\n" + ("DETAIL LINE\n" * 400)  # well over the preview cap
-    await svc.store.set_deliverable_status(
-        t.id,
-        d["id"],
-        "produced",
-        asset={"name": "headlines", "kind": "text", "content": body},
+    assert "Created task task-" in msg
+    tid = msg.split("Created task ")[1].split(" ")[0].rstrip(".—").strip()
+    detail = await svc.get_task(tid)
+    assert detail["schedule"]["cron"] == "0 9 * * *"
+    # origin captured from the channel stream for later delivery
+    raw = await svc.store.get_task(tid)
+    assert raw.origin_channel == "telegram" and raw.origin_chat == "42"
+    # bad cron comes back as a correctable message, not an exception
+    bad = await tools["create_task"](
+        name="X", prompt="p", schedule_kind="cron", cron="junk", context=ctx
     )
-
-    node = await svc.get_task(t.id)
-    surface = format_task(node)  # ambient surface context (what get_task tool guards)
-    assert "preview only" in surface  # ambient view is marked as partial
-    assert body not in surface  # …and does not contain the whole thing
-
-    full = _fmt_node(node, full=True)  # what the get_task tool returns
-    assert body in full  # complete, untruncated output
-    assert "preview only" not in full
+    assert "cron" in bad
+    out = await tools["update_task"](task_id=tid, paused="true")
+    assert "paused" in out.lower()
+    listing = await tools["list_tasks"]()
+    assert "Digest" in listing and tid in listing
+    assert tid in await tools["get_task"](task_id=tid)
+    assert "Deleted" in await tools["delete_task"](task_id=tid)
 
 
-async def test_run_now_on_scheduled_keeps_schedule(tmp_path):
-    svc = _service(tmp_path)
-    ran = []
-    svc._run_in_bg = lambda tid, ch, clarify=True: ran.append(tid)
-    t = await svc.store.create(
-        "digest",
-        status=TaskStatus.SCHEDULED,
-        scheduled_for="2030-01-01T09:00:00",
-        recurrence="0 9 * * 1-5",
+async def test_task_tools_carry_description(tmp_path):
+    """Task tools carry the description to/from the service."""
+    svc = _svc(tmp_path)
+
+    class _Settings:
+        pass
+
+    tools = _tools(svc, _Settings())
+    msg = await tools["create_task"](
+        name="N",
+        prompt="p",
+        description="short desc",
+        context=_Ctx("web-1"),
     )
-    msg = await svc.run_now(t.id)
-    assert "now" in msg.lower()
-    # a fresh occurrence (clone) was kicked off; the template stays scheduled
-    assert ran and ran[0] != t.id
-    tmpl = await svc.store.get(t.id)
-    assert tmpl.status == TaskStatus.SCHEDULED
+    assert "Created task task-" in msg
+    tid = msg.split("Created task ")[1].split(" ")[0].rstrip(".—").strip()
+    detail = await tools["get_task"](task_id=tid)
+    assert "short desc" in detail

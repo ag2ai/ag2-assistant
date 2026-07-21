@@ -238,6 +238,46 @@ def test_folder_walk_surfaces_non_noise_dot_dirs(monkeypatch, tmp_path):
         assert any(r["name"] == "deploy-target.yml" for r in results)
 
 
+def test_search_matches_file_in_task_run_scoped_folder(monkeypatch, tmp_path):
+    """``chat_id=task-run:{run_id}`` must resolve the run's task_id (via
+    ``runtime.tasks.get_run``) so a Folder granted only at task-scope is visible
+    inside that run's thread, but not from an unrelated chat (or no chat_id at
+    all) — the coverage gap called out for the ``/files/search`` route."""
+    repo = tmp_path / "acme"
+    repo.mkdir()
+    (repo / "taskfile.py").write_text("x")
+    client, pid = _client(monkeypatch)
+    with client:
+        f = _register_folder(client, repo)
+
+        created = client.post(api(pid, "/tasks"), json={"name": "T", "prompt": "go"}).json()["task"]
+        task_id = created["id"]
+        run = client.post(api(pid, f"/tasks/{task_id}/run")).json()["run"]
+        run_id = run["id"]
+        assert run["task_id"] == task_id
+
+        # Task-scope grant ONLY — no profile-scope, no chat-scope grant exists.
+        gw = client.app.state.profiles.get(pid).gateway
+        gw.folders.set_grant(f["id"], "read", profile=pid, task_id=task_id)
+
+        in_run = client.get(
+            api(pid, "/files/search"), params={"q": "taskfile", "chat_id": f"task-run:{run_id}"}
+        ).json()["results"]
+        assert len(in_run) == 1
+        assert in_run[0]["name"] == "taskfile.py"
+        assert in_run[0]["path"] == str(repo / "taskfile.py")
+
+        # An unrelated chat gets none of the task's Folder grant...
+        other_chat = client.get(
+            api(pid, "/files/search"), params={"q": "taskfile", "chat_id": "web-1"}
+        ).json()["results"]
+        assert other_chat == []
+
+        # ...and neither does a bare profile-scope search (no chat_id at all).
+        no_chat = client.get(api(pid, "/files/search"), params={"q": "taskfile"}).json()["results"]
+        assert no_chat == []
+
+
 def test_combined_corpus_ranks_filename_first(monkeypatch, tmp_path):
     repo = tmp_path / "shared"  # only its PATH matches "shared"
     repo.mkdir()

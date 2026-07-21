@@ -134,6 +134,14 @@ class ProfileRuntime:
         its WS handlers here to close sockets with code 4001)."""
         self._close_callbacks.append(callback)
 
+    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
+        """Push a message to a platform chat on THIS profile's live channel —
+        the task service delivers run outcomes through here."""
+        ch = self.channels.get(platform)
+        if ch is None:
+            raise RuntimeError(f"channel {platform!r} is not running on this profile")
+        await ch.notify(chat_id, text)
+
     async def start(self) -> None:
         """Build the derived config, construct + start gateway and task service the same
         way the base wiring does. Channel startup is driven by the ProfileManager after
@@ -153,6 +161,8 @@ class ProfileRuntime:
         )
         await self.gateway.start()
         self.tasks.set_emitter(self.gateway.emit_event)  # lifecycle → AG2 stream
+        self.tasks.set_gateway(self.gateway)  # turns/stops/stream deletion for runs
+        self.tasks.set_notifier(self.notify_channel)  # run outcomes -> the origin channel
         await self.tasks.start()  # task tools + scheduler (per-profile lock)
 
     async def close(self) -> None:

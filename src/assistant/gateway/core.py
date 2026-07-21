@@ -58,11 +58,25 @@ from assistant.observability import (
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.settings import profile_settings
 from assistant.storage import SerialStore
-from assistant.system_tools import build_system_tools, format_task
 from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
 
 _TRANSCRIPT_PREFIX = "/transcript/"
+
+
+def _task_summary(t: dict) -> str:
+    """Concise voice-grounding snapshot of a task's current state (TaskService v2's
+    dict shape: name/prompt/model/schedule_desc/paused/runs) — mirrors what the
+    get_task system tool reports, for the voice agent's ambient task_context."""
+    lines = [
+        f"{t['id']} · {t['name']}" + (" · PAUSED" if t["paused"] else ""),
+        f"prompt: {t['prompt']}",
+        f"schedule: {t['schedule_desc']}",
+    ]
+    last = t.get("last_run")
+    if last:
+        lines.append(f"last run: {last['status']} · {last['summary'] or last['error']}")
+    return "\n".join(lines)
 
 
 def _conversation_events() -> tuple:
@@ -73,6 +87,13 @@ def _conversation_events() -> tuple:
 
 
 _CONVERSATION_EVENTS = _conversation_events()
+
+
+def is_internal_stream(chat_id: str) -> bool:
+    """Streams that are a thread of something else (a task run) — they render on
+    their own page and must not appear in the Chats list. ``task:`` covers legacy
+    records from the pre-redesign model."""
+    return chat_id.startswith("task-run:") or chat_id.startswith("task:")
 
 
 @dataclass
@@ -129,6 +150,10 @@ class Gateway:
         # chat_id -> live Stream; plus which chats we've hydrated from disk
         self._streams: dict[str, object] = {}
         self._loaded: set[str] = set()
+        # llm_config_id -> its cached per-model Agent (built lazily in _agent_for;
+        # cleared on reload() so a settings/config change doesn't keep serving stale
+        # per-task agents alongside the rebuilt default one).
+        self._model_agents: dict[str, object] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
@@ -148,30 +173,66 @@ class Gateway:
         honor exactly the access the agent's own reads would (ADR 0006/0012)."""
         return self._folders
 
+    @property
+    def permissions(self):
+        """Install-wide PermissionStore — task routes/service read task-scoped rules."""
+        return self._permissions
+
     def usage_today(self) -> dict:
         """Today's token + estimated-cost totals (for the cost & activity HUD)."""
         return self._usage.today()
 
-    def _make_agent(self):
-        """Build the one universal agent: capability + system tools (know/do
-        everything) + compaction. Used by start() and reload()."""
+    def _make_agent(self, cfg=None):
+        """Build a universal agent: capability + system tools (know/do everything) +
+        compaction. Used by start()/reload() for the default agent, and by
+        `_agent_for` (with an overridden ``cfg``) to build a per-task-model agent."""
+        cfg = cfg or self._config
         extra_tools = None
         if self._tasks is not None:
-            # create/schedule come from the system tools, so we don't also wire
-            # start_task/schedule_task here (that duplicated names). `platform` lets
-            # those tools note (on channels) that follow-up questions go to the web app.
+            from assistant.settings import profile_settings
+            from assistant.system_tools import build_system_tools
+
+            # create/update/run/delete come from the system tools, so we don't also
+            # wire duplicate task actions here. `platform` lets those tools note (on
+            # channels) that follow-up questions go to the web app.
             # The voice get/set tools read/write THIS profile's settings.
-            settings = profile_settings(self._config.data_dir)
+            settings = profile_settings(cfg.data_dir)
             extra_tools = build_system_tools(
                 self._tasks, settings, chats=self, platform=self._platform
             )
         return create_agent(
-            self._config,
+            cfg,
             memory=self._memory,
             platform=self._platform,
             extra_tools=extra_tools,
             compact=self._memory,
         )
+
+    def _agent_for(self, llm_config_id: str | None):
+        """The turn's agent: the profile default, or a cached per-LLM-config agent
+        when a task pins a model. Unknown ids fall back to the default (the task
+        may reference a since-deleted configuration — degrade, don't fail)."""
+        if not llm_config_id:
+            return self._agent
+        agent = self._model_agents.get(llm_config_id)
+        if agent is not None:
+            return agent
+        from assistant import llm_configs
+
+        entry = llm_configs.get_config(llm_config_id)
+        if entry is None:
+            return self._agent
+        import copy
+
+        cfg = copy.deepcopy(self._config)
+        provider = llm_configs.PROVIDER_OF[entry["type"]]
+        cfg.llm.provider = provider
+        cfg.llm.model = entry["model"]
+        cfg.llm.provider_options[provider] = llm_configs.entry_options(entry)
+        cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
+        agent = self._make_agent(cfg)
+        self._model_agents[llm_config_id] = agent
+        return agent
 
     async def _ensure_subscription_fresh(self) -> None:
         """When OpenAI runs in ChatGPT-subscription mode, refresh the OAuth access
@@ -230,6 +291,9 @@ class Gateway:
         self._config = self._config_factory()
         if self._agent is not None:
             self._agent = self._make_agent()
+        # Stale per-model agents were built from the pre-reload config/keys; a task
+        # run after this point must get a freshly-built one.
+        self._model_agents.clear()
         if self._tasks is not None and hasattr(self._tasks, "reload"):
             await self._tasks.reload()
 
@@ -329,6 +393,8 @@ class Gateway:
         attachments: list | None = None,
         surface: str = "",
         on_event=None,
+        llm_config_id: str | None = None,
+        task_id: str | None = None,
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -343,15 +409,28 @@ class Gateway:
         the agent's structured events (tool calls, task cards, deliverables, …) raw
         as they're emitted — the voice channel forwards them so its client folds
         them with the same reducer the text path uses. Conversation/audio events are
-        omitted (voice renders those itself).
+        omitted (voice renders those itself). `llm_config_id` pins the turn to a
+        task's chosen model (a cached per-config agent) instead of the profile
+        default. `task_id`, when this turn is a task run, scopes any command grant
+        the turn mints via "always allow" to that task (survives its future runs)
+        instead of persisting it globally; when omitted it is auto-resolved from
+        `chat_id` for a run's thread (``task-run:{run_id}``), so a manual reply
+        typed there is scoped the same as the run itself, and this also feeds
+        folder-grant resolution for that turn.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
 
         await self._maybe_onboard(asker)
+        # Refresh first: subscription mode may rebuild the default agent with a
+        # rotated OAuth token, and this turn must run on the fresh one.
         await self._ensure_subscription_fresh()
+        agent = self._agent_for(llm_config_id)
 
-        extra = self._ask_kwargs(asker, chat_id)
+        # A reply typed into a run's thread arrives without task context — resolve
+        # it so task-scoped folder/command grants cover manual turns too.
+        task_id = task_id or await self._task_for_stream(chat_id)
+        extra = self._ask_kwargs(asker, chat_id, task_id or "")
         msg = [text, *(attachments or [])]
 
         async with self._chat_lock(chat_id):
@@ -391,7 +470,7 @@ class Gateway:
                 # makes the turn steerable while it runs: `feed_message` enqueues onto
                 # the run's inbox, `cancel_turn` cancels this task — AG2 propagates that
                 # into the turn.
-                async with self._agent.run(
+                async with agent.run(
                     *msg,
                     stream=stream,
                     prompt=prompt,
@@ -534,6 +613,7 @@ class Gateway:
         agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
+
         task_context = ""
         if task_id:
             node = await self._tasks.get_task(task_id)
@@ -541,7 +621,7 @@ class Gateway:
                 task_context = (
                     "You are currently on a task's page. When the user says "
                     f'"this task" they mean task {task_id}. Current state:\n'
-                    f"{format_task(node)}"
+                    f"{_task_summary(node)}"
                 )
         elif origin_chat:
             recent = await self._recent_transcript(origin_chat)
@@ -555,9 +635,9 @@ class Gateway:
 
         async def _send_capturing(request: str, chat: str, surface: str) -> str:
             # The universal agent's structured events (tool calls, the TaskCreated a
-            # create_task/schedule_task emits, deliverables, …) are forwarded raw via
-            # on_event so the voice client folds them with the same reducer as text —
-            # no separate task-capture path needed.
+            # create_task emits, …) are forwarded raw via on_event so the voice
+            # client folds them with the same reducer as text — no separate
+            # task-capture path needed.
             return await self.send_message(
                 request,
                 chat_id=chat,
@@ -568,7 +648,7 @@ class Gateway:
         async def delegate(request: str) -> str:
             if task_id:
                 node = await self._tasks.get_task(task_id)  # fresh each call
-                snap = format_task(node) if node else f"(task {task_id})"
+                snap = _task_summary(node) if node else f"(task {task_id})"
                 return await _send_capturing(
                     request,
                     f"task:{task_id}",  # share the task's universal stream
@@ -733,6 +813,8 @@ class Gateway:
             except Exception as exc:
                 log_suppressed("chat listing transcript read", exc, entry=entry)
                 continue
+            if is_internal_stream(doc.get("chat_id", "")):
+                continue
             msgs = doc.get("messages", [])
             first_user = next((m["text"] for m in msgs if m["role"] == "user"), "")
             out.append(
@@ -819,8 +901,23 @@ class Gateway:
             log_suppressed("onboarding", exc)
             # Onboarding is best-effort; never block the actual message.
 
-    def _ask_kwargs(self, asker, chat_id: str = "") -> dict:
-        """Per-turn hitl_hook + dependencies bound to this request's asker and chat."""
+    async def _task_for_stream(self, chat_id: str) -> str:
+        """The task behind a run stream (``task-run:{run_id}``) — '' for anything
+        else, or when the run/task is gone: a manual reply in an orphaned run's
+        thread then resolves like a plain chat instead of erroring."""
+        if not chat_id.startswith("task-run:") or self._tasks is None:
+            return ""
+        try:
+            run = await self._tasks.get_run(chat_id.removeprefix("task-run:"))
+        except Exception:
+            return ""
+        return (run or {}).get("task_id") or ""
+
+    def _ask_kwargs(self, asker, chat_id: str = "", task_id: str = "") -> dict:
+        """Per-turn hitl_hook + dependencies bound to this request's asker, chat, and
+        (for a task run) task — so an "always allow" this turn mints persists
+        task-scoped rather than globally (see PermissionManager.task_id)."""
+
         deps: dict = {
             PermissionManager: PermissionManager(
                 self._permissions,
@@ -830,6 +927,7 @@ class Gateway:
                 profile=self._config.data_dir.name,
                 chat_id=chat_id,
                 workspace_dir=self._config.workspace_dir,
+                task_id=task_id,
             )
         }
         out: dict = {"dependencies": deps}

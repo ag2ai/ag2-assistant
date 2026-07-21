@@ -1,5 +1,6 @@
 """Tests for the folder-permission system and the permission-gated file reader."""
 
+import asyncio
 import json
 import threading
 
@@ -13,6 +14,7 @@ from assistant.permissions import (
     DENY,
     GRANT_CHAT,
     GRANT_PROFILE,
+    GRANT_TASK,
     PermissionManager,
     PermissionStore,
     _command_detail,
@@ -584,3 +586,120 @@ async def test_workspace_is_implicit_read_write(tmp_path):
     assert await m.check(ws / "notes.md") is True
     assert await m.check(ws / "sub" / "notes.md", write=True) is True
     assert asker.asked == 0
+
+
+def test_check_honors_task_scope_grant_without_prompt(tmp_path):
+    d = tmp_path / "data"
+    d.mkdir()
+    folders = FolderStore(tmp_path / "folders.json")
+    f = folders.create_folder(d)
+    folders.set_grant(f["id"], "read_write", profile="work", task_id="task-1")
+    pm = PermissionManager(
+        PermissionStore(path=None),
+        None,
+        folders=folders,
+        profile="work",
+        chat_id="task-run:r1",
+        task_id="task-1",
+    )
+    assert asyncio.run(pm.check(d / "x.txt", write=True))
+    # без task_id тот же путь не покрыт (asker=None → deny)
+    pm2 = PermissionManager(
+        PermissionStore(path=None),
+        None,
+        folders=folders,
+        profile="work",
+        chat_id="task-run:r1",
+    )
+    assert not asyncio.run(pm2.check(d / "x.txt", write=True))
+
+
+def test_prompt_offers_and_mints_task_grant(tmp_path):
+    d = tmp_path / "data"
+    d.mkdir()
+    folders = FolderStore(tmp_path / "folders.json")
+    asker = FakeAsker(GRANT_TASK)
+    pm = PermissionManager(
+        PermissionStore(path=None),
+        asker,
+        folders=folders,
+        profile="work",
+        chat_id="task-run:r1",
+        task_id="task-1",
+    )
+    assert asyncio.run(pm.check(d / "x.txt"))
+    assert GRANT_TASK in asker.last.options
+    # грант лёг task-скоупом: виден этой таске, не виден профилю/чужим таскам
+    assert folders.mode_for(d, "work", task_id="task-1") == "read"
+    assert folders.mode_for(d, "work") is None
+
+
+def test_prompt_without_task_id_has_no_task_option(tmp_path):
+    asker = FakeAsker(ALLOW_ONCE)
+    d = tmp_path / "data"
+    d.mkdir()
+    pm = PermissionManager(
+        PermissionStore(path=None),
+        asker,
+        folders=FolderStore(tmp_path / "folders.json"),
+        profile="work",
+        chat_id="web-1",
+    )
+    asyncio.run(pm.check(d / "x.txt"))
+    assert GRANT_TASK not in asker.last.options
+
+
+# --- task-scoped command rules (Task 4: task-run always-allow persists per task) ---
+
+
+def test_task_scoped_rules_isolated(tmp_path):
+    """Task-scoped grants live alongside (not instead of) the global set: a task's
+    rule gates only its own turns, a global rule still applies inside a task turn,
+    and drop_task wipes exactly that task's rules."""
+    s = PermissionStore(path=tmp_path / "perm.json")
+    s.grant_command("run_shell_command(git *)", task_id="task-1")
+    assert s.is_command_allowed("run_shell_command", "git status", task_id="task-1")
+    assert not s.is_command_allowed("run_shell_command", "git status")  # not global
+    assert not s.is_command_allowed("run_shell_command", "git status", task_id="task-2")
+    assert s.granted_commands(task_id="task-1") == ["run_shell_command(git *)"]
+    assert s.granted_commands() == []  # global list untouched
+
+    # global rule still applies inside a task turn
+    s.grant_command("run_shell_command(ls *)")
+    assert s.is_command_allowed("run_shell_command", "ls -la", task_id="task-1")
+
+    # revoke + drop
+    assert s.revoke_command("run_shell_command(git *)", task_id="task-1")
+    s.grant_command("run_shell_command(git *)", task_id="task-1")
+    s.drop_task("task-1")
+    assert s.granted_commands(task_id="task-1") == []
+
+
+def test_task_scope_keeps_blanket_refusal(tmp_path):
+    """The _NO_BLANKET refusal (never mint a bare shell/code-tool rule) applies to
+    task-scoped grants too — a task turn must not be able to mint "allow anything"."""
+    import pytest
+
+    s = PermissionStore(path=tmp_path / "perm.json")
+    with pytest.raises(ValueError):
+        s.grant_command("run_shell_command", task_id="task-1")  # bare shell rule stays unmintable
+
+
+async def test_manager_mints_task_scoped_on_always(tmp_path):
+    """A manager bound to a task_id mints its "always allow" grant into that task's
+    scope, not the global one — so it persists across that task's future runs but
+    never leaks into other chats/tasks."""
+    from assistant.hitl.base import Question
+
+    store = PermissionStore(path=tmp_path / "perm.json")
+
+    class _Asker:
+        async def ask(self, q: Question, timeout=None):
+            return next(
+                o for o in q.options if o.startswith("Always")
+            )  # always_allow_command_label
+
+    pm = PermissionManager(store, _Asker(), task_id="task-9")
+    assert await pm.check_command("run_shell_command", '{"command": "git push"}') is True
+    assert store.is_command_allowed("run_shell_command", "git push", task_id="task-9")
+    assert not store.is_command_allowed("run_shell_command", "git push")  # NOT global

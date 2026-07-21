@@ -8,10 +8,16 @@ platform's format.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
     from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
+
+# Platforms whose adapters can push an unsolicited message (task-run outcomes
+# delivered back to the chat a task came from). Single source of truth: the
+# tuple is derived from the Literal, so the two can't drift.
+PushChannel = Literal["telegram", "discord", "slack"]
+PUSH_CHANNELS: tuple[PushChannel, ...] = get_args(PushChannel)
 
 
 @dataclass
@@ -59,3 +65,8 @@ class Channel(ABC):
     def format_outbound(self, text: str) -> str:
         """Render the agent's reply for this platform. Default: unchanged."""
         return text
+
+    async def notify(self, chat_id: str, text: str) -> None:
+        """Push an unsolicited message to a platform chat (task-run outcomes).
+        Override per platform; the default says this channel can't push."""
+        raise NotImplementedError(f"{self.platform} channel cannot push messages")

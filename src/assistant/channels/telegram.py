@@ -151,6 +151,12 @@ class TelegramChannel(Channel):
         """Telegram renders raw Markdown literally, so send clean plain text."""
         return markdown_to_plain(text)
 
+    async def notify(self, chat_id: str, text: str) -> None:
+        """Push a task-run outcome into a Telegram chat (no reply-to-edit here,
+        this isn't a reply). Mirrors `_on_message`'s send path; that path never
+        chunks long text, so neither does this."""
+        await self._app.bot.send_message(int(chat_id), self.format_outbound(text))
+
     async def stop(self) -> None:
         if self._app is None:
             return
