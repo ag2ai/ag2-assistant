@@ -1,8 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { chats, tasks, profiles, profileEpoch } from '../store.js'
-  import { route, go, newChatId, openOverlay } from '../router.js'
+  import { chats, tasks, profiles, profileEpoch, pendingTaskEdit } from '../store.js'
+  import { route, go, goTab, newChatId, openOverlay } from '../router.js'
   import { api } from '../transport/api.js'
   import { switchProfile } from '../controller.js'
   import Icon from './Icon.svelte'
@@ -62,11 +62,13 @@
   function onDocPointer(e) {
     if (pickerOpen && !e.target.closest('.profchips')) pickerOpen = false
     if (menuChat && !e.target.closest('.chatmenu') && !e.target.closest('.rowkebab')) menuChat = ''
+    if (menuTask && !e.target.closest('.taskmenu') && !e.target.closest('.rowkebab')) menuTask = ''
   }
   function onDocKey(e) {
     if (createOpen && e.key === 'Escape') { createOpen = false; return }
     if (pickerOpen && e.key === 'Escape') pickerOpen = false
     if (menuChat && e.key === 'Escape') menuChat = ''
+    if (menuTask && e.key === 'Escape') menuTask = ''
   }
 
   // "+" chip → profile-creation modal (§5.4). Reuses ProfileForm (same form as
@@ -255,6 +257,71 @@
   }
   function focusSelect(node) { node.focus(); node.select() }
 
+  // ── Task row actions (Rename / Enable-Disable / Edit / Delete) ──────────────
+  // Same idioms as the chat row above, one level over: a hover-revealed kebab opens
+  // a fixed-position menu; Rename is inline; Delete swaps to a "Delete? yes/no"
+  // confirm. All mutations patch $tasks optimistically (with rollback) so the row —
+  // and every other $tasks reader — updates without waiting for the 5s poll.
+  let menuTask = $state('')       // task id whose menu is open
+  let renameTask = $state('')     // task id being renamed
+  let renameTaskText = $state('')
+  let confirmTask = $state('')    // task id awaiting delete confirmation
+  let busyTask = $state('')       // task id currently being deleted
+
+  function toggleTaskMenu(e, t) {
+    e.stopPropagation()
+    menuChat = ''
+    if (menuTask === t.id) { menuTask = ''; return }
+    const r = e.currentTarget.getBoundingClientRect()
+    menuPos = { x: r.right, y: r.bottom + 4 }
+    menuTask = t.id
+  }
+
+  // Enable/Disable = flip the task's paused flag (the same toggle as TaskPage).
+  async function toggleTaskPause(t) {
+    menuTask = ''
+    const next = !t.paused
+    $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: next } : x))
+    try { await api.updateTask(t.id, { paused: next }) } catch {
+      $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: !next } : x))
+    }
+  }
+
+  // Full edit: hand off to TaskPage's modal via the one-shot pendingTaskEdit signal.
+  function editTask(t) {
+    menuTask = ''
+    pendingTaskEdit.set(t.id)
+    openTask(t.id)
+  }
+
+  function startTaskRename(t) {
+    menuTask = ''
+    renameTask = t.id
+    renameTaskText = t.name || ''
+  }
+  async function commitTaskRename(t) {
+    if (renameTask !== t.id) return // Escape already cancelled; ignore the blur
+    renameTask = ''
+    const name = renameTaskText.trim()
+    if (!name || name === t.name) return
+    const prev = t.name
+    $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, name } : x))
+    try { await api.updateTask(t.id, { name }) } catch {
+      $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, name: prev } : x))
+    }
+  }
+
+  async function delTask(id) {
+    busyTask = id
+    try {
+      await api.deleteTask(id)
+      $tasks = $tasks.filter((x) => x.id !== id)
+      if ($route.name === 'task' && $route.id === id) goTab('tasks')
+    } catch {}
+    busyTask = ''
+    confirmTask = ''
+  }
+
   // status → Lucide icon name + tooltip label. Colored per-status via the
   // .statusicon CSS classes; replaces the old emoji/unicode glyphs. Keys are
   // Run statuses (RunStatus.ALL: running/needs_input/completed/failed/cancelled) —
@@ -413,7 +480,7 @@
   {#if $route.tab === 'files'}
     <FilesTree />
   {:else}
-  <div class="dlist" onscroll={() => (menuChat = '')}>
+  <div class="dlist" onscroll={() => { menuChat = ''; menuTask = '' }}>
     {#if $route.tab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
       {#if !$chats.length}<div class="none">{loaded ? 'No conversations yet.' : 'Loading…'}</div>{/if}
@@ -437,10 +504,48 @@
             {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
             {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={t.last_run.status}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
             {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
-            <span class="ttitle">{t.name}</span>
-            {#if t.unread}<span class="unreadcount" title="{t.unread} unread">{t.unread}</span>{/if}
+            {#if renameTask === t.id}
+              <input class="renamein" value={renameTaskText} use:focusSelect
+                oninput={(e) => (renameTaskText = e.target.value)}
+                onclick={(e) => e.stopPropagation()}
+                onkeydown={(e) => { if (e.key === 'Enter') commitTaskRename(t); else if (e.key === 'Escape') renameTask = '' }}
+                onblur={() => commitTaskRename(t)} />
+            {:else}
+              <span class="ttitle">{t.name}</span>
+              {#if t.unread}<span class="unreadcount" title="{t.unread} unread">{t.unread}</span>{/if}
+            {/if}
+            {#if confirmTask === t.id}
+              <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+                <span class="confirm">Delete?</span>
+                <button class="linkbtn danger" disabled={busyTask === t.id}
+                  onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : 'yes'}</button>
+                <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmTask = '' }}>no</button>
+              </span>
+            {:else if renameTask !== t.id}
+              <button class="rowkebab" title="Task actions" aria-haspopup="menu" aria-expanded={menuTask === t.id}
+                onclick={(e) => toggleTaskMenu(e, t)}><Icon name="ellipsis-vertical" size={14} /></button>
+              {#if menuTask === t.id}
+                <div class="chatmenu taskmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
+                  onclick={(e) => e.stopPropagation()}>
+                  <button class="cmitem" role="menuitem" onclick={() => startTaskRename(t)}>
+                    <Icon name="pencil" size={14} /> Rename
+                  </button>
+                  <button class="cmitem" role="menuitem" onclick={() => toggleTaskPause(t)}>
+                    <Icon name={t.paused ? 'play' : 'pause'} size={14} /> {t.paused ? 'Enable' : 'Disable'}
+                  </button>
+                  <button class="cmitem" role="menuitem" onclick={() => editTask(t)}>
+                    <Icon name="pencil" size={14} /> Edit…
+                  </button>
+                  <div class="cmdiv"></div>
+                  <button class="cmitem danger" role="menuitem"
+                    onclick={() => { menuTask = ''; confirmTask = t.id }}>
+                    <Icon name="trash" size={14} /> Delete
+                  </button>
+                </div>
+              {/if}
+            {/if}
           </div>
-          {#if t.schedule.kind !== 'manual' || nextIn}
+          {#if (t.schedule.kind !== 'manual' || nextIn) && renameTask !== t.id}
             <div class="tmeta">
               {#if t.schedule.kind !== 'manual'}<span class="tag sched" title={t.schedule_desc}>{shortSched(t.schedule_desc) || t.schedule_desc}</span>{/if}
               {#if nextIn}<span class="nextin" title="Next run">{nextIn}</span>{/if}
@@ -579,7 +684,10 @@
 
   /* Kebab: hover-revealed like the old trash; swaps with the timestamp. */
   .rowkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; width: 0; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-  .chatrow:hover .rowkebab, .chatrow:focus-within .rowkebab { opacity: .55; width: auto; }
+  .chatrow:hover .rowkebab, .chatrow:focus-within .rowkebab,
+  .ttask:hover .rowkebab, .ttask:focus-within .rowkebab { opacity: .55; width: auto; }
+  /* An open menu keeps its kebab visible even once the pointer leaves the row. */
+  .rowkebab[aria-expanded='true'] { opacity: 1 !important; width: auto; color: var(--text); }
   .rowkebab:hover { opacity: 1; color: var(--text); }
 
   /* Row action menu: fixed-position (escapes the scrolling list), right edge

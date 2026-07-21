@@ -7,7 +7,7 @@
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
   import { go, goTab, route } from '../../router.js'
-  import { profiles } from '../../store.js'
+  import { profiles, tasks, pendingTaskEdit } from '../../store.js'
   import { getActiveProfileId } from '../../lib/profile.js'
   import { foldersStore, loadFolders } from '../../lib/folders.js'
   import Icon from '../Icon.svelte'
@@ -27,14 +27,24 @@
   const isNew = $derived($route.id === 'new')
 
   // Live Folder snapshot — TaskEditModal / TaskFolders mutate the same store, so
-  // this list refreshes when folders are attached/detached. Only this task's
-  // task-scope grants that actually grant access (mode !== 'none') are listed.
+  // this list refreshes when folders are attached/detached. Mirror TaskFolders'
+  // effective-access model exactly: a task reaches its own task-scope folders AND
+  // the profile folders, with a task-scope grant overriding the profile mode (a
+  // task 'none' override blocks a profile folder). Listing only task-scope grants
+  // (as this preview used to) drops profile folders the task can actually read.
   const pid = $derived($profiles.activeId || getActiveProfileId())
   onMount(() => { if (!$foldersStore.loaded) loadFolders() })
   const tGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.task_id === task.id && !g.chat_id)
-  const taskFolderRows = $derived(!task ? [] : ($foldersStore.folders || []).filter(
-    (f) => { const g = tGrant(f); return g && g.mode !== 'none' }
-  ))
+  const profileGrant = (f) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
+  const effMode = (f) => { const t = tGrant(f); return t ? t.mode : profileGrant(f)?.mode }
+  // Split into the modal's two groups (Task folders / Profile folders), read-only:
+  // task-only folders that grant access, and profile folders the task can still
+  // reach (a task 'none' override drops them here). Same layout, minus the controls.
+  const _folders = $derived($foldersStore.folders || [])
+  const taskFolders = $derived(!task ? [] : _folders.filter((f) => { const t = tGrant(f); return t && t.mode !== 'none' && !profileGrant(f) }))
+  const profileFolders = $derived(!task ? [] : _folders.filter((f) => profileGrant(f) && effMode(f) !== 'none'))
+  const hasFolders = $derived(taskFolders.length > 0 || profileFolders.length > 0)
+  const modeLabel = (m) => (m === 'read_write' ? 'Read + write' : 'Read')
 
   // Monotonic token: fast task-A → task-B navigation can let A's load() await
   // resolve after B's has started. Each call claims the next token and checks
@@ -52,11 +62,35 @@
       if (seq !== _loadSeq) return
       task = t
       perms = p
+      // Freshen the drawer's row from this authoritative load, so the shared store
+      // and this page agree — the sync effect below then never reverts to a staler
+      // list value after navigation.
+      patchTaskInStore(t)
     } catch { if (seq === _loadSeq) { error = 'Task not found.'; task = null; perms = [] } }
   }
   // reload when the route's id changes
   let _lastId = ''
   $effect(() => { const id = $route.id; if (id !== _lastId) { _lastId = id; load(id) } })
+
+  // Honour a one-shot "open Edit" request from the Drawer's task-row menu: it sets
+  // pendingTaskEdit then navigates here, so open the modal once the matching task
+  // has loaded (guarded on id so a stale request can't pop Edit on the wrong task).
+  $effect(() => {
+    if (task && $pendingTaskEdit === task.id) { pendingTaskEdit.set(null); editOpen = true }
+  })
+
+  // Reflect drawer-side edits (rename / enable-disable) on the open page: those patch
+  // the shared $tasks store, not this page's own detailed copy. Merge back only the
+  // summary fields the drawer can change, so richer local data (runs, prompt, grants)
+  // is preserved. One-directional (store → page); this page's own edits already write
+  // through via patchTaskInStore, so the merge is a no-op for them.
+  $effect(() => {
+    if (!task) return
+    const row = $tasks.find((x) => x.id === task.id)
+    if (row && (row.name !== task.name || row.paused !== task.paused)) {
+      task = { ...task, name: row.name, paused: row.paused }
+    }
+  })
 
   async function runNow() {
     if (running || !task) return
@@ -65,16 +99,29 @@
     catch (e) { error = e.message || 'run failed' } finally { running = false }
   }
 
+  // Patch the shared task-list store so the drawer's paused glyph (and any other
+  // $tasks reader) reflects the toggle immediately, rather than waiting up to 5s
+  // for Drawer's poll to re-sync. The server copy is authoritative — merge the
+  // whole returned row, not just `paused`.
+  function patchTaskInStore(t) {
+    tasks.update((list) => list.map((x) => (x.id === t.id ? t : x)))
+  }
+
   async function togglePause() {
     if (!task || pausing) return
     pausing = true
-    try { task = await api.updateTask(task.id, { paused: !task.paused }) }
+    try { task = await api.updateTask(task.id, { paused: !task.paused }); patchTaskInStore(task) }
     catch (e) { error = e.message || 'pause failed' } finally { pausing = false }
   }
 
   async function del() {
     if (!task) return
-    try { await api.deleteTask(task.id); goTab('tasks') } catch (e) { error = e.message }
+    try {
+      const id = task.id
+      await api.deleteTask(id)
+      tasks.update((list) => list.filter((x) => x.id !== id))
+      goTab('tasks')
+    } catch (e) { error = e.message }
   }
 
   async function revoke(rule) {
@@ -87,7 +134,7 @@
   // new task's own page. Editing: the modal just closes back over this page,
   // with the fresh copy from the save swapped straight into `task`.
   function closeModal() { if (isNew) goTab('tasks'); else editOpen = false }
-  function onModalSaved(t) { if (isNew) go('/t/' + t.id); else { task = t; editOpen = false } }
+  function onModalSaved(t) { patchTaskInStore(t); if (isNew) go('/t/' + t.id); else { task = t; editOpen = false } }
 
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
   const STAT_ICON = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
@@ -149,11 +196,27 @@
           <h2>Instructions</h2>
           <p class="tpprompt">{task.prompt}</p>
           <h2>Folders</h2>
-          {#if taskFolderRows.length}
-            {#each taskFolderRows as f (f.id)}
-              {@const g = tGrant(f)}
-              <p class="tpmeta" title={f.path}>{f.name} ({g.mode === 'read_write' ? 'read-write' : 'read-only'}){f.exists === false ? ' — path is missing' : ''}</p>
-            {/each}
+          {#if hasFolders}
+            {#if taskFolders.length}
+              <div class="fsec">Task folders</div>
+              {#each taskFolders as f (f.id)}
+                <div class="frow">
+                  <span class="fico"><Icon name="folder" size={14} /></span>
+                  <span class="fname" title={f.path}>{f.name}{f.exists === false ? ' — path is missing' : ''}</span>
+                  <span class="fmode">{modeLabel(effMode(f))}</span>
+                </div>
+              {/each}
+            {/if}
+            {#if profileFolders.length}
+              <div class="fsec">Profile folders</div>
+              {#each profileFolders as f (f.id)}
+                <div class="frow">
+                  <span class="fico"><Icon name="folder" size={14} /></span>
+                  <span class="fname" title={f.path}>{f.name}{f.exists === false ? ' — path is missing' : ''}</span>
+                  <span class="fmode">{modeLabel(effMode(f))}</span>
+                </div>
+              {/each}
+            {/if}
           {:else}
             <p class="tpmeta">—</p>
           {/if}
@@ -219,6 +282,18 @@
   .tpcols section > h2:first-child { margin-top: 0; }
   .tpprompt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0; }
   .tpmeta { overflow-wrap: anywhere; font-size: 13px; color: var(--ink); margin: 0; }
+
+  /* Folder rows mirror TaskFolders.svelte's .cfsec/.cfrow layout so the preview and
+     the edit modal read as one surface — read-only here, so the mode is a muted
+     label instead of the modal's switch. The section header breaks .frow adjacency,
+     so the last row of each group carries no trailing divider. */
+  .fsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 14px 0 4px; }
+  .fsec:first-of-type { margin-top: 0; }
+  .frow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+  .frow + .frow { border-top: 1px solid var(--line); }
+  .fico { flex: none; display: inline-flex; color: var(--muted); }
+  .fname { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fmode { flex: none; font-size: 13px; color: var(--muted); }
 
   .permrow { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 10px; margin-bottom: 6px; }
   .permrow code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

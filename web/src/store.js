@@ -34,6 +34,11 @@ export const tasks = writable([])
 // polled while a run thread is open; null otherwise.
 export const runInfo = writable(null)
 
+// A one-shot request to open a task's edit modal once its page loads. Set by the
+// Drawer's task-row "Edit" action (which navigates to /t/{id} first), consumed and
+// cleared by TaskPage when the matching task has loaded. Null when no request pending.
+export const pendingTaskEdit = writable(null)
+
 // Durable HITL: pending questions/permissions across all tasks, answerable
 // anywhere (polled). Survives restarts — backed by the InquiryStore.
 export const inquiries = writable([])
