@@ -221,6 +221,14 @@ export const api = {
   // grants; a blank/no-match query yields an empty list.
   searchFiles: (q, chatId = '') =>
     j('GET', P('/files/search?q=' + encodeURIComponent(q) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''))),
+  // The preview rail's "Mentioned in N threads" backlink (ADR 0014): the current
+  // profile's Threads (Chats + Task Runs) whose transcript mentions this file →
+  // {threads:[{stream_id, kind:'chat'|'run', title, updated, task_id?, task_name?,
+  // run_started_at?}]}, newest-first, hidden-when-empty. `path` is the previewed
+  // file's path (relative = Files-space, absolute = Folder); `chatId` mirrors the
+  // other /files helpers' signature but the scan is profile-wide.
+  fileMentions: (path, chatId = '') =>
+    j('GET', P('/files/mentions?path=' + encodeURIComponent(path) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''))),
   // A Folder (absolute) `path` carries `chatId` so the server resolves the Grant for
   // THIS Thread; a Files-space (relative) path ignores it (rawQuery decides — ADR 0013).
   fileUrl: (path, download = false, chatId = '') =>

@@ -140,6 +140,34 @@ def resolve(workspace_dir, rel: str) -> Path | None:
     return p if p is not None and p.is_file() else None
 
 
+def mention_forms(workspace_dir, path: str) -> list[str]:
+    """The OR-set of full-path strings a transcript scan matches for a previewed
+    file's "Mentioned in N threads" backlink (ADR 0014).
+
+    A Files-space (relative) path yields BOTH its workspace-**relative** form (as a
+    produce/attachment event or bare prose writes it) and its **absolute** form (as
+    an ``@`` ``Referenced files:`` block writes it). A Folder (absolute) path yields
+    its absolute form, plus its workspace-relative form iff it lies under the
+    workspace root. Never the bare basename. A blank path yields no forms (the scan
+    is skipped). Existence is not required — the match is path-historical."""
+    p = (path or "").strip()
+    if not p:
+        return []
+    root = _root(workspace_dir)
+    forms: list[str] = []
+    if os.path.isabs(p):
+        forms.append(p)
+        try:
+            forms.append(str(Path(p).resolve().relative_to(root)))
+        except (ValueError, OSError):
+            pass  # not under the workspace — absolute form only
+    else:
+        forms.append(p)
+        forms.append(str(root / p))
+    seen: set[str] = set()
+    return [f for f in forms if f and not (f in seen or seen.add(f))]
+
+
 def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

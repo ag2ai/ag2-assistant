@@ -702,6 +702,21 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .viewer .vhead .vsave { flex: none; padding: 4px 12px; border: none; border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: opacity var(--dur-fast) var(--ease-out); }
 .viewer .vhead .vsave:hover:not(:disabled) { opacity: 0.9; }
 .viewer .vhead .vsave:disabled { background: var(--code); color: var(--text-muted); cursor: default; }
+/* "Mentioned in N threads" backlink (ADR 0014) — a quiet icon button like .cp/.exp
+   carrying a small count badge, anchoring a popover of the Threads that mention this
+   file. The wrap is the popover's positioning context; it's absent entirely at zero. */
+.viewer .vhead .vmentions-wrap { flex: none; position: relative; display: inline-flex; }
+.viewer .vhead .vmentions { display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 6px; border: none; border-radius: 7px; background: none; color: var(--text-muted); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vmentions:hover, .viewer .vhead .vmentions.on { color: var(--ink); background: var(--code); }
+.viewer .vhead .vmentions-badge { font-size: 11px; font-weight: 600; line-height: 1; }
+/* Anchored popover: a small panel of thread rows below the button, recency-ordered
+   server-side. Sits above the rail body; dismissed on outside-click / Esc. */
+.viewer .vhead .vmentions-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 220px; max-width: 320px; max-height: 320px; overflow-y: auto; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 8px 28px rgb(0 0 0 / 0.16); }
+.viewer .vhead .vmentions-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: none; border-radius: 7px; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vmentions-row:hover { background: var(--code); }
+.viewer .vhead .vmentions-row > :global(svg) { flex: none; color: var(--text-muted); }
+.viewer .vhead .vmentions-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer .vhead .vmentions-row-kind { flex: none; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
 .viewer .vbody { min-height: 0; flex: 1; padding: 16px 18px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .viewer .vbody.native { padding: 8px; overflow: hidden; }
 /* Edit mode: a flex column so the plain-text editor fills the rail height and a

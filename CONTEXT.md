@@ -189,6 +189,20 @@ _Avoid_: activate (the file is already Active — Reveal moves the Tab and viewp
 not the active state), open (that puts a file into the preview rail; Reveal assumes
 it is already previewed), select (that is the upload target), locate
 
+**Mentioned in** (file backlink):
+The set of **Threads** whose transcript contains the **Active file**'s path — a
+reverse link from a file back to the conversations touching it, surfaced from the
+preview header (path-backed previews only). "Contains" is deliberately loose: the
+path matched as a plain substring *anywhere* in the stream (a `Referenced files:`
+block, a produce event, tool output, or bare prose), so the count is "Mentioned in
+N threads", not "referenced by". Path-historical — it matches the path as it lives
+now, so a moved/renamed file shows none. Spans this profile's **Chats** and **Task
+Runs** (both are streams in `chats.db`), never another profile's. Distinct from a
+**File reference**, which is the forward `@`-pointer into a message; this is the
+backward file→Thread view. (ADR 0014)
+_Avoid_: reference/mention (bare — a **File reference** is the forward `@`-pointer;
+this is the reverse backlink), used in, contains
+
 ## Chats
 
 **Chat**:

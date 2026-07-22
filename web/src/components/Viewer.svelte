@@ -4,13 +4,13 @@
   // html/image/pdf render natively; md/code/text in-app; unknown types → download.
   import { onMount, onDestroy } from 'svelte'
   import { route, closeAside } from '../router.js'
-  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile } from '../store.js'
+  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, openThreadRow } from '../store.js'
   import { threadScope } from '../lib/threadScope.js'
   import { api } from '../transport/api.js'
   import Markdown from './Markdown.svelte'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'
-  import { viewerKind } from '../lib/preview.js'
+  import { viewerKind, mentionsLabel, mentionRowTitle, mentionRowIcon } from '../lib/preview.js'
   import { saveErrorMessage, isConflict } from '../lib/fileEdit.js'
   import { setUnsavedGuard } from '../lib/unsavedGuard.js'
   import { isFolderPath, folderAffordances } from '../lib/folderFiles.js'
@@ -85,6 +85,39 @@
   // Expose the editor's dirty state to the router's aside guard while mounted.
   onMount(() => setUnsavedGuard(() => dirty))
   onDestroy(() => setUnsavedGuard(null))
+
+  // "Mentioned in N threads" backlink (ADR 0014): the Threads whose transcript
+  // mentions THIS file. Loaded on-demand for path-backed previews only (the transient
+  // body has no file to trace); the header affordance self-hides when the list is
+  // empty. `mentionsOpen` toggles the anchored popover.
+  let mentions = $state([])
+  let mentionsOpen = $state(false)
+  $effect(() => {
+    const p = path, cid = chatId
+    mentions = []; mentionsOpen = false   // a newly-opened file starts with a closed, unloaded list
+    if (!p) return                        // transient/path-less body: nothing to trace
+    let stale = false                     // a late load for a since-changed file must not land
+    api.fileMentions(p, cid)
+      .then((r) => { if (!stale) mentions = r.threads || [] })
+      .catch(() => { if (!stale) mentions = [] })   // best-effort backlink: a failure just hides it
+    return () => { stale = true }
+  })
+  function toggleMentions() { mentionsOpen = !mentionsOpen }
+  function openMention(row) { openThreadRow(row); mentionsOpen = false }  // navigate; keep the preview open
+  // Dismiss the popover on outside-click / Esc, mirroring FilesTree's menu.
+  function onDocPointer(e) {
+    if (mentionsOpen && !e.target.closest('.vmentions-pop') && !e.target.closest('.vmentions')) mentionsOpen = false
+  }
+  function onDocKey(e) { if (e.key === 'Escape') mentionsOpen = false }
+  onMount(() => {
+    document.addEventListener('pointerdown', onDocPointer, true)
+    document.addEventListener('keydown', onDocKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDocPointer, true)
+      document.removeEventListener('keydown', onDocKey)
+    }
+  })
+
   $effect(() => {
     const p = path, tr = transient, k = kind, cid = chatId
     let stale = false            // a late load for a since-changed file must not land
@@ -284,6 +317,29 @@
     {:else}
       <!-- Path-less transient body: no tree row to reveal, so a plain heading. -->
       <h2 title={title}>{title}</h2>
+    {/if}
+    {#if path && mentions.length > 0}
+      <!-- The reverse link: Threads (Chats + Task Runs) whose transcript mentions this
+           file. Self-hiding at zero; a run row stays previewed when opened (ADR 0014). -->
+      <div class="vmentions-wrap">
+        <button class="vmentions" class:on={mentionsOpen} aria-haspopup="menu" aria-expanded={mentionsOpen}
+                title={mentionsLabel(mentions.length)} aria-label={mentionsLabel(mentions.length)}
+                onclick={toggleMentions}>
+          <Icon name="message" size={15} />
+          <span class="vmentions-badge">{mentions.length}</span>
+        </button>
+        {#if mentionsOpen}
+          <div class="vmentions-pop" role="menu" aria-label={mentionsLabel(mentions.length)}>
+            {#each mentions as row (row.stream_id)}
+              <button class="vmentions-row" role="menuitem" onclick={() => openMention(row)}>
+                <Icon name={mentionRowIcon(row)} size={14} />
+                <span class="vmentions-row-title">{mentionRowTitle(row)}</span>
+                {#if row.kind === 'run'}<span class="vmentions-row-kind">Run</span>{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
     {#if editable}
       {#if dirty}

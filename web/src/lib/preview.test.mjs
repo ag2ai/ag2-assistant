@@ -1,6 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { viewerKind, previewable, ancestorDirs } from './preview.js'
+import {
+  viewerKind,
+  previewable,
+  ancestorDirs,
+  mentionsLabel,
+  mentionRowTitle,
+  mentionRowIcon,
+} from './preview.js'
 
 test('viewerKind: maps extensions to render kinds', () => {
   assert.equal(viewerKind('a.md'), 'markdown')
@@ -37,4 +44,26 @@ test('ancestorDirs: empty / nullish path yields nothing', () => {
 
 test('ancestorDirs: does not include the file path itself', () => {
   assert.ok(!ancestorDirs('a/b/c.md').includes('a/b/c.md'))
+})
+
+// ---- "Mentioned in N threads" backlink (ADR 0014) ----
+
+test('mentionsLabel: singular vs plural, always "thread(s)" not "referenced"', () => {
+  assert.equal(mentionsLabel(1), 'Mentioned in 1 thread')
+  assert.equal(mentionsLabel(3), 'Mentioned in 3 threads')
+  assert.equal(mentionsLabel(0), 'Mentioned in 0 threads')   // valid input; caller hides at zero
+  assert.equal(mentionsLabel(undefined), 'Mentioned in 0 threads')
+})
+
+test('mentionRowTitle: uses the row title, degrades to a kind placeholder', () => {
+  assert.equal(mentionRowTitle({ kind: 'chat', title: 'Weekly plan' }), 'Weekly plan')
+  assert.equal(mentionRowTitle({ kind: 'run', title: 'Nightly digest' }), 'Nightly digest')
+  assert.equal(mentionRowTitle({ kind: 'chat', title: '' }), 'Chat')
+  assert.equal(mentionRowTitle({ kind: 'run', title: '  ' }), 'Task run')
+  assert.equal(mentionRowTitle(null), '')
+})
+
+test('mentionRowIcon: distinguishes chat from run', () => {
+  assert.equal(mentionRowIcon({ kind: 'chat' }), 'message')
+  assert.equal(mentionRowIcon({ kind: 'run' }), 'zap')
 })

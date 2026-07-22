@@ -52,6 +52,28 @@ export function viewerKind(name) {
 // Whether the Files browser / tool card should offer a "view" affordance.
 export const previewable = (name) => viewerKind(name) !== 'download'
 
+// The header tooltip/count for the "Mentioned in" backlink (ADR 0014). The label is
+// always "Mentioned in N thread(s)" — the loose scan promises no more than that (not
+// "referenced"). Zero is a valid input (the caller hides the affordance entirely).
+export function mentionsLabel(count) {
+  const n = count || 0
+  return `Mentioned in ${n} ${n === 1 ? 'thread' : 'threads'}`
+}
+
+// One popover row's display text. A `run` row leads with its parent Task name (its
+// stored `title` already falls back to that server-side) — a Run is an execution of a
+// Task, so the Task name is what identifies it; a `chat` row shows the chat's title.
+// A blank title degrades to a kind-appropriate placeholder rather than an empty row.
+export function mentionRowTitle(row) {
+  if (!row) return ''
+  return (row.title || '').trim() || (row.kind === 'run' ? 'Task run' : 'Chat')
+}
+
+// The glyph name distinguishing a Chat row from a Task Run row in the popover.
+export function mentionRowIcon(row) {
+  return row?.kind === 'run' ? 'zap' : 'message'
+}
+
 // The ancestor Directories of a Files-space path, shallowest first — the folders
 // that must be expanded to Reveal the file's own row. 'a/b/c.md' → ['a', 'a/b'].
 // A root-level file, or an empty/nullish path, has none. Never includes the path

@@ -137,6 +137,7 @@ from assistant.workspace import (
     list_dirs,
     list_files,
     make_dir,
+    mention_forms,
     move,
     resolve,
     save_upload,
@@ -2326,6 +2327,24 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 task_id=task_id,
             )
         }
+
+    @p.get("/files/mentions")
+    async def file_mentions(
+        path: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The preview rail's "Mentioned in N threads" backlink (ADR 0014): the
+        current profile's Threads (Chats + Task Runs) whose transcript mentions the
+        previewed file, newest-first. ``path`` is the previewed file's path (relative
+        = Files-space, absolute = Folder); its OR-set of forms (absolute + workspace-
+        relative) is loose-substring-scanned over each stream's transcript + event
+        log. Read-only over this profile's own store — no auth/grant check beyond the
+        profile boundary. ``chat_id`` is accepted for signature parity with the other
+        ``/files`` routes but not needed (the scan is profile-wide)."""
+        gw = runtime.gateway
+        forms = mention_forms(runtime.config.workspace_dir, path)
+        if gw is None or not forms:
+            return {"threads": []}
+        return {"threads": await gw.threads_mentioning(forms)}
 
     @p.post("/files/upload")
     async def upload_workspace_files(
