@@ -271,19 +271,30 @@ def test_list_task_folder_authorizes_via_task_token(monkeypatch, tmp_path):
         assert _list(client, pid, media, chat_id="task:task-2").status_code == 404
 
 
-def test_run_thread_token_derives_task_from_run(monkeypatch, tmp_path):
-    # A run thread carries ``task-run:{run_id}``; the roots endpoint translates it to the
-    # run's task (via get_run) so the run sees its task-scoped Folder grants.
-    media = tmp_path / "media"
-    media.mkdir()
+def test_run_thread_token_resolves_chat_task_and_profile_together(monkeypatch, tmp_path):
+    # A run thread carries ``task-run:{run_id}``: the endpoint derives the run's task
+    # (via get_run) AND keeps the token as the chat scope, so a run resolves all three
+    # layers at once — its own chat-scoped grant, the task's grants, and profile grants.
+    media, workdir, scripts = tmp_path / "media", tmp_path / "assistant", tmp_path / "scripts"
+    for d in (media, workdir, scripts):
+        d.mkdir()
     client, pid = _client(monkeypatch)
     with client:
         task = client.post(api(pid, "/tasks"), json={"name": "T", "prompt": "p"}).json()["task"]
         run = client.post(api(pid, f"/tasks/{task['id']}/run")).json()["run"]
-        f = _register_folder(client, media)
-        _grant(client, f["id"], pid, "read", task_id=task["id"])
-        roots = _roots(client, pid, chat_id=f"task-run:{run['id']}").json()["roots"]
-        assert [r["name"] for r in roots] == ["media"]
+        token = f"task-run:{run['id']}"
+        fm = _register_folder(client, media, name="media")
+        fw = _register_folder(client, workdir, name="assistant")
+        fs = _register_folder(client, scripts, name="scripts")
+        _grant(client, fm["id"], pid, "read", task_id=task["id"])  # task scope
+        _grant(client, fw["id"], pid, "read_write", chat_id=token)  # this run's chat scope
+        _grant(client, fs["id"], pid, "read")  # profile scope
+        roots = _roots(client, pid, chat_id=token).json()["roots"]
+        assert {r["name"]: r["mode"] for r in roots} == {
+            "media": "read",
+            "assistant": "read_write",
+            "scripts": "read",
+        }
 
 
 def test_relative_path_still_lists_files_space(monkeypatch, tmp_path):

@@ -133,6 +133,18 @@ export function parse(pathname, hash) {
   return { name: 'home', tab: 'chats', kind: null, id: null, pid: null, ...o }
 }
 
+// The open Thread's Folder-grant scope token for the folder API's `chat_id` slot
+// (see lib/threadScope.js). A run → `task-run:{id}` (matches controller.openThread),
+// a Task page → `task:{id}`, a chat → its id; '' otherwise. The gateway decodes it
+// to the reachable profile ∪ (chat | task) Grants.
+export function scopeToken(r) {
+  if (!r?.id) return ''
+  if (r.kind === 'r') return 'task-run:' + r.id
+  if (r.kind === 't') return 'task:' + r.id
+  if (r.kind === 'c') return r.id
+  return ''
+}
+
 // Resolve a caller path against the current route so Tab and Thread stay
 // independent:
 //   • '/chats' | '/tasks' | '/files' (bare Tab) → switch the drawer but KEEP the
