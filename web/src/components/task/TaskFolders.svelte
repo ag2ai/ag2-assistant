@@ -199,14 +199,6 @@
   .tfadd { margin-top: 14px; }
   .tfpicker { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px; background: var(--surface-sunk, var(--bg)); }
 
-  /* .open isn't in scope here (no .modal/.panel ancestor supplies it) — reproduce
-     the same bordered button used across TaskPage. */
-  .open {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
-    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
-    border-radius: var(--radius-sm); padding: 7px 14px;
-    transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
-  }
-  .open:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--accent-soft); }
+  /* .open buttons here are styled by the app-wide rule (app.css), which scopes
+     `.open` to this component's `.tf` root. Nothing to reproduce locally. */
 </style>
