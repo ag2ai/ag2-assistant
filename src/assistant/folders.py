@@ -349,7 +349,11 @@ class FolderStore:
 
     def granted_roots(self, profile: str, chat_id: str = "", task_id: str = "") -> list[dict]:
         """Folder roots browsable for this profile∪task∪chat as ``{id, name, path, mode,
-        exists}`` — non-``None`` ``mode_for``, deduped under existing roots, keeping missing paths."""
+        exists}`` — non-``None`` ``mode_for``, keeping missing paths. A nested root folds
+        into its parent ONLY when an existing ancestor already grants ``>=`` its mode; a
+        stronger nested grant (e.g. a chat ``read_write`` under a ``read`` task folder)
+        stays its own root so that extra access is visible."""
+        rank = {READ: 1, READ_WRITE: 2}
         granted = [
             (
                 p,
@@ -363,8 +367,12 @@ class FolderStore:
             )
             for p, f, mode in self._resolved_folders(profile, chat_id, task_id)
         ]
-        existing = [p for p, v in granted if v["exists"]]
-        return [v for p, v in granted if not any(o in p.parents for o in existing)]
+        existing = [(p, v["mode"]) for p, v in granted if v["exists"]]
+
+        def covered(p, m):  # an existing ancestor already grants at least this mode
+            return any(o in p.parents and rank.get(om, 0) >= rank.get(m, 0) for o, om in existing)
+
+        return [v for p, v in granted if not covered(p, v["mode"])]
 
     def mode_for_path(
         self,

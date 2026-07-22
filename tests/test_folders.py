@@ -349,6 +349,34 @@ def test_granted_roots_include_task_scoped_folder(tmp_path):
     assert {r["name"]: r["mode"] for r in roots} == {"media": READ, "src": READ_WRITE}
 
 
+def test_granted_roots_surface_stronger_nested_grant(tmp_path):
+    # A nested Folder whose effective mode EXCEEDS its covering parent is its own root,
+    # not deduped away: a chat/run read_write grant on src/assistant must stay visible
+    # even though the task grants src (read) — else the stronger grant vanishes.
+    store = _store(tmp_path)
+    (tmp_path / "src" / "assistant").mkdir(parents=True)
+    f_src = store.create_folder(str(tmp_path / "src"))
+    f_a = store.create_folder(str(tmp_path / "src" / "assistant"))
+    store.set_grant(f_src["id"], READ, profile="work", task_id="t1")
+    store.set_grant(f_a["id"], READ_WRITE, profile="work", chat_id="task-run:r1")
+    roots = store.granted_roots("work", chat_id="task-run:r1", task_id="t1")
+    assert {r["name"]: r["mode"] for r in roots} == {"src": READ, "assistant": READ_WRITE}
+
+
+def test_granted_roots_dedupe_nested_at_same_or_weaker_mode(tmp_path):
+    # The dedupe still collapses a nested root the parent already covers at >= its mode:
+    # read under read (equal) and read under read_write (weaker) both fold into the parent.
+    store = _store(tmp_path)
+    (tmp_path / "repo" / "pkg").mkdir(parents=True)
+    f_o = store.create_folder(str(tmp_path / "repo"))
+    f_i = store.create_folder(str(tmp_path / "repo" / "pkg"))
+    store.set_grant(f_i["id"], READ, profile="work")
+    store.set_grant(f_o["id"], READ, profile="work")  # equal mode → inner folds away
+    assert [r["name"] for r in store.granted_roots("work")] == ["repo"]
+    store.set_grant(f_o["id"], READ_WRITE, profile="work")  # parent stronger → still folds
+    assert [r["name"] for r in store.granted_roots("work")] == ["repo"]
+
+
 def test_granted_roots_task_none_hides_profile_folder(tmp_path):
     store = _store(tmp_path)
     d = tmp_path / "src"
