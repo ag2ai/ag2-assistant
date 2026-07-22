@@ -271,24 +271,44 @@ class TaskPatch(BaseModel):
     description: str | None = None
 
 
+async def _scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:
+    """The task whose Folder Grants the ``chat_id`` scope token names: ``task:{id}`` (an
+    open Task page) directly, ``task-run:{run_id}`` (a run thread) via ``get_run``, else
+    ``""`` (a real chat id or none) — ADR 0006/0013."""
+    if chat_id.startswith("task:"):
+        return chat_id.removeprefix("task:")
+    if chat_id.startswith("task-run:"):
+        with contextlib.suppress(Exception):
+            run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
+            return (run or {}).get("task_id") or ""
+    return ""
+
+
 def _resolve_folder(
-    runtime: ProfileRuntime, path: str, chat_id: str
+    runtime: ProfileRuntime, path: str, chat_id: str, task_id: str = ""
 ) -> tuple[Path | None, str | None]:
     """``(readable Folder root containing ``path``, its effective mode)`` via the one
     Folder resolver, or ``(None, None)`` when there's no gateway or the absolute
     ``path`` resolves under no granted root. Read authorizes on any non-``None`` mode;
-    a mutation additionally requires ``read_write`` (the caller checks). The confining
-    root is the sandbox base every absolute ``/files/*`` mutation passes to the
-    workspace helpers, so ``within-subtree only`` falls out for free (ADR 0006/0013)."""
+    a mutation additionally requires ``read_write`` (the caller checks). ``task_id``
+    (decoded from the Thread scope) admits the open Task/run's task-scope Grants. The
+    confining root is the sandbox base every absolute ``/files/*`` mutation passes to
+    the workspace helpers, so ``within-subtree only`` falls out for free (ADR 0006/0013)."""
     gw = runtime.gateway
     folders = gw.folders if gw is not None else None
     if folders is None:
         return None, None
-    return folders.resolve_within(path, runtime.config.data_dir.name, chat_id)
+    return folders.resolve_within(path, runtime.config.data_dir.name, chat_id, task_id)
 
 
 def _folder_write_base(
-    runtime: ProfileRuntime, path: str, chat_id: str, *, miss_status: int, miss_msg: str
+    runtime: ProfileRuntime,
+    path: str,
+    chat_id: str,
+    *,
+    task_id: str = "",
+    miss_status: int,
+    miss_msg: str,
 ) -> tuple[Path | None, JSONResponse | None]:
     """The sandbox base for an ABSOLUTE ``/files/*`` MUTATION (tickets 04–05): the
     confining readable Folder root when ``path`` resolves under a ``read_write`` Grant,
@@ -297,7 +317,7 @@ def _folder_write_base(
     always ``403`` "read-only folder" when the covering Grant is ``read``. Every
     absolute mutation branch funnels through here so the read_write gate + base
     selection is written once (ADR 0006)."""
-    root, mode = _resolve_folder(runtime, path, chat_id)
+    root, mode = _resolve_folder(runtime, path, chat_id, task_id)
     if root is None:
         return None, JSONResponse({"error": miss_msg}, status_code=miss_status)
     if mode != READ_WRITE:
@@ -306,32 +326,39 @@ def _folder_write_base(
 
 
 def _mutation_base(
-    runtime: ProfileRuntime, path: str, chat_id: str, *, miss_status: int, miss_msg: str
+    runtime: ProfileRuntime,
+    path: str,
+    chat_id: str,
+    *,
+    task_id: str = "",
+    miss_status: int,
+    miss_msg: str,
 ) -> tuple[Path | None, JSONResponse | None]:
     """The sandbox base for a ``/files/*`` mutation, branching on ``os.path.isabs``: the
     workspace for a relative path, else the ``read_write`` Folder root (or a deny response)."""
     if os.path.isabs(path):
         return _folder_write_base(
-            runtime, path, chat_id, miss_status=miss_status, miss_msg=miss_msg
+            runtime, path, chat_id, task_id=task_id, miss_status=miss_status, miss_msg=miss_msg
         )
     return runtime.config.workspace_dir, None
 
 
 def _resolve_file_path(
-    runtime: ProfileRuntime, path: str, chat_id: str
+    runtime: ProfileRuntime, path: str, chat_id: str, task_id: str = ""
 ) -> tuple[Path | None, str | None]:
     """Resolve a ``/files/*`` ``path`` to ``(existing file, effective mode)``, branching
     on ``os.path.isabs`` — the sole discriminator between a Files-space file and a
     Folder file. A relative path keeps today's workspace sandbox untouched (mode
     ``read_write`` — the user owns their Files space); an absolute path authorizes via
-    the one Folder resolver (``read`` suffices for a GET) and is confirmed to be a real
-    file. ``(None, None)`` on any denial/miss — the caller turns that into the shared
-    404 shape (ADR 0006/0013). The mode rides back so the GET can advertise it to the
-    client's edit-affordance gating (ticket 04)."""
+    the one Folder resolver (``read`` suffices for a GET, ``task_id`` admitting the open
+    Task/run's grants) and is confirmed to be a real file. ``(None, None)`` on any
+    denial/miss — the caller turns that into the shared 404 shape (ADR 0006/0013). The
+    mode rides back so the GET can advertise it to the client's edit-affordance gating
+    (ticket 04)."""
     if not os.path.isabs(path):
         rp = resolve(runtime.config.workspace_dir, path)
         return (rp, READ_WRITE) if rp is not None else (None, None)
-    root, mode = _resolve_folder(runtime, path, chat_id)
+    root, mode = _resolve_folder(runtime, path, chat_id, task_id)
     if root is None:
         return None, None
     rp = Path(path).expanduser().resolve()
@@ -2225,14 +2252,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         With an ABSOLUTE ``path`` — ONE Directory level inside a granted **Folder** (a
         directory outside the Root), authorized through the one resolver (``read``
-        suffices), scoped to the open Thread's ``chat_id`` (ADR 0006/0013), with the
-        usual noise Directories pruned. The tree lazy-expands one level per call. A
+        suffices), scoped to the open Thread (``chat_id``, plus the task decoded from it
+        so a Task page/run sees its task-scope Folders — ADR 0006/0013), with the usual
+        noise Directories pruned. The tree lazy-expands one level per call. A
         denied/missing path is a 404 — the same shape either branch."""
         if path and os.path.isabs(path):
             gw = runtime.gateway
             folders = gw.folders if gw is not None else None
+            task_id = await _scope_task_id(runtime, chat_id)
             mode = (
-                folders.mode_for_path(path, runtime.config.data_dir.name, chat_id)
+                folders.mode_for_path(path, runtime.config.data_dir.name, chat_id, task_id)
                 if folders is not None
                 else None
             )
@@ -2260,14 +2289,17 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """The Folder roots browsable in the open Thread — the tree's Thread-scoped
         Folder section (ADR 0013). Each root: ``{id, name, path (absolute), mode,
         exists}``, resolved through the same ``mode_for`` truth the ``@``-picker and the
-        agent's reads share, scoped by ``chat_id`` (absent → profile-level grants only).
-        A missing-path Folder is included as a badged, repointable root (``exists:
-        false``), never an error."""
+        agent's reads share, scoped by ``chat_id`` plus the task decoded from it (a Task
+        page carries ``task:{id}``, a run thread ``task-run:{run_id}``), so the open
+        Task/run's task-scope Folders surface, not just profile grants (absent scope →
+        profile-level grants only). A missing-path Folder is included as a badged,
+        repointable root (``exists: false``), never an error."""
         gw = runtime.gateway
         folders = gw.folders if gw is not None else None
         if folders is None:
             return {"roots": []}
-        return {"roots": folders.granted_roots(runtime.config.data_dir.name, chat_id)}
+        task_id = await _scope_task_id(runtime, chat_id)
+        return {"roots": folders.granted_roots(runtime.config.data_dir.name, chat_id, task_id)}
 
     @p.get("/files/search")
     async def search_workspace_files(
@@ -2280,13 +2312,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         error. Honors the same ``mode_for`` resolution the agent's reads use, so a
         denied file is never surfaced (ADR 0006/0012)."""
         gw = runtime.gateway
-        # A run's thread carries its task only via chat_id (``task-run:{run_id}``) —
-        # resolve it so the picker sees the run's task-scoped Folder grants too.
-        task_id = ""
-        if chat_id.startswith("task-run:"):
-            with contextlib.suppress(Exception):
-                run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
-                task_id = (run or {}).get("task_id") or ""
+        # The Thread's scope carries its task in the chat_id slot (a run thread's
+        # ``task-run:{run_id}``, a Task page's ``task:{id}``) — decode it so the picker
+        # sees the task-scoped Folder grants too (the one shared decoder).
+        task_id = await _scope_task_id(runtime, chat_id)
         return {
             "results": search_corpus(
                 runtime.config.workspace_dir,
@@ -2309,10 +2338,17 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         clashes so nothing is overwritten (ADR 0007). A RELATIVE `dir` targets the
         Files-space sandbox (unchanged). An ABSOLUTE `dir` targets a Folder Directory:
         it authorizes through the one resolver requiring `read_write` (a `read`-only
-        Folder is `403`), scoped to `chat_id`, with the upload confined to that Folder's
-        subtree (ticket 05). A `dir` that escapes its root is rejected `400`."""
+        Folder is `403`), scoped to the open Thread (`chat_id` + the task decoded from
+        it), with the upload confined to that Folder's subtree (ticket 05). A `dir` that
+        escapes its root is rejected `400`."""
+        task_id = await _scope_task_id(runtime, chat_id)
         base, deny = _mutation_base(
-            runtime, dir, chat_id, miss_status=400, miss_msg="invalid target directory"
+            runtime,
+            dir,
+            chat_id,
+            task_id=task_id,
+            miss_status=400,
+            miss_msg="invalid target directory",
         )
         if deny is not None:
             return deny
@@ -2332,9 +2368,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         traversal escape / empty path. A RELATIVE `path` lands in the Files-space
         sandbox (unchanged). An ABSOLUTE `path` creates a Folder Directory: it
         authorizes through the one resolver requiring `read_write` (a `read`-only Folder
-        is `403`), scoped to `chat_id`, confined to that Folder's subtree (ticket 05)."""
+        is `403`), scoped to the open Thread (`chat_id` + the task decoded from it),
+        confined to that Folder's subtree (ticket 05)."""
+        task_id = await _scope_task_id(runtime, req.chat_id)
         base, deny = _mutation_base(
-            runtime, req.path, req.chat_id, miss_status=400, miss_msg="invalid path"
+            runtime,
+            req.path,
+            req.chat_id,
+            task_id=task_id,
+            miss_status=400,
+            miss_msg="invalid path",
         )
         if deny is not None:
             return deny
@@ -2361,8 +2404,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         # be absolute; move() then confines it under the source's root.
         if os.path.isabs(req.from_) and not os.path.isabs(req.to):
             return JSONResponse({"error": "invalid path"}, status_code=400)
+        task_id = await _scope_task_id(runtime, req.chat_id)
         base, deny = _mutation_base(
-            runtime, req.from_, req.chat_id, miss_status=404, miss_msg="source not found"
+            runtime,
+            req.from_,
+            req.chat_id,
+            task_id=task_id,
+            miss_status=404,
+            miss_msg="source not found",
         )
         if deny is not None:
             return deny
@@ -2394,7 +2443,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         The response also carries ``X-File-Mode`` (``read``|``read_write``) — the
         effective Grant mode — so the client gates its edit/rename/delete affordances
         off the same server truth a mutation is enforced against (ticket 04)."""
-        rp, mode = _resolve_file_path(runtime, path, chat_id)
+        task_id = await _scope_task_id(runtime, chat_id)
+        rp, mode = _resolve_file_path(runtime, path, chat_id, task_id)
         if rp is None:
             return JSONResponse({"error": "file not found"}, status_code=404)
         disp = "attachment" if download else "inline"
@@ -2428,8 +2478,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         (ticket 04)."""
         # Resolve the sandbox base BEFORE buffering the body: an unauthorized Folder
         # write is refused without reading its (capped) payload.
+        task_id = await _scope_task_id(runtime, chat_id)
         base, deny = _mutation_base(
-            runtime, path, chat_id, miss_status=404, miss_msg="file not found"
+            runtime, path, chat_id, task_id=task_id, miss_status=404, miss_msg="file not found"
         )
         if deny is not None:
             return deny
@@ -2477,8 +2528,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         resolver requiring ``read_write`` (a ``read``-only Folder is ``403``), scoped
         to ``chat_id``, and the delete is confined to that Folder's own subtree
         (emptied parents pruned up to — never including — the Folder root, ticket 04)."""
+        task_id = await _scope_task_id(runtime, chat_id)
         base, deny = _mutation_base(
-            runtime, path, chat_id, miss_status=404, miss_msg="file not found"
+            runtime, path, chat_id, task_id=task_id, miss_status=404, miss_msg="file not found"
         )
         if deny is not None:
             return deny

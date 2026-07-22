@@ -4,7 +4,8 @@
   // html/image/pdf render natively; md/code/text in-app; unknown types → download.
   import { onMount, onDestroy } from 'svelte'
   import { route, closeAside } from '../router.js'
-  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, thread } from '../store.js'
+  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile } from '../store.js'
+  import { threadScope } from '../lib/threadScope.js'
   import { api } from '../transport/api.js'
   import Markdown from './Markdown.svelte'
   import RailResizer from './RailResizer.svelte'
@@ -23,9 +24,9 @@
   const name = $derived(path ? path.split('/').pop() : null)
   const title = $derived(file ? (name || 'Preview') : (transient?.title || 'Preview'))
   const kind = $derived(path ? viewerKind(name) : 'markdown')
-  // The open Thread's chat_id scopes a Folder (absolute) file's Grant resolution
-  // (ADR 0013); a Files-space (relative) path ignores it. rawQuery decides per-path.
-  const chatId = $derived($thread.chat || '')
+  // The open Thread's scope token (lib/threadScope.js) scopes a Folder (absolute) file's
+  // Grant resolution (ADR 0013); a Files-space (relative) path ignores it, per rawQuery.
+  const chatId = $derived($threadScope)
   const url = $derived(path ? api.fileUrl(path, false, chatId) : '')
   const native = $derived(kind === 'html' || kind === 'pdf' || kind === 'image')
   // Offer a copy button for text-backed kinds and html (copy the source), and for

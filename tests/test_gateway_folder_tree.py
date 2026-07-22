@@ -29,10 +29,12 @@ def _register_folder(client, path, name=""):
     return client.post("/api/folders", json=body).json()["folder"]
 
 
-def _grant(client, fid, pid, mode, *, chat_id=""):
+def _grant(client, fid, pid, mode, *, chat_id="", task_id=""):
     body = {"profile": pid, "mode": mode}
     if chat_id:
         body["chat_id"] = chat_id
+    if task_id:
+        body["task_id"] = task_id
     return client.post(f"/api/folders/{fid}/grants", json=body)
 
 
@@ -219,6 +221,69 @@ def test_list_folder_honors_chat_id(monkeypatch, tmp_path):
         assert _list(client, pid, repo, chat_id="c1").status_code == 200
         assert _list(client, pid, repo, chat_id="c2").status_code == 404
         assert _list(client, pid, repo).status_code == 404  # no chat_id → profile-only
+
+
+# ---- Task-scoped Folder section (the open Task page / run thread) -----------
+# The Files rail carries the open Thread's scope in the same ``chat_id`` slot as a
+# synthetic token: ``task:{task_id}`` for a Task page, ``task-run:{run_id}`` for a run
+# thread (translated to its task via ``get_run``). Both resolve the task-scope Grants
+# that a plain chat scope can't see (the "FileTree ignores the task's folders" bug).
+
+
+def test_task_scoped_folder_shows_as_root_via_task_token(monkeypatch, tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    client, pid = _client(monkeypatch)
+    with client:
+        f = _register_folder(client, media, name="Media")
+        _grant(client, f["id"], pid, "read", task_id="task-1")  # task-ONLY grant
+        # profile scope (no token) can't see it...
+        assert _roots(client, pid).json()["roots"] == []
+        # ...the open Task page (task:{id}) does, with its resolved mode
+        (root,) = _roots(client, pid, chat_id="task:task-1").json()["roots"]
+        assert root["name"] == "Media" and root["mode"] == "read"
+        # ...and a different task doesn't
+        assert _roots(client, pid, chat_id="task:task-2").json()["roots"] == []
+
+
+def test_task_none_override_hides_profile_folder_on_task_page(monkeypatch, tmp_path):
+    repo = tmp_path / "acme"
+    repo.mkdir()
+    client, pid = _client(monkeypatch)
+    with client:
+        f = _register_folder(client, repo)
+        _grant(client, f["id"], pid, "read")  # profile-wide read
+        _grant(client, f["id"], pid, "none", task_id="task-1")  # blocked for this task
+        assert len(_roots(client, pid).json()["roots"]) == 1
+        assert _roots(client, pid, chat_id="task:task-1").json()["roots"] == []
+
+
+def test_list_task_folder_authorizes_via_task_token(monkeypatch, tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "clip.txt").write_text("x")
+    client, pid = _client(monkeypatch)
+    with client:
+        f = _register_folder(client, media)
+        _grant(client, f["id"], pid, "read", task_id="task-1")
+        assert _list(client, pid, media, chat_id="task:task-1").status_code == 200
+        assert _list(client, pid, media).status_code == 404  # profile scope can't reach it
+        assert _list(client, pid, media, chat_id="task:task-2").status_code == 404
+
+
+def test_run_thread_token_derives_task_from_run(monkeypatch, tmp_path):
+    # A run thread carries ``task-run:{run_id}``; the roots endpoint translates it to the
+    # run's task (via get_run) so the run sees its task-scoped Folder grants.
+    media = tmp_path / "media"
+    media.mkdir()
+    client, pid = _client(monkeypatch)
+    with client:
+        task = client.post(api(pid, "/tasks"), json={"name": "T", "prompt": "p"}).json()["task"]
+        run = client.post(api(pid, f"/tasks/{task['id']}/run")).json()["run"]
+        f = _register_folder(client, media)
+        _grant(client, f["id"], pid, "read", task_id=task["id"])
+        roots = _roots(client, pid, chat_id=f"task-run:{run['id']}").json()["roots"]
+        assert [r["name"] for r in roots] == ["media"]
 
 
 def test_relative_path_still_lists_files_space(monkeypatch, tmp_path):
