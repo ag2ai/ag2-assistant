@@ -125,22 +125,48 @@
 .settings .focuspill:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 .settings .focuspill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .settings .focuspill:disabled { opacity: .6; cursor: default; }
-/* Secondary action buttons (Save / Change voice / Cancel task / Close …) —
-   bordered "greyed" pill: soft radius, icon + label, accent on hover. Shared by
-   modal and task-panel actions so every secondary button reads the same. */
-.modal .open, .panel .open {
+/* ── Buttons: the single source of truth ─────────────────────────────────────
+   Three roles, so nobody re-invents them per page:
+     .open            secondary/dismiss (Cancel / Close / Change voice) — NEUTRAL hover
+     .open.primary    the ONE accent-outlined CTA per view (Save / Run now / Connect)
+     .open.danger     destructive (Delete)
+   plus .iconbtn (below) for icon-only square buttons.
+
+   Accent is reserved for .primary — a secondary must never hover accent, or it
+   reads as the primary CTA (that's why Cancel looked wrong next to Save).
+
+   `.open` MUST stay ancestor-scoped: the bare class is also a state modifier
+   elsewhere (.shdot.open, MarketBoard/NewsWire class:open), so a global `.open`
+   would style those as buttons. A page that renders outside a modal/panel opts in
+   by adding its root class to the list below (today: .taskpage, .tf) — never by
+   copying this block into the component. */
+.modal .open, .panel .open, .taskpage .open, .tf .open {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
   border: 1px solid var(--line); background: var(--surface); color: var(--ink);
   border-radius: var(--radius-sm); padding: 7px 14px;
   transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
-.modal .open:hover, .panel .open:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--accent-soft); }
-.modal .open:active, .panel .open:active { background: var(--code); }
-.modal .open:disabled, .panel .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
+.modal .open:hover, .panel .open:hover, .taskpage .open:hover, .tf .open:hover { border-color: color-mix(in srgb, var(--ink) 22%, var(--line)); background: var(--code); }
+.modal .open:active, .panel .open:active, .taskpage .open:active, .tf .open:active { background: var(--code); }
+.modal .open:disabled, .panel .open:disabled, .taskpage .open:disabled, .tf .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
+/* Primary CTA — accent-outlined, filled on hover. The one action that matters. */
+.modal .open.primary, .panel .open.primary, .taskpage .open.primary, .tf .open.primary { border-color: var(--accent); color: var(--accent); }
+.modal .open.primary:hover:not(:disabled), .panel .open.primary:hover:not(:disabled), .taskpage .open.primary:hover:not(:disabled), .tf .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
 /* Destructive action (e.g. Delete task) + its inline confirm. */
-.modal .open.danger, .panel .open.danger { border-color: color-mix(in srgb, #d8552f 55%, var(--line)); color: #d8552f; background: none; }
-.modal .open.danger:hover, .panel .open.danger:hover { border-color: #d8552f; color: #fff; background: #d8552f; }
+.modal .open.danger, .panel .open.danger, .taskpage .open.danger, .tf .open.danger { border-color: color-mix(in srgb, #d8552f 55%, var(--line)); color: #d8552f; background: none; }
+.modal .open.danger:hover, .panel .open.danger:hover, .taskpage .open.danger:hover, .tf .open.danger:hover { border-color: #d8552f; color: #fff; background: #d8552f; }
+/* Icon-only square button (Edit / Delete / revoke). Muted glyph, NEUTRAL hover —
+   matches the app's other icon buttons (.cbtn / .fttool / .rowkebab), never accent.
+   Safe as a bare global: `.iconbtn` is not overloaded as a state modifier. */
+.iconbtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 30px; height: 30px; padding: 0; border: 1px solid var(--line);
+  background: var(--surface); color: var(--muted); border-radius: var(--radius-sm); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.iconbtn:hover { color: var(--ink); background: var(--code); }
+.iconbtn:disabled { opacity: .5; cursor: default; }
 .panel .delconfirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .panel .delconfirm .confirm { color: #d8552f; font-size: 13px; }
 

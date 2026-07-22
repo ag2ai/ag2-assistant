@@ -24,7 +24,8 @@
   // Directory delete — alongside the agent's own writes.
   import { onMount, tick, untrack } from 'svelte'
   import { openAsideFile, closeAside, route } from '../router.js'
-  import { reveal, thread } from '../store.js'
+  import { reveal } from '../store.js'
+  import { threadScope } from '../lib/threadScope.js'
   import { foldersStore } from '../lib/folders.js'
   import { api } from '../transport/api.js'
   import { ancestorDirs } from '../lib/preview.js'
@@ -163,10 +164,10 @@
   }
 
   // ---- Granted Folders (a Thread-scoped section beneath the Files-space tree, ADR 0013) ----
-  // The Folder roots reachable in the OPEN THREAD (chat overrides/blocks applied), each
-  // lazy-expanded one Directory level at a time. `chatId` is the open Thread's id ('' when
-  // none is open → profile-level grants only); it re-scopes the whole section on a switch.
-  const chatId = $derived($thread.chat || '')
+  // The Folder roots reachable in the OPEN THREAD (chat/task overrides/blocks applied),
+  // lazy-expanded one Directory level at a time. `chatId` is the Thread's scope token
+  // (lib/threadScope.js; '' → profile grants only) and re-scopes the section on a switch.
+  const chatId = $derived($threadScope)
   let folderRoots = $state([])                 // [{id,name,path,mode,exists}]
   let folderErr = $state('')
   let folderLevels = $state(new Map())         // abs dir path -> {dirs:[{name,path}], files:[{name,path,size}], err?}

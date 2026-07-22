@@ -22,10 +22,12 @@ def _register_folder(client, path):
     return client.post("/api/folders", json={"path": str(path)}).json()["folder"]
 
 
-def _grant(client, fid, pid, mode, *, chat_id=""):
+def _grant(client, fid, pid, mode, *, chat_id="", task_id=""):
     body = {"profile": pid, "mode": mode}
     if chat_id:
         body["chat_id"] = chat_id
+    if task_id:
+        body["task_id"] = task_id
     return client.post(f"/api/folders/{fid}/grants", json=body)
 
 
@@ -61,6 +63,35 @@ def _upload(client, pid, target_dir, name=b"", data=b"hi", **form):
         data={"dir": str(target_dir), **form},
         files=[("files", (name or "up.txt", data, "text/plain"))],
     )
+
+
+# ---- task-scoped mutation (the open Task page carries ``chat_id=task:{id}``) ----
+
+
+def test_read_write_task_folder_is_mutable_via_task_token(monkeypatch, tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    client, pid = _client(monkeypatch)
+    with client:
+        f = _register_folder(client, media)
+        _grant(client, f["id"], pid, "read_write", task_id="task-1")  # task-only read+write
+        # the task page can create a directory inside it...
+        assert _mkdir(client, pid, media / "clips", chat_id="task:task-1").status_code == 200
+        assert (media / "clips").is_dir()
+        # ...but the plain profile scope (no token) can't reach the folder at all
+        assert _mkdir(client, pid, media / "nope").status_code in (400, 404)
+
+
+def test_read_only_task_folder_rejects_mutation(monkeypatch, tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    client, pid = _client(monkeypatch)
+    with client:
+        f = _register_folder(client, media)
+        _grant(client, f["id"], pid, "read", task_id="task-1")  # read-only for the task
+        r = _mkdir(client, pid, media / "clips", chat_id="task:task-1")
+        assert r.status_code == 403  # visible + browsable, but not writable
+        assert not (media / "clips").exists()
 
 
 # ---- edit in place (ADR 0011 optimistic concurrency) ----
