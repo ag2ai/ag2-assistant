@@ -142,6 +142,7 @@ from assistant.workspace import (
     _MAX_WRITE_BYTES,
     delete,
     etag_for_path,
+    invalid_dir_name,
     list_all_dirs,
     list_dirs,
     list_files,
@@ -234,6 +235,17 @@ class MkdirRequest(BaseModel):
 
     path: str
     chat_id: str = ""
+
+
+class FsMkdirRequest(BaseModel):
+    """Create one subfolder inside a host directory the folder picker is viewing. Distinct
+    from `MkdirRequest`: that one writes into the Files space / a granted Folder, whereas
+    this runs BEFORE any Grant exists (you're choosing the folder to grant), so it is
+    host-scoped like its sibling `GET /api/fs/list`. `name` is a single component, not a
+    path."""
+
+    path: str
+    name: str
 
 
 class MoveRequest(BaseModel):
@@ -1719,6 +1731,29 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if result is None:
             return {"ok": False, "error": "not a readable directory"}
         return {"ok": True, **result}
+
+    @app.post("/api/fs/mkdir")
+    async def fs_mkdir(req: FsMkdirRequest):
+        """Create ONE subfolder inside the host directory the picker is viewing, so a
+        working folder can be made without leaving the app. Same trust model as
+        `fs_list` above (local + single-user, `_origin_guard` blocks cross-origin).
+
+        Returns the new folder's ABSOLUTE path — `make_dir` reports a root-relative one,
+        but the picker navigates by absolute path."""
+        if list_dirs(req.path) is None:
+            return JSONResponse({"error": "not a readable directory"}, status_code=400)
+        if (why := invalid_dir_name(req.name)) is not None:
+            return JSONResponse({"error": why}, status_code=400)
+
+        status, _rel = make_dir(req.path, req.name)
+        if status == "ok":
+            return {"ok": True, "path": str(Path(req.path).expanduser().resolve() / req.name)}
+        code, msg = (
+            (409, "A folder with that name already exists")
+            if status == "exists"
+            else (400, "invalid path")
+        )
+        return JSONResponse({"error": msg}, status_code=code)
 
     # ------------------------------------------------------------------ #
     #  Profile-scoped router (/api/p/{pid})                              #

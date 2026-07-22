@@ -541,6 +541,68 @@ def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
         assert bad["ok"] is False
 
 
+def test_fs_mkdir_creates_subfolder_and_returns_absolute_path(tmp_path, monkeypatch):
+    """The picker creates one subfolder in the folder it's viewing and gets back an
+    ABSOLUTE path — `make_dir` reports a root-relative one, but the picker navigates
+    into the result by absolute path."""
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "reports"})
+        assert r.status_code == 200
+        assert r.json()["path"] == str(tmp_path / "reports")
+        assert (tmp_path / "reports").is_dir()
+
+        # It shows up in the very next listing, so the picker can step into it.
+        listed = client.get("/api/fs/list", params={"path": str(tmp_path)}).json()
+        assert "reports" in [d["name"] for d in listed["dirs"]]
+
+
+def test_fs_mkdir_rejects_duplicate_without_clobbering(tmp_path, monkeypatch):
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    (tmp_path / "taken").mkdir()
+    (tmp_path / "taken" / "keep.txt").write_text("still here")
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "taken"})
+        assert r.status_code == 409
+        assert r.json()["error"] == "A folder with that name already exists"
+    assert (tmp_path / "taken" / "keep.txt").read_text() == "still here"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("a/b", "Name can't contain slashes"),  # a name, not a path — make_dir would nest
+        ("..", "Not a valid folder name"),
+        (".hidden", "Names starting with a dot are hidden and won't show here"),
+        ("  spaced  ", "Name can't start or end with a space"),
+        ("", "Enter a folder name"),
+        ("x" * 300, "Name is too long"),
+    ],
+)
+def test_fs_mkdir_rejects_bad_names(tmp_path, monkeypatch, name, expected):
+    """Every rejection is a 400 carrying a message meant to be shown as-is, and nothing
+    is written — notably the over-long name, which used to escape as a 500."""
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    before = sorted(p.name for p in tmp_path.iterdir())  # the app puts its data dir here
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": name})
+        assert r.status_code == 400
+        assert r.json()["error"] == expected
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+
+def test_fs_mkdir_rejects_unreadable_parent(tmp_path, monkeypatch):
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path / "nope"), "name": "x"})
+        assert r.status_code == 400
+        assert r.json()["error"] == "not a readable directory"
+
+
 def test_stream_roundtrip(profile_app):
     """The stream WebSocket replays history (ready) then runs a turn (turn_end)."""
     client, pid = profile_app

@@ -4,9 +4,12 @@ per-task subfolders)."""
 
 from types import SimpleNamespace
 
+import pytest
+
 from assistant.workspace import (
     delete,
     etag_for_path,
+    invalid_dir_name,
     list_all_dirs,
     list_dirs,
     list_files,
@@ -228,6 +231,56 @@ def test_make_dir_rejects_existing(tmp_path):
 def test_make_dir_rejects_traversal_and_root(tmp_path):
     assert make_dir(tmp_path, "../escape") == ("invalid", None)
     assert make_dir(tmp_path, "") == ("invalid", None)  # the root itself
+
+
+def test_make_dir_rejects_overlong_name_instead_of_raising(tmp_path):
+    """An over-long component must come back as ("invalid", None), not an OSError.
+
+    `Path.exists()` raises ENAMETOOLONG rather than returning False, so the name never
+    reached the guarded `mkdir` — the error escaped `make_dir` and surfaced as a 500."""
+    assert make_dir(tmp_path, "x" * 300) == ("invalid", None)
+
+
+# --- invalid_dir_name (single NEW folder name; see web/src/lib/folderName.js) --------
+# The JS mirror is asserted against this same table in web/src/lib/folderName.test.mjs,
+# so a rule changed on one side alone fails on the other.
+
+
+@pytest.mark.parametrize(
+    "name", ["reports", "market roundups", "Q3-2026", "a", "naïve", "日本語", "x" * 255]
+)
+def test_invalid_dir_name_accepts_ordinary_names(name):
+    assert invalid_dir_name(name) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("", "Enter a folder name"),
+        ("   ", "Enter a folder name"),
+        (" lead", "Name can't start or end with a space"),
+        ("trail ", "Name can't start or end with a space"),
+        ("a/b", "Name can't contain slashes"),
+        ("a\\b", "Name can't contain slashes"),
+        ("../escape", "Name can't contain slashes"),
+        (".", "Not a valid folder name"),
+        ("..", "Not a valid folder name"),
+        (".hidden", "Names starting with a dot are hidden and won't show here"),
+        ("nul\x00byte", "Name contains invalid characters"),
+        ("tab\tsep", "Name contains invalid characters"),
+        ("x" * 256, "Name is too long"),
+        ("é" * 128, "Name is too long"),  # 256 BYTES — under the char count, over NAME_MAX
+    ],
+)
+def test_invalid_dir_name_rejects(name, expected):
+    assert invalid_dir_name(name) == expected
+
+
+def test_invalid_dir_name_allows_interior_spaces_and_dots():
+    """Only LEADING dots and SURROUNDING spaces are a problem — the picker's own
+    workspace already contains folders like "market roundups"."""
+    assert invalid_dir_name("two words") is None
+    assert invalid_dir_name("v1.2 notes") is None
 
 
 def test_delete_directory_recursively(tmp_path):

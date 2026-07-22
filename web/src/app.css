@@ -420,6 +420,16 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .fp-dir > :global(svg):last-child { color: var(--text-faint); }
 .fp-msg { padding: 18px 12px; text-align: center; color: var(--text-muted); font-size: var(--text-sm); }
 .fp-msg.err { color: var(--ag2-observer); }
+.fp-new { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border: 1px solid var(--line); background: var(--surface); color: var(--text-muted); border-radius: var(--radius-sm); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.fp-new:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
+.fp-new:disabled { opacity: .45; cursor: default; }
+.fp-new:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.fp-newrow { display: flex; align-items: center; gap: 9px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.fp-newrow > :global(svg) { color: var(--text-muted); flex: none; }
+.fp-input { flex: 1; min-width: 0; border: none; background: none; color: var(--text); font: inherit; font-size: var(--text-sm); padding: 0; }
+.fp-input:focus { outline: none; }
+.fp-input::placeholder { color: var(--text-faint); }
+.fp-err { color: var(--ag2-observer); font-size: var(--text-xs); }
 .fp-use { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); border-radius: var(--radius-sm); padding: 9px 16px; font: inherit; font-size: var(--text-sm); font-weight: var(--fw-semibold); cursor: pointer; transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
 .fp-use:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--accent-border); }
 .fp-use:focus-visible { outline: none; box-shadow: var(--focus-ring); }

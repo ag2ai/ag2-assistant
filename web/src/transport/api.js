@@ -107,6 +107,9 @@ export const api = {
   testLiveConfigDraft: (cfg) => j('POST', G('/live-configs/test'), cfg),
   setOnboarded: (value = true) => j('POST', G('/onboarded'), { value }),
   listDirs: (path = '') => j('GET', G('/fs/list?path=' + encodeURIComponent(path))),
+  // Create ONE subfolder in a host directory the picker is viewing; resolves to the new
+  // folder's absolute path. Rejects (400/409) carry a message meant to be shown as-is.
+  makeDir: (path, name) => j('POST', G('/fs/mkdir'), { path, name }),
   googleStatus: () => j('GET', G('/google/status')),
   googleLoginUrl: () => j('POST', G('/google/login_url')),
   googleCredentials: (content) => j('POST', G('/google/credentials'), { content }),
