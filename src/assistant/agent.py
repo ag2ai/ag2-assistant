@@ -36,6 +36,7 @@ from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.settings import profile_settings
+from assistant.skills import FilteredSkillRuntime, SkillStateStore
 from assistant.tools import build_agent_tools
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 
@@ -191,19 +192,28 @@ def build_skills_runtime(config: Config):
 
 
 def build_skills_plugin(config: Config, runtime):
-    """Progressive-disclosure Skills plugin over `runtime`.
+    """Progressive-disclosure Skills plugin over `runtime`, filtered by skill state.
 
     `SkillPlugin` injects the `<available_skills>` catalog (name + description +
     location per skill) straight into the system prompt on startup — the model
     discovers what's available with no `list_skills` round-trip — and exposes
     `load_skill` / `read_skill_resource` / `run_skill_script` for those skills.
 
+    This is the single resolution seam (ADR 0016): the runtime is wrapped so a
+    skill turned off in the install-wide `SkillStateStore` is absent from the
+    catalog and unloadable. No other code path decides availability. Resolution
+    is **default-on** (a skill is available unless a record turns it off) — the
+    inverse of a Folders Grant; see `SkillStateStore` for why not to "fix" that.
+
     The catalog and the activation tools are a **construction-time snapshot**: a
-    skill installed mid-session (via the registry tools below) lands on disk and
-    in `skills-lock.json` but isn't loadable until the next agent build picks it
-    up. Install now, use next session.
+    skill installed or toggled mid-session isn't reflected until the next agent
+    build (a `ProfileManager.reload`) picks it up — which is exactly what the
+    /api/skills routes trigger on every change.
     """
-    return SkillPlugin(runtime)
+    store = SkillStateStore(config.root_dir / "skills.json")
+    profile = config.data_dir.name
+    filtered = FilteredSkillRuntime(runtime, lambda name: store.is_available(name, profile))
+    return SkillPlugin(filtered)
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:

@@ -175,6 +175,25 @@
 }
 .iconbtn:hover { color: var(--ink); background: var(--code); }
 .iconbtn:disabled { opacity: .5; cursor: default; }
+/* On/Off toggle switch — the single 2-position control for enable/disable across
+   Settings (Skills install-wide + per-profile). A track with a sliding knob; the
+   track fills accent when on. Use with role="switch" + aria-checked and a
+   class:on binding. Replaces the old Enable/Disable / Suppress text buttons. */
+.settings .setswitch {
+  flex: none; position: relative; width: 34px; height: 20px; padding: 0;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface-sunk, var(--code)); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.settings .setswitch::after {
+  content: ''; position: absolute; top: 1px; left: 1px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--muted);
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.settings .setswitch.on { background: var(--accent); border-color: var(--accent); }
+.settings .setswitch.on::after { transform: translateX(14px); background: #fff; }
+.settings .setswitch:disabled { opacity: .5; cursor: default; }
+.settings .setswitch:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .panel .delconfirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .panel .delconfirm .confirm { color: var(--danger); font-size: 13px; }
 

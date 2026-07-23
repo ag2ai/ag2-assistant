@@ -92,14 +92,44 @@ override**: which shared model is Active for this profile (see Active). A legacy
 per-profile `voice_provider` still exists as a fallback, but voice is now configured
 install-wide via the Active Live model.
 
+**Bundled skills**:
+First-party skills that ship with the app (e.g. `web-research`, `pdf-tools`,
+`email-drafting`), available from first run. Read-only: they can be **Disabled**
+(install-wide or **Suppressed** per profile) but never **Deleted** — there is no
+writable file to remove, so their off-state is recorded separately.
+_Avoid_: built-in (reserve for non-skill features), first-party skill (fine in
+prose, but "Bundled" is the canonical term)
+
 **Global skills**:
 Skills installed once at the Root, available to every profile. Only the user
-places skills here — the agent never installs or writes into this layer.
+places skills here — the agent never installs or writes into this layer. Managed
+install-wide (Enable/Disable/Delete affects every profile) and individually
+**Suppressed** by any profile.
 
 **Profile skills**:
 Skills installed inside one profile, visible only to it. The default target for
 every install and for agent-authored skills. On a name clash, the Profile skill
-wins over the Global one.
+wins over the Global one. Fully managed by that profile: Enable/Disable/Delete.
+
+**Skill state** (Enabled / Disabled):
+Whether a skill appears in the agent's `<available_skills>` catalog. A new
+concept: previously a skill was either present on disk (available) or absent.
+**Disabled** keeps the skill installed but out of the catalog. Because the catalog
+is a **construction-time snapshot**, a state change lands immediately in storage
+but only reaches the running agent on its next build.
+_Avoid_: uninstall (that is Delete — removal from disk), archive (a profile
+concept)
+
+**Suppression** (per-profile skill override):
+A profile turning a **Global** or **Bundled** skill **off for itself only**,
+without touching it for other profiles. Mirrors the Folders *structure*
+(install-wide registry + per-profile records) but with the default **inverted**:
+absence of a record means *inherit "on"* (like the model **Active override**), so
+the record only ever exists to suppress. A Global skill is available to a profile
+iff it is install-wide **Enabled** AND not **Suppressed** here.
+_Avoid_: grant (Folders default-deny + opt-in; Suppression is default-allow +
+opt-out — the opposite), disable (reserve for the install-wide / own-skill flag;
+a profile *suppresses* a shared skill, it does not *disable* it for everyone)
 
 **Permissions**:
 The security policy of allowed commands (command-prefix and whole-tool grants).

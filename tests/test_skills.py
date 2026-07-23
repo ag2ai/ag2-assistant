@@ -14,6 +14,7 @@ from assistant.agent import (
     create_agent,
 )
 from assistant.config import Config
+from assistant.skills import SkillStateStore
 
 
 def test_skills_runtime_builds_and_creates_dir(tmp_path):
@@ -49,6 +50,91 @@ def test_bundled_skills_are_discoverable(tmp_path):
     assert {"web-research", "pdf-tools", "email-drafting"} <= names
     # description moved under metadata in AG2 main's Skill model
     assert all(m.metadata.description for m in discovered)  # required for disclosure
+
+
+def test_disabled_skill_absent_from_catalog_then_restored(tmp_path):
+    """The resolution seam (ADR 0016): a Disabled skill drops out of
+    <available_skills> on the next build; re-enabling brings it back."""
+    config = Config()
+    config.skills_dir = tmp_path / "skills"
+    # Point the install-wide state store at a known file for this test.
+    config.root_dir = tmp_path / "root"
+    store = SkillStateStore(config.root_dir / "skills.json")
+
+    def catalog() -> str:
+        runtime = build_skills_runtime(config)
+        return "\n".join(build_skills_plugin(config, runtime)._system_prompt)
+
+    assert "web-research" in catalog()  # present by default (default-on)
+
+    store.set_enabled("web-research", False)
+    prompt = catalog()
+    assert "web-research" not in prompt
+    assert "pdf-tools" in prompt  # only the disabled skill leaves the catalog
+
+    store.set_enabled("web-research", True)
+    assert "web-research" in catalog()  # re-enable restores it
+
+
+def test_suppressed_skill_absent_from_one_profiles_catalog(tmp_path):
+    """The resolution seam is per-profile (ADR 0016 t02): a skill Suppressed for
+    profile A leaves A's <available_skills> but stays in B's — build_skills_plugin
+    keys resolution on config.data_dir.name (the profile id)."""
+    root = tmp_path / "root"
+    store = SkillStateStore(root / "skills.json")
+
+    def catalog(pid: str) -> str:
+        config = Config()
+        config.root_dir = root
+        config.data_dir = root / "profiles" / pid  # .name == pid → resolution scope
+        config.skills_dir = config.data_dir / "skills"
+        runtime = build_skills_runtime(config)
+        return "\n".join(build_skills_plugin(config, runtime)._system_prompt)
+
+    assert "web-research" in catalog("work")  # default-on for everyone
+
+    store.set_suppressed("web-research", "work", True)
+    assert "web-research" not in catalog("work")  # gone for A only
+    assert "pdf-tools" in catalog("work")  # siblings untouched
+    assert "web-research" in catalog("personal")  # B still has it
+
+    store.set_suppressed("web-research", "work", False)
+    assert "web-research" in catalog("work")  # clearing restores it
+
+
+def test_installed_skill_appears_in_catalog_after_rebuild(tmp_path):
+    """ADR 0017 t04/t05: a freshly installed skill is in the agent's <available_skills>
+    on the next build. Drives the real install path (install_from_source over a zip) into
+    the profile's skills_dir, then rebuilds the plugin — the same rebuild the routes
+    trigger via reload."""
+    import io
+    import zipfile
+
+    from assistant.skills_install import install_from_source
+
+    config = Config()
+    config.skills_dir = tmp_path / "skills"
+
+    def catalog() -> str:
+        runtime = build_skills_runtime(config)
+        return "\n".join(build_skills_plugin(config, runtime)._system_prompt)
+
+    assert "freshly-installed" not in catalog()  # absent before install
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "freshly-installed/SKILL.md",
+            "---\nname: freshly-installed\ndescription: a just-installed skill\n---\n# hi\n",
+        )
+    src = tmp_path / "up.zip"
+    src.write_bytes(buf.getvalue())
+
+    installed = install_from_source(
+        build_skills_runtime(config), ["freshly-installed"], upload_path=src, filename="up.zip"
+    )
+    assert [r["name"] for r in installed] == ["freshly-installed"]
+    assert "freshly-installed" in catalog()  # present after the next build
 
 
 def test_registry_install_tools_exposed(tmp_path):

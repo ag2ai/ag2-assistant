@@ -282,6 +282,35 @@ def test_skills_dir_isolated(monkeypatch):
         assert not (b_cfg.skills_dir / "SKILL.md").exists()
 
 
+# --- e2. skills: a Suppression in A is invisible to B; install-wide Disable hits both ---
+
+
+def test_skill_suppression_isolated_but_disable_is_global(monkeypatch):
+    """A per-profile Suppression (ADR 0016 t02) turns a shared skill off for A only —
+    B's resolved skill set is unchanged. An install-wide Disable, by contrast, changes
+    both. Asserted through the /api/p/{pid}/skills projection the Skills tab reads."""
+    with _two_profile_client(monkeypatch) as client:
+        a, b = _boot_two(client)
+
+        def avail(pid, name):
+            rows = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
+            return rows[name]["available"]
+
+        # Baseline: both profiles see the shared bundled skill.
+        assert avail(a, "web-research") is True
+        assert avail(b, "web-research") is True
+
+        # Suppress in A only → A loses it, B keeps it.
+        assert client.post(api(a, "/skills/web-research/suppress")).status_code == 200
+        assert avail(a, "web-research") is False
+        assert avail(b, "web-research") is True  # B's resolved set is untouched
+
+        # An install-wide Disable of a DIFFERENT skill changes BOTH profiles.
+        assert client.post("/api/skills/pdf-tools/state", json={"enabled": False}).status_code == 200
+        assert avail(a, "pdf-tools") is False
+        assert avail(b, "pdf-tools") is False
+
+
 # --- f. permissions: now GLOBAL — a grant is install-wide, visible to every profile ---
 
 

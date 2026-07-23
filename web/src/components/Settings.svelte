@@ -10,6 +10,7 @@
   import ProfilesPage from './settings/ProfilesPage.svelte'
   import ModelsPage from './settings/ModelsPage.svelte'
   import SecretsPage from './settings/SecretsPage.svelte'
+  import SkillsPage from './settings/SkillsPage.svelte'
   import ToolsPage from './settings/ToolsPage.svelte'
   import IntegrationsPage from './settings/IntegrationsPage.svelte'
   import AdvancedPage from './settings/AdvancedPage.svelte'
@@ -19,6 +20,7 @@
     { id: SETTINGS_PAGE.PROFILES, label: 'Profiles', comp: ProfilesPage },
     { id: SETTINGS_PAGE.MODELS, label: 'Models', comp: ModelsPage },
     { id: SETTINGS_PAGE.SECRETS, label: 'Secrets', comp: SecretsPage },
+    { id: SETTINGS_PAGE.SKILLS, label: 'Skills', comp: SkillsPage },
     { id: SETTINGS_PAGE.TOOLS, label: 'Tools & Permissions', comp: ToolsPage },
     { id: SETTINGS_PAGE.INTEGRATIONS, label: 'Integrations', comp: IntegrationsPage },
     { id: SETTINGS_PAGE.ADVANCED, label: 'Advanced', comp: AdvancedPage },
