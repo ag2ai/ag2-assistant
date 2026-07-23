@@ -29,7 +29,6 @@ def _store_path(cfg):
 async def test_feedback_down_falls_back_to_raw_complaint(cfg, monkeypatch):
     # Force the LLM path to raise so we hit the fallback — no network/model needed.
     # A 👎 complaint keeps its signal even raw, so it lands under "What they dislike".
-
     def _boom(*a, **k):
         raise RuntimeError("no model in test")
 
@@ -57,7 +56,6 @@ async def test_feedback_up_drops_raw_praise_instead_of_storing_it(cfg, monkeypat
 
 
 async def test_feedback_empty_reason_writes_nothing(cfg, monkeypatch):
-
     monkeypatch.setattr(
         agent_mod, "model_config", lambda *a, **k: (_ for _ in ()).throw(RuntimeError())
     )
