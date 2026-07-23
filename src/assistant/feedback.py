@@ -104,15 +104,12 @@ async def learn(
             await record_preference(store_path, note, category, remove=remove)
         return
     except Exception as exc:
-        # Don't swallow silently: this whole leg failing is exactly why bogus bullets
-        # appeared with no trace. Log it (best-effort, never re-raises) so the next
-        # cheap-model failure is diagnosable instead of invisible.
+        # Log instead of swallowing: a silent failure here is why bogus bullets appeared
+        # with no trace. Best-effort — never re-raises.
         log_suppressed("feedback learner", exc, sentiment=sentiment)
 
-    # Fallback ONLY for a 👎. A raw complaint still carries usable signal, but raw praise
-    # ("Spot on!", "Lovely!") does not — a like with nothing to generalise is better
-    # dropped than stored verbatim as a bogus, non-generalised "preference". So on a 👍 we
-    # stop here rather than dumping the reason into the profile.
+    # Fallback ONLY for a 👎: a raw complaint still has signal, but raw praise ("Spot
+    # on!") is noise — better dropped than stored verbatim as a bogus preference.
     if down and (fallback := (reason or "").strip()):
         try:
             await remember_note(store_path, fallback, category)
