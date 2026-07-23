@@ -10,6 +10,7 @@ reads that profile's store.
 
 import pytest
 
+import assistant.agent as agent_mod
 from assistant import feedback, memory
 from assistant.config import load_config
 
@@ -28,8 +29,6 @@ def _store_path(cfg):
 async def test_feedback_down_falls_back_to_raw_complaint(cfg, monkeypatch):
     # Force the LLM path to raise so we hit the fallback — no network/model needed.
     # A 👎 complaint keeps its signal even raw, so it lands under "What they dislike".
-    import assistant.agent as agent_mod
-
     def _boom(*a, **k):
         raise RuntimeError("no model in test")
 
@@ -48,8 +47,6 @@ async def test_feedback_up_drops_raw_praise_instead_of_storing_it(cfg, monkeypat
     """The reported bug: a 👍 whose LLM leg fails must NOT dump the raw reason. A like
     with nothing to generalise ("Spot on!") is noise, so the fallback is skipped and the
     profile is left untouched — no verbatim "* Spot on!" bullet."""
-    import assistant.agent as agent_mod
-
     monkeypatch.setattr(
         agent_mod, "model_config", lambda *a, **k: (_ for _ in ()).throw(RuntimeError())
     )
@@ -59,8 +56,6 @@ async def test_feedback_up_drops_raw_praise_instead_of_storing_it(cfg, monkeypat
 
 
 async def test_feedback_empty_reason_writes_nothing(cfg, monkeypatch):
-    import assistant.agent as agent_mod
-
     monkeypatch.setattr(
         agent_mod, "model_config", lambda *a, **k: (_ for _ in ()).throw(RuntimeError())
     )
