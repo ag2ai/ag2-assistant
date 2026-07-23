@@ -148,7 +148,7 @@
 <style>
   h2 { padding-right: 34px; }
   .hint { font-size: 12px; margin: 0 0 10px; }
-  .errline { color: #d8552f; font-size: 13px; }
+  .errline { color: var(--danger); font-size: 13px; }
   .cfsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin: 16px 0 6px; }
   .cfrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
   /* Divider only between adjacent folders — the section header and Close button
@@ -167,5 +167,5 @@
   .cfmenu { position: absolute; right: 0; top: 100%; margin-top: 5px; z-index: 41; min-width: 170px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); padding: 5px; display: flex; flex-direction: column; gap: 2px; }
   .cfmenu button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; background: none; border: none; padding: 8px 10px; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; border-radius: 7px; }
   .cfmenu button:hover { background: var(--code); }
-  .cfmenu button.danger { color: #d8552f; }
+  .cfmenu button.danger { color: var(--danger); }
 </style>

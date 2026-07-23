@@ -188,5 +188,5 @@
 
   .pgactions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 16px; }
   .okmsg { color: var(--accent); font-size: var(--text-xs); }
-  .perr { font-size: var(--text-sm); color: var(--danger, #d8552f); margin: 8px 0 0; }
+  .perr { font-size: var(--text-sm); color: var(--danger, var(--danger)); margin: 8px 0 0; }
 </style>

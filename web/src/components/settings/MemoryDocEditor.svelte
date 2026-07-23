@@ -47,7 +47,7 @@
 
 <style>
   .docHint { font-size: 12px; margin: 2px 0 8px; }
-  .docErr { color: #d8552f; font-size: 13px; margin: 0 0 8px; }
+  .docErr { color: var(--danger); font-size: 13px; margin: 0 0 8px; }
   .docArea {
     width: 100%; resize: vertical; box-sizing: border-box;
     border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px;

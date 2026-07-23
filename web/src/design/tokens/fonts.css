@@ -1,21 +1,19 @@
 /* ============================================================
-   AG2 Assistant — Webfonts
+   AG2 Assistant — Webfonts  ·  "AG2 / Signal"
    ------------------------------------------------------------
-   The shipping app uses the system sans + ui-monospace stacks.
-   This design system EVOLVES the brand toward a warmer, friendlier
-   voice with three Google Fonts (an intentional brand decision,
-   not a substitution for missing files):
+   The identity is a technical AI-OS voice (Raycast / Arc / Linear
+   territory) — NO serif anywhere in the UI. Two families carry the
+   whole system:
 
-     • Bricolage Grotesque — display / headings. Characterful,
-       slightly condensed humanist grotesque; warm and modern.
-     • Hanken Grotesk      — UI + body. Soft, highly readable,
-       friendly without being cute.
-     • JetBrains Mono      — code, AG2 event names, token values.
-     • Fraunces            — editorial serif, used only by the
-       NewsDigest "wire" surface for its broadsheet voice.
+     • Geist       — display + UI + body. Modern grotesk; precise,
+       technical, more distinct than Inter. Anthropic-neutral.
+     • Geist Mono  — technical data: time, dates, temperatures,
+       token counts, model names, task status, tool badges, code.
 
-   Loaded from Google Fonts so consuming projects pick them up
-   with one stylesheet link. Weights kept tight for performance.
+   Inter is loaded as the guaranteed sans fallback (see the stack
+   in typography.css); JetBrains Mono is the mono fallback. Loaded
+   from Google Fonts so consuming projects pick them up with one
+   stylesheet link. Weights kept tight for performance.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');

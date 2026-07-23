@@ -196,10 +196,10 @@
     margin-top: 6px;
   }
   .codex .warn {
-    color: #d8552f;
+    color: var(--danger);
   }
   .codex .err {
-    color: #d8552f;
+    color: var(--danger);
     font-size: 13px;
   }
   .codex .ok {

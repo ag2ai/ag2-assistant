@@ -83,7 +83,7 @@
 
 <style>
   .mhint { font-size: var(--text-xs); color: var(--text-muted); margin: 0 0 10px; }
-  .merr { color: var(--danger, #d8552f); font-size: var(--text-sm); margin: 0 0 8px; }
+  .merr { color: var(--danger, var(--danger)); font-size: var(--text-sm); margin: 0 0 8px; }
 
   .mempty {
     display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
@@ -112,5 +112,5 @@
   .mfoot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 10px; }
   .okmsg { color: var(--accent); font-size: var(--text-xs); }
   .linkbtn.quiet { color: var(--text-muted); }
-  .linkbtn.quiet:hover { color: var(--danger, #d8552f); }
+  .linkbtn.quiet:hover { color: var(--danger, var(--danger)); }
 </style>

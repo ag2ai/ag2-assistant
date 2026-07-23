@@ -110,5 +110,5 @@
   .permadd { align-self: flex-start; }
   .permempty { font-size: 13px; margin: 0 0 8px; }
   .permhint { font-size: 12px; margin: 2px 0 10px; }
-  .permerr { color: #d8552f; font-size: 13px; margin: 0 0 8px; }
+  .permerr { color: var(--danger); font-size: 13px; margin: 0 0 8px; }
 </style>

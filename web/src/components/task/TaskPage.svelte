@@ -672,11 +672,11 @@ import WriteSwitch from '../WriteSwitch.svelte'
     padding: 8px 10px; background: var(--surface-elevated); border: 1px solid var(--line);
     border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
   }
-  .delconfirm .confirm { color: #d8552f; font-size: 13px; }
+  .delconfirm .confirm { color: var(--danger); font-size: 13px; }
   .taskerror { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 8px; padding: 9px 11px; font-size: var(--text-sm); line-height: var(--leading-snug); color: var(--ag2-observer); background: color-mix(in srgb, var(--ag2-observer) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ag2-observer) 28%, transparent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
   .statusicon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--muted); }
-  .statusicon.completed { color: #3ba55d; }
-  .statusicon.failed { color: #d8552f; }
+  .statusicon.completed { color: var(--success); }
+  .statusicon.failed { color: var(--danger); }
   .statusicon.cancelled { color: var(--muted); }
   .statusicon.running { color: var(--info); }
   .statusicon.needs_input { color: var(--accent); }

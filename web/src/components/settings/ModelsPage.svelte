@@ -118,7 +118,7 @@
 
 <div class="setgroup">Text</div>
 
-{#if err}<p class="muted" style="color:#d8552f;font-size:13px">{err}</p>{/if}
+{#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if envOverride}
   <div class="llmenv">

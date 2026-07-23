@@ -70,7 +70,7 @@
   }
 </script>
 
-{#if err}<p class="muted" style="color:#d8552f;font-size:13px">{err}</p>{/if}
+{#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if !configs.length && !editing}
   <p class="muted" style="font-size:13px">No live models yet — add one below to talk to the assistant.</p>

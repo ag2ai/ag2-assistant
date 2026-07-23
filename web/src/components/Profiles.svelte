@@ -327,9 +327,9 @@
   .prow.arch .pdot { opacity: 0.55; }
   .prow.arch .pname { color: var(--text-muted); font-weight: var(--fw-medium); }
 
-  .perr { font-size: var(--text-sm); color: var(--danger, #d8552f); margin: 0; }
+  .perr { font-size: var(--text-sm); color: var(--danger, var(--danger)); margin: 0; }
   .linkbtn.quiet { color: var(--text-muted); }
-  .linkbtn.quiet:hover { color: var(--danger, #d8552f); }
-  .open.danger { border-color: var(--danger, #d8552f); color: var(--danger, #d8552f); }
-  .open.danger:hover { background: color-mix(in srgb, var(--danger, #d8552f) 12%, transparent); border-color: var(--danger, #d8552f); color: var(--danger, #d8552f); }
+  .linkbtn.quiet:hover { color: var(--danger, var(--danger)); }
+  .open.danger { border-color: var(--danger, var(--danger)); color: var(--danger, var(--danger)); }
+  .open.danger:hover { background: color-mix(in srgb, var(--danger, var(--danger)) 12%, transparent); border-color: var(--danger, var(--danger)); color: var(--danger, var(--danger)); }
 </style>

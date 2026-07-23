@@ -1,20 +1,21 @@
 /* ============================================================
-   AG2 Assistant — Typography tokens
+   AG2 Assistant — Typography tokens  ·  "AG2 / Signal"
    ------------------------------------------------------------
-   Display : Bricolage Grotesque — headings, brand, empty-state
-   UI/Body : Hanken Grotesk      — everything readable
-   Mono    : JetBrains Mono      — code, AG2 event names, tokens
+   Display : Geist      — headings, brand, empty-state
+   UI/Body : Geist      — everything readable (one grotesk system)
+   Mono    : Geist Mono — technical data: time, dates, temps, token
+             counts, model names, task status, tool badges, code
 
-   Scale is modest and UI-first (this is a dense chat product,
-   not a marketing page). Body text never below 13px; the empty
-   "How can I help?" hero is the one large display moment.
+   No serif anywhere. Scale is modest and UI-first (this is a dense
+   chat product, not a marketing page). Body text never below 13px;
+   the empty "How can I help?" hero is the one large display moment.
    ============================================================ */
 
 :root {
   /* ---- Families ---- */
-  --font-display: 'Bricolage Grotesque', 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-sans:    'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans:    'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:    'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* ---- Weights ---- */
   --fw-regular:  400; /* @kind font */

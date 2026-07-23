@@ -61,7 +61,7 @@
 <div class="modal settings">
   <button class="modal-x" aria-label="Close" onclick={ctx.close}>×</button>
   <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>
-  {#if ctx.err}<p class="muted" style="color:#d8552f">{ctx.err}</p>{/if}
+  {#if ctx.err}<p class="muted" style="color:var(--danger)">{ctx.err}</p>{/if}
 
   {#if !ctx.s}
     <p class="muted">Loading…</p>

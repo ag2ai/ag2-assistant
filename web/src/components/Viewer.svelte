@@ -392,7 +392,7 @@
       {#if path}
         {@render missing('file-x', 'Couldn’t load this file — it may have moved or been deleted.', err)}
       {:else}
-        <p class="muted" style="color:#d8552f">{err}</p>
+        <p class="muted" style="color:var(--danger)">{err}</p>
       {/if}
     {:else if kind === 'html'}
       <!-- agent HTML: scripts run but in an opaque origin (no allow-same-origin) -->
