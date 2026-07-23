@@ -102,12 +102,11 @@ async def learn(
             await record_preference(store_path, note, category, remove=remove)
         return
     except Exception as exc:
-        # Log instead of swallowing: a silent failure here is why bogus bullets appeared
-        # with no trace. Best-effort — never re-raises.
+        # Record the failure without raising — learn() is fire-and-forget.
         log_suppressed("feedback learner", exc, sentiment=sentiment)
 
-    # Fallback ONLY for a 👎: a raw complaint still has signal, but raw praise ("Spot
-    # on!") is noise — better dropped than stored verbatim as a bogus preference.
+    # Only a 👎 falls back to the raw reason: a complaint is usable as-is, whereas
+    # ungeneralised praise is not worth storing.
     if down and (fallback := (reason or "").strip()):
         try:
             await remember_note(store_path, fallback, category)
