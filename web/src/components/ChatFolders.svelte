@@ -16,6 +16,7 @@
   import { getActiveProfileId } from '../lib/profile.js'
   import Icon from './Icon.svelte'
   import AccessSwitch from './AccessSwitch.svelte'
+  import WriteSwitch from './WriteSwitch.svelte'
 
   let { chatId, taskId = '', onClose } = $props()
 
@@ -83,8 +84,6 @@
     if (target === inheritedMode(f)) { if (cur) run(() => api.revokeGrant(f.id, pid, chatId)); return }
     run(() => api.setGrant(f.id, pid, target, chatId))
   }
-
-  const modeLabel = (m) => (m === 'read_write' ? 'Read + write' : m === 'read' ? 'Read' : 'Off')
 </script>
 
 <div class="modal-backdrop over" onclick={onClose}></div>
@@ -104,8 +103,7 @@
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
         <div class="cfctl">
-          <span class="tglstate">{modeLabel(cg?.mode)}</span>
-          <button class="tgl" class:on={cg?.mode === 'read_write'} role="switch" aria-checked={cg?.mode === 'read_write'} aria-label="Allow writing" disabled={busy} onclick={() => setChatMode(f, cg?.mode === 'read_write' ? 'read' : 'read_write')}></button>
+          <WriteSwitch mode={cg?.mode} disabled={busy} onchange={(m) => setChatMode(f, m)} />
           <span class="cfmenuwrap">
             <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
@@ -159,23 +157,6 @@
   .cfico { flex: none; display: inline-flex; color: var(--text-muted); }
   .cfname { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cfctl { flex: none; display: inline-flex; align-items: center; gap: 10px; }
-  /* Match the row's folder-name text (regular weight, inherited colour). A chat
-     folder is never "Off" here — Off would delete it. */
-  .tglstate { min-width: 74px; text-align: right; font-size: 13px; }
-
-  /* Chat folders — 2-position iOS switch (off = Read, green; on = Read+write, warn).
-     Muted like the user message bubble: a soft tinted fill + a hairline tinted
-     border (inset shadow, so the knob geometry is untouched), not a bold fill.
-     The colored label carries the semantic; the track just hints at it. */
-  .tgl { position: relative; flex: none; width: 38px; height: 22px; padding: 0; border: none; border-radius: 999px; cursor: pointer;
-    background: color-mix(in srgb, var(--success) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 32%, var(--line));
-    transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-  .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur-fast) var(--ease-out); }
-  .tgl.on { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 32%, var(--line)); }
-  .tgl.on::after { transform: translateX(16px); }
-  /* No opacity dim on :disabled — busy briefly disables EVERY switch, and a dim
-     would blink all of them on each change. The disabled attr still blocks clicks. */
-  .tgl:disabled { cursor: default; }
 
   /* Overflow menu — Move to profile / Delete tucked behind a quiet kebab. */
   .cfmenuwrap { position: relative; flex: none; }

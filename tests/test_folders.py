@@ -102,6 +102,21 @@ def test_delete_folder_revokes_all_grants(tmp_path):
     assert store.mode_for(d, "work", chat_id="c1") is None
 
 
+def test_revoking_last_grant_garbage_collects_folder(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "acme"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work")
+    store.set_grant(f["id"], READ_WRITE, profile="work", chat_id="c1")
+    # First revoke leaves the profile grant → Folder survives.
+    store.revoke_grant(f["id"], profile="work", chat_id="c1")
+    assert store.get_folder(f["id"]) is not None
+    # Revoking the last grant GCs the Folder from the registry.
+    store.revoke_grant(f["id"], profile="work")
+    assert store.get_folder(f["id"]) is None
+
+
 def test_mode_for_covers_subpaths(tmp_path):
     store = _store(tmp_path)
     d = tmp_path / "repos"
@@ -428,3 +443,13 @@ def test_drop_task_removes_only_that_tasks_grants(tmp_path):
     assert store.mode_for(d1, "work", task_id="task-1") == READ  # профильный ещё покрывает
     assert not any(g["task_id"] == "task-1" for g in store.get_folder(f1["id"])["grants"])
     assert store.mode_for(d2, "work", task_id="task-2") == READ  # чужая таска цела
+
+
+def test_drop_task_garbage_collects_task_only_folder(tmp_path):
+    store = _store(tmp_path)
+    d = tmp_path / "a"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work", task_id="task-1")  # task-only Folder
+    store.drop_task("task-1")
+    assert store.get_folder(f["id"]) is None  # no grants left → GC'd, not orphaned

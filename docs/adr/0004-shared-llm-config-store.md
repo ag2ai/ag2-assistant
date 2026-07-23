@@ -30,3 +30,15 @@ it, so the two views stay in sync live.
 - The store lives in `lib/llm.js`, not `store.js`, on purpose: `store.js` imports
   only `svelte/store`, and `store.js → transport/api.js → lib/profile.js → store.js`
   would be an import cycle if the loader lived there.
+
+## Amendment: per-profile Active override (ADR 0015)
+
+The original "one install-wide Active LLM configuration" is relaxed to a per-profile
+**Active override**: the shared config *list* stays install-wide and single-sourced
+(everything above holds), but a Profile may pick which shared config is Active *for
+it*, stored in the profile's config overlay. The install-wide Active becomes the
+default; effective Active resolves **env pin > profile override > install-wide Active
+> env fallback**. The composer's `ModelSwitcher` continues to set the install-wide
+Active (`useLlmConfig`); the new per-profile switchers in Settings → Profiles set the
+override instead. The shared store now also carries the effective/overridden active so
+both surfaces stay honest. Same treatment applies to the Live model list. See ADR 0015.

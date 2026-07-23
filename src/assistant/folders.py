@@ -271,6 +271,15 @@ class FolderStore:
             self._save()
             return self._view(entry)
 
+    def _gc(self, fid: str) -> None:
+        """Drop a Folder left with no grants — with its last grant gone it is
+        unreachable by any profile, task, or chat, so it leaves the registry.
+        Mutates in place; the caller holds the lock and saves. Uniform GC for
+        every revoke path (CLI, API, task deletion) lives here, not per surface."""
+        fid = (fid or "").strip()
+        if fid and not any(g.get("folder_id") == fid for g in self._grants):
+            self._folders = [f for f in self._folders if f.get("id") != fid]
+
     def revoke_grant(self, fid: str, *, profile: str, chat_id: str = "", task_id: str = "") -> bool:
         fid = (fid or "").strip()
         profile = (profile or "").strip()
@@ -290,6 +299,7 @@ class FolderStore:
             ]
             if len(self._grants) == before:
                 return False
+            self._gc(fid)
             self._save()
             return True
 
@@ -320,8 +330,11 @@ class FolderStore:
             return
         with self._mutate():
             before = len(self._grants)
+            affected = {g.get("folder_id") for g in self._grants if g.get("task_id", "") == task_id}
             self._grants = [g for g in self._grants if g.get("task_id", "") != task_id]
             if len(self._grants) != before:
+                for fid in affected:
+                    self._gc(fid)  # a task-only Folder outlives its task otherwise
                 self._save()
 
     # --- the enforcement query ---

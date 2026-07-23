@@ -69,6 +69,23 @@ VOICE_PROMPT = (
 )
 
 
+def profile_live_config(settings: "Settings") -> dict | None:
+    """The live (voice) config Active for THIS profile: its per-profile **Active
+    override** (ADR 0015) when set and still present, else the install-wide active.
+
+    A dangling override (points at a deleted config) degrades silently to the
+    install-wide active — never an error — mirroring the Text resolution in
+    ``llm_configs.apply_active``. This is the seam where env pin > profile override >
+    install-wide active > env fallback is realised for voice: the caller layers the
+    ``AG2ASSISTANT_VOICE_MODEL`` pin and the legacy-provider fallback around it."""
+    override = settings.get_live_override()
+    if override:
+        entry = live_configs.get_config(override)
+        if entry is not None:
+            return entry
+    return live_configs.active_config()
+
+
 def voice_realtime_config(
     config: Config,
     settings: "Settings",
@@ -85,7 +102,7 @@ def voice_realtime_config(
     `AG2ASSISTANT_VOICE_MODEL` still overrides the model. Input transcription is enabled
     per provider so the user's speech arrives as text for the on-screen bubbles.
     """
-    active = None if provider else live_configs.active_config()
+    active = None if provider else profile_live_config(settings)
     if active:
         p = voice_providers.get(active["provider"])
         model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or active["model"] or p.realtime_model
@@ -116,7 +133,7 @@ async def synthesize_preview(
     caller falls back (live preview / skip the sample).
     """
     if provider is None:
-        active = live_configs.active_config()
+        active = profile_live_config(settings)
         if active:
             provider = active["provider"]
             api_key = api_key or live_configs.resolve_key(active)

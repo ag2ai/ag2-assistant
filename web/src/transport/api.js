@@ -192,6 +192,13 @@ export const api = {
   // Focus areas are a per-profile persona attribute (settings.json → injected into
   // the agent's context). Active-profile setter (Settings modal).
   setFocuses: (focuses) => j('POST', P('/settings/focuses'), { focuses }),
+  // Per-profile model Active override (ADR 0015): point THIS profile's Active Text /
+  // Live model at a shared install-wide config id; an empty string clears the override
+  // (→ back to the install-wide Active). Distinct from the install-wide useLlmConfig /
+  // useLiveConfig the composer switcher and Models page call. → {ok, llm_override|
+  // live_override: id|null}. The effective + override ids are reported by settings().
+  setLlmOverride: (configId = '') => j('POST', P('/settings/llm-override'), { config_id: configId }),
+  setLiveOverride: (configId = '') => j('POST', P('/settings/live-override'), { config_id: configId }),
   setReplyTimeout: (replyTimeoutS) => j('POST', P('/settings/reply-timeout'), { reply_timeout_s: replyTimeoutS }),
   setVoiceProvider: (provider) => j('POST', P('/settings/voice_provider'), { provider }),
   addMcpServer: (server) => j('POST', P('/settings/mcp'), server),

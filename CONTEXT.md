@@ -83,12 +83,14 @@ integrations, agent parameters, defaults for all profiles.
 **Profile config**:
 A profile's configuration overlay: a key present here overrides the Global
 config for this profile only. Holds profile-specific choices (focuses, MCP
-servers). The agent edits its own Profile config, never the
-Global config or another profile's overlay.
+servers, and the per-profile model **Active override**). The agent edits its own
+Profile config, never the Global config or another profile's overlay.
 _Avoid_: settings (the retired per-profile `settings.json`)
-_Note_: the Text model and Live model are NOT here — both are install-wide (Global
-config). A legacy per-profile `voice_provider` still exists as a fallback, but voice
-is now configured install-wide via the Active Live model.
+_Note_: the Text and Live model *definitions* are NOT here — both live in the single
+shared install-wide store (Global config). What a profile *may* carry is an **Active
+override**: which shared model is Active for this profile (see Active). A legacy
+per-profile `voice_provider` still exists as a fallback, but voice is now configured
+install-wide via the Active Live model.
 
 **Global skills**:
 Skills installed once at the Root, available to every profile. Only the user
@@ -158,11 +160,27 @@ dialog, popup
 
 **Section** (Settings):
 A nav target inside the Settings **Modal** — General, Profiles, Models, Secrets,
-Folders, Tools, Integrations, Advanced. The Settings Modal shows exactly one Section
+Tools, Integrations, Advanced. The Settings Modal shows exactly one Section
 at a time; opening Settings from the Drawer lands on the initial Section (General).
-Some Sections group finer areas (Models holds the Text and Live areas). Distinct from
-a **Tab** (the Drawer) and a **Page** (the Tab+Thread view underneath).
+Some Sections group finer areas: Models holds the Text and Live areas, and
+**Profiles** holds the profile list plus a three-tab **Profile config zone**
+(Profile Memory · Folders · Focus areas). There is no longer a standalone Folders
+Section — the install-wide Folder registry is reached through the Profiles zone's
+Folders tab (ADR 0015). Distinct from a **Tab** (the Drawer), a **Profile config
+tab** (inside the Profiles Section), and a **Page** (the Tab+Thread view underneath).
 _Avoid_: page (that is the Tab+Thread view), tab, screen
+
+**Profile config tab** (Settings → Profiles):
+One of the three form tabs inside the **Profiles** Section that configure the
+**active** Profile — **Profile Memory** (the profile's persona memory only),
+**Folders** (this profile's **Grants** — one `read`/`read+write`/`none` switch per
+registered **Folder**, with add-a-folder registering install-wide and auto-granting
+this profile `read`), and **Focus areas** (the persona focus pills). Always scoped
+to the active Profile: switching the active Profile re-points all three. Cross-profile
+Folder granting is done by switching Profile, not from a multi-profile matrix (retired,
+ADR 0015). The shared "Who you are" memory is *not* here — it is install-wide and
+lives in Settings → Advanced.
+_Avoid_: section (that is the Settings-nav target one level up), Drawer tab, page
 
 **Active file**:
 The one file the preview rail is currently showing, reflected back in the Files
@@ -258,6 +276,22 @@ _Avoid_: permission (that is the commands policy), reference (bare — a Secret'
 **Referenced** link and a **File reference** both claim the word; never call a
 Grant a reference), access rule
 
+## Memory
+
+**Persona memory** (profile memory):
+A single Profile's learned-and-curated memory — preferences and context for that
+persona only, which the agent keeps refining as you chat and the user edits freely.
+Per-profile; edited from the **Profile Memory** tab in Settings → Profiles. Distinct
+from the **Shared identity** doc, which is install-wide.
+_Avoid_: profile config (that is the backend config overlay), settings
+
+**Shared identity** ("Who you are"):
+The install-wide "who the user is" document — identity facts (name, location,
+timezone, family, writing voice) true no matter which Profile is active; every
+Profile sees it. Edited from Settings → **Advanced**, deliberately *outside* the
+per-profile Profile config zone because editing it reaches every Profile (ADR 0015).
+_Avoid_: persona memory (that is the per-profile layer), profile memory, global config
+
 ## Models
 
 The install-wide, named backends the assistant runs on. Two kinds — one for typed
@@ -291,11 +325,26 @@ model's open-ended provider/type.
 _Avoid_: provider (bare — a Text model has a provider too)
 
 **Active** (model):
-The single Text model and single Live model currently in effect, install-wide.
-Switching re-points the whole install and persists; it takes effect on the next
-message (Text) or next voice session (Live), never retroactively on one in flight.
+The single Text model and single Live model currently in effect. The install-wide
+Active is the default; a **Profile** may override *which* shared model is Active for
+it (a per-profile **Active override**), and the effective Active is the profile
+override when set, else the install-wide Active, else the environment fallback (an
+env pin still wins last and is unswitchable). The models themselves stay a single
+shared install-wide list (ADR 0004) — only the *selection* is per-profile. Switching
+persists and takes effect on the next message (Text) or next voice session (Live),
+never retroactively on one in flight.
 _Avoid_: default, current, selected (a Secret's Default is the unrelated fallback
 concept)
+
+**Active override** (per-profile model):
+A Profile's optional choice of which shared **Text model** and which shared **Live
+model** is **Active** for it, overriding the install-wide Active for that Profile
+only. Set from two model switchers in the header of Settings → **Profiles** (Text
+reuses the composer's switcher; Live is a parallel one), each offering "use install
+default" to clear the override. Stored in the Profile's config overlay, never forking
+the shared model list (ADR 0015 · ADR 0004 amendment).
+_Avoid_: profile model (there is no per-profile model, only a per-profile selection),
+default
 
 ## Secrets
 

@@ -4,8 +4,8 @@
   import PermissionsManager from '../PermissionsManager.svelte'
 </script>
 
-<div class="setsec">MCP servers</div>
+<div class="setgroup">MCP servers</div>
 <McpServers />
 
-<div class="setsec">Permissions <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
+<div class="setgroup">Permissions <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
 <PermissionsManager />

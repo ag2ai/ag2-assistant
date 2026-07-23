@@ -36,3 +36,50 @@ def test_deleted_secret_degrades_to_fallback(monkeypatch):
 
 def test_set_secret_id_unknown_config():
     assert live_configs.set_secret_id("lv_missing", "s_x") is False
+
+
+# ---- per-profile Live Active override (ADR 0015) ------------------------------
+# Symmetric with the Text override: env pin > profile override > install-wide Active
+# > env fallback, resolved at voice.profile_live_config. A dangling override degrades
+# to the install-wide Active; one profile's override never affects another's.
+
+
+def _settings(tmp_path, pid):
+    from assistant.settings import Settings
+
+    return Settings(tmp_path / pid / "config.yaml")
+
+
+def test_live_override_absent_inherits_install_active(tmp_path):
+    from assistant import voice
+
+    x = live_configs.save_config({"name": "X", "provider": "gemini"})
+    live_configs.set_active(x["id"])
+    assert voice.profile_live_config(_settings(tmp_path, "work"))["id"] == x["id"]
+
+
+def test_live_override_wins_and_isolated(tmp_path):
+    from assistant import voice
+
+    x = live_configs.save_config({"name": "X", "provider": "gemini"})
+    y = live_configs.save_config({"name": "Y", "provider": "openai"})
+    live_configs.set_active(x["id"])
+    work = _settings(tmp_path, "work")
+    home = _settings(tmp_path, "home")
+    work.set_live_override(y["id"])
+    assert voice.profile_live_config(work)["id"] == y["id"]  # override wins
+    assert voice.profile_live_config(home)["id"] == x["id"]  # home inherits
+    assert live_configs.active_id() == x["id"]  # install-wide Active never moved
+    # Clearing restores inheritance.
+    work.set_live_override("")
+    assert voice.profile_live_config(work)["id"] == x["id"]
+
+
+def test_live_dangling_override_degrades_silently(tmp_path):
+    from assistant import voice
+
+    x = live_configs.save_config({"name": "X", "provider": "gemini"})
+    live_configs.set_active(x["id"])
+    s = _settings(tmp_path, "work")
+    s.set_live_override("lv_deleted_ghost")
+    assert voice.profile_live_config(s)["id"] == x["id"]  # no error; falls back

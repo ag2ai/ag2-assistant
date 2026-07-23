@@ -96,10 +96,15 @@
      whole strip and only one is visible at a time. */
   .settings .setnavbtn { flex: none; width: auto; white-space: nowrap; }
 }
-/* Top-level divider between the major groups of a page (e.g. Models → Text / Live).
-   Heavier than .setsec so nested .setsec sub-headers still read as subordinate. */
+/* The standard section header for every Settings page (Profiles, Models → Text /
+   Live, Secrets, Channels, Turn budget, …): title-case, semibold, with a hairline
+   rule. One idiom across all pages. Heavier than .setsec so a nested .setsec
+   sub-header (e.g. Models' "Start from a template") still reads as subordinate. */
 .settings .setgroup { font-size: 13px; font-weight: var(--fw-semibold); letter-spacing: .2px; color: var(--ink); margin: 14px 0 4px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
 .settings .setgroup:first-child { margin-top: 0; }
+/* The one section subtitle/description style — replaces the old ad-hoc inline
+   `p.muted` (12–13px) and the local `.phint`. Sits right under a .setgroup. */
+.settings .setsub { font-size: var(--text-sm); color: var(--text-muted); margin: 0 0 12px; }
 /* Ghost "add" affordance (Add model / Add live model) — matches Profiles' "Add
    profile": a muted text button + plus icon that hugs its content (align-self so it
    doesn't stretch the flex column) and brightens on hover. */
@@ -112,9 +117,12 @@
 .settings .addbtn:hover:not(:disabled) { color: var(--text); }
 .settings .addbtn:disabled { opacity: .5; cursor: default; }
 .settings .addbtn:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+/* Subordinate sub-header nested under a .setgroup (e.g. Models' "Start from a
+   template"): the lighter uppercase eyebrow, no rule. Not a page section header. */
 .settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
-/* Marks a section that applies to the whole install, not the titled profile. */
-.settings .setsec .setwide { font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+/* Pill marking a section that applies to the whole install, not the titled profile.
+   Lives inside either header idiom (.setgroup or .setsec). */
+.settings .setwide { display: inline-block; vertical-align: 1px; font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
 .settings .keyrow { display: flex; align-items: center; gap: 8px; }
 .settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
 .settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background-color: var(--bg); color: var(--ink); }
@@ -611,6 +619,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modelsw-empty:hover { color: var(--accent); }
 .modelsw-scrim { position: fixed; inset: 0; z-index: 9; border: none; background: none; cursor: default; }
 .modelsw-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; min-width: 240px; max-width: min(360px, 90vw); max-height: 320px; overflow-y: auto; background: var(--surface-elevated); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+/* Header-mounted switchers (Settings → Profiles) open DOWNWARD; the composer's opens up. */
+.modelsw-menu.down { bottom: auto; top: calc(100% + 6px); }
+/* "inherited" badge on the profile switcher when no per-profile override is set. */
+.modelsw-tag { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: var(--radius-pill, 999px); padding: 0 6px; line-height: 15px; }
 .modelsw-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: none; background: none; color: var(--ink); border-radius: var(--radius-sm); padding: 7px 9px; cursor: pointer; font: inherit; }
 .modelsw-item:hover:not(:disabled) { background: var(--code); }
 .modelsw-item.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }

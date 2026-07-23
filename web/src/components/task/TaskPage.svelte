@@ -16,6 +16,7 @@
   import Icon from '../Icon.svelte'
   import AppBar from '../AppBar.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
+import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
   import ScheduleField from './ScheduleField.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.js'
@@ -479,9 +480,7 @@
                        2-position Read/Read+write toggle + an explicit Delete, not the
                        3-position switch profile folders use. Mirrors TaskFolders. -->
                   <div class="fctl">
-                    <span class="tglstate">{modeLabel(f.mode)}</span>
-                    <button class="tgl" class:on={f.mode === 'read_write'} role="switch" aria-checked={f.mode === 'read_write'} aria-label="Allow writing"
-                      onclick={() => setFolderMode(f, f.mode === 'read_write' ? 'read' : 'read_write')}></button>
+                    <WriteSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
                     <button class="iconbtn" title="Remove folder" aria-label="Remove folder" onclick={() => setFolderMode(f, null)}><Icon name="trash" size={14} /></button>
                   </div>
                 </div>
@@ -635,18 +634,8 @@
   .fname { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fmode { flex: none; font-size: 13px; color: var(--muted); }
 
-  /* Task-folder edit control: the label + 2-position toggle (Read / Read+write) and a
-     trash button, copied from TaskFolders so both surfaces read identically. */
+  /* Task-folder edit control: the WriteSwitch (Read / Read+write) + a trash button. */
   .fctl { flex: none; display: inline-flex; align-items: center; gap: 10px; }
-  .tglstate { min-width: 74px; text-align: right; font-size: 13px; color: var(--ink); }
-  /* 2-position iOS switch (off = Read, green; on = Read+write, warn) — soft tinted fill
-     + a hairline tinted border (inset shadow, so the knob geometry is untouched). */
-  .tgl { position: relative; flex: none; width: 38px; height: 22px; padding: 0; border: none; border-radius: 999px; cursor: pointer;
-    background: color-mix(in srgb, var(--success) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 32%, var(--line));
-    transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-  .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur-fast) var(--ease-out); }
-  .tgl.on { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 32%, var(--line)); }
-  .tgl.on::after { transform: translateX(16px); }
 
   .addfolder { margin-top: 12px; }
   .tppicker { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px; background: var(--surface-sunk, var(--bg)); }

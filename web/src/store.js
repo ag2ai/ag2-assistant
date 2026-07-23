@@ -103,9 +103,6 @@ export function revealFolder(path) {
 // from the route. Open it with router.openOverlay('settings', section); close it with
 // router.closeOverlay(). The active Section is $route.overlayValue.)
 
-// Memory viewer/editor modal open/closed.
-export const memoryOpen = writable(false)
-
 // The active Settings Section is read from the route (`$route.overlayValue`),
 // validated against SETTINGS_PAGE by the pure core. Callers deep-link into a
 // Section with router.openOverlay('settings', SETTINGS_PAGE.MODELS) — a bad id is

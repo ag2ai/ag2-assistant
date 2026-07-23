@@ -378,6 +378,12 @@ class FocusesRequest(BaseModel):
     focuses: list[str] = []
 
 
+class ModelOverrideRequest(BaseModel):
+    # A selection into the shared install-wide list; empty string clears the override
+    # (→ back to the install-wide Active). Used for both the Text and Live switchers.
+    config_id: str = ""
+
+
 class ReplyTimeoutRequest(BaseModel):
     reply_timeout_s: float = Field(gt=0, le=3600)
 
@@ -1386,6 +1392,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             fid, profile=req.profile, chat_id=req.chat_id, task_id=req.task_id
         ):
             return JSONResponse({"error": "no such grant"}, status_code=404)
+        # A Folder left with no grants is garbage-collected inside revoke_grant, so it
+        # is uniform across every revoke path (CLI, API, task deletion) — see FolderStore._gc.
         return {"ok": True, **_folders_snapshot(store)}
 
     # ---- Profile management (global) ----
@@ -1975,6 +1983,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         cfg = runtime.config
         settings = _runtime_settings(runtime)
         keys = secrets.status()
+        # Per-profile model Active override (ADR 0015): report BOTH this profile's
+        # override id (None when inherited or dangling) and the EFFECTIVE Active id, so
+        # each header switcher can render the current choice + mark it
+        # inherited-vs-overridden without a second fetch. A dangling override reads as
+        # no override → the install-wide Active (matching the resolution layer).
+        llm_ovr = settings.get_llm_override()
+        llm_ovr = llm_ovr if (llm_ovr and llm_configs.get_config(llm_ovr)) else None
+        live_ovr = settings.get_live_override()
+        live_ovr = live_ovr if (live_ovr and live_configs.get_config(live_ovr)) else None
         return {
             "keys": keys,  # per-provider {set, hint} — never raw
             # Voice runs on the provider's own realtime endpoint, so a base_url
@@ -1983,6 +2000,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             # Display-only view of the resolved assistant model (the active named LLM
             # config, derived onto cfg.llm). Managed via /api/llm-configs, not here.
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
+            # Per-profile Text/Live Active override + effective Active (drives the
+            # Profiles-header switchers). override=None → inherits the install-wide.
+            "llm_override": llm_ovr,
+            "llm_active": llm_ovr or llm_configs.active_id(),
+            "live_override": live_ovr,
+            "live_active": live_ovr or live_configs.active_id(),
             "codex": codex_auth.status(),  # ChatGPT-subscription sign-in state
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
@@ -2201,6 +2224,37 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         focuses = settings.set_focuses(req.focuses)
         await manager.reload(runtime.pid)  # context change → next turn gets the line
         return {"ok": True, "focuses": focuses}
+
+    @p.post("/settings/llm-override")
+    async def set_llm_override(
+        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Set (or clear, when ``config_id`` is empty) this profile's Active Text model
+        override — a selection into the shared install-wide ``llm_configs`` list, NOT the
+        install-wide Active (the composer switcher still owns that). Reloads this
+        profile's runtime so its next message uses the new model. Unknown id → 404."""
+        settings = _runtime_settings(runtime)
+        cid = (req.config_id or "").strip()
+        if cid and llm_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        settings.set_llm_override(cid)
+        await manager.reload(runtime.pid)  # next turn's agent is built from the new model
+        return {"ok": True, "llm_override": cid or None}
+
+    @p.post("/settings/live-override")
+    async def set_live_override(
+        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Set (or clear) this profile's Active Live (voice) model override — a
+        selection into the shared install-wide ``live_configs`` list. Read fresh by the
+        voice session at connect, so it takes effect on the NEXT voice session (no
+        runtime reload needed). Unknown id → 404."""
+        settings = _runtime_settings(runtime)
+        cid = (req.config_id or "").strip()
+        if cid and live_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        settings.set_live_override(cid)
+        return {"ok": True, "live_override": cid or None}
 
     @p.post("/settings/reply-timeout")
     async def set_reply_timeout(

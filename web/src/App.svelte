@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile, closeAside } from './router.js'
   import { openThread, closeThread, switchProfile } from './controller.js'
-  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
@@ -18,7 +18,6 @@ import AppBar from './components/AppBar.svelte'
   import VoicePicker from './components/VoicePicker.svelte'
   import Viewer from './components/Viewer.svelte'
   import Settings from './components/Settings.svelte'
-  import Memory from './components/Memory.svelte'
   import Inspector from './components/Inspector.svelte'
   import PoweredBy from './components/PoweredBy.svelte'
   import Notice from './components/Notice.svelte'
@@ -138,7 +137,7 @@ import AppBar from './components/AppBar.svelte'
   // The preview rail is shell navigation, not a modal, so it's excluded here — the
   // ⌘/Ctrl-1..9 profile shortcuts keep firing while a preview is open.
   function anyModalOpen() {
-    return $settingsOpen || $memoryOpen || $poweredByOpen
+    return $settingsOpen || $poweredByOpen
       || $googleOpen || $codexOpen || $voicePickerOpen || $onboardingOpen
   }
   function editableFocused() {
@@ -232,7 +231,6 @@ import AppBar from './components/AppBar.svelte'
       <Inspector />
     {/if}
     {#if $settingsOpen}<Settings />{/if}
-    {#if $memoryOpen}<Memory />{/if}
     {#if $poweredByOpen}<PoweredBy />{/if}
     {#if $googleOpen}<Google />{/if}
     {#if $codexOpen}<Codex />{/if}

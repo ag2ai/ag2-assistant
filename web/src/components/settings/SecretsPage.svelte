@@ -69,7 +69,7 @@
 </script>
 
 <div class="setgroup">Secrets</div>
-<p class="muted" style="font-size:13px">
+<p class="setsub">
   Named, reusable API keys. Attach one to any Text or Live model; mark a
   provider-tagged secret as its provider's default fallback. Values are never
   shown back — only the last 4 characters.

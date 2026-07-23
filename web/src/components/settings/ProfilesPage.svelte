@@ -1,32 +1,32 @@
 <script>
-  // Settings → Profiles: the profile list and focus areas. (Folder access moved to
-  // Settings → Folders — the install-wide Folder registry + Grants, ADR 0006.)
-  import { getSettings } from './context.svelte.js'
-  import { api } from '../../transport/api.js'
-  import { FOCUS } from '../../lib/focuses.js'
-  import Icon from '../Icon.svelte'
+  // Settings → Profiles: a two-level zone (ADR 0015, redesign §1-2). Level 1 is the
+  // catalogue (Profiles.svelte) — a grid of profile cards. Clicking a card switches the
+  // active profile to it (the whole Settings zone is scoped to the active profile) and
+  // opens level 2, the ProfileEditor (header + General/Focus/Model/Folders/Memory tabs).
+  // Keeping the two levels separate is the whole point: the page no longer tries to be
+  // both a list AND a long stacked form.
+  import { profiles } from '../../store.js'
+  import { switchProfile } from '../../controller.js'
+  import { getActiveProfileId } from '../../lib/profile.js'
   import Profiles from '../Profiles.svelte'
+  import ProfileEditor from './ProfileEditor.svelte'
 
-  const ctx = getSettings()
+  let editing = $state(false)
 
-  // Focus areas — a per-profile persona attribute (settings.json → agent context).
-  // Toggling a pill persists immediately for the ACTIVE profile.
-  const toggleFocus = (id) => {
-    const cur = ctx.s?.focuses || []
-    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
-    ctx.run(() => api.setFocuses(next))
+  const activeId = $derived($profiles.activeId || getActiveProfileId())
+
+  // Open a profile's editor. Non-active profiles are switched-to first (in place, like the
+  // Drawer chips) so the editor's tabs — all scoped to the active profile — show its data.
+  function open(p) {
+    if (p.id !== activeId) switchProfile(p.id)
+    editing = true
   }
 </script>
 
-<div class="setsec">Profiles</div>
-<Profiles />
-
-<div class="setsec">Focus areas</div>
-<div class="focuspills">
-  {#each FOCUS as f}
-    <button class="focuspill" class:on={(ctx.s.focuses || []).includes(f.id)} disabled={ctx.busy} onclick={() => toggleFocus(f.id)}>
-      <Icon name={f.icon} size={13} /> {f.label}
-    </button>
-  {/each}
-</div>
-<p class="muted" style="font-size:12px;margin:2px 0 0">What this profile is for — shapes how the assistant helps.</p>
+{#if editing}
+  <ProfileEditor onBack={() => (editing = false)} />
+{:else}
+  <div class="setgroup">Profiles</div>
+  <p class="setsub">Manage how the assistant behaves in different contexts.</p>
+  <Profiles onSelect={open} />
+{/if}
