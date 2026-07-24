@@ -111,9 +111,9 @@ _GOOGLE_GROUPS = {
 
 
 def available_capabilities() -> list[str]:
-    """Capabilities currently usable (Google ones only when signed in)."""
+    """Capabilities currently usable (Google ones need a token *and* the libs)."""
     caps = ["web", "code", "coding", "files", "images", "skills", "mcp"]
-    if google_auth.has_token():
+    if google_auth.google_ready():
         caps += ["gmail", "calendar", "drive"]
     return caps
 
@@ -253,8 +253,10 @@ def build_agent_tools(
             fk = FilesystemToolkit(base_path=wd)
             tools += [t for t in fk.tools if t.name not in ("read_file", "write_file")]
 
-    # Google tools (only when signed in), per requested group.
-    if google_auth.has_token():
+    # Google tools (only when signed in AND the [google] extra is installed),
+    # per requested group. Registering them without the libs would hand the model
+    # a tool that can only fail — see google_auth.google_ready().
+    if google_auth.google_ready():
         keep: set[str] = set()
         for cap, names in _GOOGLE_GROUPS.items():
             if want(cap):

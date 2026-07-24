@@ -1923,10 +1923,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.get("/api/google/status")
     async def google_status() -> dict:
+        libs = google_auth.libs_available()
         return {
             "configured": google_auth.is_configured(),
             "signed_in": google_auth.has_token(),
             "email": google_auth.account_email(),
+            # A token without the optional [google] extra looks connected but can
+            # do nothing — the UI shows the remedy instead of a healthy state.
+            "libs_available": libs,
+            "install_hint": None if libs else google_auth.install_hint(),
         }
 
     @app.post("/api/google/credentials")

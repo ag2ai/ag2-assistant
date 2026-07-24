@@ -18,7 +18,13 @@
 <div class="setrowwrap">
   <div class="setrow">
     <span class="sk">Google</span>
-    <span class="sv">{ctx.google == null ? '…' : ctx.google.signed_in ? ('Connected · ' + (ctx.google.email || 'account')) : 'Not connected'}</span>
+    <span class="sv">{ctx.google == null
+      ? '…'
+      : ctx.google.signed_in && ctx.google.libs_available === false
+        ? 'Needs libraries · not usable'
+        : ctx.google.signed_in
+          ? ('Connected · ' + (ctx.google.email || 'account'))
+          : 'Not connected'}</span>
   </div>
   <button class="open" onclick={ctx.openGoogle}>Manage</button>
 </div>
