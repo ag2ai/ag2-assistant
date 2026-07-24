@@ -2,23 +2,23 @@
 
 Resolution order (highest precedence first):
   1. Environment variables (AG2ASSISTANT_*), loaded from .env if present
-  2. ~/.ag2assistant/config.json
+  2. ~/.ag2assistant/config.yaml
   3. Built-in defaults
 
 Use `load_config()` to get a fully resolved Config; bare `Config()` is just the
 built-in defaults (handy in tests).
 """
 
-import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from assistant.profiles import ProfileMeta
+    from assistant.profiles import ProfileMeta  # type-only
 
 load_dotenv()
 
@@ -35,6 +35,26 @@ def _default_root() -> Path:
     if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
         return Path(v).expanduser()
     return Path.home() / _DATA_DIR_NAME
+
+
+def read_yaml(path: Path) -> dict:
+    """Parse a YAML mapping file. A missing, malformed, or non-mapping file reads
+    as an empty dict — the same tolerance a malformed config.json had."""
+    try:
+        data = yaml.safe_load(Path(path).read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_yaml(path: Path, data: dict) -> None:
+    """Atomically write a YAML mapping (tmp file + os.replace, so a crashed write
+    never leaves a truncated config behind)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    os.replace(tmp, path)
 
 
 class LLMConfig(BaseModel):
@@ -55,7 +75,7 @@ class LLMConfig(BaseModel):
     streaming: bool = True
     # Optional cheaper model for the passive memory-aggregation pass. None → reuse
     # the main model. Aggregation is a background summarisation, so a smaller/
-    # cheaper model is usually fine and saves cost on long sessions.
+    # cheaper model is usually fine and saves cost on long chats.
     aggregate_model: str | None = None
     # Per-provider advanced options, keyed by provider name; each entry is extra
     # constructor kwargs for that provider's AG2 config, merged in last (so they
@@ -99,6 +119,14 @@ class AgentConfig(BaseModel):
     location: str | None = None
 
 
+class GatewayConfig(BaseModel):
+    """Configuration for interactive gateway turns."""
+
+    # Wall-clock limit for one chat turn, including clarification waits, model calls,
+    # and tool execution. Long-running work belongs in a background task instead.
+    reply_timeout_s: float = 600.0
+
+
 class ToolsConfig(BaseModel):
     """Configuration for the agent's execution tools (shell/code)."""
 
@@ -134,11 +162,35 @@ class TasksConfig(BaseModel):
     digest_timeout_s: int = 30
 
 
+# The Config sections a profile's config.yaml may overlay. Settings keys in the same
+# file (voice, focuses, mcp_servers, voice_provider) are read by
+# assistant.settings, not here.
+_OVERLAY_SECTIONS = ("llm", "agent", "gateway", "tools", "memory", "tasks")
+
+
+def apply_overlay(cfg: "Config", path: Path) -> None:
+    """Merge a profile's config.yaml onto ``cfg`` in place, field-wise per known
+    section (a key present in the overlay wins; absent keys inherit the global).
+    A section that fails validation is skipped wholesale — same tolerance as a
+    malformed global config file."""
+    data = read_yaml(path)
+    for section in _OVERLAY_SECTIONS:
+        raw = data.get(section)
+        if not isinstance(raw, dict) or not raw:
+            continue
+        current = getattr(cfg, section)
+        try:
+            setattr(cfg, section, type(current)(**{**current.model_dump(), **raw}))
+        except Exception:
+            continue
+
+
 class Config(BaseModel):
     """Root AG2 Assistant configuration (built-in defaults; see `load_config`)."""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tasks: TasksConfig = Field(default_factory=TasksConfig)
@@ -156,40 +208,68 @@ class Config(BaseModel):
 
     def with_profile(self, meta: "ProfileMeta") -> "Config":
         """A deep copy whose path fields are reinterpreted for a profile: data_dir and
-        skills_dir land under root_dir/profiles/<id>, workspace_dir is the profile's
-        workspace. root_dir is unchanged (the global files stay at the root)."""
+        skills_dir land under root_dir/profiles/<id>, workspace_dir is that profile dir's
+        ``workspace/`` subfolder (derived, not user-chosen), and the profile's config.yaml
+        overlay is applied (explicit AG2ASSISTANT_* env vars still win last). root_dir is
+        unchanged (the global files stay at the root)."""
         cfg = self.model_copy(deep=True)
         cfg.data_dir = cfg.root_dir / "profiles" / meta.id
         cfg.skills_dir = cfg.data_dir / "skills"
-        cfg.workspace_dir = Path(meta.workspace)
+        cfg.workspace_dir = cfg.data_dir / "workspace"
+        apply_overlay(cfg, cfg.data_dir / "config.yaml")
+        # Re-derive the active LLM config from this profile's Active override (ADR 0015),
+        # so it wins over the install-wide active; the env re-apply below still wins last.
+        try:
+            # local imports: both modules import config, so top-level would cycle
+            from assistant import llm_configs
+            from assistant.settings import profile_settings
+
+            override = profile_settings(cfg.data_dir).get_llm_override()
+            if override:
+                llm_configs.apply_active(cfg, override_id=override)
+        except Exception:
+            pass
+        _apply_env_overrides(cfg, include_paths=False)
         return cfg
 
 
 def default_config_path() -> Path:
-    """Where AG2 Assistant looks for a JSON config file."""
-    return _default_root() / "config.json"
+    """Where AG2 Assistant looks for the global YAML config file."""
+    return _default_root() / "config.yaml"
+
+
+def read_global_config() -> dict:
+    """The raw global config.yaml document (empty dict when absent/malformed)."""
+    return read_yaml(default_config_path())
+
+
+def update_global_section(key: str, value) -> None:
+    """Read-modify-write one top-level section of the global config.yaml, preserving
+    every other key (the file is shared: Config sections, llm_configs, data_dir)."""
+    data = read_yaml(default_config_path())
+    data[key] = value
+    write_yaml(default_config_path(), data)
 
 
 def data_dir() -> Path:
     """Resolve the data directory WITHOUT the full config layering, so the secrets /
     settings stores can locate their files without recursing back into load_config()
     (which itself consults settings). AG2ASSISTANT_DATA_DIR wins (highest precedence,
-    matching _apply_env_overrides); then a config.json data_dir; then the default root."""
+    matching _apply_env_overrides); then a config.yaml data_dir; then the default root."""
     if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
         return Path(v).expanduser()
-    p = default_config_path()
-    if p.exists():
-        try:
-            d = json.loads(p.read_text()).get("data_dir")
-            if d:
-                return Path(d)
-        except Exception:
-            pass
+    d = read_yaml(default_config_path()).get("data_dir")
+    if d:
+        return Path(d).expanduser()
     return _default_root()
 
 
-def _apply_env_overrides(cfg: Config) -> None:
-    """Layer AG2ASSISTANT_* environment variables on top (highest precedence)."""
+def _apply_env_overrides(cfg: Config, *, include_paths: bool = True) -> None:
+    """Layer AG2ASSISTANT_* environment variables on top (highest precedence).
+
+    ``include_paths=False`` re-applies only the non-path overrides — used by
+    with_profile() after the overlay, where the profile paths are already final and
+    AG2ASSISTANT_DATA_DIR/WORKSPACE must not clobber them back to the root."""
     env = os.environ.get
     if v := env("AG2ASSISTANT_LLM_PROVIDER"):
         cfg.llm.provider = v
@@ -225,16 +305,22 @@ def _apply_env_overrides(cfg: Config) -> None:
             pass
     if v := env("AG2ASSISTANT_LOCATION"):
         cfg.agent.location = v
-    if v := env("AG2ASSISTANT_WORKSPACE"):
-        cfg.workspace_dir = Path(v).expanduser()
-    if v := env("AG2ASSISTANT_DATA_DIR"):
-        # Redirect the whole install root (global files + profiles/ tree). Mirrors the
-        # default layout so with_profile() keeps repointing data_dir/skills_dir under it.
-        # Primarily for containers, which mount persistent state at a fixed path.
-        root = Path(v).expanduser()
-        cfg.root_dir = root
-        cfg.data_dir = root
-        cfg.skills_dir = root / "skills"
+    if v := env("AG2ASSISTANT_REPLY_TIMEOUT"):
+        try:
+            cfg.gateway.reply_timeout_s = float(v)
+        except ValueError:
+            pass
+    if include_paths:
+        if v := env("AG2ASSISTANT_WORKSPACE"):
+            cfg.workspace_dir = Path(v).expanduser()
+        if v := env("AG2ASSISTANT_DATA_DIR"):
+            # Redirect the whole install root (global files + profiles/ tree). Mirrors the
+            # default layout so with_profile() keeps repointing data_dir/skills_dir under it.
+            # Primarily for containers, which mount persistent state at a fixed path.
+            root = Path(v).expanduser()
+            cfg.root_dir = root
+            cfg.data_dir = root
+            cfg.skills_dir = root / "skills"
     if v := env("AG2ASSISTANT_SANDBOX"):
         cfg.tools.sandbox = v
     if v := env("AG2ASSISTANT_DOCKER_IMAGE"):
@@ -265,14 +351,9 @@ def _apply_env_overrides(cfg: Config) -> None:
 
 
 def load_config(path: Path | None = None) -> Config:
-    """Resolve config from defaults ← config.json ← environment (env wins)."""
+    """Resolve config from defaults ← config.yaml ← environment (env wins)."""
     path = path or default_config_path()
-    data: dict = {}
-    if path and path.exists():
-        try:
-            data = json.loads(path.read_text())
-        except Exception:
-            data = {}  # a malformed config file falls back to defaults
+    data: dict = read_yaml(path) if path else {}
     cfg = Config(**data)
     # root_dir tracks whatever data_dir resolves to (config.json may override it); the
     # profiles/ tree and global files live under this root. Profile derivation is via
@@ -283,7 +364,7 @@ def load_config(path: Path | None = None) -> Config:
     # Lazy import breaks the cycle (llm_configs imports config.data_dir); a malformed
     # store is swallowed like a malformed config.json — the flat defaults then apply.
     try:
-        from assistant import llm_configs
+        from assistant import llm_configs  # local: import cycle (llm_configs imports config)
 
         llm_configs.apply_active(cfg)
     except Exception:

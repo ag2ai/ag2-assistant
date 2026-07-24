@@ -1,9 +1,9 @@
 /* ============================================================
-   AG2 Assistant — Spacing, radii, shadows, motion
+   AG2 Assistant — Spacing, radii, shadows, motion  ·  "AG2 / Signal"
    ------------------------------------------------------------
-   The redesign reads as "organic + friendly," so radii are
-   generous and shadows are soft + warm-tinted (never the cold
-   blue-grey of default Material). 4px spacing base.
+   The identity reads as "technical AI-OS," so corners are TIGHT
+   (nothing near a capsule outside true pills) and shadows are
+   cold + low, closer to a system console than paper. 4px base.
    ============================================================ */
 
 :root {
@@ -22,25 +22,28 @@
   --space-11: 48px;
   --space-12: 64px;
 
-  /* ---- Corner radii (soft / organic) ---- */
+  /* ---- Corner radii (tight / system) ----
+     Buttons 8 · inputs 10 · cards+panels 12 · large 14. Nothing
+     at 20–24 except true pills (avatars, dots, status tabs). */
   --radius-xs:     6px;   /* tags, tiny chips           */
-  --radius-sm:     10px;  /* buttons, inputs, chips     */
-  --radius-md:     14px;  /* cards, modals base         */
-  --radius-lg:     18px;  /* large cards, panels        */
-  --radius-xl:     24px;  /* hero containers            */
-  --radius-bubble: 20px;  /* chat bubbles               */
-  --radius-pill:   999px; /* tabs, pills, avatars       */
+  --radius-sm:     8px;   /* buttons, chips             */
+  --radius-input:  10px;  /* text inputs, selects       */
+  --radius-md:     12px;  /* cards, inputs, modals base */
+  --radius-lg:     14px;  /* large cards, panels        */
+  --radius-xl:     16px;  /* hero containers            */
+  --radius-bubble: 10px;  /* chat bubbles               */
+  --radius-pill:   999px; /* avatars, dots, status tabs */
 
-  /* ---- Shadows (warm, soft, low-contrast) ---- */
-  --shadow-xs: 0 1px 2px rgba(45, 35, 25, 0.05);
-  --shadow-sm: 0 1px 3px rgba(45, 35, 25, 0.06), 0 1px 2px rgba(45, 35, 25, 0.04);
-  --shadow-md: 0 4px 12px rgba(45, 35, 25, 0.07), 0 1px 3px rgba(45, 35, 25, 0.05);
-  --shadow-lg: 0 12px 28px rgba(45, 35, 25, 0.10), 0 2px 6px rgba(45, 35, 25, 0.06);
-  --shadow-xl: 0 24px 60px rgba(45, 35, 25, 0.16), 0 4px 12px rgba(45, 35, 25, 0.08);
-  /* Soft coral glow for primary / focus moments */
+  /* ---- Shadows (cold, low, near-black) ---- */
+  --shadow-xs: 0 1px 2px rgba(11, 13, 16, 0.06);
+  --shadow-sm: 0 1px 3px rgba(11, 13, 16, 0.08), 0 1px 2px rgba(11, 13, 16, 0.05);
+  --shadow-md: 0 4px 12px rgba(11, 13, 16, 0.10), 0 1px 3px rgba(11, 13, 16, 0.06);
+  --shadow-lg: 0 12px 28px rgba(11, 13, 16, 0.16), 0 2px 6px rgba(11, 13, 16, 0.08);
+  --shadow-xl: 0 24px 60px rgba(11, 13, 16, 0.28), 0 4px 12px rgba(11, 13, 16, 0.12);
+  /* Soft coral glow for heritage brand moments */
   --shadow-coral: 0 6px 18px rgba(249, 83, 57, 0.28);
-  /* Palette-following glow — tracks the active accent */
-  --shadow-accent: 0 6px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+  /* Palette-following glow — tracks the active accent (used sparingly) */
+  --shadow-accent: 0 6px 18px color-mix(in srgb, var(--accent) 26%, transparent);
 
   /* ---- Borders ---- */
   --border-thin:   1px;   /* @kind spacing */
@@ -51,14 +54,14 @@
   --ease-out:   cubic-bezier(0.22, 1, 0.36, 1);     /* @kind other */
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);    /* @kind other */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* @kind other */
-  --dur-fast:   120ms; /* @kind other */
+  --dur-fast:   150ms; /* @kind other */
   --dur-base:   200ms; /* @kind other */
   --dur-slow:   320ms; /* @kind other */
 
   /* ---- Layout ---- */
   --drawer-w:    280px; /* @kind spacing */
   --inspector-w: 372px; /* @kind spacing */
-  --thread-max:  760px; /* @kind spacing */
+  --thread-max:  780px; /* @kind spacing — message column cap (Claude/Linear-style) */
   --z-modal:     50;    /* @kind other */
   --z-backdrop:  40;    /* @kind other */
 }

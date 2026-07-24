@@ -8,14 +8,19 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
+import assistant.secrets as secrets_mod
+from assistant import __version__, profiles
+from assistant import profiles as profiles_mod
+from assistant.gateway.app import create_app
+from assistant.gateway.profile_manager import ProfileManager
+from assistant.usage import _today as t
 from tests.conftest import api, use_fake_agent
 
 
 def _app(monkeypatch, **kw):
     """A create_app around a fresh (zero-profile) ProfileManager."""
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     use_fake_agent(monkeypatch)
     return create_app(ProfileManager(memory=False, persist=False), **kw)
@@ -27,11 +32,10 @@ def _app(monkeypatch, **kw):
 def test_profiles_zero_state_contract(monkeypatch):
     """GET /api/profiles on a fresh install: {[], null, false}; /api/p/* 404s."""
     with TestClient(_app(monkeypatch)) as client:
-        from assistant import __version__
-
         body = client.get("/api/profiles").json()
         assert body == {
             "profiles": [],
+            "archived": [],
             "active_default": None,
             "onboarded": False,
             "version": __version__,
@@ -39,7 +43,7 @@ def test_profiles_zero_state_contract(monkeypatch):
         # health still serves (SPA shell + global routes live with zero profiles)
         assert client.get("/api/health").json()["status"] == "ok"
         # nothing to serve under the profile prefix
-        assert client.get(api("anything", "/sessions")).status_code == 404
+        assert client.get(api("anything", "/chats")).status_code == 404
 
 
 # --- create + serve immediately (§3.5) ---
@@ -47,7 +51,7 @@ def test_profiles_zero_state_contract(monkeypatch):
 
 def test_create_profile_serves_immediately(monkeypatch):
     with TestClient(_app(monkeypatch)) as client:
-        r = client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
+        r = client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         assert r.status_code == 200
         pid = r.json()["profile"]["id"]
         assert pid == "work"
@@ -58,15 +62,15 @@ def test_create_profile_serves_immediately(monkeypatch):
         assert [p["id"] for p in listed["profiles"]] == ["work"]
 
         # its runtime is live: a prefixed route works right away
-        assert client.get(api(pid, "/sessions")).status_code == 200
+        assert client.get(api(pid, "/chats")).status_code == 200
         assert client.get(api(pid, "/settings")).json()["mcp_servers"] == []
 
 
-def test_create_profile_invalid_palette_400(monkeypatch):
+def test_create_profile_invalid_accent_400(monkeypatch):
     with TestClient(_app(monkeypatch)) as client:
-        r = client.post("/api/profiles", json={"name": "X", "palette": "not-a-palette"})
+        r = client.post("/api/profiles", json={"name": "X", "accent": "not-a-hex"})
         assert r.status_code == 400
-        assert "palette" in r.json()["error"]
+        assert "accent" in r.json()["error"]
 
 
 # --- unknown / archived status codes on a prefixed route ---
@@ -74,8 +78,8 @@ def test_create_profile_invalid_palette_400(monkeypatch):
 
 def test_unknown_pid_404_archived_410(monkeypatch):
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-        client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
         assert client.get(api("ghost", "/tasks")).status_code == 404  # never existed
         assert client.get(api("work", "/tasks")).status_code == 200  # live
@@ -90,7 +94,6 @@ def test_unknown_pid_404_archived_410(monkeypatch):
 
 
 def test_onboarded_endpoint_flips_registry_flag(monkeypatch):
-    from assistant import profiles
 
     with TestClient(_app(monkeypatch)) as client:
         assert client.get("/api/profiles").json()["onboarded"] is False
@@ -99,7 +102,7 @@ def test_onboarded_endpoint_flips_registry_flag(monkeypatch):
         assert client.get("/api/profiles").json()["onboarded"] is True
 
         # creating a profile after onboarding doesn't reset the flag
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         assert client.get("/api/profiles").json()["onboarded"] is True
 
 
@@ -108,9 +111,6 @@ def test_onboarded_endpoint_flips_registry_flag(monkeypatch):
 
 def test_secrets_key_reloads_all_runtimes(monkeypatch):
     """POST /api/secrets/key calls manager.reload on every runtime (observed via a spy)."""
-    import assistant.secrets as secrets_mod
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
     use_fake_agent(monkeypatch)
     monkeypatch.setattr(secrets_mod, "set_key", lambda provider, value: True)
@@ -118,8 +118,8 @@ def test_secrets_key_reloads_all_runtimes(monkeypatch):
     manager = ProfileManager(memory=False, persist=False)
     app = create_app(manager)
     with TestClient(app) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-        client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
         reloaded: list[str] = []
         orig = manager.reload
@@ -136,31 +136,29 @@ def test_secrets_key_reloads_all_runtimes(monkeypatch):
         assert set(reloaded) == {"work", "personal"}  # every runtime reloaded
 
 
-# --- workspace edit reloads the runtime (config picks up new workspace) ---
+# --- workspace is derived under the profile dir (not a user choice) ---
 
 
-def test_workspace_edit_reloads_runtime(monkeypatch, tmp_path):
+def test_workspace_is_derived_under_profile_dir(monkeypatch):
+
     with TestClient(_app(monkeypatch)) as client:
-        ws1 = tmp_path / "ws-one"
-        ws2 = tmp_path / "ws-two"
-        client.post(
-            "/api/profiles",
-            json={"name": "Work", "palette": "teal", "workspace": str(ws1)},
-        )
+        r = client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        expected = str(profiles_mod.profile_dir("work") / "workspace")
+        assert r.json()["profile"]["workspace"] == expected
+
         runtime = client.app.state.profiles.get("work")
-        assert str(runtime.config.workspace_dir) == str(ws1)
+        assert str(runtime.config.workspace_dir) == expected
 
-        r = client.post("/api/profiles/work", json={"workspace": str(ws2)})
+        # A stray `workspace` in the body is ignored — it's not an editable field.
+        r = client.post("/api/profiles/work", json={"workspace": "/tmp/nope"})
         assert r.status_code == 200
-        assert r.json()["profile"]["workspace"] == str(ws2)
-        # reference-swap reload re-resolved the config against the new registry entry
-        assert str(runtime.config.workspace_dir) == str(ws2)
+        assert r.json()["profile"]["workspace"] == expected
 
 
-def test_name_palette_edit_no_reload(monkeypatch):
-    """Renames / palette changes are display-only: no runtime reload is triggered."""
+def test_name_accent_edit_no_reload(monkeypatch):
+    """Renames / accent changes are display-only: no runtime reload is triggered."""
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         runtime = client.app.state.profiles.get("work")
 
         reloaded: list[str] = []
@@ -170,10 +168,10 @@ def test_name_palette_edit_no_reload(monkeypatch):
             lambda pid: reloaded.append(pid),
         )
 
-        r = client.post("/api/profiles/work", json={"name": "Job", "palette": "ocean"})
+        r = client.post("/api/profiles/work", json={"name": "Job", "accent": "#2f6fe0"})
         assert r.status_code == 200
         assert r.json()["profile"]["name"] == "Job"
-        assert r.json()["profile"]["palette"] == "ocean"
+        assert r.json()["profile"]["accent"] == "#2f6fe0"
         assert reloaded == []  # display-only → no reload
 
     # runtime.meta unaffected here (we only assert reload was skipped)
@@ -190,13 +188,13 @@ def test_update_unknown_profile_404(monkeypatch):
 
 def test_archive_http_guardrails_and_success(monkeypatch):
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
 
         # cannot archive the last unarchived profile → 400
         r = client.request("DELETE", "/api/profiles/work")
         assert r.status_code == 400
 
-        client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         # archiving the active default without a replacement → 400
         r = client.request("DELETE", "/api/profiles/work")
         assert r.status_code == 400
@@ -215,18 +213,100 @@ def test_archive_http_guardrails_and_success(monkeypatch):
         assert client.request("DELETE", "/api/profiles/work").status_code == 410
 
 
+# --- archived list + restore + purge (ADR 0003) ---
+
+
+def test_archived_list_in_payload(monkeypatch):
+    """GET /api/profiles carries an `archived` array beside `profiles`."""
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        # archive the non-default → no replacement needed
+        assert client.request("DELETE", "/api/profiles/personal").status_code == 200
+
+        body = client.get("/api/profiles").json()
+        assert [p["id"] for p in body["profiles"]] == ["work"]  # live only
+        assert [p["id"] for p in body["archived"]] == ["personal"]  # archived only
+
+
+def test_restore_over_http(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        client.request("DELETE", "/api/profiles/personal")
+        assert client.get(api("personal", "/tasks")).status_code == 410  # archived
+
+        r = client.post("/api/profiles/personal/restore")
+        assert r.status_code == 200
+        assert r.json()["profile"]["id"] == "personal"
+
+        body = client.get("/api/profiles").json()
+        assert "personal" in [p["id"] for p in body["profiles"]]  # back in the live list
+        assert [p["id"] for p in body["archived"]] == []  # no longer archived
+        assert client.get(api("personal", "/tasks")).status_code == 200  # booted live
+
+
+def test_restore_non_archived_409(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        # work is live, not archived → restore is a conflict
+        assert client.post("/api/profiles/work/restore").status_code == 409
+
+
+def test_restore_unknown_404(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        assert client.post("/api/profiles/ghost/restore").status_code == 404
+
+
+def test_purge_requires_archive_first_409(monkeypatch):
+    """Archive-first: a live profile cannot be hard-deleted (409), and it is untouched."""
+
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+
+        r = client.request("DELETE", "/api/profiles/personal", params={"purge": "true"})
+        assert r.status_code == 409
+        assert profiles.get_profile("personal") is not None  # still there
+        assert profiles.profile_dir("personal").exists()  # dir intact
+
+
+def test_purge_archived_profile(monkeypatch):
+
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        client.request("DELETE", "/api/profiles/personal")  # archive first
+        assert profiles.profile_dir("personal").exists()
+
+        r = client.request("DELETE", "/api/profiles/personal", params={"purge": "true"})
+        assert r.status_code == 200
+        assert profiles.get_profile("personal") is None  # gone from registry
+        assert not profiles.profile_dir("personal").exists()  # folder erased
+        # gone from both lists
+        body = client.get("/api/profiles").json()
+        assert "personal" not in [p["id"] for p in body["profiles"] + body["archived"]]
+
+
+def test_purge_unknown_404(monkeypatch):
+    with TestClient(_app(monkeypatch)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        r = client.request("DELETE", "/api/profiles/ghost", params={"purge": "true"})
+        assert r.status_code == 404
+
+
 # --- WS close on archive (§4.9) ---
 
 
 def test_stream_ws_closed_4001_on_archive(monkeypatch):
     """An open /stream socket is closed with code 4001 when its profile is archived."""
-    from starlette.websockets import WebSocketDisconnect
 
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-        client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
-        with client.websocket_connect(api("work", "/stream?session=w1")) as ws:
+        with client.websocket_connect(api("work", "/stream?chat=w1")) as ws:
             assert ws.receive_json()["type"] == "ready"
             # archive work from under the open socket
             client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})
@@ -242,8 +322,8 @@ def test_stream_ws_closed_4001_on_archive(monkeypatch):
 
 def test_status_aggregate_shape(monkeypatch):
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-        client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         rows = client.get("/api/status").json()
         assert {r["pid"] for r in rows} == {"work", "personal"}
         for r in rows:
@@ -260,7 +340,6 @@ def _seed_usage(client, pid: str, day: str, entry: dict) -> None:
     """Write a profile's usage.json directly on disk (UsageLedger's file schema:
     {day: {prompt, completion, total, cost, priced, by_model}}) and reload the live
     ledger from it, so GET /api/usage sees the seeded totals."""
-    from assistant import profiles
 
     path = profiles.profile_dir(pid) / "usage.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -269,7 +348,6 @@ def _seed_usage(client, pid: str, day: str, entry: dict) -> None:
 
 
 def _today() -> str:
-    from assistant.usage import _today as t
 
     return t()
 
@@ -278,8 +356,8 @@ def test_usage_rollup_sums_two_profiles(monkeypatch):
     """Two profiles with seeded usage.json → GET /api/usage sums the numeric fields,
     carries per-profile pid/name, and priced is true when all contributors are priced."""
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-        client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         day = _today()
         _seed_usage(
             client,
@@ -327,8 +405,8 @@ def test_usage_rollup_unpriced_makes_total_unpriced(monkeypatch):
     """An unpriced profile makes the summed cost an underestimate → total.priced False,
     while the cost still sums the priced contributions."""
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-        client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         day = _today()
         _seed_usage(
             client,
@@ -380,7 +458,7 @@ def test_usage_rollup_zero_profiles(monkeypatch):
 def test_usage_rollup_single_profile(monkeypatch):
     """One profile: its numbers are present; total mirrors it and is priced iff it is."""
     with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         day = _today()
         _seed_usage(
             client,

@@ -28,25 +28,25 @@ AG2 main genuinely doesn't reach yet (durable scheduled tasks, durable HITL).
 ## 2. Guiding principle: the event stream is the source of truth
 
 Each conversation surface — a web chat, each task, a voice session — is a
-per-session AG2 **`Stream`** keyed by `session_id`:
+per-chat AG2 **`Stream`** keyed by `chat_id`:
 
-| Session id          | Surface                          |
-| ------------------- | -------------------------------- |
-| `web-<uuid>`        | a web chat                       |
-| `task:<task_id>`    | a background task's own stream   |
-| `voice:<id>`        | a realtime voice session         |
-| `default`           | CLI single-shot                  |
+| Chat id             | Surface                                    |
+| ------------------- | ------------------------------------------- |
+| `web-<uuid>`        | a web chat                                  |
+| `task-run:<run_id>` | one run of a task — a real chat, own stream |
+| `voice:<id>`        | a realtime voice session                    |
+| `default`           | CLI single-shot                             |
 
 A stream's event history *is* the conversation. After each turn the events are
-persisted with AG2's `EventLogWriter` to `~/.ag2assistant/sessions.db` and reloaded
-on demand, so sessions are **resumable** and never cross histories.
+persisted with AG2's `EventLogWriter` to `~/.ag2assistant/chats.db` and reloaded
+on demand, so chats are **resumable** and never cross histories.
 
 **One wire contract — `wire = log = {type, data}`.** A serialized event is exactly
 what `EventLogWriter` persists:
 
 ```json
 { "type": "ag2.events.types.ModelResponse", "data": { … } }
-{ "type": "ag2assistant.events.DeliverableProduced",  "data": { … } }
+{ "type": "ag2assistant.events.TaskCreated",  "data": { … } }
 ```
 
 The same representation is used to **persist, replay, and live-stream**, so *history
@@ -77,7 +77,7 @@ exposes:
 tokens are present, and serves the FastAPI app from `create_app()`
 (`src/assistant/gateway/app.py`).
 
-**Scale.** For a single user (1–5 sessions) one process is sufficient; scaling out
+**Scale.** For a single user (1–5 chats) one process is sufficient; scaling out
 (worker pool, session affinity, external queue, or AG2 `Hub` distributed transport)
 is future work — the agent composes onto a Hub without changing the client API.
 
@@ -100,20 +100,20 @@ memory, voice, HITL, and the persistent stores hanging off the event-stream spin
 
 ### 5.1 Gateway core — `src/assistant/gateway/core.py`, `gateway/app.py`
 
-`Gateway` owns sessions, streams, persistence, and the shared agent.
+`Gateway` owns chats, streams, persistence, and the shared agent.
 
-- **Sessions & streams.** `stream_for(session_id)` returns the live per-session
+- **Chats & streams.** `stream_for(chat_id)` returns the live per-chat
   `Stream`, hydrating it from disk on first use (`_get_stream`), repairing broken
   compaction with `sanitize_history()` before resume.
 - **Turns.** `send_message()` resolves the stream, injects surface context, builds a
   per-turn permission manager + HITL hook (`_ask_kwargs`), runs `agent.ask(...)`,
   subscribes to the stream to tally usage and forward events, then persists events +
   a display transcript. Persistence is best-effort and never fails the user's turn.
-- **Persistence.** Events → `EventLogWriter` → `sessions.db`. A separate compact
-  transcript (role/text) is written for fast session listing/restore.
+- **Persistence.** Events → `EventLogWriter` → `chats.db`. A separate compact
+  transcript (role/text) is written for fast chat listing/restore.
 - **Reload.** `reload()` (`core.py:186`) reference-swaps the agent: in-flight turns
   finish on the old agent; the next turn uses a freshly-built one (new keys/config).
-  Per-session streams are untouched, so no history is lost. The task service rebuilds
+  Per-chat streams are untouched, so no history is lost. The task service rebuilds
   its planner lazily.
 - **app.py** wires it together: builds/owns the gateway + `TaskService`, mounts the
   REST routes and the two WebSockets, serves the Svelte bundle at `/app`, and runs
@@ -153,70 +153,79 @@ task subagents are scoped to their declared capabilities.
 ### 5.4 MCP integration — `tools/mcp.py`, `tools/_mcp_compat.py`
 
 `build_mcp_tools()` builds a `NamespacedMCPToolkit` per configured server. Raw MCP
-tool names are namespaced (`<server>_<tool>`, e.g. `repo_files_read_file`) to avoid
+tool names are namespaced (`<server>_<tool>`, e.g. `github_list_repos`) to avoid
 collisions with native tools, and filtered against `allowed_tools`/`blocked_tools`
 **before** namespacing. `_mcp_compat.py` quarantines the private AG2 MCP internals
 (`AnyMCPConfig`, `MCPTool`, `_resolve_config`, `_mcp_session`, `_extract_content`,
 `_wrap_middleware`) behind stable wrappers, raising `MCPCompatibilityError` on
-version drift. The onboarding project folder seeds a **read-only** `repo-files` MCP
-(7 read tools only).
+version drift. Folder access is native now (see §Folders): the host `read_file` /
+`list_folder` / `write_file` tools consult the install-wide Folder registry + Grants,
+replacing the retired auto-seeded `repo-files` MCP.
 
 ### 5.5 Task subsystem — `src/assistant/tasks/*`, `gateway/tasks_service.py`
 
-Durable background work with deliverables, scheduling, and subtask orchestration.
+A **Task** is standing configuration — name, prompt, optional per-task model,
+schedule, paused — nothing more. A **Run** is one execution of it, and its
+transcript is an ordinary chat on the run's own stream (`task-run:{run_id}`):
+a run *is* a chat the user can open live, steer mid-run with a normal message,
+stop, or keep talking to after it finishes. There is no separate planner,
+subtask tree, deliverable, or intake step — a run is one agent turn.
 
-- **`TaskStore`** (`tasks/store.py`) — CRUD + tree over `/tasks/{id}.json` in
-  `tasks.db`, serialized by `SerialStore`. `get()` raises `TaskStoreCorruptionError`
-  on a corrupt record; `list_all()` logs-and-skips so one bad record can't blank the
-  list. `Task` model in `tasks/model.py` (`title`, `description` = raw request,
-  `objective` = definition of done, `deliverables`, `status`, `recurrence`, …).
-- **`TaskManager`** (`tasks/runner.py`) — concurrency-limited runner (semaphore,
-  `MAX_CONCURRENT` default 3, `MAX_ATTEMPTS` 3). Executes a task, runs subtasks,
-  gates completion on deliverables, and cascades cancellation to descendants. Emits
-  status/progress/event/deliverable callbacks.
+- **`Task` / `Run`** (`tasks/model.py`) — plain dataclasses, JSON-serializable.
+  `Task.schedule` is a `{kind, at, cron}` union (`manual` / `once` / `cron`; the
+  UI's hourly/daily/weekly/weekdays presets all serialize to `cron`, custom cron
+  passes through as-is). `Run.status` is `running` / `needs_input` / `completed`
+  / `failed` / `cancelled`; `Run.trigger` records what started it (`schedule` /
+  `once` / `manual`); `Run.summary` is a cheap-model one-liner of the outcome.
+- **`TaskStore`** (`tasks/store.py`) — CRUD over two doc kinds in one
+  `tasks.db` (`/tasks/{id}.json`, `/runs/{id}.json`), serialized by
+  `SerialStore`. `get_task()`/`get_run()` raise `TaskStoreCorruptionError` on a
+  corrupt record; the listers log-and-skip so one bad record can't blank the
+  list. `last_summaries()` returns a task's recent completed-run summaries,
+  fed into the *next* run's prompt so a recurring task doesn't repeat itself.
 - **`Scheduler`** (`tasks/scheduling.py`) — deterministic poll loop (`interval`
-  default **30.0s**). `tick()` fires every due `SCHEDULED` task; recurrence is
-  interval-based and anchored to `scheduled_for` ("daily", "hourly", "every N
-  units", weekday patterns). A bad record logs but never kills the loop.
-  **Single-owner:** exactly one scheduler runs per data dir — `TaskService.start`
-  takes `scheduler=` (channel commands pass `False`; they keep the task tools but
-  not the loop), backed by a cross-process `flock` leader lock
-  (`scheduler_lock.py`, `~/.ag2assistant/scheduler.lock`). This prevents the
-  multi-process race where N schedulers fire the same `tasks.db` tasks. The
-  network-native evolution of this is one core with thin front-ends over AG2 `WsLink`.
-- **Executor** (`tasks/executor.py`) — `make_task_executor()` runs a **visible
-  subagent** per deliverable (archetype persona: researcher/operator/coder/worker),
-  cheap model for leaf subtasks, main model for root synthesis. Inner subagent events
-  are forwarded to the task stream as `SubagentTrace`. A **deliverable verifier**
-  (cheap model, `_Verdict{satisfied, reason}`) rejects plans/menus that don't meet
-  the acceptance criteria. Deliverable files are written to the shared workspace
-  (best-effort; inline content still stands on write failure).
-- **Planner** (`tasks/planner.py`) — `make_plan()` classifies trivial vs non-trivial,
-  produces a `TaskPlan{title, objective, questions, deliverables, subtasks,
-  capabilities}`, and drives an intake clarification loop (≤5 questions, ≤4 rounds).
-- **Controller** (per-task chat) — `gateway/tasks_service.py` builds a cached
-  `task-controller` agent with task-editing tools so a user can converse about/modify
-  a task on its page (`tasks/control.py` tools: add/cancel subtask, set objective…).
-- **`TaskService`** (`gateway/tasks_service.py`) — the bridge: owns store + manager +
-  scheduler + planner, translates lifecycle transitions into AG2 task events on the
-  task's stream (`_emit_status`, `_emit_deliverable`, `_emit_task_event`), and backs
-  the task REST endpoints. `set_emitter(gateway.emit_event)` wires task events onto
-  the shared event spine. `rerun()` clones a terminal task for a clean re-run.
+  default **30.0s**); `tick()` fires every armed, unpaused task whose
+  `next_run_at` has passed. Recurrence is standard 5-field cron (`cronsim`) plus
+  `@nicknames`, described for humans via `cron-descriptor`. **Single-owner:**
+  exactly one scheduler runs per data dir — `TaskService.start` takes
+  `scheduler=` (channel commands pass `False`; they keep the task tools but not
+  the loop), backed by a cross-process `flock` leader lock (`scheduler_lock.py`,
+  `~/.ag2assistant/scheduler.lock`), preventing the multi-process race where N
+  schedulers fire the same `tasks.db` tasks.
+- **`TaskService`** (`gateway/tasks_service.py`) — the bridge: owns the store +
+  scheduler and runs each turn through the same `Gateway.send_message()` path a
+  chat uses (`chat_id=run.stream_id`, `llm_config_id=task.model` picks the
+  task's own cached per-model agent when set, `surface=` frames it as an
+  unattended run and appends recent outcomes). `_fire()` (the scheduler
+  callback) re-arms a `cron` task's `next_run_at` — or disarms a spent `once`
+  back to `manual` — **before** running, so a slow run can never double-fire
+  its slot. After a run finishes, `tasks/summary.py` distills a one-line
+  outcome (cheap model), stored on the run and, for a task created from
+  Telegram/Slack/Discord, pushed back to that chat (`_deliver()` /
+  `set_notifier`). `stop_run()` cancels the run's turn
+  (`Gateway.cancel_turn`), keeping whatever it already produced on the stream.
+  `delete_task()` stops and deletes every run and its chat stream —
+  irreversible.
 
 ### 5.6 HITL (human-in-the-loop) — `src/assistant/hitl/*`
 
 Two stores, two lifetimes:
 
 - **Durable task inquiries** — `hitl/inquiry.py` (`Inquiry`, `InquiryStore` →
-  `inquiries.db`). Clarifications/permissions raised during task intake/execution;
-  survive restarts; answerable out-of-band from any surface. Surfaced as
-  `InquiryRaised`/`InquiryAnswered` events and via `/api/inquiries/*`.
+  `inquiries.db`). Clarifications/permissions raised during a task run (the
+  inquiry's `task_id` field actually carries the *run* id); survive restarts;
+  answerable out-of-band from any surface. A raised inquiry flips its run to
+  `needs_input`; answering flips it back to `running`
+  (`TaskService._on_inquiry`). Surfaced as `InquiryRaised`/`InquiryAnswered`
+  events on the run's stream and via `/api/inquiries/*`; unanswered ones also
+  show in the web app's "Needs your input" strip.
 - **Transient chat-turn prompts** — `hitl/gateway.py` (`GatewayAsker` + an in-memory
   `HitlServer` registry). Permission/clarification prompts during a chat turn;
   answered inline (WS `answer` frame) or via the styled `/hitl/{id}` page.
-- Asker variants: `NullAsker` (block until answered — tasks), `ChannelAsker`
-  (Telegram/Discord/Slack), `DesktopAsker` (browser popup). `build_hitl_hook()` turns
-  an asker into the AG2 `hitl_hook` dependency injected per turn.
+- Asker variants: `NullAsker` wrapped in `DurableAsker` (task runs — always
+  durable, regardless of which channel the task came from), per-channel askers
+  (Telegram/Discord/Slack), `DesktopAsker` (browser popup, CLI). `build_hitl_hook()`
+  turns an asker into the AG2 `hitl_hook` dependency injected per turn.
 
 ### 5.7 Memory — `src/assistant/memory.py`, `observers.py`
 
@@ -237,7 +246,7 @@ that emit `ObserverAlert`.
 `build_voice_agent()` constructs an AG2 **`LiveAgent`** (Gemini Live or OpenAI
 realtime, swappable via `voice_providers`). It carries a small read-only toolset
 (list/get task, list/answer questions, `current_time`) and an **`ask_assistant`**
-tool that delegates heavy work to the universal agent on the same session — so voice
+tool that delegates heavy work to the universal agent on the same chat — so voice
 shares the chat's context and tools. Audio is full-duplex over `/api/voice`: 16 kHz
 mono PCM in, 24 kHz PCM out, with transcript + delegated-event JSON frames
 interleaved. No state is persisted per voice session.
@@ -247,7 +256,7 @@ interleaved. No state is persisted per voice session.
 `Channel` adapters (`telegram.py`, `discord.py`, `slack.py`) normalize inbound
 messages to `InboundMessage`, apply **mention-gating** (`should_respond()`: DMs
 always, groups only on @mention), call `gateway.send_message()` with a per-chat
-session, and format replies (`formatting.py`). HITL surfaces through `ChannelAsker`.
+id, and format replies (`formatting.py`). HITL surfaces through `ChannelAsker`.
 All channels share the one agent.
 
 ### 5.10 Storage, config & cross-cutting — `storage.py`, `config.py`, …
@@ -255,20 +264,28 @@ All channels share the one agent.
 - **`storage.py`** — `SerialStore` (an `asyncio.Lock` over AG2's
   `SqliteKnowledgeStore`, since SQLite isn't safe for concurrent coroutine access),
   plus `now_iso()` / `new_id()`. `EventLogWriter` (AG2) writes the event log.
-- **`config.py`** — `Config` resolved defaults ← `config.json` ← UI settings ← env
-  (`AG2ASSISTANT_*` wins). `data_dir()`/`workspace_dir` derive from `Path.home()`.
+- **`config.py`** — `Config` resolved defaults ← global `config.yaml` ← active
+  `llm_configs` ← env (`AG2ASSISTANT_*` wins). `with_profile()` then overlays that
+  profile's `config.yaml` (per-section, profile key wins; env re-applied last).
+  `read_yaml`/`write_yaml` + `update_global_section` own the shared-file I/O.
+  `data_dir()`/`workspace_dir` derive from `Path.home()` (root overridable via
+  `--data-dir` / `AG2ASSISTANT_DATA_DIR`).
 - **`secrets.py`** — API keys in `secrets.json` (chmod 0600), loaded into
   `os.environ` at startup/reload (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
   `ANTHROPIC_API_KEY`, GitHub token, Ollama base URL).
-- **`settings.py`** — non-secret UI prefs: provider/model, voice provider+voice,
-  onboarded flag, project folder, MCP server list.
-- **`permissions.py`** — `PermissionStore` (folder grants/blocks → `permissions.json`)
-  + per-turn `PermissionManager`.
+- **`settings.py`** — non-secret per-profile UI prefs (voice provider+voice,
+  focuses, MCP server list), persisted at the top level of the
+  profile's `config.yaml` alongside its Config overlay sections.
+- **`permissions.py`** — `PermissionStore` (command grants → `permissions.json`)
+  + per-turn `PermissionManager` (also resolves Folder Grants for the profile/chat).
+- **`folders.py`** — `FolderStore`: the install-wide Folder registry + per-profile /
+  per-chat Grants (`read` / `read_write`) at `root_dir/folders.json` (ADR 0006).
 - **`usage.py`** — `UsageLedger` (daily tokens + estimated cost → `usage.json`,
   priced from `pricing.json`).
-- **`workspace.py`** — sandbox-safe file I/O: `write_deliverable_file` (shared
-  `deliverables/`), `write_image` (`images/`), `write_upload` (`uploads/`),
-  `resolve()` (no traversal escape), `list_files()`, `list_dirs()` (folder picker).
+- **`workspace.py`** — sandbox-safe file I/O: `write_image` (`images/`),
+  `write_upload` (`uploads/`), `resolve()` (no traversal escape), `list_files()`,
+  `list_dirs()` (folder picker). A task run's output lives in its chat
+  transcript (`task-run:{run_id}`), not a workspace file.
 - **`observability.py`** — `setup_logging()` (rotating `ag2assistant.log`),
   `agent_logging_middleware()`, `log_suppressed()` (best-effort warnings),
   `capture_failure()` (JSON snapshot under `debug/`).
@@ -283,21 +300,23 @@ Every model-backed call in the backend. Two model tiers: **main**
 
 | # | Agent / call            | File                         | Tier  | Trigger                              | Structured output            |
 | - | ----------------------- | ---------------------------- | ----- | ------------------------------------ | ---------------------------- |
-| 1 | **Universal agent**     | `agent.py:320` (`create_agent`) | main  | every user turn (`agent.ask`)        | — (conversational)           |
+| 1 | **Universal agent**     | `agent.py:320` (`create_agent`) | main  | every user turn (`agent.ask`) — also every task **run**, on the run's stream | — (conversational) |
 | 2 | **Chat title**          | `title.py`                   | cheap | after first exchange (fire-and-forget) | `ChatTitle{title}`         |
 | 3 | **Feedback learner**    | `feedback.py`                | cheap | on 👍/👎 (fire-and-forget)            | `FeedbackMemory{note, remove}` |
-| 4 | **Task planner**        | `tasks/planner.py`           | main  | task intake / before each scheduled run | `TaskPlan{…}`             |
-| 5 | **Executor subagents**  | `tasks/executor.py`          | cheap (leaf) / main (root) | each deliverable        | — (free-form deliverable)    |
-| 6 | **Deliverable verifier**| `tasks/executor.py`          | cheap | after each subagent finishes         | `_Verdict{satisfied, reason}`|
-| 7 | **Task controller**     | `gateway/tasks_service.py`   | main  | user chats on a task page (cached per task) | — |
-| 8 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
-| 9 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
-| 10| **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
-| 11| **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
+| 4 | **Run summarizer**      | `tasks/summary.py`           | cheap | after a task run completes            | `RunSummary{summary}`        |
+| 5 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
+| 6 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
+| 7 | **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
+| 8 | **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
+
+A task run is not a distinct agent — it's the same universal agent (row 1),
+optionally pinned to the task's own model via a cached per-model agent
+(`Gateway._agent_for`, §5.1), given a "you're running unattended" system
+surface and the task's recent run outcomes (§5.5).
 
 Onboarding (`onboarding.py`) is **not** an LLM call — it's a fixed 4-question HITL
 sequence that seeds the profile. The **reload** mechanism (§5.1) reference-swaps
-agents 1/4/7 without dropping streams.
+the shared agent(s) without dropping streams.
 
 ---
 
@@ -306,32 +325,35 @@ agents 1/4/7 without dropping streams.
 All under `create_app()` (`gateway/app.py`); `/api/*` is origin-guarded. Two
 WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 
-### Chat / sessions
+### Chats
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET  | `/api/health` | gateway status |
-| GET  | `/api/sessions` | list resumable sessions (newest first) |
-| GET  | `/api/sessions/{session_id}` | display transcript for a session |
-| POST | `/api/message` | send a message, blocking → `{reply, session_id}` |
-| WS   | `/api/stream?session=&surface=` | **event stream**: replay + live (frames below) |
+| GET  | `/api/chats` | list resumable chats (newest first) |
+| GET  | `/api/chats/{chat_id}` | display transcript for a chat |
+| POST | `/api/message` | send a message, blocking → `{reply, chat_id}` |
+| WS   | `/api/stream?chat=&surface=` | **event stream**: replay + live (frames below) |
 
-### Tasks / inquiries
+### Tasks / runs / inquiries
+
+A task is standing config; a run is one execution of it, and its own chat is
+what `/api/stream?chat=task-run:{run_id}` opens.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET  | `/api/tasks` | top-level tasks for the Tasks view |
-| POST | `/api/tasks` | start a task (intake runs in background) |
-| GET  | `/api/tasks/all?status=` | full history (active/completed/stopped/archived) |
-| POST | `/api/tasks/schedule` | schedule (optionally recurring) |
-| GET  | `/api/tasks/{id}` | task detail (`404`; `500` on corrupt record) |
-| POST | `/api/tasks/{id}/cancel` | cancel a running task |
-| POST | `/api/tasks/{id}/rerun` | clone + re-run from clean state |
-| POST | `/api/tasks/{id}/seen` | clear unread highlight |
-| POST | `/api/tasks/{id}/archive` | set archived flag |
-| POST | `/api/tasks/{id}/chat` | converse about a task (controller agent) |
-| GET  | `/api/inquiries/pending?task_id=` | open durable HITL inquiries |
-| POST | `/api/inquiries/{id}/answer` | answer a durable inquiry (out-of-band) |
+| GET    | `/api/tasks` | list tasks |
+| POST   | `/api/tasks` | create a task (`422` with `{error}` on a bad schedule/model) |
+| GET    | `/api/tasks/{id}` | task detail incl. its runs (`404`; `500` on corrupt record) |
+| PATCH  | `/api/tasks/{id}` | edit any subset of fields (name/prompt/model/schedule/paused) |
+| DELETE | `/api/tasks/{id}` | delete the task, its runs, and their chat streams — irreversible |
+| POST   | `/api/tasks/{id}/run` | run now — start a run immediately, schedule unchanged |
+| GET    | `/api/tasks/{id}/runs` | the task's run history (newest first) |
+| GET    | `/api/runs/{id}` | one run's status/summary/task name |
+| POST   | `/api/runs/{id}/stop` | stop a live run (keeps what it already produced) |
+| POST   | `/api/runs/{id}/seen` | clear a finished run's unread highlight |
+| GET    | `/api/inquiries/pending?task_id=` | open durable HITL inquiries (clarifications/approvals) |
+| POST   | `/api/inquiries/{id}/answer` | answer a durable inquiry (out-of-band) |
 
 ### HITL (chat-turn prompts)
 
@@ -341,11 +363,11 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | GET  | `/hitl/{req_id}` | styled browser answer page |
 | POST | `/hitl/{req_id}/answer` | submit an answer to that page |
 
-### Settings / keys / MCP / project folder
+### Settings / keys / MCP / folders
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET    | `/api/settings` | full snapshot (keys set, providers, voice, MCP, onboarded, project_folder, fs roots) |
+| GET    | `/api/settings` | full snapshot (keys set, providers, voice, MCP, onboarded, fs roots) |
 | POST   | `/api/settings/key` | set/clear an API key |
 | POST   | `/api/settings/llm` | set provider + model |
 | POST   | `/api/settings/voice_provider` | set voice provider |
@@ -353,8 +375,18 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | POST   | `/api/settings/mcp` | add/upsert an MCP server |
 | DELETE | `/api/settings/mcp/{name}` | remove an MCP server |
 | POST   | `/api/settings/mcp/{name}/health` | health-check (lists tools) |
-| POST   | `/api/settings/project-folder` | persist folder + seed read-only `repo-files` MCP |
 | GET    | `/api/fs/list?path=` | list subdirectories (folder picker) |
+
+Folders + Grants (install-wide, ADR 0006) — snapshot `{folders:[{id,name,path,exists,grants}]}`:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET    | `/api/folders` | every Folder with its path-exists badge + Grants |
+| POST   | `/api/folders` | register a directory (400 non-dir, 409 duplicate path) |
+| POST   | `/api/folders/{fid}` | rename / repoint a Folder |
+| DELETE | `/api/folders/{fid}` | delete a Folder (revokes all its Grants) |
+| POST   | `/api/folders/{fid}/grants` | upsert a Grant `(profile, chat_id) → mode` |
+| DELETE | `/api/folders/{fid}/grants` | revoke one Grant |
 
 ### Files / memory / usage
 
@@ -375,7 +407,7 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | POST | `/api/voice/select` | persist voice selection |
 | POST | `/api/voice/preview` | TTS preview (wav) |
 | GET  | `/voices/{name}.wav` | pre-recorded sample (falls back to TTS) |
-| WS   | `/api/voice?task=&session=` | full-duplex audio + transcript/event frames |
+| WS   | `/api/voice?task=&chat=` | full-duplex audio + transcript/event frames |
 
 ### Google
 
@@ -414,9 +446,7 @@ All extend `AssistantEvent(BaseEvent)` and serialize as
 
 | Event | Key fields | Rendered as |
 | ----- | ---------- | ----------- |
-| `TaskCreated` | `task_id, title, kind` | task card in the thread |
-| `TaskScheduled` | `task_id, scheduled_for, recurrence` | schedule note |
-| `DeliverableProduced` | `task_id, deliverable_id, description, preview` | deliverable item (asset via REST) |
+| `TaskCreated` | `task_id, title, kind` | task card in the thread, linking to the task page |
 | `Attachment` | `path, name, media_type` | uploaded-file thumbnail / chip |
 | `ImageGenerated` | `path, prompt, media_type` | inline clickable thumbnail |
 | `SubagentTrace` | `subagent_id, inner{type,data}` | nested event under a subagent card |
@@ -453,25 +483,27 @@ StreamBridge ── replay history ──► client     (gateway/stream_bridge.p
       │  subscribe(live)
       ▼
 Gateway.send_message()                          (gateway/core.py)
-   • resolve/hydrate session Stream
+   • resolve/hydrate chat Stream
    • inject surface context, permission mgr + HITL hook
       ▼
 Universal Agent.ask(stream, prompt)             (agent.py)
    • model call (provider config)
    • tool calls (web/code/files/image/google/skills/MCP)
-   • system tools → TaskCreated / TaskScheduled / InquiryRaised
+   • system tools → TaskCreated / InquiryRaised
    • observers → ObserverAlert
       ▼
-Stream emits events ──► EventLogWriter ──► sessions.db   (persist)
+Stream emits events ──► EventLogWriter ──► chats.db   (persist)
                    └──► subscribers ──► to_wire() ──► WS {event:{type,data}}  (live)
       ▼
 Frontend foldEvent(items, wire) → thread items → Svelte components  (web/src/project.js)
 
 Side flows:
-   • Tasks: TaskService.run → planner → runner → executor subagents → verifier,
-     emitting on task:<id> stream; deliverable files → workspace.
+   • Tasks: Scheduler._fire()/"Run now" → TaskService.start_run() → the same
+     Gateway.send_message() turn above, on the run's own task-run:<run_id>
+     stream; a cheap-model summary feeds the next run and (for a channel-
+     origin task) the origin chat.
    • Memory: aggregator every N turns + feedback.learn() on 👍/👎 → profile.db.
-   • Resume: stream_for() hydrates from sessions.db; replay == live (same wire).
+   • Resume: stream_for() hydrates from chats.db; replay == live (same wire).
 ```
 
 ---
@@ -480,13 +512,12 @@ Side flows:
 
 `web/src/project.js` `foldEvent(items, wire)` is a pure reducer mapping each
 `{type,data}` to renderable thread items (`user`, `agent` (streaming-aware),
-`tools`, `taskcard`, `deliverable`, `genimage`, `attachment`, `inquiry`, `note`,
-subagent cards). It stamps `item.at ??= data.created_at` (AG2's auto timestamp) and
-folds `FeedbackGiven` retroactively onto its target by stable key (message → `at`,
-image → `path`, deliverable → `deliverableId`). `web/src/lib/ag2map.js` maps event
-type → subsystem; `web/src/transport/` holds the WS client (`/api/stream`) and the
-REST client (`api.js`). The GUI never holds parallel state — it is a projection of
-the log.
+`tools`, `taskcard`, `genimage`, `attachment`, `inquiry`, `note`, subagent
+cards). It stamps `item.at ??= data.created_at` (AG2's auto timestamp) and folds
+`FeedbackGiven` retroactively onto its target by stable key (message → `at`,
+image → `path`). `web/src/lib/ag2map.js` maps event type → subsystem;
+`web/src/transport/` holds the WS client (`/api/stream`) and the REST client
+(`api.js`). The GUI never holds parallel state — it is a projection of the log.
 
 ---
 
@@ -496,21 +527,22 @@ Under `~/.ag2assistant/`:
 
 | File | Holds |
 | ---- | ----- |
-| `sessions.db` | event log for all sessions (via `EventLogWriter`) + display transcripts |
-| `tasks.db` | task records, deliverables, progress, schedule |
+| `chats.db` | event log for all chats (via `EventLogWriter`) + display transcripts |
+| `tasks.db` | task configs (name/prompt/model/schedule) + run records (status/summary) |
 | `inquiries.db` | durable HITL inquiries (clarifications/permissions) |
 | `profile.db` | learned user profile (`/memory/working.md` inside) |
-| `settings.json` | provider/model, voice, onboarded flag, project folder, MCP servers |
+| `config.yaml` (global) | Config overrides + the `llm_configs:` section (named models + active); env still wins |
+| `profiles/<id>/config.yaml` | per-profile Config overlay + non-secret UI prefs (voice, focuses, MCP servers) |
 | `secrets.json` | API keys (chmod 0600), loaded into env at startup/reload |
-| `config.json` | optional config overrides (env still wins) |
-| `permissions.json` | folder grants/blocks |
+| `permissions.json` | command grants (install-wide) |
+| `folders.json` | Folder registry + per-profile/per-chat Grants (install-wide, ADR 0006) |
 | `usage.json` / `pricing.json` | daily token+cost ledger / price overrides |
 | `ag2assistant.log` | rotating application log (2 MB × 3) |
-| `debug/<ts>-<session>.json` | failure snapshots (error + traceback + event tail) |
+| `debug/<ts>-<chat>.json` | failure snapshots (error + traceback + event tail) |
 
-Generated artifacts (images, deliverables, uploads) live in the **workspace**
-(`~/Documents/AG2 Assistant/` by default), in shared `images/`, `deliverables/`,
-`uploads/` folders.
+Generated artifacts (images, uploads) live in the **workspace**
+(`~/Documents/AG2 Assistant/` by default), in shared `images/`, `uploads/`
+folders. A run's own output lives in its chat transcript, not the workspace.
 
 ---
 
@@ -523,9 +555,11 @@ Generated artifacts (images, deliverables, uploads) live in the **workspace**
 - **Single-user, local-first.** No auth headers; a remote deployment must front the
   gateway with its own auth.
 - **Filesystem sandboxing.** Workspace reads/writes go through `workspace.resolve()`
-  (no traversal escape). The `repo-files` MCP is seeded **read-only** (7 read tools).
-  Arbitrary host reads (`read_file`, `/api/fs/list`) are acceptable only because the
-  gateway is local + single-user behind the origin guard.
+  (no traversal escape). Access to paths outside the workspace is governed by the
+  Folder registry + Grants (ADR 0006): `read_file`/`list_folder` need a `read` Grant,
+  `write_file` a `read_write` Grant, minted via the first-touch HITL prompt.
+  `/api/fs/list` (the folder picker) is acceptable only because the gateway is local +
+  single-user behind the origin guard.
 - **Permissions & HITL.** Shell/code/file actions are approval-gated through
   `PermissionManager` + the HITL hook; grants persist in `permissions.json`.
 - **Secrets** live in `secrets.json` (0600) and are surfaced to the UI only as
@@ -543,8 +577,9 @@ the single process. The web client is a viewer pointed at exactly one profile.
 - **Registry & layout.** `profiles.json` (`src/assistant/profiles.py`) is the
   registry: `{active_default, onboarded, profiles:[{id, name, palette, workspace,
   archived}]}`. Each profile owns `~/.ag2assistant/profiles/<id>/` holding its
-  `settings.json`, `sessions.db`, `tasks.db`, `inquiries.db`, `profile.db`,
-  `permissions.json`, `usage.json`, `skills/`, `debug/`. `id` is an immutable slug;
+  `config.yaml` (overlay + UI prefs), `chats.db`, `tasks.db`, `inquiries.db`,
+  `profile.db`, `permissions.json`, `usage.json`, `skills/`, `debug/`. `id` is an
+  immutable slug;
   `palette` is unique while ≤6 profiles exist (the palette *is* the profile's
   identity).
 - **ProfileManager** (`gateway/profile_manager.py`) boots **all unarchived**
@@ -555,13 +590,14 @@ the single process. The web client is a viewer pointed at exactly one profile.
   onboarding creates the first, which boots live).
 - **Derived config.** Each runtime is built from `Config.with_profile(meta)`, which
   overrides **every** path field (`data_dir`, `workspace_dir`, `skills_dir`) onto the
-  profile dir; `root_dir` still points at `~/.ag2assistant`. A per-profile
-  `config_factory(pid)` re-reads the registry entry on every call and overlays that
-  profile's `settings.json` LLM provider/model (env still wins) — so `reload()`
-  (workspace/model edit) rebuilds against the right profile, not the global root.
-- **Global vs per-profile split.** Per-profile: settings, sessions, tasks, memory,
-  usage, skills, permissions, inquiries, and the HITL store (on the runtime).
-  Global: `secrets.json` (keys load into one process-wide `os.environ`),
+  profile dir (`root_dir` still points at `~/.ag2assistant`) and then overlays that
+  profile's `config.yaml` Config sections (env still wins). A per-profile
+  `config_factory(pid)` re-reads the registry entry on every call — so `reload()`
+  (workspace/config edit) rebuilds against the right profile, not the global root.
+- **Global vs per-profile split.** Per-profile: `config.yaml` (overlay + UI prefs),
+  chats, tasks, memory, usage, skills, permissions, inquiries, and the HITL store
+  (on the runtime). Global: the global `config.yaml`, `secrets.json` (keys load into
+  one process-wide `os.environ`),
   `pricing.json`, `ag2assistant.log` (records tagged `[profile]` via a
   `LoggerAdapter`), and Google OAuth. The global-singleton audit removed every
   module-level path default so nothing silently leaks across profiles (pinned by
@@ -610,7 +646,7 @@ the single process. The web client is a viewer pointed at exactly one profile.
    history and live are one path.
 3. **UI-agnostic** — the gateway API is the only contract; the Svelte app is one
    client among several (channels, voice, CLI).
-4. **One universal agent, many resumable per-session streams** — isolation via
+4. **One universal agent, many resumable per-chat streams** — isolation via
    streams, not separate agents.
 5. **Build on main; migrate to native as it lands** — the durable task/inquiry layer
    is the seam, kept thin and speaking AG2's event vocabulary (`ag2-build-on-main`).

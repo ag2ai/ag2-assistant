@@ -5,9 +5,25 @@ SandboxCodeTool). We only test our provider-aware tool selection and the custom
 web_fetch fallback that's kept for providers without native web fetch.
 """
 
-import pytest
+import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
-from assistant.tools import build_agent_tools
+import pytest
+from ag2 import ToolResult
+from ag2.context import ConversationContext
+from ag2.events import ToolCallEvent
+from ag2.stream import MemoryStream
+from ag2.tools import MCPStdioServerConfig
+
+import assistant.tools.mcp as mcp_mod
+from assistant.agent import ask
+from assistant.config import Config
+from assistant.permissions import ALLOW_ONCE
+from assistant.settings import Settings
+from assistant.tools import build_agent_tools, web_fetch_tool
+from assistant.tools.mcp import NamespacedMCPToolkit, namespaced_tool_name
+from assistant.tools.web_fetch import web_fetch
 
 
 def test_build_agent_tools_has_core_capabilities():
@@ -18,24 +34,24 @@ def test_build_agent_tools_has_core_capabilities():
     assert "run_shell_command" in names
     assert "run_code" in names
     assert "read_file" in names
+    assert "list_folder" in names
+    assert "write_file" in names
     assert "web_fetch" in names
     assert "get_weather" in names
     assert "get_quotes" in names
     assert "ask_user" in names  # chat-only: option-carrying HITL questions
-    assert len(tools) == 8
+    assert len(tools) == 10
 
 
 def test_build_agent_tools_gemini_uses_fallback_fetch():
     # Native WebFetchTool is server-side on Gemini and won't mix with function
     # tools, so Gemini gets the custom function-tool fallback.
-    from assistant.tools import web_fetch_tool
 
     tools = build_agent_tools(provider="gemini")
     assert web_fetch_tool in tools
 
 
 def test_build_agent_tools_anthropic_uses_native_fetch():
-    from assistant.tools import web_fetch_tool
 
     tools = build_agent_tools(provider="anthropic")
     # Anthropic gets the native WebFetchTool, not our custom fallback object.
@@ -47,7 +63,6 @@ def test_build_agent_tools_anthropic_uses_native_fetch():
 
 
 def test_web_fetch_html():
-    from assistant.tools.web_fetch import web_fetch
 
     # example.com is an IANA-maintained, highly stable test domain.
     result = web_fetch(url="https://example.com", max_chars=5000)
@@ -58,7 +73,6 @@ def test_web_fetch_html():
 
 
 def test_web_fetch_json():
-    from assistant.tools.web_fetch import web_fetch
 
     result = web_fetch(url="https://httpbin.org/json", max_chars=5000)
     if result.startswith("Error fetching") or "Error fetching" in result[:40]:
@@ -67,7 +81,6 @@ def test_web_fetch_json():
 
 
 def test_web_fetch_invalid_url():
-    from assistant.tools.web_fetch import web_fetch
 
     result = web_fetch(url="https://thisdomaindoesnotexist.invalid", max_chars=1000)
     assert "Error" in result
@@ -76,7 +89,6 @@ def test_web_fetch_invalid_url():
 @pytest.mark.integration
 async def test_agent_uses_web_search():
     """Integration test: agent answers a current-info question using search."""
-    from assistant.agent import ask
 
     response = await ask(
         "Search the web: what is the AG2 Python framework? One sentence.",
@@ -90,7 +102,6 @@ class _AutoAllowAsker:
     """Approves every permission/command prompt (for code-exec integration test)."""
 
     async def ask(self, question, timeout=None):
-        from assistant.permissions import ALLOW_ONCE
 
         return ALLOW_ONCE
 
@@ -98,7 +109,6 @@ class _AutoAllowAsker:
 @pytest.mark.integration
 async def test_agent_uses_code_execution():
     """Integration test: agent computes via code execution."""
-    from assistant.agent import ask
 
     response = await ask(
         "Use code execution to calculate the factorial of 10.",
@@ -122,7 +132,7 @@ def test_capability_scoping_limits_tools():
     assert "duckduckgo_search" not in code
 
     files = {t.name for t in build_agent_tools("gemini", capabilities=["files"])}
-    assert files == {"read_file"}
+    assert files == {"read_file", "list_folder", "write_file"}
 
     assert build_agent_tools("gemini", capabilities=[]) == []  # no caps → no tools
 
@@ -137,14 +147,11 @@ def test_no_capabilities_filter_is_all_tools():
 def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(tmp_path):
     """MCP servers may expose generic names like read_file; present namespaced
     tool names so providers do not receive duplicate function schemas."""
-    from assistant.config import Config
-    from assistant.settings import Settings
-    from assistant.tools.mcp import NamespacedMCPToolkit, namespaced_tool_name
 
     # MCP servers are read from THIS profile's settings (config.data_dir), so write
     # one there and pass the config — no module-level monkeypatch.
     config = Config(data_dir=tmp_path)
-    Settings(config.data_dir / "settings.json").upsert_mcp_server(
+    Settings(config.data_dir / "config.yaml").upsert_mcp_server(
         {
             "name": "repo-files",
             "command": "npx",
@@ -166,17 +173,6 @@ def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(tmp_path):
 async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes(monkeypatch):
     """The namespaced adapter keeps AG2 MCP execution behavior behind our local
     compatibility surface while presenting provider-safe names."""
-    from contextlib import asynccontextmanager
-    from types import SimpleNamespace
-
-    from ag2 import ToolResult
-    from ag2.context import ConversationContext
-    from ag2.events import ToolCallEvent
-    from ag2.stream import MemoryStream
-    from ag2.tools import MCPStdioServerConfig
-
-    import assistant.tools.mcp as mcp_mod
-    from assistant.tools.mcp import NamespacedMCPToolkit
 
     calls = []
 
@@ -233,18 +229,6 @@ async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
     """One server process serves discovery AND every tool call (stateful servers
     like a browser need this), then closes after the idle window so nothing
     leaks when an agent reload drops the toolkit reference."""
-    import asyncio
-    from contextlib import asynccontextmanager
-    from types import SimpleNamespace
-
-    from ag2 import ToolResult
-    from ag2.context import ConversationContext
-    from ag2.events import ToolCallEvent
-    from ag2.stream import MemoryStream
-    from ag2.tools import MCPStdioServerConfig
-
-    import assistant.tools.mcp as mcp_mod
-    from assistant.tools.mcp import NamespacedMCPToolkit
 
     opened, closed = [], []
 
@@ -293,21 +277,22 @@ async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
 
 
 def test_files_capability_wires_workspace_toolkit(tmp_path):
-    """The `files` capability adds AG2's filesystem toolkit (write/update/find/
-    delete) scoped to the workspace, creating it — and keeps exactly one `read_file`
-    (our host reader; AG2's is dropped to avoid a duplicate tool name)."""
+    """The `files` capability adds AG2's filesystem toolkit (update/find/delete)
+    scoped to the workspace, creating it — and keeps exactly one `read_file` and one
+    `write_file` (our Grant-gated host tools; AG2's toolkit versions are dropped to
+    avoid duplicate tool names)."""
     ws = tmp_path / "workspace"
     tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=ws)
     names = [t.name for t in tools if getattr(t, "name", None)]
-    assert {"write_file", "update_file", "find_files", "delete_file"} <= set(names)
+    assert {"update_file", "find_files", "delete_file"} <= set(names)
     assert names.count("read_file") == 1  # only the custom host reader
+    assert names.count("write_file") == 1  # only the custom host writer
     assert ws.exists()
 
 
 def test_images_capability_adds_generate_image(tmp_path):
     """The `images` capability wires generate_image — but only when a config is given
     (it needs the provider/keys)."""
-    from assistant.config import Config
 
     cfg = Config()
     with_cfg = {
@@ -324,7 +309,9 @@ def test_images_capability_adds_generate_image(tmp_path):
 
 
 def test_no_workspace_dir_means_no_fs_tools():
-    """Without a workspace_dir, only the custom read_file is present (no FS toolkit)."""
+    """Without a workspace_dir, only the Grant-gated host tools are present (no
+    AG2 FS toolkit, since it has no workspace to be scoped to)."""
     tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=None)
     names = [t.name for t in tools if getattr(t, "name", None)]
-    assert "read_file" in names and "write_file" not in names
+    assert {"read_file", "list_folder", "write_file"} <= set(names)
+    assert "update_file" not in names  # no workspace → no AG2 FS toolkit

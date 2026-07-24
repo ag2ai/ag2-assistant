@@ -19,6 +19,7 @@ from telegram.ext import (
     filters,
 )
 
+from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import markdown_to_plain
 from assistant.hitl.base import Asker, Question
@@ -36,8 +37,6 @@ def _has_attachment(msg) -> bool:
 
 async def _download_attachments(msg, bot) -> list:
     """Download a Telegram message's media and build AG2 multimodal inputs."""
-    from assistant.attachments import build_input
-
     # (file_id, filename, mime) for each supported attachment on the message.
     specs: list[tuple[str, str, str | None]] = []
     if msg.document:
@@ -152,6 +151,12 @@ class TelegramChannel(Channel):
         """Telegram renders raw Markdown literally, so send clean plain text."""
         return markdown_to_plain(text)
 
+    async def notify(self, chat_id: str, text: str) -> None:
+        """Push a task-run outcome into a Telegram chat (no reply-to-edit here,
+        this isn't a reply). Mirrors `_on_message`'s send path; that path never
+        chunks long text, so neither does this."""
+        await self._app.bot.send_message(int(chat_id), self.format_outbound(text))
+
     async def stop(self) -> None:
         if self._app is None:
             return
@@ -223,7 +228,7 @@ class TelegramChannel(Channel):
         try:
             reply = await self._gateway.send_message(
                 text,
-                session_id=inbound.session_id(),
+                chat_id=inbound.stable_id(),
                 asker=self._asker_for(chat_id),
                 attachments=attachments,
             )

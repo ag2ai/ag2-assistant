@@ -5,6 +5,7 @@ from ag2 import ImageInput
 from ag2.events import BinaryType, TextInput
 
 from assistant.attachments import build_input
+from assistant.gateway.core import Gateway
 from tests.conftest import FakeRunMixin
 
 
@@ -43,6 +44,30 @@ def test_mime_overrides_when_no_extension():
     assert isinstance(inp, TextInput)
 
 
+def test_image_by_mime_when_no_extension():
+    # A pasted screenshot arrives as bytes with an empty/extensionless name but a
+    # real image MIME. Extension detection misses; MIME must route it to an image.
+    inp = build_input(b"\x89PNG...", "", media_type="image/png")
+    assert _kind(inp) == BinaryType.IMAGE
+    assert inp.media_type == "image/png"
+
+
+def test_audio_video_by_mime_when_no_extension():
+    assert _kind(build_input(b"..", "", media_type="audio/ogg")) == BinaryType.AUDIO
+    assert _kind(build_input(b"..", "", media_type="video/mp4")) == BinaryType.VIDEO
+
+
+def test_pdf_by_mime_when_no_extension():
+    got = build_input(b"%PDF", "", media_type="application/pdf")
+    assert _kind(got) == BinaryType.DOCUMENT
+
+
+def test_extension_wins_over_mime():
+    # A real filename extension stays the primary key even if MIME disagrees.
+    inp = build_input(b"\x89PNG", "pic.png", media_type="application/octet-stream")
+    assert _kind(inp) == BinaryType.IMAGE
+
+
 def test_empty_data_returns_none():
     assert build_input(b"", "pic.png") is None
 
@@ -69,14 +94,13 @@ class _CapturingAgent(FakeRunMixin):
 
 
 async def test_gateway_passes_attachments_as_positional_inputs():
-    from assistant.gateway.core import Gateway
 
     gw = Gateway(memory=False, onboard=False)
     agent = _CapturingAgent()
     gw._agent = agent
 
     img = ImageInput(data=b"img", media_type="image/png")
-    await gw.send_message("look at this", session_id="s1", attachments=[img])
+    await gw.send_message("look at this", chat_id="s1", attachments=[img])
 
     # The agent received text + the attachment as positional inputs.
     assert agent.captured[0] == "look at this"

@@ -13,6 +13,7 @@ once per profile, since every profile reads the same universal document.
 Every question is skippable (type "skip", or pick "No preference").
 """
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,8 +90,6 @@ async def needs_onboarding(user_store_path: Path) -> bool:
 
 def _persist_location(location: str, env_path: Path | None = None) -> None:
     """Write AG2ASSISTANT_LOCATION into the process env and the project `.env`."""
-    import os
-
     os.environ["AG2ASSISTANT_LOCATION"] = location
     env_path = env_path or Path(".env")
     line = f"AG2ASSISTANT_LOCATION={location}"

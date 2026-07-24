@@ -14,11 +14,15 @@ global.document = w.document
 global.location = w.location
 global.history = w.history
 for (const k of ['HTMLElement', 'Node', 'NodeFilter', 'MutationObserver', 'Element', 'Text',
-  'Comment', 'DocumentFragment', 'Event', 'CustomEvent', 'getComputedStyle', 'CSSStyleSheet']) {
+  'Comment', 'DocumentFragment', 'Event', 'CustomEvent', 'getComputedStyle', 'CSSStyleSheet',
+  'HTMLMediaElement', 'HTMLAudioElement', 'Audio', 'MouseEvent', 'KeyboardEvent']) {
   if (w[k] !== undefined) global[k] = w[k]
 }
 global.requestAnimationFrame = () => 0
 global.cancelAnimationFrame = (id) => clearTimeout(id)
+// jsdom has no layout engine — stub the observers the app wires at mount.
+global.ResizeObserver = w.ResizeObserver || class { observe() {} unobserve() {} disconnect() {} }
+global.IntersectionObserver = w.IntersectionObserver || class { observe() {} unobserve() {} disconnect() {} }
 global.WebSocket = class { constructor() {} send() {} close() {} addEventListener() {} set onmessage(v) {} set onclose(v) {} set onopen(v) {} set onerror(v) {} }
 
 // Mocked backend covering the new profile-scoped API surface. /api/profiles is

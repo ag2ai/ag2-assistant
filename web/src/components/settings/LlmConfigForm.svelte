@@ -5,17 +5,20 @@
   // one inline error line for server 400/502 messages.
   //
   // The type select toggles which endpoint field shows: base_url for openai* /
-  // anthropic, host for ollama, neither for gemini. api_key is WRITE-ONLY — blank
-  // keeps the existing key (placeholder shows the hint), Clear sends "".
-  import { untrack } from 'svelte'
+  // anthropic, host for ollama, neither for gemini. The key field is a Secret
+  // picker plus a paste-to-create shortcut (a pasted key mints a value-unique
+  // Secret on save; api_key rides only the draft-test call).
+  import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api.js'
   import { codexOpen } from '../../store.js'
   import { getSettings } from './context.svelte.js'
+  import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
+  import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
 
-  // config: {id?, name, type, model, base_url?, host?, options?, key?, api_key?}
-  //   — a template prefill has no id/key but may seed api_key (e.g. "not-needed").
+  // config: {id?, name, type, model, base_url?, host?, options?, secret_id?,
+  //   secret?, secret_missing?} — a template prefill has no id/secret.
   // activate: whether the save should also make this config active (decided by the
   //   parent — first-ever config, or re-saving the already-active one).
   let { config, activate = false, onSaved, onCancel } = $props()
@@ -43,9 +46,8 @@
       model: config.model || '',
       baseUrl: config.base_url || '',
       host: config.host || '',
-      // Seed the key draft from a template's suggested api_key (e.g. "not-needed"
-      // for a local server); an existing config never ships its key → empty.
-      apiKey: config.api_key || '',
+      // A dangling reference (secret deleted) starts the picker at "none".
+      secretId: config.secret_missing ? '' : (config.secret_id || ''),
       // Editing a saved subscription config carries the entry view's signed_in seed;
       // a template pick has none (the $effect below refetches live for this type).
       signedIn: !!config.signed_in,
@@ -59,10 +61,12 @@
   let model = $state(init.model)
   let baseUrl = $state(init.baseUrl)
   let host = $state(init.host)
-  let apiKey = $state(init.apiKey)
-  let cleared = $state(false)         // Clear pressed → send "" to wipe the stored key
+  let secretId = $state(init.secretId)  // '' = no secret (default/env fallback)
+  let pastedKey = $state('')            // non-empty → create-or-snap a Secret on save
   let advOpen = $state(init.hasOptions) // Advanced JSON escape hatch (extra provider kwargs)
   let advText = $state(init.advText)
+
+  onMount(loadSecrets)
 
   let busy = $state(false)
   let err = $state('')
@@ -82,35 +86,36 @@
     }
   })
 
-  const hasKey = $derived(!!config.key?.set)
-  const keyPlaceholder = $derived(hasKey ? '•••• ' + (config.key.hint || '') : 'paste key')
-
-  function clearKey() { cleared = true; apiKey = '' }
-
-  // Live "which key will actually be sent" line under the key field — the honest
-  // answer to why a blank field can still work (shared env fallback) and where a
-  // shared key will NOT go (custom endpoints get a placeholder, never the real key).
+  // Live "which key will actually be sent" line under the picker — the honest
+  // answer to why an empty selection can still work (default/env fallback) and
+  // where a shared key will NOT go (custom endpoints get a placeholder).
   const ENV_OF = { openai: 'OPENAI_API_KEY', openai_responses: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY' }
   const PROV_OF = { openai: 'openai', openai_responses: 'openai', anthropic: 'anthropic', gemini: 'gemini' }
+  const pickerSecrets = $derived(sortForProvider($secretsStore.secrets, PROV_OF[type] || ''))
   const keyUsage = $derived.by(() => {
     if (type === 'openai_subscription')
       return 'Requests use your ChatGPT/Codex subscription — no API key is involved.'
     if (type === 'ollama') return 'Ollama is local — no API key is used.'
     const env = ENV_OF[type]
     const shared = ctx?.s?.keys?.[PROV_OF[type]]
-    const ownKey = (apiKey !== '' && !cleared) || (hasKey && !cleared)
-    if (ownKey) return `Uses this config's own key${baseUrl.trim() ? ' (sent to the custom endpoint)' : ''}. It overrides ${env}.`
-    if (baseUrl.trim()) return `Custom endpoint with no key of its own — a placeholder is sent (your ${env} is never sent to non-${type.startsWith('openai') ? 'OpenAI' : 'Anthropic'} endpoints).`
-    if (shared?.set) return `No key here — uses your ${env} (${shared.hint || 'set'}).`
-    return `No key available — paste one above, or set ${env}.`
+    if (pastedKey.trim()) return 'A new Secret will be created from this key on save (rename it later in Settings → Secrets).'
+    if (secretId) {
+      const s = $secretsStore.secrets.find((x) => x.id === secretId)
+      return s
+        ? `Uses the "${s.name}" secret${baseUrl.trim() ? ' (sent to the custom endpoint)' : ''}. It overrides ${env}.`
+        : 'The referenced secret was deleted — falls back to the provider default or env key.'
+    }
+    if (baseUrl.trim()) return `Custom endpoint with no secret — a placeholder is sent (your ${env} is never sent to non-${type.startsWith('openai') ? 'OpenAI' : 'Anthropic'} endpoints).`
+    if (shared?.set) return `No secret selected — uses your ${env} (${shared.hint || 'set'}).`
+    return `No key available — pick or paste one above, or set ${env}.`
   })
 
   // The request body both Save and Test send — one source of truth so the Test
   // button exercises exactly what a save would persist. Parses the Advanced JSON
   // locally first (fast, friendly error); the server dry-constructs the provider
   // config, so a bad option comes back as its message. Returns null on a local
-  // validation error (err is set). api_key is write-only: "" clears, a typed
-  // string sets, blank leaves the stored key in place.
+  // validation error (err is set). api_key rides only the draft-test call (a
+  // pasted key, used directly); save mints a Secret from it instead.
   function buildPayload() {
     let options = {}
     const text = advText.trim()
@@ -129,7 +134,8 @@
       model: model.trim(),
       base_url: baseUrl.trim(),
       host: host.trim(),
-      api_key: cleared ? '' : (apiKey !== '' ? apiKey : null),
+      secret_id: secretId,
+      api_key: pastedKey.trim() || null,  // draft-test only; save creates a Secret first
       options,
     }
   }
@@ -141,6 +147,15 @@
     if (!payload) return
     busy = true
     try {
+      if (pastedKey.trim()) {
+        // Paste-to-create: mint (or snap to) a Secret, then reference it.
+        const s = await createOrSnap({ name: autoSecretName(name, pastedKey), value: pastedKey.trim() })
+        payload.secret_id = s.id
+        secretId = s.id
+        pastedKey = ''
+        loadSecrets()
+      }
+      delete payload.api_key  // never persisted; Secrets carry the key
       await api.saveLlmConfig({ ...payload, activate: activate || useNow })
       onSaved()
     } catch (e) { err = String(e.message || e) }
@@ -205,12 +220,19 @@
     </div>
   {:else}
     <div class="llmfield">
-      <label for="lf-key">API key {#if hasKey && !cleared}<span class="llmhint">leave blank to keep the current key</span>{/if}</label>
+      <label for="lf-secret">Secret <span class="llmhint">a reusable API key — manage in Settings → Secrets</span></label>
       <div class="llmkeyfield">
-        <input id="lf-key" type="password" bind:value={apiKey} placeholder={keyPlaceholder} />
-        {#if hasKey && !cleared}<button class="linkbtn" onclick={clearKey}>Clear key</button>{/if}
+        <select id="lf-secret" bind:value={secretId} disabled={!!pastedKey.trim()}>
+          <option value="">No secret — provider default / env key</option>
+          {#each pickerSecrets as s (s.id)}
+            <option value={s.id}>{s.name} {s.hint}{s.default ? ' · default' : ''}</option>
+          {/each}
+        </select>
       </div>
-      {#if cleared}<span class="llmhint">Key will be cleared on save.</span>{/if}
+      <div class="llmkeyfield">
+        <input id="lf-key" type="password" bind:value={pastedKey} placeholder="…or paste a new key to create a secret" />
+      </div>
+      {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}
       <span class="llmhint">{keyUsage}</span>
     </div>
   {/if}
@@ -230,7 +252,7 @@
     </div>
   {/if}
 
-  {#if err}<p class="muted" style="color:#d8552f;font-size:13px;margin:0">{err}</p>{/if}
+  {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
   <div class="keyrow" style="justify-content:flex-end">
     {#if testing}
       <span class="llmtest">testing…</span>

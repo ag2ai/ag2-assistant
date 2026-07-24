@@ -2,9 +2,10 @@
 
 import pytest
 
+from assistant.channels.slack import SlackChannel
+
 
 def _slack_channel():
-    from assistant.channels.slack import SlackChannel
 
     ch = SlackChannel(bot_token="xoxb-fake", app_token="xapp-fake")
     ch._bot_user_id = "UBOT"
@@ -14,7 +15,6 @@ def _slack_channel():
 def test_requires_both_tokens(monkeypatch):
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
     monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
-    from assistant.channels.slack import SlackChannel
 
     with pytest.raises(ValueError):
         SlackChannel()
@@ -28,7 +28,7 @@ def test_mention_inbound_strips_bot_token():
     assert inbound.mentioned is True
     assert inbound.is_direct is False
     assert inbound.text == "what is 2+2?"
-    assert inbound.session_id() == "slack:C1"
+    assert inbound.stable_id() == "slack:C1"
 
 
 def test_mention_inbound_empty_after_strip_is_none():
@@ -47,7 +47,7 @@ def test_dm_inbound_basic():
     inbound = ch._dm_inbound(event)
     assert inbound is not None
     assert inbound.is_direct is True
-    assert inbound.session_id() == "slack:D1"
+    assert inbound.stable_id() == "slack:D1"
 
 
 def test_dm_inbound_ignores_non_im():

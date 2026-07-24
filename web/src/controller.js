@@ -1,12 +1,15 @@
-// Owns the active thread's stream connection: opens /api/stream for a session,
+// Owns the active thread's stream connection: opens /api/stream for a chat,
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, taskPanel, sessions, inspectorEvents } from './store.js'
+import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch } from './store.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
 import { foldEvent, isBusy, queueMessage } from './project.js'
+import { getActiveProfileId, setActiveProfileId } from './lib/profile.js'
+import { setAccent } from './design/palette.js'
+import { go, closeAside, route } from './router.js'
 
 let client = null
 let panelTimer = null
@@ -45,11 +48,11 @@ export function openThread(kind, id) {
   closeThread()
   _suppressStream = false       // a fresh thread always folds its stream
   _replaying = true; _replayBuf = []   // first connect's replay buffers until `ready`
-  const session = kind === 'task' ? 'task:' + id : id
-  thread.set({ id, kind, session, items: [], busy: false })
+  const chat = kind === 'run' ? 'task-run:' + id : id
+  thread.set({ id, kind, chat, items: [], busy: false })
   inspectorEvents.set([])       // fresh inspector buffer per thread
 
-  client = new StreamClient(session, {
+  client = new StreamClient(chat, {
     // Each (re)connect re-replays the full history: buffer it afresh so a reconnect
     // rebuilds rather than double-folds onto the live items.
     onOpen: () => { _replaying = true; _replayBuf = [] },
@@ -79,12 +82,16 @@ export function openThread(kind, id) {
     }),
   }).connect()
 
-  if (kind === 'task') {
-    _markedSeen = false          // arm the "mark seen once finished" latch for this task
-    loadPanel(id)                // also marks it seen if it's already/becomes terminal
-    panelTimer = setInterval(() => loadPanel(id), 3000)
+  if (kind === 'run') {
+    _markedSeen = false
+    // Clear the previous run's data before the fetch lands — loadRun keeps the
+    // last value on error, so a stale runInfo could otherwise leak into this
+    // thread's folder panel and point "Move to task" at the wrong task.
+    runInfo.set(null)
+    loadRun(id)
+    panelTimer = setInterval(() => loadRun(id), 3000)
   } else {
-    taskPanel.set(null)
+    runInfo.set(null)
   }
 }
 
@@ -92,15 +99,15 @@ export function send(text, attachments = []) {
   if (!client || (!text.trim() && !attachments.length)) return
   thread.update((t) => ({ ...t, busy: true }))
   client.send(text, attachments)
-  // Surface a brand-new chat in the drawer immediately — the sessions list is
+  // Surface a brand-new chat in the drawer immediately — the chats list is
   // only persisted server-side once the first turn completes (which can take a
   // while). The drawer poll merges this until the server reports it for real.
   const t = get(thread)
   if (t.kind === 'chat' && text.trim()) {
-    sessions.update((list) =>
-      list.some((s) => s.session_id === t.session)
+    chats.update((list) =>
+      list.some((s) => s.chat_id === t.chat)
         ? list
-        : [{ session_id: t.session, preview: text.trim().slice(0, 80), updated: new Date().toISOString(), turns: 0 }, ...list]
+        : [{ chat_id: t.chat, preview: text.trim().slice(0, 80), updated: new Date().toISOString(), turns: 0 }, ...list]
     )
   }
 }
@@ -121,6 +128,12 @@ export function feedback({ targetKind, targetId, sentiment, reason, content = ''
   if (client) client.feedback({ target_kind: targetKind, target_id: targetId, sentiment, reason, content, request })
 }
 
+// Retract a rating (toggle the 👍/👎 off). Clears only the visible thumb — the server
+// emits FeedbackCleared and runs no learner, so learned memory is left untouched.
+export function clearFeedback({ targetKind, targetId }) {
+  if (client) client.clearFeedback({ target_kind: targetKind, target_id: targetId })
+}
+
 export function closeThread() {
   if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }  // _voiceEnded's reload is guarded out on nav
   _voiceActive = false; _vitem = null; _vrole = null
@@ -128,9 +141,46 @@ export function closeThread() {
   if (panelTimer) { clearInterval(panelTimer); panelTimer = null }
 }
 
+// Empty every profile-scoped store and bump profileEpoch, so a new profile starts
+// clean without a page reload. Any store keyed to the active profile MUST be reset
+// here; install-wide stores (llmConfigs, foldersStore, permissions) are left alone.
+function resetProfileState() {
+  closeThread()                                        // WS + panel timer + voice
+  thread.set({ id: null, kind: 'chat', items: [], busy: false })
+  chats.set([])
+  tasks.set([])
+  runInfo.set(null)
+  inquiries.set([])
+  inspectorEvents.set([])
+  viewer.set(null)                                     // drop the old profile's transient preview body
+  profileEpoch.update((n) => n + 1)
+}
+
+// Switch the active profile in place (no reload → the Settings modal doesn't blink).
+// Adopt the pid + accent before the route change so the new chat's WebSocket scopes
+// to it; go('/') lands on the profile's home and preserves the hash. On any failure
+// fall back to a full-page nav.
+export function switchProfile(pid) {
+  if (!pid || pid === getActiveProfileId()) return
+  try {
+    resetProfileState()
+    // The file preview rail addresses a file in the OLD profile's workspace and lives
+    // in the URL's aside slot, which go() preserves — strip it so the switch closes it.
+    if (get(route).aside?.kind === 'file') closeAside()
+    setActiveProfileId(pid)
+    const p = (get(profiles).list || []).find((x) => x.id === pid)
+    if (p?.accent) setAccent(p.accent)
+    profiles.update((r) => ({ ...r, activeId: pid }))
+    go('/', pid)
+  } catch (e) {
+    console.warn('[profile] in-place switch failed; falling back to reload', e)
+    location.assign('/app/' + pid + '/' + location.hash)
+  }
+}
+
 // ---- voice: frames render into the SAME thread (transcripts as bubbles, tool
 // chips, task cards). While active we suppress stream folding so the agent's
-// delegated work (which also lands on this session's stream) isn't double-shown. ----
+// delegated work (which also lands on this chat's stream) isn't double-shown. ----
 function _setBusy(b) { thread.update((t) => ({ ...t, busy: b })) }
 
 function _voiceTranscript(role, text, final) {
@@ -153,7 +203,7 @@ function _voiceTranscript(role, text, final) {
 export async function startVoice() {
   const t = get(thread)
   if (!t.id || _voiceActive) return
-  const query = t.kind === 'task' ? '?task=' + encodeURIComponent(t.id) : '?session=' + encodeURIComponent(t.session)
+  const query = '?chat=' + encodeURIComponent(t.chat)
   // capture at the active provider's native rate (Gemini 16 kHz / OpenAI 24 kHz)
   let inputRate = 16000
   try { inputRate = (await api.voices()).input_rate || 16000 } catch {}
@@ -195,16 +245,24 @@ export function stopVoice() {
 const _TERMINAL_TASK = new Set(['completed', 'failed', 'cancelled'])
 let _markedSeen = false   // per-viewed-task latch: mark seen once, only after it finishes
 
-async function loadPanel(id) {
-  let panel
-  try { panel = await api.task(id) } catch { return /* keep last panel on error */ }
-  taskPanel.set(panel)
-  // Clear the unread indicator once the task is finished — whether it was already
+async function loadRun(id) {
+  const epoch = get(profileEpoch)   // drop a poll that resolves after a profile switch
+  let run
+  try { run = await api.run(id) } catch { return /* keep last on error */ }
+  if (get(profileEpoch) !== epoch) return
+  // Thread-correlation guard: a fast run-A → run-B navigation can leave this
+  // call's fetch resolving after the thread has already moved on. Without this,
+  // A's late response would overwrite B's runInfo and could fire api.runSeen(A)
+  // through the reset `_markedSeen` latch. Bail unless the thread is still `id`.
+  const t = get(thread)
+  if (!(t.kind === 'run' && t.id === id)) return
+  runInfo.set(run)
+  // Clear the unread indicator once the run is finished — whether it was already
   // done when opened or completed while the user watched. Peeking at a still-running
-  // task deliberately does NOT mark it seen, so its dot still fires when it finishes
-  // if the user has navigated away. Latched so we call markSeen at most once.
-  if (!_markedSeen && panel && _TERMINAL_TASK.has(panel.status)) {
+  // run deliberately does NOT mark it seen, so its dot still fires when it finishes
+  // if the user has navigated away. Latched so we call runSeen at most once.
+  if (!_markedSeen && run && _TERMINAL_TASK.has(run.status)) {
     _markedSeen = true
-    api.markSeen(id).catch(() => {})
+    api.runSeen(id).catch(() => {})
   }
 }

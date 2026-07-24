@@ -7,7 +7,7 @@
   // and says HOW it resolved — answered / expired / cancelled — with its buttons
   // disabled, so a timed-out or task-ended prompt never leaves dead live controls.
   import { answer } from '../../controller.js'
-  import { taskPanel } from '../../store.js'
+  import { runInfo } from '../../store.js'
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   let { item } = $props()
   let text = $state('')
@@ -18,7 +18,7 @@
   // A card is retired once its inquiry resolves OR its owning task reaches a
   // terminal state (belt-and-suspenders: catches prompts stranded before the
   // resolution event existed — answering them is a server-side no-op anyway).
-  let onTerminalTask = $derived(!!$taskPanel && TERMINAL.has($taskPanel.status))
+  let onTerminalTask = $derived(!!$runInfo && TERMINAL.has($runInfo.status))
   let retired = $derived(!!item.resolved || onTerminalTask)
   // How it resolved: explicit resolution wins; a real answer implies "answered";
   // otherwise a retired-by-terminal-task prompt was simply never answered.
@@ -123,7 +123,7 @@
   }
   .chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .chip:disabled { cursor: default; opacity: .45; }
-  .chip.picked { opacity: 1; border-color: var(--accent); background: var(--accent); color: var(--paper, #fff); }
+  .chip.picked { opacity: 1; border-color: var(--accent); background: var(--accent); color: var(--text-on-accent, #fff); }
 
   .cans { margin-top: 9px; font-family: var(--code, ui-monospace, monospace); font-size: 12.5px; color: var(--muted); }
 

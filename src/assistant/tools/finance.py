@@ -12,9 +12,11 @@ agent does not have to guess prices. The FIRST quote is the lead/featured.
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import quote as urlquote
 
+import httpx
 from ag2 import tool
 
 _CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=5m"
@@ -200,10 +202,6 @@ def get_quotes(symbols: str, title: str = "") -> str:
         "quotes":[{"symbol","name","price","change","changePercent","currency",
         "exchange","dayLow"?,"dayHigh"?,"spark"?,"state"?}, …]}.
     """
-    from concurrent.futures import ThreadPoolExecutor
-
-    import httpx
-
     wanted = [s.strip() for s in str(symbols).split(",") if s.strip()][:_MAX_SYMBOLS]
     if not wanted:
         return "No symbols requested."

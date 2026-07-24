@@ -1,55 +1,56 @@
 /* ============================================================
-   AG2 Assistant — Editorial / broadsheet surface tokens
+   AG2 Assistant — Editorial / broadsheet surface tokens  ·  Signal
    ------------------------------------------------------------
-   A distinct "printed page" identity shared by the A2UI
-   broadsheet surfaces (NewsWire, WeatherCard, MarketBoard):
-   Fraunces serif, JetBrains Mono wire, vermilion/green ink.
+   The A2UI "wire" surfaces (NewsWire, WeatherCard, MarketBoard)
+   share a compact DATA-BOARD identity — no serif, no cream paper.
+   They read as cold system panels (Geist + Geist Mono) that sit
+   inside the AG2 / Signal language, keeping only the masthead /
+   ticker / footer STRUCTURE that made them legible.
 
-   Deliberately INDEPENDENT of the [data-palette] accent — the
-   broadsheet keeps its own editorial colour voice regardless of
-   the chosen app palette. But it DOES honour light/dark via
-   [data-theme]: a cream "day edition" and a warm-espresso
-   "night edition" aligned to the app's sand-900/950 dark family
-   ("warm espresso, not cold black").
+   Still INDEPENDENT of the [data-palette] accent (the boards keep
+   their own semantic voice) but now aligned to the app's cold
+   surfaces + honouring light/dark via [data-theme].
 
-   Vermilion (--ed-accent*) = alerts / market down.
-   Green     (--ed-up*)      = market up.
+   --ed-accent* = alerts / market DOWN (rose).
+   --ed-up*     = market UP (green).
    The *-d step is the higher-contrast emphasis shade for text:
-   darker than the base on light paper, BRIGHTER on dark paper.
+   darker on the light board, BRIGHTER on the dark board.
+   --ed-serif is retained as a var NAME only — it now resolves to
+   the Geist display grotesk (there is no serif anywhere).
    ============================================================ */
 
 :root {
-  /* ---- Day edition (light, default) ---- */
-  --ed-paper:    #f4eee1;
-  --ed-paper-2:  #ece3d2;
-  --ed-ink:      #18140d;
-  --ed-ink-2:    #4f4636;
-  --ed-ink-3:    #8a7f6b;
-  --ed-accent:   #c5402a;   /* vermilion */
-  --ed-accent-d: #972c1a;   /* emphasis text (darker on cream) */
-  --ed-up:       #2f6b46;   /* editorial green */
-  --ed-up-d:     #234f34;   /* emphasis text (darker on cream) */
-  --ed-rule:     rgba(24, 20, 13, 0.14);
-  --ed-rule-2:   rgba(24, 20, 13, 0.28);
-  --ed-noise:    0.045;
+  /* ---- Light board (default) ---- */
+  --ed-paper:    #ffffff;
+  --ed-paper-2:  #eef1f5;
+  --ed-ink:      #161a20;
+  --ed-ink-2:    #5f6875;
+  --ed-ink-3:    #8a94a2;
+  --ed-accent:   #e11d48;   /* rose — alert / down */
+  --ed-accent-d: #be123c;   /* emphasis text (darker) */
+  --ed-up:       #10b981;   /* green — up */
+  --ed-up-d:     #059669;   /* emphasis text (darker) */
+  --ed-rule:     rgba(22, 26, 32, 0.10);
+  --ed-rule-2:   rgba(22, 26, 32, 0.16);
+  --ed-noise:    0.015;
 
-  --ed-serif: Fraunces, Georgia, serif;
-  --ed-ui:    'Hanken Grotesk', system-ui, sans-serif;
-  --ed-code:  'JetBrains Mono', ui-monospace, monospace;
+  --ed-serif: 'Geist', 'Inter', system-ui, sans-serif; /* display grotesk (no serif) */
+  --ed-ui:    'Geist', 'Inter', system-ui, sans-serif;
+  --ed-code:  'Geist Mono', 'JetBrains Mono', ui-monospace, monospace;
 }
 
 [data-theme="dark"] {
-  /* ---- Night edition — warm espresso newsprint ---- */
-  --ed-paper:    #221d18;
-  --ed-paper-2:  #1a1611;
-  --ed-ink:      #efe7d6;
-  --ed-ink-2:    #c6bba7;
-  --ed-ink-3:    #8d8270;
-  --ed-accent:   #e2674e;   /* vermilion, lifted for dark */
-  --ed-accent-d: #f0876f;   /* emphasis text (brighter on espresso) */
-  --ed-up:       #5cb87e;   /* green, lifted for dark */
-  --ed-up-d:     #82d49f;   /* emphasis text (brighter on espresso) */
-  --ed-rule:     rgba(239, 231, 214, 0.12);
-  --ed-rule-2:   rgba(239, 231, 214, 0.24);
-  --ed-noise:    0.06;
+  /* ---- Dark board — cold system panel ---- */
+  --ed-paper:    #13171d;
+  --ed-paper-2:  #0f1217;
+  --ed-ink:      #f2f4f7;
+  --ed-ink-2:    #a7afbb;
+  --ed-ink-3:    #6f7885;
+  --ed-accent:   #fb7185;   /* rose, lifted for dark */
+  --ed-accent-d: #fda4af;   /* emphasis text (brighter) */
+  --ed-up:       #34d399;   /* green, lifted for dark */
+  --ed-up-d:     #6ee7b7;   /* emphasis text (brighter) */
+  --ed-rule:     rgba(242, 244, 247, 0.10);
+  --ed-rule-2:   rgba(242, 244, 247, 0.18);
+  --ed-noise:    0.02;
 }

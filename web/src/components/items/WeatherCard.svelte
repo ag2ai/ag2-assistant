@@ -74,22 +74,24 @@
      Only weather-specific body styles live here. */
   /* Bold pill: temperature (in-scene) reads left, the zoomed weather glyph rides
      right, cropped by the rounded border — echoes the reference weather chips. */
+  /* Weather glyph is a small DECORATIVE band, not the hero — the data grid
+     carries the card. Shorter aspect + thin cold rule keep it system-like. */
   .hero {
     position: relative;
-    aspect-ratio: 16 / 5;
-    max-height: 220px;
+    aspect-ratio: 16 / 4;
+    max-height: 132px;
     /* aspect-ratio + max-height can transfer a narrower width to the box; auto
-       inline margins keep the pill horizontally centred when that happens */
+       inline margins keep the band horizontally centred when that happens */
     margin: 4px auto 14px;
-    border: 2.5px solid var(--ink);
-    border-radius: 16px;
+    border: 1px solid var(--rule-2);
+    border-radius: var(--radius-sm);
     overflow: hidden;
     z-index: 1;
   }
-  .deck { margin: 0 0 14px; max-width: 60ch; font-size: 13.5px; line-height: 1.5; color: var(--ink-2); }
+  .deck { margin: 0 0 14px; max-width: 60ch; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); border-top: 1.5px solid var(--ink); border-left: 1px solid var(--rule); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); border-top: 1px solid var(--rule-2); border-left: 1px solid var(--rule); }
   .cell { padding: 9px 14px 11px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-  .label { font-family: var(--code); font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+  .label { font-family: var(--code); font-size: 9px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
   .val { font-family: var(--code); font-size: 16px; font-weight: 600; color: var(--ink); margin-top: 4px; letter-spacing: -.01em; }
 </style>

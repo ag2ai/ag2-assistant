@@ -42,33 +42,33 @@ def _two_profile_client(monkeypatch):
 
 def _boot_two(client):
     """Create work + personal over HTTP on an already-open client. Returns (a, b)."""
-    client.post("/api/profiles", json={"name": "Work", "palette": "teal"})
-    client.post("/api/profiles", json={"name": "Personal", "palette": "coral"})
+    client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+    client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
     return "work", "personal"
 
 
-# --- a. chat isolation: A's sessions has it, B's is empty; dbs in right dirs ---
+# --- a. chat isolation: A's chats has it, B's is empty; dbs in right dirs ---
 
 
-def test_chat_sessions_isolated(monkeypatch):
+def test_chats_isolated(monkeypatch):
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
 
-        r = client.post(api(a, "/message"), json={"text": "hi A", "session_id": "s-a"})
+        r = client.post(api(a, "/message"), json={"text": "hi A", "chat_id": "s-a"})
         assert r.status_code == 200
         assert r.json()["reply"].startswith("echo[1]")
 
-        a_sessions = client.get(api(a, "/sessions")).json()["sessions"]
-        b_sessions = client.get(api(b, "/sessions")).json()["sessions"]
-        assert any(s["session_id"] == "s-a" for s in a_sessions)
-        assert b_sessions == []  # B never saw the chat
+        a_chats = client.get(api(a, "/chats")).json()["chats"]
+        b_chats = client.get(api(b, "/chats")).json()["chats"]
+        assert any(s["chat_id"] == "s-a" for s in a_chats)
+        assert b_chats == []  # B never saw the chat
 
-        # each profile has its OWN sessions.db under its own dir (persist=True creates
+        # each profile has its OWN chats.db under its own dir (persist=True creates
         # one per runtime at boot); the chat lives only in A's, and neither is the root's
-        assert (profiles.profile_dir(a) / "sessions.db").exists()
-        assert (profiles.profile_dir(b) / "sessions.db").exists()
+        assert (profiles.profile_dir(a) / "chats.db").exists()
+        assert (profiles.profile_dir(b) / "chats.db").exists()
         assert profiles.profile_dir(a) != profiles.profile_dir(b)
-        assert not (profiles.data_dir() / "sessions.db").exists()
+        assert not (profiles.data_dir() / "chats.db").exists()
 
 
 # --- b. remember tool: A's profile.db changes, B's absent; GET B/memory empty ---
@@ -177,11 +177,11 @@ def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
         assert r.status_code == 200, r.text
 
         # A's settings.json updated; B's has no focuses
-        assert Settings(profiles.profile_dir(a) / "settings.json").get_focuses() == [
+        assert Settings(profiles.profile_dir(a) / "config.yaml").get_focuses() == [
             "research",
             "coding",
         ]
-        assert Settings(profiles.profile_dir(b) / "settings.json").get_focuses() == []
+        assert Settings(profiles.profile_dir(b) / "config.yaml").get_focuses() == []
 
         # regression: after reload A's config still points at A's data_dir (not root/B)
         assert a_runtime.config.data_dir == a_data_dir
@@ -190,6 +190,53 @@ def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
         # B's runtime config untouched
         b_runtime = client.app.state.profiles.get(b)
         assert b_runtime.config.data_dir == profiles.profile_dir(b)
+
+
+# --- c2. per-profile LLM Active override (ADR 0015): A overrides, B inherits ---
+
+
+def test_llm_override_isolated_via_endpoint(monkeypatch):
+    """POST A/settings/llm-override points A's Active Text model at a shared config and
+    reloads A's runtime; B inherits the install-wide Active and the install-wide Active
+    itself never moves. Clearing restores inheritance; an unknown id is a 404."""
+    from assistant import llm_configs
+
+    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
+    with _two_profile_client(monkeypatch) as client:
+        a, b = _boot_two(client)
+        e1 = llm_configs.save_config({"name": "A", "type": "anthropic", "model": "claude-x"})
+        e2 = llm_configs.save_config({"name": "O", "type": "openai", "model": "gpt-x"})
+        # Activate e1 install-wide via the real endpoint so EVERY runtime reloads and
+        # picks up the store (mirrors the composer switch); B then inherits claude-x.
+        assert client.post(f"/api/llm-configs/{e1['id']}/use").status_code == 200
+
+        r = client.post(api(a, "/settings/llm-override"), json={"config_id": e2["id"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["llm_override"] == e2["id"]
+
+        sa = client.get(api(a, "/settings")).json()
+        assert sa["llm_override"] == e2["id"]
+        assert sa["llm_active"] == e2["id"]
+        assert sa["assistant"]["model"] == "gpt-x"  # A's runtime rebuilt on the override
+
+        sb = client.get(api(b, "/settings")).json()
+        assert sb["llm_override"] is None  # B never overrode
+        assert sb["llm_active"] == e1["id"]
+        assert sb["assistant"]["model"] == "claude-x"
+
+        assert llm_configs.active_id() == e1["id"]  # install-wide Active untouched
+
+        # Clear A's override → back to the inherited install-wide Active.
+        r = client.post(api(a, "/settings/llm-override"), json={"config_id": ""})
+        assert r.status_code == 200 and r.json()["llm_override"] is None
+        sa = client.get(api(a, "/settings")).json()
+        assert sa["llm_override"] is None
+        assert sa["assistant"]["model"] == "claude-x"
+
+        # Unknown id is rejected (never persisted).
+        bad = client.post(api(a, "/settings/llm-override"), json={"config_id": "c_ghost"})
+        assert bad.status_code == 404
 
 
 # --- d. usage: recording a turn's usage in A writes A/usage.json only ---
@@ -235,6 +282,37 @@ def test_skills_dir_isolated(monkeypatch):
         assert not (b_cfg.skills_dir / "SKILL.md").exists()
 
 
+# --- e2. skills: a Suppression in A is invisible to B; install-wide Disable hits both ---
+
+
+def test_skill_suppression_isolated_but_disable_is_global(monkeypatch):
+    """A per-profile Suppression (ADR 0016 t02) turns a shared skill off for A only —
+    B's resolved skill set is unchanged. An install-wide Disable, by contrast, changes
+    both. Asserted through the /api/p/{pid}/skills projection the Skills tab reads."""
+    with _two_profile_client(monkeypatch) as client:
+        a, b = _boot_two(client)
+
+        def avail(pid, name):
+            rows = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
+            return rows[name]["available"]
+
+        # Baseline: both profiles see the shared bundled skill.
+        assert avail(a, "web-research") is True
+        assert avail(b, "web-research") is True
+
+        # Suppress in A only → A loses it, B keeps it.
+        assert client.post(api(a, "/skills/web-research/suppress")).status_code == 200
+        assert avail(a, "web-research") is False
+        assert avail(b, "web-research") is True  # B's resolved set is untouched
+
+        # An install-wide Disable of a DIFFERENT skill changes BOTH profiles.
+        assert (
+            client.post("/api/skills/pdf-tools/state", json={"enabled": False}).status_code == 200
+        )
+        assert avail(a, "pdf-tools") is False
+        assert avail(b, "pdf-tools") is False
+
+
 # --- f. permissions: now GLOBAL — a grant is install-wide, visible to every profile ---
 
 
@@ -254,11 +332,15 @@ def test_permissions_are_global(monkeypatch):
         assert b_cfg.root_dir / "permissions.json" == root_perm
         assert a_cfg.data_dir != b_cfg.data_dir  # profiles are still isolated elsewhere
 
-        PermissionStore(root_perm).grant("/tmp/work-repo")
+        PermissionStore(root_perm).grant_command("gmail_send")
 
         # visible via BOTH profiles' gateway stores (they share the file)
-        assert client.app.state.profiles.get(a).gateway._permissions.is_allowed("/tmp/work-repo")
-        assert client.app.state.profiles.get(b).gateway._permissions.is_allowed("/tmp/work-repo")
+        assert (
+            "gmail_send" in client.app.state.profiles.get(a).gateway._permissions.granted_commands()
+        )
+        assert (
+            "gmail_send" in client.app.state.profiles.get(b).gateway._permissions.granted_commands()
+        )
         # and no per-profile file was created
         assert not (profiles.profile_dir(a) / "permissions.json").exists()
         assert not (profiles.profile_dir(b) / "permissions.json").exists()
@@ -306,7 +388,7 @@ def test_voice_system_tool_isolated(monkeypatch):
     with _two_profile_client(monkeypatch) as client:
         a, b = _boot_two(client)
         a_runtime = client.app.state.profiles.get(a)
-        a_settings = Settings(a_runtime.config.data_dir / "settings.json")
+        a_settings = Settings(a_runtime.config.data_dir / "config.yaml")
 
         # pick a valid non-default voice for the active provider
         provider = voice_providers.get(a_settings.voice_provider())
@@ -317,9 +399,9 @@ def test_voice_system_tool_isolated(monkeypatch):
         msg = asyncio.run(_run_tool(set_voice, voice=target))
         assert "Voice set to" in msg
 
-        assert Settings(profiles.profile_dir(a) / "settings.json").get_voice() == target
+        assert Settings(profiles.profile_dir(a) / "config.yaml").get_voice() == target
         # B's settings.json has no voice override → its provider default
-        b_settings = Settings(profiles.profile_dir(b) / "settings.json")
+        b_settings = Settings(profiles.profile_dir(b) / "config.yaml")
         assert (
             b_settings.get_voice() == voice_providers.get(b_settings.voice_provider()).default_voice
         )
@@ -331,17 +413,17 @@ def test_voice_system_tool_isolated(monkeypatch):
 async def test_a_scheduler_fires_while_b_active(monkeypatch):
     """Schedule a near-due task in A's runtime, interact with B, and assert A's
     scheduler autonomously fires A's task to a terminal state — deterministic (fake
-    executor, short interval, poll with timeout; no long sleeps)."""
+    agent, short interval, poll with timeout; no long sleeps)."""
     from datetime import datetime, timedelta
 
     from assistant.config import load_config
     from assistant.gateway.core import build_gateway
-    from assistant.tasks import DeliverableStatus, TaskStatus
+    from assistant.tasks.model import RunStatus
 
     use_fake_agent(monkeypatch)
 
-    a_meta = profiles.create_profile("Work", "teal")
-    b_meta = profiles.create_profile("Personal", "coral")
+    a_meta = profiles.create_profile("Work", "#109e91")
+    b_meta = profiles.create_profile("Personal", "#f95339")
     profiles.profile_dir(a_meta.id).mkdir(parents=True, exist_ok=True)
     profiles.profile_dir(b_meta.id).mkdir(parents=True, exist_ok=True)
 
@@ -349,6 +431,11 @@ async def test_a_scheduler_fires_while_b_active(monkeypatch):
     b_cfg = load_config().with_profile(b_meta)
     a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True)
     b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True)
+    # build_gateway wires the TaskService into the Gateway's agent tools, but the
+    # reverse wiring (turns/stops for runs) is the caller's job — normally done by
+    # ProfileManager; do it here since this test drives build_gateway directly.
+    a_tasks.set_gateway(a_gw)
+    b_tasks.set_gateway(b_gw)
     # A ticks fast so the test stays deterministic without long sleeps
     a_tasks._scheduler_interval = 0.05
     await a_gw.start()
@@ -356,47 +443,36 @@ async def test_a_scheduler_fires_while_b_active(monkeypatch):
     await a_tasks.start()
     await b_tasks.start()
 
-    fired = asyncio.Event()
-
-    async def fake_executor(task_id, mgr, asker):
-        # produce the task's deliverable so it lands COMPLETED (no LLM)
-        t = await a_tasks.store.get(task_id)
-        for d in t.pending_deliverables():
-            await a_tasks.store.set_deliverable_status(task_id, d["id"], DeliverableStatus.PRODUCED)
-        fired.set()
-
-    a_tasks._manager.executor = fake_executor
-
     try:
-        # seed a PLANNED, near-due SCHEDULED task directly (bypass the LLM planner):
-        # a deliverable makes _is_planned True so _fire submits it to the manager.
+        # seed a near-due one-off task directly on A's store (bypass the tool
+        # layer/LLM); the fake agent (echo) stands in for the run's turn.
         now = datetime.now().astimezone()
-        task = await a_tasks.store.create(
+        task = await a_tasks.store.create_task(
             "due soon",
-            status=TaskStatus.SCHEDULED,
-            scheduled_for=(now - timedelta(seconds=1)).isoformat(),
+            "produce the output",
+            schedule={"kind": "once", "at": (now - timedelta(seconds=1)).isoformat()},
         )
-        await a_tasks.store.add_deliverable(task.id, "the output")
 
         # meanwhile, drive a message through B (B is the "active" profile)
-        reply = await b_gw.send_message("busy over here", session_id="b1")
+        reply = await b_gw.send_message("busy over here", chat_id="b1")
         assert reply.startswith("echo[")
 
-        # A's scheduler fired A's task autonomously while B was in use
-        await asyncio.wait_for(fired.wait(), timeout=5)
-
-        async def _terminal():
+        # A's scheduler fired A's task autonomously while B was in use — poll for
+        # its run to land in a terminal state (no long sleeps: short interval +
+        # bounded poll).
+        async def _terminal_run():
             for _ in range(100):
-                got = await a_tasks.store.get(task.id)
-                if got.status in TaskStatus.TERMINAL:
-                    return got
+                t = await a_tasks.get_task(task.id)
+                last = t["last_run"] if t else None
+                if last and last["status"] in RunStatus.TERMINAL:
+                    return last
                 await asyncio.sleep(0.05)
-            return await a_tasks.store.get(task.id)
+            return None
 
-        done = await _terminal()
-        assert done.status == TaskStatus.COMPLETED
+        run = await asyncio.wait_for(_terminal_run(), timeout=5)
+        assert run is not None and run["status"] == "completed"
         # B's store never saw the task
-        assert await b_tasks.store.get(task.id) is None
+        assert await b_tasks.store.get_task(task.id) is None
     finally:
         await a_tasks.close()
         await b_tasks.close()

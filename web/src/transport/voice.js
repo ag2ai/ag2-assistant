@@ -21,7 +21,7 @@ registerProcessor('pcm16', PCM16)`
 
 export class VoiceController {
   constructor(query, handlers = {}, inputRate = 16000) {
-    this.query = query // "?task=<id>" or "?session=<id>"
+    this.query = query // "?task=<id>" or "?chat=<id>"
     this.h = handlers  // {onState, onTranscript, onTurnEnd, onEvent, onAudio}
     this.inputRate = inputRate  // mic capture rate the active provider expects (Gemini 16k / OpenAI 24k)
     this.ws = null; this.micCtx = null; this.micNode = null; this.micStream = null

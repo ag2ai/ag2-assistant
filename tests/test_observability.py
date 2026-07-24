@@ -3,6 +3,9 @@ and the shape of the history that triggered it."""
 
 import json
 
+from ag2.events import ModelRequest, ModelResponse
+
+import assistant.observability as obs
 from assistant.config import load_config
 from assistant.observability import capture_failure, log_suppressed, setup_logging
 
@@ -28,7 +31,6 @@ def _cfg(tmp_path):
 
 
 def test_setup_logging_creates_logfile_at_root(tmp_path):
-    import assistant.observability as obs
 
     obs._CONFIGURED = False  # setup is idempotent via a module global; reset for this test
     cfg = _cfg(tmp_path)
@@ -42,7 +44,6 @@ def test_setup_logging_creates_logfile_at_root(tmp_path):
 
 
 def test_profile_logger_tags_records(tmp_path):
-    import assistant.observability as obs
 
     obs._CONFIGURED = False
     cfg = _cfg(tmp_path)
@@ -59,13 +60,12 @@ def test_profile_logger_tags_records(tmp_path):
 async def test_capture_failure_writes_record_with_history_shape(tmp_path):
     cfg = _cfg(tmp_path)
     setup_logging(cfg)
-    from ag2.events import ModelRequest, ModelResponse
 
     stream = _Stream([ModelRequest(parts=[]), ModelResponse(message=None)])
     err = ValueError("400 INVALID_ARGUMENT boom")
     path = await capture_failure(
         cfg,
-        session_id="task:abc",
+        chat_id="task:abc",
         surface="ctx",
         user_text="hi",
         error=err,
@@ -73,7 +73,7 @@ async def test_capture_failure_writes_record_with_history_shape(tmp_path):
     )
     assert path is not None
     rec = json.loads(open(path).read())
-    assert rec["session_id"] == "task:abc"
+    assert rec["chat_id"] == "task:abc"
     assert rec["error_type"] == "ValueError" and "boom" in rec["error"]
     assert rec["event_count"] == 2
     assert rec["event_types"].get("ModelRequest") == 1
@@ -85,7 +85,7 @@ async def test_capture_failure_writes_record_with_history_shape(tmp_path):
 async def test_capture_failure_best_effort_no_stream(tmp_path):
     cfg = _cfg(tmp_path)
     setup_logging(cfg)
-    path = await capture_failure(cfg, session_id="s1", error=RuntimeError("x"))
+    path = await capture_failure(cfg, chat_id="s1", error=RuntimeError("x"))
     assert path and json.loads(open(path).read())["event_count"] == 0
 
 

@@ -40,6 +40,23 @@ export function fmtAgo(v) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
+// Ultra-compact relative past for dense lists (the drawer's chat rows): "now",
+// "5m", "2h", "3d", else a short date. Sibling of fmtAgo without the " ago"
+// tail — the row has no room for it and the header already frames the day.
+export function fmtAgoShort(v) {
+  const d = toDate(v)
+  if (!d) return ''
+  const ms = Date.now() - d.getTime()
+  const mins = Math.round(ms / 60000)
+  if (mins < 1) return 'now'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.round(hours / 24)
+  if (days < 7) return `${days}d`
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
 // Neat, human absolute date-time for a specific moment (e.g. a scheduled run) —
 // replaces raw ISO like "2026-06-23T08:15:00+10:00". Day-aware:
 //   "Today 8:15 AM", "Tomorrow 8:15 AM", "Yesterday 8:15 AM",
@@ -58,6 +75,77 @@ export function fmtDateTime(v) {
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+// Stable per-calendar-day key for grouping thread items under date breakpoints.
+// Two moments share a key iff they fall on the same local calendar day. Returns
+// null when the item has no time yet (live/streaming items before `created_at`
+// lands) so no divider is drawn for them.
+export function dayKey(v) {
+  const d = toDate(v)
+  if (!d) return null
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
+// Label for a day breakpoint between messages, ChatGPT-style: a relative day name
+// ("Today" / "Yesterday") or an absolute date for anything older, ALWAYS followed
+// by that day's first-message time — "Today at 5:24 PM", "Yesterday at 11:00 AM",
+// "Fri, Jun 26 at 5:24 PM" (localized, e.g. "пт, 26 июн. в 17:24"). The year shows
+// only when it isn't the current one. `v` is the first-of-day item's `at`, so the
+// time is that first message's time.
+export function fmtDay(v) {
+  const d = toDate(v)
+  if (!d) return ''
+  const now = new Date()
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
+  const dayDiff = Math.round((startOfDay(d) - startOfDay(now)) / 86400000)
+  let day
+  if (dayDiff === 0) day = 'Today'
+  else if (dayDiff === -1) day = 'Yesterday'
+  else {
+    const opts = { weekday: 'short', month: 'short', day: 'numeric' }
+    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
+    day = d.toLocaleDateString([], opts)
+  }
+  return `${day} at ${time}`
+}
+
+// Date-only day label for a section header (the chats list), sibling to fmtDay
+// but WITHOUT the "at TIME" tail — a header groups many rows, each with its own
+// time, so a single time would be meaningless. Today's group reads "Recent"
+// (friendlier than "Today" for a chat list); "Yesterday" otherwise a relative
+// day name is dropped for an absolute date: "Wed, Jul 13" — weekday + month +
+// day, with the year appended only when it isn't the current one.
+export function fmtDayShort(v) {
+  const d = toDate(v)
+  if (!d) return ''
+  const now = new Date()
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
+  const dayDiff = Math.round((startOfDay(d) - startOfDay(now)) / 86400000)
+  if (dayDiff === 0) return 'Recent'
+  if (dayDiff === -1) return 'Yesterday'
+  const opts = { weekday: 'short', month: 'short', day: 'numeric' }
+  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
+  return d.toLocaleDateString([], opts)
+}
+
+// Interleave day breakpoints through a list of items: each item is tagged with
+// `sep` — the divider/header label to render above it when it's the first item
+// of a new calendar day, else null. `label` builds that string from the item's
+// `at` (defaults to fmtDay, the thread's per-item divider with a time; the chats
+// list passes fmtDayShort for date-only section headers). Items without a time
+// (`at` missing/blank — a live/streaming bubble before created_at lands, or a
+// bare chat stub) never start a new day, so they ride under the previous
+// header. Pure so the views and their tests share one source of truth.
+export function dayRows(items, label = fmtDay) {
+  let lastDay = null
+  return items.map((item) => {
+    const key = dayKey(item.at)
+    const sep = key && key !== lastDay ? label(item.at) : null
+    if (key) lastDay = key
+    return { item, sep }
+  })
+}
+
 // Combined inline stamp shown on thread items / the task panel: "4:52 AM · 2h ago".
 export function fmtStamp(v) {
   const clock = fmtClock(v)
@@ -70,6 +158,15 @@ export function fmtWhen(v) {
   const d = toDate(v)
   if (!d) return ''
   return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
+// A task's place in the drawer's recency list — the task analogue of a chat's
+// `updated`. Its last run's end time, or its start when the run is still
+// running/waiting (no end yet), falling back to creation for a task that never
+// ran. Pure, so the drawer's grouping and its tests share one source of truth.
+export function taskRecencyAt(task) {
+  const r = task.last_run
+  return (r && (r.ended_at || r.started_at)) || task.created_at
 }
 
 // Relative future until a scheduled time — "Next in 3 mins" / "Due now". Recomputed

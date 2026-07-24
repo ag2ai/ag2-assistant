@@ -1,12 +1,12 @@
-// One WebSocket to /api/p/{pid}/stream for a session. Receives the session's
+// One WebSocket to /api/p/{pid}/stream for a chat. Receives the chat's
 // events ({event:{type,data}}) — replayed on connect, then live — and sends
 // turns. The caller folds events into thread items via project.js.
 
 import { api as P, onProfileGone } from '../lib/profile.js'
 
 export class StreamClient {
-  constructor(sessionId, { onEvent, onReady, onOpen, onTurnEnd, onQueued, onError } = {}) {
-    this.sessionId = sessionId
+  constructor(chatId, { onEvent, onReady, onOpen, onTurnEnd, onQueued, onError } = {}) {
+    this.chatId = chatId
     this.onEvent = onEvent || (() => {})
     this.onReady = onReady || (() => {})
     // The server fed this message to the turn already running. It won't come back as an
@@ -26,7 +26,7 @@ export class StreamClient {
 
   connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${location.host}${P('/stream?session=' + encodeURIComponent(this.sessionId))}`
+    const url = `${proto}://${location.host}${P('/stream?chat=' + encodeURIComponent(this.chatId))}`
     this.ws = new WebSocket(url)
     this.ws.onopen = () => { this.onOpen(); const q = this._queue; this._queue = []; q.forEach((o) => this._raw(o)) }
     this.ws.onmessage = (e) => {
@@ -65,5 +65,6 @@ export class StreamClient {
   cancel() { this._send({ type: 'cancel' }) }
   answer(id, answer) { this._send({ type: 'answer', id, answer }) }
   feedback(payload) { this._send({ type: 'feedback', ...payload }) }
+  clearFeedback(payload) { this._send({ type: 'feedback_clear', ...payload }) }
   close() { this._closed = true; try { this.ws && this.ws.close() } catch {} }
 }

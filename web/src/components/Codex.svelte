@@ -196,10 +196,10 @@
     margin-top: 6px;
   }
   .codex .warn {
-    color: #d8552f;
+    color: var(--danger);
   }
   .codex .err {
-    color: #d8552f;
+    color: var(--danger);
     font-size: 13px;
   }
   .codex .ok {
@@ -267,13 +267,6 @@
   .codex .foot :global(.modal-close) {
     align-self: auto;
   }
-
-  /* The single primary action, so there's never a question which button to press. */
-  .codex .open.primary {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .codex .open.primary:hover:not(:disabled) {
-    background: var(--accent-soft);
-  }
+  /* .open / .open.primary come from the app-wide button rules (app.css); the modal
+     ancestor supplies them here. Only the positional override above is local. */
 </style>

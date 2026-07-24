@@ -35,7 +35,7 @@ export function clearStoredProfileId() {
   try { localStorage.removeItem(LS_KEY) } catch {}
 }
 
-// Profile-scoped URL: api('/sessions') -> '/api/p/<pid>/sessions'.
+// Profile-scoped URL: api('/chats') -> '/api/p/<pid>/chats'.
 export function api(path) {
   return `/api/p/${encodeURIComponent(_activeId)}${path}`
 }

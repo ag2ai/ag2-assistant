@@ -1,106 +1,124 @@
 /* ============================================================
-   AG2 Assistant — Color tokens
+   AG2 Assistant — Color tokens  ·  "AG2 / Signal"
    ------------------------------------------------------------
-   Anchored to the real app (--accent #f95339 coral, the AG2
-   brand red) but evolved WARM + organic: neutrals carry a faint
-   amber/sand tint instead of the cold pure greys of the shipping
-   build, so surfaces feel like paper rather than glass.
+   A technical "AI Operating System" identity — cold neutral base
+   (no warm/amber tint), a deep blue-violet system colour, and a
+   bright cyan reserved for interactive states. Surfaces read like
+   a precise system console, NOT paper. (Raycast / Arc / Linear
+   territory, with its own voice.)
 
-   Three layers:
-     1. Brand scales      — coral primary, full ramp
-     2. Categorical / AG2 — the robot-antenna palette, mapped to
-                            AG2 event subsystems (Model, Tool, …)
-     3. Semantic aliases  — bg / surface / text / border / state,
+   Layers:
+     1. Brand scales      — heritage coral, kept for mascot/antenna
+     2. AG2 system colour — indigo (structure) + cyan (interaction)
+     3. Categorical / AG2 — the subsystem palette (Model, Tool, …)
+     4. Semantic aliases  — bg / surface / text / border / state,
                             themed for light (default) + dark.
    ============================================================ */
 
 :root {
-  /* ---- Brand: AG2 Coral (primary) ---- */
+  /* ---- Heritage: AG2 Coral (mascot antenna / brand moments) ---- */
   --coral-50:  #fff2ee;
   --coral-100: #ffe1d8;
   --coral-200: #ffc4b4;
   --coral-300: #fb9e84;
   --coral-400: #fb7758;
-  --coral-500: #f95339;  /* ← AG2 brand accent (exact) */
+  --coral-500: #f95339;  /* ← AG2 brand red (exact) */
   --coral-600: #e53c20;
   --coral-700: #bd2f18;
   --coral-800: #8f2614;
   --coral-900: #5e1b10;
 
-  /* ---- Warm neutral ramp (sand → espresso) ---- */
-  --sand-0:   #ffffff;
-  --sand-25:  #fcfbf8;
-  --sand-50:  #f8f5f0;
-  --sand-100: #f1ece4;
-  --sand-200: #e7e0d5;
-  --sand-300: #d6ccbd;
-  --sand-400: #b3a99a;
-  --sand-500: #8c847a;
-  --sand-600: #6b645b;
-  --sand-700: #4c463f;
-  --sand-800: #2e2a25;
-  --sand-900: #1d1a16;
-  --sand-950: #14110f;
+  /* ---- Cold neutral ramp (slate: light canvas → deep space) ----
+     Kept under the historic --sand-* names so every existing
+     reference re-themes automatically; the values are now COLD. */
+  --sand-0:   #ffffff;  /* light surface / elevated          */
+  --sand-25:  #fafbfc;  /* near-white                        */
+  --sand-50:  #f5f7fa;  /* light canvas                      */
+  --sand-100: #eef1f5;  /* light sidebar / sunk              */
+  --sand-200: #dde2e8;  /* light border                      */
+  --sand-300: #c8cfd8;  /* light strong border               */
+  --sand-400: #b5bdc7;  /* light text-disabled               */
+  --sand-500: #8a94a2;  /* light text-muted                  */
+  --sand-600: #5f6875;  /* light text-secondary              */
+  --sand-700: #454c56;  /* dark text-disabled                */
+  --sand-800: #242a33;  /* dark border                       */
+  --sand-900: #161a20;  /* light text-primary                */
+  --sand-950: #0b0d10;  /* dark canvas (deepest)             */
+
+  /* ---- AG2 system colour ----
+     Indigo = structure/system chrome; Cyan = pure interaction.
+     These are FIXED (do not follow the user's workspace accent);
+     the accent stays personal (see --accent below). */
+  --ag2-indigo:       #4f46e5;  /* light-theme step */
+  --ag2-indigo-bright: #6366f1; /* dark-theme step  */
+  --ag2-cyan:         #0891b2;  /* light-theme step */
+  --ag2-cyan-bright:  #22d3ee;  /* dark-theme step  */
 
   /* ---- Categorical: AG2 subsystem palette ----
-     Drawn from the AG2 brand robot-antenna colors and the app's
-     own ag2map.js. Use to color-code agents, event layers, tags. */
-  --ag2-model:    #4c8bf5;  /* blue   — Agent ↔ model (LLM calls) */
-  --ag2-tool:     #1f9d55;  /* green  — tools: search/shell/code  */
-  --ag2-memory:   #9b59b6;  /* purple — knowledge & compaction    */
-  --ag2-subagent: #e67e22;  /* orange — run_task subagents         */
-  --ag2-hitl:     #e0b400;  /* amber  — human-in-the-loop          */
-  --ag2-observer: #c2410c;  /* rust   — observers: alerts & halts  */
-  --ag2-voice:    #16a3a3;  /* aqua   — LiveAgent realtime voice   */
-  --ag2-usage:    #8c847a;  /* sand   — token usage / stream       */
+     Cooled to sit inside the Signal system; still color-codes
+     agents, event layers and tags (see ag2map.js). */
+  --ag2-model:    #6366f1;  /* indigo — Agent ↔ model (LLM calls) */
+  --ag2-tool:     #22d3ee;  /* cyan   — tools: search/shell/code  */
+  --ag2-memory:   #a78bfa;  /* violet — knowledge & compaction    */
+  --ag2-subagent: #38bdf8;  /* sky    — run_task subagents         */
+  --ag2-hitl:     #fbbf24;  /* amber  — human-in-the-loop          */
+  --ag2-observer: #fb7185;  /* rose   — observers: alerts & halts  */
+  --ag2-voice:    #2dd4bf;  /* teal   — LiveAgent realtime voice   */
+  --ag2-usage:    #6f7885;  /* slate  — token usage / stream       */
 
-  /* ---- State hues ---- */
-  --green-500:  #1f9d55;
-  --green-600:  #178048;
-  --amber-500:  #e0b400;
-  --red-500:    #d8552f;
-  --red-600:    #c2410c;
-  --blue-500:   #4c8bf5;
+  /* ---- State hues (cold, Signal semantics) ---- */
+  --green-500:  #10b981;
+  --green-600:  #059669;
+  --amber-500:  #f59e0b;
+  --red-500:    #e11d48;
+  --red-600:    #be123c;
+  --blue-500:   #0ea5e9;
 
   /* =========================================================
      SEMANTIC ALIASES — Light theme (default)
+     Cold system, NOT pure white: canvas #F5F7FA, cards #FFFFFF.
      ========================================================= */
 
   /* Surfaces */
-  --bg:            var(--sand-50);   /* app canvas — warm paper   */
+  --bg:            var(--sand-50);   /* app canvas — cool slate   */
   --surface:       var(--sand-0);    /* cards, bubbles, modals    */
-  --surface-sunk:  var(--sand-100);  /* code blocks, wells, input */
+  --surface-sunk:  var(--sand-100);  /* code blocks, wells        */
   --surface-hover: var(--sand-100);
-  --panel:         var(--sand-25);   /* drawer / rails            */
+  --surface-elevated: var(--sand-0); /* popovers, modals, composer — elevation via shadow in light */
+  --panel:         var(--sand-100);  /* drawer / rails (sidebar)  */
 
   /* Ink */
-  --text:          var(--sand-900);
-  --text-muted:    var(--sand-500);
-  --text-faint:    var(--sand-400);
+  --text:          var(--sand-900);  /* #161a20 primary           */
+  --text-muted:    var(--sand-600);  /* #5f6875 secondary         */
+  --text-faint:    var(--sand-500);  /* #8a94a2 muted             */
   --text-on-coral: #ffffff;
   --text-on-dark:  var(--sand-25);
 
   /* Lines */
-  --line:          var(--sand-200);
-  --line-strong:   var(--sand-300);
+  --line:          var(--sand-200);  /* #dde2e8                   */
+  --line-strong:   var(--sand-300);  /* #c8cfd8                   */
 
   /* Brand / interactive — driven by the active palette (see palettes.css).
      The --accent* tokens resolve to whatever palette is set via [data-palette];
      soft + ring derive from --accent so they follow the palette automatically. */
   --accent:        var(--p-500);
-  --accent-hover:  var(--p-600);
-  --accent-press:  var(--p-700);
+  --accent-hover:  color-mix(in srgb, #fff 9%, var(--accent)); /* ~9% lighter, calmer than a darker press */
+  --accent-press:  var(--p-600);
   --accent-soft:   color-mix(in srgb, var(--accent) 12%, transparent); /* tinted fills, unseen rows */
+  --accent-border: color-mix(in srgb, var(--accent) 22%, transparent); /* card frames — soft, not a bright rule */
   --accent-ring:   color-mix(in srgb, var(--accent) 38%, transparent);
   --text-on-accent: #ffffff;
   /* Fixed brand pop — AG2 coral, independent of the chosen palette
      (lives in the mascot antenna + heritage moments). */
   --brand-coral:   var(--coral-500);
 
-  /* Message bubbles — the user's bubble follows the palette accent. */
-  --user-bubble:     var(--accent);
-  --user-bubble-ink: #ffffff;
-  --agent-bubble:    var(--sand-0);
+  /* Message bubbles — both neutral Surface cards; the user's carries only a
+     whisper of the palette accent (≤5% tint + a thin tinted border) so the
+     UI reads calm with ANY workspace accent, white included. */
+  --user-bubble:        color-mix(in srgb, var(--accent) 5%, var(--surface));
+  --user-bubble-border: color-mix(in srgb, var(--accent) 22%, var(--line));
+  --user-bubble-ink:    var(--text);
+  --agent-bubble:    var(--surface);
   --agent-bubble-ink: var(--sand-900);
 
   /* State */
@@ -116,38 +134,58 @@
 }
 
 /* =========================================================
-   SEMANTIC ALIASES — Dark theme
-   Warm espresso, not cold black. Opt in with [data-theme="dark"]
-   on a wrapper; also honors the OS preference automatically.
+   SEMANTIC ALIASES — Dark theme  ·  "AG2 / Signal"
+   Cold near-black system (#0B0D10), NOT warm espresso. Opt in
+   with [data-theme="dark"]; also honors the OS preference.
    ========================================================= */
 
 [data-theme="dark"] {
-  --bg:            var(--sand-950);
-  --surface:       var(--sand-900);
-  --surface-sunk:  #221d19;
-  --surface-hover: #262019;
-  --panel:         #1a1713;
+  /* Elevation ladder so cards, inputs and the sidebar don't blend.
+     bg (canvas) < panel (sidebar/rails) < surface (cards/bubbles) <
+     elevated (popovers/modals/composer) < sunk/hover (wells). Cold
+     slate steps, each ~+3–5% lightness. */
+  --bg:            #0b0d10;  /* app canvas — deepest         */
+  --panel:         #0f1217;  /* drawer / rails (sidebar)     */
+  --surface:       #13171d;  /* cards, bubbles               */
+  --surface-elevated: #181d25; /* popovers, modals, composer */
+  --surface-sunk:  #1b212a;  /* code wells                   */
+  --surface-hover: #1b212a;  /* interactive / hover          */
 
-  --text:          var(--sand-25);
-  --text-muted:    #998f83;
-  --text-faint:    #6b645b;
+  --text:          #f2f4f7;  /* primary   */
+  --text-muted:    #a7afbb;  /* secondary */
+  --text-faint:    #6f7885;  /* muted     */
   --text-on-coral: #ffffff;
   --text-on-accent: #ffffff;
-  --text-on-dark:  var(--sand-25);
+  --text-on-dark:  #f2f4f7;
 
-  --line:          #2e2823;
-  --line-strong:   #3c352d;
+  /* Solid cold borders — thin structural rules, not white-alpha haze. */
+  --line:          #242a33;  /* border        */
+  --line-strong:   #303844;  /* strong border */
+
+  /* AG2 system colour lifts to the brighter steps on dark. */
+  --ag2-indigo:    #6366f1;
+  --ag2-cyan:      #22d3ee;
+
+  /* State hues lift for dark surfaces (Signal semantics). */
+  --green-500:     #34d399;
+  --green-600:     #10b981;
+  --amber-500:     #fbbf24;
+  --red-500:       #fb7185;
+  --red-600:       #f43f5e;
+  --blue-500:      #38bdf8;
 
   /* Palette-driven; dark uses the brighter palette steps. */
   --accent:        var(--p-400);
-  --accent-hover:  var(--p-300);
-  --accent-press:  var(--p-200);
+  --accent-hover:  color-mix(in srgb, #fff 10%, var(--accent)); /* ~10% lighter */
+  --accent-press:  var(--p-300);
   --accent-soft:   color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 25%, transparent);
   --accent-ring:   color-mix(in srgb, var(--accent) 45%, transparent);
 
-  --user-bubble:     var(--p-500);
-  --user-bubble-ink: #ffffff;
-  --agent-bubble:    var(--sand-900);
+  --user-bubble:        color-mix(in srgb, var(--accent) 8%, var(--surface));
+  --user-bubble-border: color-mix(in srgb, var(--accent) 24%, var(--line-strong));
+  --user-bubble-ink:    var(--text);
+  --agent-bubble:    var(--surface);
   --agent-bubble-ink: var(--sand-25);
 
   color-scheme: dark;

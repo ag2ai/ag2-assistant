@@ -4,12 +4,13 @@ per-profile provider/model + Advanced-JSON settings.
 An LLM configuration is a named, type-tagged bundle of what it takes to reach one
 model: a ``type`` (one of :data:`TYPES`), a ``model`` name, an optional endpoint
 (``base_url`` for OpenAI/Anthropic-compatible servers, ``host`` for Ollama), a
-free-form ``options`` escape-hatch object, and — held separately in the secrets
-store, never here — an optional per-config API key. The list *and* the single
+free-form ``options`` escape-hatch object, and an optional ``secret_id``
+referencing a Secret (the key itself lives in the secrets store, never here). The list *and* the single
 ``active`` selection are install-wide (the LLM is common across profiles), so this
-store lives at ``data_dir()/llm_configs.json`` (no secrets) alongside
-``secrets.json`` and resolves its path the same standalone way (via
-``config.data_dir()``), so it never recurses back into ``load_config()``.
+store lives in the ``llm_configs:`` section of the global ``config.yaml`` (no
+secrets), read/written via ``config.read_global_config`` / ``update_global_section``
+so it shares the file without disturbing neighbouring sections and never recurses
+back into ``load_config()``.
 
 The bridge to the rest of the app is :func:`apply_active`: ``load_config()`` calls
 it to *derive* the active entry onto the flat ``cfg.llm`` fields
@@ -27,9 +28,9 @@ ollama           ollama            ``{host?}``
 ===============  ================  =============================
 
 An entry's ``options`` merge FIRST, the type-forced fields (``api`` and the lifted
-``base_url``/``host``) next, and the resolved per-config ``api_key`` LAST — riding
-the ``provider_options`` merge machinery in ``model_config``. With no per-config key
-the provider's conventional env var (``KEY_ENV``) still applies. Note: an active
+``base_url``/``host``) next, and the referenced Secret's ``api_key`` LAST — riding
+the ``provider_options`` merge machinery in ``model_config``. With no referenced
+Secret the provider's conventional env var (``KEY_ENV``) still applies. Note: an active
 entry SHADOWS the ``llm`` block in ``config.json`` (that block is only the flat
 default used when the store is empty or has no active entry).
 """
@@ -37,7 +38,7 @@ default used when the store is empty or has no active entry).
 from secrets import token_hex
 
 from assistant import secrets
-from assistant.config import data_dir
+from assistant.config import read_global_config, update_global_section
 
 # The supported configuration types. ``openai`` = Chat Completions API, the surface
 # OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) implement reliably;
@@ -66,27 +67,21 @@ def _subscription_signed_in() -> bool:
     missing or broken ``codex_auth`` module must never raise into the usable()/health
     path, so any import or call failure reads as "not signed in"."""
     try:
-        from assistant import codex_auth
+        from assistant import codex_auth  # local: import cycle (codex_auth)
 
         return bool(codex_auth.is_signed_in())
     except Exception:
         return False
 
 
-def _path():
-    return data_dir() / "llm_configs.json"
+_SECTION = "llm_configs"
 
 
 def _read() -> dict:
-    """The raw store (``{"active": id|None, "configs": [...]}``). A missing or
-    malformed file reads as an empty store — the flat ``config.json`` defaults then
-    apply, exactly like a malformed ``config.json`` falls back to defaults."""
-    try:
-        import json
-
-        data = json.loads(_path().read_text())
-    except Exception:
-        return {"active": None, "configs": []}
+    """The store section (``{"active": id|None, "configs": [...]}``) of the global
+    config.yaml. A missing or malformed section reads as an empty store — the flat
+    ``llm:`` defaults then apply, exactly like a malformed config file."""
+    data = read_global_config().get(_SECTION)
     if not isinstance(data, dict):
         return {"active": None, "configs": []}
     configs = data.get("configs")
@@ -97,11 +92,9 @@ def _read() -> dict:
 
 
 def _write(data: dict) -> None:
-    import json
-
-    p = _path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2))
+    update_global_section(
+        _SECTION, {"active": data.get("active"), "configs": list(data.get("configs") or [])}
+    )
 
 
 def _clean_entry(raw: dict) -> dict:
@@ -135,6 +128,7 @@ def _clean_entry(raw: dict) -> dict:
         "model": model,
         "base_url": "" if is_subscription else str(raw.get("base_url") or "").strip(),
         "host": "" if is_subscription else str(raw.get("host") or "").strip(),
+        "secret_id": "" if is_subscription else str(raw.get("secret_id") or "").strip(),
         "options": {} if is_subscription else options,
     }
     if not entry["id"]:
@@ -175,18 +169,36 @@ def save_config(raw: dict) -> dict:
 
 
 def delete_config(cid: str) -> bool:
-    """Remove a configuration by id (returns False if unknown). Refuses to delete the
-    active one — the caller must select another first — raising ``ValueError``. The
-    per-config secret is the endpoint's to clean up (this store holds no secrets)."""
+    """Remove a configuration by id (returns False if unknown). Deleting the active one
+    is allowed: the active pointer moves to the first remaining config, or None when it
+    was the last (an empty store then falls back to the flat ``llm:`` defaults, exactly
+    like a fresh install). Referenced Secrets are independent entities and are never
+    deleted with a config."""
     data = _read()
     configs = list(data.get("configs") or [])
     if not any(c.get("id") == cid for c in configs):
         return False
+    remaining = [c for c in configs if c.get("id") != cid]
+    data["configs"] = remaining
     if data.get("active") == cid:
-        raise ValueError("cannot delete the active configuration; select another first")
-    data["configs"] = [c for c in configs if c.get("id") != cid]
+        data["active"] = remaining[0]["id"] if remaining else None
     _write(data)
     return True
+
+
+def set_secret_id(cid: str, sid: str) -> bool:
+    """Point one config at a Secret by id (empty ``sid`` clears the reference).
+    Returns False for an unknown config. Used by the save flow and by the
+    legacy-store migration."""
+    data = _read()
+    configs = list(data.get("configs") or [])
+    for i, entry in enumerate(configs):
+        if entry.get("id") == cid:
+            configs[i] = {**entry, "secret_id": (sid or "").strip()}
+            data["configs"] = configs
+            _write(data)
+            return True
+    return False
 
 
 def active_id() -> str | None:
@@ -217,14 +229,14 @@ def entry_options(entry: dict) -> dict:
 
     Merge order (later wins): the entry's own ``options`` object first; then the
     type-forced fields — ``api`` for the two OpenAI surfaces plus the lifted
-    ``base_url`` (OpenAI/Anthropic) or ``host`` (Ollama) when set; then the resolved
-    per-config ``api_key`` last, so a config's own key overrides anything in options.
-    Absent per-config key → the env fallback in ``model_config`` applies — EXCEPT
-    when the entry targets a custom ``base_url``: the shared provider key must never
-    be transmitted to a third-party/local endpoint, so a placeholder is forced
-    instead. It is non-empty on purpose (the OpenAI SDK refuses a missing key and
-    llama.cpp-style servers expect some bearer value); endpoints that need a real
-    key (e.g. MiniMax) take it via the per-config key field."""
+    ``base_url`` (OpenAI/Anthropic) or ``host`` (Ollama) when set; then the
+    referenced Secret's ``api_key`` last, so a config's own Secret overrides
+    anything in options. No resolving Secret → the env fallback in ``model_config``
+    applies — EXCEPT when the entry targets a custom ``base_url``: the shared
+    provider key must never be transmitted to a third-party/local endpoint, so a
+    placeholder is forced instead. It is non-empty on purpose (the OpenAI SDK
+    refuses a missing key and llama.cpp-style servers expect some bearer value);
+    endpoints that need a real key (e.g. MiniMax) take it via a referenced Secret."""
     opts = dict(entry.get("options") or {})
     ctype = entry.get("type")
     if ctype == "openai_subscription":
@@ -240,7 +252,7 @@ def entry_options(entry: dict) -> dict:
         opts["base_url"] = entry["base_url"]
     elif ctype == "ollama" and entry.get("host"):
         opts["host"] = entry["host"]
-    key = secrets.config_key(entry.get("id") or "")
+    key = secrets.secret_value(entry.get("secret_id") or "")
     if key:
         opts["api_key"] = key
     elif entry.get("base_url"):
@@ -248,14 +260,23 @@ def entry_options(entry: dict) -> dict:
     return opts
 
 
-def apply_active(cfg) -> None:
+def apply_active(cfg, override_id: str | None = None) -> None:
     """Derive the active configuration onto the flat ``cfg.llm`` fields, in place.
 
     No-op when the store is empty or its active id doesn't resolve (so a fresh
     install / CLI-before-store keeps the flat ``config.json`` gemini defaults). Called
     from ``load_config()`` BEFORE the env overrides, so ``AG2ASSISTANT_LLM_PROVIDER`` /
-    ``AG2ASSISTANT_MODEL`` still win last."""
-    entry = active_config()
+    ``AG2ASSISTANT_MODEL`` still win last.
+
+    ``override_id`` is a profile's per-profile **Active override** (ADR 0015): a
+    selection into this shared list that is Active *for that profile*. It is preferred
+    over the install-wide active when it resolves to a present config; a dangling
+    override (deleted config) silently falls back to the install-wide active, never an
+    error. ``config.with_profile`` passes it so the effective Active is env pin >
+    profile override > install-wide active > env fallback."""
+    entry = get_config(override_id) if override_id else None
+    if entry is None:
+        entry = active_config()
     if entry is None:
         return
     provider = PROVIDER_OF[entry["type"]]
@@ -282,7 +303,7 @@ def usable(entry: dict) -> bool:
         return True
     if entry.get("base_url"):
         return True
-    if secrets.config_key(entry.get("id") or ""):
+    if secrets.secret_value(entry.get("secret_id") or ""):
         return True
     provider = PROVIDER_OF.get(ctype, "")
     return bool(secrets.status().get(provider, {}).get("set"))
@@ -291,7 +312,7 @@ def usable(entry: dict) -> bool:
 def key_source(entry: dict) -> str:
     """Which key this configuration would actually send, for honest UI labelling:
 
-    - ``"config"`` — its own per-config key (secrets ``llm_keys``); overrides all.
+    - ``"secret"`` — its referenced Secret resolves; overrides all.
     - ``"not_needed"`` — Ollama (no key concept) or a custom ``base_url`` (a
       placeholder is sent; see :func:`entry_options` — the shared key never is).
     - ``"shared"`` — no key of its own; the provider's shared/env key (``KEY_ENV``)
@@ -302,8 +323,8 @@ def key_source(entry: dict) -> str:
     """
     if entry.get("type") == "openai_subscription":
         return "subscription"
-    if secrets.config_key(entry.get("id") or ""):
-        return "config"
+    if secrets.secret_value(entry.get("secret_id") or ""):
+        return "secret"
     if entry.get("type") == "ollama" or entry.get("base_url"):
         return "not_needed"
     provider = PROVIDER_OF.get(entry.get("type"), "")

@@ -1,16 +1,18 @@
-"""User-adjustable settings persisted to a profile's ``settings.json``.
+"""User-adjustable settings persisted to a profile's ``config.yaml``.
 
 Per-profile persistence for things toggled live from the GUI / tools: the realtime
-voice (per provider), the persisted voice provider, the project folder, focus areas,
-and the MCP server list. (The LLM provider/model is NOT here — it's the install-wide
-named ``llm_configs`` store now, common across profiles.) Kept separate from
-`config` (env/file/defaults, read-only at runtime) because these are changed at
-runtime and must persist across restarts.
+voice (per provider), the persisted voice provider, focus areas, and the MCP server
+list. (The LLM provider/model is NOT here — it's the install-wide
+named ``llm_configs`` store now, common across profiles.) These keys live at the top
+level of the same ``config.yaml`` that carries the profile's Config overlay sections
+(``llm``/``agent``/…); the read-modify-write here preserves those neighbouring
+sections. Kept separate from `config` (env/file/defaults, read-only at runtime)
+because these are changed at runtime and must persist across restarts.
 
 The store is a :class:`Settings` instance bound to an explicit path — one per
-profile. There is **no** global default path: callers hold the path for the
-profile they operate on (``config.data_dir / "settings.json"``), so an agent
-changing its voice or loading its MCP servers touches only its own profile.
+profile. There is **no** global default path: callers get the store for the profile
+they operate on via ``profile_settings(config.data_dir)``, so an agent changing its
+voice or loading its MCP servers touches only its own profile.
 
 The voice provider (Gemini or OpenAI) and its voice catalogue live in
 ``voice_providers``; this module is just the per-provider persistence layer, so
@@ -21,12 +23,13 @@ profile registry (``assistant.profiles.is_onboarded`` / ``set_onboarded``); one
 first-run flow can create several profiles, so the flag is install-level.
 """
 
-import json
 import re
 import shlex
+from math import isfinite
 from pathlib import Path
 
 from assistant import voice_providers
+from assistant.config import read_yaml, write_yaml
 
 _MCP_KEY = "mcp_servers"
 _MCP_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -46,14 +49,10 @@ class Settings:
     # --- persistence ---
 
     def _read(self) -> dict:
-        try:
-            return json.loads(self._path.read_text())
-        except Exception:
-            return {}
+        return read_yaml(self._path)
 
     def _write(self, data: dict) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(data, indent=2))
+        write_yaml(self._path, data)
 
     # --- voice provider ---
 
@@ -74,21 +73,6 @@ class Settings:
         self._write(data)
         return True
 
-    # --- project folder ---
-
-    def get_project_folder(self) -> str:
-        """The folder the assistant may read (chosen in onboarding; backs the read-only
-        repo-files MCP). Empty string if not set."""
-        v = self._read().get("project_folder")
-        return v if isinstance(v, str) else ""
-
-    def set_project_folder(self, path: str) -> None:
-        """Persist the chosen project folder. (Seeding the repo-files MCP itself is done by
-        the gateway endpoint via upsert_mcp_server.)"""
-        data = self._read()
-        data["project_folder"] = path or ""
-        self._write(data)
-
     # --- focuses (per-profile persona attribute) ---
 
     def get_focuses(self) -> list[str]:
@@ -105,6 +89,60 @@ class Settings:
         data["focuses"] = clean
         self._write(data)
         return clean
+
+    # --- gateway ---
+
+    def set_reply_timeout(self, seconds: float) -> float:
+        """Persist this profile's total chat-turn timeout in seconds."""
+        value = float(seconds)
+        if not isfinite(value) or value <= 0:
+            raise ValueError("Reply timeout must be greater than zero.")
+        data = self._read()
+        gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+        gateway["reply_timeout_s"] = value
+        data["gateway"] = gateway
+        self._write(data)
+        return value
+
+    # --- per-profile model Active override (ADR 0015) ---
+    # A profile may pick which shared install-wide config is Active *for it* — a
+    # selection into the ``llm_configs`` / ``live_configs`` list, never a model of its
+    # own. Stored as a top-level id in this same config.yaml (like ``focuses``); the
+    # effective Active resolves env pin > this override > install-wide Active > env
+    # fallback in the active-derivation layer (Text: ``config.with_profile`` /
+    # ``llm_configs.apply_active``; Live: ``voice.voice_realtime_config``). A dangling
+    # override (points at a deleted config) degrades to the install-wide Active there.
+
+    def get_llm_override(self) -> str | None:
+        """This profile's Active-override Text config id, or None when it inherits the
+        install-wide Active."""
+        v = self._read().get("llm_active_override")
+        return v if isinstance(v, str) and v else None
+
+    def set_llm_override(self, cid: str) -> None:
+        """Point this profile's Active Text model at shared config ``cid`` (an empty /
+        blank value clears the override → back to the install-wide Active)."""
+        self._set_override("llm_active_override", cid)
+
+    def get_live_override(self) -> str | None:
+        """This profile's Active-override Live (voice) config id, or None when it
+        inherits the install-wide Active."""
+        v = self._read().get("live_active_override")
+        return v if isinstance(v, str) and v else None
+
+    def set_live_override(self, cid: str) -> None:
+        """Point this profile's Active Live model at shared config ``cid`` (an empty /
+        blank value clears the override → back to the install-wide Active)."""
+        self._set_override("live_active_override", cid)
+
+    def _set_override(self, key: str, cid: str) -> None:
+        data = self._read()
+        cid = (cid or "").strip()
+        if cid:
+            data[key] = cid
+        else:
+            data.pop(key, None)
+        self._write(data)
 
     # --- MCP servers ---
 
@@ -179,6 +217,13 @@ class Settings:
         data["voice"] = vmap
         self._write(data)
         return True
+
+
+def profile_settings(data_dir) -> Settings:
+    """The Settings store for a profile's data dir — backed by the profile's
+    ``config.yaml``. Settings keys live at the top level of the same file as the
+    Config overlay sections; the read-modify-write in ``_write`` preserves them."""
+    return Settings(Path(data_dir) / "config.yaml")
 
 
 # --- pure helpers (path-free; shared by validation and the Settings methods) ---

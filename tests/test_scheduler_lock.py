@@ -9,10 +9,6 @@ from assistant.gateway.tasks_service import TaskService
 from assistant.scheduler_lock import SchedulerLock
 
 
-async def _ex(task_id, mgr, asker):
-    pass
-
-
 def test_scheduler_lock_is_exclusive(tmp_path):
     p = tmp_path / "scheduler.lock"
     a, b = SchedulerLock(p), SchedulerLock(p)
@@ -34,12 +30,11 @@ def test_scheduler_lock_release_is_idempotent(tmp_path):
 
 async def test_start_without_scheduler_keeps_tools_but_no_loop(tmp_path):
     svc = TaskService(config=Config(data_dir=tmp_path))
-    svc._executor = _ex
     await svc.start(scheduler=False)
     try:
         assert svc._scheduler is None
         assert svc._scheduler_lock is None
-        t = await svc.store.create("schedule me")  # tools still work
+        t = await svc.store.create_task("schedule me", "p")  # tools still work
         assert t.id
     finally:
         await svc.close()
@@ -48,7 +43,6 @@ async def test_start_without_scheduler_keeps_tools_but_no_loop(tmp_path):
 async def test_only_one_scheduler_leader_per_datadir(tmp_path):
     a = TaskService(config=Config(data_dir=tmp_path))
     b = TaskService(config=Config(data_dir=tmp_path))
-    a._executor = b._executor = _ex
     await a.start(scheduler=True)
     await b.start(scheduler=True)
     try:
@@ -63,13 +57,11 @@ async def test_only_one_scheduler_leader_per_datadir(tmp_path):
 
 async def test_scheduler_lock_frees_for_next_owner(tmp_path):
     a = TaskService(config=Config(data_dir=tmp_path))
-    a._executor = _ex
     await a.start(scheduler=True)
     assert a._scheduler is not None
     await a.close()
 
     b = TaskService(config=Config(data_dir=tmp_path))
-    b._executor = _ex
     await b.start(scheduler=True)
     try:
         assert b._scheduler is not None

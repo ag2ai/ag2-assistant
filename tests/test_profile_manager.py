@@ -1,15 +1,24 @@
-"""ProfileManager, config_factory, and legacy migration (WP3).
+"""ProfileManager and config_factory (WP3).
 
 The autouse conftest fixture points HOME at a tmp dir, so the registry, profile
 dirs, and stores resolve under disposable space. The agent factory is faked
 (``create_agent``) so no runtime touches a real LLM.
 """
 
-import json
 from pathlib import Path
 
 import pytest
 
+import assistant.gateway.core as core_mod
+from assistant import llm_configs, profiles
+from assistant.config import load_config
+from assistant.gateway.profile_manager import (
+    ArchivedProfile,
+    ProfileManager,
+    UnknownProfile,
+    config_factory,
+    resolve_active_profile,
+)
 from tests.conftest import FakeRunMixin
 
 
@@ -29,136 +38,19 @@ class _FakeAgent(FakeRunMixin):
 @pytest.fixture(autouse=True)
 def _fake_agent(monkeypatch):
     """Every runtime's gateway builds a fake agent instead of a real one."""
-    import assistant.gateway.core as core_mod
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
 
 
 def _root() -> Path:
-    from assistant.config import load_config
 
     return load_config().root_dir
-
-
-# --- migration ---
-
-
-def _seed_legacy(root: Path, *, onboarded_key=False, onboarded_marker=False, extra=None):
-    """Create a legacy (pre-profile) layout at the root."""
-    root.mkdir(parents=True, exist_ok=True)
-    settings = {"llm": {"provider": "openai", "model": "gpt-x"}}
-    if onboarded_key:
-        settings["onboarded"] = True
-    (root / "settings.json").write_text(json.dumps(settings))
-    (root / "sessions.db").write_text("db")
-    (root / "tasks.db").write_text("db")
-    (root / "profile.db").write_text("db")
-    (root / "skills").mkdir(exist_ok=True)
-    (root / "skills" / "a.md").write_text("skill")
-    if onboarded_marker:
-        (root / "onboarded").write_text("")
-    for name, content in (extra or {}).items():
-        (root / name).write_text(content)
-
-
-def test_migration_moves_files_and_writes_registry():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root, onboarded_key=True)
-
-    assert migrate_if_needed() is True
-
-    dest = root / "profiles" / "default"
-    # files moved out of the root, into the default profile dir
-    assert not (root / "sessions.db").exists()
-    assert (dest / "sessions.db").exists()
-    assert (dest / "tasks.db").exists()
-    assert (dest / "profile.db").exists()
-    assert (dest / "skills" / "a.md").exists()
-
-    # registry written with a single "default" profile, active + onboarded carried
-    reg = profiles.load_registry()
-    assert reg["active_default"] == "default"
-    assert reg["onboarded"] is True
-    assert [p["id"] for p in reg["profiles"]] == ["default"]
-
-    # onboarded key stripped from the moved settings file (registry is its only home)
-    moved = json.loads((dest / "settings.json").read_text())
-    assert "onboarded" not in moved
-    assert moved["llm"]["provider"] == "openai"
-
-    # idempotent: a second run is a no-op
-    assert migrate_if_needed() is False
-
-
-def test_migration_leaves_global_permissions_at_root():
-    # permissions.json is the INSTALL-WIDE store now — it can legitimately exist at
-    # the root before profiles/ does (e.g. a CLI grant on a fresh install). Migration
-    # must not relocate it into profiles/default/ (that would orphan global grants).
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root, extra={"permissions.json": json.dumps({"folders": ["/tmp/x"]})})
-
-    assert migrate_if_needed() is True
-    assert (root / "permissions.json").exists()
-    assert not (root / "profiles" / "default" / "permissions.json").exists()
-
-
-def test_migration_onboarded_from_marker_only():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root, onboarded_key=False, onboarded_marker=True)
-
-    assert migrate_if_needed() is True
-    assert profiles.load_registry()["onboarded"] is True
-    # marker deleted (registry owns the flag now)
-    assert not (root / "onboarded").exists()
-
-
-def test_migration_not_onboarded_when_neither_present():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    _seed_legacy(_root(), onboarded_key=False, onboarded_marker=False)
-    assert migrate_if_needed() is True
-    assert profiles.load_registry()["onboarded"] is False
-
-
-def test_migration_binds_channels_from_env(monkeypatch):
-    for e in ("DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
-        monkeypatch.delenv(e, raising=False)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_if_needed
-
-    root = _root()
-    _seed_legacy(root)
-    assert migrate_if_needed() is True
-    # env-enabled channels are bound to the default profile in the registry
-    bindings = profiles.channel_bindings()
-    assert bindings["telegram"] == "default"
-    assert bindings["discord"] is None
-    assert bindings["slack"] is None
-
-
-def test_migration_noop_on_fresh_install():
-    from assistant.gateway.migration import migrate_if_needed
-
-    # nothing at the root → no-op
-    assert migrate_if_needed() is False
-    assert not (_root() / "profiles").exists()
 
 
 # --- ProfileManager start / boot ---
 
 
 async def test_zero_profile_start_is_noop():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -167,11 +59,9 @@ async def test_zero_profile_start_is_noop():
 
 
 async def test_boot_skips_archived():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ProfileManager
 
-    a = profiles.create_profile("Work", "teal")
-    b = profiles.create_profile("Personal", "coral")
+    a = profiles.create_profile("Work", "#109e91")
+    b = profiles.create_profile("Personal", "#f95339")
     profiles.archive_profile(b.id)
 
     mgr = ProfileManager(memory=False, persist=False)
@@ -182,15 +72,9 @@ async def test_boot_skips_archived():
 
 
 async def test_get_raises_unknown_archived_and_not_running():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import (
-        ArchivedProfile,
-        ProfileManager,
-        UnknownProfile,
-    )
 
-    a = profiles.create_profile("Work", "teal")
-    b = profiles.create_profile("Personal", "coral")
+    a = profiles.create_profile("Work", "#109e91")
+    b = profiles.create_profile("Personal", "#f95339")
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
@@ -205,7 +89,7 @@ async def test_get_raises_unknown_archived_and_not_running():
         with pytest.raises(ArchivedProfile):
             mgr.get(b.id)
         # registered + unarchived but not running → server-bug RuntimeError
-        c = profiles.create_profile("Third", "ocean")
+        c = profiles.create_profile("Third", "#2f6fe0")
         with pytest.raises(RuntimeError):
             mgr.get(c.id)
     finally:
@@ -213,18 +97,15 @@ async def test_get_raises_unknown_archived_and_not_running():
 
 
 async def test_create_boots_live():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        runtime = await mgr.create("Work", "teal")
+        runtime = await mgr.create("Work", "#109e91")
         assert runtime.pid == "work"
         assert mgr.get("work") is runtime
         assert runtime.gateway is not None
         # the profile dir was created
-        from assistant import profiles
-
         assert profiles.profile_dir("work").exists()
     finally:
         await mgr.close()
@@ -234,12 +115,11 @@ async def test_create_boots_live():
 
 
 async def test_archive_refuses_last_profile():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        await mgr.create("Only", "teal")
+        await mgr.create("Only", "#109e91")
         with pytest.raises(ValueError):
             await mgr.archive("only")
     finally:
@@ -247,14 +127,12 @@ async def test_archive_refuses_last_profile():
 
 
 async def test_archive_requires_new_default_when_archiving_active():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        a = await mgr.create("Work", "teal")  # first → active_default
-        b = await mgr.create("Personal", "coral")
+        a = await mgr.create("Work", "#109e91")  # first → active_default
+        b = await mgr.create("Personal", "#f95339")
         assert mgr.active_default == a.pid
 
         # archiving the active default without a replacement → ValueError
@@ -265,8 +143,6 @@ async def test_archive_requires_new_default_when_archiving_active():
         await mgr.archive(a.pid, new_default=b.pid)
         assert mgr.active_default == b.pid
         assert profiles.get_profile(a.pid).archived is True
-        from assistant.gateway.profile_manager import ArchivedProfile
-
         with pytest.raises(ArchivedProfile):
             mgr.get(a.pid)
         assert {r.pid for r in mgr.runtimes()} == {b.pid}
@@ -277,13 +153,11 @@ async def test_archive_requires_new_default_when_archiving_active():
 async def test_restart_after_archive_stays_gone(monkeypatch):
     """§6.6: archive B → close manager → new ProfileManager.start() → B not booted
     (get raises ArchivedProfile), absent from list_profiles(), folder intact on disk."""
-    from assistant import profiles
-    from assistant.gateway.profile_manager import ArchivedProfile, ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
-    a = await mgr.create("Work", "teal")  # first → active_default
-    b = await mgr.create("Personal", "coral")
+    a = await mgr.create("Work", "#109e91")  # first → active_default
+    b = await mgr.create("Personal", "#f95339")
     await mgr.archive(b.pid)  # archiving a non-default needs no replacement
     b_dir = profiles.profile_dir(b.pid)
     assert b_dir.exists()
@@ -305,15 +179,139 @@ async def test_restart_after_archive_stays_gone(monkeypatch):
 
 
 async def test_archive_bad_new_default_rejected():
-    from assistant.gateway.profile_manager import ProfileManager
 
     mgr = ProfileManager(memory=False, persist=False)
     await mgr.start()
     try:
-        a = await mgr.create("Work", "teal")
-        await mgr.create("Personal", "coral")
+        a = await mgr.create("Work", "#109e91")
+        await mgr.create("Personal", "#f95339")
         with pytest.raises(ValueError):
             await mgr.archive(a.pid, new_default="does-not-exist")
+    finally:
+        await mgr.close()
+
+
+# --- restore (unarchive + boot) ---
+
+
+async def test_restore_boots_live():
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        b = await mgr.create("Personal", "#f95339")
+        await mgr.archive(b.pid)  # non-default, no replacement needed
+        assert {r.pid for r in mgr.runtimes()} == {a.pid}
+
+        runtime = await mgr.restore(b.pid)
+        assert runtime.pid == b.pid
+        assert profiles.get_profile(b.pid).archived is False
+        assert mgr.get(b.pid) is runtime  # booted + resolvable
+        assert {r.pid for r in mgr.runtimes()} == {a.pid, b.pid}
+    finally:
+        await mgr.close()
+
+
+async def test_restore_unknown_raises():
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        with pytest.raises(UnknownProfile):
+            await mgr.restore("ghost")
+    finally:
+        await mgr.close()
+
+
+async def test_restore_non_archived_rejected():
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        await mgr.create("Personal", "#f95339")
+        # a is live, not archived → restoring it is a no-op error, not a boot
+        with pytest.raises(ValueError):
+            await mgr.restore(a.pid)
+    finally:
+        await mgr.close()
+
+
+async def test_restore_rolls_back_on_boot_failure(monkeypatch):
+    """§4.9 (Q9): if boot fails, the profile stays cleanly archived — never left in the
+    unarchived-but-not-running limbo the manager treats as a server bug."""
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        b = await mgr.create("Personal", "#f95339")
+        await mgr.archive(b.pid)
+
+        async def _boom(meta):
+            raise RuntimeError("boot exploded")
+
+        monkeypatch.setattr(mgr, "_boot", _boom)
+        with pytest.raises(RuntimeError):
+            await mgr.restore(b.pid)
+
+        # rolled back: still archived, not running, still resolvable-as-archived
+        assert profiles.get_profile(b.pid).archived is True
+        assert {r.pid for r in mgr.runtimes()} == {a.pid}
+        with pytest.raises(ArchivedProfile):
+            mgr.get(b.pid)
+    finally:
+        await mgr.close()
+
+
+# --- purge (hard delete, archive-first) ---
+
+
+async def test_purge_deletes_dir_and_registry_entry():
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        await mgr.create("Work", "#109e91")
+        b = await mgr.create("Personal", "#f95339")
+        await mgr.archive(b.pid)
+        b_dir = profiles.profile_dir(b.pid)
+        assert b_dir.exists()
+
+        await mgr.purge(b.pid)
+
+        assert not b_dir.exists()  # folder erased from disk
+        assert profiles.get_profile(b.pid) is None  # registry entry gone
+        assert b.pid not in {m.id for m in profiles.list_profiles(include_archived=True)}
+    finally:
+        await mgr.close()
+
+
+async def test_purge_unknown_raises():
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        with pytest.raises(UnknownProfile):
+            await mgr.purge("ghost")
+    finally:
+        await mgr.close()
+
+
+async def test_purge_refuses_unarchived_profile():
+    """Archive-first (Q4/ADR 0003): a live profile cannot be hard-deleted directly."""
+
+    mgr = ProfileManager(memory=False, persist=False)
+    await mgr.start()
+    try:
+        a = await mgr.create("Work", "#109e91")
+        await mgr.create("Personal", "#f95339")
+        with pytest.raises(ValueError):
+            await mgr.purge(a.pid)  # not archived
+        # untouched: still live, dir intact, still in registry
+        assert profiles.profile_dir(a.pid).exists()
+        assert profiles.get_profile(a.pid) is not None
     finally:
         await mgr.close()
 
@@ -321,29 +319,22 @@ async def test_archive_bad_new_default_rejected():
 # --- config_factory ---
 
 
-def test_config_factory_picks_up_workspace_edit():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import config_factory
+def test_config_factory_derives_workspace_under_profile_dir():
 
-    meta = profiles.create_profile("Work", "teal", workspace="/tmp/ws-one")
+    meta = profiles.create_profile("Work", "#109e91")
     factory = config_factory(meta.id)
-    assert str(factory().workspace_dir) == "/tmp/ws-one"
-
-    # edit the registry; the factory (which re-reads meta each call) sees it
-    profiles.set_workspace(meta.id, "/tmp/ws-two")
-    assert str(factory().workspace_dir) == "/tmp/ws-two"
+    # workspace is always <profile dir>/workspace — derived, not user-chosen.
+    assert factory().workspace_dir == profiles.profile_dir(meta.id) / "workspace"
 
 
 def test_config_factory_derives_active_llm_config(monkeypatch):
     """The LLM is install-wide now: config_factory doesn't overlay per-profile
     settings — it just carries whatever load_config() derived from the active named
     LLM config (common across every profile)."""
-    from assistant import llm_configs, profiles
-    from assistant.gateway.profile_manager import config_factory
 
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
 
     # No store yet → flat gemini defaults.
@@ -358,10 +349,8 @@ def test_config_factory_derives_active_llm_config(monkeypatch):
 
 
 def test_config_factory_env_wins_over_active_config(monkeypatch):
-    from assistant import llm_configs, profiles
-    from assistant.gateway.profile_manager import config_factory
 
-    meta = profiles.create_profile("Work", "teal")
+    meta = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     entry = llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "claude-x"})
     llm_configs.set_active(entry["id"])
@@ -374,7 +363,6 @@ def test_config_factory_env_wins_over_active_config(monkeypatch):
 
 
 def test_config_factory_unknown_profile_raises():
-    from assistant.gateway.profile_manager import UnknownProfile, config_factory
 
     with pytest.raises(UnknownProfile):
         config_factory("ghost")()
@@ -384,18 +372,15 @@ def test_config_factory_unknown_profile_raises():
 
 
 def test_resolve_active_profile_zero_profiles_raises():
-    from assistant.gateway.profile_manager import UnknownProfile, resolve_active_profile
 
     with pytest.raises(UnknownProfile):
         resolve_active_profile()
 
 
 def test_resolve_active_profile_defaults_to_active():
-    from assistant import profiles
-    from assistant.gateway.profile_manager import resolve_active_profile
 
-    meta = profiles.create_profile("Work", "teal", workspace="/tmp/ws")
+    meta = profiles.create_profile("Work", "#109e91")
     pid, cfg, factory = resolve_active_profile()
     assert pid == meta.id
-    assert str(cfg.workspace_dir) == "/tmp/ws"
+    assert cfg.workspace_dir == profiles.profile_dir(meta.id) / "workspace"
     assert callable(factory)

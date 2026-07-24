@@ -1,14 +1,18 @@
-"""The install-wide named LLM configuration store, derivation, and migration.
+"""The install-wide named LLM configuration store and derivation.
 
 HOME is isolated by the autouse conftest fixture, so each test gets its own empty
-``~/.ag2assistant`` (and thus an empty ``llm_configs.json`` to start).
+``~/.ag2assistant`` (and thus an empty store to start).
 """
 
 import json
+import os
 
 import pytest
+import yaml
 
-from assistant import llm_configs, secrets
+from assistant import codex_auth, llm_configs, secrets
+from assistant.agent import cheap_model
+from assistant.config import Config, default_config_path, load_config
 
 # ---- CRUD + validation --------------------------------------------------------
 
@@ -42,18 +46,22 @@ def test_update_by_id_and_unknown_id_raises():
         llm_configs.save_config({"id": "c_nope", "name": "x", "type": "gemini", "model": "m"})
 
 
-def test_delete_refuses_active_and_cleans_up():
+def test_delete_active_moves_active_to_next():
     a = llm_configs.save_config({"name": "A", "type": "gemini", "model": "gm"})
     b = llm_configs.save_config({"name": "B", "type": "anthropic", "model": "cl"})
     llm_configs.set_active(a["id"])
 
     assert llm_configs.delete_config("c_ghost") is False  # unknown id
-    with pytest.raises(ValueError):  # active → refused
-        llm_configs.delete_config(a["id"])
 
-    llm_configs.set_active(b["id"])  # select another first
+    # Deleting the active config is allowed; active moves to the remaining one.
     assert llm_configs.delete_config(a["id"]) is True
     assert llm_configs.get_config(a["id"]) is None
+    assert llm_configs.active_id() == b["id"]
+
+    # Deleting the last remaining (still active) clears active → empty store.
+    assert llm_configs.delete_config(b["id"]) is True
+    assert llm_configs.active_id() is None
+    assert llm_configs.list_configs() == []
 
 
 def test_set_active_unknown_returns_false():
@@ -87,7 +95,9 @@ def test_entry_options_openai_surfaces_and_key_last():
     # the OpenAI SDK gets the non-empty key it requires).
     assert opts["api_key"] == "unused"
 
-    secrets.set_config_key(e["id"], "sk-xyz-9999")
+    s = secrets.create_secret("O key", "sk-xyz-9999")
+    llm_configs.set_secret_id(e["id"], s["id"])
+    e = llm_configs.get_config(e["id"])  # re-read: entry dicts are copies
     assert llm_configs.entry_options(e)["api_key"] == "sk-xyz-9999"  # merged last
 
 
@@ -108,7 +118,6 @@ def test_entry_options_chat_and_ollama_and_gemini():
 
 
 def test_apply_active_empty_store_is_noop():
-    from assistant.config import Config
 
     cfg = Config()
     cfg.llm.provider = "sentinel"
@@ -117,7 +126,6 @@ def test_apply_active_empty_store_is_noop():
 
 
 def test_apply_active_derives_and_env_still_wins(monkeypatch):
-    from assistant.config import load_config
 
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
@@ -138,8 +146,6 @@ def test_apply_active_derives_and_env_still_wins(monkeypatch):
 def test_apply_active_base_url_suppresses_cheap_aggregate(monkeypatch):
     """An active config pointing at an OpenAI-compatible server (base_url) suppresses
     the cheap-tier aggregate default — its OpenAI model name wouldn't exist there."""
-    from assistant.agent import cheap_model
-    from assistant.config import load_config
 
     monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
@@ -171,9 +177,11 @@ def test_usable_by_type_key_and_base_url(monkeypatch):
         "status",
         lambda: {"gemini": {"set": False}, "openai": {"set": False}, "anthropic": {"set": False}},
     )
-    assert llm_configs.usable(gem) is False  # no env key, no per-config key
-    secrets.set_config_key(gem["id"], "k")
-    assert llm_configs.usable(gem) is True  # per-config key makes it usable
+    assert llm_configs.usable(gem) is False  # no env key, no referenced Secret
+    s = secrets.create_secret("G key", "sk-usable-1")
+    llm_configs.set_secret_id(gem["id"], s["id"])
+    gem = llm_configs.get_config(gem["id"])
+    assert llm_configs.usable(gem) is True  # a referenced Secret makes it usable
 
 
 def test_image_entry_follows_active_only():
@@ -205,94 +213,57 @@ def test_image_entry_none_when_no_capable():
     assert llm_configs.image_entry() is None
 
 
-# ---- per-config secret never leaks --------------------------------------------
+# ---- a referenced Secret never leaks -------------------------------------------
 
 
-def test_config_key_stored_but_not_in_env(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    e = llm_configs.save_config({"name": "O", "type": "openai", "model": "m"})
-    assert secrets.config_key(e["id"]) == ""
-    assert secrets.set_config_key(e["id"], "sk-secret-4242") is True
-    assert secrets.config_key(e["id"]) == "sk-secret-4242"
-    assert secrets.config_key_hint(e["id"]) == {"set": True, "hint": "…4242"}
-    # deliberately NOT loaded into os.environ (unlike provider keys)
-    import os
+def test_secret_reference_flows_to_options_not_env(monkeypatch):
 
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)  # a real dev key must not leak in
+    s = secrets.create_secret("K", "sk-4242-4242")
+    e = llm_configs.save_config(
+        {"name": "X", "type": "openai", "model": "gpt-4o", "secret_id": s["id"]}
+    )
+    assert e["secret_id"] == s["id"]
+    assert llm_configs.entry_options(e)["api_key"] == "sk-4242-4242"
+    # deliberately NOT loaded into os.environ (non-default Secrets never hit env)
     assert os.environ.get("OPENAI_API_KEY") is None
-    # status() (per-provider) never exposes per-config keys
+    assert llm_configs.key_source(e) == "secret"
+    assert llm_configs.usable(e) is True
+    # status() (per-provider) never exposes non-default Secrets
     assert "…4242" not in json.dumps(secrets.status())
-    assert secrets.set_config_key(e["id"], "") is True  # clear
-    assert secrets.config_key(e["id"]) == ""
+    # deleting the Secret degrades: dangling reference falls through to env/none
+    secrets.delete_secret(s["id"])
+    e = llm_configs.get_config(e["id"])
+    assert "api_key" not in llm_configs.entry_options(e)
+    assert llm_configs.key_source(e) == "none"
 
 
-# ---- one-time migration -------------------------------------------------------
+def test_set_secret_id():
+    s = secrets.create_secret("K2", "sk-k2-1")
+    e = llm_configs.save_config({"name": "Y", "type": "gemini", "model": "gemini-3.5-flash"})
+    assert llm_configs.set_secret_id(e["id"], s["id"]) is True
+    assert llm_configs.get_config(e["id"])["secret_id"] == s["id"]
+    assert llm_configs.set_secret_id(e["id"], "") is True  # clear
+    assert llm_configs.get_config(e["id"])["secret_id"] == ""
+    assert llm_configs.set_secret_id("c_missing", s["id"]) is False
 
 
-def test_migration_folds_legacy_llm_and_is_idempotent(monkeypatch):
-    from assistant import profiles
-    from assistant.config import data_dir
-    from assistant.gateway.migration import migrate_llm_configs
+def test_store_lives_in_global_config_yaml():
 
-    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
+    # Seed an unrelated key to prove the store preserves neighbours in the shared file.
+    p = default_config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("agent:\n  name: keep-me\n")
 
-    # An install with a config.json default + a profile that overrode to a compat server.
-    data_dir().mkdir(parents=True, exist_ok=True)
-    (data_dir() / "config.json").write_text(
-        json.dumps({"llm": {"provider": "gemini", "model": "gemini-3.5-flash"}})
-    )
-    work = profiles.create_profile("Work", "teal")
-    home = profiles.create_profile("Home", "coral")
-    profiles.set_active_default(work.id)
-    profiles.profile_dir(work.id).mkdir(parents=True, exist_ok=True)
-    profiles.profile_dir(home.id).mkdir(parents=True, exist_ok=True)
-    (profiles.profile_dir(work.id) / "settings.json").write_text(
-        json.dumps(
-            {
-                "llm": {"provider": "openai", "model": "gemma-4"},
-                "llm_options": {"openai": {"base_url": "http://192.168.0.55:8080/v1"}},
-                "voice_provider": "gemini",
-            }
-        )
-    )
+    e = llm_configs.save_config({"name": "G", "type": "gemini", "model": "gemini-x"})
+    llm_configs.set_active(e["id"])
 
-    assert migrate_llm_configs() is True
-    configs = llm_configs.list_configs()
-    assert {c["type"] for c in configs} == {"gemini", "openai"}
-
-    work_cfg = next(c for c in configs if c["type"] == "openai")
-    assert work_cfg["model"] == "gemma-4"
-    assert work_cfg["base_url"] == "http://192.168.0.55:8080/v1"  # lifted to first-class
-    assert "base_url" not in work_cfg["options"]
-
-    # active is the active-default profile's (Work) entry
-    assert llm_configs.active_config()["id"] == work_cfg["id"]
-
-    # legacy keys stripped from the profile settings; other keys preserved
-    ws = json.loads((profiles.profile_dir(work.id) / "settings.json").read_text())
-    assert "llm" not in ws and "llm_options" not in ws
-    assert ws["voice_provider"] == "gemini"
-
-    # idempotent — a second run is a no-op
-    before = llm_configs.list_configs()
-    assert migrate_llm_configs() is False
-    assert llm_configs.list_configs() == before
-
-
-def test_migration_noop_on_fresh_install():
-    from assistant import profiles
-    from assistant.gateway.migration import migrate_llm_configs
-
-    # A profile with settings but no llm block, and no config.json → nothing to migrate.
-    p = profiles.create_profile("Solo", "teal")
-    profiles.profile_dir(p.id).mkdir(parents=True, exist_ok=True)
-    (profiles.profile_dir(p.id) / "settings.json").write_text(
-        json.dumps({"voice_provider": "gemini"})
-    )
-
-    assert migrate_llm_configs() is False
-    assert llm_configs.list_configs() == []
-    assert not llm_configs._path().exists()  # store not created → flat defaults apply
+    data = yaml.safe_load(p.read_text())
+    assert data["agent"]["name"] == "keep-me"  # RMW preserved the neighbour section
+    assert data["llm_configs"]["active"] == e["id"]
+    assert data["llm_configs"]["configs"][0]["model"] == "gemini-x"
+    assert not (p.parent / "llm_configs.json").exists()
+    assert llm_configs.active_config()["name"] == "G"
 
 
 # ---- openai_subscription type (ChatGPT sign-in) -------------------------------
@@ -338,7 +309,6 @@ def test_subscription_strips_endpoint_fields_and_options():
 
 
 def test_subscription_apply_active_sets_and_resets_auth_mode():
-    from assistant.config import Config
 
     sub = llm_configs.save_config(
         {"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"}
@@ -360,7 +330,6 @@ def test_subscription_apply_active_sets_and_resets_auth_mode():
 
 
 def test_subscription_usable_and_key_source_track_sign_in(monkeypatch):
-    from assistant import codex_auth
 
     e = llm_configs.save_config({"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"})
     assert llm_configs.key_source(e) == "subscription"  # never key-based
@@ -374,7 +343,6 @@ def test_subscription_usable_and_key_source_track_sign_in(monkeypatch):
 def test_subscription_usable_never_raises(monkeypatch):
     # A missing/broken codex_auth must read as "not signed in", never propagate into
     # the health/usable path.
-    from assistant import codex_auth
 
     def _boom():
         raise RuntimeError("codex_auth exploded")
@@ -385,7 +353,6 @@ def test_subscription_usable_never_raises(monkeypatch):
 
 
 def test_subscription_is_image_capable(monkeypatch):
-    from assistant import codex_auth
 
     monkeypatch.setattr(codex_auth, "is_signed_in", lambda: True)
     sub = llm_configs.save_config(
@@ -420,8 +387,12 @@ def test_key_source_resolution(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "shared-key-1234")
     assert llm_configs.key_source(gem) == "shared"
 
-    # a per-config key overrides everything, base_url included
-    secrets.set_config_key(gem["id"], "sk-own-5678")
-    assert llm_configs.key_source(gem) == "config"
-    secrets.set_config_key(local["id"], "sk-own-9999")
-    assert llm_configs.key_source(local) == "config"
+    # a referenced Secret overrides everything, base_url included
+    s1 = secrets.create_secret("gem key", "sk-own-5678")
+    llm_configs.set_secret_id(gem["id"], s1["id"])
+    gem = llm_configs.get_config(gem["id"])
+    assert llm_configs.key_source(gem) == "secret"
+    s2 = secrets.create_secret("local key", "sk-own-9999")
+    llm_configs.set_secret_id(local["id"], s2["id"])
+    local = llm_configs.get_config(local["id"])
+    assert llm_configs.key_source(local) == "secret"

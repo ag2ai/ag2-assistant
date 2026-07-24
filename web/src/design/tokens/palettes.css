@@ -3,99 +3,100 @@
    ------------------------------------------------------------
    The accent is themeable. Each palette defines a --p-* ramp;
    the semantic --accent* tokens (in colors.css) resolve to it.
-   Switch by setting a [data-palette="…"] attribute on <html>
-   (or any wrapper) — do it in code with palette.js:
+   A profile's Accent (any #rrggbb hex) is applied in code via
+   palette.js — a preset hex activates its block below, any other
+   hex gets a ramp derived + inlined on <html>:
 
-       AG2Palette.setPalette('ocean')
+       AG2Accent.setAccent('#1d4ed8')   // preset → this Navy Blue block
+       AG2Accent.setAccent('#3a7bd5')   // custom → derived inline ramp
 
-   …or hand the agent that same call as a tool. Default = Teal
-   (calmer + more organic than the heritage coral, which stays
-   alive as --brand-coral in the mascot antenna).
+   Default = Navy Blue
+   (the safest high-contrast accent — white text reads cleanly on it).
 
-   Palettes: teal · coral · ocean · violet · sage · sunset
+   Palettes: navy-blue · royal-blue · dark-indigo · deep-purple · forest-green · burgundy
    ============================================================ */
 
-/* ---- Teal (default) ---- */
+/* ---- Navy Blue (default — safest, high-contrast blue) ---- */
 :root,
-[data-palette="teal"] {
-  --p-50:  #ecfbf7;
-  --p-100: #cdf3eb;
-  --p-200: #9ce7da;
-  --p-300: #63d4c4;
-  --p-400: #2fbbac;
-  --p-500: #109e91;
-  --p-600: #0c8076;
-  --p-700: #0d655d;
-  --p-800: #0e4f4a;
-  --p-900: #0a3a37;
+[data-palette="navy-blue"] {
+  --p-50:  #edf1fc;
+  --p-100: #d6dff8;
+  --p-200: #a9bcf0;
+  --p-300: #7795e8;
+  --p-400: #466edf;
+  --p-500: #1d4ed8;
+  --p-600: #1842b5;
+  --p-700: #13338f;
+  --p-800: #0f276c;
+  --p-900: #0a1b49;
 }
 
-/* ---- Coral (AG2 heritage) ---- */
-[data-palette="coral"] {
-  --p-50:  #fff2ee;
-  --p-100: #ffe1d8;
-  --p-200: #ffc4b4;
-  --p-300: #fb9e84;
-  --p-400: #fb7758;
-  --p-500: #f95339;
-  --p-600: #e53c20;
-  --p-700: #bd2f18;
-  --p-800: #8f2614;
-  --p-900: #5e1b10;
+/* ---- Royal Blue (premium, deep blue) ---- */
+[data-palette="royal-blue"] {
+  --p-50:  #edf0f9;
+  --p-100: #d7ddf1;
+  --p-200: #aab6e1;
+  --p-300: #788ccf;
+  --p-400: #4762bd;
+  --p-500: #1e40af;
+  --p-600: #193693;
+  --p-700: #142a73;
+  --p-800: #0f2058;
+  --p-900: #0a163b;
 }
 
-/* ---- Ocean (deep friendly blue) ---- */
-[data-palette="ocean"] {
-  --p-50:  #ecf3ff;
-  --p-100: #d6e6ff;
-  --p-200: #aeccff;
-  --p-300: #7dabfb;
-  --p-400: #4c8bf5;
-  --p-500: #2f6fe0;
-  --p-600: #2057bd;
-  --p-700: #1c4593;
-  --p-800: #1a3771;
-  --p-900: #142850;
+/* ---- Dark Indigo (modern violet-blue) ---- */
+[data-palette="dark-indigo"] {
+  --p-50:  #f0effb;
+  --p-100: #dddbf5;
+  --p-200: #b8b3eb;
+  --p-300: #8e88df;
+  --p-400: #655cd4;
+  --p-500: #4338ca;
+  --p-600: #382faa;
+  --p-700: #2c2585;
+  --p-800: #221c65;
+  --p-900: #171345;
 }
 
-/* ---- Violet (soft, modern) ---- */
-[data-palette="violet"] {
-  --p-50:  #f4f0ff;
-  --p-100: #e8e0ff;
-  --p-200: #d2c2ff;
-  --p-300: #b39bff;
-  --p-400: #9472fb;
-  --p-500: #7a52ec;
-  --p-600: #6438cf;
-  --p-700: #512ca6;
-  --p-800: #3f2480;
-  --p-900: #2c1a59;
+/* ---- Deep Purple (great for AI products) ---- */
+[data-palette="deep-purple"] {
+  --p-50:  #f2edf9;
+  --p-100: #e1d7f2;
+  --p-200: #c1abe3;
+  --p-300: #9d7ad3;
+  --p-400: #7949c3;
+  --p-500: #5b21b6;
+  --p-600: #4c1c99;
+  --p-700: #3c1678;
+  --p-800: #2e115b;
+  --p-900: #1f0b3e;
 }
 
-/* ---- Sage (calm botanical green) ---- */
-[data-palette="sage"] {
-  --p-50:  #eef8ee;
-  --p-100: #d6efd6;
-  --p-200: #abdcab;
-  --p-300: #79c47c;
-  --p-400: #4ea857;
-  --p-500: #2f8c44;
-  --p-600: #237036;
-  --p-700: #1d592d;
-  --p-800: #194726;
-  --p-900: #11331c;
+/* ---- Forest Green (deep green theme) ---- */
+[data-palette="forest-green"] {
+  --p-50:  #ecf3ef;
+  --p-100: #d5e3da;
+  --p-200: #a6c4b2;
+  --p-300: #73a385;
+  --p-400: #408159;
+  --p-500: #166534;
+  --p-600: #12552c;
+  --p-700: #0f4322;
+  --p-800: #0b331a;
+  --p-900: #072212;
 }
 
-/* ---- Sunset (warm amber-rose) ---- */
-[data-palette="sunset"] {
-  --p-50:  #fff3ec;
-  --p-100: #ffe2d1;
-  --p-200: #ffc29c;
-  --p-300: #ff9d63;
-  --p-400: #fb7a36;
-  --p-500: #ec5d18;
-  --p-600: #c8480f;
-  --p-700: #a03a10;
-  --p-800: #7c2f12;
-  --p-900: #52210e;
+/* ---- Burgundy (rich, premium on dark UI) ---- */
+[data-palette="burgundy"] {
+  --p-50:  #f7ecef;
+  --p-100: #eed4db;
+  --p-200: #dba5b4;
+  --p-300: #c57188;
+  --p-400: #b03d5d;
+  --p-500: #9f1239;
+  --p-600: #860f30;
+  --p-700: #690c26;
+  --p-800: #50091d;
+  --p-900: #360613;
 }

@@ -2,8 +2,8 @@
 
 A profile is a named, colour-coded runtime: one ``Gateway`` + one ``TaskService``
 + its own channels, all alive simultaneously so background tasks in a non-viewed
-profile keep running. This module boots them all at server start, runs the
-one-time legacy migration first, and owns the create / archive / reload lifecycle.
+profile keep running. This module boots them all at server start and owns the
+create / archive / reload lifecycle.
 
 Isolation is structural (directory-per-profile), not query discipline: each
 runtime is constructed from a **derived config** (``Config.with_profile(meta)``)
@@ -12,13 +12,14 @@ so every profile-owned path lands under the profile dir.
 
 import asyncio
 import os
+import shutil
 from collections.abc import Callable, Iterator
 
-from assistant import profiles
+from assistant import channels, profiles
 from assistant.config import Config, load_config
 from assistant.gateway.core import Gateway, build_gateway
-from assistant.gateway.migration import migrate_if_needed, migrate_llm_configs
-from assistant.observability import setup_logging
+from assistant.hitl import HitlServer
+from assistant.observability import log_suppressed, profile_logger, setup_logging
 from assistant.profiles import ProfileMeta
 
 # Platform → env vars that must ALL be present for its channel to run. Canonical
@@ -51,7 +52,7 @@ def config_factory(pid: str) -> Callable[[], Config]:
 
     On EACH call it: ``load_config()`` (which already derives the install-wide active
     ``llm_configs`` entry onto ``cfg.llm``) → re-reads the profile's ``ProfileMeta``
-    from the registry (never a captured snapshot, so workspace edits are picked up) →
+    from the registry (never a captured snapshot, so rename/accent edits are picked up) →
     ``with_profile(meta)``. The LLM is common across profiles now, so there is no
     per-profile settings overlay — a config change reloads every runtime.
     """
@@ -102,11 +103,7 @@ class ProfileRuntime:
         # This profile's own HITL registry (permission/question prompts). Its request
         # ids are globally unique, so the global /hitl/{id} dispatcher (app.py) can
         # find the right profile by asking each runtime's registry in turn (§4.1).
-        from assistant.hitl import HitlServer
-
         self.hitl = HitlServer()
-        from assistant.observability import profile_logger
-
         self.log = profile_logger(meta.id)
         # Close callbacks WP4's WS handlers subscribe to; fired on archive so open
         # sockets get closed with 4001. Also an Event peers can await.
@@ -120,14 +117,14 @@ class ProfileRuntime:
     @property
     def config(self) -> Config | None:
         """The runtime's live config. Once the gateway is up this delegates to the
-        gateway's config so a reload (workspace/model edit) is reflected everywhere
+        gateway's config so a reload (model/config edit) is reflected everywhere
         the routes read ``runtime.config`` — before start it's the prepared config."""
         if self.gateway is not None:
             return self.gateway.config
         return self._config
 
     def refresh_meta(self) -> None:
-        """Re-read this profile's registry entry (after a rename/palette/workspace edit)."""
+        """Re-read this profile's registry entry (after a rename/accent edit)."""
         meta = profiles.get_profile(self.pid)
         if meta is not None:
             self.meta = meta
@@ -136,6 +133,14 @@ class ProfileRuntime:
         """Register a callback fired when this runtime is archived/closed (WP4 wires
         its WS handlers here to close sockets with code 4001)."""
         self._close_callbacks.append(callback)
+
+    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
+        """Push a message to a platform chat on THIS profile's live channel —
+        the task service delivers run outcomes through here."""
+        ch = self.channels.get(platform)
+        if ch is None:
+            raise RuntimeError(f"channel {platform!r} is not running on this profile")
+        await ch.notify(chat_id, text)
 
     async def start(self) -> None:
         """Build the derived config, construct + start gateway and task service the same
@@ -156,6 +161,8 @@ class ProfileRuntime:
         )
         await self.gateway.start()
         self.tasks.set_emitter(self.gateway.emit_event)  # lifecycle → AG2 stream
+        self.tasks.set_gateway(self.gateway)  # turns/stops/stream deletion for runs
+        self.tasks.set_notifier(self.notify_channel)  # run outcomes -> the origin channel
         await self.tasks.start()  # task tools + scheduler (per-profile lock)
 
     async def close(self) -> None:
@@ -167,15 +174,11 @@ class ProfileRuntime:
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("profile close callback", exc, profile=self.pid)
         for ch in list(self.channels.values()):
             try:
                 await ch.stop()
             except Exception as exc:
-                from assistant.observability import log_suppressed
-
                 log_suppressed("channel stop", exc, profile=self.pid)
         self.channels.clear()
         if self.tasks is not None:
@@ -197,17 +200,13 @@ class ProfileManager:
         self.channel_errors: dict[str, str] = {}
 
     async def start(self) -> None:
-        """Run migration first, boot every UNARCHIVED registered profile, then start
-        each channel the registry binds to a booted profile.
+        """Boot every UNARCHIVED registered profile, then start each channel the
+        registry binds to a booted profile.
 
         Zero profiles is a legal no-op (fresh install, §3.5). Logging is set up once
         against the root config here so per-profile loggers write to the shared file.
         """
         setup_logging(load_config())
-        migrate_if_needed()
-        # One-time: fold legacy config.json llm + each profile's settings llm/llm_options
-        # into the install-wide named-config store (idempotent — skipped if it exists).
-        migrate_llm_configs()
         for meta in profiles.list_profiles(include_archived=False):
             await self._boot(meta)
         await self._start_bound_channels()
@@ -228,8 +227,6 @@ class ProfileManager:
                 continue
             runtime = self._runtimes.get(pid)
             if runtime is None:
-                from assistant.observability import profile_logger
-
                 profile_logger("default").warning(
                     "channel '%s' bound to '%s' which is not booted; skipping", platform, pid
                 )
@@ -249,14 +246,12 @@ class ProfileManager:
             msg = f"no token configured for {platform}"
             self.channel_errors[platform] = msg
             return False, msg
-        from assistant.channels import get_channel
-
         # A channel's start() talks to the platform (Telegram get_me, Discord/Slack
         # connect) and RAISES on a bad token / network failure — as does get_channel
         # when a token is missing. Never let that propagate: it would 500 the endpoint
         # and crash boot. Record the reason, stay inactive.
         try:
-            channel = get_channel(platform)
+            channel = channels.get_channel(platform)
             await channel.start(runtime.gateway)
         except Exception as exc:
             # Platform libraries embed the raw token in some error messages
@@ -280,8 +275,6 @@ class ProfileManager:
         try:
             await channel.stop()
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("channel stop", exc, profile=runtime.pid)
         runtime.log.info("channel '%s' stopped for profile '%s'", platform, runtime.pid)
         return True
@@ -380,9 +373,10 @@ class ProfileManager:
     def active_default(self) -> str | None:
         return profiles.load_registry().get("active_default")
 
-    async def create(self, name: str, palette: str, workspace: str | None = None) -> ProfileRuntime:
-        """Create a profile (registry + dir) and boot its runtime live (§3.5)."""
-        meta = profiles.create_profile(name, palette, workspace=workspace)
+    async def create(self, name: str, accent: str) -> ProfileRuntime:
+        """Create a profile (registry + dir) and boot its runtime live (§3.5).
+        ``accent`` is a ``#rrggbb`` hex (ADR 0002)."""
+        meta = profiles.create_profile(name, accent)
         profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
         return await self._boot(meta)
 
@@ -441,10 +435,55 @@ class ProfileManager:
                 try:
                     await runtime.tasks.cancel_all(reason="profile-archived")
                 except Exception as exc:
-                    from assistant.observability import log_suppressed
-
                     log_suppressed("archive cancel_all", exc, profile=pid)
             await runtime.close()
             self._runtimes.pop(pid, None)
 
         profiles.archive_profile(pid)
+
+    async def restore(self, pid: str) -> ProfileRuntime:
+        """Un-archive a profile and boot its runtime live (§4.9, ADR 0003).
+
+        Symmetric with ``create``: clear the archived flag then ``_boot``. All-or-
+        nothing — if boot fails the flag is rolled back to archived so the profile is
+        never left in the unarchived-but-not-running state ``get`` treats as a server
+        bug. Unknown → UnknownProfile; a live (non-archived) profile → ValueError.
+        """
+        meta = profiles.get_profile(pid)
+        if meta is None:
+            raise UnknownProfile(pid)
+        if not meta.archived:
+            raise ValueError(f"profile is not archived: {pid}")
+
+        restored = profiles.restore_profile(pid)
+        try:
+            return await self._boot(restored)
+        except Exception:
+            # Roll back the flag so the invariant "unarchived ⟺ running" holds.
+            profiles.archive_profile(pid)
+            self._runtimes.pop(pid, None)
+            raise
+
+    async def purge(self, pid: str) -> None:
+        """Permanently delete an ARCHIVED profile: erase its folder and drop its
+        registry entry (§4.9, ADR 0003). The only state-destroying operation.
+
+        Archive-first: refuses a live profile (ValueError → 409) so delete never has to
+        tear down a running runtime, reassign the active default, or hit the last-profile
+        guardrail — an archived profile is already none of those. Unknown → UnknownProfile.
+        """
+        meta = profiles.get_profile(pid)
+        if meta is None:
+            raise UnknownProfile(pid)
+        if not meta.archived:
+            raise ValueError(f"cannot delete a profile that is not archived: {pid}")
+
+        # Archived profiles are never booted, but be defensive if one somehow is.
+        runtime = self._runtimes.pop(pid, None)
+        if runtime is not None:
+            await runtime.close()
+
+        # Erase the folder first; only drop the registry entry once the disk is clear,
+        # so a failed rmtree leaves the profile cleanly archived rather than half-gone.
+        shutil.rmtree(profiles.profile_dir(pid), ignore_errors=True)
+        profiles.delete_profile(pid)

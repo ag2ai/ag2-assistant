@@ -54,7 +54,7 @@ Then open **http://localhost:8800/** and follow the first-run setup — six shor
 2. **About you** — location, working hours, preferred answer style (all optional, shared by every profile).
 3. **Connect** — add a provider key (Gemini is the default and recommended — get one at [aistudio.google.com](https://aistudio.google.com/apikey)), or **sign in with ChatGPT** to run on your existing ChatGPT subscription instead of an API key. You can't continue until one of the two works.
 4. **Profiles** — create at least one profile (e.g. *Personal*), each a colour-coded, fully isolated workspace.
-5. **Set up** — per profile: an optional read-only project folder and the kinds of work you want help with.
+5. **Set up** — per profile: an optional folder to grant it read access to, and the kinds of work you want help with.
 6. **Ready** — pick a theme and start.
 
 Everything here is changeable later in **Settings**.
@@ -65,9 +65,9 @@ To serve the API/UI without any messaging channels, use `ag2-assistant gateway` 
 
 ## Profiles
 
-The assistant is organised into **profiles** — separate, colour-coded workspaces you switch between from the sidebar (or ⌘1–⌘9). A profile has its own chats, tasks, memory, files, project folder, MCP servers and permissions, so a *Work* profile never sees your *Personal* one.
+The assistant is organised into **profiles** — separate, colour-coded workspaces you switch between from the sidebar (or ⌘1–⌘9). A profile has its own chats, tasks, memory, files, folder grants, MCP servers and permissions, so a *Work* profile never sees your *Personal* one.
 
-Provider keys, the model configuration, and who you are are shared install-wide; everything else is per profile. State lives in `~/.ag2assistant/profiles/<id>/` and generated files in `~/Documents/AG2 Assistant/<Profile>/`.
+Provider keys, the model configuration, and who you are are shared install-wide (the global `~/.ag2assistant/config.yaml`); everything else is per profile, overlaid from that profile's `~/.ag2assistant/profiles/<id>/config.yaml`. State lives in `~/.ag2assistant/profiles/<id>/` and generated files in `~/Documents/AG2 Assistant/<Profile>/`. Override the install root with `--data-dir` (or `AG2ASSISTANT_DATA_DIR`).
 
 ## The web app
 
@@ -76,16 +76,16 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 - **Chat** — multi-turn conversations with live, streamed agent events (tool calls, code runs, web searches) rendered inline. Attach images or documents and ask about them.
 - **Rich answers** — where structure beats prose, the agent renders a live surface instead: a weather panel, market board, news digest, agenda, inbox brief, or decision matrix.
 - **Steer or stop a turn while it runs** — send a message mid-turn and the agent folds it into the work it's already doing, or hit **Stop** to end the turn — keeping whatever it produced up to that point, so the conversation carries on with that context.
-- **Tasks** — one-shot and recurring scheduled tasks with deliverables, timestamps, re-run, and cancel/archive. You can chat to a running task to re-scope or cancel it.
+- **Tasks** — standing jobs the agent runs on a schedule. A task is just a prompt + an optional model + a schedule (hourly/daily/weekly/weekdays, custom cron, one-shot, or manual), editable in place at any time — or created for you by the agent from chat. Every run is a real chat: open it to watch the agent work, steer it mid-run, stop it, or keep talking in it after it finishes. Recent run outcomes feed the next run, and tasks created from Telegram/Slack/Discord report their results back there.
 - **It asks when it's unsure** — mid-task the agent can put a question to you (with tappable options) and resume with your answer, in the web UI or on a connected channel.
 - **Image generation** — generated images are saved to the shared workspace and shown as clickable inline thumbnails.
 - **Files** — browse, preview, download and delete everything the assistant has saved.
 - **Memory** — the assistant passively learns your preferences; 👍/👎 feedback (with a reason) feeds a memory-aware learner that dedupes and prunes conflicting notes.
-- **Project folder** — a read-only `repo-files` MCP scoped to a folder you choose, so the assistant can read your code/notes (browse + search, never write).
-- **Permissions** — you decide what it can touch: allow or block folders, and approve shell commands once or always.
+- **Folders** — register folders outside the workspace and grant a profile (or a single chat) **read** or **read + write** access, so the assistant can work with your code/notes. Access is granted, never blanket — a first-touch prompt can mint a grant on the fly.
+- **Permissions** — you decide what commands it can run: approve shell commands once or always.
 - **Voice** — talk to the assistant (Gemini Live / OpenAI realtime) over a browser audio bridge.
 - **Usage** — tokens and estimated cost, per profile and across the install.
-- **Settings** — models, API keys, voice, MCP servers, Google, channels, project folder, permissions, profiles, and re-run setup.
+- **Settings** — models, API keys, voice, MCP servers, Google, channels, folders, permissions, profiles, and re-run setup.
 
 ### Models
 
@@ -189,11 +189,11 @@ A text sketch of the same shape:
     |  Gateway  |  (FastAPI: /api/p/{profile}/message, /api/p/{profile}/stream,
     |           |   /api/health, /app)
     +-----------+
-         |  per-profile, per-session isolation; events streamed to every client
+         |  per-profile, per-chat isolation; events streamed to every client
     +-----------+
     |   Agent   |  (AG2 + Gemini / OpenAI / Anthropic / Ollama)
     |   Tools   |  (web search, web fetch, weather, markets, shell, code exec,
-    |           |   image gen, files, tasks/scheduling, repo-files MCP, Google,
+    |           |   image gen, files, folder read/write, tasks/scheduling, Google,
     |           |   skills, your own MCP servers)
     +-----------+
          |
@@ -202,7 +202,7 @@ A text sketch of the same shape:
     +-----------+
 ```
 
-Install-wide state lives under `~/.ag2assistant/` (provider keys, model configs, profiles); each profile keeps its own chats, tasks and memory in `~/.ag2assistant/profiles/<id>/`, and its generated files in `~/Documents/AG2 Assistant/<Profile>/`.
+Install-wide state lives under `~/.ag2assistant/` — the global `config.yaml` (model configs live in its `llm_configs:` section), `secrets.json` (provider keys), and the profile registry; each profile keeps its own `config.yaml` overlay, chats, tasks and memory in `~/.ag2assistant/profiles/<id>/`, and its generated files in `~/Documents/AG2 Assistant/<Profile>/`. The install root is overridable with `--data-dir` / `AG2ASSISTANT_DATA_DIR`.
 
 ## Project Status
 
@@ -211,16 +211,16 @@ Install-wide state lives under `~/.ag2assistant/` (provider keys, model configs,
 - [x] Profiles — isolated, colour-coded workspaces (own chats, tasks, memory, files)
 - [x] CLI (run, gateway, chat, agent, onboard, profiles, permissions, auth, google)
 - [x] Tools (web search, web fetch, weather, markets, shell, code execution, image generation, files)
-- [x] Memory — passively learns preferences and from 👍/👎 feedback; persists across sessions
-- [x] Multi-turn conversations (per-session isolation)
+- [x] Memory — passively learns preferences and from 👍/👎 feedback; persists across chats
+- [x] Multi-turn conversations (per-chat isolation)
 - [x] Gateway (REST + WebSocket event-stream API)
 - [x] Web UI — chat, tasks, files, images, voice, memory, usage, permissions, onboarding, settings
 - [x] Generative UI — rich live surfaces (weather, markets, news, agenda, inbox, decisions)
-- [x] Tasks & scheduling with deliverables (one-shot + recurring), steerable mid-run
+- [x] Tasks — standing scheduled jobs (manual/once/cron); every run is a steerable, stoppable chat
 - [x] Human-in-the-loop — the agent asks you questions and waits, on any surface
-- [x] Permissions — folder allow/block and shell-command approval
+- [x] Permissions — shell-command approval (folder access is Folders + Grants)
 - [x] Voice (Gemini Live / OpenAI realtime over a browser audio bridge)
-- [x] Project folder — read-only `repo-files` MCP; user-extensible MCP servers
+- [x] Folders — install-wide registry with per-profile/per-chat read & read+write grants; user-extensible MCP servers
 - [x] Google — Gmail, Calendar, Drive
 - [x] Channels: Telegram, Discord, Slack (DM + group @mention gating)
 - [x] Skills — searches & installs from the skills.sh registry, runs them

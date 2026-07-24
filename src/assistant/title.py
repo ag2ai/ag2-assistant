@@ -6,8 +6,10 @@ same structured-output primitive the planner/executor use. It runs exactly **onc
 per chat (a single revision), fire-and-forget so it never delays the response.
 """
 
+from ag2 import Agent
 from pydantic import BaseModel, Field
 
+from assistant.agent import cheap_model, model_config
 from assistant.config import Config
 
 
@@ -39,10 +41,6 @@ def _clean_title(raw: str | None) -> str | None:
 
 async def generate_title(config: Config, user_text: str, agent_text: str) -> str | None:
     """Ask the cheap model for a chat title (None on any failure)."""
-    from ag2 import Agent
-
-    from assistant.agent import cheap_model, model_config
-
     cfg = model_config(config, cheap_model(config))
     agent = Agent("titler", config=cfg)
     prompt = _PROMPT.format(user=(user_text or "")[:2000], agent=(agent_text or "")[:2000])

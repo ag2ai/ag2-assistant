@@ -12,7 +12,8 @@ Route map:
     GET  /api/health                         -> process status (first running runtime)
     GET  /api/status                         -> [{pid, busy, running_tasks, unseen_done}] activity badges
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
-    POST /api/secrets/key                    -> save a provider key (global secrets); reloads ALL runtimes
+    POST /api/secrets/key                    -> save a provider key (upserts its Default Secret); reloads ALL runtimes
+    GET/POST /api/secrets[/{sid}] + DELETE   -> Secret CRUD (named reusable API keys); reloads ALL runtimes
     GET  /api/llm-configs                     -> named LLM configs (install-wide) + active + env_override
     POST /api/llm-configs[/{cid}]             -> create/update a config (dry-construct → save → reload ALL)
     DELETE /api/llm-configs/{cid}             -> delete a config (409 if active); reloads ALL
@@ -22,10 +23,11 @@ Route map:
     POST /api/onboarded                      -> set the install-level onboarding flag
     GET/POST /api/memory                     -> universal "who the user is" doc (shared root/user.db)
     POST /api/identity                       -> seed universal doc from web onboarding (name/location/hours/style); seed-only, never clobbers
-    GET  /api/profiles                       -> {profiles, active_default, onboarded} (§3.5 contract)
-    POST /api/profiles                       -> create {name, palette, workspace?}; boots live
-    POST /api/profiles/{pid}                 -> rename / palette / workspace (workspace reloads runtime)
-    DELETE /api/profiles/{pid}               -> archive (guardrails §4.9)
+    GET  /api/profiles                       -> {profiles, archived, active_default, onboarded} (§3.5 contract)
+    POST /api/profiles                       -> create {name, accent}; boots live
+    POST /api/profiles/{pid}                 -> rename / accent (display-only)
+    POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
+    DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
     GET  /api/channels                       -> {platform: {profile, token_present, active, error}} (install-level)
     POST /api/channels                       -> bind {platform, profile:pid|null}; hot-applies; returns updated entry
     GET  /api/google/*                       -> account-level OAuth (shared like keys)
@@ -34,45 +36,132 @@ Route map:
     static: /, /{name}.svg, /favicon.ico, /voices/{name}.wav, /app*, catch-all
 
   Profile-scoped (under /api/p/{pid}):
-    GET  sessions, sessions/{sid}
+    GET  chats, chats/{cid}
     POST message
     GET/POST tasks* (all/schedule/{id}/cancel/rerun/seen/archive/chat)
     GET  inquiries/pending, POST inquiries/{id}/answer
     GET  hitl/pending
     WS   stream, WS voice; GET voice/voices, POST voice/select, POST voice/preview
-    GET/POST settings, settings/mcp*, settings/project-folder, settings/focuses, settings/voice_provider
+    GET/POST settings, settings/mcp*, settings/focuses, settings/voice_provider
     GET/POST memory                          -> THIS profile's persona memory (profiles/<id>/profile.db)
-    GET  files, GET/DELETE files/raw
+    GET  files (files+dirs), GET/PUT/DELETE files/raw (GET emits ETag; PUT in-place
+         write with If-Match, ADR 0011; delete: file or Directory, recursive)
+    POST files/upload (multipart → target dir), files/mkdir, files/move ({from,to}) — ADR 0007
     GET  usage
 """
 
 import asyncio
+import base64
 import contextlib
 import os
+import secrets as _secrets
+import tempfile
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import ag2
+from ag2.config import OllamaConfig
+from ag2.context import ConversationContext
+from ag2.events import (
+    ModelMessage,
+    ModelMessageChunk,
+    ModelRequest,
+    ModelResponse,
+    TextInput,
+    ToolCallsEvent,
+)
+from ag2.events.voice import (
+    RecordedAudioEvent,
+    SynthesizedAudioEvent,
+    TranscriptionChunkEvent,
+    TranscriptionCompletedEvent,
+)
+from ag2.exceptions import SkillDownloadError, SkillError, SkillInstallError
+from ag2.stream import MemoryStream
 from fastapi import (
     APIRouter,
     Depends,
     FastAPI,
+    File,
+    Form,
     HTTPException,
     Request,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from pydantic import BaseModel, Field
 
-from assistant import __version__
+from assistant import __version__, codex_auth, live_configs, llm_configs, secrets, voice_providers
+from assistant import feedback as feedback_learner
+from assistant import profiles as profiles_mod
+from assistant.agent import build_skills_runtime, bundled_skills_dir, model_config
+from assistant.attachments import build_input
+from assistant.config import Config, load_config
+from assistant.events import Attachment, FeedbackCleared, FeedbackGiven
+from assistant.filesearch import list_folder_dir, search_corpus
+from assistant.folders import READ_WRITE, DuplicatePath, FolderStore
 from assistant.gateway.profile_manager import (
+    _CHANNEL_TOKENS,
     ArchivedProfile,
     ProfileManager,
     ProfileRuntime,
     UnknownProfile,
 )
+from assistant.gateway.stream_bridge import StreamBridge
+from assistant.gateway.wire import to_wire
 from assistant.hitl import DurableAsker, GatewayAsker, NullAsker, add_hitl_routes
+from assistant.integrations import google_auth
+from assistant.memory import read_profile, read_universal, write_profile, write_universal
+from assistant.observability import log_suppressed
+from assistant.onboarding import identity_document
+from assistant.permissions import PermissionStore, command_rule, shell_prefix
+from assistant.secrets import KEY_ENV
+from assistant.settings import profile_settings
+from assistant.skills import (
+    DISABLE_OWN,
+    ORIGIN_BUNDLED,
+    ORIGIN_GLOBAL,
+    ORIGIN_PROFILE,
+    SUPPRESS_SHARED,
+    SkillStateStore,
+    skill_origin,
+)
+from assistant.skills_install import (
+    SkillSourceError,
+    discover_source,
+    install_from_source,
+    registry_install,
+    registry_search,
+)
+from assistant.tasks import TaskStoreCorruptionError
+from assistant.tools.mcp import build_mcp_tools
+from assistant.voice import synthesize_preview
+from assistant.workspace import (
+    _MAX_WRITE_BYTES,
+    delete,
+    etag_for_path,
+    list_all_dirs,
+    list_dirs,
+    list_files,
+    make_dir,
+    mention_forms,
+    move,
+    resolve,
+    save_upload,
+    write_text,
+    write_upload,
+)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -118,61 +207,210 @@ def _origin_ok(origin: str | None, host: str | None) -> bool:
 _SURFACES = {
     "new_task": (
         "The user is starting a NEW TASK. If their request is clear enough, create "
-        "it now with create_task (or schedule_task if they gave a time / cadence); "
-        "only ask a brief clarifying question if something essential is missing. "
-        "Confirm what you created."
+        "it now with create_task (pass schedule_kind='once'/'cron' with at/cron if "
+        "they gave a time or cadence, otherwise leave it 'manual'); only ask a brief "
+        "clarifying question if something essential is missing. Confirm what you created."
     ),
 }
 
 
 class MessageRequest(BaseModel):
     text: str
-    session_id: str = "default"
+    chat_id: str = "default"
     platform: str | None = None
 
 
 class MessageResponse(BaseModel):
     reply: str
-    session_id: str
+    chat_id: str
+
+
+class ChatPatch(BaseModel):
+    """Partial chat-metadata update: rename and/or star. Absent field = unchanged."""
+
+    title: str | None = None
+    starred: bool | None = None
 
 
 class CredentialsUpload(BaseModel):
     content: str  # raw OAuth client JSON
 
 
-class TaskRequest(BaseModel):
-    text: str
-    channel: str = "web"
+class MkdirRequest(BaseModel):
+    """Create an empty Directory (ADR 0007). `path` is workspace-relative for the Files
+    space; for a Folder (ADR 0006, ticket 05) it is ABSOLUTE and stays inside a granted
+    Folder's subtree. `chat_id` scopes the read_write Grant resolution for a Folder
+    mkdir (ignored for a relative path)."""
+
+    path: str
+    chat_id: str = ""
+
+
+class MoveRequest(BaseModel):
+    """Move/rename a file or Directory (ADR 0007). `from`/`to` are workspace-relative
+    for a Files-space move; for a Folder move (ADR 0006, ticket 04) both are ABSOLUTE
+    and must resolve under the SAME readable Folder root (no cross-Root move).
+    `chat_id` scopes the Grant resolution for a Folder move (ignored for a relative
+    move — the Files space is profile-sandboxed)."""
+
+    from_: str = Field(alias="from")
+    to: str
+    chat_id: str = ""
+
+    model_config = {"populate_by_name": True}
+
+
+def _unquote_etag(value: str | None) -> str | None:
+    """The raw content token inside an ``If-Match`` header value — its weak-``W/``
+    prefix and surrounding quotes stripped (ADR 0011), or None when absent."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value.startswith("W/"):
+        value = value[2:]
+    return value.strip('"')
+
+
+class TaskCreate(BaseModel):
+    # Empty name triggers the service's cheap-model auto-naming from the prompt.
+    name: str = ""
+    prompt: str
+    model: str | None = None
+    schedule: dict | None = None
+    description: str = ""
+
+
+class TaskPatch(BaseModel):
+    name: str | None = None
+    prompt: str | None = None
+    model: str | None = None  # "" clears back to the profile default
+    schedule: dict | None = None
+    paused: bool | None = None
+    starred: bool | None = None
+    description: str | None = None
+
+
+async def _scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:
+    """The task whose Folder Grants the ``chat_id`` scope token names: ``task:{id}`` (an
+    open Task page) directly, ``task-run:{run_id}`` (a run thread) via ``get_run``, else
+    ``""`` (a real chat id or none) — ADR 0006/0013."""
+    if chat_id.startswith("task:"):
+        return chat_id.removeprefix("task:")
+    if chat_id.startswith("task-run:"):
+        with contextlib.suppress(Exception):
+            run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
+            return (run or {}).get("task_id") or ""
+    return ""
+
+
+def _resolve_folder(
+    runtime: ProfileRuntime, path: str, chat_id: str, task_id: str = ""
+) -> tuple[Path | None, str | None]:
+    """``(readable Folder root containing ``path``, its effective mode)`` via the one
+    Folder resolver, or ``(None, None)`` when there's no gateway or the absolute
+    ``path`` resolves under no granted root. Read authorizes on any non-``None`` mode;
+    a mutation additionally requires ``read_write`` (the caller checks). ``task_id``
+    (decoded from the Thread scope) admits the open Task/run's task-scope Grants. The
+    confining root is the sandbox base every absolute ``/files/*`` mutation passes to
+    the workspace helpers, so ``within-subtree only`` falls out for free (ADR 0006/0013)."""
+    gw = runtime.gateway
+    folders = gw.folders if gw is not None else None
+    if folders is None:
+        return None, None
+    return folders.resolve_within(path, runtime.config.data_dir.name, chat_id, task_id)
+
+
+def _folder_write_base(
+    runtime: ProfileRuntime,
+    path: str,
+    chat_id: str,
+    *,
+    task_id: str = "",
+    miss_status: int,
+    miss_msg: str,
+) -> tuple[Path | None, JSONResponse | None]:
+    """The sandbox base for an ABSOLUTE ``/files/*`` MUTATION (tickets 04–05): the
+    confining readable Folder root when ``path`` resolves under a ``read_write`` Grant,
+    else ``(None, <deny response>)`` — the caller's ``miss_status``/``miss_msg`` (e.g.
+    404 "file not found", 400 "invalid path") when the path is under no granted root,
+    always ``403`` "read-only folder" when the covering Grant is ``read``. Every
+    absolute mutation branch funnels through here so the read_write gate + base
+    selection is written once (ADR 0006)."""
+    root, mode = _resolve_folder(runtime, path, chat_id, task_id)
+    if root is None:
+        return None, JSONResponse({"error": miss_msg}, status_code=miss_status)
+    if mode != READ_WRITE:
+        return None, JSONResponse({"error": "read-only folder"}, status_code=403)
+    return root, None
+
+
+def _mutation_base(
+    runtime: ProfileRuntime,
+    path: str,
+    chat_id: str,
+    *,
+    task_id: str = "",
+    miss_status: int,
+    miss_msg: str,
+) -> tuple[Path | None, JSONResponse | None]:
+    """The sandbox base for a ``/files/*`` mutation, branching on ``os.path.isabs``: the
+    workspace for a relative path, else the ``read_write`` Folder root (or a deny response)."""
+    if os.path.isabs(path):
+        return _folder_write_base(
+            runtime, path, chat_id, task_id=task_id, miss_status=miss_status, miss_msg=miss_msg
+        )
+    return runtime.config.workspace_dir, None
+
+
+def _resolve_file_path(
+    runtime: ProfileRuntime, path: str, chat_id: str, task_id: str = ""
+) -> tuple[Path | None, str | None]:
+    """Resolve a ``/files/*`` ``path`` to ``(existing file, effective mode)``, branching
+    on ``os.path.isabs`` — the sole discriminator between a Files-space file and a
+    Folder file. A relative path keeps today's workspace sandbox untouched (mode
+    ``read_write`` — the user owns their Files space); an absolute path authorizes via
+    the one Folder resolver (``read`` suffices for a GET, ``task_id`` admitting the open
+    Task/run's grants) and is confirmed to be a real file. ``(None, None)`` on any
+    denial/miss — the caller turns that into the shared 404 shape (ADR 0006/0013). The
+    mode rides back so the GET can advertise it to the client's edit-affordance gating
+    (ticket 04)."""
+    if not os.path.isabs(path):
+        rp = resolve(runtime.config.workspace_dir, path)
+        return (rp, READ_WRITE) if rp is not None else (None, None)
+    root, mode = _resolve_folder(runtime, path, chat_id, task_id)
+    if root is None:
+        return None, None
+    rp = Path(path).expanduser().resolve()
+    return (rp, mode) if rp.is_file() else (None, None)
 
 
 class AnswerRequest(BaseModel):
     answer: str
 
 
-class TaskChatRequest(BaseModel):
-    text: str
-
-
-class ScheduleRequest(BaseModel):
-    text: str
-    when: str  # ISO 8601 datetime
-    recurrence: str | None = None
-
-
 class OnboardedRequest(BaseModel):
     value: bool = True
-
-
-class ProjectFolderRequest(BaseModel):
-    path: str
 
 
 class FocusesRequest(BaseModel):
     focuses: list[str] = []
 
 
+class ModelOverrideRequest(BaseModel):
+    # A selection into the shared install-wide list; empty string clears the override
+    # (→ back to the install-wide Active). Used for both the Text and Live switchers.
+    config_id: str = ""
+
+
+class ReplyTimeoutRequest(BaseModel):
+    reply_timeout_s: float = Field(gt=0, le=3600)
+
+
 class VoiceRequest(BaseModel):
     voice: str
+    # When set, the voice op targets a named live config (its provider/key, and
+    # select persists onto that config) instead of the profile's legacy voice setting.
+    config_id: str | None = None
 
 
 class MCPServerRequest(BaseModel):
@@ -192,11 +430,11 @@ class KeyRequest(BaseModel):
 
 
 class LlmConfigRequest(BaseModel):
-    """Create/update body for a named LLM configuration. ``api_key`` is write-only:
-    None leaves the stored key unchanged, "" clears it, a value sets it — the raw key
-    is never echoed back (only a set/hint). ``id`` is only read by the draft-test
-    endpoint (create/update take the id from the URL path), letting a test of an
-    edit-in-progress fall back to that config's STORED key when none is typed."""
+    """Create/update body for a named LLM configuration. A model's key is its
+    ``secret_id`` reference (a Secret in the secrets store). ``api_key`` is
+    DRAFT-TEST ONLY: the /test endpoints use a typed value directly ("" tests as
+    if no Secret resolved); create/update ignore it. ``id`` is only read by the
+    draft-test endpoint (create/update take the id from the URL path)."""
 
     id: str | None = None
     name: str
@@ -204,9 +442,49 @@ class LlmConfigRequest(BaseModel):
     model: str
     base_url: str = ""
     host: str = ""
+    secret_id: str = ""
     api_key: str | None = None
     options: dict = Field(default_factory=dict)
     activate: bool = False
+
+
+class LiveConfigRequest(BaseModel):
+    """Create/update body for a named live (voice) configuration. A config's key is
+    its ``secret_id`` reference (a Secret in the secrets store). ``api_key`` is
+    DRAFT-TEST ONLY (a typed value is used directly, never persisted). ``id`` is
+    only read by the draft-test endpoint. ``voice`` is optional on save (defaults
+    to the provider's default voice; usually changed via the voice picker, not
+    this body)."""
+
+    id: str | None = None
+    name: str
+    provider: str
+    model: str = ""
+    voice: str = ""
+    secret_id: str = ""
+    api_key: str | None = None
+    activate: bool = False
+
+
+class SecretCreateRequest(BaseModel):
+    """Create body for a Secret (named reusable API key — CONTEXT.md "Secrets").
+    ``value`` is write-only: no endpoint ever returns it (views carry a last-4
+    hint). ``default`` requires a provider tag."""
+
+    name: str
+    value: str
+    provider: str = ""
+    default: bool = False
+
+
+class SecretUpdateRequest(BaseModel):
+    """Partial update for a Secret — None leaves a field unchanged. Rotating
+    ``value`` re-keys every model referencing this Secret."""
+
+    name: str | None = None
+    value: str | None = None
+    provider: str | None = None
+    default: bool | None = None
 
 
 class CodexCodeRequest(BaseModel):
@@ -246,22 +524,66 @@ class IdentityRequest(BaseModel):
 
 class ProfileCreateRequest(BaseModel):
     name: str
-    palette: str
-    workspace: str | None = None
+    accent: str
 
 
 class ProfileUpdateRequest(BaseModel):
     name: str | None = None
-    palette: str | None = None
-    workspace: str | None = None
+    accent: str | None = None
 
 
 class ProfileArchiveRequest(BaseModel):
     new_default: str | None = None
 
 
-class PermissionFolderRequest(BaseModel):
+class FolderCreateRequest(BaseModel):
     path: str
+    name: str = ""
+
+
+class FolderUpdateRequest(BaseModel):
+    name: str | None = None
+    path: str | None = None
+
+
+class FolderGrantRequest(BaseModel):
+    profile: str
+    chat_id: str = ""
+    task_id: str = ""
+    mode: str
+
+
+class FolderGrantDeleteRequest(BaseModel):
+    profile: str
+    chat_id: str = ""
+    task_id: str = ""
+
+
+class SkillStateRequest(BaseModel):
+    # Enabled (True) / Disabled (False). Install-wide for a Bundled/Global skill via
+    # /api/skills/{name}/state; per-profile for a Profile skill via /api/p/{pid}/skills/{name}/state.
+    enabled: bool
+
+
+class SkillSearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+
+
+class SkillInstallRequest(BaseModel):
+    # A registry install (ADR 0017 t04) passes ``install_id`` (from a search hit).
+    # A git install (t05) passes ``git_url`` + the chosen ``names``. The target is the
+    # surface, not a field here: the Application route lands Global, the profile route
+    # lands in that profile.
+    install_id: str | None = None
+    git_url: str | None = None
+    names: list[str] | None = None
+
+
+class SkillDiscoverRequest(BaseModel):
+    # Scan a git URL (t05) for every SKILL.md without installing. Upload discovery uses
+    # the multipart route instead (a file can't ride a JSON body).
+    git_url: str | None = None
 
 
 class PermissionCommandAddRequest(BaseModel):
@@ -307,48 +629,40 @@ class _HitlDispatcher:
 
 def _runtime_settings(runtime: ProfileRuntime):
     """This profile's Settings, resolved from the runtime's derived config."""
-    from assistant.settings import Settings
-
-    return Settings(runtime.config.data_dir / "settings.json")
+    return profile_settings(runtime.config.data_dir)
 
 
-def _chat_asker(runtime: ProfileRuntime, session_id: str):
+def _chat_asker(runtime: ProfileRuntime, chat_id: str):
     """Durable, inline HITL for a chat turn: the agent's question persists as an
-    Inquiry and surfaces inline on this session's stream (InquiryRaised),
+    Inquiry and surfaces inline on this chat's stream (InquiryRaised),
     answerable from the thread or the strip. Falls back to the transient HITL
     registry if the inquiry store isn't available."""
     inquiries = getattr(runtime.tasks, "inquiries", None) if runtime.tasks is not None else None
     if inquiries is None:
         return GatewayAsker(runtime.hitl)
-    return DurableAsker(NullAsker(), inquiries, session=session_id)
+    return DurableAsker(NullAsker(), inquiries, chat=chat_id)
 
 
 async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
-    """Per-profile activity for the chip badges, from a single store scan.
+    """Per-profile activity for the chip badges, from a single store scan (v2:
+    a Task is standing config, a Run is one execution — this scans runs, not tasks).
 
     Returns ``(running, unseen_done)``:
-      * ``running``     — RUNNING tasks (top-level + subtree); kept for API back-compat.
-      * ``unseen_done`` — finished, not-yet-opened root tasks (non-archived): the count
-        behind the chip's "unread results" dot. Mirrors the nav's per-row unread marker
-        (``isUnread`` = terminal status && not seen), rolled up to the profile.
+      * ``running``     — runs not yet in a terminal state (RUNNING or NEEDS_INPUT).
+      * ``unseen_done`` — finished, not-yet-opened runs: the count behind the chip's
+        "unread results" dot. Mirrors the nav's per-row unread marker (``isUnread`` =
+        terminal status && not seen), rolled up to the profile.
     """
     tasks = runtime.tasks
     store = getattr(tasks, "store", None) if tasks is not None else None
     if store is None:
         return 0, 0
     try:
-        from assistant.tasks import TaskStatus
+        from assistant.tasks import RunStatus
 
-        rows = await store.list_all()
-        running = sum(1 for t in rows if t.status == TaskStatus.RUNNING)
-        unseen_done = sum(
-            1
-            for t in rows
-            if t.parent_id is None
-            and not getattr(t, "archived", False)
-            and t.status in TaskStatus.TERMINAL
-            and getattr(t, "seen_at", None) is None
-        )
+        runs = await store.list_runs()
+        running = sum(1 for r in runs if r.status not in RunStatus.TERMINAL)
+        unseen_done = sum(1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None)
         return running, unseen_done
     except Exception:
         return 0, 0
@@ -358,7 +672,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
     The app owns the manager's lifecycle: ``profiles.start()`` runs on lifespan
-    startup (migration + boot all unarchived profiles) and ``profiles.close()`` on
+    startup (boot all unarchived profiles) and ``profiles.close()`` on
     shutdown. ``persist`` is accepted for signature symmetry (the manager itself is
     already configured with its persistence choice).
 
@@ -369,7 +683,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await manager.start()  # migration + boot all unarchived profiles (+ channels)
+        await manager.start()  # boot all unarchived profiles (+ channels)
         try:
             yield
         finally:
@@ -430,8 +744,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.get("/")
     async def ui():
         """The web UI is the Svelte client at /app."""
-        from fastapi.responses import RedirectResponse
-
         return RedirectResponse(url="/app/", status_code=307)
 
     @app.get("/{name}.svg")
@@ -508,10 +820,76 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def set_secrets_key(req: KeyRequest) -> dict:
         """Save/clear a provider API key (global secrets). Reloads ALL runtimes so
         every profile's agent picks up the change on its next turn."""
-        from assistant import secrets
-
         if not secrets.set_key(req.provider, req.value):
             return Response(status_code=400)
+        await _reload_all()
+        return {"ok": True}
+
+    # ---- Secrets: named reusable API keys (CONTEXT.md "Secrets", ADR 0005).
+    # Registered AFTER /api/secrets/key so the literal "key" segment keeps routing
+    # to the provider-key handler, not /{sid}. ----
+
+    def _secret_views() -> list[dict]:
+        """Safe views + the names of the model configs referencing each Secret
+        (drives the "used by N models" delete confirm)."""
+        llm = llm_configs.list_configs()
+        live = live_configs.list_configs()
+        out = []
+        for s in secrets.list_secrets():
+            used = [c.get("name", "") for c in llm if c.get("secret_id") == s["id"]]
+            used += [c.get("name", "") for c in live if c.get("secret_id") == s["id"]]
+            out.append({**s, "used_by": used})
+        return out
+
+    @app.get("/api/secrets")
+    async def list_secrets_api() -> dict:
+        """Every Secret as a safe view — name/provider/default/hint/used_by, never
+        the raw value."""
+        return {"secrets": _secret_views()}
+
+    @app.post("/api/secrets")
+    async def create_secret_api(req: SecretCreateRequest):
+        """Create a Secret. 409 + the existing Secret's view when the value is
+        already stored (unique by value — the model form snaps to ``existing``).
+        Reloads all runtimes (a new Default changes env-derived keys)."""
+        try:
+            view = secrets.create_secret(
+                req.name, req.value, provider=req.provider, default=req.default
+            )
+        except secrets.DuplicateValue as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc), "existing": exc.existing}, status_code=409
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        await _reload_all()
+        return {"ok": True, "secret": view}
+
+    @app.post("/api/secrets/{sid}")
+    async def update_secret_api(sid: str, req: SecretUpdateRequest):
+        """Partial update (rename / rotate / retag / set-default). 404 unknown, 409
+        duplicate value, 400 bad input. Rotating re-keys every referencing model."""
+        try:
+            view = secrets.update_secret(
+                sid, name=req.name, value=req.value, provider=req.provider, default=req.default
+            )
+        except KeyError:
+            return JSONResponse({"ok": False, "error": f"unknown secret: {sid}"}, status_code=404)
+        except secrets.DuplicateValue as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc), "existing": exc.existing}, status_code=409
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        await _reload_all()
+        return {"ok": True, "secret": view}
+
+    @app.delete("/api/secrets/{sid}")
+    async def delete_secret_api(sid: str):
+        """Delete a Secret (404 unknown). Always allowed — referencing configs
+        degrade down the resolution order; deleting a Default pops its env var."""
+        if not secrets.delete_secret(sid):
+            return JSONResponse({"ok": False, "error": f"unknown secret: {sid}"}, status_code=404)
         await _reload_all()
         return {"ok": True}
 
@@ -525,16 +903,19 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 await manager.reload(runtime.pid)
 
     def _llm_entry_view(entry: dict, active: str | None) -> dict:
-        """One config as the API exposes it: the stored fields, a set/hint summary for
-        BOTH keys that could apply (its own per-config key and the provider's shared
-        env key — never the raw values), plus ``key_source`` naming which one an
+        """One config as the API exposes it: the stored fields, the referenced
+        Secret's view (or a dangling-reference flag) and the provider's shared env
+        key summary — never the raw values — plus ``key_source`` naming which one an
         actual call would send. That triple is what lets the UI say honestly why a
         keyless-looking config still works (shared fallback / no key needed)."""
-        from assistant import llm_configs, secrets
-        from assistant.secrets import KEY_ENV
-
         provider = llm_configs.PROVIDER_OF.get(entry["type"], "")
         shared = secrets.status().get(provider, {})
+        sec_view = secrets.get_secret(entry.get("secret_id", ""))
+        sec = (
+            {"id": sec_view["id"], "name": sec_view["name"], "hint": sec_view["hint"]}
+            if sec_view
+            else None
+        )
         view = {
             "id": entry["id"],
             "name": entry["name"],
@@ -543,10 +924,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "base_url": entry.get("base_url", ""),
             "host": entry.get("host", ""),
             "options": entry.get("options", {}),
-            "key": secrets.config_key_hint(entry["id"]),
+            "secret_id": entry.get("secret_id", ""),
+            "secret": sec,
+            "secret_missing": bool(entry.get("secret_id")) and sec is None,
             "key_source": llm_configs.key_source(
                 entry
-            ),  # config | shared | not_needed | none | subscription
+            ),  # secret | shared | not_needed | none | subscription
             "images": llm_configs.image_capable(entry),  # drives the row's "images" chip
             "shared_key": {
                 "env": KEY_ENV.get(provider, ""),
@@ -559,8 +942,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             # The chip/form need the live ChatGPT sign-in state without a second
             # fetch. Lazy + guarded so a missing/broken codex_auth reads as signed-out.
             try:
-                from assistant import codex_auth
-
                 view["signed_in"] = bool(codex_auth.status().get("signed_in"))
             except Exception:
                 view["signed_in"] = False
@@ -580,9 +961,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     def _llm_probe_config(entry: dict):
         """A throwaway Config carrying just the entry's derived provider/model/options,
         for the dry-construct + test round-trip. Streaming off (a one-shot probe)."""
-        from assistant import llm_configs
-        from assistant.config import Config
-
         probe = Config()
         probe.llm.streaming = False
         probe.llm.provider = llm_configs.PROVIDER_OF[entry["type"]]
@@ -598,8 +976,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def list_llm_configs() -> dict:
         """The install-wide named LLM configs, the active id, and any env override that
         pins provider/model over them (drives the 'pinned by env' UI banner)."""
-        from assistant import llm_configs
-
         active = llm_configs.active_id()
         return {
             "configs": [_llm_entry_view(e, active) for e in llm_configs.list_configs()],
@@ -610,17 +986,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def _save_llm_config(req: LlmConfigRequest, cid: str | None):
         """Shared create/update: dry-construct the derived model_config BEFORE
         persisting (a bad type/kwarg fails here, 400 + the constructor's message, not on
-        the agent's next turn), then save the entry, write the per-config key, optionally
-        activate, and reload every runtime. 404 when updating an unknown id."""
-        from assistant import llm_configs, secrets
-        from assistant.agent import model_config
-
+        the agent's next turn), then save the entry, optionally activate, and reload
+        every runtime. 404 when updating an unknown id."""
         entry = {
             "name": req.name,
             "type": req.type,
             "model": req.model,
             "base_url": req.base_url,
             "host": req.host,
+            "secret_id": req.secret_id,
             "options": req.options,
         }
         if cid is not None:
@@ -637,9 +1011,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
         saved = llm_configs.save_config(entry)
-        # api_key: None leaves it unchanged; "" clears; a value sets it.
-        if req.api_key is not None:
-            secrets.set_config_key(saved["id"], req.api_key)
         if req.activate:
             llm_configs.set_active(saved["id"])
         await _reload_all()
@@ -654,10 +1025,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         then get the placeholder — the same thing a save would produce). A working
         reply → ``{ok, reply, latency_ms}``; ANY failure (construction, auth,
         timeout) → 502 ``{ok:false, error}``."""
-        import time
-
-        from assistant.agent import model_config
-
         started = time.monotonic()
         try:
             probe = _llm_probe_config(entry)
@@ -668,9 +1035,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     opts["api_key"] = draft_key
                 elif entry.get("base_url"):
                     opts["api_key"] = "unused"  # mirror entry_options' placeholder
-            from ag2 import Agent
-
-            agent = Agent("ping", config=model_config(probe))
+            agent = ag2.Agent("ping", config=model_config(probe))
             reply = await asyncio.wait_for(
                 agent.ask("Reply with exactly: PONG"), timeout=_LLM_TEST_TIMEOUT_S
             )
@@ -694,8 +1059,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         captured as an id. ``req.id`` (when editing an existing config) lets a blank
         key field fall back to that config's stored key, matching what a save would
         produce; a typed ``api_key`` is used directly and never persisted."""
-        from assistant import llm_configs
-
         try:
             entry = llm_configs._clean_entry(
                 {
@@ -705,6 +1068,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     "model": req.model,
                     "base_url": req.base_url,
                     "host": req.host,
+                    "secret_id": req.secret_id or "",
                     "options": req.options,
                 }
             )
@@ -720,27 +1084,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.delete("/api/llm-configs/{cid}")
     async def delete_llm_config(cid: str):
-        """Delete a config. 409 if it is active (select another first), 404 if unknown;
-        else remove it, clear its per-config key, and reload every runtime."""
-        from assistant import llm_configs, secrets
-
+        """Delete a config (404 if unknown). Deleting the active one moves active to the
+        next remaining config (or none — flat defaults). Reloads every runtime so the
+        new active takes effect (referenced Secrets are independent and untouched)."""
         if llm_configs.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        try:
-            llm_configs.delete_config(cid)
-        except ValueError:
-            return JSONResponse(
-                {"ok": False, "error": "select another configuration first"}, status_code=409
-            )
-        secrets.set_config_key(cid, "")  # drop the orphaned secret
+        llm_configs.delete_config(cid)
         await _reload_all()
         return {"ok": True}
 
     @app.post("/api/llm-configs/{cid}/use")
     async def use_llm_config(cid: str):
         """Make ``cid`` the active configuration and reload every runtime (404 unknown)."""
-        from assistant import llm_configs
-
         if not llm_configs.set_active(cid):
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         await _reload_all()
@@ -750,18 +1105,175 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def test_llm_config(cid: str):
         """Real PONG round-trip against a SAVED config, exercising the exact runtime
         key-resolution path. 404 if unknown; result shape per ``_ping_entry``."""
-        from assistant import llm_configs
-
         entry = llm_configs.get_config(cid)
         if entry is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         return await _ping_entry(entry)
 
+    # ---- Named LIVE (voice) configurations — the spoken counterpart of the LLM
+    # configs above. Install-wide list + single active selection, read fresh by the
+    # voice session at connect (so no runtime reload on change). ----
+
+    def _live_entry_view(entry: dict, active: str | None) -> dict:
+        """One live config as the API exposes it: stored fields + the referenced
+        Secret's view (or a dangling-reference flag) and the provider's shared env
+        key summary (never the raw values) + ``key_source`` naming which one a
+        session sends."""
+        provider = entry["provider"]
+        shared = secrets.status().get(provider, {})
+        sec_view = secrets.get_secret(entry.get("secret_id", ""))
+        sec = (
+            {"id": sec_view["id"], "name": sec_view["name"], "hint": sec_view["hint"]}
+            if sec_view
+            else None
+        )
+        return {
+            "id": entry["id"],
+            "name": entry["name"],
+            "provider": provider,
+            "model": entry["model"],
+            "voice": entry.get("voice", ""),
+            "secret_id": entry.get("secret_id", ""),
+            "secret": sec,
+            "secret_missing": bool(entry.get("secret_id")) and sec is None,
+            "key_source": live_configs.key_source(entry),  # secret | shared | none
+            "shared_key": {
+                "env": KEY_ENV.get(provider, ""),
+                "set": bool(shared.get("set")),
+                "hint": shared.get("hint", ""),
+            },
+            "active": entry["id"] == active,
+        }
+
+    async def _ping_live(entry: dict, draft_key: str | None = None):
+        """Models-list key probe (the live-config 'Test'): call the provider's cheap
+        ``check`` with the resolved key. ``draft_key`` overrides for an unsaved edit —
+        None uses the stored/shared key, "" tests as if the stored key were cleared, a
+        value tests that key directly. Ok → ``{ok, reply, latency_ms}``; any failure →
+        502 ``{ok:false, error}``."""
+        if draft_key is None:
+            key = live_configs.resolve_key(entry)
+        elif draft_key:
+            key = draft_key
+        else:
+            key = live_configs._shared_key(entry.get("provider", ""))
+        started = time.monotonic()
+        try:
+            await asyncio.wait_for(
+                voice_providers.get(entry["provider"]).check(key), timeout=_LLM_TEST_TIMEOUT_S
+            )
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=502)
+        return {"ok": True, "reply": "OK", "latency_ms": int((time.monotonic() - started) * 1000)}
+
+    @app.get("/api/live-configs")
+    async def list_live_configs() -> dict:
+        """The install-wide named live configs, the active id, and the provider catalog
+        (default model/voice per provider) that seeds the add-form and templates."""
+        active = live_configs.active_id()
+        return {
+            "configs": [_live_entry_view(e, active) for e in live_configs.list_configs()],
+            "active": active,
+            "providers": [
+                {
+                    "name": n,
+                    "default_model": voice_providers.get(n).realtime_model,
+                    "default_voice": voice_providers.get(n).default_voice,
+                }
+                for n in voice_providers.names()
+            ],
+        }
+
+    async def _save_live_config(req: LiveConfigRequest, cid: str | None):
+        """Shared create/update: validate (bad provider/voice → 400), save, optionally
+        activate. 404 when updating an unknown id. A blank ``voice`` on update keeps
+        the config's existing voice (it's set via the picker, not this form) rather
+        than resetting to the provider default."""
+        existing = live_configs.get_config(cid) if cid is not None else None
+        if cid is not None and existing is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        voice = req.voice
+        if not voice and existing and existing.get("provider") == req.provider:
+            voice = existing.get("voice", "")
+        entry = {
+            "name": req.name,
+            "provider": req.provider,
+            "model": req.model,
+            "voice": voice,
+            "secret_id": req.secret_id,
+        }
+        if cid is not None:
+            entry["id"] = cid
+        try:
+            saved = live_configs.save_config(entry)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        except KeyError:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        if req.activate:
+            live_configs.set_active(saved["id"])
+        active = live_configs.active_id()
+        return {"ok": True, "config": _live_entry_view(saved, active), "active": active}
+
+    @app.post("/api/live-configs")
+    async def create_live_config(req: LiveConfigRequest):
+        """Create a new named live configuration."""
+        return await _save_live_config(req, None)
+
+    @app.post("/api/live-configs/test")
+    async def test_live_config_draft(req: LiveConfigRequest):
+        """Probe a DRAFT live config as entered, WITHOUT saving. Registered before the
+        /{cid} routes so "test" isn't captured as an id. ``req.id`` lets a blank key
+        field fall back to that config's stored key; a typed key is used directly."""
+        try:
+            entry = live_configs._clean_entry(
+                {
+                    "id": req.id or "",
+                    "name": req.name or "draft",
+                    "provider": req.provider,
+                    "model": req.model,
+                    "voice": req.voice,
+                    "secret_id": req.secret_id or "",
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+        entry.setdefault("id", "")
+        return await _ping_live(entry, draft_key=req.api_key)
+
+    @app.post("/api/live-configs/{cid}")
+    async def update_live_config(cid: str, req: LiveConfigRequest):
+        """Update an existing named live configuration (404 if unknown)."""
+        return await _save_live_config(req, cid)
+
+    @app.delete("/api/live-configs/{cid}")
+    async def delete_live_config(cid: str):
+        """Delete a live config (404 if unknown). Deleting the active one moves active to
+        the next remaining config (or none — legacy fallback). Referenced Secrets are
+        independent and untouched."""
+        if live_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        live_configs.delete_config(cid)
+        return {"ok": True}
+
+    @app.post("/api/live-configs/{cid}/use")
+    async def use_live_config(cid: str):
+        """Make ``cid`` the active live configuration (404 if unknown)."""
+        if not live_configs.set_active(cid):
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        return {"ok": True}
+
+    @app.post("/api/live-configs/{cid}/test")
+    async def test_live_config(cid: str):
+        """Models-list key probe against a SAVED live config. 404 if unknown."""
+        entry = live_configs.get_config(cid)
+        if entry is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        return await _ping_live(entry)
+
     @app.post("/api/onboarded")
     async def set_onboarded(req: OnboardedRequest) -> dict:
         """Mark first-run onboarding completed/dismissed (install-level, in the registry)."""
-        from assistant import profiles as profiles_mod
-
         profiles_mod.set_onboarded(req.value)
         return {"ok": True}
 
@@ -770,24 +1282,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     def _user_store_path() -> Path:
         """The install-wide universal memory DB — the SAME file every profile's agent
         reads (``root_dir/user.db``). Profile-agnostic, so resolved from the root config."""
-        from assistant.config import load_config
-
         return load_config().root_dir / "user.db"
 
     @app.get("/api/memory")
     async def get_universal_memory() -> dict:
         """Read the shared universal "who the user is" document (identity facts injected
         into EVERY profile's context). Mirrors the per-profile GET /api/p/{pid}/memory."""
-        from assistant.memory import read_universal
-
         return {"text": await read_universal(_user_store_path())}
 
     @app.post("/api/memory")
     async def set_universal_memory(req: MemoryRequest) -> dict:
         """Replace the shared universal document (a user edit from any profile's Settings →
         Memory). Read fresh per turn, so all profiles' agents pick it up next turn."""
-        from assistant.memory import write_universal
-
         await write_universal(req.text, _user_store_path())
         return {"ok": True}
 
@@ -801,9 +1307,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if every field is empty nothing is written (also ``seeded: false``). This is why
         a web-onboarded user's first chat never triggers the in-chat interview: the
         store is already seeded, so `needs_onboarding` is false."""
-        from assistant.memory import read_universal, write_universal
-        from assistant.onboarding import identity_document
-
         doc = identity_document(req.model_dump())
         if not doc:
             return {"ok": True, "seeded": False, "reason": "empty"}
@@ -813,65 +1316,20 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         await write_universal(doc, path)
         return {"ok": True, "seeded": True}
 
-    # ---- Permissions (global, install-wide: one store shared by every profile) ----
+    # ---- Permissions (global, install-wide: one command store shared by every profile) ----
 
     def _permissions_store():
         """A fresh PermissionStore over the install-wide file. mtime self-refresh
         means live turns pick up any change on their next query — no manager.reload()."""
-        from assistant.config import load_config
-        from assistant.permissions import PermissionStore
-
         return PermissionStore(load_config().root_dir / "permissions.json")
 
     def _permissions_snapshot(store) -> dict:
-        return {
-            "folders": store.granted_folders(),
-            "blocked": store.blocked_folders(),
-            "commands": store.granted_commands(),
-        }
+        return {"commands": store.granted_commands()}
 
     @app.get("/api/permissions")
     async def get_permissions() -> dict:
-        """The full install-wide permission state (folders + blocked + command rules)."""
+        """The install-wide permission state (command rules)."""
         return _permissions_snapshot(_permissions_store())
-
-    @app.post("/api/permissions/folders")
-    async def grant_permission_folder(req: PermissionFolderRequest):
-        """Grant a folder. Returns the full snapshot (client never needs a second GET)."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        store.grant(req.path)
-        return {"ok": True, **_permissions_snapshot(store)}
-
-    @app.delete("/api/permissions/folders")
-    async def revoke_permission_folder(req: PermissionFolderRequest):
-        """Revoke a granted folder. 404 if it wasn't granted."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        if not store.revoke(req.path):
-            return JSONResponse({"error": f"not granted: {req.path}"}, status_code=404)
-        return {"ok": True, **_permissions_snapshot(store)}
-
-    @app.post("/api/permissions/blocked")
-    async def block_permission_folder(req: PermissionFolderRequest):
-        """Block a folder (also removes any conflicting grant)."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        store.block(req.path)
-        return {"ok": True, **_permissions_snapshot(store)}
-
-    @app.delete("/api/permissions/blocked")
-    async def unblock_permission_folder(req: PermissionFolderRequest):
-        """Unblock a folder. 404 if it wasn't blocked."""
-        if not req.path.strip():
-            return JSONResponse({"error": "path is required"}, status_code=400)
-        store = _permissions_store()
-        if not store.unblock(req.path):
-            return JSONResponse({"error": f"not blocked: {req.path}"}, status_code=404)
-        return {"ok": True, **_permissions_snapshot(store)}
 
     @app.post("/api/permissions/commands")
     async def grant_permission_command(req: PermissionCommandAddRequest):
@@ -879,8 +1337,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         so the frontend can't produce malformed syntax; a prefix that the matcher would
         never honour (fails the shell_prefix charset) is rejected 400 rather than minting
         a dead rule."""
-        from assistant.permissions import command_rule, shell_prefix
-
         if not req.tool.strip():
             return JSONResponse({"error": "tool is required"}, status_code=400)
         prefix = req.prefix.strip() if req.prefix else None
@@ -907,13 +1363,349 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse({"error": f"not granted: {req.rule}"}, status_code=404)
         return {"ok": True, **_permissions_snapshot(store)}
 
+    # ---- Folders + Grants (global: the install-wide Folder registry, ADR 0006) ----
+
+    def _folder_store():
+        """A fresh FolderStore over the install-wide file. mtime self-refresh means
+        live turns pick up any change on their next check — no manager.reload()."""
+        return FolderStore(load_config().root_dir / "folders.json")
+
+    def _folders_snapshot(store) -> dict:
+        return {"folders": store.list_folders()}
+
+    @app.get("/api/folders")
+    async def get_folders() -> dict:
+        """Every Folder with its path-exists badge and its Grants."""
+        return _folders_snapshot(_folder_store())
+
+    @app.post("/api/folders")
+    async def create_folder(req: FolderCreateRequest):
+        """Register a directory as a Folder. 400 for a non-directory; 409 with a
+        pointer when the resolved path is already registered (path-unique)."""
+        fp = Path(req.path or "").expanduser()
+        if not req.path.strip() or not fp.is_dir():
+            return JSONResponse({"error": "not a directory"}, status_code=400)
+        store = _folder_store()
+        try:
+            view = store.create_folder(req.path, name=req.name)
+        except DuplicatePath as exc:
+            return JSONResponse({"error": str(exc), "existing": exc.existing}, status_code=409)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, "folder": view, **_folders_snapshot(store)}
+
+    @app.post("/api/folders/{fid}")
+    async def update_folder(fid: str, req: FolderUpdateRequest):
+        """Rename and/or repoint a Folder. 404 unknown; 409 path collision."""
+        store = _folder_store()
+        try:
+            view = store.update_folder(fid, name=req.name, path=req.path)
+        except KeyError:
+            return JSONResponse({"error": f"unknown folder: {fid}"}, status_code=404)
+        except DuplicatePath as exc:
+            return JSONResponse({"error": str(exc), "existing": exc.existing}, status_code=409)
+        return {"ok": True, "folder": view, **_folders_snapshot(store)}
+
+    @app.delete("/api/folders/{fid}")
+    async def delete_folder(fid: str):
+        """Delete a Folder — always allowed; every Grant to it is revoked instantly."""
+        store = _folder_store()
+        if not store.delete_folder(fid):
+            return JSONResponse({"error": f"unknown folder: {fid}"}, status_code=404)
+        return {"ok": True, **_folders_snapshot(store)}
+
+    @app.post("/api/folders/{fid}/grants")
+    async def set_folder_grant(fid: str, req: FolderGrantRequest):
+        """Upsert one Grant: (profile, task, chat) → mode. Empty chat_id+task_id = profile-scope."""
+        store = _folder_store()
+        try:
+            store.set_grant(
+                fid, req.mode, profile=req.profile, chat_id=req.chat_id, task_id=req.task_id
+            )
+        except KeyError:
+            return JSONResponse({"error": f"unknown folder: {fid}"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, **_folders_snapshot(store)}
+
+    @app.delete("/api/folders/{fid}/grants")
+    async def revoke_folder_grant(fid: str, req: FolderGrantDeleteRequest):
+        """Revoke one Grant: (profile, task, chat) → mode. Empty chat_id+task_id = profile-scope.
+        404 when no such Grant exists."""
+        store = _folder_store()
+        if not store.revoke_grant(
+            fid, profile=req.profile, chat_id=req.chat_id, task_id=req.task_id
+        ):
+            return JSONResponse({"error": "no such grant"}, status_code=404)
+        # A Folder left with no grants is garbage-collected inside revoke_grant, so it
+        # is uniform across every revoke path (CLI, API, task deletion) — see FolderStore._gc.
+        return {"ok": True, **_folders_snapshot(store)}
+
+    # ---- Skills (install-wide Enable/Disable, ADR 0016) ----
+
+    def _skill_store() -> SkillStateStore:
+        """A fresh SkillStateStore over the install-wide file. mtime self-refresh
+        means a live turn's next build sees any change — same shape as _folder_store."""
+        return SkillStateStore(load_config().root_dir / "skills.json")
+
+    def _installwide_skills() -> list[dict]:
+        """The install-wide projection: every Bundled + Global skill with its name,
+        description, origin, and install-wide ``enabled`` state.
+
+        Discovery uses the ROOT config (skills_dir is the Global layer there;
+        ``with_profile`` repoints it per profile) plus the bundled first-party dir,
+        so this is genuinely install-wide — not any one profile's view. Origin is
+        read from each skill's on-disk location: under the bundled dir → bundled,
+        otherwise → global.
+        """
+        store = _skill_store()
+        bundled_root = bundled_skills_dir()
+        runtime = build_skills_runtime(load_config())
+        rows = [
+            {
+                "name": s.name,
+                "description": s.metadata.description,
+                "origin": skill_origin(s.location, bundled_root),
+                "enabled": not store.is_disabled(s.name),
+            }
+            for s in runtime.skills
+        ]
+        # Deletable (Global, user-installed) first, then read-only Bundled — each group
+        # by name — so the rows a user can act on sit at the top.
+        return sorted(rows, key=lambda r: (r["origin"] == ORIGIN_BUNDLED, r["name"]))
+
+    def _skills_snapshot() -> dict:
+        return {"skills": _installwide_skills()}
+
+    def _profile_skill_rows(runtime) -> list[dict]:
+        """The active-profile projection (ADR 0016 ticket 02): every skill VISIBLE to
+        this profile — inherited Bundled/Global (Suppressible here) plus the profile's
+        OWN skills (Enable/Disable here) — each carrying origin, install-wide
+        ``enabled``, per-profile ``suppressed``, and the resolved ``available``.
+
+        Built through the one resolution seam (``SkillStateStore.is_available``) so a
+        row can never disagree with the catalog the profile's agent actually gets: a
+        skill Disabled install-wide reads unavailable here too.
+        """
+        store = _skill_store()
+        bundled_root = bundled_skills_dir()
+        profile = runtime.pid
+        rows: dict[str, dict] = {}
+        # Inherited shared layers (Global + Bundled), discovered from the Root config.
+        for s in build_skills_runtime(load_config()).skills:
+            rows[s.name] = {
+                "name": s.name,
+                "description": s.metadata.description,
+                "origin": skill_origin(s.location, bundled_root),
+                "enabled": not store.is_disabled(s.name),
+            }
+        # The profile's OWN skills (under its skills_dir) shadow a shared skill of the
+        # same name (catalog precedence Profile > Global > Bundled). A Profile skill has
+        # no install-wide Disable — it lives in one profile, toggled per-profile only.
+        prof_skills_dir = runtime.config.skills_dir.resolve()
+        for s in build_skills_runtime(runtime.config).skills:
+            loc = Path(s.location).resolve() if s.location else None
+            if loc is None or not (prof_skills_dir == loc or prof_skills_dir in loc.parents):
+                continue  # bundled (extra_paths) — already covered by the shared pass
+            rows[s.name] = {
+                "name": s.name,
+                "description": s.metadata.description,
+                "origin": ORIGIN_PROFILE,
+                "enabled": True,
+            }
+        for r in rows.values():
+            kind = DISABLE_OWN if r["origin"] == ORIGIN_PROFILE else SUPPRESS_SHARED
+            r["suppressed"] = store.is_suppressed(r["name"], profile, kind=kind)
+            r["available"] = store.is_available(r["name"], profile, origin=r["origin"])
+        order = {ORIGIN_BUNDLED: 0, ORIGIN_GLOBAL: 1, ORIGIN_PROFILE: 2}
+        return sorted(rows.values(), key=lambda r: (order.get(r["origin"], 9), r["name"]))
+
+    @app.get("/api/skills")
+    async def get_skills() -> dict:
+        """The install-wide skill projection: Bundled + Global skills with origin
+        and their install-wide Enabled/Disabled state (drives Application → Skills)."""
+        return _skills_snapshot()
+
+    @app.post("/api/skills/{name}/state")
+    async def set_skill_state(name: str, req: SkillStateRequest):
+        """Enable/Disable a Bundled or Global skill install-wide. Fans out a reload
+        to every live runtime so the catalog changes everywhere at once — an
+        in-flight turn finishes on the old catalog, the next turn sees the change.
+        404 for a name that is not an install-wide skill."""
+        known = {s["name"] for s in _installwide_skills()}
+        if name not in known:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        _skill_store().set_enabled(name, req.enabled)
+        await _reload_all()  # install-wide change → every profile's agent rebuilds
+        return {"ok": True, **_skills_snapshot()}
+
+    def _remove_skill_dir(runtime, name: str) -> None:
+        """Remove skill ``name`` by its REAL on-disk directory. The lenient loader
+        permits a skill whose frontmatter ``name`` differs from its directory
+        (``weather-helper/`` with ``name: weather``); ``runtime.remove`` assumes
+        dir == name and would 404 such a hand-placed skill, leaving it undeletable from
+        the UI. Resolve the actual dir via the loader, then remove by its basename so
+        the runtime's path-traversal guard still applies."""
+        skill_dir = runtime.get_path(name)  # SkillError if the name isn't on disk
+        runtime.remove(skill_dir.name)
+
+    @app.delete("/api/skills/{name}")
+    async def delete_skill(name: str):
+        """Delete a **Global** skill from disk install-wide, then cascade-purge its
+        state (install-wide Disable + every profile's Suppression) so a later same-named
+        re-install resolves default-on everywhere — no ghost. Fans out a reload to all
+        live runtimes. A **Bundled** skill is first-party/read-only → 409 (not deletable);
+        an unknown name → 404. Mirrors DELETE /api/folders/{id}'s grant cascade."""
+        config = load_config()
+        store = _skill_store()
+        runtime = build_skills_runtime(config)
+        bundled_root = bundled_skills_dir()
+        row = next((s for s in runtime.skills if s.name == name), None)
+        if row is None:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        if skill_origin(row.location, bundled_root) == ORIGIN_BUNDLED:
+            return JSONResponse(
+                {"error": f"{name} is a first-party skill and can't be deleted"},
+                status_code=409,
+            )
+        try:
+            _remove_skill_dir(runtime, name)
+        except (SkillError, FileNotFoundError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        runtime.invalidate()
+        store.purge(name)  # drop Disable + every shared Suppression of this name
+        await _reload_all()
+        return {"ok": True, **_skills_snapshot()}
+
+    # ---- Installing skills from Settings (registry / git / upload — ADR 0017) ----
+    # The target is the SURFACE: the /api/skills* routes below install into the Global
+    # layer and fan out; the mirrored /api/p/{pid}/skills* routes install into the active
+    # profile and reload only it. Both delegate to skills_install over the right runtime.
+
+    _MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB raw upload cap
+
+    async def _save_upload(upload: UploadFile, tmp_dir: Path) -> Path:
+        """Stream an uploaded file into ``tmp_dir`` in bounded chunks and return its path
+        (original name preserved so discover/install can tell a .zip from a SKILL.md).
+        Caps the total read so a huge upload can't exhaust RAM before it ever reaches the
+        unpacker; the archive's UNCOMPRESSED size is capped again at unpack."""
+        name = os.path.basename(upload.filename or "upload") or "upload"
+        dest = tmp_dir / name
+        total = 0
+        with dest.open("wb") as f:
+            while chunk := await upload.read(1024 * 1024):
+                total += len(chunk)
+                if total > _MAX_UPLOAD_BYTES:
+                    raise SkillSourceError("upload is too large")
+                f.write(chunk)
+        return dest
+
+    # Every install/discover failure maps to a 400 with the exception message. Discover
+    # only raises SkillSourceError; catching the superset is harmless and keeps one tuple.
+    _SKILL_INSTALL_ERRORS = (SkillSourceError, SkillDownloadError, SkillInstallError)
+
+    async def _install_from_req(runtime, req: SkillInstallRequest) -> dict:
+        """Install into ``runtime``'s layer from a registry id (t04) or a git source
+        (t05). Raises one of ``_SKILL_INSTALL_ERRORS``. Shared by both surfaces — only
+        the target runtime and the reload differ."""
+        if req.install_id:
+            return {"installed": [await registry_install(runtime, req.install_id)]}
+        if req.git_url:
+            # git clone + copytree are blocking (up to a 120s clone timeout); off-load
+            # them so a slow/hanging remote never freezes the whole gateway.
+            installed = await asyncio.to_thread(
+                install_from_source, runtime, req.names or [], git_url=req.git_url
+            )
+            return {"installed": installed}
+        raise SkillSourceError("provide a registry install_id or a git_url")
+
+    async def _discover_git(git_url: str | None) -> dict:
+        """Scan a git URL for every SKILL.md (no install). The clone is blocking (120s
+        timeout) so it runs off the event loop. Shared by both surfaces' discover routes."""
+        return {"skills": await asyncio.to_thread(discover_source, git_url=git_url)}
+
+    async def _install_upload_into(runtime, file: UploadFile, names: str) -> dict:
+        """Install the selected (comma-separated) ``names`` from an uploaded source into
+        ``runtime``. Shared by both surfaces' install-upload routes."""
+        wanted = [n.strip() for n in (names or "").split(",") if n.strip()]
+        with tempfile.TemporaryDirectory(prefix="skill-up-") as td:
+            path = await _save_upload(file, Path(td))
+            # Unpack + copytree are blocking → run off-loop.
+            installed = await asyncio.to_thread(
+                install_from_source,
+                runtime,
+                wanted,
+                upload_path=path,
+                filename=file.filename or "",
+            )
+            return {"installed": installed}
+
+    async def _discover_upload_file(file: UploadFile) -> dict:
+        """Discover skills in an uploaded SKILL.md / zipped folder (no install)."""
+        with tempfile.TemporaryDirectory(prefix="skill-up-") as td:
+            path = await _save_upload(file, Path(td))
+            skills = await asyncio.to_thread(  # blocking unpack + scan → off-loop
+                discover_source, upload_path=path, filename=file.filename or ""
+            )
+            return {"skills": skills}
+
+    @app.post("/api/skills/search")
+    async def search_skills(req: SkillSearchRequest):
+        """Proxy a skills.sh registry search → ``{results:[{name, install_id,
+        description, installs}]}``. Target-agnostic: both surfaces search through here,
+        then install via their own (Global vs Profile) install route."""
+        try:
+            return {"results": await registry_search(req.query, req.limit)}
+        except Exception as exc:  # a registry/network failure shouldn't 500 the page
+            return JSONResponse({"error": f"search failed: {exc}"}, status_code=502)
+
+    @app.post("/api/skills/discover")
+    async def discover_skills(req: SkillDiscoverRequest):
+        """Scan a git URL for every SKILL.md (no install) → ``{skills:[{name,
+        description}]}`` for the checklist. 400 for an unreachable/invalid source."""
+        try:
+            return await _discover_git(req.git_url)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/skills/discover-upload")
+    async def discover_skills_upload(file: UploadFile = File(...)):
+        """Discover skills in an uploaded SKILL.md / zipped folder (no install)."""
+        try:
+            return await _discover_upload_file(file)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/skills/install")
+    async def install_skill(req: SkillInstallRequest):
+        """Install into the **Global** layer from a registry id or a git URL + names,
+        then fan out a reload so every profile sees it next turn. A name collision in the
+        target replaces the prior skill. 400 on a bad source (nothing half-installed)."""
+        try:
+            result = await _install_from_req(build_skills_runtime(load_config()), req)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _reload_all()
+        return {"ok": True, **result, **_skills_snapshot()}
+
+    @app.post("/api/skills/install-upload")
+    async def install_skill_upload(file: UploadFile = File(...), names: str = Form(...)):
+        """Install selected skills from an uploaded source into the **Global** layer.
+        ``names`` is a comma-separated list (multipart can't carry a JSON array)."""
+        try:
+            result = await _install_upload_into(build_skills_runtime(load_config()), file, names)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _reload_all()
+        return {"ok": True, **result, **_skills_snapshot()}
+
     # ---- Profile management (global) ----
 
     def _profile_view(meta) -> dict:
         return {
             "id": meta.id,
             "name": meta.name,
-            "palette": meta.palette,
+            "accent": meta.accent,
             "workspace": meta.workspace,
             "created": meta.created,
         }
@@ -924,13 +1716,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         server-side active default, and the install-level onboarded flag. Empty list +
         null + false on fresh install. Channel bindings are install-level now — see
         GET /api/channels."""
-        from assistant import profiles as profiles_mod
-
         reg = profiles_mod.load_registry()
+        allp = profiles_mod.list_profiles(include_archived=True)
         return {
-            "profiles": [
-                _profile_view(m) for m in profiles_mod.list_profiles(include_archived=False)
-            ],
+            "profiles": [_profile_view(m) for m in allp if not m.archived],
+            # Archived profiles for the Settings "Archived" section (ADR 0003): restore
+            # or permanently delete them. Empty on a fresh install / when none archived.
+            "archived": [_profile_view(m) for m in allp if m.archived],
             "active_default": reg.get("active_default"),
             "onboarded": bool(reg.get("onboarded")),
             # App version rides the boot payload so the UI needn't make a second request.
@@ -941,40 +1733,47 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def create_profile(req: ProfileCreateRequest):
         """Create a profile (dir + registry) and boot its runtime live (§3.5)."""
         try:
-            runtime = await manager.create(req.name, req.palette, workspace=req.workspace)
+            runtime = await manager.create(req.name, req.accent)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"profile": _profile_view(runtime.meta)}
 
     @app.post("/api/profiles/{pid}")
     async def update_profile(pid: str, req: ProfileUpdateRequest):
-        """Rename / set palette (display-only) and/or set workspace (runtime config
-        change → reload that runtime). Unknown pid → 404, invalid value → 400."""
-        from assistant import profiles as profiles_mod
-
+        """Rename and/or set accent (both display-only, registry-level). Unknown pid →
+        404, invalid value → 400."""
         if profiles_mod.get_profile(pid) is None:
             return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
         try:
             if req.name is not None:
                 profiles_mod.rename_profile(pid, req.name)
-            if req.palette is not None:
-                profiles_mod.set_palette(pid, req.palette)
-            workspace_changed = False
-            if req.workspace is not None:
-                profiles_mod.set_workspace(pid, req.workspace)
-                workspace_changed = True
+            if req.accent is not None:
+                profiles_mod.set_accent(pid, req.accent)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        if workspace_changed:
-            # runtime config change — reference-swap reload so new turns use it.
-            with contextlib.suppress(Exception):
-                await manager.reload(pid)
         return {"profile": _profile_view(profiles_mod.get_profile(pid))}
 
     @app.delete("/api/profiles/{pid}")
-    async def archive_profile(pid: str, req: ProfileArchiveRequest | None = None):
-        """Archive a profile with the §4.9 guardrails. new_default may come in the
-        body. ValueError (guardrail) → 400, unknown → 404, already archived → 410."""
+    async def archive_or_purge_profile(
+        pid: str, purge: bool = False, req: ProfileArchiveRequest | None = None
+    ):
+        """Soft-archive by default; hard-delete when ``?purge=true`` (ADR 0003).
+
+        Archive: §4.9 guardrails — ValueError (guardrail) → 400, unknown → 404, already
+        archived → 410. new_default may come in the body.
+
+        Purge (``?purge=true``): permanently erase an ALREADY-archived profile. Unknown →
+        404; a live (not-yet-archived) profile → 409 (archive-first). The explicit flag
+        makes the soft→hard escalation deliberate."""
+        if purge:
+            try:
+                await manager.purge(pid)
+            except UnknownProfile:
+                return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=409)
+            return {"ok": True}
+
         new_default = req.new_default if req is not None else None
         try:
             await manager.archive(pid, new_default=new_default)
@@ -986,14 +1785,27 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"ok": True}
 
+    @app.post("/api/profiles/{pid}/restore")
+    async def restore_profile(pid: str):
+        """Un-archive a profile and boot it live (ADR 0003). Unknown → 404; a live
+        (non-archived) profile → 409; a boot failure rolls the archive flag back and
+        surfaces 500."""
+        try:
+            runtime = await manager.restore(pid)
+        except UnknownProfile:
+            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        except Exception as exc:  # boot failed; manager already rolled back to archived
+            return JSONResponse({"error": f"could not restore profile: {exc}"}, status_code=500)
+        return {"profile": _profile_view(runtime.meta)}
+
     # ---- Channels (global, install-level: platform → one profile or disabled) ----
 
     def _channel_entry(platform: str, pid: str | None) -> dict:
         """The install-level state of one platform: which profile owns it (or null),
         whether its token env is present, whether it is live on that runtime, and the
         last start error (or null)."""
-        from assistant.gateway.profile_manager import _CHANNEL_TOKENS
-
         active = False
         if pid is not None:
             runtime = manager.runtimes_by_id().get(pid)
@@ -1009,8 +1821,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def list_channels() -> dict:
         """Install-level channel bindings: ``{platform: {profile, token_present, active,
         error}}``. A fresh (zero-profile) install returns all profiles null."""
-        from assistant import profiles as profiles_mod
-
         return {
             platform: _channel_entry(platform, pid)
             for platform, pid in profiles_mod.channel_bindings().items()
@@ -1036,9 +1846,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         accepted; an unknown platform or env name → 400. Saving sets os.environ, so the
         bound channel is restarted (stopped, then started if all tokens are now present).
         Returns the updated GET /api/channels entry. Token values are never echoed."""
-        from assistant import profiles as profiles_mod
-        from assistant import secrets
-
         platform = req.platform
         if platform not in profiles_mod.CHANNEL_PLATFORMS:
             return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
@@ -1062,8 +1869,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.get("/api/google/status")
     async def google_status() -> dict:
-        from assistant.integrations import google_auth
-
         return {
             "configured": google_auth.is_configured(),
             "signed_in": google_auth.has_token(),
@@ -1073,8 +1878,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.post("/api/google/credentials")
     async def google_credentials(payload: CredentialsUpload) -> dict:
         """Save an uploaded OAuth client JSON (so users avoid the filesystem)."""
-        from assistant.integrations import google_auth
-
         try:
             google_auth.save_credentials_json(payload.content)
         except Exception as exc:
@@ -1089,8 +1892,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         overrides the redirect base when the gateway is reachable at a public URL
         (so the round-trip can complete from another device).
         """
-        from assistant.integrations import google_auth
-
         if not google_auth.is_configured():
             return {"ok": False, "error": "No OAuth client configured."}
         base = os.environ.get("AG2ASSISTANT_PUBLIC_URL") or str(request.base_url)
@@ -1106,8 +1907,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.get("/api/google/callback", response_class=HTMLResponse)
     async def google_callback(state: str = "", code: str = "", error: str = ""):
-        from assistant.integrations import google_auth
-
         def _page(title, msg):
             return (
                 f"<!doctype html><meta charset=utf-8><title>{title}</title>"
@@ -1135,8 +1934,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/google/logout")
     async def google_logout() -> dict:
-        from assistant.integrations import google_auth
-
         ok = google_auth.logout()
         # Drop the Google tools from every runtime immediately (same gate, reversed).
         for runtime in list(manager.runtimes()):
@@ -1156,8 +1953,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.get("/api/codex/status")
     async def codex_status() -> dict:
-        from assistant import codex_auth
-
         return codex_auth.status()
 
     @app.post("/api/codex/login_url")
@@ -1165,11 +1960,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Begin a ChatGPT sign-in: return the consent URL for the UI to open, and
         start a background loopback listener (localhost:1455) that completes the flow
         when OpenAI redirects back. The UI polls GET /api/codex/status."""
-        from assistant import codex_auth
-
         verifier, challenge = codex_auth.generate_pkce()
-        import secrets as _secrets
-
         state = _secrets.token_urlsafe(24)
         app.state.codex_flows[state] = verifier
         url = codex_auth.build_authorize_url(challenge, state)
@@ -1195,8 +1986,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Headless fallback: exchange a manually pasted auth code for the flow's
         pending PKCE verifier. Used when the loopback callback can't reach the box
         (e.g. Docker/remote) — the user copies the ``code`` from the redirect URL."""
-        from assistant import codex_auth
-
         verifier = app.state.codex_flows.pop(payload.state, None)
         if verifier is None:
             return JSONResponse(
@@ -1214,8 +2003,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/codex/logout")
     async def codex_logout() -> dict:
-        from assistant import codex_auth
-
         ok = codex_auth.logout()
         await _reload_all_runtimes()
         return {"ok": ok}
@@ -1225,8 +2012,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """List immediate subdirectories of a host path — drives the folder picker. The
         gateway is local + single-user and `_origin_guard` blocks cross-origin, so this is
         safe; dotfolders are hidden. Empty path starts at home."""
-        from assistant.workspace import list_dirs
-
         result = list_dirs(path or str(Path.home()))
         if result is None:
             return {"ok": False, "error": "not a readable directory"}
@@ -1243,8 +2028,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         VOICE endpoints need (the realtime APIs always talk to the provider's own
         endpoint, so a base_url never makes a provider available). Assistant model
         availability is per-config now and lives in the named LLM configs store."""
-        from assistant import secrets
-
         st = secrets.status()
         avail = {prov: st[prov]["set"] for prov in ("openai", "gemini", "anthropic")}
         avail["ollama"] = _ollama_installed()
@@ -1252,36 +2035,42 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     def _ollama_installed() -> bool:
         try:
-            from ag2.config import OllamaConfig
-
             return type(OllamaConfig).__module__ != "unittest.mock"
         except Exception:
             return False
 
-    # ---- Sessions ----
+    # ---- Chats ----
 
-    @p.get("/sessions")
-    async def sessions(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+    @p.get("/chats")
+    async def chats(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """List persisted, resumable conversations (newest first)."""
-        return {"sessions": await runtime.gateway.list_sessions()}
+        return {"chats": await runtime.gateway.list_chats()}
 
-    @p.get("/sessions/{session_id}")
-    async def session_transcript(
-        session_id: str, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """The display transcript for a session, for the UI to restore."""
+    @p.get("/chats/{chat_id}")
+    async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """The display transcript for a chat, for the UI to restore."""
         return {
-            "session_id": session_id,
-            "messages": await runtime.gateway.transcript(session_id),
+            "chat_id": chat_id,
+            "messages": await runtime.gateway.transcript(chat_id),
         }
 
-    @p.delete("/sessions/{session_id}")
-    async def delete_session(
-        session_id: str, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
+    @p.delete("/chats/{chat_id}")
+    async def delete_chat(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """Permanently delete a chat (transcript + full event log). Irreversible."""
-        removed = await runtime.gateway.delete_session(session_id)
+        removed = await runtime.gateway.delete_chat(chat_id)
         if not removed:
+            return Response(status_code=404)
+        return {"ok": True}
+
+    @p.patch("/chats/{chat_id}")
+    async def update_chat(
+        chat_id: str, patch: ChatPatch, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Rename and/or star a chat. 400 on an empty patch, 404 on unknown chat."""
+        if patch.title is None and patch.starred is None:
+            return JSONResponse({"error": "empty patch"}, status_code=400)
+        ok = await runtime.gateway.update_chat(chat_id, title=patch.title, starred=patch.starred)
+        if not ok:
             return Response(status_code=404)
         return {"ok": True}
 
@@ -1291,46 +2080,37 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def message(
         req: MessageRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> MessageResponse:
-        # Durable, inline HITL bound to this chat session (answerable from the
+        # Durable, inline HITL bound to this chat (answerable from the
         # thread or the strip); the request blocks until answered (or times out).
-        asker = _chat_asker(runtime, req.session_id)
-        reply = await runtime.gateway.send_message(req.text, session_id=req.session_id, asker=asker)
-        return MessageResponse(reply=reply, session_id=req.session_id)
+        asker = _chat_asker(runtime, req.chat_id)
+        reply = await runtime.gateway.send_message(req.text, chat_id=req.chat_id, asker=asker)
+        return MessageResponse(reply=reply, chat_id=req.chat_id)
 
-    # ---- Tasks + durable HITL inquiries ----
+    # ---- Tasks (config) + Runs (each run is a chat on stream task-run:<id>) ----
 
     @p.get("/tasks")
     async def list_tasks(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Top-level tasks (newest first) for the Tasks view."""
+        """Task rows for the drawer (needs-input first, then newest)."""
         return {"tasks": await runtime.tasks.list_tasks()}
 
     @p.post("/tasks")
-    async def create_task(req: TaskRequest, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Kick off a task — intake (clarifying questions) runs in the background
-        and surfaces as inquiries to answer."""
-        task_id = await runtime.tasks.submit_request(req.text, channel=req.channel)
-        return {"id": task_id}
-
-    @p.get("/tasks/all")
-    async def list_all_tasks(
-        status: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Full task history for the listing page (newest first). Optional status
-        filter: active / completed / stopped / archived."""
-        return {"tasks": await runtime.tasks.list_all(status)}
-
-    @p.post("/tasks/schedule")
-    async def schedule_task(
-        req: ScheduleRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Schedule a task for a future time (optionally recurring)."""
-        task_id = await runtime.tasks.schedule_task(req.text, req.when, req.recurrence)
-        return {"id": task_id}
+    async def create_task(req: TaskCreate, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Create a task; empty ``name`` auto-generates one from the prompt
+        (service-side). 422 with {error} on a bad schedule/model."""
+        try:
+            task = await runtime.tasks.create_task(
+                name=req.name,
+                prompt=req.prompt,
+                model=req.model,
+                schedule=req.schedule,
+                description=req.description,
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        return {"task": task}
 
     @p.get("/tasks/{task_id}")
     async def get_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        from assistant.tasks import TaskStoreCorruptionError
-
         try:
             task = await runtime.tasks.get_task(task_id)
         except TaskStoreCorruptionError as exc:
@@ -1339,64 +2119,88 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return Response(status_code=404)
         return {"task": task}
 
-    @p.post("/tasks/{task_id}/cancel")
-    async def cancel_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        ok = await runtime.tasks.cancel(task_id)
-        return {"ok": ok}
-
-    @p.post("/tasks/{task_id}/rerun")
-    async def rerun_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Re-run a finished task from a clean start; returns the new run's id."""
-        result = await runtime.tasks.rerun(task_id)
-        if "error" in result:
-            return JSONResponse(result, status_code=400)
-        return result
-
-    @p.post("/tasks/{task_id}/seen")
-    async def mark_task_seen(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Mark a task/run as opened (clears its unread highlight in the nav)."""
-        ok = await runtime.tasks.mark_seen(task_id)
-        return {"ok": ok}
+    @p.patch("/tasks/{task_id}")
+    async def update_task(
+        task_id: str, req: TaskPatch, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Edit any subset of task fields; model='' clears to the profile default."""
+        patch = {k: v for k, v in req.model_dump().items() if v is not None}
+        if req.model == "":  # explicit clear back to the profile default
+            patch["model"] = None
+        if not patch and req.model != "":
+            return JSONResponse({"error": "empty patch"}, status_code=400)
+        try:
+            task = await runtime.tasks.update_task(task_id, **patch)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        if task is None:
+            return Response(status_code=404)
+        return {"task": task}
 
     @p.delete("/tasks/{task_id}")
     async def delete_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Permanently delete a task + its whole subtree, plus each one's chat/event
-        stream. Cancels an in-flight run first. Irreversible."""
-        ok, ids = await runtime.tasks.delete(task_id)
-        if not ok:
+        """Delete the task, its runs, and their chat streams. Irreversible."""
+        if not await runtime.tasks.delete_task(task_id):
             return Response(status_code=404)
-        # Purge the per-task chat/event streams (task pages use session "task:<id>").
-        for tid in ids:
-            with contextlib.suppress(Exception):
-                await runtime.gateway.delete_session(f"task:{tid}")
-        return {"ok": True, "deleted": ids}
+        return {"ok": True}
 
-    @p.post("/tasks/{task_id}/chat")
-    async def task_chat(
+    @p.post("/tasks/{task_id}/run")
+    async def run_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Run now — start a run immediately; the schedule is unchanged."""
+        run = await runtime.tasks.start_run(task_id, trigger="manual")
+        if run is None:
+            return Response(status_code=404)
+        return {"run": await runtime.tasks.get_run(run.id)}
+
+    @p.get("/tasks/{task_id}/runs")
+    async def list_runs(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """The task's run history (newest first), as on the task page."""
+        task = await runtime.tasks.get_task(task_id)
+        if task is None:
+            return Response(status_code=404)
+        return {"runs": task["runs"]}
+
+    @p.get("/tasks/{task_id}/permissions")
+    async def task_permissions(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """This task's own granted command rules — never the global set (mirrors
+        ``GET /api/permissions``, scoped via ``task_id``). 404 on an unknown task."""
+        if await runtime.tasks.get_task(task_id) is None:
+            return Response(status_code=404)
+        return {"rules": runtime.gateway.permissions.granted_commands(task_id=task_id)}
+
+    @p.delete("/tasks/{task_id}/permissions")
+    async def revoke_task_permission(
         task_id: str,
-        req: TaskChatRequest,
+        req: PermissionCommandDeleteRequest,
         runtime: ProfileRuntime = Depends(get_runtime),
     ):
-        """Converse about a task — the SAME universal agent, given this task as its
-        surface context (it inspects/steers the task via its system tools)."""
-        from assistant.system_tools import format_task
-
-        node = await runtime.tasks.get_task(task_id)
-        if node is None:
+        """Revoke one of this task's own command rules by its canonical string
+        (mirrors ``DELETE /api/permissions/commands``, scoped via ``task_id``).
+        404 on an unknown task; an absent/already-revoked rule is a plain
+        ``{"ok": false}`` — the task-scoped set is small enough that a client
+        double-revoking isn't an error worth a 404."""
+        if await runtime.tasks.get_task(task_id) is None:
             return Response(status_code=404)
-        surface = (
-            f"You are on the page for task {task_id}. The user's messages here are "
-            f"usually about THIS task — inspect or steer it with your task tools "
-            f"(its id is {task_id}). Current state:\n{format_task(node)}"
-        )
-        asker = _chat_asker(runtime, f"task:{task_id}")
-        reply = await runtime.gateway.send_message(
-            req.text,
-            session_id=f"task:{task_id}",
-            asker=asker,
-            surface=surface,
-        )
-        return {"reply": reply}
+        ok = runtime.gateway.permissions.revoke_command(req.rule, task_id=task_id)
+        return {"ok": ok}
+
+    @p.get("/runs/{run_id}")
+    async def get_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """One run's durable header (status/summary/task name) for the run page."""
+        run = await runtime.tasks.get_run(run_id)
+        if run is None:
+            return Response(status_code=404)
+        return {"run": run}
+
+    @p.post("/runs/{run_id}/stop")
+    async def stop_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Stop a live run; whatever it already produced stays in its thread."""
+        return {"ok": await runtime.tasks.stop_run(run_id)}
+
+    @p.post("/runs/{run_id}/seen")
+    async def run_seen(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Mark a finished run opened (clears its unread highlight)."""
+        return {"ok": await runtime.tasks.mark_run_seen(run_id)}
 
     @p.get("/inquiries/pending")
     async def inquiries_pending(
@@ -1426,35 +2230,51 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     # ---- Voice picker: list voices, select (persist), preview (TTS) ----
 
     @p.get("/voice/voices")
-    async def voice_voices(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        from assistant import voice_providers
-
+    async def voice_voices(
+        config_id: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The voice catalogue + current selection. Scoped to a named live config when
+        ``config_id`` is given (its provider + persisted voice); otherwise the profile's
+        legacy voice-provider setting."""
         settings = _runtime_settings(runtime)
+        entry = live_configs.get_config(config_id) if config_id else None
+        provider = entry["provider"] if entry else settings.voice_provider()
+        p_v = voice_providers.get(provider)
+        current = entry.get("voice") if entry else settings.get_voice(provider)
         return {
-            "voices": [{"name": n, "style": s} for n, s in settings.voices_for().items()],
-            "current": settings.get_voice(),
-            "provider": settings.voice_provider(),
-            # mic capture rate the client should use, for this profile's provider
-            "input_rate": voice_providers.get(settings.voice_provider()).input_rate,
+            "voices": [{"name": n, "style": s} for n, s in p_v.voices.items()],
+            "current": current,
+            "provider": provider,
+            "input_rate": p_v.input_rate,  # mic capture rate the client should use
         }
 
     @p.post("/voice/select")
     async def voice_select(
         req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
-        if not _runtime_settings(runtime).set_voice(req.voice):
+        """Persist the chosen voice — onto the named live config when ``config_id`` is
+        given, else the profile's legacy per-provider voice setting."""
+        if req.config_id:
+            if not live_configs.set_voice(req.config_id, req.voice):
+                return Response(status_code=400)
+        elif not _runtime_settings(runtime).set_voice(req.voice):
             return Response(status_code=400)
         return {"ok": True, "voice": req.voice}
 
     @p.post("/voice/preview")
     async def voice_preview(req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)):
-        from assistant.voice import synthesize_preview
-
         settings = _runtime_settings(runtime)
-        if req.voice not in settings.voices_for():
+        entry = live_configs.get_config(req.config_id) if req.config_id else None
+        provider = entry["provider"] if entry else None
+        api_key = live_configs.resolve_key(entry) if entry else ""
+        # Validate the voice against the target provider's catalogue.
+        catalog = voice_providers.get(provider or settings.voice_provider()).voices
+        if req.voice not in catalog:
             return Response(status_code=400)
         try:
-            wav = await synthesize_preview(runtime.config, settings, req.voice)
+            wav = await synthesize_preview(
+                runtime.config, settings, req.voice, provider=provider, api_key=api_key
+            )
         except Exception as exc:
             return Response(content=str(exc)[:200], status_code=502)
         return Response(content=wav, media_type="audio/wav")
@@ -1463,11 +2283,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @p.get("/settings")
     async def get_settings(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        from assistant import codex_auth, secrets
-
         cfg = runtime.config
         settings = _runtime_settings(runtime)
         keys = secrets.status()
+        # Per-profile model Active override (ADR 0015): report BOTH this profile's
+        # override id (None when inherited or dangling) and the EFFECTIVE Active id, so
+        # each header switcher can render the current choice + mark it
+        # inherited-vs-overridden without a second fetch. A dangling override reads as
+        # no override → the install-wide Active (matching the resolution layer).
+        llm_ovr = settings.get_llm_override()
+        llm_ovr = llm_ovr if (llm_ovr and llm_configs.get_config(llm_ovr)) else None
+        live_ovr = settings.get_live_override()
+        live_ovr = live_ovr if (live_ovr and live_configs.get_config(live_ovr)) else None
         return {
             "keys": keys,  # per-provider {set, hint} — never raw
             # Voice runs on the provider's own realtime endpoint, so a base_url
@@ -1476,11 +2303,17 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             # Display-only view of the resolved assistant model (the active named LLM
             # config, derived onto cfg.llm). Managed via /api/llm-configs, not here.
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
+            # Per-profile Text/Live Active override + effective Active (drives the
+            # Profiles-header switchers). override=None → inherits the install-wide.
+            "llm_override": llm_ovr,
+            "llm_active": llm_ovr or llm_configs.active_id(),
+            "live_override": live_ovr,
+            "live_active": live_ovr or live_configs.active_id(),
             "codex": codex_auth.status(),  # ChatGPT-subscription sign-in state
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
-            "project_folder": settings.get_project_folder(),  # repo-files MCP root
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
+            "reply_timeout_s": cfg.gateway.reply_timeout_s,
             "fs": {  # start roots for the folder picker
                 "home": str(Path.home()),
                 "cwd": str(Path.cwd()),
@@ -1501,9 +2334,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         channel bound to this profile failed to start; else ``ok``. Google and the
         scheduler are informational and never move ``overall``.
         """
-        from assistant import profiles as profiles_mod
-        from assistant.integrations import google_auth
-
         checks: list[dict] = []
 
         # Assistant agent — liveness (agent object built + not closed).
@@ -1521,8 +2351,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         # LLM provider — the active named config must be usable (per-config key, a
         # base_url compat server, Ollama, or the provider's env key). When the store is
         # empty we fall back to the flat provider's key check (fresh install / CLI).
-        from assistant import llm_configs
-
         entry = llm_configs.active_config()
         if entry is not None:
             key_set = llm_configs.usable(entry)
@@ -1631,11 +2459,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         return {"overall": overall, "checks": checks}
 
     async def _mcp_health(server: dict) -> dict:
-        from ag2.context import ConversationContext
-        from ag2.stream import MemoryStream
-
-        from assistant.tools.mcp import build_mcp_tools
-
         tools = build_mcp_tools([server])
         if not tools:
             return {"ok": False, "error": "MCP server is disabled"}
@@ -1693,41 +2516,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         except Exception as exc:
             return {"ok": False, "error": str(exc)[:500]}
 
-    # Read-only subset of @modelcontextprotocol/server-filesystem — the repo-files MCP
-    # gets exactly these so the agent can read the project but never write/edit/delete.
-    _REPO_FILES_READ_TOOLS = [
-        "read_file",
-        "read_multiple_files",
-        "list_directory",
-        "directory_tree",
-        "search_files",
-        "get_file_info",
-        "list_allowed_directories",
-    ]
-
-    @p.post("/settings/project-folder")
-    async def set_project_folder(
-        req: ProjectFolderRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ):
-        """Persist the chosen project folder AND seed a read-only `repo-files` MCP pointed
-        at it (reusing the MCP-server settings path), then reload so the agent picks it up."""
-        settings = _runtime_settings(runtime)
-        fp = Path(req.path or "").expanduser()
-        if not req.path or not fp.is_dir():
-            return JSONResponse({"error": "not a directory"}, status_code=400)
-        folder = str(fp.resolve())
-        settings.set_project_folder(folder)
-        settings.upsert_mcp_server(
-            {
-                "name": "repo-files",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", folder],
-                "allowed_tools": list(_REPO_FILES_READ_TOOLS),
-            }
-        )
-        await manager.reload(runtime.pid)  # new turns get the repo-files tools
-        return {"ok": True, "project_folder": folder}
-
     @p.post("/settings/focuses")
     async def set_focuses(
         req: FocusesRequest, runtime: ProfileRuntime = Depends(get_runtime)
@@ -1739,6 +2527,46 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         focuses = settings.set_focuses(req.focuses)
         await manager.reload(runtime.pid)  # context change → next turn gets the line
         return {"ok": True, "focuses": focuses}
+
+    @p.post("/settings/llm-override")
+    async def set_llm_override(
+        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Set (or clear, when ``config_id`` is empty) this profile's Active Text model
+        override — a selection into the shared install-wide ``llm_configs`` list, NOT the
+        install-wide Active (the composer switcher still owns that). Reloads this
+        profile's runtime so its next message uses the new model. Unknown id → 404."""
+        settings = _runtime_settings(runtime)
+        cid = (req.config_id or "").strip()
+        if cid and llm_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        settings.set_llm_override(cid)
+        await manager.reload(runtime.pid)  # next turn's agent is built from the new model
+        return {"ok": True, "llm_override": cid or None}
+
+    @p.post("/settings/live-override")
+    async def set_live_override(
+        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Set (or clear) this profile's Active Live (voice) model override — a
+        selection into the shared install-wide ``live_configs`` list. Read fresh by the
+        voice session at connect, so it takes effect on the NEXT voice session (no
+        runtime reload needed). Unknown id → 404."""
+        settings = _runtime_settings(runtime)
+        cid = (req.config_id or "").strip()
+        if cid and live_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        settings.set_live_override(cid)
+        return {"ok": True, "live_override": cid or None}
+
+    @p.post("/settings/reply-timeout")
+    async def set_reply_timeout(
+        req: ReplyTimeoutRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Persist this profile's chat-turn timeout and reload its runtime."""
+        timeout = _runtime_settings(runtime).set_reply_timeout(req.reply_timeout_s)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "reply_timeout_s": timeout}
 
     @p.post("/settings/voice_provider")
     async def set_settings_voice_provider(
@@ -1753,59 +2581,472 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return Response(status_code=400)
         return {"ok": True}
 
+    # ---- Skills (per-profile: Suppression of shared skills + own-skill state, ADR 0016) ----
+    # These scope to the profile in the URL (mirrors the /settings per-profile routes),
+    # not the global install-wide /api/skills page. A change reloads ONLY this profile
+    # (manager.reload(pid)); the install-wide toggle at /api/skills fans out to all.
+
+    @p.get("/skills")
+    async def profile_skills(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """This profile's resolved skill projection — inherited Bundled/Global skills
+        (Suppressible here) and the profile's own skills (Enable/Disable here)."""
+        return {"skills": _profile_skill_rows(runtime)}
+
+    async def _suppress(name: str, runtime, suppressed: bool) -> dict:
+        # Shared by the suppress/un-suppress routes: validate against the projection
+        # (built once), flip the per-profile off-record, reload only this profile.
+        if name not in {r["name"] for r in _profile_skill_rows(runtime)}:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        # A Suppression of an inherited shared skill — tagged SHARED so a same-named
+        # Global Delete's purge clears it (but never a Profile skill's own off-state).
+        _skill_store().set_suppressed(name, runtime.pid, suppressed, kind=SUPPRESS_SHARED)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "skills": _profile_skill_rows(runtime)}
+
+    @p.post("/skills/{name}/suppress")
+    async def suppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Suppress an inherited (Bundled/Global) skill for THIS profile only — off
+        here, untouched everywhere else. Reloads only this profile so its next turn
+        drops the skill; other profiles never rebuild. 404 for a name not visible here."""
+        return await _suppress(name, runtime, True)
+
+    @p.delete("/skills/{name}/suppress")
+    async def unsuppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Clear this profile's Suppression of a shared skill — back to inherited "on".
+        Reloads only this profile. 404 for a name not visible here."""
+        return await _suppress(name, runtime, False)
+
+    @p.post("/skills/{name}/state")
+    async def set_profile_skill_state(
+        name: str, req: SkillStateRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Enable/Disable a skill this profile OWNS, scoped to the profile — its own
+        Disable never leaves it (stored as the same per-profile off-record Suppression
+        uses). Reloads only this profile. 404 unless ``name`` is a Profile skill here
+        (a shared Bundled/Global skill is Suppressed, not Disabled, per profile)."""
+        row = next((r for r in _profile_skill_rows(runtime) if r["name"] == name), None)
+        if row is None or row["origin"] != ORIGIN_PROFILE:
+            return JSONResponse({"error": f"not a profile skill: {name}"}, status_code=404)
+        # A Disable of THIS profile's own skill — tagged OWN so a same-named Global
+        # purge leaves it intact; only this copy's Delete clears it.
+        _skill_store().set_suppressed(name, runtime.pid, not req.enabled, kind=DISABLE_OWN)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "skills": _profile_skill_rows(runtime)}
+
+    @p.delete("/skills/{name}")
+    async def delete_profile_skill(
+        name: str, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Delete one of THIS profile's own Profile skills from disk — removed for this
+        profile only; other profiles never rebuild. Clears this profile's off-record for
+        the name so a same-named re-install here is default-on. 404 for an unknown name;
+        409 for a shared Bundled/Global skill (delete a Global skill from Application →
+        Skills, which cascades; Bundled is never deletable)."""
+        row = next((r for r in _profile_skill_rows(runtime) if r["name"] == name), None)
+        if row is None:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        if row["origin"] != ORIGIN_PROFILE:
+            return JSONResponse(
+                {"error": f"{name} isn't this profile's own skill — can't delete it here"},
+                status_code=409,
+            )
+        prof_runtime = build_skills_runtime(runtime.config)
+        try:
+            _remove_skill_dir(prof_runtime, name)
+        except (SkillError, FileNotFoundError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        prof_runtime.invalidate()
+        # Clear only THIS profile's OWN off-record for the name (kind=OWN): a Profile
+        # skill lives in one profile. Leaving a same-named SHARED Suppression standing
+        # keeps a shadowed Global skill suppressed after the copy is gone — and this
+        # never touches the Global skill's install-wide/other-profile state.
+        _skill_store().set_suppressed(name, runtime.pid, False, kind=DISABLE_OWN)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "skills": _profile_skill_rows(runtime)}
+
+    # ---- Install into THIS profile (registry / git / upload — ADR 0017) ----
+    # Same delegation as the Global /api/skills* install routes, but the target is the
+    # profile's own skills dir (build_skills_runtime over runtime.config) and only this
+    # profile reloads. Registry search is target-agnostic → done via GLOBAL /api/skills/search.
+
+    @p.post("/skills/install")
+    async def install_profile_skill(
+        req: SkillInstallRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Install into THIS profile from a registry id or a git URL + names; reloads
+        only this profile. Collision in the profile's dir replaces the prior skill. Same
+        body as the Global route (``_install_from_req``) — only the target + reload differ."""
+        try:
+            result = await _install_from_req(build_skills_runtime(runtime.config), req)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await manager.reload(runtime.pid)
+        return {"ok": True, **result, "skills": _profile_skill_rows(runtime)}
+
+    @p.post("/skills/discover")
+    async def discover_profile_skills(
+        req: SkillDiscoverRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Scan a git URL for every SKILL.md (no install) for the profile's checklist."""
+        try:
+            return await _discover_git(req.git_url)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @p.post("/skills/discover-upload")
+    async def discover_profile_skills_upload(
+        file: UploadFile = File(...), runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        try:
+            return await _discover_upload_file(file)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @p.post("/skills/install-upload")
+    async def install_profile_skill_upload(
+        file: UploadFile = File(...),
+        names: str = Form(...),
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ) -> dict:
+        """Install selected skills from an uploaded source into THIS profile."""
+        try:
+            result = await _install_upload_into(build_skills_runtime(runtime.config), file, names)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await manager.reload(runtime.pid)
+        return {"ok": True, **result, "skills": _profile_skill_rows(runtime)}
+
     # ---- Memory: view + edit THIS profile's persona memory (profile.db) ----
     # (The shared universal "who the user is" doc is the global GET/POST /api/memory.)
 
     @p.get("/memory")
     async def get_memory(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        from assistant.memory import read_profile
-
         return {"text": await read_profile(runtime.config.data_dir / "profile.db")}
 
     @p.post("/memory")
     async def set_memory(
         req: MemoryRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
-        from assistant.memory import write_profile
-
         await write_profile(req.text, runtime.config.data_dir / "profile.db")
         return {"ok": True}
 
     # ---- Workspace (the agent's working file space) ----
 
     @p.get("/files")
-    async def list_workspace_files(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Files the agent has written in the workspace (for the GUI browser)."""
-        from assistant.workspace import list_files
+    async def list_workspace_files(
+        path: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """List a file tree, branching on ``os.path.isabs`` (the sole discriminator).
+
+        With no ``path`` (or a relative one) — the profile's whole Files space: files
+        plus every Directory (so the tree can show empty Directories the files-only
+        listing omits). Shared read+write; agent writes and user uploads land here
+        alike (ADR 0007).
+
+        With an ABSOLUTE ``path`` — ONE Directory level inside a granted **Folder** (a
+        directory outside the Root), authorized through the one resolver (``read``
+        suffices), scoped to the open Thread (``chat_id``, plus the task decoded from it
+        so a Task page/run sees its task-scope Folders — ADR 0006/0013), with the usual
+        noise Directories pruned. The tree lazy-expands one level per call. A
+        denied/missing path is a 404 — the same shape either branch."""
+        if path and os.path.isabs(path):
+            gw = runtime.gateway
+            folders = gw.folders if gw is not None else None
+            task_id = await _scope_task_id(runtime, chat_id)
+            mode = (
+                folders.mode_for_path(path, runtime.config.data_dir.name, chat_id, task_id)
+                if folders is not None
+                else None
+            )
+            if mode is None:
+                return JSONResponse({"error": "not found"}, status_code=404)
+            listing = list_folder_dir(path)
+            if listing is None:
+                return JSONResponse({"error": "not found"}, status_code=404)
+            # This level's own resolved mode (not the root's) so the tree derives each
+            # nested Directory's write affordances from the Grant that actually covers
+            # it — a read_write Folder nested under a read root reads as writable when
+            # descended into (ticket 04, "affordances derived from the resolved mode").
+            return {**listing, "mode": mode}
 
         return {
             "root": str(Path(runtime.config.workspace_dir).expanduser()),
             "files": list_files(runtime.config.workspace_dir),
+            "dirs": list_all_dirs(runtime.config.workspace_dir),
         }
+
+    @p.get("/folders/roots")
+    async def list_folder_roots(
+        chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The Folder roots browsable in the open Thread — the tree's Thread-scoped
+        Folder section (ADR 0013). Each root: ``{id, name, path (absolute), mode,
+        exists}``, resolved through the same ``mode_for`` truth the ``@``-picker and the
+        agent's reads share, scoped by ``chat_id`` plus the task decoded from it (a Task
+        page carries ``task:{id}``, a run thread ``task-run:{run_id}``), so the open
+        Task/run's task-scope Folders surface, not just profile grants (absent scope →
+        profile-level grants only). A missing-path Folder is included as a badged,
+        repointable root (``exists: false``), never an error."""
+        gw = runtime.gateway
+        folders = gw.folders if gw is not None else None
+        if folders is None:
+            return {"roots": []}
+        task_id = await _scope_task_id(runtime, chat_id)
+        return {"roots": folders.granted_roots(runtime.config.data_dir.name, chat_id, task_id)}
+
+    @p.get("/files/search")
+    async def search_workspace_files(
+        q: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The ``@``-picker's corpus search: a bounded, ranked list of files matching
+        `q` across the profile's Files space **and** every Folder this profile∪task∪chat
+        can read, each with an ABSOLUTE `path` the agent's ``read_file`` can open.
+        Ranked filename-first; a blank/no-match query yields an empty list, not an
+        error. Honors the same ``mode_for`` resolution the agent's reads use, so a
+        denied file is never surfaced (ADR 0006/0012)."""
+        gw = runtime.gateway
+        # The Thread's scope carries its task in the chat_id slot (a run thread's
+        # ``task-run:{run_id}``, a Task page's ``task:{id}``) — decode it so the picker
+        # sees the task-scoped Folder grants too (the one shared decoder).
+        task_id = await _scope_task_id(runtime, chat_id)
+        return {
+            "results": search_corpus(
+                runtime.config.workspace_dir,
+                q,
+                folders=gw.folders if gw is not None else None,
+                profile=runtime.config.data_dir.name,
+                chat_id=chat_id,
+                task_id=task_id,
+            )
+        }
+
+    @p.get("/files/mentions")
+    async def file_mentions(
+        path: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The preview rail's "Mentioned in N threads" backlink (ADR 0014): the
+        current profile's Threads (Chats + Task Runs) whose transcript mentions the
+        previewed file, newest-first. ``path`` is the previewed file's path (relative
+        = Files-space, absolute = Folder); its OR-set of forms (absolute + workspace-
+        relative) is loose-substring-scanned over each stream's transcript + event
+        log. Read-only over this profile's own store — no auth/grant check beyond the
+        profile boundary. ``chat_id`` is accepted for signature parity with the other
+        ``/files`` routes but not needed (the scan is profile-wide)."""
+        gw = runtime.gateway
+        forms = mention_forms(runtime.config.workspace_dir, path)
+        if gw is None or not forms:
+            return {"threads": []}
+        return {"threads": await gw.threads_mentioning(forms)}
+
+    @p.post("/files/upload")
+    async def upload_workspace_files(
+        files: list[UploadFile] = File(...),
+        dir: str = Form(""),
+        chat_id: str = Form(""),
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
+        """Upload one or more files into `dir` (root when empty), auto-suffixing name
+        clashes so nothing is overwritten (ADR 0007). A RELATIVE `dir` targets the
+        Files-space sandbox (unchanged). An ABSOLUTE `dir` targets a Folder Directory:
+        it authorizes through the one resolver requiring `read_write` (a `read`-only
+        Folder is `403`), scoped to the open Thread (`chat_id` + the task decoded from
+        it), with the upload confined to that Folder's subtree (ticket 05). A `dir` that
+        escapes its root is rejected `400`."""
+        task_id = await _scope_task_id(runtime, chat_id)
+        base, deny = _mutation_base(
+            runtime,
+            dir,
+            chat_id,
+            task_id=task_id,
+            miss_status=400,
+            miss_msg="invalid target directory",
+        )
+        if deny is not None:
+            return deny
+
+        saved: list[str] = []
+        for f in files:
+            data = await f.read()
+            rel = save_upload(base, f.filename or "file", data, dir)
+            if rel is None:
+                return JSONResponse({"error": "invalid target directory"}, status_code=400)
+            saved.append(rel)
+        return {"ok": True, "saved": saved}
+
+    @p.post("/files/mkdir")
+    async def mkdir_workspace(req: MkdirRequest, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Create an empty Directory. 409 if it already exists (no clobber), 400 on a
+        traversal escape / empty path. A RELATIVE `path` lands in the Files-space
+        sandbox (unchanged). An ABSOLUTE `path` creates a Folder Directory: it
+        authorizes through the one resolver requiring `read_write` (a `read`-only Folder
+        is `403`), scoped to the open Thread (`chat_id` + the task decoded from it),
+        confined to that Folder's subtree (ticket 05)."""
+        task_id = await _scope_task_id(runtime, req.chat_id)
+        base, deny = _mutation_base(
+            runtime,
+            req.path,
+            req.chat_id,
+            task_id=task_id,
+            miss_status=400,
+            miss_msg="invalid path",
+        )
+        if deny is not None:
+            return deny
+
+        status, rel = make_dir(base, req.path)
+        if status == "ok":
+            return {"ok": True, "path": rel}
+        code, msg = (409, "directory exists") if status == "exists" else (400, "invalid path")
+        return JSONResponse({"error": msg}, status_code=code)
+
+    @p.post("/files/move")
+    async def move_workspace(req: MoveRequest, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Move/rename a file or Directory. 409 if the destination already exists
+        (never overwrites, ADR 0007), 404 if the source is missing, 400 on a
+        traversal escape.
+
+        A RELATIVE ``from`` moves within the Files-space sandbox (unchanged). An
+        ABSOLUTE ``from`` is a Folder move: it authorizes through the one resolver
+        requiring ``read_write`` (a ``read``-only Folder is ``403``), scoped to
+        ``chat_id``, and is confined to the source's own readable Folder root — so a
+        ``to`` that resolves outside it (another root, the Files space, or a relative
+        target) is rejected ``400`` (no cross-Root move, ticket 04)."""
+        # Cross-space/cross-Root guard: an absolute (Folder) source's target must itself
+        # be absolute; move() then confines it under the source's root.
+        if os.path.isabs(req.from_) and not os.path.isabs(req.to):
+            return JSONResponse({"error": "invalid path"}, status_code=400)
+        task_id = await _scope_task_id(runtime, req.chat_id)
+        base, deny = _mutation_base(
+            runtime,
+            req.from_,
+            req.chat_id,
+            task_id=task_id,
+            miss_status=404,
+            miss_msg="source not found",
+        )
+        if deny is not None:
+            return deny
+
+        outcome = move(base, req.from_, req.to)
+        if outcome == "ok":
+            return {"ok": True}
+        status, msg = {
+            "exists": (409, "destination exists"),
+            "not_found": (404, "source not found"),
+            "invalid": (400, "invalid path"),
+        }[outcome]
+        return JSONResponse({"error": msg}, status_code=status)
 
     @p.get("/files/raw")
     async def workspace_file(
-        path: str, download: bool = False, runtime: ProfileRuntime = Depends(get_runtime)
+        path: str,
+        download: bool = False,
+        chat_id: str = "",
+        runtime: ProfileRuntime = Depends(get_runtime),
     ):
-        """Serve one workspace file (view inline or download), sandboxed to the
-        workspace root — a path that escapes it is rejected."""
-        from assistant.workspace import resolve
-
-        rp = resolve(runtime.config.workspace_dir, path)
+        """Serve one file (view inline or download). A RELATIVE ``path`` is a
+        Files-space file, sandboxed to the workspace root (ADR 0007). An ABSOLUTE
+        ``path`` is a Folder file (a file inside a granted Folder outside the Root):
+        authorized through the one resolver (``read`` suffices), scoped to the open
+        Thread's ``chat_id`` (ADR 0006/0013). Either way carries an ``ETag``
+        content-version token (ADR 0011) an in-place ``PUT`` echoes back as
+        ``If-Match``. A denied/missing path is a 404 — the same shape either branch.
+        The response also carries ``X-File-Mode`` (``read``|``read_write``) — the
+        effective Grant mode — so the client gates its edit/rename/delete affordances
+        off the same server truth a mutation is enforced against (ticket 04)."""
+        task_id = await _scope_task_id(runtime, chat_id)
+        rp, mode = _resolve_file_path(runtime, path, chat_id, task_id)
         if rp is None:
             return JSONResponse({"error": "file not found"}, status_code=404)
         disp = "attachment" if download else "inline"
-        return FileResponse(rp, headers={"Content-Disposition": f'{disp}; filename="{rp.name}"'})
+        # Let FileResponse build Content-Disposition so a non-ASCII filename (user
+        # uploads keep their original name) is RFC 5987-encoded, not latin-1 crashed.
+        resp = FileResponse(rp, filename=rp.name, content_disposition_type=disp)
+        etag = etag_for_path(rp)
+        if etag is not None:
+            resp.headers["ETag"] = f'"{etag}"'  # RFC 7232 quoted-string
+        if mode is not None:
+            resp.headers["X-File-Mode"] = mode
+        return resp
+
+    @p.put("/files/raw")
+    async def write_workspace_file(
+        path: str,
+        request: Request,
+        chat_id: str = "",
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
+        """Overwrite an existing file's contents in place from the request body
+        (UTF-8), using ``If-Match`` as the base ETag (ADR 0011). ``200`` + the new
+        ``ETag`` on success, ``404`` if the path is missing, ``409`` if ``If-Match``
+        is stale, ``400`` on a traversal/invalid path; omitting ``If-Match`` forces
+        past the compare.
+
+        A RELATIVE ``path`` writes in the Files-space sandbox (unchanged). An ABSOLUTE
+        ``path`` is a Folder file: it authorizes through the one resolver requiring
+        ``read_write`` (a ``read``-only Folder file is ``403``), scoped to the open
+        Thread's ``chat_id``, and the write is confined to that Folder's own subtree
+        (ticket 04)."""
+        # Resolve the sandbox base BEFORE buffering the body: an unauthorized Folder
+        # write is refused without reading its (capped) payload.
+        task_id = await _scope_task_id(runtime, chat_id)
+        base, deny = _mutation_base(
+            runtime, path, chat_id, task_id=task_id, miss_status=404, miss_msg="file not found"
+        )
+        if deny is not None:
+            return deny
+
+        # Stream the body under a hard cap so an oversize (or lying Content-Length) PUT
+        # can't buffer unboundedly into memory before the size check (DoS guard).
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > _MAX_WRITE_BYTES:
+                return JSONResponse({"error": "file too large"}, status_code=413)
+            chunks.append(chunk)
+        try:
+            content = b"".join(chunks).decode("utf-8")
+        except UnicodeDecodeError:
+            return JSONResponse({"error": "body must be valid UTF-8"}, status_code=400)
+        if_match = request.headers.get("if-match")
+        base_token = _unquote_etag(if_match)  # strip weak prefix + quotes to the raw token
+        status, new_tag = write_text(
+            base,
+            path,
+            content,
+            base_token=base_token,
+            force=if_match is None,  # no If-Match ⇒ forced overwrite (bypass compare)
+        )
+        if status == "ok":
+            headers = {"ETag": f'"{new_tag}"'}
+            return JSONResponse({"ok": True, "etag": new_tag}, headers=headers)
+        code, msg = {
+            "not_found": (404, "file not found"),
+            "conflict": (409, "file changed on disk"),
+            "invalid": (400, "invalid path"),
+            "too_large": (413, "file too large"),
+        }[status]
+        return JSONResponse({"error": msg}, status_code=code)
 
     @p.delete("/files/raw")
     async def delete_workspace_file(
-        path: str, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Delete one workspace file, sandboxed to the workspace root (same guard as
-        serving). Prunes an emptied per-task subfolder afterwards."""
-        from assistant.workspace import delete
+        path: str, chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Delete a file — or a Directory and everything in it, recursively (ADR
+        0007). A RELATIVE ``path`` is sandboxed to the Files-space root (unchanged). An
+        ABSOLUTE ``path`` is a Folder file/Directory: it authorizes through the one
+        resolver requiring ``read_write`` (a ``read``-only Folder is ``403``), scoped
+        to ``chat_id``, and the delete is confined to that Folder's own subtree
+        (emptied parents pruned up to — never including — the Folder root, ticket 04)."""
+        task_id = await _scope_task_id(runtime, chat_id)
+        base, deny = _mutation_base(
+            runtime, path, chat_id, task_id=task_id, miss_status=404, miss_msg="file not found"
+        )
+        if deny is not None:
+            return deny
 
-        if not delete(runtime.config.workspace_dir, path):
+        if not delete(base, path):
             return JSONResponse({"error": "file not found"}, status_code=404)
         return {"ok": True}
 
@@ -1823,7 +3064,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.websocket("/api/p/{pid}/stream")
     async def stream_ws(websocket: WebSocket, pid: str) -> None:
-        """Event-stream transport: the client receives the session's events as
+        """Event-stream transport: the client receives the chat's events as
         `{event:{type,data}}` — replayed on connect, then live — and sends `{text}`
         turns. Closes with 4001 if the profile is archived mid-session (§4.9)."""
         if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
@@ -1833,7 +3074,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if runtime is None:
             return
         await websocket.accept()
-        from assistant.gateway.stream_bridge import StreamBridge
 
         # Archive → close this socket with 4001 (§4.9). Tolerant: a closed socket
         # must not error the archive loop (runtime.close suppresses callback errors).
@@ -1843,23 +3083,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         runtime.on_close(_on_archive)
 
-        session_id = websocket.query_params.get("session") or "default"
+        chat_id = websocket.query_params.get("chat") or "default"
+        # A run's chat (stream "task-run:<id>") IS a plain chat — TaskService seeds
+        # its task/run framing into the FIRST turn's surface at start_run time, so
+        # this transport needs no per-task branch here; every turn gets the same
+        # surface a normal chat would.
         default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
-        bridge = StreamBridge(runtime.gateway, websocket, session_id)
-
-        async def turn_surface() -> str:
-            # task threads get a fresh task snapshot each turn so "this task" resolves
-            if session_id.startswith("task:"):
-                tid = session_id.split(":", 1)[1]
-                node = await runtime.tasks.get_task(tid)
-                if node:
-                    from assistant.system_tools import format_task
-
-                    return (
-                        "The user is viewing this task; act on THIS task when "
-                        f"they refer to it.\n\n{format_task(node)}"
-                    )
-            return default_surface
+        bridge = StreamBridge(runtime.gateway, websocket, chat_id)
 
         try:
             await bridge.open()
@@ -1876,27 +3106,24 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                             await runtime.tasks.answer_inquiry(iid, ans)
                     continue
                 if data.get("type") == "cancel":
-                    # Stop the turn running on this session. The gateway cancels the
+                    # Stop the turn running on this chat. The gateway cancels the
                     # task driving AG2's run, which AG2 propagates into the turn; a
                     # TurnCancelled event comes back out through the bridge. A no-op
                     # when nothing is in flight.
-                    await runtime.gateway.cancel_turn(session_id)
+                    await runtime.gateway.cancel_turn(chat_id)
                     continue
                 if data.get("type") == "feedback" and data.get("target_id"):
                     # 👍/👎 + mandatory reason on a generated item. Emit it onto the
-                    # session stream (persists/replays → the GUI projects the thumb
+                    # chat stream (persists/replays → the GUI projects the thumb
                     # state, shows in the AG2 inspector), then fire-and-forget a learner
                     # that distils it into the memory profile (never blocks the socket).
-                    from assistant import feedback as feedback_learner
-                    from assistant.events import FeedbackGiven
-
                     sentiment = "down" if data.get("sentiment") == "down" else "up"
                     reason = (data.get("reason") or "").strip()
                     content = data.get("content") or ""
                     request = data.get("request") or ""
                     with contextlib.suppress(Exception):
                         await runtime.gateway.emit_event(
-                            session_id,
+                            chat_id,
                             FeedbackGiven(
                                 data["target_id"],
                                 target_kind=data.get("target_kind", "message"),
@@ -1917,6 +3144,19 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                             )
                         )
                     continue
+                if data.get("type") == "feedback_clear" and data.get("target_id"):
+                    # Retract a rating (thumb toggled off). Emit onto the stream so the
+                    # cleared state persists/replays; no learner — unmarking takes back
+                    # only the visible thumb, never the memory it already taught.
+                    with contextlib.suppress(Exception):
+                        await runtime.gateway.emit_event(
+                            chat_id,
+                            FeedbackCleared(
+                                data["target_id"],
+                                target_kind=data.get("target_kind", "message"),
+                            ),
+                        )
+                    continue
                 text = data.get("text", "")
                 raw_atts = data.get("attachments")
                 attachments = _decode_attachments(raw_atts)
@@ -1924,14 +3164,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     text = "Here is a file I'm sharing with you."
                 if not text:
                     continue
-                asker = _chat_asker(runtime, session_id)
-                surface = await turn_surface()
+                asker = _chat_asker(runtime, chat_id)
+                surface = default_surface
                 # Persist uploads into the workspace and tell the agent their paths (via
                 # surface, so the transcript stays clean) — enables editing/reading them.
                 saved = _persist_uploads(runtime.config.workspace_dir, raw_atts)
                 if saved:
-                    from assistant.events import Attachment
-
                     surface = (surface + "\n\n" if surface else "") + (
                         "The user attached file(s), saved in the workspace at: "
                         + ", ".join(pth for pth, _ in saved)
@@ -1941,22 +3179,20 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     )
                     # Surface each upload in the thread (thumbnail / file chip) — emitted
                     # before the turn so it sits with the user's message; persists on the
-                    # session stream so it survives reload.
+                    # chat stream so it survives reload.
                     for pth, name in saved:
                         with contextlib.suppress(Exception):
-                            await runtime.gateway.emit_event(session_id, Attachment(pth, name=name))
+                            await runtime.gateway.emit_event(chat_id, Attachment(pth, name=name))
                 # Typed while the agent is still working? Feed the live turn instead of
                 # queueing a second one behind it — AG2 drains the message before the
                 # turn's next model call, so the user steers the work in progress.
-                if await runtime.gateway.feed_message(text, session_id, attachments):
+                if await runtime.gateway.feed_message(text, chat_id, attachments):
                     # The agent won't echo it until it drains the inbox, which can be a
                     # whole tool round away. Ack now so the thread can show it as queued
                     # rather than leaving the user wondering if it landed. Transient: the
                     # durable record is the DrainedModelRequest AG2 emits on the drain.
                     with contextlib.suppress(Exception):
-                        await websocket.send_json(
-                            {"type": "queued", "text": text, "session": session_id}
-                        )
+                        await websocket.send_json({"type": "queued", "text": text, "chat": chat_id})
                 else:
                     asyncio.create_task(
                         bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
@@ -1978,24 +3214,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if runtime is None:
             return
         await websocket.accept()
-        import uuid
-
-        from ag2.events import (
-            ModelMessage,
-            ModelMessageChunk,
-            ModelRequest,
-            ModelResponse,
-            TextInput,
-            ToolCallsEvent,
-        )
-        from ag2.events.voice import (
-            RecordedAudioEvent,
-            SynthesizedAudioEvent,
-            TranscriptionChunkEvent,
-            TranscriptionCompletedEvent,
-        )
-
-        from assistant.gateway.wire import to_wire
 
         # Archive → close this voice socket with 4001 (§4.9), tolerant of a closed sock.
         async def _on_archive():
@@ -2005,11 +3223,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         runtime.on_close(_on_archive)
 
         sid = uuid.uuid4().hex[:8]
-        task_id = websocket.query_params.get("task") or None
-        chat_session = websocket.query_params.get("session") or None
-        # persist spoken transcripts onto the surface's stream so they survive reload
-        # and become shared conversation history (None → bare voice session, skip).
-        persist_session = f"task:{task_id}" if task_id else chat_session
+        # A run is a plain chat now, so voice has one binding to make: the chat
+        # it's continuing (its stream carries task/run framing already, same as
+        # any other chat). persist_chat mirrors that stream so spoken transcripts
+        # survive reload and join the shared history (None → bare voice session).
+        origin_chat = websocket.query_params.get("chat") or None
+        persist_chat = origin_chat
         # Persist spoken turns by ROLE ALTERNATION, not the "completed" event (Gemini
         # doesn't fire it reliably): accumulate each side's chunks and flush a turn
         # when the other side starts speaking → alternating ModelRequest/ModelResponse.
@@ -2020,19 +3239,19 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         async def _flush_user():
             text = "".join(user_buf).strip()
             user_buf.clear()
-            if persist_session and text:
+            if persist_chat and text:
                 with contextlib.suppress(Exception):
                     await runtime.gateway.emit_event(
-                        persist_session, ModelRequest(parts=[TextInput(content=text)])
+                        persist_chat, ModelRequest(parts=[TextInput(content=text)])
                     )
 
         async def _flush_agent():
             text = "".join(agent_buf).strip()
             agent_buf.clear()
-            if persist_session and text:
+            if persist_chat and text:
                 with contextlib.suppress(Exception):
                     await runtime.gateway.emit_event(
-                        persist_session, ModelResponse(message=ModelMessage(content=text))
+                        persist_chat, ModelResponse(message=ModelMessage(content=text))
                     )
 
         async def forward_event(event) -> None:
@@ -2048,9 +3267,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         try:
             agent = await runtime.gateway.build_voice_agent(
-                session_id=sid,
-                task_id=task_id,
-                chat_session=chat_session,
+                voice_id=sid,
+                origin_chat=origin_chat,
                 on_event=forward_event,  # delegated universal-agent events → voice client
                 on_end=end_requested.set,
             )
@@ -2189,13 +3407,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return FileResponse(f)
         return FileResponse(index)
 
+    @app.api_route("/api/{full_path:path}", methods=["POST", "PUT", "PATCH", "DELETE"])
+    async def api_not_found(full_path: str):
+        """Any unmatched /api/* write → 404 (not Starlette's default 405, which the
+        GET SPA catch-all below would otherwise force). Keeps 'route is gone' honest
+        across every method: a retired route 404s whether it's read or written."""
+        return Response(status_code=404)
+
     @app.get("/{full_path:path}")
     async def spa(full_path: str):
         """Any other path → the Svelte app at /app (unknown /api paths 404)."""
         if full_path.startswith("api/"):
             return Response(status_code=404)
-        from fastapi.responses import RedirectResponse
-
         return RedirectResponse(url="/app/", status_code=307)
 
     return app
@@ -2203,17 +3426,11 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
 def _decode_attachments(items) -> list:
     """Turn UI attachment frames ({name, mime, data:b64}) into AG2 inputs."""
-    import base64
-
-    from assistant.attachments import build_input
-
     out = []
     for a in items or []:
         try:
             raw = base64.b64decode(a.get("data", ""))
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("attachment decode", exc, name=a.get("name"))
             continue
         inp = build_input(raw, a.get("name", "file"), a.get("mime"))
@@ -2225,17 +3442,11 @@ def _decode_attachments(items) -> list:
 def _persist_uploads(workspace_dir, items) -> list[tuple[str, str]]:
     """Save uploaded files into the workspace (uploads/) so the agent can edit/read
     them by path — returns ``(workspace_path, original_name)`` per saved file."""
-    import base64
-
-    from assistant.workspace import write_upload
-
     out = []
     for a in items or []:
         try:
             raw = base64.b64decode(a.get("data", ""))
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("upload decode", exc, name=a.get("name"))
             continue
         if not raw:
@@ -2244,7 +3455,5 @@ def _persist_uploads(workspace_dir, items) -> list[tuple[str, str]]:
             name = a.get("name", "file")
             out.append((write_upload(workspace_dir, name, raw), name))
         except Exception as exc:
-            from assistant.observability import log_suppressed
-
             log_suppressed("upload persist", exc, name=name)
     return out

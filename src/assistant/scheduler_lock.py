@@ -14,7 +14,7 @@ from pathlib import Path
 logger = logging.getLogger("ag2assistant.tasks")
 
 try:
-    import fcntl
+    import fcntl  # local: POSIX-only module
 except ImportError:  # pragma: no cover - non-POSIX
     fcntl = None  # type: ignore[assignment]
 

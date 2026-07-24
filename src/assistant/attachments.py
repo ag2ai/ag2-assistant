@@ -91,5 +91,17 @@ def build_input(data: bytes, filename: str, media_type: str | None = None):
             text = ""
         return TextInput(f"Attached file {filename!r}:\n\n{text}")
 
+    # Fall back to the MIME type when the extension resolved nothing (nameless
+    # pasted/dropped files carry a media_type but no ".ext").
+    mime = (media_type or "").lower()
+    if mime.startswith("image/"):
+        return ImageInput(data=data, media_type=media_type)
+    if mime.startswith("audio/"):
+        return AudioInput(data=data, media_type=media_type)
+    if mime.startswith("video/"):
+        return VideoInput(data=data, media_type=media_type)
+    if mime == "application/pdf":
+        return DocumentInput(data=data, media_type=media_type)
+
     # Unknown/binary: hand it over as a document so the model can still try.
     return DocumentInput(data=data, media_type=media_type or "application/octet-stream")

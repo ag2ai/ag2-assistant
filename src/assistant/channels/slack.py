@@ -12,6 +12,11 @@ import contextlib
 import os
 import re
 
+import aiohttp
+from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
+from slack_bolt.app.async_app import AsyncApp
+
+from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import markdown_to_slack, split_for_limit
 from assistant.hitl.base import Asker, Question
@@ -29,10 +34,6 @@ async def _download_attachments(event: dict, bot_token: str) -> list:
     Slack file URLs are private — they require an `Authorization: Bearer` header
     with the bot token, and the `files:read` scope.
     """
-    import aiohttp
-
-    from assistant.attachments import build_input
-
     files = event.get("files") or []
     if not files:
         return []
@@ -116,9 +117,6 @@ class SlackChannel(Channel):
         return SlackAsker(self._app.client, channel_id, self._pending)
 
     async def start(self, gateway) -> None:
-        from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
-        from slack_bolt.app.async_app import AsyncApp
-
         self._gateway = gateway
         self._app = AsyncApp(token=self._bot_token)
         self._app.event("app_mention")(self._handle_app_mention)
@@ -137,6 +135,14 @@ class SlackChannel(Channel):
 
     def format_outbound(self, text: str) -> str:
         return markdown_to_slack(text)
+
+    async def notify(self, chat_id: str, text: str) -> None:
+        """Push a task-run outcome into a Slack channel. Mirrors `_respond`'s send
+        path — same `split_for_limit`/`SLACK_LIMIT` chunking and `format_outbound`
+        — but posts via `self._app.client` directly since there's no `say()`
+        callback outside of an event handler."""
+        for chunk in split_for_limit(self.format_outbound(text), SLACK_LIMIT):
+            await self._app.client.chat_postMessage(channel=chat_id, text=chunk)
 
     def _mention_inbound(self, event: dict) -> InboundMessage | None:
         text = re.sub(rf"<@{self._bot_user_id}>", "", event.get("text", "")).strip()
@@ -230,7 +236,7 @@ class SlackChannel(Channel):
         try:
             reply = await self._gateway.send_message(
                 text,
-                session_id=inbound.session_id(),
+                chat_id=inbound.stable_id(),
                 asker=self._asker_for(channel) if channel else None,
                 attachments=attachments,
             )

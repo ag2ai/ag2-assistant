@@ -18,11 +18,17 @@ model's speech leaves as `SynthesizedAudioEvent` on the same conversation stream
 import os
 from typing import TYPE_CHECKING
 
+from ag2 import tool
+from ag2.live import LiveAgent
+
+from assistant import live_configs, voice_providers
+from assistant.agent import environment_context
 from assistant.config import Config
+from assistant.system_tools import build_system_tools
 from assistant.voice_providers import PREVIEW_TEXT
 
 if TYPE_CHECKING:
-    from assistant.settings import Settings
+    from assistant.settings import Settings  # type-only
 
 # Basic tools the voice agent may run itself: quick, low-context reads/answers.
 # Everything else is delegated to the universal agent via ask_assistant.
@@ -63,25 +69,51 @@ VOICE_PROMPT = (
 )
 
 
+def profile_live_config(settings: "Settings") -> dict | None:
+    """The live (voice) config Active for THIS profile: its per-profile **Active
+    override** (ADR 0015) when set and still present, else the install-wide active.
+
+    A dangling override (points at a deleted config) degrades silently to the
+    install-wide active — never an error — mirroring the Text resolution in
+    ``llm_configs.apply_active``. This is the seam where env pin > profile override >
+    install-wide active > env fallback is realised for voice: the caller layers the
+    ``AG2ASSISTANT_VOICE_MODEL`` pin and the legacy-provider fallback around it."""
+    override = settings.get_live_override()
+    if override:
+        entry = live_configs.get_config(override)
+        if entry is not None:
+            return entry
+    return live_configs.active_config()
+
+
 def voice_realtime_config(
     config: Config,
     settings: "Settings",
     voice: str | None = None,
     provider: str | None = None,
 ):
-    """Build the realtime RealtimeConfig for the profile's active (or given) provider.
+    """Build the realtime RealtimeConfig for the active live config (or given provider).
 
-    Delegates to the provider registry — input transcription is enabled per
-    provider so the user's speech arrives as text (TranscriptionChunk/Completed)
-    for the on-screen bubbles. The provider defaults to the profile's persisted
-    choice; `voice` defaults to that provider's persisted setting.
-    `AG2ASSISTANT_VOICE_MODEL` overrides the provider's default model.
+    The active named live config (install-wide, via ``live_configs``) is the source of
+    truth: it supplies the provider, realtime model, voice, and resolved API key (its
+    own per-config key, or the provider's shared key). When the store is empty this
+    falls back to the profile's legacy ``voice_provider``/voice + the provider default
+    model + the env key — so voice keeps working before any live config is added.
+    `AG2ASSISTANT_VOICE_MODEL` still overrides the model. Input transcription is enabled
+    per provider so the user's speech arrives as text for the on-screen bubbles.
     """
-    from assistant import voice_providers
-
-    p = voice_providers.get(provider or settings.voice_provider())
-    model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or p.realtime_model
-    return p.build_realtime(config, voice or settings.get_voice(p.name), model)
+    active = None if provider else profile_live_config(settings)
+    if active:
+        p = voice_providers.get(active["provider"])
+        model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or active["model"] or p.realtime_model
+        chosen_voice = voice or active.get("voice") or p.default_voice
+        api_key = live_configs.resolve_key(active)
+    else:
+        p = voice_providers.get(provider or settings.voice_provider())
+        model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or p.realtime_model
+        chosen_voice = voice or settings.get_voice(p.name)
+        api_key = ""  # builder falls back to the provider's env key
+    return p.build_realtime(config, chosen_voice, model, api_key)
 
 
 async def synthesize_preview(
@@ -90,18 +122,24 @@ async def synthesize_preview(
     voice: str,
     text: str = PREVIEW_TEXT,
     provider: str | None = None,
+    api_key: str = "",
 ) -> bytes:
     """Single-shot TTS of a sample sentence in `voice`; returns WAV bytes.
 
-    Used by the voice-picker preview and the sample-recording script; delegates
-    to the active (or given) provider. A voice the provider's TTS doesn't offer
-    raises, and the caller falls back (live preview / skip the sample).
+    Used by the voice-picker preview and the sample-recording script. When `provider`
+    (and usually `api_key`) is given — the per-config preview path — it uses those
+    directly; otherwise it resolves the active live config, falling back to the
+    profile's legacy provider. A voice the provider's TTS doesn't offer raises, and the
+    caller falls back (live preview / skip the sample).
     """
-    from assistant import voice_providers
-
-    return await voice_providers.get(provider or settings.voice_provider()).synthesize(
-        config, voice, text
-    )
+    if provider is None:
+        active = profile_live_config(settings)
+        if active:
+            provider = active["provider"]
+            api_key = api_key or live_configs.resolve_key(active)
+        else:
+            provider = settings.voice_provider()
+    return await voice_providers.get(provider).synthesize(config, voice, text, api_key)
 
 
 def build_voice_agent(
@@ -126,12 +164,6 @@ def build_voice_agent(
     of the universal assistant's tool names — surfaced in the prompt so the voice
     agent knows what it can delegate via ask_assistant.
     """
-    from ag2 import tool
-    from ag2.live import LiveAgent
-
-    from assistant.agent import environment_context
-    from assistant.system_tools import build_system_tools
-
     basic = [t for t in build_system_tools(tasks, settings) if t.name in _BASIC_VOICE_TOOLS]
     # A realtime session's prompt is fixed at connect, so the injected clock would
     # drift on a long call — pair it with a tool the agent can call for fresh time.

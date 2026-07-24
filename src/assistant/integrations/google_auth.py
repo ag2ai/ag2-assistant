@@ -10,6 +10,7 @@ ag2-assistant[google]`); everything here imports them lazily so the rest of AG2 
 without them.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -58,8 +59,6 @@ def account_email() -> str | None:
 
 def save_credentials_json(content: str) -> None:
     """Validate and store an uploaded OAuth client JSON to the credentials path."""
-    import json
-
     data = json.loads(content)  # raises if not valid JSON
     if not isinstance(data, dict) or not ({"installed", "web"} & data.keys()):
         raise ValueError("Not an OAuth client file (expected an 'installed' or 'web' key).")
@@ -81,9 +80,9 @@ def has_token() -> bool:
 
 def _require_libs():
     try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google.auth.transport.requests import Request  # local: optional [google] extra
+        from google.oauth2.credentials import Credentials  # local: optional [google] extra
+        from google_auth_oauthlib.flow import InstalledAppFlow  # local: optional [google] extra
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise ImportError(
             'Google integration needs extra deps. Install with: pip install "ag2-assistant[google]"'
@@ -140,7 +139,7 @@ def _save_token(creds) -> None:
 
 def _email_for(creds) -> str:
     try:
-        from googleapiclient.discovery import build
+        from googleapiclient.discovery import build  # local: optional [google] extra
 
         profile = (
             build("gmail", "v1", credentials=creds, cache_discovery=False)
@@ -213,7 +212,7 @@ def logout() -> bool:
 
 def build_service(api: str, version: str):
     """Build a Google API client (e.g. ('gmail','v1')), or raise if not logged in."""
-    from googleapiclient.discovery import build
+    from googleapiclient.discovery import build  # local: optional [google] extra
 
     creds = load_credentials(interactive=False)
     if creds is None:

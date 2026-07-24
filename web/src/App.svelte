@@ -1,24 +1,25 @@
 <script>
   import { onMount } from 'svelte'
-  import { route, go, newChatId, redirectToProfile } from './router.js'
-  import { openThread, closeThread } from './controller.js'
-  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, memoryOpen, poweredByOpen, filesOpen, ag2View, onboardingOpen, profiles, animations, appVersion } from './store.js'
+  import { route, go, newChatId, redirectToProfile, closeAside } from './router.js'
+  import { openThread, closeThread, switchProfile } from './controller.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
+  import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
-  import { setPalette } from './design/palette.js'
+  import { setAccent } from './design/palette.js'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
+  import TaskPage from './components/task/TaskPage.svelte'
+import AppBar from './components/AppBar.svelte'
   import Hitl from './components/Hitl.svelte'
   import Google from './components/Google.svelte'
   import Codex from './components/Codex.svelte'
   import VoicePicker from './components/VoicePicker.svelte'
   import Viewer from './components/Viewer.svelte'
   import Settings from './components/Settings.svelte'
-  import Memory from './components/Memory.svelte'
   import Inspector from './components/Inspector.svelte'
   import PoweredBy from './components/PoweredBy.svelte'
-  import Files from './components/Files.svelte'
   import Notice from './components/Notice.svelte'
 
   // Boot gate: nothing profile-dependent renders until we've resolved the active
@@ -31,14 +32,29 @@
   // welcome/onboarding overlay opens once a profile already exists.
   let registryOnboarded = $state(true)
 
-  // The AG2 Inspector occupies a right rail when AG2 view is on and a thread is open.
-  const showInspector = $derived(boot === 'ready' && $ag2View && $route.name !== 'home')
+  // The AG2 Inspector occupies the rail when the route's `aside` is `inspector`.
+  const showInspector = $derived(boot === 'ready' && $route.aside?.kind === 'inspector')
+
+  // The preview rail's occupant: a URL-addressed file (route `aside`) or the path-less
+  // transient body ($viewer). It shares the grid's right column with the Inspector and
+  // takes precedence; `showRail` gates whether the third column is present.
+  const railFile = $derived($route.aside?.kind === 'file')
+  const railOpen = $derived(railFile || !!$viewer)
+  const showRail = $derived(railOpen || showInspector)
+
+  // The third column's width tracks the mounted occupant: the preview's own width, or
+  // the Inspector's. Expanded preview fills the Thread column instead (.app.rail.railfull).
+  const railW = $derived(railOpen ? clampRailWidth($previewWidth) : clampRailWidth($railWidth))
+  const previewFull = $derived(railOpen && $previewExpanded)
 
   // Boot sequence (§7 Phase 1 item 4): fetch /api/profiles FIRST. Empty →
   // create-first-profile form. Else resolve active pid (localStorage if still
   // valid, else active_default), persist it, redirect a bare /app/ into
   // /app/{pid}/, THEN let the normal boot proceed.
   onMount(async () => {
+    // Preview sizing only survives a reload when the URL re-mounts the preview
+    // (aside=file); any other boot state drops a stale expanded/width.
+    if ($route.aside?.kind !== 'file') resetPreviewView()
     try {
       const reg = await api.profiles()
       const list = reg.profiles || []
@@ -69,13 +85,17 @@
       : list[0].id
     setActiveProfileId(pid)
     $profiles = { list, activeId: pid }
-    // §5.3 Palette ownership: the active profile's palette IS the applied palette.
-    // palette.js self-applied localStorage('ag2-palette') pre-Svelte as a *hint*
+    // §5.3 Accent ownership: the active profile's accent IS the applied accent.
+    // palette.js self-applied localStorage('ag2-accent') pre-Svelte as a *hint*
     // (avoids flash); correct it from the registry now — the profile is the source
     // of truth, not localStorage. Switching is full-page nav, so boot covers it too.
     const active = list.find((p) => p.id === pid)
-    if (active?.palette) setPalette(active.palette)
-    // Canonicalise the URL: bare /app/ or a stale/foreign pid → /app/{pid}/.
+    if (active?.accent) setAccent(active.accent)
+    // Canonicalise the URL: bare /app/ or a stale/foreign pid → /app/{pid}/. This
+    // preserves the hash (redirectToProfile), so a `#settings=<section>` carried
+    // across a profile-switch/archive reload — or a cold deep-link — survives and
+    // reopens Settings on the same Section (the URL is the source of truth; no
+    // sessionStorage reopen flag anymore).
     if ($route.pid !== pid) redirectToProfile(pid)
     boot = 'ready'
     maybeOnboard()
@@ -91,7 +111,7 @@
     setActiveProfileId(pid)
     $profiles = { list, activeId: pid }
     const active = list.find((p) => p.id === pid)
-    if (active?.palette) setPalette(active.palette)
+    if (active?.accent) setAccent(active.accent)
     redirectToProfile(pid)
     boot = 'ready'
   }
@@ -114,9 +134,11 @@
   // registry order and triggers the SAME full-page nav as a chip click. Ignored
   // when any modal is open or focus is in an editable field (typing "⌘2" in the
   // message box must not switch profiles).
+  // The preview rail is shell navigation, not a modal, so it's excluded here — the
+  // ⌘/Ctrl-1..9 profile shortcuts keep firing while a preview is open.
   function anyModalOpen() {
-    return $settingsOpen || $memoryOpen || $poweredByOpen || $filesOpen
-      || $googleOpen || $codexOpen || $voicePickerOpen || !!$viewer || $onboardingOpen
+    return $settingsOpen || $poweredByOpen
+      || $googleOpen || $codexOpen || $voicePickerOpen || $onboardingOpen
   }
   function editableFocused() {
     const el = document.activeElement
@@ -133,11 +155,27 @@
     const target = list[Number(e.key) - 1]
     if (!target) return
     e.preventDefault()
-    if (target.id !== $profiles.activeId) location.assign('/app/' + target.id + '/')
+    switchProfile(target.id)   // in-place (no reload); no-ops on the active one
+  }
+  // Escape closes the preview rail when it's the topmost dismissible surface.
+  // Skipped when a modal is stacked over it (the modal owns Escape) or focus is in
+  // an editable field (a rail markdown edit, the composer) — same guards as the
+  // profile shortcuts, since the rail is shell navigation living at this level.
+  // A URL-addressed file strips the aside key (via closeAside → confirmDiscard guard);
+  // a path-less transient body just clears its store.
+  function onEscape(e) {
+    if (e.key !== 'Escape' || !railOpen || anyModalOpen() || editableFocused()) return
+    e.preventDefault()
+    if (railFile) closeAside()
+    else $viewer = null
   }
   onMount(() => {
     window.addEventListener('keydown', onProfileShortcut)
-    return () => window.removeEventListener('keydown', onProfileShortcut)
+    window.addEventListener('keydown', onEscape)
+    return () => {
+      window.removeEventListener('keydown', onProfileShortcut)
+      window.removeEventListener('keydown', onEscape)
+    }
   })
 
   // React to route changes: open the matching thread. Gated on boot === 'ready'
@@ -150,9 +188,10 @@
     const key = r.name + ':' + (r.id || '')
     if (key === last) return
     last = key
-    if (r.name === 'task') openThread('task', r.id)
+    if (r.name === 'run') openThread('run', r.id)
     else if (r.name === 'chat') openThread('chat', r.id)
-    else { closeThread(); go('/c/' + newChatId()) }
+    else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files') closeThread()
+    else { closeThread(); go('/c/' + newChatId()) } // home → a fresh chat
   })
 </script>
 
@@ -164,25 +203,38 @@
   <!-- data-animations lets any component's CSS gate its motion on the app-wide
        tier (see store.animations) without importing the store — same
        attribute-driven pattern as theming. -->
-  <div class="app" class:ag2={showInspector} data-animations={$animations}>
+  <div class="app" class:ag2={showInspector} class:rail={showRail} class:railfull={previewFull}
+       style="--drawer-w: {clampDrawerWidth($drawerWidth)}px; --rail-w: {railW}px" data-animations={$animations}>
     <Drawer />
     <div class="main">
       <Hitl />
-      {#if $route.name === 'home'}
-        <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
-      {:else}
+      {#if $route.name === 'chat' || $route.name === 'run'}
         <Thread />
+      {:else if $route.name === 'task'}
+        <TaskPage />
+      {:else if $route.name === 'files'}
+        <AppBar title="Files" />
+        <div class="thread"><div class="empty"><h1>Files</h1>Browse and manage your files from the sidebar.</div></div>
+      {:else if $route.name === 'tasks'}
+        <AppBar title="Tasks" />
+        <div class="thread"><div class="empty"><h1>Tasks</h1>Pick a task from the sidebar, or create one with New task.</div></div>
+      {:else}
+        <AppBar title="AG2 Assistant" />
+        <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
       {/if}
     </div>
-    {#if showInspector}<Inspector />{/if}
+    <!-- The right rail holds one occupant; the preview takes precedence over the
+         Inspector. Both share the grid's third column. -->
+    {#if railOpen}
+      <Viewer />
+    {:else if showInspector}
+      <Inspector />
+    {/if}
     {#if $settingsOpen}<Settings />{/if}
-    {#if $memoryOpen}<Memory />{/if}
     {#if $poweredByOpen}<PoweredBy />{/if}
-    {#if $filesOpen}<Files />{/if}
     {#if $googleOpen}<Google />{/if}
     {#if $codexOpen}<Codex />{/if}
     {#if $voicePickerOpen}<VoicePicker />{/if}
-    {#if $viewer}<Viewer />{/if}
     {#if $onboardingOpen}<Onboarding />{/if}
   </div>
 {/if}

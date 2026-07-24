@@ -5,11 +5,15 @@ The autouse conftest fixture points HOME at a tmp dir, so the registry, profile
 dirs, and stores resolve under disposable space.
 """
 
+import asyncio
+
 import pytest
 from typer.testing import CliRunner
 
-from assistant.cli import app
-from assistant.profiles import PALETTES
+from assistant import profiles
+from assistant.cli import _DEFAULT_ACCENT, app
+from assistant.config import load_config
+from assistant.memory import write_profile
 
 runner = CliRunner()
 
@@ -17,75 +21,60 @@ runner = CliRunner()
 # --- profiles create ---
 
 
-def test_create_default_palette_picks_first_unused():
+def test_create_default_accent():
     result = runner.invoke(app, ["profiles", "create", "Work"])
     assert result.exit_code == 0, result.output
-    # first PALETTES entry with nothing claimed yet
-    assert f"palette   {PALETTES[0]}" in result.output
+    # no --accent → the single fallback hex (backend keeps no palette catalogue)
+    assert f"accent    {_DEFAULT_ACCENT}" in result.output
     assert "Created profile 'work'" in result.output
-
-    from assistant import profiles
 
     meta = profiles.get_profile("work")
     assert meta is not None
-    assert meta.palette == PALETTES[0]
+    assert meta.accent == _DEFAULT_ACCENT
     # first profile becomes the active default
     assert profiles.load_registry()["active_default"] == "work"
     # the dir was created
     assert profiles.profile_dir("work").exists()
 
 
-def test_create_second_default_palette_skips_used():
-    runner.invoke(app, ["profiles", "create", "Work"])
-    result = runner.invoke(app, ["profiles", "create", "Personal"])
+def test_create_explicit_accent():
+    result = runner.invoke(app, ["profiles", "create", "Work", "--accent", "#7A52EC"])
     assert result.exit_code == 0, result.output
-    # second profile takes the SECOND palette (first is claimed)
-    assert f"palette   {PALETTES[1]}" in result.output
+    # normalised to lowercase on store + echo
+    assert "accent    #7a52ec" in result.output
+
+    assert profiles.get_profile("work").accent == "#7a52ec"
 
 
-def test_create_explicit_palette():
-    result = runner.invoke(app, ["profiles", "create", "Work", "--palette", "violet"])
+def test_create_duplicate_accent_allowed():
+    # No uniqueness rule (ADR 0002): two profiles may share a colour.
+    runner.invoke(app, ["profiles", "create", "Work", "--accent", "#109e91"])
+    result = runner.invoke(app, ["profiles", "create", "Personal", "--accent", "#109e91"])
     assert result.exit_code == 0, result.output
-    assert "palette   violet" in result.output
 
-    from assistant import profiles
-
-    assert profiles.get_profile("work").palette == "violet"
+    assert profiles.get_profile("personal").accent == "#109e91"
 
 
-def test_create_duplicate_palette_errors():
-    runner.invoke(app, ["profiles", "create", "Work", "--palette", "teal"])
-    result = runner.invoke(app, ["profiles", "create", "Personal", "--palette", "teal"])
+def test_create_invalid_accent_errors():
+    result = runner.invoke(app, ["profiles", "create", "Work", "--accent", "chartreuse"])
     assert result.exit_code == 1
-    assert "palette already in use" in result.output
+    assert "invalid accent" in result.output
 
 
-def test_create_invalid_palette_errors():
-    result = runner.invoke(app, ["profiles", "create", "Work", "--palette", "chartreuse"])
-    assert result.exit_code == 1
-    assert "invalid palette" in result.output
-
-
-def test_create_workspace_default():
+def test_create_workspace_derived():
     result = runner.invoke(app, ["profiles", "create", "Work"])
     assert result.exit_code == 0, result.output
 
-    from assistant import profiles
-
     meta = profiles.get_profile("work")
-    # default workspace ends with ~/Documents/AG2 Assistant/<Name>
-    assert meta.workspace.endswith("Documents/AG2 Assistant/Work")
+    # workspace is derived from the profile dir (not user-chosen) and echoed on create.
+    assert meta.workspace == str(profiles.profile_dir("work") / "workspace")
     assert f"workspace {meta.workspace}" in result.output
 
 
-def test_create_explicit_workspace():
+def test_create_rejects_workspace_flag():
+    # The --workspace flag was removed — profiles always store under the install root.
     result = runner.invoke(app, ["profiles", "create", "Work", "--workspace", "/tmp/my-ws"])
-    assert result.exit_code == 0, result.output
-    assert "workspace /tmp/my-ws" in result.output
-
-    from assistant import profiles
-
-    assert profiles.get_profile("work").workspace == "/tmp/my-ws"
+    assert result.exit_code != 0
 
 
 # --- profiles list ---
@@ -112,7 +101,6 @@ def test_list_marks_active_default():
 def test_list_hides_archived_unless_all():
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
-    from assistant import profiles
 
     profiles.archive_profile("personal")
 
@@ -157,7 +145,6 @@ def test_unknown_profile_exits_with_guidance():
 def test_archived_profile_targeting_reports_archived():
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
-    from assistant import profiles
 
     profiles.archive_profile("personal")
     result = runner.invoke(app, ["profile", "show", "-p", "personal"])
@@ -169,8 +156,6 @@ def test_archived_profile_targeting_reports_archived():
 
 
 async def _seed(pid: str, text: str) -> None:
-    from assistant import profiles
-    from assistant.memory import write_profile
 
     d = profiles.profile_dir(pid)
     d.mkdir(parents=True, exist_ok=True)
@@ -178,7 +163,6 @@ async def _seed(pid: str, text: str) -> None:
 
 
 def test_profile_show_targets_the_named_profile():
-    import asyncio
 
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
@@ -197,7 +181,6 @@ def test_profile_show_targets_the_named_profile():
 
 
 def test_profile_show_defaults_to_active():
-    import asyncio
 
     runner.invoke(app, ["profiles", "create", "Work"])  # active default
     asyncio.run(_seed("work", "WORK-MEMORY"))
@@ -209,21 +192,16 @@ def test_profile_show_defaults_to_active():
 def test_permissions_are_global_and_need_no_profile():
     """Permissions are install-wide now: `permissions` commands take no --profile,
     work with zero profiles, and a grant lands in the shared root store."""
-    from assistant.config import load_config
 
     # zero profiles: list still works (no §3.5 guidance, no exit 1)
     empty = runner.invoke(app, ["permissions", "list"])
     assert empty.exit_code == 0, empty.output
-    assert "Allowed folders:" in empty.output
     assert "Allowed commands:" in empty.output
 
-    allow = runner.invoke(app, ["permissions", "allow", "/tmp/work-repo"])
-    assert allow.exit_code == 0, allow.output
     cmd = runner.invoke(app, ["permissions", "allow-command", "run_shell_command(git *)"])
     assert cmd.exit_code == 0, cmd.output
 
     listed = runner.invoke(app, ["permissions", "list"])
-    assert "/tmp/work-repo" in listed.output
     assert "run_shell_command(git *)" in listed.output
 
     # persisted to the shared root store, not a per-profile dir
@@ -257,6 +235,59 @@ def test_permissions_allow_command_rejects_bare_exec_tools():
     listing = runner.invoke(app, ["permissions", "list"])
     for tool in ("run_shell_command", "run_code"):
         assert tool not in listing.output
+
+
+# --- folders (task-scope label + --task grant/revoke) ---
+
+
+def test_folders_list_shows_task_scope_label(tmp_path):
+    add = runner.invoke(app, ["folders", "add", str(tmp_path)])
+    assert add.exit_code == 0, add.output
+    folder_id = add.output.split()[1].rstrip(":")
+
+    grant = runner.invoke(app, ["folders", "grant", folder_id, "work", "--task", "task-1"])
+    assert grant.exit_code == 0, grant.output
+    assert "(task task-1)" in grant.output
+
+    listing = runner.invoke(app, ["folders", "list"])
+    assert listing.exit_code == 0, listing.output
+    assert "(task task-1): read" in listing.output
+
+
+def test_folders_grant_and_revoke_task_scope(tmp_path):
+    add = runner.invoke(app, ["folders", "add", str(tmp_path)])
+    folder_id = add.output.split()[1].rstrip(":")
+
+    grant = runner.invoke(app, ["folders", "grant", folder_id, "work", "--task", "task-2"])
+    assert grant.exit_code == 0, grant.output
+
+    revoke = runner.invoke(app, ["folders", "revoke", folder_id, "work", "--task", "task-2"])
+    assert revoke.exit_code == 0, revoke.output
+    assert "Revoked." in revoke.output
+
+    # gone: a second revoke of the same grant is a miss
+    miss = runner.invoke(app, ["folders", "revoke", folder_id, "work", "--task", "task-2"])
+    assert miss.exit_code == 1
+    assert "No such grant." in miss.output
+
+
+def test_folders_grant_rejects_chat_and_task_together(tmp_path):
+    add = runner.invoke(app, ["folders", "add", str(tmp_path)])
+    folder_id = add.output.split()[1].rstrip(":")
+
+    result = runner.invoke(
+        app, ["folders", "grant", folder_id, "work", "--chat", "c1", "--task", "t1"]
+    )
+    assert result.exit_code == 1
+    assert "not both" in result.output
+
+
+def test_data_dir_flag_redirects_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("AG2ASSISTANT_DATA_DIR", str(tmp_path))
+    result = runner.invoke(app, ["--data-dir", str(tmp_path), "profiles", "create", "Work"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "profiles.json").exists()
+    assert (tmp_path / "profiles" / "work").is_dir()
 
 
 if __name__ == "__main__":  # pragma: no cover

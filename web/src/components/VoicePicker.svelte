@@ -1,7 +1,12 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { voicePickerOpen } from '../store.js'
+  import { voicePickerOpen, voicePickerConfig } from '../store.js'
   import { api } from '../transport/api.js'
+  import { loadLiveConfigs } from '../lib/live.js'
+
+  // Which live config (if any) this picker targets — captured once at mount so the
+  // scope is stable while open. null → the profile's legacy voice setting.
+  const configId = $voicePickerConfig
 
   let voices = $state([])
   let current = $state('')
@@ -12,7 +17,7 @@
   const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI' }
 
   async function load() {
-    try { const d = await api.voices(); voices = d.voices; current = d.current; provider = d.provider || '' } catch {}
+    try { const d = await api.voices(configId); voices = d.voices; current = d.current; provider = d.provider || '' } catch {}
   }
   onMount(load)
   function _stopAudio() { if (audio) { audio.pause(); URL.revokeObjectURL(audio.src); audio = null } }
@@ -30,24 +35,29 @@
 
   async function choose(v) {
     current = v.name
-    api.selectVoice(v.name).catch(() => {})   // persist (applies next voice session)
+    // persist (applies next voice session); scoped to this config when set, so the
+    // Live list's voice chip updates — refresh the shared store on success.
+    api.selectVoice(v.name, configId).then(() => { if (configId) loadLiveConfigs() }).catch(() => {})
     playing = v.name
     try {
       // prefer the pre-recorded sample (instant); fall back to live TTS if absent
       await _play('/voices/' + encodeURIComponent(v.name) + '.wav', v.name)
     } catch {
       try {
-        const blob = await api.previewVoice(v.name)
+        const blob = await api.previewVoice(v.name, configId)
         await _play(URL.createObjectURL(blob), v.name)
       } catch { playing = '' }
     }
   }
 
-  const close = () => { _stopAudio(); $voicePickerOpen = false }
+  // Reset the target so a later legacy open isn't left scoped to this config.
+  const close = () => { _stopAudio(); voicePickerConfig.set(null); $voicePickerOpen = false }
 </script>
 
-<div class="modal-backdrop" onclick={close}></div>
-<div class="modal voicepick">
+<!-- Scoped to a config → stack OVER Settings (.over) rather than replace it. -->
+<div class="modal-backdrop" class:over={!!configId} onclick={close}></div>
+<div class="modal voicepick" class:over={!!configId}>
+  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Voice{provider ? ' — ' + (PROVIDER_LABEL[provider] || provider) : ''}</h2>
   <p class="muted">Pick a voice — it plays a sample and is saved for your chats (applies next voice session).</p>
   <div class="vlist">
@@ -59,5 +69,4 @@
       </button>
     {/each}
   </div>
-  <button class="modal-close" onclick={close}>Close</button>
 </div>

@@ -15,7 +15,6 @@
   import Icon from './Icon.svelte'
 
   let servers = $state([])
-  let projectFolder = $state('')
   let health = $state({})     // name -> {ok, tools[]|error} | {checking: true}
   let busy = $state(false)
   let err = $state('')
@@ -40,7 +39,6 @@
     try {
       const s = await api.settings()
       servers = s.mcp_servers || []
-      projectFolder = s.project_folder || ''
     } catch (e) { err = String(e.message || e) }
   })
 
@@ -105,8 +103,7 @@
     if (names.has(entry.id) || busy) return
     if (!entry.inputs.length) { addEntry(entry); return }
     openEntry = openEntry === entry.id ? '' : entry.id
-    // Prefill the files entry with the profile's project folder when set.
-    entryValues = entry.id === 'repo-files' && projectFolder ? { folder: projectFolder } : {}
+    entryValues = {}
   }
   const entryReady = (entry) =>
     entry.inputs.every((i) => !i.required || String(entryValues[i.key] || '').trim())
@@ -125,7 +122,7 @@
   const cmdline = (s) => [s.command, ...(s.args || [])].join(' ')
 </script>
 
-{#if err}<p class="muted" style="color:#d8552f;font-size:13px">{err}</p>{/if}
+{#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if !servers.length}
   <p class="muted" style="font-size:13px">No MCP servers configured — add one below to give the assistant new tools.</p>
@@ -147,7 +144,7 @@
       {/if}
     </div>
     <button class="open" disabled={busy} onclick={() => check(server.name)}>Check</button>
-    <button class="linkbtn" disabled={busy} onclick={() => remove(server.name)}>Delete</button>
+    <button class="linkbtn danger" disabled={busy} onclick={() => remove(server.name)}>Delete</button>
   </div>
 {/each}
 
@@ -197,7 +194,7 @@
   oninput={(e) => onPaste(e.target)}
 ></textarea>
 {#if parseErr}
-  <p class="muted" style="font-size:12px;color:#d8552f;margin:0">{parseErr}</p>
+  <p class="muted" style="font-size:12px;color:var(--danger);margin:0">{parseErr}</p>
 {/if}
 {#if drafts.length}
   {#each drafts as d, i (i)}

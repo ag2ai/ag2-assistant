@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from assistant.channels.discord import DiscordChannel
 from assistant.channels.formatting import split_for_limit
 
 
 def _discord_channel():
-    from assistant.channels.discord import DiscordChannel
 
     ch = DiscordChannel(token="fake-token")
     ch._bot_user_id = 999
@@ -40,7 +40,7 @@ def test_normalize_dm():
     inbound = ch._normalize(_fake_message("hello", guild=False))
     assert inbound is not None
     assert inbound.is_direct is True
-    assert inbound.session_id() == "discord:42"
+    assert inbound.stable_id() == "discord:42"
 
 
 def test_normalize_guild_with_mention_strips_token():
@@ -81,7 +81,6 @@ def test_normalize_accepts_attachment_only_dm():
 
 def test_requires_token(monkeypatch):
     monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
-    from assistant.channels.discord import DiscordChannel
 
     with pytest.raises(ValueError):
         DiscordChannel()

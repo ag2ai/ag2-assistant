@@ -3,7 +3,7 @@
   // can create SEVERAL profiles. Steps: Welcome (name) → Connect (global provider
   // keys + model) → Profiles (the multi-profile creation LOOP, ProfileForm reused
   // from the "+" chip modal so they can't drift) → Set up (ONE page PER created
-  // profile: its project folder + its focus areas, both skippable) → Ready. POST
+  // profile: a Folder (granted read to it) + its focus areas, both skippable) → Ready. POST
   // /api/onboarded fires once, at flow completion.
   //
   // Focus areas are a PER-PROFILE persona attribute persisted server-side (each
@@ -20,7 +20,7 @@
   import { onboardingOpen, profile, profiles } from '../store.js'
   import { api } from '../transport/api.js'
   import { setActiveProfileId } from '../lib/profile.js'
-  import { PALETTES, setPalette } from '../design/palette.js'
+  import { setAccent } from '../design/palette.js'
   import { FOCUS, focusLabel } from '../lib/focuses.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
@@ -42,21 +42,47 @@
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
     { icon: 'brain', title: 'Remembers what matters', desc: 'Builds a private memory of your preferences so it gets more helpful over time.' },
   ]
+  // Single source of truth for selectable models — finish() maps the chosen label
+  // back to provider/model via this list. The first entry per provider is that tab's
+  // default (recommended); the rest are common alternatives shown as extra pills.
   const MODELS = [
-    { label: 'Gemini · gemini-3.5-flash', provider: 'gemini', model: 'gemini-3.5-flash' },
-    { label: 'OpenAI · gpt-5', provider: 'openai', model: 'gpt-5' },
-    { label: 'Anthropic · claude-opus-4', provider: 'anthropic', model: 'claude-opus-4' },
+    { label: 'Gemini · Gemini 3.5 Flash', provider: 'gemini', model: 'gemini-3.5-flash' },
+    { label: 'Gemini · Gemini 3.1 Flash Lite', provider: 'gemini', model: 'gemini-3.1-flash-lite' },
+    { label: 'Gemini · Gemini 3.1 Pro Preview', provider: 'gemini', model: 'gemini-3.1-pro-preview' },
+    { label: 'OpenAI · GPT-5.6 Luna', provider: 'openai', model: 'gpt-5.6-luna' },
+    { label: 'OpenAI · GPT-5.6 Terra', provider: 'openai', model: 'gpt-5.6-terra' },
+    { label: 'OpenAI · GPT-5.6 Sol', provider: 'openai', model: 'gpt-5.6-sol' },
+    { label: 'OpenAI · GPT-5.4 Mini', provider: 'openai', model: 'gpt-5.4-mini' },
+    { label: 'OpenAI · GPT-5.4 Nano', provider: 'openai', model: 'gpt-5.4-nano' },
+    { label: 'Anthropic · Claude Sonnet 5', provider: 'anthropic', model: 'claude-sonnet-5' },
+    { label: 'Anthropic · Claude Haiku 4.5', provider: 'anthropic', model: 'claude-haiku-4.5' },
+    { label: 'Anthropic · Claude Opus 4.8', provider: 'anthropic', model: 'claude-opus-4-8' },
   ]
-  const KEY_FIELDS = [
-    { id: 'gemini', label: 'Gemini', hint: 'recommended' },
-    { id: 'openai', label: 'OpenAI', hint: 'optional' },
-    { id: 'anthropic', label: 'Anthropic', hint: 'optional' },
+  const modelsFor = (provider) => MODELS.filter((m) => m.provider === provider)
+  // Connect step is organised as provider tabs. Each key-based tab owns one API-key
+  // field (keyed into `keys`) plus its provider's models; the OAuth tab hosts the
+  // ChatGPT subscription sign-in instead. The ACTIVE tab drives which model gets
+  // activated on finish (see `selectTab`); within a tab the user picks among its models.
+  const TABS = [
+    { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: 'recommended', models: modelsFor('gemini') },
+    { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: 'optional', models: modelsFor('openai') },
+    { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
+    { id: 'oauth', label: 'OpenAI OAuth', oauth: true, hint: 'no API key · unofficial' },
   ]
-  const paletteHex = (id) => (PALETTES.find((p) => p.id === id) || {}).hex
 
   let step = $state(0)
   let keys = $state({ gemini: '', openai: '', anthropic: '' })
+  let activeTab = $state(TABS[0].id)
   let modelLabel = $state(MODELS[0].label)
+  const currentTab = $derived(TABS.find((t) => t.id === activeTab) || TABS[0])
+  // The active tab drives which model gets activated. Key tabs carry their single
+  // model; the OAuth tab's model is the subscription one, but only once signed in.
+  function selectTab(id) {
+    activeTab = id
+    const t = TABS.find((x) => x.id === id)
+    if (t?.oauth) { if (codex?.signed_in) modelLabel = SUB_MODEL.label }
+    else if (t?.models?.length) modelLabel = t.models[0].label
+  }
   let name = $state($profile.name || '')
   // "About you" identity answers — seed the shared universal "who the user is" doc
   // (POST /api/identity at flow completion). All optional; name comes from Welcome.
@@ -112,12 +138,12 @@
   }
 
   // Profiles created during THIS flow. Starts from whatever the server already has
-  // (re-run mode); fresh install starts empty. Palettes already used are removed
-  // from the ProfileForm swatches (§5.5).
+  // (re-run mode); fresh install starts empty. Preset accents already used are
+  // removed from the ProfileForm swatches (§5.5) — a custom colour is always
+  // available, so the form is never gated shut.
   let created = $state([...($profiles.list || [])])
   let showForm = $state(true)
-  const claimedPalettes = $derived(created.map((p) => p.palette))
-  const allPalettesUsed = $derived(claimedPalettes.length >= PALETTES.length)
+  const claimedAccents = $derived(created.map((p) => p.accent))
 
   // Per-profile "Set up" step: iterate `created`, one page each. `setupIdx` is the
   // current profile; `chosen` accumulates {folder, focuses} keyed by pid for the
@@ -183,7 +209,17 @@
       chosen = { ...chosen, [p.id]: { folder, focuses: [...focuses] } }
       if (!skip) {
         const scoped = api.forProfile(p.id)
-        if (folder) { try { await scoped.setProjectFolder(folder) } catch {} }
+        if (folder) {
+          // Register the picked directory as an install-wide Folder (or adopt the
+          // existing one on a 409 path collision) and grant THIS profile read.
+          try {
+            let view
+            try { view = (await api.createFolder(folder)).folder } catch (e) {
+              view = e.status === 409 ? e.body?.existing : null
+            }
+            if (view) await api.setGrant(view.id, p.id, 'read')
+          } catch {}
+        }
         // Always send focuses when the user engaged the page: an empty list clears
         // any prior selection. Only skip when Skip was pressed.
         try { await scoped.setFocuses(focuses) } catch {}
@@ -195,16 +231,16 @@
 
   // Create one profile live (POST /api/profiles boots the runtime). On the first
   // one we also adopt it as the active profile so it's the one App boots into, and
-  // reflect its palette immediately.
-  async function createProfile({ name: pname, palette, workspace }) {
-    const res = await api.createProfile(pname, palette, workspace) // throws → inline error
+  // reflect its accent immediately.
+  async function createProfile({ name: pname, accent }) {
+    const res = await api.createProfile(pname, accent) // throws → inline error
     const p = res.profile
     const first = created.length === 0
     created = [...created, p]
     $profiles = { list: created, activeId: first ? p.id : $profiles.activeId }
     if (first) {
       setActiveProfileId(p.id)
-      if (p.palette) setPalette(p.palette)
+      if (p.accent) setAccent(p.accent)
     }
     showForm = false // → summary + "Add another / Continue"
   }
@@ -337,52 +373,74 @@
           {:else if step === CONNECT_STEP}
             <h2>Connect a model</h2>
             <p class="lead">Add at least one provider key. It's stored locally and shared across all your profiles — you can change these anytime in Settings.</p>
-            {#each KEY_FIELDS as k}
-              <div class="onb-field">
-                <div class="onb-flabel"><span>{k.label} API key</span><span class="hint">{k.hint}</span></div>
-                <div class="onb-input">
-                  <Icon name="settings" size={15} />
-                  <input type="password" placeholder="paste key…" bind:value={keys[k.id]} />
-                </div>
-              </div>
-            {/each}
 
-            <!-- Or: use a ChatGPT/Codex subscription instead of an API key (unofficial). -->
-            <div class="onb-field">
-              <div class="onb-flabel"><span>Or use your ChatGPT subscription</span><span class="hint">no API key · unofficial</span></div>
-              {#if codex?.signed_in}
-                <div class="onb-input" style="cursor:default">
-                  <Icon name="check" size={15} />
-                  <span style="flex:1;font-size:var(--text-sm)">Signed in with ChatGPT{codex.account_id ? ' · ' + codex.account_id : ''}</span>
-                </div>
-              {:else}
-                <button class="onb-pill" onclick={connectCodex}>
-                  <Icon name="sparkles" size={14} /> {codexConnecting ? 'Waiting for ChatGPT…' : 'Sign in with ChatGPT'}
-                </button>
-                {#if codexConnecting}
-                  <p class="hint" style="margin-top:2px">
-                    Complete sign-in in the opened tab.
-                    Headless? <button class="onb-btn ghost" style="padding:0 4px" onclick={() => (codexShowManual = !codexShowManual)}>paste the code</button>
-                  </p>
-                  {#if codexShowManual}
-                    <div class="onb-input">
-                      <Icon name="settings" size={15} />
-                      <input placeholder="paste the code from the redirect URL" bind:value={codexCode} />
-                    </div>
-                    <button class="onb-pill" onclick={submitCodexCode}>Submit code</button>
-                  {/if}
-                {/if}
-                <p class="hint" style="margin-top:2px">Runs on your ChatGPT Plus/Pro quota. OpenAI doesn't officially support this — your account could be rate-limited.</p>
-              {/if}
+            <!-- Provider tabs: one panel per provider. The active tab drives which model
+                 gets activated on finish; the OAuth tab hosts the ChatGPT sign-in flow. -->
+            <div class="onb-tabs" role="tablist">
+              {#each TABS as t}
+                <button
+                  class="onb-tab"
+                  class:on={activeTab === t.id}
+                  role="tab"
+                  aria-selected={activeTab === t.id}
+                  onclick={() => selectTab(t.id)}
+                >{t.label}</button>
+              {/each}
             </div>
 
-            <div class="onb-field">
-              <div class="onb-flabel"><span>Assistant model</span></div>
-              <div class="onb-pills">
-                {#each allModels as m}
-                  <button class="onb-pill" class:on={modelLabel === m.label} onclick={() => (modelLabel = m.label)}>{m.label}</button>
-                {/each}
-              </div>
+            <div class="onb-tabpanel">
+              {#if currentTab.oauth}
+                <!-- ChatGPT/Codex subscription instead of an API key (unofficial). -->
+                <div class="onb-field">
+                  <div class="onb-flabel"><span>Sign in with your ChatGPT subscription</span><span class="hint">no API key · unofficial</span></div>
+                  {#if codex?.signed_in}
+                    <div class="onb-input" style="cursor:default">
+                      <Icon name="check" size={15} />
+                      <span style="flex:1;font-size:var(--text-sm)">Signed in with ChatGPT{codex.account_id ? ' · ' + codex.account_id : ''}</span>
+                    </div>
+                  {:else}
+                    <button class="onb-pill" onclick={connectCodex}>
+                      <Icon name="sparkles" size={14} /> {codexConnecting ? 'Waiting for ChatGPT…' : 'Sign in with ChatGPT'}
+                    </button>
+                    {#if codexConnecting}
+                      <p class="hint" style="margin-top:2px">
+                        Complete sign-in in the opened tab.
+                        Headless? <button class="onb-btn ghost" style="padding:0 4px" onclick={() => (codexShowManual = !codexShowManual)}>paste the code</button>
+                      </p>
+                      {#if codexShowManual}
+                        <div class="onb-input">
+                          <Icon name="settings" size={15} />
+                          <input placeholder="paste the code from the redirect URL" bind:value={codexCode} />
+                        </div>
+                        <button class="onb-pill" onclick={submitCodexCode}>Submit code</button>
+                      {/if}
+                    {/if}
+                    <p class="hint" style="margin-top:2px">Runs on your ChatGPT Plus/Pro quota. OpenAI doesn't officially support this — your account could be rate-limited.</p>
+                  {/if}
+                </div>
+                {#if codex?.signed_in}
+                  <div class="onb-field">
+                    <div class="onb-flabel"><span>Assistant model</span></div>
+                    <div class="onb-pills"><span class="onb-pill on">{SUB_MODEL.label}</span></div>
+                  </div>
+                {/if}
+              {:else}
+                <div class="onb-field">
+                  <div class="onb-flabel"><span>{currentTab.label} API key</span><span class="hint">{currentTab.hint}</span></div>
+                  <div class="onb-input">
+                    <Icon name="settings" size={15} />
+                    <input type="password" placeholder="paste key…" bind:value={keys[currentTab.keyId]} />
+                  </div>
+                </div>
+                <div class="onb-field">
+                  <div class="onb-flabel"><span>Assistant model</span></div>
+                  <div class="onb-pills">
+                    {#each currentTab.models as m}
+                      <button class="onb-pill" class:on={modelLabel === m.label} onclick={() => (modelLabel = m.label)}>{m.label}</button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
             </div>
 
           {:else if step === PROFILES_STEP}
@@ -392,39 +450,35 @@
             {#if created.length}
               <div class="onb-chips">
                 {#each created as p (p.id)}
-                  <span class="onb-chip" style="--dot:{paletteHex(p.palette)}"><span class="onb-chipdot"></span>{p.name}</span>
+                  <span class="onb-chip" style="--dot:{p.accent}"><span class="onb-chipdot"></span>{p.name}</span>
                 {/each}
               </div>
             {/if}
 
-            {#if showForm && !allPalettesUsed}
+            {#if showForm}
               <ProfileForm
-                claimed={claimedPalettes}
+                claimed={claimedAccents}
                 submitLabel={created.length ? 'Add profile' : 'Create profile'}
                 busyLabel="Creating…"
                 onSubmit={createProfile}
               />
             {:else}
               <div class="onb-loopactions">
-                {#if allPalettesUsed}
-                  <p class="hint">All six palettes are in use — that's the max distinct colours.</p>
-                {:else}
-                  <button class="onb-btn ghost" onclick={addAnother}><Icon name="plus" size={15} /> Add another profile</button>
-                {/if}
+                <button class="onb-btn ghost" onclick={addAnother}><Icon name="plus" size={15} /> Add another profile</button>
               </div>
             {/if}
 
           {:else if step === SETUP_STEP}
             {#if setupProfile}
               <div class="onb-setuphead">
-                <span class="onb-setupdot" style="--dot:{paletteHex(setupProfile.palette)}"></span>
+                <span class="onb-setupdot" style="--dot:{setupProfile.accent}"></span>
                 <h2>Set up {setupProfile.name}</h2>
                 {#if created.length > 1}<span class="onb-setupprog">{setupIdx + 1} of {created.length}</span>{/if}
               </div>
-              <p class="lead">Give this profile a project folder and tell it what you'll use it for. Both are optional — you can change them anytime in Settings.</p>
+              <p class="lead">Give this profile a folder to work in and tell it what you'll use it for. Both are optional — you can change them anytime in Settings.</p>
 
               <div class="onb-field">
-                <div class="onb-flabel"><span>Project folder</span><span class="hint">read-only — it can browse & search, never write</span></div>
+                <div class="onb-flabel"><span>Folder</span><span class="hint">the assistant gets read access — manage access later in Settings → Folders</span></div>
                 <FolderPicker roots={fsRoots} start={folder || fsRoots.cwd} bind:selected={folder} />
               </div>
 
@@ -454,12 +508,12 @@
             <div class="onb-summary">
               <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">Model</span><span class="onb-sumval">{modelLabel}</span></div>
             </div>
-            <!-- Per-profile summary: name, palette dot, folder-or-—, focuses-or-—. -->
+            <!-- Per-profile summary: name, accent dot, folder-or-—, focuses-or-—. -->
             <div class="onb-summary">
               {#each created as p (p.id)}
                 {@const c = chosen[p.id] || {}}
                 <div class="onb-profrow">
-                  <span class="onb-profdot" style="--dot:{paletteHex(p.palette)}"></span>
+                  <span class="onb-profdot" style="--dot:{p.accent}"></span>
                   <span class="onb-profname">{p.name}</span>
                   <span class="onb-profmeta">
                     <span class="onb-profmetaitem"><Icon name="folder" size={13} /> {c.folder || '—'}</span>
@@ -584,6 +638,21 @@
   .onb-pill:hover { border-color: var(--accent); }
   .onb-pill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
+  /* Connect provider tabs */
+  .onb-tabs {
+    display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-sm);
+    background: var(--surface-sunk); border: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .onb-tab {
+    flex: 1; min-width: max-content; cursor: pointer; padding: 8px 14px;
+    border: none; border-radius: calc(var(--radius-sm) - 2px); background: none;
+    color: var(--text-muted); font: inherit; font-size: var(--text-sm);
+    font-weight: var(--fw-semibold); transition: all var(--dur-fast) var(--ease-out);
+  }
+  .onb-tab:hover { color: var(--accent); }
+  .onb-tab.on { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-sm); }
+  .onb-tabpanel { display: flex; flex-direction: column; gap: 16px; }
+
   /* Profiles loop: chips of what's been created + the "add another" affordance. */
   .onb-chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .onb-chip {
@@ -598,14 +667,17 @@
   /* Buttons */
   .onb-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer;
-    border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 16px;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 9px 16px;
     font: inherit; font-size: var(--text-sm); font-weight: var(--fw-semibold);
     transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
   }
   .onb-btn.lg { padding: 11px 20px; font-size: var(--text-base); }
-  .onb-btn.primary { background: var(--accent); color: var(--text-on-accent); box-shadow: var(--shadow-accent); }
-  .onb-btn.primary:hover { background: var(--accent-hover); }
-  .onb-btn.primary:disabled { opacity: .5; cursor: default; box-shadow: none; }
+  /* Primary is a neutral surface button — the accent is workspace-personalization,
+     never a button fill (it can be any colour, white included). */
+  .onb-btn.primary { background: var(--surface); color: var(--text); }
+  .onb-btn.primary:hover { background: var(--surface-hover); border-color: var(--accent-border); }
+  .onb-btn.primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .onb-btn.primary:disabled { opacity: .5; cursor: default; }
   .onb-btn.ghost { background: none; border-color: transparent; color: var(--text-muted); box-shadow: none; }
   .onb-btn.ghost:hover { color: var(--accent); }
   .onb-welcomeactions { display: flex; gap: 10px; margin-top: 4px; }
@@ -615,7 +687,8 @@
   .onb-readytick {
     display: inline-flex; align-items: center; justify-content: center;
     width: 52px; height: 52px; flex: none; border-radius: var(--radius-pill);
-    background: var(--accent); color: var(--text-on-accent);
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--accent-border);
   }
   .onb-summary {
     display: flex; flex-direction: column; gap: 12px;

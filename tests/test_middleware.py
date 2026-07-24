@@ -1,10 +1,15 @@
 """Per-LLM-call timeout middleware — the guard against a silently-hung provider.
 
-Covers three layers:
+Covers two layers:
   1. the middleware hook in isolation (a call that never resolves → raises);
-  2. the timeout propagating through a real AG2 ``Agent`` turn;
-  3. the executor/runner path: a task whose agent hangs ends FAILED with the
-     timeout message (the incident's failure mode, now surfaced not swallowed).
+  2. the timeout propagating through a real AG2 ``Agent`` turn.
+
+(A third layer used to live here: the old TaskManager executor/runner path
+asserting a hung task ends FAILED after MAX_ATTEMPTS. That machinery was
+removed by the TaskService v2 rewrite — a run is now one gateway chat turn,
+with no separate attempts-loop at that layer — retries live in
+LLMRetryMiddleware, covered below. The turn-fails-run-FAILED behavior is now
+covered by test_tasks_service.py::test_failed_turn_marks_run_failed.)
 """
 
 import asyncio
@@ -74,52 +79,6 @@ async def test_timeout_propagates_through_agent_turn():
         raise AssertionError("expected LLMCallTimeout")
     except LLMCallTimeout as exc:
         assert "timed out" in str(exc)
-
-
-async def test_executor_path_marks_task_failed_when_all_attempts_time_out(tmp_path):
-    """The executor/runner failure path under the resilience semantics: an agent
-    whose LLM call hangs on EVERY attempt consumes each attempt (a crash, not
-    instant death) and only then ends the task FAILED — carrying the timeout
-    message and the crash flavour. This reproduces the incident's hang chain
-    (agent.ask timeout → run_task → RuntimeError → recorded crash) while asserting
-    the new "a crash = one attempt" behaviour: the loop runs MAX_ATTEMPTS times.
-    """
-    from ag2.context import ConversationContext
-    from ag2.stream import MemoryStream
-    from ag2.tools.subagents.run_task import run_task
-
-    from assistant.tasks import DeliverableStatus, TaskManager, TaskStatus, TaskStore
-
-    store = TaskStore(path=tmp_path / "tasks.db")
-    t = await store.create("hung research")
-    d = await store.add_deliverable(t.id, "notes")
-
-    attempts = 0
-
-    async def executor(task_id, mgr, asker):
-        nonlocal attempts
-        attempts += 1
-        # Mirror the real executor: run a subagent via run_task and raise its error.
-        agent = Agent("worker", config=_HangingConfig(), middleware=[LLMTimeoutMiddleware(0.1)])
-        stream = MemoryStream(id=f"{task_id}:work")
-        parent = ConversationContext(stream=MemoryStream(id=f"{task_id}:parent"))
-        result = await run_task(
-            agent, "do the work", parent_context=parent, stream=stream, task_id=task_id
-        )
-        if not result.completed:
-            raise RuntimeError(str(result.error or "subagent failed"))
-        # (unreached on the hang path) satisfy the deliverable
-        await store.set_deliverable_status(task_id, d["id"], DeliverableStatus.PRODUCED)
-
-    mgr = TaskManager(store, executor)
-    await mgr.submit(t.id)
-    await asyncio.wait_for(mgr.wait(t.id), timeout=5.0)
-
-    got = await store.get(t.id)
-    assert got.status == TaskStatus.FAILED
-    assert "timed out" in got.error
-    assert "crashed" in got.error  # crash-flavoured, not a plain "not met"
-    assert attempts == TaskManager.MAX_ATTEMPTS  # each hang consumed one attempt
 
 
 # --- Retry middleware: transient-only retry with injected (no-real) sleep -----

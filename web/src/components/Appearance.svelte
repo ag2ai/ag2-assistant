@@ -1,6 +1,6 @@
 <script>
   // Theme (light/dark/auto) controls. Shared by Settings and the onboarding
-  // "Personalize" step so the two stay in sync — both drive the same AG2Palette
+  // "Personalize" step so the two stay in sync — both drive the same shared theme switcher (palette.js)
   // theme switcher (persisted to localStorage + applied on <html>).
   //
   // §5.3: the accent *palette* is no longer set here. Palette is the profile's

@@ -6,12 +6,18 @@ from types import SimpleNamespace
 
 from assistant.workspace import (
     delete,
+    etag_for_path,
+    list_all_dirs,
     list_dirs,
     list_files,
+    make_dir,
+    move,
     resolve,
+    save_upload,
     slugify,
     write_deliverable_file,
     write_image,
+    write_text,
     write_upload,
 )
 
@@ -60,13 +66,42 @@ def test_list_files(tmp_path):
     assert files[0]["path"] == "ai-headlines/x.md" and files[0]["dir"] == "ai-headlines"
 
 
-def test_delete_removes_file_and_prunes_empty_folder(tmp_path):
+def test_delete_removes_file_and_prunes_now_empty_folder(tmp_path):
     (tmp_path / "ai-headlines").mkdir()
     (tmp_path / "ai-headlines" / "x.md").write_text("hi")
     assert delete(tmp_path, "ai-headlines/x.md") is True
     assert not (tmp_path / "ai-headlines" / "x.md").exists()
-    assert not (tmp_path / "ai-headlines").exists()  # emptied task folder pruned
-    assert tmp_path.exists()  # but never the workspace root
+    assert not (tmp_path / "ai-headlines").exists()  # the folder the delete emptied is pruned
+    assert tmp_path.exists()  # and the workspace root is never touched
+
+
+def test_delete_prunes_empty_ancestors_up_to_root(tmp_path):
+    (tmp_path / "a" / "b" / "c").mkdir(parents=True)
+    (tmp_path / "a" / "b" / "c" / "x.md").write_text("hi")
+    assert delete(tmp_path, "a/b/c/x.md") is True
+    assert not (tmp_path / "a").exists()  # whole now-empty chain a/b/c collapses
+    assert tmp_path.exists()  # but never past the root
+
+
+def test_delete_prune_stops_at_first_nonempty_ancestor(tmp_path):
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "keep.md").write_text("keep")
+    (tmp_path / "a" / "b" / "x.md").write_text("hi")
+    assert delete(tmp_path, "a/b/x.md") is True
+    assert not (tmp_path / "a" / "b").exists()  # emptied leaf is pruned
+    assert (tmp_path / "a").exists()  # but a/ still holds keep.md — kept
+
+
+def test_delete_leaves_a_sibling_empty_folder_untouched(tmp_path):
+    # A folder that was already empty before the delete (New directory) sits off the
+    # deleted file's ancestor chain, so pruning never reaches it (ADR 0007).
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "b" / "x.md").write_text("hi")
+    (tmp_path / "a" / "note").mkdir()  # intentionally-empty sibling of b/
+    assert delete(tmp_path, "a/b/x.md") is True
+    assert not (tmp_path / "a" / "b").exists()  # emptied leaf pruned
+    assert (tmp_path / "a" / "note").exists()  # sibling empty folder preserved
+    assert (tmp_path / "a").exists()  # a/ still holds note/
 
 
 def test_delete_keeps_nonempty_folder(tmp_path):
@@ -132,3 +167,193 @@ def test_list_dirs_empty_path_defaults_to_home(tmp_path, monkeypatch):
     (tmp_path / "proj").mkdir()
     r = list_dirs("")
     assert r is not None and "proj" in [d["name"] for d in r["dirs"]]
+
+
+# ---- User-writable Files space (ADR 0007) ----
+
+
+def test_save_upload_to_root_preserves_original_name(tmp_path):
+    rel = save_upload(tmp_path, "My Report.PDF", b"pdf-bytes")
+    assert rel == "My Report.PDF"  # original name kept (unlike write_upload's slug)
+    assert (tmp_path / rel).read_bytes() == b"pdf-bytes"
+
+
+def test_save_upload_to_nested_target_directory(tmp_path):
+    (tmp_path / "docs" / "sub").mkdir(parents=True)
+    rel = save_upload(tmp_path, "notes.md", b"hi", target_dir="docs/sub")
+    assert rel == "docs/sub/notes.md"
+    assert (tmp_path / rel).read_text() == "hi"
+
+
+def test_save_upload_creates_missing_target_directory(tmp_path):
+    rel = save_upload(tmp_path, "a.txt", b"x", target_dir="brand/new")
+    assert rel == "brand/new/a.txt" and (tmp_path / rel).exists()
+
+
+def test_save_upload_auto_suffixes_on_clash(tmp_path):
+    assert save_upload(tmp_path, "photo.png", b"a") == "photo.png"
+    assert save_upload(tmp_path, "photo.png", b"b") == "photo (2).png"  # never overwrites
+    assert save_upload(tmp_path, "photo.png", b"c") == "photo (3).png"
+    assert (tmp_path / "photo.png").read_bytes() == b"a"  # original untouched
+
+
+def test_save_upload_suffix_no_extension(tmp_path):
+    assert save_upload(tmp_path, "LICENSE", b"a") == "LICENSE"
+    assert save_upload(tmp_path, "LICENSE", b"b") == "LICENSE (2)"
+
+
+def test_save_upload_rejects_traversal(tmp_path):
+    assert save_upload(tmp_path, "x.txt", b"a", target_dir="../../etc") is None
+    # a filename that tries to climb is reduced to its basename, staying inside
+    rel = save_upload(tmp_path, "../../evil.sh", b"a")
+    assert rel == "evil.sh" and (tmp_path / "evil.sh").exists()
+
+
+def test_make_dir_creates_empty_directory(tmp_path):
+    assert make_dir(tmp_path, "reports") == ("ok", "reports")
+    assert (tmp_path / "reports").is_dir()
+
+
+def test_make_dir_nested_and_shown_by_list_all_dirs(tmp_path):
+    assert make_dir(tmp_path, "a/b/c") == ("ok", "a/b/c")
+    dirs = list_all_dirs(tmp_path)
+    assert "a" in dirs and "a/b" in dirs and "a/b/c" in dirs
+
+
+def test_make_dir_rejects_existing(tmp_path):
+    (tmp_path / "dup").mkdir()
+    assert make_dir(tmp_path, "dup") == ("exists", None)  # no clobber
+
+
+def test_make_dir_rejects_traversal_and_root(tmp_path):
+    assert make_dir(tmp_path, "../escape") == ("invalid", None)
+    assert make_dir(tmp_path, "") == ("invalid", None)  # the root itself
+
+
+def test_delete_directory_recursively(tmp_path):
+    (tmp_path / "d" / "sub").mkdir(parents=True)
+    (tmp_path / "d" / "one.md").write_text("1")
+    (tmp_path / "d" / "sub" / "two.md").write_text("2")
+    assert delete(tmp_path, "d") is True
+    assert not (tmp_path / "d").exists()
+    assert tmp_path.exists()  # never the root
+
+
+def test_delete_directory_rejects_traversal_and_root(tmp_path):
+    assert delete(tmp_path, "../..") is False
+    assert delete(tmp_path, "") is False  # can't delete the root
+
+
+def test_move_renames_file_in_place(tmp_path):
+    (tmp_path / "a.md").write_text("hi")
+    assert move(tmp_path, "a.md", "b.md") == "ok"
+    assert not (tmp_path / "a.md").exists()
+    assert (tmp_path / "b.md").read_text() == "hi"
+
+
+def test_move_file_into_another_directory(tmp_path):
+    (tmp_path / "a.md").write_text("hi")
+    assert move(tmp_path, "a.md", "docs/a.md") == "ok"  # intermediate dir created
+    assert (tmp_path / "docs" / "a.md").read_text() == "hi"
+
+
+def test_move_directory_rewrites_subtree(tmp_path):
+    (tmp_path / "old" / "sub").mkdir(parents=True)
+    (tmp_path / "old" / "sub" / "x.md").write_text("x")
+    assert move(tmp_path, "old", "new") == "ok"
+    assert (tmp_path / "new" / "sub" / "x.md").read_text() == "x"
+    assert not (tmp_path / "old").exists()
+
+
+def test_move_rejects_clash(tmp_path):
+    (tmp_path / "a.md").write_text("a")
+    (tmp_path / "b.md").write_text("b")
+    assert move(tmp_path, "a.md", "b.md") == "exists"  # never overwrites
+    assert (tmp_path / "a.md").read_text() == "a"  # source untouched
+    assert (tmp_path / "b.md").read_text() == "b"  # destination untouched
+
+
+def test_move_missing_source(tmp_path):
+    assert move(tmp_path, "nope.md", "b.md") == "not_found"
+
+
+def test_move_rejects_traversal_on_either_side(tmp_path):
+    (tmp_path / "a.md").write_text("a")
+    assert move(tmp_path, "../../etc/passwd", "b.md") == "invalid"
+    assert move(tmp_path, "a.md", "../../evil.md") == "invalid"
+    assert (tmp_path / "a.md").exists()
+
+
+def test_move_directory_into_own_subtree_rejected(tmp_path):
+    (tmp_path / "d" / "sub").mkdir(parents=True)
+    assert move(tmp_path, "d", "d/sub/d") == "invalid"
+
+
+def test_list_all_dirs_includes_empty_directories(tmp_path):
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "withfile").mkdir()
+    (tmp_path / "withfile" / "f.md").write_text("f")
+    dirs = list_all_dirs(tmp_path)
+    assert "empty" in dirs and "withfile" in dirs
+
+
+# ---- In-place editable writes: optimistic concurrency via content token (ADR 0011) ----
+
+
+def test_write_text_replaces_existing_and_returns_new_hash(tmp_path):
+    (tmp_path / "notes.md").write_text("old")
+    status, new = write_text(tmp_path, "notes.md", "new body", force=True)
+    assert status == "ok" and isinstance(new, str) and new
+    assert (tmp_path / "notes.md").read_text() == "new body"
+
+
+def test_write_text_matching_token_succeeds(tmp_path):
+    (tmp_path / "a.md").write_text("hello")
+    token = etag_for_path(tmp_path / "a.md")
+    status, new = write_text(tmp_path, "a.md", "goodbye", base_token=token)
+    assert status == "ok"
+    assert (tmp_path / "a.md").read_text() == "goodbye"
+    assert new != token  # the token moves with the content
+
+
+def test_write_text_stale_token_is_conflict_and_leaves_file_untouched(tmp_path):
+    (tmp_path / "a.md").write_text("v1")
+    stale = etag_for_path(tmp_path / "a.md")
+    (tmp_path / "a.md").write_text("v2 — agent wrote underneath us")  # content moved on
+    status, new = write_text(tmp_path, "a.md", "my edit", base_token=stale)
+    assert status == "conflict" and new is None
+    assert (tmp_path / "a.md").read_text() == "v2 — agent wrote underneath us"  # untouched
+
+
+def test_write_text_force_ignores_token(tmp_path):
+    (tmp_path / "a.md").write_text("v1")
+    status, _ = write_text(tmp_path, "a.md", "forced", base_token="totally-stale", force=True)
+    assert status == "ok"
+    assert (tmp_path / "a.md").read_text() == "forced"
+
+
+def test_write_text_missing_path_never_creates(tmp_path):
+    status, new = write_text(tmp_path, "nope.md", "x", force=True)
+    assert status == "not_found" and new is None
+    assert not (tmp_path / "nope.md").exists()  # creation stays Upload's job
+
+
+def test_write_text_rejects_traversal(tmp_path):
+    (tmp_path / "a.md").write_text("keep")
+    status, _ = write_text(tmp_path, "../../evil.md", "x", force=True)
+    assert status == "invalid"
+    assert (tmp_path / "a.md").read_text() == "keep"
+
+
+def test_write_text_rejects_oversized_body(tmp_path):
+    (tmp_path / "a.md").write_text("small")
+    status, _ = write_text(tmp_path, "a.md", "x" * 50, force=True, max_bytes=10)
+    assert status == "too_large"
+    assert (tmp_path / "a.md").read_text() == "small"  # untouched
+
+
+def test_write_read_token_round_trips(tmp_path):
+    (tmp_path / "a.md").write_text("start")
+    _, new = write_text(tmp_path, "a.md", "round-trip", force=True)
+    # the returned token equals what a subsequent read hands out
+    assert etag_for_path(tmp_path / "a.md") == new

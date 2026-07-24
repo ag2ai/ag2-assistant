@@ -1,61 +1,72 @@
 <script>
-  // Reusable profile form (§5.5): name + palette swatches + workspace. One form,
-  // three consumers so they can't drift:
+  // Reusable profile form (§5.5): name + palette swatches. One form, three consumers
+  // so they can't drift:
   //   (a) the onboarding multi-profile loop (§5.5) — also the zero-profile bootstrap
   //   (b) Drawer "+" chip create modal (§5.4)
   //   (c) Settings "Profiles" section inline edit of the active profile (§5.4)
   //
+  // The workspace folder is NOT a user choice — every profile stores its files under
+  // the install root, so there's no folder field here.
+  //
   // The form owns only field state + busy/error UI. The actual persistence is the
-  // parent's job via onSubmit({name, palette, workspace}) → Promise. If it throws,
-  // the message is shown inline (e.g. 400 "palette already in use"). This lets each
-  // consumer choose what "submit" means (create, create-then-continue, etc.).
+  // parent's job via onSubmit({name, accent}) → Promise. If it throws, the message is
+  // shown inline. This lets each consumer choose what "submit" means (create,
+  // create-then-continue, etc.). `accent` is an opaque #rrggbb hex (ADR 0002): a
+  // preset swatch or any colour from the custom picker.
   import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
 
   let {
-    // Palette ids already taken by other profiles — hidden from the swatches when
-    // creating (plan §5.4/§5.5). `keepPalettes` re-admits ids (e.g. the profile's
-    // own palette when editing) even if they're in `claimed`.
+    // Preset hexes already taken by other profiles — hidden from the swatches when
+    // creating (plan §5.4/§5.5). `keepAccents` re-admits hexes (e.g. the profile's
+    // own accent when editing) even if they're in `claimed`. Custom colours are
+    // never hidden — this is a gentle nudge over the presets, not a constraint.
     claimed = [],
-    keepPalettes = [],
+    keepAccents = [],
     // Initial values (edit affordances reuse this form shape too).
     initialName = '',
-    initialPalette = null,
-    initialWorkspace = '',
+    initialAccent = null,
     submitLabel = 'Create profile',
     busyLabel = 'Creating…',
-    // onSubmit({name, palette, workspace}) -> Promise. Throw to show inline error.
+    // onSubmit({name, accent}) -> Promise. Throw to show inline error.
     onSubmit,
     autofocus = true,
   } = $props()
 
-  // Available swatches: all palettes minus claimed, plus any explicitly kept.
+  // Available preset swatches: all presets minus claimed, plus any explicitly kept.
   const available = $derived(
-    PALETTES.filter((p) => !claimed.includes(p.id) || keepPalettes.includes(p.id))
+    PALETTES.filter((p) => !claimed.includes(p.hex) || keepAccents.includes(p.hex))
   )
 
   let name = $state(initialName)
-  let palette = $state(initialPalette || (available[0] && available[0].id) || PALETTES[0].id)
-  let workspace = $state(initialWorkspace)
+  let accent = $state(initialAccent || (available[0] && available[0].hex) || PALETTES[0].hex)
   let busy = $state(false)
   let error = $state('')
 
-  // If the currently-selected palette gets claimed out from under us (e.g. the
-  // loop removed it), fall back to the first still-available swatch.
+  // Custom = the accent is not one of the (available) presets. Drives the custom
+  // swatch's selected state + colour.
+  const isCustom = $derived(!PALETTES.some((p) => p.hex === accent))
+
+  // If the selected PRESET gets claimed out from under us (e.g. the loop removed
+  // it), fall back to the first still-available swatch. A custom colour is left
+  // alone — it's always valid.
   $effect(() => {
-    if (!available.some((p) => p.id === palette) && available.length) palette = available[0].id
+    if (!isCustom && !available.some((p) => p.hex === accent) && available.length) {
+      accent = available[0].hex
+    }
   })
 
-  const wsPlaceholder = $derived(
-    '~/Documents/AG2 Assistant/' + (name.trim() || '<Name>')
-  )
+  function pickCustom(e) {
+    const v = (e.target.value || '').toLowerCase()
+    if (/^#[0-9a-f]{6}$/.test(v)) accent = v
+  }
 
   async function submit() {
     if (!name.trim() || busy) return
     busy = true
     error = ''
     try {
-      await onSubmit({ name: name.trim(), palette, workspace: workspace.trim() || undefined })
+      await onSubmit({ name: name.trim(), accent })
       // On success the parent typically navigates/closes; leave busy true so the
       // button doesn't flash back to idle mid-transition.
     } catch (e) {
@@ -81,26 +92,29 @@
       {#each available as p (p.id)}
         <button
           class="pf-dot"
-          class:on={palette === p.id}
+          class:on={accent === p.hex}
           style="--dot:{p.hex}"
           title={p.label}
           aria-label={p.label}
           type="button"
-          onclick={() => (palette = p.id)}
+          onclick={() => (accent = p.hex)}
         >
-          {#if palette === p.id}<Icon name="check" size={13} />{/if}
+          {#if accent === p.hex}<Icon name="check" size={13} />{/if}
         </button>
       {/each}
-    </div>
-  </div>
 
-  <div class="pf-field">
-    <div class="pf-flabel"><span>Workspace folder</span><span class="hint">optional</span></div>
-    <div class="pf-input">
-      <Icon name="folder" size={15} />
-      <input placeholder={wsPlaceholder} bind:value={workspace} onkeydown={(e) => e.key === 'Enter' && submit()} />
+      <!-- Custom colour: a native <input type=color> hidden behind our swatch.
+           Always shows the rainbow gradient (never the chosen colour) — its job
+           is to open the picker; the selected hex reads below in .pf-hex. -->
+      <label
+        class="pf-dot pf-custom rainbow"
+        class:on={isCustom}
+        title="Custom colour"
+      >
+        <input type="color" value={accent} oninput={pickCustom} aria-label="Custom colour" />
+      </label>
     </div>
-    <div class="hint">Leave empty to use the default shown above.</div>
+    <div class="pf-hex">{accent}{#if isCustom} · custom{/if}</div>
   </div>
 
   {#if error}<div class="pf-error"><Icon name="x" size={13} /> {error}</div>{/if}
@@ -143,6 +157,23 @@
   .pf-dot:hover { transform: scale(1.08); }
   .pf-dot.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--dot); }
 
+  /* Custom-colour swatch: wraps a hidden native colour input. Always shows a
+     rainbow ring + palette glyph to read as "pick any colour". */
+  .pf-custom { position: relative; overflow: hidden; padding: 0; }
+  .pf-custom.rainbow {
+    background: conic-gradient(from 90deg, #f95339, #ec5d18, #e0b400, #2f8c44, #109e91, #2f6fe0, #7a52ec, #f95339);
+  }
+  .pf-custom.rainbow.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+  .pf-custom input {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer; border: none; padding: 0; background: none;
+  }
+
+  .pf-hex {
+    margin-top: 2px; font-size: var(--text-xs); color: var(--text-muted);
+    font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  }
+
   .pf-error {
     display: flex; align-items: center; gap: 6px;
     font-size: var(--text-sm); color: var(--danger, #e53c20);
@@ -151,11 +182,14 @@
   .pf-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
   .pf-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer;
-    border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 10px 18px;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 10px 18px;
     font: inherit; font-size: var(--text-sm); font-weight: var(--fw-semibold);
     transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
   }
-  .pf-btn.primary { background: var(--accent); color: var(--text-on-accent); box-shadow: var(--shadow-accent); }
-  .pf-btn.primary:hover { background: var(--accent-hover); }
-  .pf-btn.primary:disabled { opacity: .5; cursor: default; box-shadow: none; }
+  /* Primary reads through weight + surface, not an accent fill — the workspace
+     accent can be any colour (white included), so it never carries a button. */
+  .pf-btn.primary { background: var(--surface); color: var(--text); }
+  .pf-btn.primary:hover { background: var(--surface-hover); border-color: var(--accent-border); }
+  .pf-btn.primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .pf-btn.primary:disabled { opacity: .5; cursor: default; }
 </style>

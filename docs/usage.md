@@ -57,10 +57,10 @@ Start an interactive, multi-turn conversation in your terminal (the single-shot
 ```bash
 ag2-assistant chat                     # talk back and forth; type 'exit' or Ctrl-D to quit
 ag2-assistant chat --sandbox docker    # run shell/code in a container during the chat
-ag2-assistant chat --no-memory         # don't learn from this session
+ag2-assistant chat --no-memory         # don't learn from this chat
 ```
 
-It keeps one session, so AG2 Assistant remembers earlier turns, asks permissions via the
+It keeps one chat, so AG2 Assistant remembers earlier turns, asks permissions via the
 desktop popup, and learns your profile as you go.
 
 ### `ag2-assistant version`
@@ -89,23 +89,23 @@ permission/HITL prompts rendered inline as cards. The **History** button lists
 past conversations and lets you resume any of them. Use it as-is or as a reference
 for building your own front-end against the API below.
 
-**Resumable conversations.** Each session's full event history is persisted to
-`~/.ag2assistant/sessions.db` after every turn (via AG2's event log) and reloaded into a
+**Resumable conversations.** Each chat's full event history is persisted to
+`~/.ag2assistant/chats.db` after every turn (via AG2's event log) and reloaded into a
 fresh stream on demand — so conversations survive a gateway restart with complete
 context, not just a text transcript. This applies to **every** surface (web and
-all chat channels), keyed by session id.
+all chat channels), keyed by chat id.
 
 Endpoints:
 
 ```
-GET  /api/health                      -> {status, model, sessions, ...}
-GET  /api/sessions                    -> {sessions: [{session_id, updated, preview, turns}]}
-GET  /api/sessions/{id}               -> {session_id, messages: [{role, text}]}
+GET  /api/health                      -> {status, model, chats, ...}
+GET  /api/chats                       -> {chats: [{chat_id, updated, preview, turns}]}
+GET  /api/chats/{id}                  -> {chat_id, messages: [{role, text}]}
 GET  /api/hitl/pending                -> {pending: [{id, text, options, path, ...}]}
-POST /api/message   {text, session_id} -> {reply, session_id}
+POST /api/message   {text, chat_id}   -> {reply, chat_id}
 POST /hitl/{id}/answer  {answer}       -> {ok: true}   (answer a permission prompt)
 GET  /hitl/{id}                        -> styled HTML question page
-WS   /api/ws                           -> send {text, session_id};
+WS   /api/ws                           -> send {text, chat_id};
                                           receive {type: thinking|question|reply|error};
                                           answer a question with {type:"answer", id, answer}
 ```
@@ -126,11 +126,11 @@ Example:
 ```bash
 curl -X POST http://127.0.0.1:8800/api/message \
   -H 'Content-Type: application/json' \
-  -d '{"text":"What is the capital of Japan?","session_id":"u1"}'
-# {"reply":"The capital of Japan is Tokyo.","session_id":"u1"}
+  -d '{"text":"What is the capital of Japan?","chat_id":"u1"}'
+# {"reply":"The capital of Japan is Tokyo.","chat_id":"u1"}
 ```
 
-Each `session_id` keeps its own isolated multi-turn conversation. For
+Each `chat_id` keeps its own isolated multi-turn conversation. For
 distributed/multi-agent deployments, the agent can also be served over WebSocket
 through an AG2 Hub.
 
@@ -177,19 +177,19 @@ ag2-assistant setup
 # ? API key: ****
 # ? Enable Telegram? (y/n)
 # ? Telegram bot token: ****
-# Configuration saved to ~/.ag2assistant/config.json
+# Configuration saved to ~/.ag2assistant/config.yaml
 ```
 
 ### `ag2-assistant status` (coming soon)
 
-Check the status of the gateway, connected channels, and active sessions.
+Check the status of the gateway, connected channels, and active chats.
 
 ```bash
 ag2-assistant status
 # Gateway: running (ws://127.0.0.1:8789)
 # Channels:
-#   telegram: connected (2 active sessions)
-#   discord:  connected (1 active session)
+#   telegram: connected (2 active chats)
+#   discord:  connected (1 active chat)
 #   slack:    not configured
 # Agent: idle
 # Uptime: 3h 42m
@@ -309,38 +309,41 @@ Now it can answer "what's the time here?" and reason about your local context.
 Configuration resolves in this order (later wins):
 
 1. Built-in defaults
-2. `~/.ag2assistant/config.json`
-3. `AG2ASSISTANT_*` environment variables (from `.env` or the shell)
+2. Global `~/.ag2assistant/config.yaml`
+3. The active profile's `~/.ag2assistant/profiles/<id>/config.yaml` overlay
+4. `AG2ASSISTANT_*` environment variables (from `.env` or the shell)
 
-So you can keep a base `config.json` and override per-run with an env var.
+So you can keep a base global `config.yaml`, override per profile, and override
+per-run with an env var. (Point the whole install root elsewhere with `--data-dir`
+or `AG2ASSISTANT_DATA_DIR`.)
 
-### `~/.ag2assistant/config.json`
+### `~/.ag2assistant/config.yaml`
 
-```json
-{
-  "llm": {
-    "provider": "gemini",
-    "model": "gemini-3.5-flash",
-    "api_key_env": "GEMINI_API_KEY",
-    "aggregate_model": "gemini-2.5-flash"
-  },
-  "agent": {
-    "name": "ag2-assistant",
-    "system_prompt": "You are AG2 Assistant, a helpful personal AI assistant."
-  },
-  "tools": { "sandbox": "local" },
-  "memory": { "aggregate_every_n_turns": 4 }
-}
+```yaml
+llm:
+  provider: gemini
+  model: gemini-3.5-flash
+  api_key_env: GEMINI_API_KEY
+  aggregate_model: gemini-2.5-flash
+agent:
+  name: ag2-assistant
+  system_prompt: You are AG2 Assistant, a helpful personal AI assistant.
+gateway:
+  reply_timeout_s: 600
+tools:
+  sandbox: local
+memory:
+  aggregate_every_n_turns: 4
 ```
 
 `aggregate_model` (optional) runs the passive memory-distillation pass on a
-cheaper model than your main one — handy on long sessions. On Gemini this
+cheaper model than your main one — handy on long chats. On Gemini this
 defaults to `gemini-2.5-flash-lite`; set it explicitly to override, or set it to
 your main model to disable the saving.
 
 ### Environment variable overrides
 
-Every key above also has an env override (these win over `config.json`):
+Every key above also has an env override (these win over `config.yaml`):
 
 | Env var | Overrides |
 |---|---|
@@ -349,6 +352,7 @@ Every key above also has an env override (these win over `config.json`):
 | `AG2ASSISTANT_API_KEY_ENV` | `llm.api_key_env` |
 | `AG2ASSISTANT_AGGREGATE_MODEL` | `llm.aggregate_model` |
 | `AG2ASSISTANT_LOCATION` | `agent.location` |
+| `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
@@ -358,11 +362,11 @@ Every key above also has an env override (these win over `config.json`):
 Set the provider + model + the env var holding its key, and install that
 provider's extra (`pip install "ag2[anthropic]"` / `ag2[openai]`):
 
-```json
-{ "llm": { "provider": "openai", "model": "gpt-4o", "api_key_env": "OPENAI_API_KEY" } }
+```yaml
+llm: { provider: openai, model: gpt-4o, api_key_env: OPENAI_API_KEY }
 ```
-```json
-{ "llm": { "provider": "anthropic", "model": "claude-sonnet-4-6", "api_key_env": "ANTHROPIC_API_KEY" } }
+```yaml
+llm: { provider: anthropic, model: claude-sonnet-4-6, api_key_env: ANTHROPIC_API_KEY }
 ```
 
 Or quickly, without a file:
@@ -376,14 +380,11 @@ AG2ASSISTANT_LLM_PROVIDER=anthropic AG2ASSISTANT_MODEL=claude-sonnet-4-6 \
 
 ### System prompt
 
-Customize your agent's personality by editing the system prompt in `~/.ag2assistant/config.json`:
+Customize your agent's personality by editing the system prompt in `~/.ag2assistant/config.yaml`:
 
-```json
-{
-  "agent": {
-    "system_prompt": "You are Jarvis, a witty personal assistant. You speak concisely and always suggest actionable next steps."
-  }
-}
+```yaml
+agent:
+  system_prompt: You are Jarvis, a witty personal assistant. You speak concisely and always suggest actionable next steps.
 ```
 
 ### Agent name
@@ -577,17 +578,50 @@ Scopes requested (least-privilege): `gmail.readonly` + `gmail.compose` (read mai
 create drafts, and send — but **not** delete or relabel existing mail),
 `calendar.events` (read + create events, not calendar management), and `drive.readonly`.
 
-## Sessions
+## Chats
 
-AG2 Assistant maintains conversation history per user per channel. When you message your agent on Telegram, it remembers your previous conversations on Telegram. Discord conversations are separate sessions.
+AG2 Assistant maintains conversation history per user per channel. When you message your agent on Telegram, it remembers your previous conversations on Telegram. Discord conversations are separate chats.
 
-Sessions are persisted locally in `~/.ag2assistant/sessions/`.
+Chats are persisted locally in `~/.ag2assistant/chats.db`.
+
+## Tasks — standing jobs on a schedule
+
+A **task** is just a name, a prompt, an optional per-task model, and a schedule
+— **manual** (on demand only), **once** (a single future run), or **cron**
+(recurring), with UI presets for hourly/daily/weekly/weekdays plus a raw cron
+field for anything else. Create one from the **Tasks** tab in the web app, or
+ask the agent to do it from any chat or channel (see below).
+
+Every **run** of a task is a real chat, on its own stream
+(`task-run:{run_id}`): open it to watch the agent work live, send a message
+mid-run to steer it, hit **Stop** to end it early (keeping whatever it already
+produced), or keep chatting in it after it finishes. Recent runs' summaries
+feed into the next run's prompt, so a recurring task doesn't repeat itself.
+
+The task page is inline-editable — change the name, prompt, model, or schedule
+and save, no separate settings screen — with every run listed underneath it,
+each showing a status and a one-line summary. **Run now** starts a run
+immediately without touching the schedule; **Pause** stops a `once`/`cron` task
+from firing again (a paused task never auto-resumes); **Delete** removes the
+task, its runs, and their chats — irreversible.
+
+If a run needs your input — a clarifying question or a permission approval —
+it appears inline in that run's own chat if you're already watching it, or in
+the **Needs your input** strip anywhere else in the web app. Tasks created
+from Telegram, Slack, or Discord report their outcome back to the chat they
+came from when the run finishes.
+
+Just ask, from the web UI or any connected channel: *"Set up a daily task that
+sends me a morning news digest at 8am"*, or *"Run my news digest task now"* —
+the agent manages tasks with the same six operations (list, get, create,
+update, run now, delete) the UI uses. (This is a gateway/channel capability;
+the single-shot `ag2-assistant agent` CLI command doesn't carry task tools.)
 
 ## How It Works
 
 1. You send a message on any connected platform (or CLI)
 2. The channel adapter normalizes it to a common format
-3. The gateway routes it to your session
+3. The gateway routes it to your chat
 4. The AG2 agent processes it with your conversation history
 5. The response is sent back through the same channel
 

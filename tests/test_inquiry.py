@@ -5,12 +5,6 @@ import asyncio
 from assistant.hitl.base import Question
 from assistant.hitl.inquiry import DurableAsker, Inquiry, InquiryStatus, InquiryStore
 from assistant.permissions import DENY
-from assistant.tasks import (
-    DeliverableStatus,
-    TaskManager,
-    TaskStatus,
-    TaskStore,
-)
 
 
 def _istore(tmp_path):
@@ -126,50 +120,9 @@ async def test_durable_asker_rebind_tags_subtask(tmp_path):
     assert (await store.list_all())[0].task_id == "child"
 
 
-# ----- task integration -----
-
-
-async def test_taskmanager_persists_task_inquiries(tmp_path):
-    tstore = TaskStore(path=tmp_path / "t.db")
-    istore = _istore(tmp_path)
-    t = await tstore.create("ask then work")
-    await tstore.add_deliverable(t.id, "out")
-    seen = {}
-
-    async def executor(task_id, mgr, asker):
-        seen["ans"] = await asker.ask(Question(text="proceed?"))
-        tk = await tstore.get(task_id)
-        for d in tk.pending_deliverables():
-            await tstore.set_deliverable_status(task_id, d["id"], DeliverableStatus.PRODUCED)
-
-    mgr = TaskManager(tstore, executor, inquiry_store=istore)
-    await mgr.submit(t.id, asker=_ImmediateAsker("go"))
-    await mgr.wait(t.id)
-
-    assert seen["ans"] == "go"
-    inqs = await istore.list_all()
-    assert len(inqs) == 1
-    assert inqs[0].task_id == t.id and inqs[0].status == InquiryStatus.ANSWERED
-
-
-async def test_taskmanager_cancel_releases_pending_inquiry(tmp_path):
-    tstore = TaskStore(path=tmp_path / "t.db")
-    istore = _istore(tmp_path)
-    t = await tstore.create("blocks on a question")
-    await tstore.add_deliverable(t.id, "out")
-
-    async def executor(task_id, mgr, asker):
-        await asker.ask(Question(text="waiting…"))  # blocks until answered/cancelled
-
-    mgr = TaskManager(tstore, executor, inquiry_store=istore)
-    await mgr.submit(t.id, asker=_BlockingAsker())
-    for _ in range(200):
-        if await istore.list_pending(t.id):
-            break
-        await asyncio.sleep(0.01)
-    assert await istore.list_pending(t.id), "task never raised its inquiry"
-
-    await mgr.cancel(t.id, reason="user stop")
-    await mgr.wait(t.id)
-    assert await istore.list_pending(t.id) == []  # released, not left dangling
-    assert (await tstore.get(t.id)).status == TaskStatus.CANCELLED
+# Note: the old TaskManager/DeliverableStatus/TaskStatus integration tests that
+# used to live here exercised task-executor machinery removed by the TaskService
+# v2 rewrite (a run is now one ordinary chat turn, executed by the gateway itself
+# — there is no separate injectable executor/TaskManager to submit/cancel/wait
+# on). The generic DurableAsker behavior above (persists, resolves out-of-band,
+# times out, rebinds) is unaffected and still fully covered.

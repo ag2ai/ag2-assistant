@@ -43,6 +43,7 @@ const APP_EVENT_SUB = {
   TaskCreated: 'Subagent', TaskScheduled: 'Subagent', DeliverableProduced: 'Subagent',
   InquiryRaised: 'HITL', InquiryAnswered: 'HITL', SubagentTrace: 'Subagent',
   FeedbackGiven: 'Memory', // 👍/👎 feeds the learned memory profile
+  FeedbackCleared: 'Memory', // rating retracted (thumb toggled off; no memory change)
   A2UISurface: 'A2UI',
 }
 

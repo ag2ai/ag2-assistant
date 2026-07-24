@@ -4,6 +4,11 @@ import json
 from functools import lru_cache
 from typing import Any
 
+from ag2.a2ui._runtime import _A2UIRuntime
+from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
+from ag2.a2ui.middleware import _publish_a2ui
+from ag2.middleware.base import BaseMiddleware
+
 from assistant.events import A2UISurface
 
 # A2UI protocol message keys — a JSON array whose items carry any of these is an
@@ -633,10 +638,8 @@ def runtime():
 
     The public A2UIServer wraps this runtime internally; for AG2 Assistant's
     existing WebSocket stream we use the same beta runtime/middleware directly
-    so A2UIMessageEvent is emitted on the normal session stream.
+    so A2UIMessageEvent is emitted on the normal chat stream.
     """
-
-    from ag2.a2ui._runtime import _A2UIRuntime
 
     return _A2UIRuntime(
         protocol_version="v1.0",
@@ -669,8 +672,6 @@ def wrap_bare_a2ui(text: str) -> str | None:
     """
     if not text:
         return None
-    from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
-
     decoder = json.JSONDecoder()
     i = 0
     while True:
@@ -701,9 +702,6 @@ def tolerant_a2ui_middleware(parser):
     response. Reuses the runtime ``parser`` and the runtime's publish path, so the
     recovered surface travels the same out-of-band channel as a wrapped one.
     """
-    from ag2.a2ui.constants import A2UI_JSON_OPEN_TAG
-    from ag2.a2ui.middleware import _publish_a2ui
-    from ag2.middleware.base import BaseMiddleware
 
     class _TolerantMiddleware(BaseMiddleware):
         async def on_llm_call(self, call_next, events, context):

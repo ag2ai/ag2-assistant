@@ -279,6 +279,21 @@ export function foldEvent(items, wire) {
       }
       break
     }
+    case 'FeedbackCleared': {
+      // Retraction: fold the thumb back to neutral on the item it rated. Same
+      // match-by-stable-key as FeedbackGiven; folds in stream order so a clear after
+      // a mark wins (and a later re-rating would win over this).
+      const k = d.target_kind, tid = d.target_id
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i]
+        const match =
+          (k === 'message' && it.kind === 'agent' && String(it.at) === tid) ||
+          (k === 'image' && it.kind === 'genimage' && it.path === tid) ||
+          (k === 'deliverable' && it.kind === 'deliverable' && it.deliverableId === tid)
+        if (match) { it.feedback = null; break }
+      }
+      break
+    }
     default:
       break // UsageEvent, ToolResult*, GeminiToolCallEvent, etc. — not rendered
   }

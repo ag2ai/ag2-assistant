@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from assistant.channels.base import InboundMessage, should_respond
+from assistant.channels.telegram import TelegramChannel
 
 
 def _msg(text="hi", is_direct=True, mentioned=False) -> InboundMessage:
@@ -18,8 +19,8 @@ def _msg(text="hi", is_direct=True, mentioned=False) -> InboundMessage:
     )
 
 
-def test_session_id_is_per_chat():
-    assert _msg().session_id() == "telegram:c1"
+def test_stable_id_is_per_chat():
+    assert _msg().stable_id() == "telegram:c1"
 
 
 def test_should_respond_dm():
@@ -42,7 +43,6 @@ def test_should_respond_empty_text():
 
 
 def _telegram_channel():
-    from assistant.channels.telegram import TelegramChannel
 
     ch = TelegramChannel(token="fake-token")
     ch._bot_username = "ag2assistantbot"
@@ -78,7 +78,7 @@ def test_normalize_dm():
     assert inbound.is_direct is True
     assert inbound.mentioned is False
     assert inbound.text == "hello"
-    assert inbound.session_id() == "telegram:42"
+    assert inbound.stable_id() == "telegram:42"
 
 
 def test_normalize_group_with_mention_strips_handle():
@@ -130,7 +130,6 @@ def test_normalize_accepts_attachment_only_dm():
 
 def test_telegram_requires_token(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    from assistant.channels.telegram import TelegramChannel
 
     with pytest.raises(ValueError):
         TelegramChannel()

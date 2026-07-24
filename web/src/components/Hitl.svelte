@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { inquiries, soundOnInput } from '../store.js'
+  import { get } from 'svelte/store'
+  import { inquiries, soundOnInput, profileEpoch } from '../store.js'
   import { api } from '../transport/api.js'
   import { go, route } from '../router.js'
   import { chime } from '../lib/chime.js'
@@ -9,26 +10,30 @@
   let seen = new Set()   // inquiry ids already surfaced — chime only on genuinely new ones
   let first = true
 
-  // The stream the open page renders inline: a task page → "task:<id>", a chat
-  // page → the chat id (mirrors controller.js's session mapping).
-  const pageSession = $derived(
-    $route.name === 'task' ? 'task:' + $route.id : $route.name === 'chat' ? $route.id : null,
+  // The stream the open page renders inline: a run thread → "task-run:<id>"
+  // (mirrors controller.js's openThread chat mapping), a chat page → the chat
+  // id. A task page (route.name === 'task') is config + a run list, not a
+  // chat — it has no inline stream, so it maps to null (nothing to dedupe
+  // against; its inquiries stay in the strip).
+  const pageChat = $derived(
+    $route.name === 'run' ? 'task-run:' + $route.id : $route.name === 'chat' ? $route.id : null,
   )
 
   // An inquiry the open page already renders inline (its InquiryRaised rides that
-  // session's stream) is dropped from the strip — answer it in context, not twice.
+  // chat's stream) is dropped from the strip — answer it in context, not twice.
   // Everything else stays: other pages' inquiries, subtask inquiries (different
-  // stream), and transient prompts without a session.
+  // stream), and transient prompts without a chat.
   const visible = $derived(
     $inquiries.filter((q) => {
       if (q._src !== 'inquiry') return true
-      if (q.session && q.session === pageSession) return false
-      if ($route.name === 'task' && q.task_id === $route.id) return false // pre-session fallback
+      if (q.chat && q.chat === pageChat) return false
+      if ($route.name === 'task' && q.task_id === $route.id) return false // pre-chat fallback
       return true
     }),
   )
 
   async function refresh() {
+    const epoch = get(profileEpoch)   // drop a poll that resolves after a profile switch
     try {
       // Two sources merged into one strip: durable task inquiries, and chat-turn
       // permission prompts (run_code/shell/file) which live in the HitlServer.
@@ -36,6 +41,7 @@
         api.inquiries().catch(() => []),
         api.hitlPending().catch(() => []),
       ])
+      if (get(profileEpoch) !== epoch) return   // switched mid-flight — this is the old profile's data
       const next = [
         ...inq.map((q) => ({ ...q, _src: 'inquiry', _key: 'inq:' + q.id })),
         ...hitl.map((q) => ({ ...q, _src: 'hitl', _key: 'hitl:' + q.id })),
