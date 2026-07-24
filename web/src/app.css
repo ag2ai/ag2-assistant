@@ -710,6 +710,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* Google modal setup steps */
 .gsteps { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; color: var(--ink); }
 .gsteps a { color: var(--accent); }
+/* Pre-flight banner + copy-ready install command when the optional [google] extra is missing. */
+.gwarn { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--warn, #c9922b); border-radius: 8px; background: rgba(201, 146, 43, .10); font-size: 13px; line-height: 1.5; }
+.gwarn p { margin: 0 0 6px; }
+.ghint { margin: 6px 0 12px; padding: 8px 10px; border-radius: 6px; background: var(--panel2, rgba(127,127,127,.12)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; user-select: all; overflow-x: auto; }
 
 .modal-close { display: inline-flex; align-items: center; gap: 6px; align-self: flex-end; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 14px; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .modal-close:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }

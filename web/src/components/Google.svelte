@@ -37,10 +37,23 @@
 <div class="modal">
   <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Google</h2>
+  {#if st && st.libs_available === false}
+    <!-- Pre-flight: shown in every state, so nobody completes the Google Cloud
+         setup only to discover at the first tool call that the libs are absent. -->
+    <div class="gwarn">
+      <p><b>Optional Google libraries aren't installed.</b> Gmail, Calendar and
+      Drive stay unavailable {st.signed_in ? '(even though you\'re signed in) ' : ''}until you add them.</p>
+      <p>Run this, then restart AG2 Assistant:</p>
+      <pre class="ghint">{st.install_hint}</pre>
+      <button class="linkbtn" onclick={refresh}>Re-check</button>
+    </div>
+  {/if}
   {#if !st}
     <p class="muted">Loading…</p>
   {:else if st.signed_in}
-    <p>Connected as <b>{st.email || 'your account'}</b>. AG2 Assistant can use Gmail, Calendar and Drive.</p>
+    <p>Signed in as <b>{st.email || 'your account'}</b>.{st.libs_available === false
+      ? ''
+      : ' AG2 Assistant can use Gmail, Calendar and Drive.'}</p>
     <button class="open" onclick={logout}>Disconnect</button>
   {:else if !st.configured}
     <p>Google integration is <b>bring-your-own</b>: you create a free OAuth client in

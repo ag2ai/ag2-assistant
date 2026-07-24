@@ -61,6 +61,7 @@ def test_extract_drive_id_from_url_or_id():
 
 def test_google_guidance_in_turn_prompt_when_signed_in(monkeypatch):
 
+    monkeypatch.setattr(ga, "libs_available", lambda: True)
     monkeypatch.setattr(ga, "has_token", lambda: True)
     assert GOOGLE_GUIDANCE in " ".join(turn_prompt(Config()))
 
@@ -165,10 +166,50 @@ def test_google_status_endpoint(monkeypatch):
 
     monkeypatch.setattr(ga, "is_configured", lambda: True)
     monkeypatch.setattr(ga, "has_token", lambda: True)
+    monkeypatch.setattr(ga, "libs_available", lambda: True)
     monkeypatch.setattr(ga, "account_email", lambda: "me@example.com")
     with _client(monkeypatch) as client:
         st = client.get("/api/google/status").json()
-        assert st == {"configured": True, "signed_in": True, "email": "me@example.com"}
+        assert st == {
+            "configured": True,
+            "signed_in": True,
+            "email": "me@example.com",
+            "libs_available": True,
+            "install_hint": None,
+        }
+
+
+def test_google_status_reports_missing_libs(monkeypatch):
+    """A token without the [google] extra must not read as a healthy connection —
+    the UI needs the remedy, not a green tick."""
+    monkeypatch.setattr(ga, "is_configured", lambda: True)
+    monkeypatch.setattr(ga, "has_token", lambda: True)
+    monkeypatch.setattr(ga, "libs_available", lambda: False)
+    monkeypatch.setattr(ga, "account_email", lambda: "me@example.com")
+    with _client(monkeypatch) as client:
+        st = client.get("/api/google/status").json()
+        assert st["signed_in"] is True
+        assert st["libs_available"] is False
+        assert st["install_hint"] == ga.install_hint()
+        assert "google" in st["install_hint"]
+
+
+def test_install_hint_matches_how_this_install_was_made(monkeypatch, tmp_path):
+    """A remedy for the wrong install method is barely better than none, so the
+    hint follows the environment rather than always naming pip."""
+    import sys
+
+    # Editable checkout: a pyproject.toml three levels above this module.
+    assert ga.install_hint() == "uv sync --extra google"
+
+    # Not a checkout → fall through to the install-method checks.
+    monkeypatch.setattr(ga, "__file__", str(tmp_path / "a/b/c/google_auth.py"))
+    monkeypatch.setattr(sys, "prefix", "/home/u/.local/share/uv/tools/ag2-assistant")
+    hint = ga.install_hint()
+    assert hint.startswith("uv tool install") and "ag2-assistant[google]" in hint
+
+    monkeypatch.setattr(sys, "prefix", "/usr/local")
+    assert ga.install_hint() == 'pip install "ag2-assistant[google]"'
 
 
 def test_google_login_url_and_callback(monkeypatch):
@@ -221,6 +262,7 @@ def test_google_credentials_upload_endpoint(monkeypatch, tmp_path):
 
 def test_agent_tools_include_google_only_when_signed_in(monkeypatch):
 
+    monkeypatch.setattr(ga, "libs_available", lambda: True)
     monkeypatch.setattr(ga, "has_token", lambda: False)
     base = [t.name for t in tools_mod.build_agent_tools(provider="gemini")]
     assert not any(n.startswith("gmail_") for n in base)
@@ -230,3 +272,52 @@ def test_agent_tools_include_google_only_when_signed_in(monkeypatch):
     assert "gmail_send" in signed_in
     assert "calendar_list_events" in signed_in
     assert "drive_search" in signed_in
+
+
+def test_google_tools_withheld_when_libs_missing(monkeypatch):
+    """Signed in but no [google] extra: the model must not be handed tools whose
+    every call would raise ImportError — that's the dead end this guards."""
+    monkeypatch.setattr(ga, "has_token", lambda: True)
+    monkeypatch.setattr(ga, "libs_available", lambda: False)
+
+    names = [t.name for t in tools_mod.build_agent_tools(provider="gemini")]
+    assert not any(n.startswith(("gmail_", "calendar_", "drive_")) for n in names)
+
+    caps = tools_mod.available_capabilities()
+    assert "gmail" not in caps and "calendar" not in caps and "drive" not in caps
+
+    # ...and the model isn't told to reach for them either.
+    assert GOOGLE_GUIDANCE not in " ".join(turn_prompt(Config()))
+
+
+def test_google_ready_needs_both_token_and_libs(monkeypatch):
+    for token, libs, expected in [
+        (True, True, True),
+        (True, False, False),
+        (False, True, False),
+        (False, False, False),
+    ]:
+        monkeypatch.setattr(ga, "has_token", lambda t=token: t)
+        monkeypatch.setattr(ga, "libs_available", lambda v=libs: v)
+        assert ga.google_ready() is expected
+
+
+def test_build_service_gives_install_hint_not_import_error(monkeypatch):
+    """Defence in depth: any path reaching build_service without the libs gets
+    the remedy, never a bare "No module named 'googleapiclient'"."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("googleapiclient"):
+            raise ImportError("No module named 'googleapiclient'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with _pytest.raises(ImportError) as exc:
+        ga.build_service("gmail", "v1")
+    msg = str(exc.value)
+    assert msg == ga._missing_libs_message()
+    assert "Install with:" in msg and ga.install_hint() in msg
+    assert msg != "No module named 'googleapiclient'"  # never the bare error

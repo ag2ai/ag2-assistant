@@ -472,7 +472,7 @@ def turn_prompt(
     if workspace:
         parts.append(workspace_guidance(config))
     try:
-        if google_auth.has_token() if google is None else google:
+        if google_auth.google_ready() if google is None else google:
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for turn prompt", exc)
@@ -503,7 +503,7 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
     if focuses:
         parts.append(focuses)
     try:
-        if google_auth.has_token():
+        if google_auth.google_ready():
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for universal prompt", exc)

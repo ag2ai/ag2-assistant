@@ -88,6 +88,14 @@ def build_self_tools(config, settings) -> list:
                 lines.append(
                     "Google: set up but not signed in — sign in at Settings → Integrations."
                 )
+            elif not google_auth.libs_available():
+                who = google_auth.account_email() or "the user's account"
+                lines.append(
+                    f"Google: signed in as {who}, but the optional client libraries are "
+                    f"NOT installed, so Gmail/Calendar/Drive tools are unavailable this "
+                    f"run. Tell the user to run `{google_auth.install_hint()}` and restart "
+                    f"AG2 Assistant. Do not claim you can read their mail."
+                )
             else:
                 who = google_auth.account_email() or "unknown account"
                 lines.append(f"Google: connected as {who} (Gmail, Calendar, Drive read).")

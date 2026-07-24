@@ -78,15 +78,62 @@ def has_token() -> bool:
     return token_path().exists()
 
 
+# The remedy differs by how this install was made, and a command that doesn't
+# apply is barely better than no command at all: the documented install path is
+# `uv tool install` from git (scripts/install.sh), contributors run an editable
+# checkout, and only a plain PyPI install wants bare pip. Detect, don't guess.
+_GIT_REPO = "https://github.com/ag2ai/ag2-assistant.git"
+
+
+def install_hint() -> str:
+    """The command that actually adds the `[google]` extra to *this* install."""
+    import sys
+
+    if (Path(__file__).resolve().parents[3] / "pyproject.toml").exists():
+        return "uv sync --extra google"  # editable checkout (src/assistant/integrations/…)
+    if "/uv/tools/" in Path(sys.prefix).as_posix():
+        return f'uv tool install --force "ag2-assistant[google] @ git+{_GIT_REPO}@main"'
+    return 'pip install "ag2-assistant[google]"'
+
+
+def _missing_libs_message() -> str:
+    return f"Google integration needs extra deps. Install with: {install_hint()}"
+
+
+# Every module the integration needs at runtime: the auth pair (consent + refresh)
+# and the API client (every actual Gmail/Calendar/Drive call).
+_REQUIRED_MODULES = ("google.auth", "google_auth_oauthlib", "googleapiclient")
+
+
+def libs_available() -> bool:
+    """True if the optional `[google]` client libraries are importable.
+
+    A cached token only proves the user once consented — not that the libraries
+    are present. The two come apart routinely: a token written by one venv (or
+    an older install that had the extra) is read by another that never installed
+    it. Callers gate on `google_ready()` so we never hand the model a tool whose
+    first call would be a bare ImportError.
+    """
+    from importlib.util import find_spec
+
+    try:
+        return all(find_spec(m) is not None for m in _REQUIRED_MODULES)
+    except (ImportError, ValueError):  # parent package missing, or a broken spec
+        return False
+
+
+def google_ready() -> bool:
+    """True if Google calls can actually be made: signed in *and* libraries present."""
+    return has_token() and libs_available()
+
+
 def _require_libs():
     try:
         from google.auth.transport.requests import Request  # local: optional [google] extra
         from google.oauth2.credentials import Credentials  # local: optional [google] extra
         from google_auth_oauthlib.flow import InstalledAppFlow  # local: optional [google] extra
     except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise ImportError(
-            'Google integration needs extra deps. Install with: pip install "ag2-assistant[google]"'
-        ) from exc
+        raise ImportError(_missing_libs_message()) from exc
     return Credentials, Request, InstalledAppFlow
 
 
@@ -211,8 +258,14 @@ def logout() -> bool:
 
 
 def build_service(api: str, version: str):
-    """Build a Google API client (e.g. ('gmail','v1')), or raise if not logged in."""
-    from googleapiclient.discovery import build  # local: optional [google] extra
+    """Build a Google API client (e.g. ('gmail','v1')), or raise if not usable."""
+    try:
+        from googleapiclient.discovery import build  # local: optional [google] extra
+    except ImportError as exc:
+        # Defence in depth: `google_ready()` should have kept these tools
+        # unregistered, but any path that still lands here gets the remedy
+        # rather than a bare "No module named 'googleapiclient'".
+        raise ImportError(_missing_libs_message()) from exc
 
     creds = load_credentials(interactive=False)
     if creds is None:
