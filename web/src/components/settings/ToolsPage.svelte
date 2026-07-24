@@ -10,5 +10,5 @@
 
 <CodingAgents />
 
-<div class="setsec">Permissions <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
+<div class="setgroup">Permissions <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
 <PermissionsManager />
