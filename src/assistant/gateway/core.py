@@ -47,7 +47,7 @@ from assistant.a2ui import (
 )
 from assistant.agent import create_agent, universal_turn_prompt
 from assistant.config import Config, load_config
-from assistant.events import TurnCancelled
+from assistant.events import TurnCancelled, TurnFailed
 from assistant.folders import FolderStore
 from assistant.gateway.repair import repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
@@ -109,6 +109,18 @@ def _conversation_events() -> tuple:
 
 
 _CONVERSATION_EVENTS = _conversation_events()
+
+
+def _failure_text(exc: BaseException) -> str:
+    """A short, user-facing reason a turn ended in an error.
+
+    The traceback belongs in the debug record (``capture_failure``), not the chat —
+    this is only what the thread shows, so it stays one plain sentence.
+    """
+    if isinstance(exc, asyncio.TimeoutError):
+        return "The turn timed out before it finished."
+    detail = " ".join(str(exc).split())[:200]  # collapse multi-line provider blobs
+    return f"The turn failed: {detail}" if detail else "The turn failed unexpectedly."
 
 
 def is_internal_stream(chat_id: str) -> bool:
@@ -522,11 +534,14 @@ class Gateway:
                                 stream, turn, on_event, hitl_pending=hitl_pending
                             )
                     except asyncio.CancelledError:
+                        # A cancelled turn keeps what it already did: the tool calls and
+                        # results are on the stream, so persist them whoever cancelled.
+                        # Awaiting here is safe — a cancelled task still completes its
+                        # handler's awaits (verified under a double cancel), so a
+                        # shutdown mid-turn no longer erases the work.
+                        await self._persist_turn(chat_id, stream, text, "")
                         if not active.cancelled:
                             raise  # not a user stop (disconnect, shutdown) — let it fly
-                        # A stopped turn keeps what it already did: the tool calls and
-                        # results are on the stream, so persist them and mark the stop.
-                        await self._persist_turn(chat_id, stream, text, "")
                         await self.emit_event(chat_id, TurnCancelled(chat_id, reason=active.reason))
                         return ""
                     finally:
@@ -541,6 +556,14 @@ class Gateway:
                     error=exc,
                     stream=stream,
                 )
+                # A failed turn keeps its work. Without this the turn's events are
+                # never written at all, and since the thread renders from the event
+                # log the whole chat opens blank — the user loses the record of work
+                # that actually happened (tasks created, files written). Emit the
+                # marker FIRST: _persist_turn snapshots the history, so an event sent
+                # after it would not make the log.
+                await self.emit_event(chat_id, TurnFailed(chat_id, error=_failure_text(exc)))
+                await self._persist_turn(chat_id, stream, text, "")
                 raise
             else:
                 await self._emit_a2ui_surfaces(stream, a2ui_handle)
