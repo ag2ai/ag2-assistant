@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ag2.knowledge import SqliteKnowledgeStore
 
-from assistant.hitl.base import Asker, Question
+from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.storage import SerialStore, new_id, now_iso
 
 _PREFIX = "/inquiries/"
@@ -228,7 +228,7 @@ class NullAsker:
         return ""  # pragma: no cover
 
 
-class DurableAsker:
+class DurableAsker(PendingGuard):
     """Wraps a transport `Asker` so every prompt is persisted as an `Inquiry`.
 
     `ask()` races the live transport against an out-of-band answer to the stored
@@ -268,6 +268,10 @@ class DurableAsker:
         )
 
     async def ask(self, question: Question, timeout: float | None = None) -> str:
+        with self.pending_guard():
+            return await self._ask(question, timeout)
+
+    async def _ask(self, question: Question, timeout: float | None = None) -> str:
         to = timeout or self._timeout
         # Surface on the explicit chat, else the task's stream (so a task's
         # inquiries render inline on its page exactly as before).

@@ -19,7 +19,7 @@ import discord
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import split_for_limit
-from assistant.hitl.base import Asker, Question
+from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
 DISCORD_LIMIT = 2000
@@ -64,7 +64,7 @@ class _AskView(discord.ui.View):
         return callback
 
 
-class DiscordAsker:
+class DiscordAsker(PendingGuard):
     """Asks a question in a specific Discord channel and awaits the answer."""
 
     def __init__(self, client, channel_id: str, pending: PendingAsks) -> None:
@@ -88,7 +88,8 @@ class DiscordAsker:
         else:
             await channel.send(text)
         try:
-            return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
+            with self.pending_guard():
+                return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
         finally:
             self._pending.discard(self._channel_id)
 

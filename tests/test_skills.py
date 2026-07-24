@@ -55,7 +55,7 @@ def test_bundled_skills_are_discoverable(tmp_path):
     rt = LocalRuntime(dir=tempfile.mkdtemp(), extra_paths=[str(d)])
     discovered = rt.skills  # AG2 main renamed discover() → the `skills` accessor
     names = {m.name for m in discovered}
-    assert {"web-research", "pdf-tools", "email-drafting"} <= names
+    assert {"web-research", "pdf-tools", "email-drafting", "self-knowledge"} <= names
     # description moved under metadata in AG2 main's Skill model
     assert all(m.metadata.description for m in discovered)  # required for disclosure
 

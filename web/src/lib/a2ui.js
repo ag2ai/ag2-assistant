@@ -3,6 +3,36 @@ const nextId = () => `a2ui-${Date.now()}-${++_seq}`
 
 export const BETA_CATALOG_ID = 'https://ag2.ai/assistant/a2ui/catalog.json'
 
+function pointerParts(path) {
+  return String(path || '').replace(/^\//, '').split('/').filter(Boolean)
+    .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
+}
+
+// Resolve the literal-or-JSON-Pointer values used by the Basic Catalog.
+export function a2uiValue(value, data = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.path !== 'string') {
+    return value
+  }
+  return pointerParts(value.path).reduce((current, part) => current?.[part], data)
+}
+
+// Apply a client-side input update without mutating the durable surface payload.
+export function withA2UIValue(data = {}, path, value) {
+  const parts = pointerParts(path)
+  if (!parts.length) return value && typeof value === 'object' ? { ...value } : { value }
+  const next = { ...data }
+  let target = next
+  let source = data
+  for (const part of parts.slice(0, -1)) {
+    const child = source?.[part]
+    target[part] = child && typeof child === 'object' && !Array.isArray(child) ? { ...child } : {}
+    target = target[part]
+    source = child
+  }
+  target[parts.at(-1)] = value
+  return next
+}
+
 // ── A2UI payload in the model's text ────────────────────────────────────────
 // The model authors a surface by writing A2UI messages into its reply text (either
 // wrapped in <a2ui-json>…</a2ui-json> or as a bare JSON array/objects). The backend
@@ -108,6 +138,16 @@ export function splitA2UIText(text) {
   return { text: out.replace(/\n{3,}/g, '\n\n').trim(), composing }
 }
 
+// The surface id is usually emitted near the start of an A2UI operation, while
+// the component tree may still be streaming. It lets an existing canvas own its
+// loading state instead of adding a second placeholder to the thread.
+export function a2uiComposingSurfaceId(text) {
+  const { composing } = splitA2UIText(text)
+  if (!composing) return null
+  const match = String(text || '').match(/"(?:createSurface|updateComponents|updateDataModel)"\s*:\s*\{[^}]*"surfaceId"\s*:\s*"([^"\\]+)"/)
+  return match?.[1] || null
+}
+
 function componentKind(component = {}) {
   return component.component || 'AnswerBrief'
 }
@@ -123,7 +163,7 @@ function itemTitle(kind, data = {}) {
   if (k === 'restaurantfinder') return 'Open places'
   if (k === 'taskplan') return 'Task setup'
   if (k === 'checklist') return data.title || 'Checklist'
-  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return 'Briefing'
+  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return 'Interactive view'
   return 'Structured answer'
 }
 
@@ -146,7 +186,7 @@ function ensureSurface(items, surfaceId, catalogId, version) {
       version: version || 'v1.0',
       catalogId: catalogId || BETA_CATALOG_ID,
       surfaceId,
-      title: 'Briefing',
+      title: 'Interactive view',
       intent: '',
       component: {},
       data: {},

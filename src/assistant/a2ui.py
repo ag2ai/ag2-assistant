@@ -4,10 +4,8 @@ import json
 from functools import lru_cache
 from typing import Any
 
-from ag2.a2ui._runtime import _A2UIRuntime
-from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
-from ag2.a2ui.middleware import _publish_a2ui
-from ag2.middleware.base import BaseMiddleware
+from ag2.a2ui import a2ui_action
+from ag2.a2ui.actions import collect_action_declarations, collect_server_actions
 
 from assistant.events import A2UISurface
 
@@ -18,6 +16,67 @@ _A2UI_MSG_KEYS = frozenset(
 )
 
 CATALOG_ID = "https://ag2.ai/assistant/a2ui/catalog.json"
+
+# AG2's schema manager merges the whole Basic Catalog into every custom catalog.
+# Keep this app's contract honest: only advertise and validate what the web renderer
+# implements, plus the assistant-specific components below.
+SUPPORTED_BASIC_COMPONENTS = frozenset(
+    {
+        "Button",
+        "Card",
+        "CheckBox",
+        "ChoicePicker",
+        "Column",
+        "DateTimeInput",
+        "Divider",
+        "Icon",
+        "Image",
+        "List",
+        "Row",
+        "Slider",
+        "Text",
+        "TextField",
+        "Video",
+    }
+)
+
+
+class _AssistantSchemaManager:
+    """Filter AG2's merged Basic Catalog to this renderer's supported subset."""
+
+    def __new__(cls, *args, **kwargs):
+        from ag2.a2ui.schema_manager import A2UISchemaManager
+
+        class FilteredSchemaManager(A2UISchemaManager):
+            def _ensure_loaded(self):
+                super()._ensure_loaded()
+                if getattr(self, "_assistant_catalog_filtered", False):
+                    return
+                basic = dict(self._basic_catalog)
+                components = {
+                    name: schema
+                    for name, schema in basic.get("components", {}).items()
+                    if name in SUPPORTED_BASIC_COMPONENTS
+                }
+                definitions = dict(basic.get("$defs", {}))
+                definitions["anyComponent"] = {
+                    "oneOf": [{"$ref": f"#/components/{name}"} for name in components],
+                    "discriminator": {"propertyName": "component"},
+                }
+                basic["components"] = components
+                basic["$defs"] = definitions
+                self._basic_catalog = basic
+                self._catalog_rules = (
+                    "Only use these Basic Catalog components: "
+                    + ", ".join(sorted(SUPPORTED_BASIC_COMPONENTS))
+                    + ". A canvas is an A2UI surface, not a component: compose it with "
+                    "Card, Column, Row, and List; never emit a Canvas component. Image "
+                    "requires exactly its url plus optional description, fit, and variant."
+                )
+                self._assistant_catalog_filtered = True
+
+        return FilteredSchemaManager(*args, **kwargs)
+
 
 # The dominant weather conditions a WeatherPanel can declare. Single source of truth:
 # the catalog schema's `condition` enum AND the get_weather tool's mapping both use this,
@@ -51,6 +110,21 @@ def _component_data(component: dict, existing: dict | None = None) -> dict:
     return data
 
 
+def update_data_value(data: dict, path: str, value: Any) -> dict:
+    """Return a copy of ``data`` with a JSON Pointer value updated."""
+    if path in {"", "/"}:
+        return value if isinstance(value, dict) else {"value": value}
+    parts = [part.replace("~1", "/").replace("~0", "~") for part in path.lstrip("/").split("/")]
+    result = dict(data)
+    current = result
+    for part in parts[:-1]:
+        next_value = current.get(part)
+        current[part] = dict(next_value) if isinstance(next_value, dict) else {}
+        current = current[part]
+    current[parts[-1]] = value
+    return result
+
+
 def _surface_title(component: dict, data: dict) -> str:
     kind = str(component.get("component") or component.get("type") or "").lower()
     if kind == "weatherpanel":
@@ -64,7 +138,7 @@ def _surface_title(component: dict, data: dict) -> str:
     if kind == "checklist":
         return data.get("title") or "Checklist"
     if kind in {"column", "row", "list", "card", "text"}:
-        return "Briefing"
+        return "Interactive view"
     return "Structured answer"
 
 
@@ -141,12 +215,9 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
             )
             if surface_id not in order:
                 order.append(surface_id)
-            path = (update.get("path") or "/").lstrip("/")
-            value = update.get("value")
-            if not path:
-                state["data"] = value if isinstance(value, dict) else {"value": value}
-            else:
-                state["data"][path] = value
+            state["data"] = update_data_value(
+                state.get("data") or {}, update.get("path") or "/", update.get("value")
+            )
         elif delete := message.get("deleteSurface"):
             surface_id = delete.get("surfaceId")
             if surface_id in states:
@@ -585,6 +656,9 @@ When an answer matches one of these, EMIT that component — the surface is the 
 - Research summaries or briefs without competing options -> render an AnswerBrief.
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
+An interactive canvas is an A2UI surface, not a `Canvas` component. Build it from Card, Column, Row, and List. When `generate_image` returns an A2UI image URL, place that exact value in an Image component's required `url`; do not substitute the workspace path or invent image properties.
+For basic controls, use these exact property shapes: TextField `{"component":"TextField","label":"Name","value":{"path":"/name"}}`; ChoicePicker `{"component":"ChoicePicker","options":[{"label":"One","value":"one"}],"value":{"path":"/choice"},"variant":"mutuallyExclusive"}`; CheckBox `{"component":"CheckBox","label":"Enable","value":{"path":"/enabled"}}`; Slider `{"component":"Slider","label":"Level","max":100,"value":{"path":"/level"}}`; DateTimeInput `{"component":"DateTimeInput","label":"When","value":{"path":"/when"},"enableDate":true,"enableTime":true}`. Do not add undocumented properties. A Button needs a Text child and an action event.
+Interactive inputs (CheckBox, ChoicePicker, TextField, Slider, DateTimeInput) only update the local surface data model. If the user expects the assistant to use, submit, reveal, save, search, or otherwise act on those values, include a separate Button in the same layout. Its action must be an `event` with a specific verb-like name and a context object containing every required input as JSON Pointer bindings. For example: `{"id":"submit","component":"Button","child":"submit_text","variant":"primary","action":{"event":{"name":"apply_preferences","context":{"colours":{"path":"/selectedColours"}}}}}` followed by `{"id":"submit_text","component":"Text","text":"Apply"}`. Do not imply that choosing an option alone sends it to the assistant.
 Always emit createSurface followed by updateComponents for the same surfaceId. Use catalog id __CATALOG_ID__ and root id "root".
 Do not call tools to discover A2UI components or catalog contracts; use the schema and rules already provided in this prompt.
 Do not describe or print "corrected A2UI components"; emit valid A2UI messages directly.
@@ -632,6 +706,68 @@ and numeric `price`/`change`/`changePercent` exactly as returned):
 CATALOG_RULES = _CATALOG_RULES_TEMPLATE.replace("__CATALOG_ID__", CATALOG_ID)
 
 
+@a2ui_action(
+    name="save_surface",
+    description="Persist the current values in an interactive A2UI surface.",
+    example_context={"surface_id": "<surface id>", "data": {}},
+)
+def save_surface(surface_id: str, data: dict) -> dict:
+    """Store a complete interactive surface data model."""
+    return {"updateDataModel": {"surfaceId": surface_id, "path": "/", "value": data}}
+
+
+A2UI_ACTIONS = (save_surface,)
+A2UI_SERVER_ACTIONS = collect_server_actions(A2UI_ACTIONS)
+
+
+class _AssistantA2UIRuntime:
+    """AG2 runtime using the assistant's filtered Basic Catalog."""
+
+    def __init__(self) -> None:
+        from ag2.a2ui.middleware import A2UIValidationMiddleware
+        from ag2.a2ui.parser import A2UIResponseParser
+
+        self.schema_manager = _AssistantSchemaManager(
+            protocol_version="v1.0",
+            custom_catalog=assistant_catalog(),
+            custom_catalog_rules=CATALOG_RULES,
+        )
+        self.catalog_id = self.schema_manager.catalog_id
+        self.parser = A2UIResponseParser(
+            version_string=self.schema_manager.version_string,
+            server_to_client_schema=self.schema_manager.server_to_client_schema,
+            schema_registry=self.schema_manager.build_schema_registry(),
+            component_schemas=self.schema_manager.get_component_schemas(),
+            catalog_id=self.schema_manager.catalog_id,
+        )
+        self.actions = collect_action_declarations(A2UI_ACTIONS)
+        prompt = self.schema_manager.generate_prompt_section(
+            include_schema=True,
+            include_rules=True,
+            actions=list(self.actions),
+        )
+        self.system_prompt_section = (
+            "You can generate rich A2UI interfaces for the AG2 Assistant web UI. "
+            "Prefer an A2UI component whenever structure makes an answer easier to "
+            "scan than prose would; the catalog describes what each one is for. "
+            "Users do not need to mention A2UI for you to use it.\n\n"
+            f"{prompt}"
+        )
+        self._middleware = A2UIValidationMiddleware(self.parser, 1)
+
+    @property
+    def version_string(self) -> str:
+        return self.schema_manager.version_string
+
+    def middleware_factories(self):
+        return [self._middleware]
+
+    def capabilities_prompt(self, caps):
+        from ag2.a2ui.capabilities import capabilities_to_prompt
+
+        return capabilities_to_prompt(caps, catalog_id=self.schema_manager.catalog_id)
+
+
 @lru_cache(maxsize=1)
 def runtime():
     """Return the configured beta A2UI runtime.
@@ -641,21 +777,7 @@ def runtime():
     so A2UIMessageEvent is emitted on the normal chat stream.
     """
 
-    return _A2UIRuntime(
-        protocol_version="v1.0",
-        custom_catalog=assistant_catalog(),
-        custom_catalog_rules=CATALOG_RULES,
-        include_schema_in_prompt=True,
-        include_rules_in_prompt=True,
-        validate_responses=True,
-        validation_retries=1,
-        system_message=(
-            "You can generate rich A2UI interfaces for the AG2 Assistant web UI. "
-            "Prefer an A2UI component whenever structure makes an answer easier to "
-            "scan than prose would; the catalog describes what each one is for. "
-            "Users do not need to mention A2UI for you to use it."
-        ),
-    )
+    return _AssistantA2UIRuntime()
 
 
 def wrap_bare_a2ui(text: str) -> str | None:
@@ -672,6 +794,8 @@ def wrap_bare_a2ui(text: str) -> str | None:
     """
     if not text:
         return None
+    from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
+
     decoder = json.JSONDecoder()
     i = 0
     while True:
@@ -702,6 +826,9 @@ def tolerant_a2ui_middleware(parser):
     response. Reuses the runtime ``parser`` and the runtime's publish path, so the
     recovered surface travels the same out-of-band channel as a wrapped one.
     """
+    from ag2.a2ui.constants import A2UI_JSON_OPEN_TAG
+    from ag2.a2ui.middleware import _publish_a2ui
+    from ag2.middleware.base import BaseMiddleware
 
     class _TolerantMiddleware(BaseMiddleware):
         async def on_llm_call(self, call_next, events, context):

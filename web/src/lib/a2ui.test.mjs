@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { splitA2UIText } from './a2ui.js'
+import { a2uiComposingSurfaceId, a2uiValue, splitA2UIText, withA2UIValue } from './a2ui.js'
 
 const PROSE = "Here's the current tech picture on OzBargain."
 const BATCH =
@@ -45,11 +45,29 @@ test('a payload streaming with no prose yet leaves nothing to render', () => {
   })
 })
 
+test('identifies the surface being updated while an A2UI payload streams', () => {
+  assert.equal(a2uiComposingSurfaceId(BATCH.slice(0, 80)), 'oz-tech')
+  assert.equal(a2uiComposingSurfaceId(BATCH), null)
+  assert.equal(a2uiComposingSurfaceId('ordinary prose'), null)
+})
+
 test('non-A2UI JSON in the reply is preserved, complete or not', () => {
   const complete = 'The config is {"retries": 3, "mode": "fast"} — use it.'
   assert.deepEqual(splitA2UIText(complete), { text: complete, composing: false })
   const partial = 'The config is {"retries": 3, "mo'
   assert.deepEqual(splitA2UIText(partial), { text: partial, composing: false })
+})
+
+test('resolves and updates JSON Pointer data bindings for interactive components', () => {
+  const data = { checklist: { done: false }, 'a/b': true }
+
+  assert.equal(a2uiValue({ path: '/checklist/done' }, data), false)
+  assert.equal(a2uiValue({ path: '/a~1b' }, data), true)
+  assert.deepEqual(withA2UIValue(data, '/checklist/done', true), {
+    checklist: { done: true },
+    'a/b': true,
+  })
+  assert.deepEqual(data, { checklist: { done: false }, 'a/b': true })
 })
 
 test('markdown lists and other brackets are not mistaken for a payload', () => {

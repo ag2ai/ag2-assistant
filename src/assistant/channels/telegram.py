@@ -22,7 +22,7 @@ from telegram.ext import (
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import markdown_to_plain
-from assistant.hitl.base import Asker, Question
+from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
 WORKING_PLACEHOLDER = "⏳ Sorting that out…"
@@ -68,7 +68,7 @@ async def _download_attachments(msg, bot) -> list:
     return inputs
 
 
-class TelegramAsker:
+class TelegramAsker(PendingGuard):
     """Asks a question in a specific Telegram chat and awaits the answer."""
 
     def __init__(self, bot, chat_id: str, pending: PendingAsks) -> None:
@@ -91,7 +91,8 @@ class TelegramAsker:
             )
         await self._bot.send_message(int(self._chat_id), text, reply_markup=markup)
         try:
-            return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
+            with self.pending_guard():
+                return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
         finally:
             self._pending.discard(self._chat_id)
 

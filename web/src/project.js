@@ -41,6 +41,12 @@ function prettyToolName(name) {
   return name.replace(/_/g, ' ')
 }
 
+function clearA2UIActionStatus(items) {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].kind === 'note' && items[i].a2uiActionPending) items.splice(i, 1)
+  }
+}
+
 // Whether a turn is still in progress, derived from the items rather than a
 // transient flag — so it's correct after reopening a chat mid-turn (where the
 // turn_end frame went to the old, closed socket). Busy if the most recent
@@ -136,6 +142,9 @@ export function foldEvent(items, wire) {
     case 'DrainedModelRequest': {
       const text = joinText(d.parts)
       if (!text) break
+      // Button fallbacks are private instructions passed to the agent. Their
+      // corresponding A2UIActionSubmitted event is the user-facing status.
+      if (text.startsWith('[[A2UI_ACTION]]')) break
       // If we were showing this as queued, the agent has now picked it up: resolve that
       // bubble in place rather than pushing a duplicate. (Replay never has queued items —
       // they're live-only, so history stays purely what the server recorded.)
@@ -156,6 +165,9 @@ export function foldEvent(items, wire) {
     case 'ModelResponse': {
       const msg = d.message && d.message.content
       const calls = (d.tool_calls && d.tool_calls.calls) || []
+      // An A2UI button dispatches an ordinary agent turn. Its status note belongs
+      // only to that turn, not to the durable conversation history.
+      if (msg || !calls.length) clearA2UIActionStatus(items)
       const cur = items[items.length - 1]
       const streaming = [...items].reverse().find((it) => it.kind === 'agent' && it.streaming)
       if (msg) {
@@ -237,6 +249,17 @@ export function foldEvent(items, wire) {
           data: d.data || {},
         })
       }
+      break
+    case 'A2UISurfaceDataUpdated': {
+      const item = items.find((i) => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+      if (item) item.data = d.data || {}
+      break
+    }
+    case 'A2UIActionSubmitted':
+      // A surface can be clicked repeatedly, but only one action is in flight per
+      // conversation. Replace the old indicator instead of accumulating spinners.
+      clearA2UIActionStatus(items)
+      items.push({ id: nid(), kind: 'note', icon: 'rotate-cw', pending: true, a2uiActionPending: true, surfaceId: d.surface_id, text: '' })
       break
     case 'A2UIMessageEvent': {
       applyA2UIMessage(items, d.message || d)

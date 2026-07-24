@@ -255,6 +255,36 @@ def save_upload(workspace_dir, filename: str, data: bytes, target_dir: str = "")
     return str(path.relative_to(root))
 
 
+#: Longest single filename component on the filesystems we target (POSIX NAME_MAX).
+_NAME_MAX = 255
+
+
+def invalid_dir_name(name: str) -> str | None:
+    """Why `name` is unusable as a NEW single folder name, or None if it's fine.
+
+    `make_dir` deliberately accepts a nested relative path ("a/b/c") because the Files
+    tab creates trees that way. A picker's "new folder" field is a different thing — one
+    name, in the folder you're looking at — so the stricter rules live here rather than in
+    `make_dir`, which must keep its existing behaviour. Returns a message written for the
+    person typing, not a code."""
+    if not name or not name.strip():
+        return "Enter a folder name"
+    if name != name.strip():
+        return "Name can't start or end with a space"
+    if "/" in name or "\\" in name:
+        return "Name can't contain slashes"
+    if name in (".", ".."):
+        return "Not a valid folder name"
+    if name.startswith("."):
+        # It would be created and then immediately hidden — list_dirs skips dotfolders.
+        return "Names starting with a dot are hidden and won't show here"
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        return "Name contains invalid characters"
+    if len(name.encode("utf-8", "surrogatepass")) > _NAME_MAX:
+        return "Name is too long"
+    return None
+
+
 def make_dir(workspace_dir, rel: str) -> tuple[str, str | None]:
     """Create an empty Directory at `rel` (intermediate Directories created as
     needed). Returns ``(status, path)``: ``("ok", relpath)`` on success, else
@@ -264,11 +294,14 @@ def make_dir(workspace_dir, rel: str) -> tuple[str, str | None]:
     p = _inside(root, rel)
     if p is None or p == root:
         return ("invalid", None)
-    if p.exists():
-        return ("exists", None)
     try:
+        if p.exists():
+            return ("exists", None)
         p.mkdir(parents=True, exist_ok=False)
     except OSError:
+        # exists() itself raises on an over-long component (ENAMETOOLONG), so it has to
+        # sit inside the guard too — otherwise the name never reaches mkdir and the
+        # OSError escapes as a 500 instead of a 400.
         return ("invalid", None)
     return ("ok", str(p.relative_to(root)))
 

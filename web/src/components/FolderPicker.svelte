@@ -6,6 +6,7 @@
   // host owns the commit (Onboarding's stepped flow). `busy` shows a saving state for onUse.
   import { onMount } from 'svelte'
   import { api } from '../transport/api.js'
+  import { invalidFolderName } from '../lib/folderName.js'
   import Icon from './Icon.svelte'
 
   let { roots = {}, start = '', selected = $bindable(''), onUse = null, busy = false } = $props()
@@ -26,12 +27,52 @@
     loading = false
   }
   onMount(() => load(start || roots.cwd || roots.home || ''))
+
+  // ---- New sub-folder, created in the folder being viewed ----
+  // Kept separate from `error`: that one REPLACES the list (a folder that wouldn't open),
+  // whereas a rejected name must leave the list on screen so you can see what's already
+  // there while fixing the name.
+  let creating = $state(false)
+  let saving = $state(false)
+  let newName = $state('')
+  let createErr = $state('')
+
+  function startCreate() { creating = true; newName = ''; createErr = '' }
+  function cancelCreate() { creating = false; newName = ''; createErr = '' }
+  function focusRow(node) { node.focus() }
+
+  async function commitCreate(fromBlur = false) {
+    if (!creating) return    // Enter already handled it — ignore the blur that follows unmount
+    const name = newName
+    const why = invalidFolderName(name)
+    if (why) {
+      // Clicking away with a name that can't work just backs out; pressing Enter asks for
+      // a fix, because that's a deliberate attempt to create it.
+      if (fromBlur) cancelCreate()
+      else createErr = why
+      return
+    }
+    creating = false
+    saving = true
+    try {
+      const r = await api.makeDir(current, name)
+      await load(r.path)     // step inside, so "Use this folder" commits the new folder
+      newName = ''; createErr = ''
+    } catch (e) {
+      // The server owns the last word on names (it can see the filesystem) — surface its
+      // message verbatim and reopen the field with the text intact so it can be edited.
+      createErr = String(e.message || e)
+      creating = true
+    }
+    saving = false
+  }
 </script>
 
 <div class="fp">
   <div class="fp-bar">
     <button class="fp-up" disabled={!parent} onclick={() => load(parent)} title="Up one folder" aria-label="Up one folder"><Icon name="chevron-left" size={15} /></button>
     <span class="fp-path" title={current}>{current || '…'}</span>
+    <button class="fp-new" disabled={!current || loading || saving || creating} onclick={startCreate} title="New folder here" aria-label="New folder here"><Icon name="plus" size={15} /></button>
   </div>
   {#if roots.cwd || roots.home || roots.workspace}
     <div class="fp-roots">
@@ -41,9 +82,28 @@
     </div>
   {/if}
   <div class="fp-list">
-    {#if loading}<div class="fp-msg">Loading…</div>
+    {#if creating}
+      <div class="fp-newrow">
+        <Icon name="folder" size={15} />
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          class="fp-input"
+          placeholder="New folder name"
+          bind:value={newName}
+          use:focusRow
+          onkeydown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commitCreate() }
+            else if (e.key === 'Escape') { e.preventDefault(); cancelCreate() }
+            else createErr = ''
+          }}
+          onblur={() => commitCreate(true)}
+        />
+      </div>
+    {/if}
+    {#if saving}<div class="fp-msg">Creating…</div>
+    {:else if loading}<div class="fp-msg">Loading…</div>
     {:else if error}<div class="fp-msg err">{error}</div>
-    {:else if !dirs.length}<div class="fp-msg">No sub-folders here.</div>
+    {:else if !dirs.length && !creating}<div class="fp-msg">No sub-folders here.</div>
     {:else}
       {#each dirs as d (d.path)}
         <button class="fp-dir" onclick={() => load(d.path)} title={d.path}>
@@ -52,6 +112,7 @@
       {/each}
     {/if}
   </div>
+  {#if createErr}<div class="fp-err">{createErr}</div>{/if}
   {#if onUse}
     <button class="fp-use on" disabled={!current || busy} onclick={() => onUse(current)}>
       {#if busy}Saving…{:else}<Icon name="check" size={15} /> Use this folder{/if}

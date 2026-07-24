@@ -28,7 +28,7 @@
   import { threadScope } from '../lib/threadScope.js'
   import { foldersStore } from '../lib/folders.js'
   import { api } from '../transport/api.js'
-  import { ancestorDirs } from '../lib/preview.js'
+  import { ancestorDirs, iconForFile } from '../lib/preview.js'
   import { modeLabel, isFolderPath, folderAncestorDirs, folderAffordances } from '../lib/folderFiles.js'
   import { clearsTreeTarget } from '../lib/filesTree.js'
   import Icon from './Icon.svelte'
@@ -628,7 +628,7 @@
       ondragstart={(e) => onRowDragStart(e, f.path)}
       onclick={() => { if (renaming !== f.path) openFile(f) }}
     >
-      <Icon name="file-text" size={14} />
+      <Icon name={iconForFile(f.name)} size={14} />
       {#if renaming === f.path}
         <input class="ftinput" bind:value={renameText} use:focusSelect
           onclick={(e) => e.stopPropagation()}
@@ -719,7 +719,7 @@
         draggable={aff.move}
         ondragstart={aff.move ? (e) => onRowDragStart(e, f.path) : null}
         onclick={() => { if (renaming !== f.path) openFile(f) }}>
-        <Icon name="file-text" size={14} />
+        <Icon name={iconForFile(f.name)} size={14} />
         {#if renaming === f.path}
           <input class="ftinput" bind:value={renameText} use:focusSelect
             onclick={(e) => e.stopPropagation()}

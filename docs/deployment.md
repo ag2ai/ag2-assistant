@@ -7,7 +7,7 @@ you want to run it.
 | Tier | For | How |
 |------|-----|-----|
 | [Contributor](#contributor-clone--editable) | developing the code | clone + `pip install -e ".[dev]"` |
-| [CLI user](#cli-user-pipx--uv-tool) | running it locally without cloning | `uv tool install` / `pipx install` from git |
+| [CLI user](#cli-user-install-script--pipx--uv-tool) | running it locally without cloning | `uv tool install` / `pipx install` from git |
 | [Self-hosted](#self-hosted-docker) | an always-on instance / server | Docker + Compose |
 | [PyPI](#pypi) | released versions | `uv tool install ag2-assistant` (from the first release) |
 
@@ -129,6 +129,71 @@ isolation), mount the host Docker socket and switch the sandbox to `docker` — 
 commented block in `docker-compose.yml`. Note the trade-off: mounting `/var/run/docker.sock`
 grants the container control of the host Docker daemon. Enable it only if you accept that.
 
+### Coding agents from Docker (ACP host bridge)
+
+The assistant can hand real coding tasks to a locally installed CLI coding agent
+(Claude Code / Codex / OpenCode) via `code_with_cli_agent`. Those CLIs — and their
+on-disk logins — live on the **host**, so a container cannot see them. The opt-in
+**ACP host bridge** closes that gap: a small daemon on the host spawns the agent and
+relays its ACP stdio to the container over TCP.
+
+```
+[HOST]  claude-agent-acp / codex-acp / opencode    (installed + logged in)
+          ^ spawned by
+        ag2-assistant acp-bridge          <--TCP+token--   [CONTAINER]
+        (loopback:8801)                                    AG2ASSISTANT_ACP_BRIDGE=
+                                                           host.docker.internal:8801
+```
+
+Default off: with `AG2ASSISTANT_ACP_BRIDGE` unset the container simply reports "no
+coding agents". Nothing listens unless you start the daemon yourself.
+
+**1. Generate a shared token** (gates every bridge connection) and give it to both
+sides via `.env`:
+
+```bash
+echo "AG2ASSISTANT_ACP_BRIDGE_TOKEN=$(openssl rand -hex 16)" >> .env
+echo "AG2ASSISTANT_ACP_BRIDGE=host.docker.internal:8801" >> .env
+```
+
+**2. Start the bridge on the host** (where the coding CLIs are installed and logged
+in — install the CLI per the [CLI user](#cli-user-install-script--pipx--uv-tool)
+tier, or use your dev checkout):
+
+```bash
+ag2-assistant acp-bridge --port 8801 \
+  --token "$(grep AG2ASSISTANT_ACP_BRIDGE_TOKEN .env | cut -d= -f2)"
+```
+
+Keep it running; it prints the coding agents it can see on this host.
+
+**3. Bind-mount the repo you want edited at the SAME absolute path** it has on the
+host, so folder approval, the daemon's `cwd` check, and diffs all line up. In
+`docker-compose.yml`:
+
+```yaml
+    volumes:
+      - ag2_data:/data
+      - ag2_workspace:/workspace
+      - /Users/me/code/myrepo:/Users/me/code/myrepo   # host path == container path
+```
+
+Then `docker compose up -d` and ask the assistant to write code in that folder — it
+asks you to approve the folder first, and the agent's plan + working-tree diff stream
+into the chat.
+
+Notes:
+
+- On Linux, `host.docker.internal` needs `extra_hosts: ["host.docker.internal:host-gateway"]`
+  (Docker Desktop provides it automatically), and the daemon must bind a
+  host-reachable interface (`--host`) since `host-gateway` traffic does not reach a
+  loopback-bound listener there.
+- Coding runs are **not sandboxed**: the CLI agent edits real files in the approved
+  folder through the bind mount — that is the point. The daemon only ever works
+  inside the `cwd` the (token-authenticated) client names, spawns agents with a
+  minimal env whitelist, and never receives provider API keys — auth is the CLI's
+  own on-disk login.
+
 ### Configuration reference
 
 | Env var | Purpose | Container default |
@@ -136,6 +201,8 @@ grants the container control of the host Docker daemon. Enable it only if you ac
 | `AG2ASSISTANT_DATA_DIR` | install root: secrets, profiles, config, memory | `/data` |
 | `AG2ASSISTANT_WORKSPACE` | the agent's readable/writable file space | `/workspace` |
 | `AG2ASSISTANT_SANDBOX` | `local` (in-container) or `docker` (sibling containers) | `local` |
+| `AG2ASSISTANT_ACP_BRIDGE` | `host:port` of the ACP host bridge; unset = spawn coding agents locally | — |
+| `AG2ASSISTANT_ACP_BRIDGE_TOKEN` | shared secret for the bridge (must match `acp-bridge --token`) | — |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | provider keys | — |
 
 See `.env.example` for the full list.

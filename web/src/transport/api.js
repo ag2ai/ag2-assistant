@@ -78,6 +78,10 @@ export const api = {
   deleteProfile: (pid) =>
     j('DELETE', G('/profiles/' + encodeURIComponent(pid) + '?purge=true')),
   status: () => j('GET', G('/status')),
+  // Read-only status of the CLI coding agents (Settings → Tools). {mode:'local'|
+  // 'bridge', bridge, connected, agents:[{name,label,available}], error?}. In
+  // Docker with AG2ASSISTANT_ACP_BRIDGE set this reflects the host bridge.
+  codingAgents: () => j('GET', G('/coding/agents')),
   // Install-wide token/cost roll-up across all profiles: {profiles:[{pid,name,...}],
   // total}. The HUD derives the active profile's numbers from `profiles` and appends
   // the `total` only when more than one profile exists (one request, not two).
@@ -128,6 +132,9 @@ export const api = {
   testLiveConfigDraft: (cfg) => j('POST', G('/live-configs/test'), cfg),
   setOnboarded: (value = true) => j('POST', G('/onboarded'), { value }),
   listDirs: (path = '') => j('GET', G('/fs/list?path=' + encodeURIComponent(path))),
+  // Create ONE subfolder in a host directory the picker is viewing; resolves to the new
+  // folder's absolute path. Rejects (400/409) carry a message meant to be shown as-is.
+  makeDir: (path, name) => j('POST', G('/fs/mkdir'), { path, name }),
   googleStatus: () => j('GET', G('/google/status')),
   googleLoginUrl: () => j('POST', G('/google/login_url')),
   googleCredentials: (content) => j('POST', G('/google/credentials'), { content }),

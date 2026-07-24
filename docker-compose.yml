@@ -44,6 +44,10 @@ services:
       - ag2_data:/data
       # The agent's readable/writable file workspace (generated images, outputs).
       - ag2_workspace:/workspace
+      # ACP bridge users: also bind-mount the repo the coding agent may edit, at
+      # the SAME absolute path as on the host — see the bridge block below and
+      # docs/deployment.md § "Coding agents from Docker".
+      #   - /Users/me/code/myrepo:/Users/me/code/myrepo
     restart: unless-stopped
 
     # --- Optional: docker-out-of-docker code execution -----------------------
@@ -70,6 +74,28 @@ services:
     #
     # group_add:
     #   - "999"
+
+    # --- Optional: drive the HOST's CLI coding agents (Claude Code / Codex /
+    #     OpenCode) from inside this container over the ACP host bridge ---------
+    # Full walkthrough: docs/deployment.md § "Coding agents from Docker".
+    # 1) On the HOST (not in Docker), where the CLIs are installed & logged in:
+    #        pip install ag2-assistant          # once
+    #        ag2-assistant acp-bridge --port 8801 --token "$(openssl rand -hex 16)"
+    #    Keep it running; it prints the agents it can see.
+    # 2) Point this container at it and bind-mount the repo you want edited at the
+    #    SAME absolute path it has on the host (so diffs + folder approval line up).
+    #    Uncomment and adjust:
+    # environment:
+    #   AG2ASSISTANT_SANDBOX: local
+    #   AG2ASSISTANT_ACP_BRIDGE: host.docker.internal:8801
+    #   AG2ASSISTANT_ACP_BRIDGE_TOKEN: <same token you passed to acp-bridge>
+    # volumes:
+    #   - ag2_data:/data
+    #   - ag2_workspace:/workspace
+    #   - /Users/me/code/myrepo:/Users/me/code/myrepo   # host path == container path
+    # extra_hosts:
+    #   # Docker Desktop provides host.docker.internal automatically; on Linux add:
+    #   - "host.docker.internal:host-gateway"
 
 volumes:
   ag2_data:

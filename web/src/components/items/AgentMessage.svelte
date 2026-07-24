@@ -1,6 +1,6 @@
 <script>
   import { renderMarkdown, linkifyDom, bindImages } from '../../lib/markdown.js'
-  import { splitA2UIText } from '../../lib/a2ui.js'
+  import { a2uiComposingSurfaceId, splitA2UIText } from '../../lib/a2ui.js'
   import A2UIComposing from './A2UIComposing.svelte'
   import { go, openAsideFile } from '../../router.js'
   import { thread, runInfo } from '../../store.js'
@@ -13,6 +13,10 @@
   const parsed = $derived(splitA2UIText(item.text || ''))
   const displayText = $derived(parsed.text)
   const composing = $derived(!!item.streaming && parsed.composing)
+  const composingSurfaceId = $derived(a2uiComposingSurfaceId(item.text || ''))
+  const replacesCanvas = $derived(
+    !!composingSurfaceId && $thread.items.some((entry) => entry.kind === 'a2ui' && entry.surfaceId === composingSurfaceId)
+  )
   let el
   $effect(() => {
     if (!el) return
@@ -29,7 +33,7 @@
 {#if displayText || !composing}
   <div class="msg agent"><div class="bubble" class:voice={item.voice} class:empty={item.empty} bind:this={el}></div></div>
 {/if}
-{#if composing}
+{#if composing && !replacesCanvas}
   <A2UIComposing />
 {/if}
 {#if canRate}

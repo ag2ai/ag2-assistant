@@ -49,6 +49,7 @@ from assistant.agent import create_agent, universal_turn_prompt
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled
 from assistant.folders import FolderStore
+from assistant.gateway.repair import repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
 from assistant.gateway.wire import is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
@@ -456,6 +457,10 @@ class Gateway:
 
         async with self._chat_lock(chat_id):
             stream = await self._get_stream(chat_id)
+            # Heal a history whose last turn died between a tool call and its
+            # result (timeout/crash) — left as is, the dangling call makes the
+            # provider reject every later turn of this chat.
+            await repair_stream_history(stream, chat_id)
             # Persist a transcript stub the instant we accept the message, so the
             # chat shows up in list_chats() *during* a long agentic turn — not
             # only after it completes. Without this, a chat in flight lives solely in
@@ -485,6 +490,7 @@ class Gateway:
                 middleware = ()
             usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
             a2ui_handle = self._watch_a2ui(stream)
+            hitl_pending = getattr(asker, "has_pending", None)
             try:
                 # `run` is `ask` with the turn left observable (`ask` is literally
                 # run-then-result). We drive `result()` in a task we own, which is what
@@ -502,12 +508,19 @@ class Gateway:
                     active = _ActiveTurn(run, turn)
                     self._active[chat_id] = active
                     try:
+                        # wait_reply = wait_for whose clock pauses while a HITL
+                        # prompt is open or a sanctioned long run (a CLI coding
+                        # agent) holds the asker's pending-guard.
                         if on_event is None:
-                            reply = await asyncio.wait_for(
-                                turn, timeout=self._config.gateway.reply_timeout_s
+                            reply = await wait_reply(
+                                turn,
+                                timeout=self._config.gateway.reply_timeout_s,
+                                hitl_pending=hitl_pending,
                             )
                         else:
-                            reply = await self._forwarding_events(stream, turn, on_event)
+                            reply = await self._forwarding_events(
+                                stream, turn, on_event, hitl_pending=hitl_pending
+                            )
                     except asyncio.CancelledError:
                         if not active.cancelled:
                             raise  # not a user stop (disconnect, shutdown) — let it fly
@@ -586,7 +599,7 @@ class Gateway:
             except Exception as exc:
                 log_suppressed("a2ui durable surface emit", exc, surface_id=surface.surface_id)
 
-    async def _forwarding_events(self, stream, turn, on_event):
+    async def _forwarding_events(self, stream, turn, on_event, hitl_pending=None):
         """Await a driving turn, forwarding the agent's structured events to `on_event`.
 
         Uses AG2's stream subscription — the same event mechanism observers and the
@@ -608,7 +621,9 @@ class Gateway:
 
         sub_id = stream.subscribe(report)
         try:
-            return await asyncio.wait_for(turn, timeout=self._config.gateway.reply_timeout_s)
+            return await wait_reply(
+                turn, timeout=self._config.gateway.reply_timeout_s, hitl_pending=hitl_pending
+            )
         finally:
             stream.unsubscribe(sub_id)
 

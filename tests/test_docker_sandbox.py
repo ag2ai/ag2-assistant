@@ -34,7 +34,7 @@ def test_build_tools_falls_back_when_docker_unavailable(monkeypatch):
 
     with pytest.warns(UserWarning, match="Docker sandbox requested"):
         tools = tools_mod.build_agent_tools(provider="gemini", sandbox="docker")
-    assert len(tools) == 10  # incl. chat-only ask_user
+    assert len(tools) == 12  # incl. chat-only ask_user + the two coding-agent tools
     assert calls["approval"] == 1  # local fallback keeps the approval gate
 
 

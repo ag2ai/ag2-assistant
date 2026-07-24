@@ -187,6 +187,35 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     assert s1["preview"] == "hello there"
 
 
+async def test_replay_and_chat_reads_share_one_sqlite_connection(tmp_path, monkeypatch):
+    """Hydrating a chat and reading its metadata may happen in the same request burst."""
+    import assistant.gateway.core as core_mod
+    from assistant.config import Config
+    from assistant.events import Attachment
+    from assistant.gateway.core import Gateway
+    from assistant.storage import SerialStore
+
+    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
+
+    first = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await first.start()
+    await first.send_message("hello", chat_id="s1")
+    await first.emit_event("s1", Attachment("/tmp/demo.txt", name="demo.txt"))
+    await first.close()
+
+    second = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    await second.start()
+    assert isinstance(second._event_store, SerialStore)
+
+    stream, transcript, chats = await asyncio.gather(
+        second.stream_for("s1"), second.transcript("s1"), second.list_chats()
+    )
+    assert len(await stream.history.get_events()) > 0
+    assert transcript[0]["text"] == "hello"
+    assert any(chat["chat_id"] == "s1" for chat in chats)
+    await second.close()
+
+
 async def test_delete_chat_removes_transcript_and_event_log(tmp_path, monkeypatch):
     """Deleting a chat drops BOTH artifacts — the display transcript AND the AG2
     event log — so it neither lists nor resumes, even on a fresh Gateway."""
@@ -510,6 +539,68 @@ def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
 
         bad = client.get("/api/fs/list", params={"path": str(tmp_path / "missing")}).json()
         assert bad["ok"] is False
+
+
+def test_fs_mkdir_creates_subfolder_and_returns_absolute_path(tmp_path, monkeypatch):
+    """The picker creates one subfolder in the folder it's viewing and gets back an
+    ABSOLUTE path — `make_dir` reports a root-relative one, but the picker navigates
+    into the result by absolute path."""
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "reports"})
+        assert r.status_code == 200
+        assert r.json()["path"] == str(tmp_path / "reports")
+        assert (tmp_path / "reports").is_dir()
+
+        # It shows up in the very next listing, so the picker can step into it.
+        listed = client.get("/api/fs/list", params={"path": str(tmp_path)}).json()
+        assert "reports" in [d["name"] for d in listed["dirs"]]
+
+
+def test_fs_mkdir_rejects_duplicate_without_clobbering(tmp_path, monkeypatch):
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    (tmp_path / "taken").mkdir()
+    (tmp_path / "taken" / "keep.txt").write_text("still here")
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "taken"})
+        assert r.status_code == 409
+        assert r.json()["error"] == "A folder with that name already exists"
+    assert (tmp_path / "taken" / "keep.txt").read_text() == "still here"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("a/b", "Name can't contain slashes"),  # a name, not a path — make_dir would nest
+        ("..", "Not a valid folder name"),
+        (".hidden", "Names starting with a dot are hidden and won't show here"),
+        ("  spaced  ", "Name can't start or end with a space"),
+        ("", "Enter a folder name"),
+        ("x" * 300, "Name is too long"),
+    ],
+)
+def test_fs_mkdir_rejects_bad_names(tmp_path, monkeypatch, name, expected):
+    """Every rejection is a 400 carrying a message meant to be shown as-is, and nothing
+    is written — notably the over-long name, which used to escape as a 500."""
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    before = sorted(p.name for p in tmp_path.iterdir())  # the app puts its data dir here
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": name})
+        assert r.status_code == 400
+        assert r.json()["error"] == expected
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+
+def test_fs_mkdir_rejects_unreadable_parent(tmp_path, monkeypatch):
+    use_fake_agent(monkeypatch)
+    app, _pid = make_profile_app()
+    with TestClient(app) as client:
+        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path / "nope"), "name": "x"})
+        assert r.status_code == 400
+        assert r.json()["error"] == "not a readable directory"
 
 
 def test_stream_roundtrip(profile_app):

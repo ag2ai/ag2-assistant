@@ -63,6 +63,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import ag2
+from ag2.a2ui.incoming import A2UIIncomingAction, A2UIIncomingActionResult, parse_incoming_message
+from ag2.a2ui.server_action import build_server_action_context, run_server_action
 from ag2.config import OllamaConfig
 from ag2.context import ConversationContext
 from ag2.events import (
@@ -105,10 +107,17 @@ from pydantic import BaseModel, Field
 from assistant import __version__, codex_auth, live_configs, llm_configs, secrets, voice_providers
 from assistant import feedback as feedback_learner
 from assistant import profiles as profiles_mod
+from assistant.a2ui import A2UI_SERVER_ACTIONS
 from assistant.agent import build_skills_runtime, bundled_skills_dir, model_config
 from assistant.attachments import build_input
 from assistant.config import Config, load_config
-from assistant.events import Attachment, FeedbackCleared, FeedbackGiven
+from assistant.events import (
+    A2UIActionSubmitted,
+    A2UISurfaceDataUpdated,
+    Attachment,
+    FeedbackCleared,
+    FeedbackGiven,
+)
 from assistant.filesearch import list_folder_dir, search_corpus
 from assistant.folders import READ_WRITE, DuplicatePath, FolderStore
 from assistant.gateway.profile_manager import (
@@ -151,6 +160,7 @@ from assistant.workspace import (
     _MAX_WRITE_BYTES,
     delete,
     etag_for_path,
+    invalid_dir_name,
     list_all_dirs,
     list_dirs,
     list_files,
@@ -244,6 +254,17 @@ class MkdirRequest(BaseModel):
 
     path: str
     chat_id: str = ""
+
+
+class FsMkdirRequest(BaseModel):
+    """Create one subfolder inside a host directory the folder picker is viewing. Distinct
+    from `MkdirRequest`: that one writes into the Files space / a granted Folder, whereas
+    this runs BEFORE any Grant exists (you're choosing the folder to grant), so it is
+    host-scoped like its sibling `GET /api/fs/list`. `name` is a single component, not a
+    path."""
+
+    path: str
+    name: str
 
 
 class MoveRequest(BaseModel):
@@ -765,6 +786,39 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if runtime is None or runtime.gateway is None:
             return {"status": "ok", "profiles": 0}
         return runtime.gateway.status()
+
+    @app.get("/api/coding/agents")
+    async def coding_agents() -> dict:
+        """Read-only status of CLI coding agents (for the Settings "Coding agents"
+        card). In Docker with ``AG2ASSISTANT_ACP_BRIDGE`` set, reports the host
+        bridge and the agents it exposes; otherwise the locally-installed agents.
+        Never raises — an unreachable bridge is reported as ``connected: false``.
+        """
+        from assistant.coding import detect
+
+        endpoint = detect.bridge_endpoint()
+        if endpoint is None:
+            agents = [
+                {"name": a.name, "label": a.label, "available": a.available}
+                for a in detect.detect_agents()
+            ]
+            return {"mode": "local", "bridge": None, "connected": True, "agents": agents}
+
+        from assistant.coding import bridge_client
+
+        target = f"{endpoint.host}:{endpoint.port}"
+        try:
+            inventory = await bridge_client.list_agents(endpoint)
+        except Exception as exc:  # noqa: BLE001 — surface as a disconnected status
+            return {
+                "mode": "bridge",
+                "bridge": target,
+                "connected": False,
+                "error": str(exc),
+                "agents": [],
+            }
+        agents = [{"name": a.name, "label": a.label, "available": a.available} for a in inventory]
+        return {"mode": "bridge", "bridge": target, "connected": True, "agents": agents}
 
     @app.get("/api/usage")
     async def usage() -> dict:
@@ -2017,6 +2071,29 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return {"ok": False, "error": "not a readable directory"}
         return {"ok": True, **result}
 
+    @app.post("/api/fs/mkdir")
+    async def fs_mkdir(req: FsMkdirRequest):
+        """Create ONE subfolder inside the host directory the picker is viewing, so a
+        working folder can be made without leaving the app. Same trust model as
+        `fs_list` above (local + single-user, `_origin_guard` blocks cross-origin).
+
+        Returns the new folder's ABSOLUTE path — `make_dir` reports a root-relative one,
+        but the picker navigates by absolute path."""
+        if list_dirs(req.path) is None:
+            return JSONResponse({"error": "not a readable directory"}, status_code=400)
+        if (why := invalid_dir_name(req.name)) is not None:
+            return JSONResponse({"error": why}, status_code=400)
+
+        status, _rel = make_dir(req.path, req.name)
+        if status == "ok":
+            return {"ok": True, "path": str(Path(req.path).expanduser().resolve() / req.name)}
+        code, msg = (
+            (409, "A folder with that name already exists")
+            if status == "exists"
+            else (400, "invalid path")
+        )
+        return JSONResponse({"error": msg}, status_code=code)
+
     # ------------------------------------------------------------------ #
     #  Profile-scoped router (/api/p/{pid})                              #
     # ------------------------------------------------------------------ #
@@ -3095,6 +3172,76 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             await bridge.open()
             while True:
                 data = await websocket.receive_json()
+                if data.get("type") == "a2ui":
+                    # A2UI clicks use AG2's standard action envelope. Only actions
+                    # explicitly registered by this app may mutate durable state.
+                    parsed = parse_incoming_message(data.get("message"))
+                    if not isinstance(parsed, A2UIIncomingActionResult):
+                        await websocket.send_json(
+                            {"type": "error", "message": "Invalid A2UI action."}
+                        )
+                        continue
+                    click = parsed.action
+                    action = A2UI_SERVER_ACTIONS.get(click.name)
+                    if not click.surface_id or not click.source_component_id:
+                        await websocket.send_json(
+                            {"type": "error", "message": "Unsupported A2UI action."}
+                        )
+                        continue
+                    if action is None:
+                        # AG2's standard fallback for an undeclared Button action is
+                        # an agent turn. Preserve its supplied state first, then give
+                        # the agent a concise, structured description of the click.
+                        await runtime.gateway.emit_event(
+                            chat_id,
+                            A2UISurfaceDataUpdated(
+                                click.surface_id,
+                                data=click.context if isinstance(click.context, dict) else {},
+                            ),
+                        )
+                        await runtime.gateway.emit_event(
+                            chat_id,
+                            A2UIActionSubmitted(click.surface_id, action_name=click.name),
+                        )
+                        action_text = (
+                            f"[[A2UI_ACTION]] The user clicked the A2UI action '{click.name}' on surface "
+                            f"'{click.surface_id}'. Its current values are: {click.context}. "
+                            "Carry out the requested action and respond to the user."
+                        )
+                        asyncio.create_task(
+                            bridge.run_turn(
+                                action_text,
+                                asker=_chat_asker(runtime, chat_id),
+                                surface=default_surface,
+                            )
+                        )
+                        continue
+                    # The surface id is transport metadata, never trusted from a model
+                    # supplied context object. The registered handler receives it as a
+                    # normal argument after the standard AG2 action parsing step.
+                    click = A2UIIncomingAction(
+                        name=click.name,
+                        surface_id=click.surface_id,
+                        source_component_id=click.source_component_id,
+                        timestamp=click.timestamp,
+                        context={**click.context, "surface_id": click.surface_id},
+                        response_request=click.response_request,
+                    )
+                    messages = await run_server_action(
+                        action,
+                        click,
+                        version=data.get("message", {}).get("version", "v1.0"),
+                        context=build_server_action_context(runtime.gateway._agent),
+                    )
+                    for message in messages:
+                        update = message.get("updateDataModel")
+                        if update and update.get("surfaceId") == click.surface_id:
+                            value = update.get("value")
+                            if update.get("path", "/") == "/" and isinstance(value, dict):
+                                await runtime.gateway.emit_event(
+                                    chat_id, A2UISurfaceDataUpdated(click.surface_id, data=value)
+                                )
+                    continue
                 if data.get("type") == "answer" and data.get("id"):
                     iid, ans = data["id"], data.get("answer", "")
                     # Chat permission prompts live in this profile's HITL registry;

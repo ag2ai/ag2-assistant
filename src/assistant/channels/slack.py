@@ -19,7 +19,7 @@ from slack_bolt.app.async_app import AsyncApp
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.formatting import markdown_to_slack, split_for_limit
-from assistant.hitl.base import Asker, Question
+from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
 SLACK_LIMIT = 3500
@@ -58,7 +58,7 @@ async def _download_attachments(event: dict, bot_token: str) -> list:
     return inputs
 
 
-class SlackAsker:
+class SlackAsker(PendingGuard):
     """Asks a question in a specific Slack channel and awaits the answer."""
 
     def __init__(self, client, channel_id: str, pending: PendingAsks) -> None:
@@ -91,7 +91,8 @@ class SlackAsker:
         else:
             await self._client.chat_postMessage(channel=self._channel_id, text=text)
         try:
-            return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
+            with self.pending_guard():
+                return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
         finally:
             self._pending.discard(self._channel_id)
 

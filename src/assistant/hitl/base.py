@@ -6,6 +6,7 @@ through AG2's `hitl_hook` (for open `context.input()` questions) and, later,
 through the permission middleware (for multi-option approvals).
 """
 
+import contextlib
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -20,6 +21,31 @@ class Question:
     options: list[str] | None = None  # None -> free-text answer expected
     detail: str | None = None  # smaller secondary context
     kind: str = "question"  # "question" | "permission"
+
+
+class PendingGuard:
+    """Mixin for askers: track in-flight waits so the turn's timeout clock can
+    pause while it would be wrong to keep ticking (see
+    ``gateway.repair.wait_reply``) — a human deciding on a prompt, or a
+    sanctioned long-running external run (a CLI coding agent) that carries its
+    own timeout.
+
+    Implementations wrap the waiting section in ``with self.pending_guard():``;
+    ``has_pending()`` then reports whether THIS asker (i.e. this turn) is
+    paused on such a wait."""
+
+    _inflight: int = 0
+
+    def has_pending(self) -> bool:
+        return self._inflight > 0
+
+    @contextlib.contextmanager
+    def pending_guard(self):
+        self._inflight += 1
+        try:
+            yield
+        finally:
+            self._inflight -= 1
 
 
 @runtime_checkable
