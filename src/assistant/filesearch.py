@@ -10,28 +10,10 @@ include files (``kind: "file"``) and Directories (``kind: "directory"``).
 import os
 from pathlib import Path
 
-from assistant.workspace import SEARCH_LIMIT, list_all_dirs, list_files, match_rank
+from assistant.workspace import SEARCH_LIMIT, SKIP_DIRS, list_all_dirs, list_files, match_rank
 
-# Directories whose subtrees are search noise — pruned during the Folder walk.
-SKIP_DIRS = frozenset(
-    {
-        ".git",
-        ".hg",
-        ".svn",
-        "node_modules",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".tox",
-        "dist",
-        "build",
-        ".next",
-        ".idea",
-    }
-)
+# ``SKIP_DIRS`` (dev-noise dirs pruned during the Folder walk) is the canonical set
+# defined in :mod:`assistant.workspace`; re-exported via the import above.
 
 # OS-junk files that are never a useful reference — pruned from both corpus halves so a
 # folder-name query (which matches every descendant on its path) doesn't surface them.

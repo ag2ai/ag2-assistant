@@ -9,12 +9,11 @@ import { api as P, globalApi as G, pidApi as PID, onProfileGone } from '../lib/p
 import { parseEtag } from '../lib/fileEdit.js'
 import { rawQuery } from '../lib/folderFiles.js'
 
-async function j(method, path, body) {
-  const r = await fetch(path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+// The one response check both helpers share: the profile-gone recovery (410, or 404
+// on a scoped route) and the error extraction off a non-2xx body. Kept in one place so
+// a fix to the 410 recovery or the error shape lands for JSON and multipart alike.
+// Returns the parsed JSON on success; throws an Error carrying .status/.body on failure.
+async function checkResponse(r, method, path) {
   // A scoped route returning 410 means the active profile was archived under
   // us — recover by re-resolving (§7 item 6). 404 = unknown pid, same fix.
   if (r.status === 410 || (r.status === 404 && path.startsWith('/api/p/'))) {
@@ -33,6 +32,32 @@ async function j(method, path, body) {
     throw err
   }
   return r.json()
+}
+
+async function j(method, path, body) {
+  const r = await fetch(path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  return checkResponse(r, method, path)
+}
+
+// Build the multipart body a skill upload route expects: the file, plus (for install)
+// a comma-separated `names` field — multipart can't carry a JSON array.
+function formFile(file, names) {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (names !== undefined) fd.append('names', Array.isArray(names) ? names.join(',') : String(names))
+  return fd
+}
+
+// Multipart POST (file uploads) — the JSON helper above stringifies bodies, so skill
+// uploads (discover/install from a SKILL.md or zip) go through this instead. Shares j()'s
+// error/410 handling via the same checkResponse().
+async function jForm(path, formData) {
+  const r = await fetch(path, { method: 'POST', body: formData })
+  return checkResponse(r, 'POST', path)
 }
 
 export const api = {
@@ -158,6 +183,46 @@ export const api = {
   revokeGrant: (id, profile, chatId = '', taskId = '') =>
     j('DELETE', G('/folders/' + encodeURIComponent(id) + '/grants'), { profile, chat_id: chatId, task_id: taskId }),
 
+  // ---- Skills (install-wide Enable/Disable; ADR 0016).
+  // Snapshot shape: {skills:[{name,description,origin:'bundled'|'global',enabled}]}.
+  // setSkillState fans out a reload to every profile, so the toggle takes effect
+  // everywhere from the next turn.
+  skills: () => j('GET', G('/skills')),
+  setSkillState: (name, enabled) => j('POST', G('/skills/' + encodeURIComponent(name) + '/state'), { enabled }),
+  // Delete a Global skill from disk install-wide; cascade-purges every profile's
+  // Suppression and fans out a reload. Bundled → 409, unknown → 404 (ADR 0016 t03).
+  deleteSkill: (name) => j('DELETE', G('/skills/' + encodeURIComponent(name))),
+
+  // ---- Installing skills (ADR 0017). Search is target-agnostic; install/discover
+  // target the SURFACE — these Global variants land in the install-wide layer & fan out.
+  // Registry: {results:[{name,install_id,description,installs}]}. discover: {skills:[…]}.
+  searchSkills: (query, limit = 10) => j('POST', G('/skills/search'), { query, limit }),
+  installSkill: (body) => j('POST', G('/skills/install'), body), // {install_id} or {git_url, names}
+  discoverSkills: (git_url) => j('POST', G('/skills/discover'), { git_url }),
+  discoverSkillsUpload: (file) => jForm(G('/skills/discover-upload'), formFile(file)),
+  installSkillUpload: (file, names) => jForm(G('/skills/install-upload'), formFile(file, names)),
+
+  // ---- Skills (per-profile: Suppression of shared skills + own-skill state; ADR 0016 t02).
+  // Scoped to the ACTIVE profile via P(). Row shape adds {suppressed, available} to the
+  // install-wide {name,description,origin,enabled}. A change reloads only this profile.
+  profileSkills: () => j('GET', P('/skills')),
+  suppressSkill: (name, suppressed) =>
+    suppressed
+      ? j('POST', P('/skills/' + encodeURIComponent(name) + '/suppress'))
+      : j('DELETE', P('/skills/' + encodeURIComponent(name) + '/suppress')),
+  setProfileSkillState: (name, enabled) =>
+    j('POST', P('/skills/' + encodeURIComponent(name) + '/state'), { enabled }),
+  // Delete one of THIS profile's own skills from disk (active profile only). A shared
+  // skill → 409 (delete a Global one from Application → Skills instead) (ADR 0016 t03).
+  deleteProfileSkill: (name) => j('DELETE', P('/skills/' + encodeURIComponent(name))),
+
+  // Install into THIS profile (ADR 0017). Search reuses the global searchSkills; only the
+  // install/discover half is profile-scoped so the surface carries the target.
+  installProfileSkill: (body) => j('POST', P('/skills/install'), body),
+  discoverProfileSkills: (git_url) => j('POST', P('/skills/discover'), { git_url }),
+  discoverProfileSkillsUpload: (file) => jForm(P('/skills/discover-upload'), formFile(file)),
+  installProfileSkillUpload: (file, names) => jForm(P('/skills/install-upload'), formFile(file, names)),
+
   // ---- Profile-scoped (/api/p/{pid}/…) ----
   // Cheap subsystem health for the status dot: {overall, checks:[{id,label,state,detail,…}]}.
   // Distinct from the GLOBAL /api/health (Docker liveness). MCP is listed here but
@@ -199,6 +264,13 @@ export const api = {
   // Focus areas are a per-profile persona attribute (settings.json → injected into
   // the agent's context). Active-profile setter (Settings modal).
   setFocuses: (focuses) => j('POST', P('/settings/focuses'), { focuses }),
+  // Per-profile model Active override (ADR 0015): point THIS profile's Active Text /
+  // Live model at a shared install-wide config id; an empty string clears the override
+  // (→ back to the install-wide Active). Distinct from the install-wide useLlmConfig /
+  // useLiveConfig the composer switcher and Models page call. → {ok, llm_override|
+  // live_override: id|null}. The effective + override ids are reported by settings().
+  setLlmOverride: (configId = '') => j('POST', P('/settings/llm-override'), { config_id: configId }),
+  setLiveOverride: (configId = '') => j('POST', P('/settings/live-override'), { config_id: configId }),
   setReplyTimeout: (replyTimeoutS) => j('POST', P('/settings/reply-timeout'), { reply_timeout_s: replyTimeoutS }),
   setVoiceProvider: (provider) => j('POST', P('/settings/voice_provider'), { provider }),
   addMcpServer: (server) => j('POST', P('/settings/mcp'), server),
@@ -228,6 +300,14 @@ export const api = {
   // grants; a blank/no-match query yields an empty list.
   searchFiles: (q, chatId = '') =>
     j('GET', P('/files/search?q=' + encodeURIComponent(q) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''))),
+  // The preview rail's "Mentioned in N threads" backlink (ADR 0014): the current
+  // profile's Threads (Chats + Task Runs) whose transcript mentions this file →
+  // {threads:[{stream_id, kind:'chat'|'run', title, updated, task_id?, task_name?,
+  // run_started_at?}]}, newest-first, hidden-when-empty. `path` is the previewed
+  // file's path (relative = Files-space, absolute = Folder); `chatId` mirrors the
+  // other /files helpers' signature but the scan is profile-wide.
+  fileMentions: (path, chatId = '') =>
+    j('GET', P('/files/mentions?path=' + encodeURIComponent(path) + (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''))),
   // A Folder (absolute) `path` carries `chatId` so the server resolves the Grant for
   // THIS Thread; a Files-space (relative) path ignores it (rawQuery decides — ADR 0013).
   fileUrl: (path, download = false, chatId = '') =>

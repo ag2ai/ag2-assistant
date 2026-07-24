@@ -122,7 +122,7 @@
   const cmdline = (s) => [s.command, ...(s.args || [])].join(' ')
 </script>
 
-{#if err}<p class="muted" style="color:#d8552f;font-size:13px">{err}</p>{/if}
+{#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if !servers.length}
   <p class="muted" style="font-size:13px">No MCP servers configured — add one below to give the assistant new tools.</p>
@@ -194,7 +194,7 @@
   oninput={(e) => onPaste(e.target)}
 ></textarea>
 {#if parseErr}
-  <p class="muted" style="font-size:12px;color:#d8552f;margin:0">{parseErr}</p>
+  <p class="muted" style="font-size:12px;color:var(--danger);margin:0">{parseErr}</p>
 {/if}
 {#if drafts.length}
   {#each drafts as d, i (i)}

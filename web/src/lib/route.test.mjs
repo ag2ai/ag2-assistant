@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parse, resolve } from './route.js'
+import { parse, resolve, scopeToken } from './route.js'
 
 // The four full-object parse assertions below carry every route field. `aside`
 // (the right-rail occupant, ADR 0009) defaults to null (rail closed).
@@ -327,4 +327,17 @@ test('run thread routes parse and resolve', () => {
   // /r/ shorthand opens in the current tab
   const url2 = resolve({ pathname: '/app/p1/tasks', hash: '' }, { type: 'go', path: '/r/run_9' })
   assert.equal(url2, '/app/p1/tasks/r/run_9')
+})
+
+test('scopeToken maps each thread kind to its Folder-grant scope', () => {
+  // a run thread carries BOTH its task (derived server-side from the run) and its own
+  // chat-scoped grants — the token must be the run form, not a plain task token, or the
+  // run's chat grants vanish from the Files rail.
+  assert.equal(scopeToken(parse('/app/p1/tasks/r/run_9', '')), 'task-run:run_9')
+  assert.equal(scopeToken(parse('/app/p1/tasks/t/task_3', '')), 'task:task_3')
+  assert.equal(scopeToken(parse('/app/p1/chats/c/chat_7', '')), 'chat_7')
+  // a bare Tab (no open thread) → no scope, so only profile grants surface
+  assert.equal(scopeToken(parse('/app/p1/files', '')), '')
+  assert.equal(scopeToken(parse('/app/p1/tasks', '')), '')
+  assert.equal(scopeToken(undefined), '')
 })

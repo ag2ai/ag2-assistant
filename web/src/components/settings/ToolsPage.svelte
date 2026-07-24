@@ -5,7 +5,7 @@
   import PermissionsManager from '../PermissionsManager.svelte'
 </script>
 
-<div class="setsec">MCP servers</div>
+<div class="setgroup">MCP servers</div>
 <McpServers />
 
 <CodingAgents />

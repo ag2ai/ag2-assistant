@@ -79,6 +79,17 @@ export function revealFile(path) {
   go('/files')
 }
 
+// Open the Thread a "Mentioned in" popover row points at (ADR 0014): a `chat` row
+// opens that chat, a `run` row opens the run stream (`task-run:{id}`) as a Thread.
+// Navigation only — `go` preserves the hash, so the aside (the previewed file) stays
+// open; the aside is orthogonal to the Thread (ADR 0008/0009). A run's `stream_id`
+// carries the `task-run:` prefix; strip it to the run id the `/r/{id}` route expects.
+export function openThreadRow(row) {
+  if (!row?.stream_id) return
+  if (row.kind === 'run') go('/r/' + row.stream_id.replace(/^task-run:/, ''))
+  else go('/c/' + row.stream_id)
+}
+
 // Reveal (and expand) a Directory in the Files tree: same as revealFile but FilesTree
 // also opens the directory itself so its contents are visible. A folder has no preview
 // rail (it isn't a file), so a mentioned folder browses here instead (ADR 0012).
@@ -91,9 +102,6 @@ export function revealFolder(path) {
 // (settingsOpen is re-exported from router.js at the top of this file — it's derived
 // from the route. Open it with router.openOverlay('settings', section); close it with
 // router.closeOverlay(). The active Section is $route.overlayValue.)
-
-// Memory viewer/editor modal open/closed.
-export const memoryOpen = writable(false)
 
 // The active Settings Section is read from the route (`$route.overlayValue`),
 // validated against SETTINGS_PAGE by the pure core. Callers deep-link into a

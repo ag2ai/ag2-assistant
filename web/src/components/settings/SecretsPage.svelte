@@ -69,13 +69,13 @@
 </script>
 
 <div class="setgroup">Secrets</div>
-<p class="muted" style="font-size:13px">
+<p class="setsub">
   Named, reusable API keys. Attach one to any Text or Live model; mark a
   provider-tagged secret as its provider's default fallback. Values are never
   shown back — only the last 4 characters.
 </p>
 
-{#if err && editingId === null}<p class="muted" style="color:#d8552f;font-size:13px">{err}</p>{/if}
+{#if err && editingId === null}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if !secrets.length && editingId === null}
   <p class="muted" style="font-size:13px">No secrets yet — add one below, or paste a key in a model form.</p>
@@ -101,7 +101,7 @@
       <div class="llmfield">
         <label><input type="checkbox" bind:checked={isDefault} disabled={!provider} /> Default for {PROVIDER_LABEL[provider] || 'its provider'}</label>
       </div>
-      {#if err}<p class="muted" style="color:#d8552f;font-size:13px;margin:0">{err}</p>{/if}
+      {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
       <div class="keyrow" style="justify-content:flex-end">
         <button class="linkbtn" disabled={busy} onclick={cancel}>Cancel</button>
         <button class="open" disabled={busy || !name.trim()} onclick={save}>{busy ? 'Saving…' : 'Save'}</button>
@@ -143,7 +143,7 @@
     <div class="llmfield">
       <label><input type="checkbox" bind:checked={isDefault} disabled={!provider} /> Default for {PROVIDER_LABEL[provider] || 'its provider'}</label>
     </div>
-    {#if err}<p class="muted" style="color:#d8552f;font-size:13px;margin:0">{err}</p>{/if}
+    {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
     <div class="keyrow" style="justify-content:flex-end">
       <button class="linkbtn" disabled={busy} onclick={cancel}>Cancel</button>
       <button class="open" disabled={busy || !name.trim() || !value.trim()} onclick={save}>{busy ? 'Saving…' : 'Add'}</button>

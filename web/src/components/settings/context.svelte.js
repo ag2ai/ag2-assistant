@@ -28,7 +28,7 @@ import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api.js'
 import { closeOverlay } from '../../router.js'
 import {
-  voicePickerOpen, voicePickerConfig, googleOpen, codexOpen, memoryOpen,
+  voicePickerOpen, voicePickerConfig, googleOpen, codexOpen,
   poweredByOpen, onboardingOpen, profileEpoch,
 } from '../../store.js'
 
@@ -81,7 +81,6 @@ export function createSettingsContext() {
   // away. It stacks over Settings (.modal.over) and closing it reveals the form
   // again, with its signed-in state refreshed.
   ctx.openCodex = () => codexOpen.set(true)
-  ctx.openMemory = () => { closeOverlay(); memoryOpen.set(true) }
   ctx.openPoweredBy = () => { closeOverlay(); poweredByOpen.set(true) }
   ctx.reRunSetup = () => { closeOverlay(); onboardingOpen.set(true) }
 

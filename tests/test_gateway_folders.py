@@ -77,6 +77,33 @@ def test_grant_upsert_and_revoke(monkeypatch, tmp_path):
         assert r.status_code == 404
 
 
+def test_revoking_last_grant_garbage_collects_folder(monkeypatch, tmp_path):
+    """Revoking a Folder's ONLY grant removes the Folder from the registry (it's
+    unreachable by anyone); revoking one of several grants keeps it."""
+    d = tmp_path / "acme"
+    d.mkdir()
+    client, pid = _client(monkeypatch)
+    with client:
+        fid = client.post("/api/folders", json={"path": str(d)}).json()["folder"]["id"]
+        # Two grants: profile + a chat scope.
+        client.post(f"/api/folders/{fid}/grants", json={"profile": pid, "mode": "read"})
+        client.post(
+            f"/api/folders/{fid}/grants",
+            json={"profile": pid, "chat_id": "c1", "mode": "read_write"},
+        )
+        # Revoke the chat grant — the profile grant remains, so the Folder stays.
+        r = client.request(
+            "DELETE", f"/api/folders/{fid}/grants", json={"profile": pid, "chat_id": "c1"}
+        )
+        assert r.status_code == 200
+        assert any(f["id"] == fid for f in r.json()["folders"])
+        # Revoke the last (profile) grant — the Folder is garbage-collected.
+        r = client.request("DELETE", f"/api/folders/{fid}/grants", json={"profile": pid})
+        assert r.status_code == 200
+        assert not any(f["id"] == fid for f in r.json()["folders"])
+        assert client.get("/api/folders").json()["folders"] == []
+
+
 def test_task_scope_grant_roundtrip(monkeypatch, tmp_path):
     d = tmp_path / "acme"
     d.mkdir()

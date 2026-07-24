@@ -719,14 +719,14 @@
   .ttask:hover .rowtime, .ttask:focus-within .rowtime { display: none; }
   /* Task last-run stamp: faint by default, but a failed/waiting last run tints
      the time so a bad outcome reads at a glance even with the row unopened. */
-  .lastrun.failed { color: #d8552f; }
+  .lastrun.failed { color: var(--danger); }
   .lastrun.needs_input { color: var(--accent); }
   .rowconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; }
-  .rowconfirm .confirm { color: #d8552f; font-size: 12px; }
+  .rowconfirm .confirm { color: var(--danger); font-size: 12px; }
   .rowconfirm .linkbtn { border: none; background: none; font: inherit; font-size: 12px; cursor: pointer; padding: 0; color: var(--accent); }
   .rowconfirm .linkbtn:hover { text-decoration: underline; }
   .rowconfirm .linkbtn.danger { color: var(--muted); }
-  .rowconfirm .linkbtn.danger:hover { color: #d8552f; }
+  .rowconfirm .linkbtn.danger:hover { color: var(--danger); }
   .rowconfirm .linkbtn.danger:disabled { cursor: default; opacity: .6; }
 
   /* Kebab: hover-revealed like the old trash; swaps with the timestamp. */
@@ -742,8 +742,8 @@
   .chatmenu { position: fixed; z-index: var(--z-modal); transform: translateX(-100%); min-width: 150px; display: flex; flex-direction: column; padding: 4px; background: var(--surface-elevated); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
   .cmitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: none; background: none; font: inherit; font-size: var(--text-xs); color: var(--text); border-radius: var(--radius-xs, 6px); cursor: pointer; text-align: left; }
   .cmitem:hover { background: var(--surface-hover); }
-  .cmitem.danger { color: var(--danger, #d8552f); }
-  .cmitem.danger:hover { background: color-mix(in srgb, var(--danger, #d8552f) 12%, transparent); }
+  .cmitem.danger { color: var(--danger, var(--danger)); }
+  .cmitem.danger:hover { background: color-mix(in srgb, var(--danger, var(--danger)) 12%, transparent); }
   .cmitem :global(svg) { flex: none; opacity: .7; }
   .cmdiv { height: 1px; margin: 4px 6px; background: var(--line); }
 

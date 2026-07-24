@@ -260,14 +260,23 @@ def entry_options(entry: dict) -> dict:
     return opts
 
 
-def apply_active(cfg) -> None:
+def apply_active(cfg, override_id: str | None = None) -> None:
     """Derive the active configuration onto the flat ``cfg.llm`` fields, in place.
 
     No-op when the store is empty or its active id doesn't resolve (so a fresh
     install / CLI-before-store keeps the flat ``config.json`` gemini defaults). Called
     from ``load_config()`` BEFORE the env overrides, so ``AG2ASSISTANT_LLM_PROVIDER`` /
-    ``AG2ASSISTANT_MODEL`` still win last."""
-    entry = active_config()
+    ``AG2ASSISTANT_MODEL`` still win last.
+
+    ``override_id`` is a profile's per-profile **Active override** (ADR 0015): a
+    selection into this shared list that is Active *for that profile*. It is preferred
+    over the install-wide active when it resolves to a present config; a dangling
+    override (deleted config) silently falls back to the install-wide active, never an
+    error. ``config.with_profile`` passes it so the effective Active is env pin >
+    profile override > install-wide active > env fallback."""
+    entry = get_config(override_id) if override_id else None
+    if entry is None:
+        entry = active_config()
     if entry is None:
         return
     provider = PROVIDER_OF[entry["type"]]

@@ -159,6 +159,85 @@ def test_env_still_wins_over_profile_overlay(tmp_path, monkeypatch):
     assert prof.data_dir == tmp_path / "profiles" / "work"  # paths not clobbered by env re-apply
 
 
+# ---- per-profile LLM Active override (ADR 0015) -------------------------------
+# The effective Active resolves env pin > profile override > install-wide Active >
+# env fallback, at the config-load / active-derivation seam (with_profile).
+
+
+def _write_override(tmp_path, pid, cid):
+    pdir = tmp_path / "profiles" / pid
+    pdir.mkdir(parents=True, exist_ok=True)
+    write_yaml(pdir / "config.yaml", {"llm_active_override": cid})
+
+
+def _two_shared_configs(monkeypatch):
+    """Two shared install-wide LLM configs (anthropic active, openai the override
+    target); env pins cleared so derivation, not env, is under test. Returns (a, b)."""
+    from assistant import llm_configs
+
+    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
+    a = llm_configs.save_config({"name": "A", "type": "anthropic", "model": "claude-x"})
+    b = llm_configs.save_config({"name": "B", "type": "openai", "model": "gpt-x"})
+    llm_configs.set_active(a["id"])
+    return a, b
+
+
+def test_profile_llm_override_absent_inherits_install_active(tmp_path, monkeypatch):
+    a, _b = _two_shared_configs(monkeypatch)
+    cfg = load_config(tmp_path / "absent.yaml")
+    cfg.root_dir = tmp_path
+    prof = cfg.with_profile(_meta(tmp_path))  # no override written
+    assert prof.llm.provider == "anthropic"
+    assert prof.llm.model == "claude-x"
+
+
+def test_profile_llm_override_wins_over_install_active(tmp_path, monkeypatch):
+    _a, b = _two_shared_configs(monkeypatch)
+    cfg = load_config(tmp_path / "absent.yaml")
+    cfg.root_dir = tmp_path
+    _write_override(tmp_path, "work", b["id"])
+    prof = cfg.with_profile(_meta(tmp_path))
+    assert prof.llm.provider == "openai"
+    assert prof.llm.model == "gpt-x"
+
+
+def test_env_pin_wins_over_profile_llm_override(tmp_path, monkeypatch):
+    _a, b = _two_shared_configs(monkeypatch)
+    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("AG2ASSISTANT_MODEL", "gemini-pinned")
+    cfg = load_config(tmp_path / "absent.yaml")
+    cfg.root_dir = tmp_path
+    _write_override(tmp_path, "work", b["id"])
+    prof = cfg.with_profile(_meta(tmp_path))
+    assert prof.llm.provider == "gemini"  # env pin wins last, over the override
+    assert prof.llm.model == "gemini-pinned"
+
+
+def test_dangling_profile_llm_override_falls_back_to_install_active(tmp_path, monkeypatch):
+    a, _b = _two_shared_configs(monkeypatch)
+    cfg = load_config(tmp_path / "absent.yaml")
+    cfg.root_dir = tmp_path
+    _write_override(tmp_path, "work", "c_deleted_ghost")  # points at nothing
+    prof = cfg.with_profile(_meta(tmp_path))  # no error; degrades silently
+    assert prof.llm.provider == "anthropic"
+    assert prof.llm.model == "claude-x"
+
+
+def test_profile_llm_override_isolated_between_profiles(tmp_path, monkeypatch):
+    from assistant import llm_configs
+
+    a, b = _two_shared_configs(monkeypatch)
+    cfg = load_config(tmp_path / "absent.yaml")
+    cfg.root_dir = tmp_path
+    _write_override(tmp_path, "work", b["id"])  # only Work overrides
+    work = cfg.with_profile(_meta(tmp_path, "work"))
+    home = cfg.with_profile(_meta(tmp_path, "home"))
+    assert work.llm.model == "gpt-x"  # Work uses its override
+    assert home.llm.model == "claude-x"  # Home inherits the install-wide Active
+    assert llm_configs.active_id() == a["id"]  # install-wide Active never moved
+
+
 def test_malformed_overlay_section_is_skipped(tmp_path):
     cfg = Config(root_dir=tmp_path, data_dir=tmp_path)
     pdir = tmp_path / "profiles" / "work"

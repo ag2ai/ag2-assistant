@@ -16,6 +16,8 @@ stream, never crossing histories.
 import asyncio
 import contextlib
 import json
+import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -63,6 +65,25 @@ from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
 
 _TRANSCRIPT_PREFIX = "/transcript/"
+
+logger = logging.getLogger("ag2assistant.gateway")
+
+# Bounds for the on-demand "Mentioned in N threads" scan (ADR 0014): a huge chat
+# history can't stall the request (streams examined) nor flood the popover (rows
+# returned). Truncation is logged, never silent.
+_MENTIONS_STREAM_CAP = 2000
+_MENTIONS_RESULT_CAP = 50
+# An event-log segment file is ``{stream_id}.jsonl`` or ``{stream_id}.dropped-N.jsonl``.
+_DROPPED_SEGMENT_RE = re.compile(r"\.dropped-\d+$")
+
+
+def _log_stream_id(entry: str) -> str:
+    """The base stream id behind an event-log filename (``LOG_PREFIX`` entry): strip
+    the ``.jsonl`` suffix and any ``.dropped-N`` segment marker
+    (``task-run:r1.dropped-2.jsonl`` → ``task-run:r1``). Non-log entries → ""."""
+    if not entry.endswith(".jsonl"):
+        return ""
+    return _DROPPED_SEGMENT_RE.sub("", entry[: -len(".jsonl")])
 
 
 def _task_summary(t: dict) -> str:
@@ -848,6 +869,128 @@ class Gateway:
             )
         out.sort(key=lambda s: s["updated"], reverse=True)
         return out
+
+    async def threads_mentioning(self, paths: list[str]) -> list[dict]:
+        """Threads (this profile's Chats + Task Runs) whose transcript mentions any
+        of ``paths`` — the reverse link behind the preview rail's "Mentioned in N
+        threads" backlink (ADR 0014).
+
+        Loose full-path substring over each stream's **display transcript** AND its
+        raw **event log** (main + dropped segments) — so a produced deliverable /
+        attachment path, which lives only in a log event and never in the display
+        messages, still matches. On-demand, no index, always fresh. A ``task:`` page
+        holds config, not a transcript, and is skipped; ``task-run:`` runs and plain
+        chats are kept and classified by their stream-id. Rows are newest-first and
+        bounded (``_MENTIONS_STREAM_CAP`` streams scanned, ``_MENTIONS_RESULT_CAP``
+        rows returned) so a large history can't stall the request."""
+        if self._event_store is None or not paths:
+            return []
+        # Enumerate candidate streams: transcript docs (chats + the meta for a row)
+        # unioned with event-log files (catches run streams and produced-path-only
+        # mentions that never reach a display transcript).
+        docs: dict[str, dict] = {}
+        logs: dict[str, list[str]] = {}
+        order: list[str] = []
+        seen: set[str] = set()
+
+        def _add(sid: str) -> None:
+            if sid and sid not in seen:
+                seen.add(sid)
+                order.append(sid)
+
+        for entry in await self._event_store.list(_TRANSCRIPT_PREFIX):
+            if not entry.endswith(".json"):
+                continue
+            try:
+                doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry))
+            except Exception as exc:
+                log_suppressed("mentions transcript read", exc, entry=entry)
+                continue
+            sid = doc.get("chat_id", "")
+            if sid:
+                docs[sid] = doc
+                _add(sid)
+        for entry in await self._event_store.list(LOG_PREFIX):
+            sid = _log_stream_id(entry)
+            if not sid:
+                continue
+            logs.setdefault(sid, []).append(f"{LOG_PREFIX}{entry}")
+            _add(sid)
+
+        # Cap the work, but keep the *most recent* streams when truncating — so the
+        # "newest first" guarantee still holds on a huge history (a blind enumeration-
+        # order slice could drop recent threads for old ones). A log-only stream has
+        # no transcript ``updated`` and sorts last (rare: a produced path with no turn).
+        order.sort(key=lambda s: (docs.get(s) or {}).get("updated", ""), reverse=True)
+        truncated = len(order) > _MENTIONS_STREAM_CAP
+        if truncated:
+            order = order[:_MENTIONS_STREAM_CAP]
+
+        rows: list[dict] = []
+        for sid in order:
+            # A Task PAGE stream is config chatter, not a transcript — skip it. Runs
+            # and chats are real, openable Threads.
+            if sid.startswith("task:"):
+                continue
+            corpus = await self._stream_corpus(sid, docs.get(sid), logs.get(sid, []))
+            if not any(p in corpus for p in paths):
+                continue
+            row = await self._mention_row(sid, docs.get(sid))
+            if row is not None:
+                rows.append(row)
+        rows.sort(key=lambda r: r.get("updated") or "", reverse=True)
+        if truncated:
+            logger.info("threads_mentioning: stream scan truncated at %d", _MENTIONS_STREAM_CAP)
+        return rows[:_MENTIONS_RESULT_CAP]
+
+    async def _stream_corpus(self, sid: str, doc: dict | None, log_paths: list[str]) -> str:
+        """Concatenated searchable text for one stream: its display-transcript
+        message text plus its raw event-log segments. Best-effort — an unreadable
+        segment contributes nothing rather than failing the whole scan."""
+        parts: list[str] = []
+        if doc is not None:
+            parts.extend(m.get("text", "") for m in doc.get("messages", []))
+        for path in log_paths:
+            try:
+                parts.append(await self._event_store.read(path))
+            except Exception as exc:
+                log_suppressed("mentions log read", exc, stream_id=sid)
+        return "\n".join(p for p in parts if p)
+
+    async def _mention_row(self, sid: str, doc: dict | None) -> dict | None:
+        """Build one popover row for a matched stream. A ``task-run:`` stream is a
+        Run — enriched with its parent Task name + run start time (title falls back
+        to the task name); everything else is a plain Chat."""
+        if sid.startswith("task-run:"):
+            info: dict | None = None
+            if self._tasks is not None:
+                try:
+                    info = await self._tasks.get_run(sid.removeprefix("task-run:"))
+                except Exception as exc:
+                    log_suppressed("mentions run lookup", exc, stream_id=sid)
+            info = info or {}
+            task_name = info.get("task_name", "")
+            started = info.get("started_at", "")
+            ended = info.get("ended_at", "") or ""
+            title = task_name or (doc.get("title") if doc else "") or "Task run"
+            return {
+                "stream_id": sid,
+                "kind": "run",
+                "title": title,
+                "updated": (doc.get("updated") if doc else "") or ended or started,
+                "task_id": info.get("task_id", ""),
+                "task_name": task_name,
+                "run_started_at": started,
+            }
+        doc = doc or {}
+        msgs = doc.get("messages", [])
+        first_user = next((m["text"] for m in msgs if m.get("role") == "user"), "")
+        return {
+            "stream_id": sid,
+            "kind": "chat",
+            "title": doc.get("title") or first_user[:80] or "Chat",
+            "updated": doc.get("updated", ""),
+        }
 
     async def delete_chat(self, chat_id: str) -> bool:
         """Permanently delete a chat: its display transcript AND its full AG2 event

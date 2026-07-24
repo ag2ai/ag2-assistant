@@ -22,7 +22,7 @@ export const SETTINGS_PAGE = Object.freeze({
   PROFILES: 'profiles',
   MODELS: 'models',
   SECRETS: 'secrets',
-  FOLDERS: 'folders',
+  SKILLS: 'skills',
   TOOLS: 'tools',
   INTEGRATIONS: 'integrations',
   ADVANCED: 'advanced',
@@ -131,6 +131,18 @@ export function parse(pathname, hash) {
   if ((m = p.match(/^\/app\/([^/]+)\/?$/))) return { name: 'home', tab: 'chats', kind: null, id: null, pid: dec(m[1]), ...o }
   // Bare /app/ or any legacy/unknown shape → home with no pid (boot resolves it).
   return { name: 'home', tab: 'chats', kind: null, id: null, pid: null, ...o }
+}
+
+// The open Thread's Folder-grant scope token for the folder API's `chat_id` slot
+// (see lib/threadScope.js). A run → `task-run:{id}` (matches controller.openThread),
+// a Task page → `task:{id}`, a chat → its id; '' otherwise. The gateway decodes it
+// to the reachable profile ∪ (chat | task) Grants.
+export function scopeToken(r) {
+  if (!r?.id) return ''
+  if (r.kind === 'r') return 'task-run:' + r.id
+  if (r.kind === 't') return 'task:' + r.id
+  if (r.kind === 'c') return r.id
+  return ''
 }
 
 // Resolve a caller path against the current route so Tab and Thread stay

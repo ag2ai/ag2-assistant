@@ -29,7 +29,7 @@
   background: var(--paper);
   color: var(--ink);
   border: 1px solid var(--rule-2);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   isolation: isolate;
   font-family: var(--ui);
@@ -44,14 +44,14 @@
 
 /* ---- masthead ---- */
 .bs-masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 15px 20px 11px; }
-.bs-kicker { font-family: var(--code); font-size: 10px; letter-spacing: .26em; text-transform: uppercase; color: var(--accent-d); font-weight: 700; }
-.bs-masthead h1 { margin: 3px 0 0; font-family: var(--serif); font-weight: 900; font-size: clamp(24px, 5vw, 36px); line-height: .96; letter-spacing: -.01em; font-variation-settings: "opsz" 120; }
+.bs-kicker { font-family: var(--code); font-size: 10px; letter-spacing: .22em; text-transform: uppercase; color: var(--accent-d); font-weight: 600; }
+.bs-masthead h1 { margin: 3px 0 0; font-family: var(--ui); font-weight: 700; font-size: clamp(20px, 4vw, 28px); line-height: 1.02; letter-spacing: -.02em; }
 .bs-edition { flex: none; text-align: right; font-family: var(--code); font-size: 10px; line-height: 1.7; color: var(--ink-3); letter-spacing: .03em; }
 .bs-edition b { color: var(--ink-2); font-weight: 700; }
 .bs-edition b.open { color: var(--up-d); } /* markets "Market open" status */
 
 /* ---- ticker / tape ---- */
-.bs-ticker { display: flex; align-items: stretch; border-top: 1.5px solid var(--ink); border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+.bs-ticker { display: flex; align-items: stretch; border-top: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule); background: var(--paper-2); }
 .bs-tag { flex: none; display: flex; align-items: center; gap: 7px; padding: 6px 12px; background: var(--ink); color: var(--paper); font-family: var(--code); font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
 .bs-viewport { overflow: hidden; flex: 1; position: relative; }
 .bs-viewport::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 42px; background: linear-gradient(90deg, transparent, var(--paper-2)); }
@@ -75,7 +75,7 @@
 
 /* ---- body + footer ---- */
 .bs-body { padding: 16px 20px 18px; }
-.bs-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 10px; border-top: 1.5px solid var(--ink); font-family: var(--code); font-size: 10px; color: var(--ink-3); letter-spacing: .03em; }
+.bs-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 10px; border-top: 1px solid var(--rule-2); font-family: var(--code); font-size: 10px; color: var(--ink-3); letter-spacing: .03em; }
 .bs-foot .bs-src { display: flex; gap: 8px; flex-wrap: wrap; }
 .bs-foot .bs-src span { color: var(--ink-2); }
 .bs-foot .bs-upd { display: inline-flex; align-items: center; gap: 6px; flex: none; }

@@ -217,6 +217,18 @@ class Config(BaseModel):
         cfg.skills_dir = cfg.data_dir / "skills"
         cfg.workspace_dir = cfg.data_dir / "workspace"
         apply_overlay(cfg, cfg.data_dir / "config.yaml")
+        # Re-derive the active LLM config from this profile's Active override (ADR 0015),
+        # so it wins over the install-wide active; the env re-apply below still wins last.
+        try:
+            # local imports: both modules import config, so top-level would cycle
+            from assistant import llm_configs
+            from assistant.settings import profile_settings
+
+            override = profile_settings(cfg.data_dir).get_llm_override()
+            if override:
+                llm_configs.apply_active(cfg, override_id=override)
+        except Exception:
+            pass
         _apply_env_overrides(cfg, include_paths=False)
         return cfg
 

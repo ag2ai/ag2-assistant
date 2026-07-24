@@ -55,6 +55,7 @@ import base64
 import contextlib
 import os
 import secrets as _secrets
+import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -80,6 +81,7 @@ from ag2.events.voice import (
     TranscriptionChunkEvent,
     TranscriptionCompletedEvent,
 )
+from ag2.exceptions import SkillDownloadError, SkillError, SkillInstallError
 from ag2.stream import MemoryStream
 from fastapi import (
     APIRouter,
@@ -106,7 +108,7 @@ from assistant import __version__, codex_auth, live_configs, llm_configs, secret
 from assistant import feedback as feedback_learner
 from assistant import profiles as profiles_mod
 from assistant.a2ui import A2UI_SERVER_ACTIONS
-from assistant.agent import model_config
+from assistant.agent import build_skills_runtime, bundled_skills_dir, model_config
 from assistant.attachments import build_input
 from assistant.config import Config, load_config
 from assistant.events import (
@@ -135,6 +137,22 @@ from assistant.onboarding import identity_document
 from assistant.permissions import PermissionStore, command_rule, shell_prefix
 from assistant.secrets import KEY_ENV
 from assistant.settings import profile_settings
+from assistant.skills import (
+    DISABLE_OWN,
+    ORIGIN_BUNDLED,
+    ORIGIN_GLOBAL,
+    ORIGIN_PROFILE,
+    SUPPRESS_SHARED,
+    SkillStateStore,
+    skill_origin,
+)
+from assistant.skills_install import (
+    SkillSourceError,
+    discover_source,
+    install_from_source,
+    registry_install,
+    registry_search,
+)
 from assistant.tasks import TaskStoreCorruptionError
 from assistant.tools.mcp import build_mcp_tools
 from assistant.voice import synthesize_preview
@@ -147,6 +165,7 @@ from assistant.workspace import (
     list_dirs,
     list_files,
     make_dir,
+    mention_forms,
     move,
     resolve,
     save_upload,
@@ -292,24 +311,44 @@ class TaskPatch(BaseModel):
     description: str | None = None
 
 
+async def _scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:
+    """The task whose Folder Grants the ``chat_id`` scope token names: ``task:{id}`` (an
+    open Task page) directly, ``task-run:{run_id}`` (a run thread) via ``get_run``, else
+    ``""`` (a real chat id or none) — ADR 0006/0013."""
+    if chat_id.startswith("task:"):
+        return chat_id.removeprefix("task:")
+    if chat_id.startswith("task-run:"):
+        with contextlib.suppress(Exception):
+            run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
+            return (run or {}).get("task_id") or ""
+    return ""
+
+
 def _resolve_folder(
-    runtime: ProfileRuntime, path: str, chat_id: str
+    runtime: ProfileRuntime, path: str, chat_id: str, task_id: str = ""
 ) -> tuple[Path | None, str | None]:
     """``(readable Folder root containing ``path``, its effective mode)`` via the one
     Folder resolver, or ``(None, None)`` when there's no gateway or the absolute
     ``path`` resolves under no granted root. Read authorizes on any non-``None`` mode;
-    a mutation additionally requires ``read_write`` (the caller checks). The confining
-    root is the sandbox base every absolute ``/files/*`` mutation passes to the
-    workspace helpers, so ``within-subtree only`` falls out for free (ADR 0006/0013)."""
+    a mutation additionally requires ``read_write`` (the caller checks). ``task_id``
+    (decoded from the Thread scope) admits the open Task/run's task-scope Grants. The
+    confining root is the sandbox base every absolute ``/files/*`` mutation passes to
+    the workspace helpers, so ``within-subtree only`` falls out for free (ADR 0006/0013)."""
     gw = runtime.gateway
     folders = gw.folders if gw is not None else None
     if folders is None:
         return None, None
-    return folders.resolve_within(path, runtime.config.data_dir.name, chat_id)
+    return folders.resolve_within(path, runtime.config.data_dir.name, chat_id, task_id)
 
 
 def _folder_write_base(
-    runtime: ProfileRuntime, path: str, chat_id: str, *, miss_status: int, miss_msg: str
+    runtime: ProfileRuntime,
+    path: str,
+    chat_id: str,
+    *,
+    task_id: str = "",
+    miss_status: int,
+    miss_msg: str,
 ) -> tuple[Path | None, JSONResponse | None]:
     """The sandbox base for an ABSOLUTE ``/files/*`` MUTATION (tickets 04–05): the
     confining readable Folder root when ``path`` resolves under a ``read_write`` Grant,
@@ -318,7 +357,7 @@ def _folder_write_base(
     always ``403`` "read-only folder" when the covering Grant is ``read``. Every
     absolute mutation branch funnels through here so the read_write gate + base
     selection is written once (ADR 0006)."""
-    root, mode = _resolve_folder(runtime, path, chat_id)
+    root, mode = _resolve_folder(runtime, path, chat_id, task_id)
     if root is None:
         return None, JSONResponse({"error": miss_msg}, status_code=miss_status)
     if mode != READ_WRITE:
@@ -327,32 +366,39 @@ def _folder_write_base(
 
 
 def _mutation_base(
-    runtime: ProfileRuntime, path: str, chat_id: str, *, miss_status: int, miss_msg: str
+    runtime: ProfileRuntime,
+    path: str,
+    chat_id: str,
+    *,
+    task_id: str = "",
+    miss_status: int,
+    miss_msg: str,
 ) -> tuple[Path | None, JSONResponse | None]:
     """The sandbox base for a ``/files/*`` mutation, branching on ``os.path.isabs``: the
     workspace for a relative path, else the ``read_write`` Folder root (or a deny response)."""
     if os.path.isabs(path):
         return _folder_write_base(
-            runtime, path, chat_id, miss_status=miss_status, miss_msg=miss_msg
+            runtime, path, chat_id, task_id=task_id, miss_status=miss_status, miss_msg=miss_msg
         )
     return runtime.config.workspace_dir, None
 
 
 def _resolve_file_path(
-    runtime: ProfileRuntime, path: str, chat_id: str
+    runtime: ProfileRuntime, path: str, chat_id: str, task_id: str = ""
 ) -> tuple[Path | None, str | None]:
     """Resolve a ``/files/*`` ``path`` to ``(existing file, effective mode)``, branching
     on ``os.path.isabs`` — the sole discriminator between a Files-space file and a
     Folder file. A relative path keeps today's workspace sandbox untouched (mode
     ``read_write`` — the user owns their Files space); an absolute path authorizes via
-    the one Folder resolver (``read`` suffices for a GET) and is confirmed to be a real
-    file. ``(None, None)`` on any denial/miss — the caller turns that into the shared
-    404 shape (ADR 0006/0013). The mode rides back so the GET can advertise it to the
-    client's edit-affordance gating (ticket 04)."""
+    the one Folder resolver (``read`` suffices for a GET, ``task_id`` admitting the open
+    Task/run's grants) and is confirmed to be a real file. ``(None, None)`` on any
+    denial/miss — the caller turns that into the shared 404 shape (ADR 0006/0013). The
+    mode rides back so the GET can advertise it to the client's edit-affordance gating
+    (ticket 04)."""
     if not os.path.isabs(path):
         rp = resolve(runtime.config.workspace_dir, path)
         return (rp, READ_WRITE) if rp is not None else (None, None)
-    root, mode = _resolve_folder(runtime, path, chat_id)
+    root, mode = _resolve_folder(runtime, path, chat_id, task_id)
     if root is None:
         return None, None
     rp = Path(path).expanduser().resolve()
@@ -369,6 +415,12 @@ class OnboardedRequest(BaseModel):
 
 class FocusesRequest(BaseModel):
     focuses: list[str] = []
+
+
+class ModelOverrideRequest(BaseModel):
+    # A selection into the shared install-wide list; empty string clears the override
+    # (→ back to the install-wide Active). Used for both the Text and Live switchers.
+    config_id: str = ""
 
 
 class ReplyTimeoutRequest(BaseModel):
@@ -526,6 +578,33 @@ class FolderGrantDeleteRequest(BaseModel):
     profile: str
     chat_id: str = ""
     task_id: str = ""
+
+
+class SkillStateRequest(BaseModel):
+    # Enabled (True) / Disabled (False). Install-wide for a Bundled/Global skill via
+    # /api/skills/{name}/state; per-profile for a Profile skill via /api/p/{pid}/skills/{name}/state.
+    enabled: bool
+
+
+class SkillSearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+
+
+class SkillInstallRequest(BaseModel):
+    # A registry install (ADR 0017 t04) passes ``install_id`` (from a search hit).
+    # A git install (t05) passes ``git_url`` + the chosen ``names``. The target is the
+    # surface, not a field here: the Application route lands Global, the profile route
+    # lands in that profile.
+    install_id: str | None = None
+    git_url: str | None = None
+    names: list[str] | None = None
+
+
+class SkillDiscoverRequest(BaseModel):
+    # Scan a git URL (t05) for every SKILL.md without installing. Upload discovery uses
+    # the multipart route instead (a file can't ride a JSON body).
+    git_url: str | None = None
 
 
 class PermissionCommandAddRequest(BaseModel):
@@ -1412,7 +1491,267 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             fid, profile=req.profile, chat_id=req.chat_id, task_id=req.task_id
         ):
             return JSONResponse({"error": "no such grant"}, status_code=404)
+        # A Folder left with no grants is garbage-collected inside revoke_grant, so it
+        # is uniform across every revoke path (CLI, API, task deletion) — see FolderStore._gc.
         return {"ok": True, **_folders_snapshot(store)}
+
+    # ---- Skills (install-wide Enable/Disable, ADR 0016) ----
+
+    def _skill_store() -> SkillStateStore:
+        """A fresh SkillStateStore over the install-wide file. mtime self-refresh
+        means a live turn's next build sees any change — same shape as _folder_store."""
+        return SkillStateStore(load_config().root_dir / "skills.json")
+
+    def _installwide_skills() -> list[dict]:
+        """The install-wide projection: every Bundled + Global skill with its name,
+        description, origin, and install-wide ``enabled`` state.
+
+        Discovery uses the ROOT config (skills_dir is the Global layer there;
+        ``with_profile`` repoints it per profile) plus the bundled first-party dir,
+        so this is genuinely install-wide — not any one profile's view. Origin is
+        read from each skill's on-disk location: under the bundled dir → bundled,
+        otherwise → global.
+        """
+        store = _skill_store()
+        bundled_root = bundled_skills_dir()
+        runtime = build_skills_runtime(load_config())
+        rows = [
+            {
+                "name": s.name,
+                "description": s.metadata.description,
+                "origin": skill_origin(s.location, bundled_root),
+                "enabled": not store.is_disabled(s.name),
+            }
+            for s in runtime.skills
+        ]
+        # Deletable (Global, user-installed) first, then read-only Bundled — each group
+        # by name — so the rows a user can act on sit at the top.
+        return sorted(rows, key=lambda r: (r["origin"] == ORIGIN_BUNDLED, r["name"]))
+
+    def _skills_snapshot() -> dict:
+        return {"skills": _installwide_skills()}
+
+    def _profile_skill_rows(runtime) -> list[dict]:
+        """The active-profile projection (ADR 0016 ticket 02): every skill VISIBLE to
+        this profile — inherited Bundled/Global (Suppressible here) plus the profile's
+        OWN skills (Enable/Disable here) — each carrying origin, install-wide
+        ``enabled``, per-profile ``suppressed``, and the resolved ``available``.
+
+        Built through the one resolution seam (``SkillStateStore.is_available``) so a
+        row can never disagree with the catalog the profile's agent actually gets: a
+        skill Disabled install-wide reads unavailable here too.
+        """
+        store = _skill_store()
+        bundled_root = bundled_skills_dir()
+        profile = runtime.pid
+        rows: dict[str, dict] = {}
+        # Inherited shared layers (Global + Bundled), discovered from the Root config.
+        for s in build_skills_runtime(load_config()).skills:
+            rows[s.name] = {
+                "name": s.name,
+                "description": s.metadata.description,
+                "origin": skill_origin(s.location, bundled_root),
+                "enabled": not store.is_disabled(s.name),
+            }
+        # The profile's OWN skills (under its skills_dir) shadow a shared skill of the
+        # same name (catalog precedence Profile > Global > Bundled). A Profile skill has
+        # no install-wide Disable — it lives in one profile, toggled per-profile only.
+        prof_skills_dir = runtime.config.skills_dir.resolve()
+        for s in build_skills_runtime(runtime.config).skills:
+            loc = Path(s.location).resolve() if s.location else None
+            if loc is None or not (prof_skills_dir == loc or prof_skills_dir in loc.parents):
+                continue  # bundled (extra_paths) — already covered by the shared pass
+            rows[s.name] = {
+                "name": s.name,
+                "description": s.metadata.description,
+                "origin": ORIGIN_PROFILE,
+                "enabled": True,
+            }
+        for r in rows.values():
+            kind = DISABLE_OWN if r["origin"] == ORIGIN_PROFILE else SUPPRESS_SHARED
+            r["suppressed"] = store.is_suppressed(r["name"], profile, kind=kind)
+            r["available"] = store.is_available(r["name"], profile, origin=r["origin"])
+        order = {ORIGIN_BUNDLED: 0, ORIGIN_GLOBAL: 1, ORIGIN_PROFILE: 2}
+        return sorted(rows.values(), key=lambda r: (order.get(r["origin"], 9), r["name"]))
+
+    @app.get("/api/skills")
+    async def get_skills() -> dict:
+        """The install-wide skill projection: Bundled + Global skills with origin
+        and their install-wide Enabled/Disabled state (drives Application → Skills)."""
+        return _skills_snapshot()
+
+    @app.post("/api/skills/{name}/state")
+    async def set_skill_state(name: str, req: SkillStateRequest):
+        """Enable/Disable a Bundled or Global skill install-wide. Fans out a reload
+        to every live runtime so the catalog changes everywhere at once — an
+        in-flight turn finishes on the old catalog, the next turn sees the change.
+        404 for a name that is not an install-wide skill."""
+        known = {s["name"] for s in _installwide_skills()}
+        if name not in known:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        _skill_store().set_enabled(name, req.enabled)
+        await _reload_all()  # install-wide change → every profile's agent rebuilds
+        return {"ok": True, **_skills_snapshot()}
+
+    def _remove_skill_dir(runtime, name: str) -> None:
+        """Remove skill ``name`` by its REAL on-disk directory. The lenient loader
+        permits a skill whose frontmatter ``name`` differs from its directory
+        (``weather-helper/`` with ``name: weather``); ``runtime.remove`` assumes
+        dir == name and would 404 such a hand-placed skill, leaving it undeletable from
+        the UI. Resolve the actual dir via the loader, then remove by its basename so
+        the runtime's path-traversal guard still applies."""
+        skill_dir = runtime.get_path(name)  # SkillError if the name isn't on disk
+        runtime.remove(skill_dir.name)
+
+    @app.delete("/api/skills/{name}")
+    async def delete_skill(name: str):
+        """Delete a **Global** skill from disk install-wide, then cascade-purge its
+        state (install-wide Disable + every profile's Suppression) so a later same-named
+        re-install resolves default-on everywhere — no ghost. Fans out a reload to all
+        live runtimes. A **Bundled** skill is first-party/read-only → 409 (not deletable);
+        an unknown name → 404. Mirrors DELETE /api/folders/{id}'s grant cascade."""
+        config = load_config()
+        store = _skill_store()
+        runtime = build_skills_runtime(config)
+        bundled_root = bundled_skills_dir()
+        row = next((s for s in runtime.skills if s.name == name), None)
+        if row is None:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        if skill_origin(row.location, bundled_root) == ORIGIN_BUNDLED:
+            return JSONResponse(
+                {"error": f"{name} is a first-party skill and can't be deleted"},
+                status_code=409,
+            )
+        try:
+            _remove_skill_dir(runtime, name)
+        except (SkillError, FileNotFoundError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        runtime.invalidate()
+        store.purge(name)  # drop Disable + every shared Suppression of this name
+        await _reload_all()
+        return {"ok": True, **_skills_snapshot()}
+
+    # ---- Installing skills from Settings (registry / git / upload — ADR 0017) ----
+    # The target is the SURFACE: the /api/skills* routes below install into the Global
+    # layer and fan out; the mirrored /api/p/{pid}/skills* routes install into the active
+    # profile and reload only it. Both delegate to skills_install over the right runtime.
+
+    _MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB raw upload cap
+
+    async def _save_upload(upload: UploadFile, tmp_dir: Path) -> Path:
+        """Stream an uploaded file into ``tmp_dir`` in bounded chunks and return its path
+        (original name preserved so discover/install can tell a .zip from a SKILL.md).
+        Caps the total read so a huge upload can't exhaust RAM before it ever reaches the
+        unpacker; the archive's UNCOMPRESSED size is capped again at unpack."""
+        name = os.path.basename(upload.filename or "upload") or "upload"
+        dest = tmp_dir / name
+        total = 0
+        with dest.open("wb") as f:
+            while chunk := await upload.read(1024 * 1024):
+                total += len(chunk)
+                if total > _MAX_UPLOAD_BYTES:
+                    raise SkillSourceError("upload is too large")
+                f.write(chunk)
+        return dest
+
+    # Every install/discover failure maps to a 400 with the exception message. Discover
+    # only raises SkillSourceError; catching the superset is harmless and keeps one tuple.
+    _SKILL_INSTALL_ERRORS = (SkillSourceError, SkillDownloadError, SkillInstallError)
+
+    async def _install_from_req(runtime, req: SkillInstallRequest) -> dict:
+        """Install into ``runtime``'s layer from a registry id (t04) or a git source
+        (t05). Raises one of ``_SKILL_INSTALL_ERRORS``. Shared by both surfaces — only
+        the target runtime and the reload differ."""
+        if req.install_id:
+            return {"installed": [await registry_install(runtime, req.install_id)]}
+        if req.git_url:
+            # git clone + copytree are blocking (up to a 120s clone timeout); off-load
+            # them so a slow/hanging remote never freezes the whole gateway.
+            installed = await asyncio.to_thread(
+                install_from_source, runtime, req.names or [], git_url=req.git_url
+            )
+            return {"installed": installed}
+        raise SkillSourceError("provide a registry install_id or a git_url")
+
+    async def _discover_git(git_url: str | None) -> dict:
+        """Scan a git URL for every SKILL.md (no install). The clone is blocking (120s
+        timeout) so it runs off the event loop. Shared by both surfaces' discover routes."""
+        return {"skills": await asyncio.to_thread(discover_source, git_url=git_url)}
+
+    async def _install_upload_into(runtime, file: UploadFile, names: str) -> dict:
+        """Install the selected (comma-separated) ``names`` from an uploaded source into
+        ``runtime``. Shared by both surfaces' install-upload routes."""
+        wanted = [n.strip() for n in (names or "").split(",") if n.strip()]
+        with tempfile.TemporaryDirectory(prefix="skill-up-") as td:
+            path = await _save_upload(file, Path(td))
+            # Unpack + copytree are blocking → run off-loop.
+            installed = await asyncio.to_thread(
+                install_from_source,
+                runtime,
+                wanted,
+                upload_path=path,
+                filename=file.filename or "",
+            )
+            return {"installed": installed}
+
+    async def _discover_upload_file(file: UploadFile) -> dict:
+        """Discover skills in an uploaded SKILL.md / zipped folder (no install)."""
+        with tempfile.TemporaryDirectory(prefix="skill-up-") as td:
+            path = await _save_upload(file, Path(td))
+            skills = await asyncio.to_thread(  # blocking unpack + scan → off-loop
+                discover_source, upload_path=path, filename=file.filename or ""
+            )
+            return {"skills": skills}
+
+    @app.post("/api/skills/search")
+    async def search_skills(req: SkillSearchRequest):
+        """Proxy a skills.sh registry search → ``{results:[{name, install_id,
+        description, installs}]}``. Target-agnostic: both surfaces search through here,
+        then install via their own (Global vs Profile) install route."""
+        try:
+            return {"results": await registry_search(req.query, req.limit)}
+        except Exception as exc:  # a registry/network failure shouldn't 500 the page
+            return JSONResponse({"error": f"search failed: {exc}"}, status_code=502)
+
+    @app.post("/api/skills/discover")
+    async def discover_skills(req: SkillDiscoverRequest):
+        """Scan a git URL for every SKILL.md (no install) → ``{skills:[{name,
+        description}]}`` for the checklist. 400 for an unreachable/invalid source."""
+        try:
+            return await _discover_git(req.git_url)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/skills/discover-upload")
+    async def discover_skills_upload(file: UploadFile = File(...)):
+        """Discover skills in an uploaded SKILL.md / zipped folder (no install)."""
+        try:
+            return await _discover_upload_file(file)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/skills/install")
+    async def install_skill(req: SkillInstallRequest):
+        """Install into the **Global** layer from a registry id or a git URL + names,
+        then fan out a reload so every profile sees it next turn. A name collision in the
+        target replaces the prior skill. 400 on a bad source (nothing half-installed)."""
+        try:
+            result = await _install_from_req(build_skills_runtime(load_config()), req)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _reload_all()
+        return {"ok": True, **result, **_skills_snapshot()}
+
+    @app.post("/api/skills/install-upload")
+    async def install_skill_upload(file: UploadFile = File(...), names: str = Form(...)):
+        """Install selected skills from an uploaded source into the **Global** layer.
+        ``names`` is a comma-separated list (multipart can't carry a JSON array)."""
+        try:
+            result = await _install_upload_into(build_skills_runtime(load_config()), file, names)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _reload_all()
+        return {"ok": True, **result, **_skills_snapshot()}
 
     # ---- Profile management (global) ----
 
@@ -2024,6 +2363,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         cfg = runtime.config
         settings = _runtime_settings(runtime)
         keys = secrets.status()
+        # Per-profile model Active override (ADR 0015): report BOTH this profile's
+        # override id (None when inherited or dangling) and the EFFECTIVE Active id, so
+        # each header switcher can render the current choice + mark it
+        # inherited-vs-overridden without a second fetch. A dangling override reads as
+        # no override → the install-wide Active (matching the resolution layer).
+        llm_ovr = settings.get_llm_override()
+        llm_ovr = llm_ovr if (llm_ovr and llm_configs.get_config(llm_ovr)) else None
+        live_ovr = settings.get_live_override()
+        live_ovr = live_ovr if (live_ovr and live_configs.get_config(live_ovr)) else None
         return {
             "keys": keys,  # per-provider {set, hint} — never raw
             # Voice runs on the provider's own realtime endpoint, so a base_url
@@ -2032,6 +2380,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             # Display-only view of the resolved assistant model (the active named LLM
             # config, derived onto cfg.llm). Managed via /api/llm-configs, not here.
             "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
+            # Per-profile Text/Live Active override + effective Active (drives the
+            # Profiles-header switchers). override=None → inherits the install-wide.
+            "llm_override": llm_ovr,
+            "llm_active": llm_ovr or llm_configs.active_id(),
+            "live_override": live_ovr,
+            "live_active": live_ovr or live_configs.active_id(),
             "codex": codex_auth.status(),  # ChatGPT-subscription sign-in state
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
@@ -2251,6 +2605,37 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         await manager.reload(runtime.pid)  # context change → next turn gets the line
         return {"ok": True, "focuses": focuses}
 
+    @p.post("/settings/llm-override")
+    async def set_llm_override(
+        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Set (or clear, when ``config_id`` is empty) this profile's Active Text model
+        override — a selection into the shared install-wide ``llm_configs`` list, NOT the
+        install-wide Active (the composer switcher still owns that). Reloads this
+        profile's runtime so its next message uses the new model. Unknown id → 404."""
+        settings = _runtime_settings(runtime)
+        cid = (req.config_id or "").strip()
+        if cid and llm_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        settings.set_llm_override(cid)
+        await manager.reload(runtime.pid)  # next turn's agent is built from the new model
+        return {"ok": True, "llm_override": cid or None}
+
+    @p.post("/settings/live-override")
+    async def set_live_override(
+        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Set (or clear) this profile's Active Live (voice) model override — a
+        selection into the shared install-wide ``live_configs`` list. Read fresh by the
+        voice session at connect, so it takes effect on the NEXT voice session (no
+        runtime reload needed). Unknown id → 404."""
+        settings = _runtime_settings(runtime)
+        cid = (req.config_id or "").strip()
+        if cid and live_configs.get_config(cid) is None:
+            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
+        settings.set_live_override(cid)
+        return {"ok": True, "live_override": cid or None}
+
     @p.post("/settings/reply-timeout")
     async def set_reply_timeout(
         req: ReplyTimeoutRequest, runtime: ProfileRuntime = Depends(get_runtime)
@@ -2272,6 +2657,141 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if not _runtime_settings(runtime).set_voice_provider(provider):
             return Response(status_code=400)
         return {"ok": True}
+
+    # ---- Skills (per-profile: Suppression of shared skills + own-skill state, ADR 0016) ----
+    # These scope to the profile in the URL (mirrors the /settings per-profile routes),
+    # not the global install-wide /api/skills page. A change reloads ONLY this profile
+    # (manager.reload(pid)); the install-wide toggle at /api/skills fans out to all.
+
+    @p.get("/skills")
+    async def profile_skills(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """This profile's resolved skill projection — inherited Bundled/Global skills
+        (Suppressible here) and the profile's own skills (Enable/Disable here)."""
+        return {"skills": _profile_skill_rows(runtime)}
+
+    async def _suppress(name: str, runtime, suppressed: bool) -> dict:
+        # Shared by the suppress/un-suppress routes: validate against the projection
+        # (built once), flip the per-profile off-record, reload only this profile.
+        if name not in {r["name"] for r in _profile_skill_rows(runtime)}:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        # A Suppression of an inherited shared skill — tagged SHARED so a same-named
+        # Global Delete's purge clears it (but never a Profile skill's own off-state).
+        _skill_store().set_suppressed(name, runtime.pid, suppressed, kind=SUPPRESS_SHARED)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "skills": _profile_skill_rows(runtime)}
+
+    @p.post("/skills/{name}/suppress")
+    async def suppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Suppress an inherited (Bundled/Global) skill for THIS profile only — off
+        here, untouched everywhere else. Reloads only this profile so its next turn
+        drops the skill; other profiles never rebuild. 404 for a name not visible here."""
+        return await _suppress(name, runtime, True)
+
+    @p.delete("/skills/{name}/suppress")
+    async def unsuppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+        """Clear this profile's Suppression of a shared skill — back to inherited "on".
+        Reloads only this profile. 404 for a name not visible here."""
+        return await _suppress(name, runtime, False)
+
+    @p.post("/skills/{name}/state")
+    async def set_profile_skill_state(
+        name: str, req: SkillStateRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Enable/Disable a skill this profile OWNS, scoped to the profile — its own
+        Disable never leaves it (stored as the same per-profile off-record Suppression
+        uses). Reloads only this profile. 404 unless ``name`` is a Profile skill here
+        (a shared Bundled/Global skill is Suppressed, not Disabled, per profile)."""
+        row = next((r for r in _profile_skill_rows(runtime) if r["name"] == name), None)
+        if row is None or row["origin"] != ORIGIN_PROFILE:
+            return JSONResponse({"error": f"not a profile skill: {name}"}, status_code=404)
+        # A Disable of THIS profile's own skill — tagged OWN so a same-named Global
+        # purge leaves it intact; only this copy's Delete clears it.
+        _skill_store().set_suppressed(name, runtime.pid, not req.enabled, kind=DISABLE_OWN)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "skills": _profile_skill_rows(runtime)}
+
+    @p.delete("/skills/{name}")
+    async def delete_profile_skill(
+        name: str, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Delete one of THIS profile's own Profile skills from disk — removed for this
+        profile only; other profiles never rebuild. Clears this profile's off-record for
+        the name so a same-named re-install here is default-on. 404 for an unknown name;
+        409 for a shared Bundled/Global skill (delete a Global skill from Application →
+        Skills, which cascades; Bundled is never deletable)."""
+        row = next((r for r in _profile_skill_rows(runtime) if r["name"] == name), None)
+        if row is None:
+            return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
+        if row["origin"] != ORIGIN_PROFILE:
+            return JSONResponse(
+                {"error": f"{name} isn't this profile's own skill — can't delete it here"},
+                status_code=409,
+            )
+        prof_runtime = build_skills_runtime(runtime.config)
+        try:
+            _remove_skill_dir(prof_runtime, name)
+        except (SkillError, FileNotFoundError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        prof_runtime.invalidate()
+        # Clear only THIS profile's OWN off-record for the name (kind=OWN): a Profile
+        # skill lives in one profile. Leaving a same-named SHARED Suppression standing
+        # keeps a shadowed Global skill suppressed after the copy is gone — and this
+        # never touches the Global skill's install-wide/other-profile state.
+        _skill_store().set_suppressed(name, runtime.pid, False, kind=DISABLE_OWN)
+        await manager.reload(runtime.pid)
+        return {"ok": True, "skills": _profile_skill_rows(runtime)}
+
+    # ---- Install into THIS profile (registry / git / upload — ADR 0017) ----
+    # Same delegation as the Global /api/skills* install routes, but the target is the
+    # profile's own skills dir (build_skills_runtime over runtime.config) and only this
+    # profile reloads. Registry search is target-agnostic → done via GLOBAL /api/skills/search.
+
+    @p.post("/skills/install")
+    async def install_profile_skill(
+        req: SkillInstallRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Install into THIS profile from a registry id or a git URL + names; reloads
+        only this profile. Collision in the profile's dir replaces the prior skill. Same
+        body as the Global route (``_install_from_req``) — only the target + reload differ."""
+        try:
+            result = await _install_from_req(build_skills_runtime(runtime.config), req)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await manager.reload(runtime.pid)
+        return {"ok": True, **result, "skills": _profile_skill_rows(runtime)}
+
+    @p.post("/skills/discover")
+    async def discover_profile_skills(
+        req: SkillDiscoverRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """Scan a git URL for every SKILL.md (no install) for the profile's checklist."""
+        try:
+            return await _discover_git(req.git_url)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @p.post("/skills/discover-upload")
+    async def discover_profile_skills_upload(
+        file: UploadFile = File(...), runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        try:
+            return await _discover_upload_file(file)
+        except SkillSourceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @p.post("/skills/install-upload")
+    async def install_profile_skill_upload(
+        file: UploadFile = File(...),
+        names: str = Form(...),
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ) -> dict:
+        """Install selected skills from an uploaded source into THIS profile."""
+        try:
+            result = await _install_upload_into(build_skills_runtime(runtime.config), file, names)
+        except _SKILL_INSTALL_ERRORS as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await manager.reload(runtime.pid)
+        return {"ok": True, **result, "skills": _profile_skill_rows(runtime)}
 
     # ---- Memory: view + edit THIS profile's persona memory (profile.db) ----
     # (The shared universal "who the user is" doc is the global GET/POST /api/memory.)
@@ -2302,14 +2822,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         With an ABSOLUTE ``path`` — ONE Directory level inside a granted **Folder** (a
         directory outside the Root), authorized through the one resolver (``read``
-        suffices), scoped to the open Thread's ``chat_id`` (ADR 0006/0013), with the
-        usual noise Directories pruned. The tree lazy-expands one level per call. A
+        suffices), scoped to the open Thread (``chat_id``, plus the task decoded from it
+        so a Task page/run sees its task-scope Folders — ADR 0006/0013), with the usual
+        noise Directories pruned. The tree lazy-expands one level per call. A
         denied/missing path is a 404 — the same shape either branch."""
         if path and os.path.isabs(path):
             gw = runtime.gateway
             folders = gw.folders if gw is not None else None
+            task_id = await _scope_task_id(runtime, chat_id)
             mode = (
-                folders.mode_for_path(path, runtime.config.data_dir.name, chat_id)
+                folders.mode_for_path(path, runtime.config.data_dir.name, chat_id, task_id)
                 if folders is not None
                 else None
             )
@@ -2337,14 +2859,17 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """The Folder roots browsable in the open Thread — the tree's Thread-scoped
         Folder section (ADR 0013). Each root: ``{id, name, path (absolute), mode,
         exists}``, resolved through the same ``mode_for`` truth the ``@``-picker and the
-        agent's reads share, scoped by ``chat_id`` (absent → profile-level grants only).
-        A missing-path Folder is included as a badged, repointable root (``exists:
-        false``), never an error."""
+        agent's reads share, scoped by ``chat_id`` plus the task decoded from it (a Task
+        page carries ``task:{id}``, a run thread ``task-run:{run_id}``), so the open
+        Task/run's task-scope Folders surface, not just profile grants (absent scope →
+        profile-level grants only). A missing-path Folder is included as a badged,
+        repointable root (``exists: false``), never an error."""
         gw = runtime.gateway
         folders = gw.folders if gw is not None else None
         if folders is None:
             return {"roots": []}
-        return {"roots": folders.granted_roots(runtime.config.data_dir.name, chat_id)}
+        task_id = await _scope_task_id(runtime, chat_id)
+        return {"roots": folders.granted_roots(runtime.config.data_dir.name, chat_id, task_id)}
 
     @p.get("/files/search")
     async def search_workspace_files(
@@ -2357,13 +2882,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         error. Honors the same ``mode_for`` resolution the agent's reads use, so a
         denied file is never surfaced (ADR 0006/0012)."""
         gw = runtime.gateway
-        # A run's thread carries its task only via chat_id (``task-run:{run_id}``) —
-        # resolve it so the picker sees the run's task-scoped Folder grants too.
-        task_id = ""
-        if chat_id.startswith("task-run:"):
-            with contextlib.suppress(Exception):
-                run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
-                task_id = (run or {}).get("task_id") or ""
+        # The Thread's scope carries its task in the chat_id slot (a run thread's
+        # ``task-run:{run_id}``, a Task page's ``task:{id}``) — decode it so the picker
+        # sees the task-scoped Folder grants too (the one shared decoder).
+        task_id = await _scope_task_id(runtime, chat_id)
         return {
             "results": search_corpus(
                 runtime.config.workspace_dir,
@@ -2374,6 +2896,24 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 task_id=task_id,
             )
         }
+
+    @p.get("/files/mentions")
+    async def file_mentions(
+        path: str = "", chat_id: str = "", runtime: ProfileRuntime = Depends(get_runtime)
+    ) -> dict:
+        """The preview rail's "Mentioned in N threads" backlink (ADR 0014): the
+        current profile's Threads (Chats + Task Runs) whose transcript mentions the
+        previewed file, newest-first. ``path`` is the previewed file's path (relative
+        = Files-space, absolute = Folder); its OR-set of forms (absolute + workspace-
+        relative) is loose-substring-scanned over each stream's transcript + event
+        log. Read-only over this profile's own store — no auth/grant check beyond the
+        profile boundary. ``chat_id`` is accepted for signature parity with the other
+        ``/files`` routes but not needed (the scan is profile-wide)."""
+        gw = runtime.gateway
+        forms = mention_forms(runtime.config.workspace_dir, path)
+        if gw is None or not forms:
+            return {"threads": []}
+        return {"threads": await gw.threads_mentioning(forms)}
 
     @p.post("/files/upload")
     async def upload_workspace_files(
@@ -2386,10 +2926,17 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         clashes so nothing is overwritten (ADR 0007). A RELATIVE `dir` targets the
         Files-space sandbox (unchanged). An ABSOLUTE `dir` targets a Folder Directory:
         it authorizes through the one resolver requiring `read_write` (a `read`-only
-        Folder is `403`), scoped to `chat_id`, with the upload confined to that Folder's
-        subtree (ticket 05). A `dir` that escapes its root is rejected `400`."""
+        Folder is `403`), scoped to the open Thread (`chat_id` + the task decoded from
+        it), with the upload confined to that Folder's subtree (ticket 05). A `dir` that
+        escapes its root is rejected `400`."""
+        task_id = await _scope_task_id(runtime, chat_id)
         base, deny = _mutation_base(
-            runtime, dir, chat_id, miss_status=400, miss_msg="invalid target directory"
+            runtime,
+            dir,
+            chat_id,
+            task_id=task_id,
+            miss_status=400,
+            miss_msg="invalid target directory",
         )
         if deny is not None:
             return deny
@@ -2409,9 +2956,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         traversal escape / empty path. A RELATIVE `path` lands in the Files-space
         sandbox (unchanged). An ABSOLUTE `path` creates a Folder Directory: it
         authorizes through the one resolver requiring `read_write` (a `read`-only Folder
-        is `403`), scoped to `chat_id`, confined to that Folder's subtree (ticket 05)."""
+        is `403`), scoped to the open Thread (`chat_id` + the task decoded from it),
+        confined to that Folder's subtree (ticket 05)."""
+        task_id = await _scope_task_id(runtime, req.chat_id)
         base, deny = _mutation_base(
-            runtime, req.path, req.chat_id, miss_status=400, miss_msg="invalid path"
+            runtime,
+            req.path,
+            req.chat_id,
+            task_id=task_id,
+            miss_status=400,
+            miss_msg="invalid path",
         )
         if deny is not None:
             return deny
@@ -2438,8 +2992,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         # be absolute; move() then confines it under the source's root.
         if os.path.isabs(req.from_) and not os.path.isabs(req.to):
             return JSONResponse({"error": "invalid path"}, status_code=400)
+        task_id = await _scope_task_id(runtime, req.chat_id)
         base, deny = _mutation_base(
-            runtime, req.from_, req.chat_id, miss_status=404, miss_msg="source not found"
+            runtime,
+            req.from_,
+            req.chat_id,
+            task_id=task_id,
+            miss_status=404,
+            miss_msg="source not found",
         )
         if deny is not None:
             return deny
@@ -2471,7 +3031,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         The response also carries ``X-File-Mode`` (``read``|``read_write``) — the
         effective Grant mode — so the client gates its edit/rename/delete affordances
         off the same server truth a mutation is enforced against (ticket 04)."""
-        rp, mode = _resolve_file_path(runtime, path, chat_id)
+        task_id = await _scope_task_id(runtime, chat_id)
+        rp, mode = _resolve_file_path(runtime, path, chat_id, task_id)
         if rp is None:
             return JSONResponse({"error": "file not found"}, status_code=404)
         disp = "attachment" if download else "inline"
@@ -2505,8 +3066,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         (ticket 04)."""
         # Resolve the sandbox base BEFORE buffering the body: an unauthorized Folder
         # write is refused without reading its (capped) payload.
+        task_id = await _scope_task_id(runtime, chat_id)
         base, deny = _mutation_base(
-            runtime, path, chat_id, miss_status=404, miss_msg="file not found"
+            runtime, path, chat_id, task_id=task_id, miss_status=404, miss_msg="file not found"
         )
         if deny is not None:
             return deny
@@ -2554,8 +3116,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         resolver requiring ``read_write`` (a ``read``-only Folder is ``403``), scoped
         to ``chat_id``, and the delete is confined to that Folder's own subtree
         (emptied parents pruned up to — never including — the Folder root, ticket 04)."""
+        task_id = await _scope_task_id(runtime, chat_id)
         base, deny = _mutation_base(
-            runtime, path, chat_id, miss_status=404, miss_msg="file not found"
+            runtime, path, chat_id, task_id=task_id, miss_status=404, miss_msg="file not found"
         )
         if deny is not None:
             return deny

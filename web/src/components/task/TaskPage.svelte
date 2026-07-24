@@ -7,15 +7,16 @@
   // Save POSTs instead of PATCHes. No modal. Each run opens as a chat thread at /r/{id}.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api.js'
-  import { go, goTab, route } from '../../router.js'
-  import { profiles, tasks, pendingTaskEdit } from '../../store.js'
+  import { go, goTab, route, openOverlay } from '../../router.js'
+  import { profiles, tasks, pendingTaskEdit, SETTINGS_PAGE } from '../../store.js'
   import { getActiveProfileId } from '../../lib/profile.js'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.js'
-  import { llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { llmConfigs, loadLlmConfigs, LOGO, TYPE_LABEL, isUsable } from '../../lib/llm.js'
   import { folderGrantDiff, taskEditPatch } from '../../lib/taskEdit.js'
   import Icon from '../Icon.svelte'
   import AppBar from '../AppBar.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
+import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
   import ScheduleField from './ScheduleField.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.js'
@@ -41,6 +42,7 @@
   let eschedule = $state({ kind: 'manual', at: null, cron: null })
   let efolders = $state([])   // intended folder set: [{ id, path, name, exists, profileMode, mode }]
   let pickerOpen = $state(false)
+  let modelOpen = $state(false)   // model-override popover (edit mode)
   let roots = $state({})      // fs roots for the FolderPicker (cwd/home/workspace)
   let _createFoldersSeeded = false
 
@@ -71,6 +73,16 @@
   const modelRowLabel = $derived(
     task?.model ? ($llmConfigs.configs.find((c) => c.id === task.model)?.name || task.model) : 'Profile default'
   )
+  // Edit-mode picker: the buffered override config (null `emodel` = Profile default).
+  const emodelConfig = $derived($llmConfigs.configs.find((c) => c.id === emodel) || null)
+  // Read-only preview: the saved override config (null model = Profile default, shown as
+  // plain text; a stale/unknown id falls through to modelRowLabel's raw string).
+  const roModelConfig = $derived(task?.model ? ($llmConfigs.configs.find((c) => c.id === task.model) || null) : null)
+  // Buffer-only: pick a config id or null (Profile default). Unlike the composer's
+  // ModelSwitcher this does NOT switch the install-wide active config — it just stages
+  // the task's own override for Save.
+  function chooseModel(id) { emodel = id; modelOpen = false }
+  function openModelSettings() { modelOpen = false; openOverlay('settings', SETTINGS_PAGE.MODELS) }
 
   const tGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.task_id === task.id && !g.chat_id)
   const profileGrant = (f) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
@@ -170,6 +182,7 @@
     eschedule = t ? $state.snapshot(t.schedule) : { kind: 'manual', at: null, cron: null }
     efolders = t ? currentFolderState().map((g) => ({ ...g, mode: g.taskMode ?? g.profileMode })) : createFolderSeed()
     pickerOpen = false
+    modelOpen = false
   }
   // Create has no task yet (no task-scope grants), but the profile's own folders should
   // still be editable up front — pick them at their profile mode so a change becomes a
@@ -304,6 +317,8 @@
   const STAT_ICON = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
 </script>
 
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') modelOpen = false }} />
+
 <AppBar
   back={{ label: 'Tasks', onClick: () => goTab('tasks') }}
   title={inEdit ? (ename || (isNew ? 'New task' : task?.name) || 'Task') : (task?.name || 'Task')}
@@ -386,12 +401,71 @@
 
           <h2>Model</h2>
           {#if inEdit}
-            <select class="tpinput chpick" bind:value={emodel}>
-              <option value={null}>Profile default</option>
-              {#each $llmConfigs.configs as m (m.id)}<option value={m.id}>{m.name} ({m.model})</option>{/each}
-            </select>
+            <!-- Same popover vocabulary as the composer's ModelSwitcher (.modelsw-*,
+                 app.css) so the two model pickers read as one control. The menu drops
+                 DOWN here (.tpmodel override) since the row sits mid-page, and the extra
+                 "Profile default" row maps to a null override. -->
+            <div class="modelsw tpmodel">
+              <div class="modelsw-wrap">
+                <button class="modelsw-btn" onclick={() => (modelOpen = !modelOpen)}
+                        aria-haspopup="menu" aria-expanded={modelOpen} title="Model for this task">
+                  {#if emodelConfig}
+                    <img class="modelsw-logo" src={LOGO[emodelConfig.type]} alt="" />
+                    <span class="modelsw-name">{emodelConfig.name}</span>
+                    <span class="modelsw-dot" class:warn={!isUsable(emodelConfig)}></span>
+                  {:else}
+                    <span class="modelsw-name">{emodel ? emodel : 'Profile default'}</span>
+                  {/if}
+                  <Icon name="chevron-down" size={13} />
+                </button>
+
+                {#if modelOpen}
+                  <button class="modelsw-scrim" aria-label="Close model menu" onclick={() => (modelOpen = false)}></button>
+                  <div class="modelsw-menu" role="menu">
+                    <button class="modelsw-item" class:active={emodel == null} role="menuitem" onclick={() => chooseModel(null)}>
+                      <span class="modelsw-itemmeta">
+                        <span class="modelsw-name">
+                          Profile default{#if emodel == null}<Icon name="check" size={12} />{/if}
+                        </span>
+                        <span class="modelsw-sub">Use the profile's active model</span>
+                      </span>
+                    </button>
+                    {#each $llmConfigs.configs as c (c.id)}
+                      <button
+                        class="modelsw-item" class:active={c.id === emodel}
+                        role="menuitem"
+                        disabled={!isUsable(c)}
+                        title={isUsable(c) ? '' : 'Not ready — add a key or sign in via Settings'}
+                        onclick={() => chooseModel(c.id)}
+                      >
+                        <img class="modelsw-logo" src={LOGO[c.type]} alt="" />
+                        <span class="modelsw-itemmeta">
+                          <span class="modelsw-name">
+                            {c.name}{#if c.id === emodel}<Icon name="check" size={12} />{/if}
+                          </span>
+                          <span class="modelsw-sub">{TYPE_LABEL[c.type]} · {c.model}</span>
+                        </span>
+                        <span class="modelsw-dot" class:warn={!isUsable(c)}></span>
+                      </button>
+                    {/each}
+                    <button class="modelsw-manage" role="menuitem" onclick={openModelSettings}>Manage models…</button>
+                  </div>
+                {/if}
+              </div>
+            </div>
           {:else}
-            <p class="tpmeta">{modelRowLabel}</p>
+            <!-- Read-only: the same logo + name + health-dot vocabulary as the picker
+                 trigger, but a static (unclickable) row — the model reads as one control
+                 across view and edit. A null model / stale id shows plain text. -->
+            <div class="tpmodel-view">
+              {#if roModelConfig}
+                <img class="modelsw-logo" src={LOGO[roModelConfig.type]} alt="" />
+                <span class="modelsw-name">{roModelConfig.name}</span>
+                <span class="modelsw-dot" class:warn={!isUsable(roModelConfig)}></span>
+              {:else}
+                <span class="modelsw-name">{modelRowLabel}</span>
+              {/if}
+            </div>
           {/if}
 
           <h2>Folders</h2>
@@ -406,9 +480,7 @@
                        2-position Read/Read+write toggle + an explicit Delete, not the
                        3-position switch profile folders use. Mirrors TaskFolders. -->
                   <div class="fctl">
-                    <span class="tglstate">{modeLabel(f.mode)}</span>
-                    <button class="tgl" class:on={f.mode === 'read_write'} role="switch" aria-checked={f.mode === 'read_write'} aria-label="Allow writing"
-                      onclick={() => setFolderMode(f, f.mode === 'read_write' ? 'read' : 'read_write')}></button>
+                    <WriteSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
                     <button class="iconbtn" title="Remove folder" aria-label="Remove folder" onclick={() => setFolderMode(f, null)}><Icon name="trash" size={14} /></button>
                   </div>
                 </div>
@@ -510,7 +582,20 @@
   .tpinput { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--ink);
     border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--bg); }
   .tpprompt-input { line-height: 1.5; resize: vertical; }
-  .tpinput.chpick { padding-right: 30px; } /* clears the shared chevron (.chpick, app.css) */
+
+  /* The Model picker reuses the composer's .modelsw-* popover (app.css) verbatim. Two
+     deltas for this context: the trigger aligns to the left edge like the other field
+     controls (not the composer's centered pill), and the menu drops DOWN — the composer's
+     rule opens it UPWARD because it's pinned to the screen bottom, but this row is mid-page. */
+  .tpmodel { display: flex; }
+  /* Pull the pill left by its own horizontal padding so the logo lines up flush with the
+     column (and the read-only row) — without stripping the padding, which would make the
+     content hug the pill's rounded edge once the hover/active fill shows. */
+  .tpmodel .modelsw-btn { margin-left: -9px; }
+  .tpmodel :global(.modelsw-menu) { top: calc(100% + 6px); bottom: auto; }
+  /* Read-only mirror of the picker trigger: same logo/name/dot row, but static — no
+     pill background, hover, or pointer. Sits flush-left like the other .tpmeta values. */
+  .tpmodel-view { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); }
 
   /* A 2-position pill toggle for Active/Paused — same knob-on-a-track vocabulary
      as AccessSwitch's .sw3, simplified to a plain checkbox (no cycling states). */
@@ -549,18 +634,8 @@
   .fname { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fmode { flex: none; font-size: 13px; color: var(--muted); }
 
-  /* Task-folder edit control: the label + 2-position toggle (Read / Read+write) and a
-     trash button, copied from TaskFolders so both surfaces read identically. */
+  /* Task-folder edit control: the WriteSwitch (Read / Read+write) + a trash button. */
   .fctl { flex: none; display: inline-flex; align-items: center; gap: 10px; }
-  .tglstate { min-width: 74px; text-align: right; font-size: 13px; color: var(--ink); }
-  /* 2-position iOS switch (off = Read, green; on = Read+write, warn) — soft tinted fill
-     + a hairline tinted border (inset shadow, so the knob geometry is untouched). */
-  .tgl { position: relative; flex: none; width: 38px; height: 22px; padding: 0; border: none; border-radius: 999px; cursor: pointer;
-    background: color-mix(in srgb, var(--success) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 32%, var(--line));
-    transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-  .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur-fast) var(--ease-out); }
-  .tgl.on { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 32%, var(--line)); }
-  .tgl.on::after { transform: translateX(16px); }
 
   .addfolder { margin-top: 12px; }
   .tppicker { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px; background: var(--surface-sunk, var(--bg)); }
@@ -568,11 +643,9 @@
   .permrow { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 10px; margin-bottom: 6px; }
   .permrow code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* Icon-only action buttons (Edit / Delete / revoke a permission rule) — same
-     bordered-square shape as the composer's icon buttons, sized for a 15px glyph. */
-  .iconbtn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: var(--radius-sm); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
-  .iconbtn:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--accent-soft); }
-  .iconbtn:disabled { opacity: .5; cursor: default; }
+  /* .iconbtn (Edit / Delete / revoke) and the .open button family are the app-wide
+     canonical rules (app.css) — .open is scoped to .taskpage there, .iconbtn is a
+     bare global. Nothing to reproduce here. */
 
   /* Run rows: same bordered-card row vocabulary as Settings' .llmrow / .mcprow
      (border + radius-sm + hover fill), with the .drow.unseen accent-tint treatment
@@ -590,25 +663,6 @@
   .runrow.unseen .runsum { color: var(--ink); font-weight: var(--fw-semibold); }
   .runsum { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* The following were app.css rules scoped to an ancestor (.panel/.modal/.drow)
-     that TaskPanel.svelte's root supplied — TaskPage's root carries neither class,
-     so they're reproduced here (Svelte-scoped to this component only). */
-  .open {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
-    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
-    border-radius: var(--radius-sm); padding: 7px 14px;
-    transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
-  }
-  .open:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--accent-soft); }
-  .open:active { background: var(--code); }
-  .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
-  .open.danger { border-color: color-mix(in srgb, #d8552f 55%, var(--line)); color: #d8552f; background: none; }
-  .open.danger:hover { border-color: #d8552f; color: #fff; background: #d8552f; }
-  /* The one CTA that matters (Run now / Save) gets the accent-outlined ".open.primary"
-     treatment already used for Codex's single primary action. */
-  .taskpage .open.primary { border-color: var(--accent); color: var(--accent); }
-  .taskpage .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
   /* Delete confirm is a popover anchored under the trash button (not inline in
      .tpactions) so opening it never widens the header row / shifts the layout. */
   .delwrap { position: relative; display: inline-flex; flex: none; }
@@ -618,11 +672,11 @@
     padding: 8px 10px; background: var(--surface-elevated); border: 1px solid var(--line);
     border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
   }
-  .delconfirm .confirm { color: #d8552f; font-size: 13px; }
+  .delconfirm .confirm { color: var(--danger); font-size: 13px; }
   .taskerror { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 8px; padding: 9px 11px; font-size: var(--text-sm); line-height: var(--leading-snug); color: var(--ag2-observer); background: color-mix(in srgb, var(--ag2-observer) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ag2-observer) 28%, transparent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
   .statusicon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--muted); }
-  .statusicon.completed { color: #3ba55d; }
-  .statusicon.failed { color: #d8552f; }
+  .statusicon.completed { color: var(--success); }
+  .statusicon.failed { color: var(--danger); }
   .statusicon.cancelled { color: var(--muted); }
   .statusicon.running { color: var(--info); }
   .statusicon.needs_input { color: var(--accent); }

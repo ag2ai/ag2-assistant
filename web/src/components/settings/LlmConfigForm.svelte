@@ -252,7 +252,7 @@
     </div>
   {/if}
 
-  {#if err}<p class="muted" style="color:#d8552f;font-size:13px;margin:0">{err}</p>{/if}
+  {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
   <div class="keyrow" style="justify-content:flex-end">
     {#if testing}
       <span class="llmtest">testing…</span>

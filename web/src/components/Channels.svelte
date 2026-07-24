@@ -233,9 +233,9 @@
     border: none; background: none; padding: 6px 4px; cursor: pointer;
     font: inherit; font-size: var(--text-sm); color: var(--text-muted);
   }
-  .chclear:hover:not(:disabled) { color: var(--danger, #d8552f); }
+  .chclear:hover:not(:disabled) { color: var(--danger, var(--danger)); }
   .chclear:disabled { opacity: .6; cursor: default; }
 
   .chmuted { font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
-  .cherr { font-size: var(--text-sm); color: var(--danger, #d8552f); margin: 0 0 6px; }
+  .cherr { font-size: var(--text-sm); color: var(--danger, var(--danger)); margin: 0 0 6px; }
 </style>

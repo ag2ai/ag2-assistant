@@ -102,5 +102,5 @@
   }
   .permempty { font-size: 13px; margin: 0; }
   .permhint { font-size: 12px; margin: 2px 0 0; }
-  .permerr { color: #d8552f; font-size: 13px; margin: 0; }
+  .permerr { color: var(--danger); font-size: 13px; margin: 0; }
 </style>

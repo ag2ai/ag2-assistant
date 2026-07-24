@@ -24,6 +24,28 @@ _MAX_WRITE_BYTES = 5 * 1024 * 1024
 # response (search, not enumeration); the user narrows by typing more.
 SEARCH_LIMIT = 20
 
+# Directories whose subtrees are dev noise — hidden from the folder picker and
+# pruned during Folder walks/listings. The canonical list; ``filesearch`` reuses it.
+SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        "dist",
+        "build",
+        ".next",
+        ".idea",
+    }
+)
+
 
 def slugify(text: str, default: str = "task", maxlen: int = 48) -> str:
     """A filesystem-safe slug from arbitrary text."""
@@ -116,6 +138,34 @@ def resolve(workspace_dir, rel: str) -> Path | None:
     escapes the workspace root (path-traversal guard) or isn't a file."""
     p = _inside(_root(workspace_dir), rel)
     return p if p is not None and p.is_file() else None
+
+
+def mention_forms(workspace_dir, path: str) -> list[str]:
+    """The OR-set of full-path strings a transcript scan matches for a previewed
+    file's "Mentioned in N threads" backlink (ADR 0014).
+
+    A Files-space (relative) path yields BOTH its workspace-**relative** form (as a
+    produce/attachment event or bare prose writes it) and its **absolute** form (as
+    an ``@`` ``Referenced files:`` block writes it). A Folder (absolute) path yields
+    its absolute form, plus its workspace-relative form iff it lies under the
+    workspace root. Never the bare basename. A blank path yields no forms (the scan
+    is skipped). Existence is not required — the match is path-historical."""
+    p = (path or "").strip()
+    if not p:
+        return []
+    root = _root(workspace_dir)
+    forms: list[str] = []
+    if os.path.isabs(p):
+        forms.append(p)
+        try:
+            forms.append(str(Path(p).resolve().relative_to(root)))
+        except (ValueError, OSError):
+            pass  # not under the workspace — absolute form only
+    else:
+        forms.append(p)
+        forms.append(str(root / p))
+    seen: set[str] = set()
+    return [f for f in forms if f and not (f in seen or seen.add(f))]
 
 
 def _hash(data: bytes) -> str:
@@ -378,7 +428,8 @@ def match_rank(query: str, name: str, rel_path: str) -> int | None:
 def list_dirs(path: str) -> dict | None:
     """Immediate subdirectories of `path` (non-recursive) — for the folder picker that
     lets the user choose a Folder to register anywhere on the host (not workspace-scoped).
-    Dotfolders are hidden. Returns ``{path, parent, dirs:[{name, path}]}`` (absolute
+    Dotfolders and dev-noise dirs (``__pycache__``, ``node_modules``, … — see
+    ``SKIP_DIRS``) are hidden. Returns ``{path, parent, dirs:[{name, path}]}`` (absolute
     paths), or None if `path` isn't a readable directory."""
     try:
         p = Path(path or "~").expanduser().resolve()
@@ -389,8 +440,8 @@ def list_dirs(path: str) -> dict | None:
     dirs: list[dict] = []
     try:
         for item in p.iterdir():
-            if item.name.startswith("."):
-                continue  # hide dotfolders (.git, .venv, …) by default
+            if item.name.startswith(".") or item.name in SKIP_DIRS:
+                continue  # hide dotfolders + dev-noise dirs (__pycache__, node_modules, …)
             try:
                 if item.is_dir():
                     dirs.append({"name": item.name, "path": str(item)})

@@ -24,7 +24,8 @@
   // Directory delete — alongside the agent's own writes.
   import { onMount, tick, untrack } from 'svelte'
   import { openAsideFile, closeAside, route } from '../router.js'
-  import { reveal, thread } from '../store.js'
+  import { reveal } from '../store.js'
+  import { threadScope } from '../lib/threadScope.js'
   import { foldersStore } from '../lib/folders.js'
   import { api } from '../transport/api.js'
   import { ancestorDirs, iconForFile } from '../lib/preview.js'
@@ -163,10 +164,10 @@
   }
 
   // ---- Granted Folders (a Thread-scoped section beneath the Files-space tree, ADR 0013) ----
-  // The Folder roots reachable in the OPEN THREAD (chat overrides/blocks applied), each
-  // lazy-expanded one Directory level at a time. `chatId` is the open Thread's id ('' when
-  // none is open → profile-level grants only); it re-scopes the whole section on a switch.
-  const chatId = $derived($thread.chat || '')
+  // The Folder roots reachable in the OPEN THREAD (chat/task overrides/blocks applied),
+  // lazy-expanded one Directory level at a time. `chatId` is the Thread's scope token
+  // (lib/threadScope.js; '' → profile grants only) and re-scopes the section on a switch.
+  const chatId = $derived($threadScope)
   let folderRoots = $state([])                 // [{id,name,path,mode,exists}]
   let folderErr = $state('')
   let folderLevels = $state(new Map())         // abs dir path -> {dirs:[{name,path}], files:[{name,path,size}], err?}
@@ -779,11 +780,11 @@
   .ftspacer { flex: 1; }
   .ftsel { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--accent); }
 
-  .fterr { margin: 6px 8px 0; color: #d8552f; font-size: 12px; }
+  .fterr { margin: 6px 8px 0; color: var(--danger); font-size: 12px; }
   .ftlink { border: none; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; padding: 0; }
   .ftlink:hover { text-decoration: underline; }
   .ftlink.danger { color: var(--muted); }
-  .ftlink.danger:hover { color: #d8552f; }
+  .ftlink.danger:hover { color: var(--danger); }
   .ftlink.danger:disabled { cursor: default; opacity: .6; }
 
   .fttree { flex: 1; overflow-y: auto; padding: 4px 0; min-height: 0; }
@@ -806,7 +807,7 @@
   .ftinput { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 1px 5px; border: 1px solid var(--accent); border-radius: 5px; background: var(--surface); color: var(--text); }
 
   .ftconfirm { flex: none; display: inline-flex; align-items: center; gap: 7px; margin-left: auto; }
-  .ftconfirm .confirm { color: #d8552f; font-size: 12px; white-space: nowrap; }
+  .ftconfirm .confirm { color: var(--danger); font-size: 12px; white-space: nowrap; }
 
   .ftkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-left: auto; border: none; background: none; color: var(--muted); border-radius: 5px; opacity: 0; cursor: pointer; }
   .ftrow:hover .ftkebab, .ftrow:focus-within .ftkebab { opacity: .55; }
@@ -814,7 +815,7 @@
   .ftmenu { position: fixed; z-index: var(--z-modal); min-width: 150px; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow, 0 8px 28px rgba(0,0,0,.18)); }
   .ftmitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: none; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; border-radius: 6px; cursor: pointer; }
   .ftmitem:hover { background: var(--surface-hover, var(--code)); }
-  .ftmitem.danger { color: #d8552f; }
+  .ftmitem.danger { color: var(--danger); }
   .ftmdiv { height: 1px; margin: 4px 6px; background: var(--line); }
 
   .ftmuted { color: var(--muted); font-size: 13px; padding: 8px 12px; }
@@ -827,6 +828,6 @@
   .ftfolder.missing .ftcaret { opacity: .4; cursor: default; }
   .ftbadge { flex: none; margin-left: auto; padding: 1px 6px; border-radius: 999px; background: var(--code); color: var(--muted); font-size: 10px; font-family: var(--mono); white-space: nowrap; }
   .ftbadge.rw { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
-  .ftbadge.warn { margin-left: 6px; background: color-mix(in srgb, #d8552f 16%, transparent); color: #d8552f; }
+  .ftbadge.warn { margin-left: 6px; background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
   .ftcaption { flex: none; margin: 0; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

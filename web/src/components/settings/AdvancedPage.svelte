@@ -1,10 +1,14 @@
 <script>
-  // Settings → Advanced: persona memory + the AG2 architecture map and live-view toggle.
+  // Settings → Advanced: shared identity ("Who you are"), turn budget, and the AG2
+  // architecture map + live-view toggle. The identity doc is install-wide
+  // (globalMemory/setGlobalMemory), so it lives here rather than the per-profile
+  // Profile Memory tab (ADR 0015), edited inline.
   import { getSettings } from './context.svelte.js'
   import { ag2View } from '../../store.js'
   import { toggleAsideInspector } from '../../router.js'
   import { api } from '../../transport/api.js'
   import Icon from '../Icon.svelte'
+  import MemoryDocEditor from './MemoryDocEditor.svelte'
 
   const ctx = getSettings()
   let replyTimeout = $state('')
@@ -23,7 +27,7 @@
   }
 </script>
 
-<div class="setsec">Turn budget</div>
+<div class="setgroup">Turn budget</div>
 <div class="setrowwrap">
   <div class="setrow">
     <span class="sk"><Icon name="clock" size={15} /> Chat turn timeout</span>
@@ -36,16 +40,15 @@
   <button class="open" disabled={ctx.busy} onclick={saveReplyTimeout}>Save</button>
 </div>
 
-<div class="setsec">Memory</div>
-<div class="setrowwrap">
-  <div class="setrow">
-    <span class="sk"><Icon name="brain" size={15} /> Memory</span>
-    <span class="sv">what the assistant has learned about you</span>
-  </div>
-  <button class="open" onclick={ctx.openMemory}>View & edit</button>
-</div>
+<div class="setgroup">Who you are</div>
+<MemoryDocEditor
+  load={() => api.globalMemory().then((r) => r.text)}
+  save={(t) => api.setGlobalMemory(t)}
+  hint="Identity facts — name, location, timezone, family, writing voice — that are true no matter which profile you're in. Shared across every profile."
+  placeholder="(nothing here yet)"
+/>
 
-<div class="setsec">AG2</div>
+<div class="setgroup">AG2</div>
 <div class="setrowwrap">
   <div class="setrow">
     <span class="sk"><Icon name="zap" size={15} /> Powered by AG2</span>

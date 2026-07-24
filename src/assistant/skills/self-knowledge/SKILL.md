@@ -53,7 +53,7 @@ you hold it in all of them.
 | Profiles | Personas — add, edit, switch |
 | Models | The LLM configurations and which one is active |
 | Secrets | API keys |
-| Folders | Folders and their grants (see below) |
+| Skills | Every skill the agent can use — enable/disable each, install more |
 | Tools & Permissions | Tool and sandbox configuration, command permissions |
 | Integrations | Google sign-in, MCP servers |
 | Advanced | Everything else — including **View & edit** for memory |
@@ -100,7 +100,7 @@ never the reason.
 
 When access is missing, say which folder and at what mode, and offer the two
 real routes: ask now and the user can approve the prompt (which can grant it to
-this chat or this persona), or add it in Settings → Folders.
+this chat or this persona), or add it in Settings → Profiles (the Folders tab).
 
 A Folder whose directory no longer exists on disk isn't an error — it's flagged
 and can be repointed at a new path.

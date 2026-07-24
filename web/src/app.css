@@ -96,10 +96,15 @@
      whole strip and only one is visible at a time. */
   .settings .setnavbtn { flex: none; width: auto; white-space: nowrap; }
 }
-/* Top-level divider between the major groups of a page (e.g. Models → Text / Live).
-   Heavier than .setsec so nested .setsec sub-headers still read as subordinate. */
+/* The standard section header for every Settings page (Profiles, Models → Text /
+   Live, Secrets, Channels, Turn budget, …): title-case, semibold, with a hairline
+   rule. One idiom across all pages. Heavier than .setsec so a nested .setsec
+   sub-header (e.g. Models' "Start from a template") still reads as subordinate. */
 .settings .setgroup { font-size: 13px; font-weight: var(--fw-semibold); letter-spacing: .2px; color: var(--ink); margin: 14px 0 4px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
 .settings .setgroup:first-child { margin-top: 0; }
+/* The one section subtitle/description style — replaces the old ad-hoc inline
+   `p.muted` (12–13px) and the local `.phint`. Sits right under a .setgroup. */
+.settings .setsub { font-size: var(--text-sm); color: var(--text-muted); margin: 0 0 12px; }
 /* Ghost "add" affordance (Add model / Add live model) — matches Profiles' "Add
    profile": a muted text button + plus icon that hugs its content (align-self so it
    doesn't stretch the flex column) and brightens on hover. */
@@ -112,9 +117,12 @@
 .settings .addbtn:hover:not(:disabled) { color: var(--text); }
 .settings .addbtn:disabled { opacity: .5; cursor: default; }
 .settings .addbtn:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+/* Subordinate sub-header nested under a .setgroup (e.g. Models' "Start from a
+   template"): the lighter uppercase eyebrow, no rule. Not a page section header. */
 .settings .setsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 8px 0 2px; }
-/* Marks a section that applies to the whole install, not the titled profile. */
-.settings .setsec .setwide { font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+/* Pill marking a section that applies to the whole install, not the titled profile.
+   Lives inside either header idiom (.setgroup or .setsec). */
+.settings .setwide { display: inline-block; vertical-align: 1px; font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: none; color: var(--muted); background: var(--surface-sunk, rgba(0,0,0,.05)); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
 .settings .keyrow { display: flex; align-items: center; gap: 8px; }
 .settings .keyrow .kp { flex: none; width: 78px; font-size: 13px; }
 .settings .keyrow input, .settings .keyrow select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background-color: var(--bg); color: var(--ink); }
@@ -125,24 +133,69 @@
 .settings .focuspill:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 .settings .focuspill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .settings .focuspill:disabled { opacity: .6; cursor: default; }
-/* Secondary action buttons (Save / Change voice / Cancel task / Close …) —
-   bordered "greyed" pill: soft radius, icon + label, accent on hover. Shared by
-   modal and task-panel actions so every secondary button reads the same. */
-.modal .open, .panel .open {
+/* ── Buttons: the single source of truth ─────────────────────────────────────
+   Three roles, so nobody re-invents them per page:
+     .open            secondary/dismiss (Cancel / Close / Change voice) — NEUTRAL hover
+     .open.primary    the ONE accent-outlined CTA per view (Save / Run now / Connect)
+     .open.danger     destructive (Delete)
+   plus .iconbtn (below) for icon-only square buttons.
+
+   Accent is reserved for .primary — a secondary must never hover accent, or it
+   reads as the primary CTA (that's why Cancel looked wrong next to Save).
+
+   `.open` MUST stay ancestor-scoped: the bare class is also a state modifier
+   elsewhere (.shdot.open, MarketBoard/NewsWire class:open), so a global `.open`
+   would style those as buttons. A page that renders outside a modal/panel opts in
+   by adding its root class to the list below (today: .taskpage, .tf) — never by
+   copying this block into the component. */
+.modal .open, .panel .open, .taskpage .open, .tf .open {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
   border: 1px solid var(--line); background: var(--surface); color: var(--ink);
   border-radius: var(--radius-sm); padding: 7px 14px;
   transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
-.modal .open:hover, .panel .open:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--accent-soft); }
-.modal .open:active, .panel .open:active { background: var(--code); }
-.modal .open:disabled, .panel .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
+.modal .open:hover, .panel .open:hover, .taskpage .open:hover, .tf .open:hover { border-color: color-mix(in srgb, var(--ink) 22%, var(--line)); background: var(--code); }
+.modal .open:active, .panel .open:active, .taskpage .open:active, .tf .open:active { background: var(--code); }
+.modal .open:disabled, .panel .open:disabled, .taskpage .open:disabled, .tf .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
+/* Primary CTA — accent-outlined, filled on hover. The one action that matters. */
+.modal .open.primary, .panel .open.primary, .taskpage .open.primary, .tf .open.primary { border-color: var(--accent); color: var(--accent); }
+.modal .open.primary:hover:not(:disabled), .panel .open.primary:hover:not(:disabled), .taskpage .open.primary:hover:not(:disabled), .tf .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
 /* Destructive action (e.g. Delete task) + its inline confirm. */
-.modal .open.danger, .panel .open.danger { border-color: color-mix(in srgb, #d8552f 55%, var(--line)); color: #d8552f; background: none; }
-.modal .open.danger:hover, .panel .open.danger:hover { border-color: #d8552f; color: #fff; background: #d8552f; }
+.modal .open.danger, .panel .open.danger, .taskpage .open.danger, .tf .open.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); background: none; }
+.modal .open.danger:hover, .panel .open.danger:hover, .taskpage .open.danger:hover, .tf .open.danger:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
+/* Icon-only square button (Edit / Delete / revoke). Muted glyph, NEUTRAL hover —
+   matches the app's other icon buttons (.cbtn / .fttool / .rowkebab), never accent.
+   Safe as a bare global: `.iconbtn` is not overloaded as a state modifier. */
+.iconbtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 30px; height: 30px; padding: 0; border: 1px solid var(--line);
+  background: var(--surface); color: var(--muted); border-radius: var(--radius-sm); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.iconbtn:hover { color: var(--ink); background: var(--code); }
+.iconbtn:disabled { opacity: .5; cursor: default; }
+/* On/Off toggle switch — the single 2-position control for enable/disable across
+   Settings (Skills install-wide + per-profile). A track with a sliding knob; the
+   track fills accent when on. Use with role="switch" + aria-checked and a
+   class:on binding. Replaces the old Enable/Disable / Suppress text buttons. */
+.settings .setswitch {
+  flex: none; position: relative; width: 34px; height: 20px; padding: 0;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface-sunk, var(--code)); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.settings .setswitch::after {
+  content: ''; position: absolute; top: 1px; left: 1px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--muted);
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.settings .setswitch.on { background: var(--accent); border-color: var(--accent); }
+.settings .setswitch.on::after { transform: translateX(14px); background: #fff; }
+.settings .setswitch:disabled { opacity: .5; cursor: default; }
+.settings .setswitch:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .panel .delconfirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.panel .delconfirm .confirm { color: #d8552f; font-size: 13px; }
+.panel .delconfirm .confirm { color: var(--danger); font-size: 13px; }
 
 /* Memory editor */
 .modal.memory { width: min(720px, 92vw); height: min(88vh, 940px); }
@@ -151,7 +204,7 @@
 .memory .msection .small { margin: 0; font-size: 12px; }
 .memory textarea { flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: inherit; font-size: 13px; line-height: 1.5; background: var(--bg); color: var(--ink); resize: none; }
 .memory .mfoot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-.memory .okmsg { color: #3ba55d; font-size: 13px; }
+.memory .okmsg { color: var(--success); font-size: 13px; }
 .settings .linkbtn { flex: none; border: none; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
 /* Benign links hover to primary text (near-white in dark, ink in light — theme-safe;
    a literal white would vanish on the light theme). Only destructive actions
@@ -171,7 +224,7 @@
 .settings .mcpmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
 .settings .mcpmeta strong { color: var(--ink); font-size: 13px; }
 .settings .mcpmeta span { overflow-wrap: anywhere; }
-.settings .mcpbad { color: #d8552f; }
+.settings .mcpbad { color: var(--danger); }
 .settings .mcpform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .settings .mcpform input, .settings .mcpform textarea { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--bg); color: var(--ink); }
 .settings .mcpform textarea { grid-column: 1 / -1; min-height: 74px; font-family: var(--mono); font-size: 12px; resize: none; }
@@ -218,11 +271,11 @@
 .settings .llmbadge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; }
 .settings .llmsub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .settings .llmkey { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--surface-sunk); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; }
-.settings .llmkey.warn { color: #d8552f; border-color: color-mix(in srgb, #d8552f 45%, var(--line)); }
+.settings .llmkey.warn { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
 /* Per-row Test status — the McpServers health-map vocabulary (grey → green/red). */
 .settings .llmtest { font-size: 12px; color: var(--muted); }
-.settings .llmtest.ok { color: #3ba55d; }
-.settings .llmtest.bad { color: #d8552f; }
+.settings .llmtest.ok { color: var(--success); }
+.settings .llmtest.bad { color: var(--danger); }
 /* Inline config form (create/edit) — stacked label + field, in a sunk card. */
 .settings .llmform { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface-sunk); }
 .settings .llmfield { display: flex; flex-direction: column; gap: 5px; }
@@ -253,8 +306,8 @@
 /* task rows: status icon + title (+ recurrence / unread badges) */
 .drow.trow { display: flex; align-items: center; gap: 8px; }
 .drow .statusicon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--muted); }
-.drow .statusicon.completed { color: #3ba55d; }
-.drow .statusicon.failed { color: #d8552f; }
+.drow .statusicon.completed { color: var(--success); }
+.drow .statusicon.failed { color: var(--danger); }
 .drow .statusicon.running { color: var(--info); }
 .drow .statusicon.scheduled { color: var(--success); }
 .drow .ttitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -282,11 +335,12 @@
 
 .msg { display: flex; margin: 18px 0; }
 .msg.user { justify-content: flex-end; }
-.bubble { max-width: 80%; padding: 12px 16px; border-radius: var(--radius-md); line-height: 1.6; font-size: 15px; overflow-wrap: anywhere; }
-/* User messages: a neutral Surface card, right-aligned — the accent shows only as
-   the bubble's faint tint + thin border (tokens in colors.css), never a solid fill,
-   so any workspace accent stays readable. */
-.msg.user .bubble { background: var(--user-bg); color: var(--user-ink); border: 1px solid var(--user-bubble-border); border-bottom-right-radius: 6px; white-space: pre-wrap; max-width: 72%; }
+.bubble { max-width: 80%; padding: 12px 16px; border-radius: var(--radius-bubble); line-height: 1.6; font-size: 15px; overflow-wrap: anywhere; }
+/* User messages (Signal): a neutral Surface card, right-aligned. The workspace
+   accent shows only as a thin inset "signal bar" on the leading edge + a faint
+   tint/border (tokens in colors.css) — never a solid fill, so any accent stays
+   readable. Matches the sidebar's active-row signal language. */
+.msg.user .bubble { background: var(--user-bg); color: var(--user-ink); border: 1px solid var(--user-bubble-border); box-shadow: inset 2px 0 0 var(--accent); white-space: pre-wrap; max-width: 72%; }
 /* A message fed to the running turn: dimmed until the agent picks it up (it resolves to
    a normal bubble when AG2 drains it), with a line saying that's what's happening. */
 .msg.user.queued { flex-direction: column; align-items: flex-end; gap: 4px; }
@@ -440,7 +494,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .toolcards { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
 .toolcard { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; max-width: 100%; }
 .toolcard .tcicon { display: inline-flex; align-items: center; color: var(--muted); line-height: 1; }
-.toolcard .tclink { background: none; border: none; padding: 0; color: var(--accent, #d8552f); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+.toolcard .tclink { background: none; border: none; padding: 0; color: var(--accent, var(--danger)); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .toolcard .tcdl { display: inline-flex; align-items: center; background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); }
 .toolcard .tcdl:hover { color: var(--text, inherit); }
 .toolcard.gone .tcname { color: var(--muted); text-decoration: line-through; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -466,15 +520,15 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .subagent .srow { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .subagent .sdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--info); }
 .subagent.running .sdot { animation: blink 1.2s infinite both; }
-.subagent.completed { border-left-color: #1f9d55; }
-.subagent.completed .sdot { background: #1f9d55; }
-.subagent.failed, .subagent.cancelled { border-left-color: #c2410c; }
-.subagent.failed .sdot, .subagent.cancelled .sdot { background: #c2410c; }
+.subagent.completed { border-left-color: var(--success); }
+.subagent.completed .sdot { background: var(--success); }
+.subagent.failed, .subagent.cancelled { border-left-color: var(--danger); }
+.subagent.failed .sdot, .subagent.cancelled .sdot { background: var(--danger); }
 .subagent .sname { font-size: 12px; font-weight: 700; color: var(--ink); text-transform: capitalize; overflow-wrap: anywhere; }
 .subagent .sstatus { margin-left: auto; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .subagent .sobj { margin-top: 5px; font-size: 13px; color: var(--ink); overflow-wrap: anywhere; }
 .subagent .sres, .subagent .serr { margin-top: 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-.subagent .serr { color: #c2410c; }
+.subagent .serr { color: var(--danger); }
 .subagent .srow { cursor: pointer; user-select: none; }
 .subagent .scount { flex: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--line); color: var(--muted); font-size: 10px; line-height: 16px; text-align: center; }
 .subagent .scaret { flex: none; margin-left: 6px; font-size: 10px; color: var(--muted); }
@@ -540,8 +594,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* The composer input is one of the most prominent elements on the page: its own
    elevated surface, a stronger hairline, real height, and a soft resting shadow.
    Focus swaps the hairline for the accent ring. */
-.inputbox { max-width: calc(var(--thread-max) - 40px); margin: 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-elevated); box-shadow: var(--shadow-md); padding: 10px 10px 10px 16px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-.inputbox:focus-within { border-color: var(--accent-border); box-shadow: var(--focus-ring), var(--shadow-md); }
+.inputbox { max-width: calc(var(--thread-max) - 40px); margin: 0 auto; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-elevated); box-shadow: var(--shadow-md); padding: 10px 10px 10px 16px; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+/* Calm focus — the leading edge takes ~half the accent into the hairline; no
+   bright glow ring (Signal keeps the input quiet, not lit up). */
+.inputbox:focus-within { border-color: color-mix(in srgb, var(--accent) 50%, var(--line-strong)); box-shadow: var(--shadow-md); }
 .cinput { display: block; width: 100%; resize: none; border: none; background: none; color: var(--ink); font: inherit; font-size: var(--text-md); padding: 8px 4px 6px; max-height: 200px; }
 .cinput:focus { outline: none; }
 .cbar { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
@@ -561,7 +617,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .csend:disabled { opacity: .4; cursor: default; box-shadow: none; pointer-events: none; }
 .csend.stop { background: var(--surface); color: var(--ink); border: 1px solid var(--line); box-shadow: none; }
 .csend.stop:hover { border-color: var(--danger); color: var(--danger); }
-@keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(249,83,57,.5); } 50% { box-shadow: 0 0 0 6px rgba(249,83,57,0); } }
+@keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); } 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); } }
 .bubble.voice { font-style: italic; }
 .bubble.voice::before { content: "🎙 "; font-style: normal; }
 
@@ -570,7 +626,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .mhead .back:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 .mhead .titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .mhead .title { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-lg); line-height: var(--leading-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mhead .msub { font-size: var(--text-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Subtitle carries technical metadata ("Work · GPT 5.5") → mono. */
+.mhead .msub { font-family: var(--mono); font-size: var(--text-xs); letter-spacing: -.01em; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mhead .hactions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent-border); background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-medium); }
 
@@ -580,7 +637,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .panel .taskerror { display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; padding: 9px 11px; font-size: var(--text-sm); line-height: var(--leading-snug); color: var(--ag2-observer); background: color-mix(in srgb, var(--ag2-observer) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ag2-observer) 28%, transparent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 .panel .taskerror strong { font-weight: var(--fw-semibold); }
 .panel .child { border-left: 2px solid var(--line); padding-left: 10px; margin: 6px 0; }
-.panel .runlink { background: none; border: none; padding: 0; color: var(--accent, #d8552f); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.panel .runlink { background: none; border: none; padding: 0; color: var(--accent, var(--danger)); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 .hitl { border-bottom: 1px solid var(--line); background: var(--panel); padding: 10px 20px; max-height: 40vh; overflow-y: auto; }
 .hitlhead { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; margin-bottom: 6px; }
@@ -605,15 +662,20 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modelsw-btn:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
 .modelsw-btn:disabled { opacity: .6; cursor: default; }
 .modelsw-logo { width: 14px; height: 14px; object-fit: contain; }
-.modelsw-name { display: inline-flex; align-items: center; gap: 4px; }
+/* Model name is technical metadata → mono (Geist Mono). */
+.modelsw-name { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); letter-spacing: -.01em; }
 .modelsw-name.muted { color: var(--muted); }
-.modelsw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok, #3aa657); flex: none; }
+.modelsw-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok, var(--success)); flex: none; }
 .modelsw-dot.warn { background: var(--muted); }
 .modelsw-pin, .modelsw-empty { font-size: 12px; color: var(--muted); }
 .modelsw-empty { border: none; background: none; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font: inherit; font-size: 12px; color: var(--muted); }
 .modelsw-empty:hover { color: var(--accent); }
 .modelsw-scrim { position: fixed; inset: 0; z-index: 9; border: none; background: none; cursor: default; }
 .modelsw-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; min-width: 240px; max-width: min(360px, 90vw); max-height: 320px; overflow-y: auto; background: var(--surface-elevated); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+/* Header-mounted switchers (Settings → Profiles) open DOWNWARD; the composer's opens up. */
+.modelsw-menu.down { bottom: auto; top: calc(100% + 6px); }
+/* "inherited" badge on the profile switcher when no per-profile override is set. */
+.modelsw-tag { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: var(--radius-pill, 999px); padding: 0 6px; line-height: 15px; }
 .modelsw-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: none; background: none; color: var(--ink); border-radius: var(--radius-sm); padding: 7px 9px; cursor: pointer; font: inherit; }
 .modelsw-item:hover:not(:disabled) { background: var(--code); }
 .modelsw-item.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
@@ -705,6 +767,21 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .viewer .vhead .vsave { flex: none; padding: 4px 12px; border: none; border-radius: 7px; background: var(--accent); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: opacity var(--dur-fast) var(--ease-out); }
 .viewer .vhead .vsave:hover:not(:disabled) { opacity: 0.9; }
 .viewer .vhead .vsave:disabled { background: var(--code); color: var(--text-muted); cursor: default; }
+/* "Mentioned in N threads" backlink (ADR 0014) — a quiet icon button like .cp/.exp
+   carrying a small count badge, anchoring a popover of the Threads that mention this
+   file. The wrap is the popover's positioning context; it's absent entirely at zero. */
+.viewer .vhead .vmentions-wrap { flex: none; position: relative; display: inline-flex; }
+.viewer .vhead .vmentions { display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 6px; border: none; border-radius: 7px; background: none; color: var(--text-muted); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vmentions:hover, .viewer .vhead .vmentions.on { color: var(--ink); background: var(--code); }
+.viewer .vhead .vmentions-badge { font-size: 11px; font-weight: 600; line-height: 1; }
+/* Anchored popover: a small panel of thread rows below the button, recency-ordered
+   server-side. Sits above the rail body; dismissed on outside-click / Esc. */
+.viewer .vhead .vmentions-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 220px; max-width: 320px; max-height: 320px; overflow-y: auto; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 8px 28px rgb(0 0 0 / 0.16); }
+.viewer .vhead .vmentions-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: none; border-radius: 7px; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.viewer .vhead .vmentions-row:hover { background: var(--code); }
+.viewer .vhead .vmentions-row > :global(svg) { flex: none; color: var(--text-muted); }
+.viewer .vhead .vmentions-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer .vhead .vmentions-row-kind { flex: none; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
 .viewer .vbody { min-height: 0; flex: 1; padding: 16px 18px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .viewer .vbody.native { padding: 8px; overflow: hidden; }
 /* Edit mode: a flex column so the plain-text editor fills the rail height and a
@@ -712,7 +789,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .viewer .vbody.editing { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
 .viewer .vedit { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; resize: none; border: 1px solid var(--line); border-radius: 6px; background: var(--code); color: var(--ink); padding: 14px; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5; white-space: pre; overflow: auto; }
 .viewer .vedit:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
-.viewer .vsaveerr { flex: none; margin: 0; padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, #d8552f 12%, transparent); color: #d8552f; font-size: 13px; }
+.viewer .vsaveerr { flex: none; margin: 0; padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); font-size: 13px; }
 /* The stale-file save clash (ADR 0011): a warning-toned message with two neutral,
    consequence-labelled choices — Reload (discard mine) / Overwrite (replace disk). */
 .viewer .vconflict { flex: none; display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 12px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }

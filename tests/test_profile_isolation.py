@@ -192,6 +192,53 @@ def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
         assert b_runtime.config.data_dir == profiles.profile_dir(b)
 
 
+# --- c2. per-profile LLM Active override (ADR 0015): A overrides, B inherits ---
+
+
+def test_llm_override_isolated_via_endpoint(monkeypatch):
+    """POST A/settings/llm-override points A's Active Text model at a shared config and
+    reloads A's runtime; B inherits the install-wide Active and the install-wide Active
+    itself never moves. Clearing restores inheritance; an unknown id is a 404."""
+    from assistant import llm_configs
+
+    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
+    with _two_profile_client(monkeypatch) as client:
+        a, b = _boot_two(client)
+        e1 = llm_configs.save_config({"name": "A", "type": "anthropic", "model": "claude-x"})
+        e2 = llm_configs.save_config({"name": "O", "type": "openai", "model": "gpt-x"})
+        # Activate e1 install-wide via the real endpoint so EVERY runtime reloads and
+        # picks up the store (mirrors the composer switch); B then inherits claude-x.
+        assert client.post(f"/api/llm-configs/{e1['id']}/use").status_code == 200
+
+        r = client.post(api(a, "/settings/llm-override"), json={"config_id": e2["id"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["llm_override"] == e2["id"]
+
+        sa = client.get(api(a, "/settings")).json()
+        assert sa["llm_override"] == e2["id"]
+        assert sa["llm_active"] == e2["id"]
+        assert sa["assistant"]["model"] == "gpt-x"  # A's runtime rebuilt on the override
+
+        sb = client.get(api(b, "/settings")).json()
+        assert sb["llm_override"] is None  # B never overrode
+        assert sb["llm_active"] == e1["id"]
+        assert sb["assistant"]["model"] == "claude-x"
+
+        assert llm_configs.active_id() == e1["id"]  # install-wide Active untouched
+
+        # Clear A's override → back to the inherited install-wide Active.
+        r = client.post(api(a, "/settings/llm-override"), json={"config_id": ""})
+        assert r.status_code == 200 and r.json()["llm_override"] is None
+        sa = client.get(api(a, "/settings")).json()
+        assert sa["llm_override"] is None
+        assert sa["assistant"]["model"] == "claude-x"
+
+        # Unknown id is rejected (never persisted).
+        bad = client.post(api(a, "/settings/llm-override"), json={"config_id": "c_ghost"})
+        assert bad.status_code == 404
+
+
 # --- d. usage: recording a turn's usage in A writes A/usage.json only ---
 
 
@@ -233,6 +280,37 @@ def test_skills_dir_isolated(monkeypatch):
 
         assert (a_cfg.skills_dir / "SKILL.md").exists()
         assert not (b_cfg.skills_dir / "SKILL.md").exists()
+
+
+# --- e2. skills: a Suppression in A is invisible to B; install-wide Disable hits both ---
+
+
+def test_skill_suppression_isolated_but_disable_is_global(monkeypatch):
+    """A per-profile Suppression (ADR 0016 t02) turns a shared skill off for A only —
+    B's resolved skill set is unchanged. An install-wide Disable, by contrast, changes
+    both. Asserted through the /api/p/{pid}/skills projection the Skills tab reads."""
+    with _two_profile_client(monkeypatch) as client:
+        a, b = _boot_two(client)
+
+        def avail(pid, name):
+            rows = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
+            return rows[name]["available"]
+
+        # Baseline: both profiles see the shared bundled skill.
+        assert avail(a, "web-research") is True
+        assert avail(b, "web-research") is True
+
+        # Suppress in A only → A loses it, B keeps it.
+        assert client.post(api(a, "/skills/web-research/suppress")).status_code == 200
+        assert avail(a, "web-research") is False
+        assert avail(b, "web-research") is True  # B's resolved set is untouched
+
+        # An install-wide Disable of a DIFFERENT skill changes BOTH profiles.
+        assert (
+            client.post("/api/skills/pdf-tools/state", json={"enabled": False}).status_code == 200
+        )
+        assert avail(a, "pdf-tools") is False
+        assert avail(b, "pdf-tools") is False
 
 
 # --- f. permissions: now GLOBAL — a grant is install-wide, visible to every profile ---

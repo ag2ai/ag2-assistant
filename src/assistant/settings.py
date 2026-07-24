@@ -104,6 +104,46 @@ class Settings:
         self._write(data)
         return value
 
+    # --- per-profile model Active override (ADR 0015) ---
+    # A profile may pick which shared install-wide config is Active *for it* — a
+    # selection into the ``llm_configs`` / ``live_configs`` list, never a model of its
+    # own. Stored as a top-level id in this same config.yaml (like ``focuses``); the
+    # effective Active resolves env pin > this override > install-wide Active > env
+    # fallback in the active-derivation layer (Text: ``config.with_profile`` /
+    # ``llm_configs.apply_active``; Live: ``voice.voice_realtime_config``). A dangling
+    # override (points at a deleted config) degrades to the install-wide Active there.
+
+    def get_llm_override(self) -> str | None:
+        """This profile's Active-override Text config id, or None when it inherits the
+        install-wide Active."""
+        v = self._read().get("llm_active_override")
+        return v if isinstance(v, str) and v else None
+
+    def set_llm_override(self, cid: str) -> None:
+        """Point this profile's Active Text model at shared config ``cid`` (an empty /
+        blank value clears the override → back to the install-wide Active)."""
+        self._set_override("llm_active_override", cid)
+
+    def get_live_override(self) -> str | None:
+        """This profile's Active-override Live (voice) config id, or None when it
+        inherits the install-wide Active."""
+        v = self._read().get("live_active_override")
+        return v if isinstance(v, str) and v else None
+
+    def set_live_override(self, cid: str) -> None:
+        """Point this profile's Active Live model at shared config ``cid`` (an empty /
+        blank value clears the override → back to the install-wide Active)."""
+        self._set_override("live_active_override", cid)
+
+    def _set_override(self, key: str, cid: str) -> None:
+        data = self._read()
+        cid = (cid or "").strip()
+        if cid:
+            data[key] = cid
+        else:
+            data.pop(key, None)
+        self._write(data)
+
     # --- MCP servers ---
 
     def list_mcp_servers(self, *, include_env: bool = False) -> list[dict]:

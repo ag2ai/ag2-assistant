@@ -13,6 +13,7 @@
   import { getActiveProfileId } from '../../lib/profile.js'
   import Icon from '../Icon.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
+  import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
 
   let { taskId } = $props()
@@ -101,8 +102,6 @@
       return snap
     })
   }
-
-  const modeLabel = (m) => (m === 'read_write' ? 'Read + write' : m === 'read' ? 'Read' : 'Off')
 </script>
 
 <div class="tf">
@@ -118,8 +117,7 @@
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
         <div class="cfctl">
-          <span class="tglstate">{modeLabel(tg?.mode)}</span>
-          <button class="tgl" class:on={tg?.mode === 'read_write'} role="switch" aria-checked={tg?.mode === 'read_write'} aria-label="Allow writing" disabled={busy} onclick={() => setTaskMode(f, tg?.mode === 'read_write' ? 'read' : 'read_write')}></button>
+          <WriteSwitch mode={tg?.mode} disabled={busy} onchange={(m) => setTaskMode(f, m)} />
           <span class="cfmenuwrap">
             <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
@@ -161,7 +159,7 @@
 <style>
   .tf { display: flex; flex-direction: column; }
   .hint { font-size: 12px; margin: 0 0 10px; }
-  .errline { color: #d8552f; font-size: 13px; }
+  .errline { color: var(--danger); font-size: 13px; }
   .noteline { font-size: 13px; }
   .cfsec { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin: 16px 0 6px; }
   .cfrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
@@ -171,19 +169,6 @@
   .cfico { flex: none; display: inline-flex; color: var(--text-muted); }
   .cfname { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cfctl { flex: none; display: inline-flex; align-items: center; gap: 10px; }
-  /* A task folder is never "Off" here — Off would delete it. */
-  .tglstate { min-width: 74px; text-align: right; font-size: 13px; }
-
-  /* Task folders — 2-position iOS switch (off = Read, green; on = Read+write, warn).
-     Soft tinted fill + a hairline tinted border (inset shadow, so the knob geometry
-     is untouched); the colored label carries the semantic. Copied from ChatFolders. */
-  .tgl { position: relative; flex: none; width: 38px; height: 22px; padding: 0; border: none; border-radius: 999px; cursor: pointer;
-    background: color-mix(in srgb, var(--success) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 32%, var(--line));
-    transition: background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-  .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur-fast) var(--ease-out); }
-  .tgl.on { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 32%, var(--line)); }
-  .tgl.on::after { transform: translateX(16px); }
-  .tgl:disabled { cursor: default; }
 
   /* Overflow menu — Move to profile / Delete tucked behind a quiet kebab. */
   .cfmenuwrap { position: relative; flex: none; }
@@ -194,19 +179,11 @@
   .cfmenu { position: absolute; right: 0; top: 100%; margin-top: 5px; z-index: 41; min-width: 170px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); padding: 5px; display: flex; flex-direction: column; gap: 2px; }
   .cfmenu button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; background: none; border: none; padding: 8px 10px; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; border-radius: 7px; }
   .cfmenu button:hover { background: var(--code); }
-  .cfmenu button.danger { color: #d8552f; }
+  .cfmenu button.danger { color: var(--danger); }
 
   .tfadd { margin-top: 14px; }
   .tfpicker { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px; background: var(--surface-sunk, var(--bg)); }
 
-  /* .open isn't in scope here (no .modal/.panel ancestor supplies it) — reproduce
-     the same bordered button used across TaskPage. */
-  .open {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
-    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
-    border-radius: var(--radius-sm); padding: 7px 14px;
-    transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
-  }
-  .open:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: var(--accent-soft); }
+  /* .open buttons here are styled by the app-wide rule (app.css), which scopes
+     `.open` to this component's `.tf` root. Nothing to reproduce locally. */
 </style>

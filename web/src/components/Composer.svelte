@@ -524,6 +524,6 @@
   }
   .cfmore:hover { color: var(--text); border-color: var(--text-muted); }
   .cfmsg { font-size: 12px; color: var(--text-muted); margin: 0 0 6px; }
-  .cfmsg.err { color: #d8552f; }
+  .cfmsg.err { color: var(--danger); }
   .cfhint { font-size: 12px; margin: 0 0 10px; }
 </style>
