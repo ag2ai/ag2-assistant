@@ -180,3 +180,16 @@ class TurnCancelled(AssistantEvent):
 
     chat_id: str = Field(kw_only=False)
     reason: str = "Stopped"
+
+
+class TurnFailed(AssistantEvent):
+    """A turn ended in an error (timeout, provider fault, connection drop) rather
+    than a reply. Emitted before the turn's history is persisted, so it lands after
+    whatever the turn had already produced — the thread keeps that work and says why
+    it stopped instead of simply ending mid-air.
+
+    `error` is a short, user-facing sentence; the traceback stays in the debug record
+    written by ``capture_failure``, never in the chat."""
+
+    chat_id: str = Field(kw_only=False)
+    error: str = ""

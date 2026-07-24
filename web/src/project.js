@@ -287,6 +287,22 @@ export function foldEvent(items, wire) {
       items.push({ id: nid(), kind: 'note', icon: 'x', text: d.reason || 'Stopped', ends: true })
       break
     }
+    case 'TurnFailed': {
+      // The turn errored (timeout / provider fault / connection drop). Same shape as
+      // a stop — keep the work, finalize the bubble, end the turn — but flagged as an
+      // alert so the thread says why it stopped instead of just ending mid-air.
+      const cur = items[items.length - 1]
+      if (cur && cur.kind === 'agent' && cur.streaming) cur.streaming = false
+      items.push({
+        id: nid(),
+        kind: 'note',
+        icon: 'x',
+        text: d.error || 'The turn failed unexpectedly.',
+        alert: true,
+        ends: true,
+      })
+      break
+    }
     case 'FeedbackGiven': {
       // Project a 👍/👎 back onto the item it rated — match by the item's stable key
       // (message → created_at, image → path, deliverable → deliverable_id). Latest

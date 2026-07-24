@@ -11,6 +11,7 @@ const user = (text) => ({
 })
 const chunk = (text) => ({ type: 'ag2.events.ModelMessageChunk', data: { content: text } })
 const cancelled = (reason) => ({ type: 'assistant.events.TurnCancelled', data: { reason } })
+const failed = (error) => ({ type: 'assistant.events.TurnFailed', data: { error } })
 const a2uiAction = () => ({ type: 'assistant.events.A2UIActionSubmitted', data: { surface_id: 'demo', action_name: 'continue' } })
 const response = (content) => ({
   type: 'ag2.events.ModelResponse',
@@ -68,6 +69,32 @@ test('TurnCancelled ends the turn, keeps the partial reply, and clears busy', ()
   assert.equal(note.text, 'Stopped')
   assert.equal(note.ends, true)
   assert.equal(isBusy(items), false)     // replay of a cancelled turn is never "thinking"
+})
+
+test('TurnFailed keeps the work, explains why, and clears busy', () => {
+  const items = []
+  foldEvent(items, user('list the open PRs'))
+  foldEvent(items, chunk('Fetching '))
+  assert.equal(isBusy(items), true)
+
+  foldEvent(items, failed('The turn timed out before it finished.'))
+
+  const agent = items.find((i) => i.kind === 'agent')
+  assert.equal(agent.text, 'Fetching ')  // work done before the failure survives
+  assert.equal(agent.streaming, false)   // finalized, so it renders as a bubble
+  const note = items.at(-1)
+  assert.equal(note.kind, 'note')
+  assert.equal(note.text, 'The turn timed out before it finished.')
+  assert.equal(note.alert, true)         // reads as a failure, not a normal note
+  assert.equal(note.ends, true)
+  assert.equal(isBusy(items), false)     // a reloaded failed chat is never "thinking"
+})
+
+test('TurnFailed falls back to a generic reason when the error is empty', () => {
+  const items = []
+  foldEvent(items, user('hello'))
+  foldEvent(items, failed(''))
+  assert.equal(items.at(-1).text, 'The turn failed unexpectedly.')
 })
 
 test('an A2UI action shows one transient indicator and retires it on the reply', () => {
