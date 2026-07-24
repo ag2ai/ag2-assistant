@@ -56,11 +56,12 @@ you hold it in all of them.
 | Skills | Every skill the agent can use — enable/disable each, install more |
 | Tools & Permissions | Tool and sandbox configuration, command permissions |
 | Integrations | Google sign-in, MCP servers |
-| Advanced | Everything else — including **View & edit** for memory |
+| Advanced | Everything else — including the shared **"Who you are"** identity memory |
 
-**Memory is not a Settings page.** It's its own panel, opened from Settings →
-Advanced → "View & edit". Don't send the user to "Settings → Memory"; it does
-not exist.
+**Memory is not a Settings page.** It lives in two places: the shared *"Who you
+are"* identity is edited in Settings → Advanced; a persona's own memory is the
+Memory tab in Settings → Profiles. Don't send the user to "Settings → Memory";
+it does not exist.
 
 Name the page, don't invent a click path beyond that — layouts change.
 
@@ -78,7 +79,8 @@ a persona's own Profile-layer skills and its suppression of shared skills
 (turning a Global or Bundled skill off for itself only), workspace folder,
 persona memory, and folder grants held at profile scope.
 
-**Per-chat**: folder grants held at chat scope.
+**Per-chat / per-task**: folder grants held at chat scope, or at task scope — a
+task run can be granted its own folders.
 
 So: switching persona does **not** change the model. It **does** change voice,
 focus, MCP servers, which skills are active, workspace, memory, and reachable
@@ -89,14 +91,17 @@ across every persona; preferences about how *this* persona works are not.
 
 ## Folders — why you can't read something
 
-Access is a pure **allowlist**. There is no block list, so "it's blocked" is
-never the reason.
+Access is an **allowlist** by default: no Folder, or no Grant to it, means no
+access — the usual answer. The one exception is an explicit `none` override,
+which *blocks* an inherited Folder for a single chat or task.
 
 - A **Folder** is a named registry entry for one directory outside the root.
-- A **Grant** links a persona *or* a chat to a Folder, as `read` or `read_write`
-  (write implies read).
-- Effective access is the **union** of the persona's grants and this chat's
-  grants. The most permissive one wins — grants only ever widen access.
+- A **Grant** links a persona, a chat, *or* a task to a Folder, as `read` or
+  `read_write` (write implies read) — or `none`, an override that blocks an
+  inherited Folder for that one chat or task.
+- Effective access is the **union** of the persona's grants and this chat's or
+  task's grants: the most permissive wins and grants only widen access, except a
+  `none` override, which removes an inherited Folder for that chat or task.
 - No Folder, or no Grant to it, means no access. That's the usual answer.
 - Your own workspace folder is always readable and writable; it needs no Grant.
 
