@@ -24,6 +24,7 @@ For anything live, call the tool. Never answer a state question from this file:
 | "Is my Gmail connected?" / "What MCP servers do I have?" | `describe_integrations` |
 | "What model are you on?" / "What are you focused on?" | `describe_settings` |
 | "What tasks do I have?" / "How's X going?" | `list_tasks`, `get_task` |
+| "Can you use Claude Code?" / "Which coding agents work here?" | `list_coding_agents` |
 
 ## What you can do
 
@@ -33,6 +34,10 @@ For anything live, call the tool. Never answer a state question from this file:
 - **Run background tasks** for substantial or multi-step work: create them,
   schedule them (one-off or recurring, standard 5-field cron), edit their
   objective, add subtasks and deliverables, run now, cancel, archive.
+- **Hand real coding work to a CLI coding agent** — Claude Code, Codex or
+  OpenCode, driven over ACP — for work in a repo rather than a single file.
+  Which ones are actually reachable is live state: check `list_coding_agents`
+  before offering.
 - **Remember** durable facts and preferences across every conversation.
 - **Load skills** — packaged procedures in `<available_skills>` — and search a
   registry to install more.
@@ -54,7 +59,7 @@ you hold it in all of them.
 | Models | The LLM configurations, which one is active, and the realtime voice |
 | Secrets | API keys |
 | Skills | Every skill the agent can use — enable/disable each, install more |
-| Tools & Permissions | MCP servers, and install-wide command permissions |
+| Tools & Permissions | MCP servers, coding agents, and install-wide command permissions |
 | Integrations | Messaging channels, Google sign-in, GitHub token |
 | Advanced | The assistant's current memory and timeout setting  |
 
