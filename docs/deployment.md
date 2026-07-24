@@ -78,8 +78,9 @@ Add extras like Google integration with `"git+https://github.com/ag2ai/ag2-assis
 ## Self-hosted (Docker)
 
 The recommended way to run an always-on instance. The image is pure Python on
-`python:3.12-slim` — the web UI bundle is committed to the repo, so no Node build is
-involved.
+`python:3.14-slim` — the web UI bundle is committed to the repo, so no Node build is
+involved. Published tags are multi-arch (`linux/amd64` + `linux/arm64`), so Apple Silicon
+and ARM servers pull a native image.
 
 ### With Compose (recommended)
 
