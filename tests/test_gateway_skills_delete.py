@@ -39,9 +39,7 @@ def test_delete_global_removes_from_projection(monkeypatch):
         names = {s["name"] for s in r.json()["skills"]}
         assert "extra-global" not in names
         # And it's gone on a fresh GET across the whole install.
-        assert "extra-global" not in {
-            s["name"] for s in client.get("/api/skills").json()["skills"]
-        }
+        assert "extra-global" not in {s["name"] for s in client.get("/api/skills").json()["skills"]}
 
 
 def test_delete_bundled_is_409(monkeypatch):
@@ -200,9 +198,9 @@ def test_profile_copy_delete_keeps_shadowed_global_suppression(monkeypatch):
 
         work_cfg = client.app.state.profiles.get("work").config
         _write_skill(work_cfg.skills_dir, "foo", "work's own foo")  # shadow it with an own copy
-        assert {s["name"]: s for s in client.get(api("work", "/skills")).json()["skills"]}[
-            "foo"
-        ]["origin"] == "profile"
+        assert {s["name"]: s for s in client.get(api("work", "/skills")).json()["skills"]}["foo"][
+            "origin"
+        ] == "profile"
 
         assert client.delete(api("work", "/skills/foo")).status_code == 200  # delete the copy
 

@@ -164,8 +164,7 @@ class SkillStateStore:
             {
                 "disabled": sorted(self._disabled),
                 "suppressed": [
-                    {"profile": p, "name": n, "kind": k}
-                    for p, n, k in sorted(self._suppressed)
+                    {"profile": p, "name": n, "kind": k} for p, n, k in sorted(self._suppressed)
                 ],
             },
             indent=2,
@@ -286,9 +285,7 @@ class SkillStateStore:
             raise ValueError("skill name is required")
         with self._mutate():
             has_disabled = name in self._disabled
-            keep = [
-                r for r in self._suppressed if not (r[1] == name and r[2] == SUPPRESS_SHARED)
-            ]
+            keep = [r for r in self._suppressed if not (r[1] == name and r[2] == SUPPRESS_SHARED)]
             if not has_disabled and len(keep) == len(self._suppressed):
                 return  # nothing shared-scoped recorded for this skill — no write
             self._disabled = [n for n in self._disabled if n != name]

@@ -37,8 +37,12 @@ def _make_git_repo(root: Path, skills: dict[str, str]) -> str:
         d = root / "skills" / name
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(_skill_md(name, desc))
-    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
-           "GIT_COMMITTER_EMAIL": "t@t"}
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
 
     def git(*a):
         subprocess.run(["git", "-C", str(root), *a], check=True, capture_output=True, env=dict(env))
@@ -122,8 +126,9 @@ def test_discover_upload_zip_returns_checklist(monkeypatch):
     client, _pid = _client(monkeypatch)
     with client:
         data = _make_zip({"u1": "upload one", "u2": "upload two"})
-        r = client.post("/api/skills/discover-upload",
-                        files={"file": ("skills.zip", data, "application/zip")})
+        r = client.post(
+            "/api/skills/discover-upload", files={"file": ("skills.zip", data, "application/zip")}
+        )
         assert r.status_code == 200, r.text
         assert {s["name"] for s in r.json()["skills"]} == {"u1", "u2"}
 
@@ -132,9 +137,11 @@ def test_install_upload_zip_subset(monkeypatch):
     client, _pid = _client(monkeypatch)
     with client:
         data = _make_zip({"u1": "one", "u2": "two"})
-        r = client.post("/api/skills/install-upload",
-                        files={"file": ("skills.zip", data, "application/zip")},
-                        data={"names": "u2"})
+        r = client.post(
+            "/api/skills/install-upload",
+            files={"file": ("skills.zip", data, "application/zip")},
+            data={"names": "u2"},
+        )
         assert r.status_code == 200, r.text
         assert {s["name"] for s in r.json()["installed"]} == {"u2"}
         catalog = {s["name"] for s in client.get("/api/skills").json()["skills"]}
@@ -144,8 +151,9 @@ def test_install_upload_zip_subset(monkeypatch):
 def test_discover_upload_invalid_is_400(monkeypatch):
     client, _pid = _client(monkeypatch)
     with client:
-        r = client.post("/api/skills/discover-upload",
-                        files={"file": ("notes.txt", b"hello", "text/plain")})
+        r = client.post(
+            "/api/skills/discover-upload", files={"file": ("notes.txt", b"hello", "text/plain")}
+        )
         assert r.status_code == 400
 
 
@@ -202,8 +210,10 @@ def test_install_upload_rejects_zip_bomb(monkeypatch):
         buf = io.BytesIO()
         with zf_mod.ZipFile(buf, "w", zf_mod.ZIP_DEFLATED) as zf:
             zf.writestr("skill/SKILL.md", b"\0" * (26 * 1024 * 1024))  # > 25 MB cap
-        r = client.post("/api/skills/discover-upload",
-                        files={"file": ("bomb.zip", buf.getvalue(), "application/zip")})
+        r = client.post(
+            "/api/skills/discover-upload",
+            files={"file": ("bomb.zip", buf.getvalue(), "application/zip")},
+        )
         assert r.status_code == 400
         assert "large" in r.json()["error"].lower()
 
@@ -217,10 +227,14 @@ def test_install_upload_into_profile(monkeypatch):
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         data = _make_zip({"pskill": "profile upload"})
-        r = client.post(api("work", "/skills/install-upload"),
-                        files={"file": ("s.zip", data, "application/zip")},
-                        data={"names": "pskill"})
+        r = client.post(
+            api("work", "/skills/install-upload"),
+            files={"file": ("s.zip", data, "application/zip")},
+            data={"names": "pskill"},
+        )
         assert r.status_code == 200, r.text
         w = {s["name"]: s for s in client.get(api("work", "/skills")).json()["skills"]}
         assert w["pskill"]["origin"] == "profile"
-        assert "pskill" not in {s["name"] for s in client.get(api("personal", "/skills")).json()["skills"]}
+        assert "pskill" not in {
+            s["name"] for s in client.get(api("personal", "/skills")).json()["skills"]
+        }

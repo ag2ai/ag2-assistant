@@ -306,7 +306,9 @@ def test_skill_suppression_isolated_but_disable_is_global(monkeypatch):
         assert avail(b, "web-research") is True  # B's resolved set is untouched
 
         # An install-wide Disable of a DIFFERENT skill changes BOTH profiles.
-        assert client.post("/api/skills/pdf-tools/state", json={"enabled": False}).status_code == 200
+        assert (
+            client.post("/api/skills/pdf-tools/state", json={"enabled": False}).status_code == 200
+        )
         assert avail(a, "pdf-tools") is False
         assert avail(b, "pdf-tools") is False
 

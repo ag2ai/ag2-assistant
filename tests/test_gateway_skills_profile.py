@@ -96,7 +96,10 @@ def test_profile_owned_skill_state_scoped_to_profile(monkeypatch):
         assert by_name["mine"]["suppressed"] is True
 
         # A shared (Bundled) skill is NOT a Profile skill → /state 404s for it.
-        assert client.post(api(pid, "/skills/web-research/state"), json={"enabled": False}).status_code == 404
+        assert (
+            client.post(api(pid, "/skills/web-research/state"), json={"enabled": False}).status_code
+            == 404
+        )
 
 
 def test_per_profile_change_reloads_only_active_profile(monkeypatch):

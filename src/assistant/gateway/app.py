@@ -2603,18 +2603,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         return {"ok": True, "skills": _profile_skill_rows(runtime)}
 
     @p.post("/skills/{name}/suppress")
-    async def suppress_skill(
-        name: str, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
+    async def suppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """Suppress an inherited (Bundled/Global) skill for THIS profile only — off
         here, untouched everywhere else. Reloads only this profile so its next turn
         drops the skill; other profiles never rebuild. 404 for a name not visible here."""
         return await _suppress(name, runtime, True)
 
     @p.delete("/skills/{name}/suppress")
-    async def unsuppress_skill(
-        name: str, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
+    async def unsuppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         """Clear this profile's Suppression of a shared skill — back to inherited "on".
         Reloads only this profile. 404 for a name not visible here."""
         return await _suppress(name, runtime, False)

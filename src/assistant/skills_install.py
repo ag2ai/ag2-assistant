@@ -65,7 +65,9 @@ async def registry_search(query: str, limit: int = 10) -> list[dict]:
     for s in records:
         skill_id_val = s.get("skillId") or ""
         source = s.get("source") or ""
-        install_id = f"{source}/{skill_id_val}" if skill_id_val and source else source or skill_id_val
+        install_id = (
+            f"{source}/{skill_id_val}" if skill_id_val and source else source or skill_id_val
+        )
         out.append(
             {
                 "name": s.get("name") or skill_id_val or "unknown",
@@ -177,8 +179,17 @@ def _fetch_git(git_url: str, dest: Path) -> None:
             # _validate_git_url: even a URL that slips the check can't invoke the ext
             # transport helper. ``--`` ends option parsing but does NOT restrict
             # transports, so it is not enough on its own.
-            ["git", "-c", "protocol.ext.allow=never", "clone", "--depth", "1", "--",
-             git_url, str(dest)],
+            [
+                "git",
+                "-c",
+                "protocol.ext.allow=never",
+                "clone",
+                "--depth",
+                "1",
+                "--",
+                git_url,
+                str(dest),
+            ],
             capture_output=True,
             text=True,
             timeout=120,
@@ -313,10 +324,7 @@ def _install_skill_dir(runtime, skill_dir: Path, name: str, all_dirs: set[Path])
         # Drop the nested skill subtrees, plus the usual VCS/build noise a root-level
         # skill dir (== a clone root) would otherwise carry in.
         base = Path(directory).resolve()
-        return {
-            nm for nm in names
-            if nm in _EXCLUDE_DIRS or (base / nm).resolve() in nested
-        }
+        return {nm for nm in names if nm in _EXCLUDE_DIRS or (base / nm).resolve() in nested}
 
     with tempfile.TemporaryDirectory(prefix="skill-prune-") as pd:
         staged = Path(pd) / name

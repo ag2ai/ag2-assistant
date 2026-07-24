@@ -26,10 +26,20 @@ def _fake_registry(monkeypatch, *, desc="installed via registry"):
 
     async def fake_search(self, query, limit=10):
         return [
-            {"name": "react-best-practices", "skillId": "react-best-practices",
-             "source": "vercel-labs/agent-skills", "description": "React rules", "installs": 1234},
-            {"name": "standalone", "skillId": "", "source": "me/standalone",
-             "description": "A standalone skill", "installs": 7},
+            {
+                "name": "react-best-practices",
+                "skillId": "react-best-practices",
+                "source": "vercel-labs/agent-skills",
+                "description": "React rules",
+                "installs": 1234,
+            },
+            {
+                "name": "standalone",
+                "skillId": "",
+                "source": "me/standalone",
+                "description": "A standalone skill",
+                "installs": 7,
+            },
         ]
 
     async def fake_download(self, source, skill_id, runtime):
@@ -37,7 +47,9 @@ def _fake_registry(monkeypatch, *, desc="installed via registry"):
         with tempfile.TemporaryDirectory() as td:
             staged = Path(td) / name
             staged.mkdir(parents=True)
-            (staged / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {desc}\n---\n# {name}\n")
+            (staged / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: {desc}\n---\n# {name}\n"
+            )
             runtime.install(staged, name)
         return SkillMetadata(name=name, description=desc), "deadbeef"
 
@@ -59,7 +71,10 @@ def test_search_projects_results(monkeypatch):
         assert r.status_code == 200
         results = r.json()["results"]
         by_name = {s["name"]: s for s in results}
-        assert by_name["react-best-practices"]["install_id"] == "vercel-labs/agent-skills/react-best-practices"
+        assert (
+            by_name["react-best-practices"]["install_id"]
+            == "vercel-labs/agent-skills/react-best-practices"
+        )
         assert by_name["react-best-practices"]["description"] == "React rules"
         assert by_name["react-best-practices"]["installs"] == 1234
         # A standalone repo (no skillId) → install_id is just the source.
@@ -84,8 +99,10 @@ def test_install_global_lands_and_fans_out(monkeypatch):
 
         monkeypatch.setattr(manager, "reload", spy)
 
-        r = client.post("/api/skills/install",
-                        json={"install_id": "vercel-labs/agent-skills/react-best-practices"})
+        r = client.post(
+            "/api/skills/install",
+            json={"install_id": "vercel-labs/agent-skills/react-best-practices"},
+        )
         assert r.status_code == 200, r.text
         assert r.json()["installed"][0]["name"] == "react-best-practices"
         # In the install-wide projection as a Global skill.
@@ -113,8 +130,7 @@ def test_install_profile_lands_only_for_that_profile(monkeypatch):
 
         monkeypatch.setattr(manager, "reload", spy)
 
-        r = client.post(api("work", "/skills/install"),
-                        json={"install_id": "me/standalone"})
+        r = client.post(api("work", "/skills/install"), json={"install_id": "me/standalone"})
         assert r.status_code == 200, r.text
         # Present for work as a profile-owned skill...
         w = {s["name"]: s for s in client.get(api("work", "/skills")).json()["skills"]}

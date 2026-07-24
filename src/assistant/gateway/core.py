@@ -925,9 +925,7 @@ class Gateway:
                 rows.append(row)
         rows.sort(key=lambda r: r.get("updated") or "", reverse=True)
         if truncated:
-            logger.info(
-                "threads_mentioning: stream scan truncated at %d", _MENTIONS_STREAM_CAP
-            )
+            logger.info("threads_mentioning: stream scan truncated at %d", _MENTIONS_STREAM_CAP)
         return rows[:_MENTIONS_RESULT_CAP]
 
     async def _stream_corpus(self, sid: str, doc: dict | None, log_paths: list[str]) -> str:
