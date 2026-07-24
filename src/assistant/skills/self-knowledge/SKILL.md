@@ -49,19 +49,15 @@ you hold it in all of them.
 
 | Page | What it owns |
 |---|---|
-| General | The assistant's name, and the realtime voice |
-| Profiles | Personas — add, edit, switch |
-| Models | The LLM configurations and which one is active |
+| General | Appearance, animations, notifications, re-run setup (per-device) |
+| Profiles | Personas, and each persona's own config — model, folders, skills, memory, focus |
+| Models | The LLM configurations, which one is active, and the realtime voice |
 | Secrets | API keys |
 | Skills | Every skill the agent can use — enable/disable each, install more |
-| Tools & Permissions | Tool and sandbox configuration, command permissions |
-| Integrations | Google sign-in, MCP servers |
-| Advanced | Everything else — including the shared **"Who you are"** identity memory |
+| Tools & Permissions | MCP servers, and install-wide command permissions |
+| Integrations | Messaging channels, Google sign-in, GitHub token |
+| Advanced | The assistant's current memory and timeout setting  |
 
-**Memory is not a Settings page.** It lives in two places: the shared *"Who you
-are"* identity is edited in Settings → Advanced; a persona's own memory is the
-Memory tab in Settings → Profiles. Don't send the user to "Settings → Memory";
-it does not exist.
 
 Name the page, don't invent a click path beyond that — layouts change.
 

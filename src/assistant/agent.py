@@ -311,7 +311,7 @@ MEMORY_GUIDANCE = (
     "each conversation. When the user explicitly asks you to remember something, or "
     "states a lasting preference, call the `remember` tool to save it right away — "
     "never claim you have no way to remember. The user can also view and edit this "
-    "memory themselves in Settings → Memory."
+    "memory themselves in Settings → Advanced."
 )
 
 
@@ -382,7 +382,7 @@ def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
     Local date/time is read from the system clock at call time; location comes
-    from config if set. Pass this per turn (it goes stale if baked in once).
+    from config if set. Passed each turn.
     """
     now = datetime.now().astimezone()
     when = now.strftime("%A, %d %B %Y, %-I:%M %p")
