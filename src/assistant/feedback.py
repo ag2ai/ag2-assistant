@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from assistant.config import Config
 from assistant.memory import read_profile, record_preference, remember_note
+from assistant.observability import log_suppressed
 
 
 class FeedbackMemory(BaseModel):
@@ -102,12 +103,14 @@ async def learn(
         if note or remove:
             await record_preference(store_path, note, category, remove=remove)
         return
-    except Exception:
-        pass
+    except Exception as exc:
+        # Record the failure without raising — learn() is fire-and-forget.
+        log_suppressed("feedback learner", exc, sentiment=sentiment)
 
-    fallback = (reason or "").strip()
-    if fallback:
+    # Only a 👎 falls back to the raw reason: a complaint is usable as-is, whereas
+    # ungeneralised praise is not worth storing.
+    if down and (fallback := (reason or "").strip()):
         try:
             await remember_note(store_path, fallback, category)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_suppressed("feedback learner fallback", exc, sentiment=sentiment)
