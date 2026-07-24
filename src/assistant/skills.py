@@ -18,13 +18,9 @@ unreachable unless a Grant opts it in. Do **not** "fix" this into a default-deny
 Grant: skills are capabilities you *add*, and flipping the default would
 dark-start every profile's skills on upgrade (ADR 0016, rejected alternative).
 
-The store holds two things: the install-wide **Disabled** set (by skill name) and
-per-profile **Suppression** records ``(profile_id, skill_name)`` — a shared skill
-turned off for one profile only (ADR 0016). Resolution folds both together in
-``is_available``: a skill is available to a profile unless it is Disabled
-install-wide OR Suppressed for that profile. Absence of a Suppression record means
-inherit "on" — the same default-on intent as the install-wide set, and the inverse
-of a Folders Grant.
+The store holds an install-wide **Disabled** set plus typed per-profile off-records.
+Shared skills resolve Disabled + Suppression; Profile skills resolve only their own
+Disable, so state cannot leak across same-named layers.
 """
 
 import contextlib
@@ -60,18 +56,21 @@ SUPPRESS_SHARED = "shared"
 DISABLE_OWN = "own"
 
 
-def skill_origin(location: str | None, bundled_root: Path) -> str:
+def skill_origin(location: str | None, bundled_root: Path, profile_root: Path | None = None) -> str:
     """Classify a discovered skill's layer from its on-disk location: under the
-    bundled first-party dir → ``bundled``, otherwise → ``global``. Kept beside the
-    store so origin is decided in the skills domain, not at the HTTP layer."""
+    active profile skills dir → ``profile``; under the bundled first-party dir →
+    ``bundled``; otherwise → ``global``."""
     if not location:
         return ORIGIN_GLOBAL
     try:
         loc = Path(location).resolve()
-        root = bundled_root.resolve()
+        bundled = bundled_root.resolve()
+        profile = profile_root.resolve() if profile_root is not None else None
     except (OSError, ValueError, RuntimeError):
         return ORIGIN_GLOBAL
-    return ORIGIN_BUNDLED if loc == root or root in loc.parents else ORIGIN_GLOBAL
+    if profile is not None and (loc == profile or profile in loc.parents):
+        return ORIGIN_PROFILE
+    return ORIGIN_BUNDLED if loc == bundled or bundled in loc.parents else ORIGIN_GLOBAL
 
 
 class SkillStateStore:
@@ -202,26 +201,35 @@ class SkillStateStore:
         profile = (profile or "").strip()
         return {n for p, n, _k in self._suppressed if p == profile}
 
-    def is_suppressed(self, name: str, profile: str) -> bool:
-        """Whether ``name`` is turned off for ``profile`` (off for this profile only).
-        Resolution ignores the record's kind — any off-record means unavailable."""
+    def is_suppressed(self, name: str, profile: str, kind: str | None = None) -> bool:
+        """Whether ``name`` is turned off for ``profile``.
+
+        ``kind`` selects a shared-skill Suppression or Profile-skill Disable. With no
+        kind, either record counts for callers that do not know the resolved layer.
+        """
         self._refresh()
         profile = (profile or "").strip()
         name = (name or "").strip()
-        return any(p == profile and n == name for p, n, _k in self._suppressed)
+        return any(
+            p == profile and n == name and (kind is None or record_kind == kind)
+            for p, n, record_kind in self._suppressed
+        )
 
-    def is_available(self, name: str, profile: str = "") -> bool:
+    def is_available(self, name: str, profile: str = "", origin: str = ORIGIN_GLOBAL) -> bool:
         """The single resolution seam: is skill ``name`` available to ``profile``?
 
         DEFAULT-ON — available unless turned off (ADR 0016; see the module note).
-        A skill is unavailable if it is Disabled install-wide OR Suppressed for this
-        profile. Absence of either record means "on". Do NOT invert this to
-        default-deny. ``profile`` empty = the install-wide answer (no Suppression
-        applies), which is what the Application → Skills view asks.
+        Shared skills resolve against install-wide Disable plus this profile's shared
+        Suppression. A Profile skill resolves only against its own per-profile Disable,
+        so same-named shared state never leaks through the shadow.
         """
+        if origin == ORIGIN_PROFILE:
+            return not (profile and self.is_suppressed(name, profile, kind=DISABLE_OWN))
+        if origin not in (ORIGIN_GLOBAL, ORIGIN_BUNDLED):
+            raise ValueError(f"unknown skill origin: {origin!r}")
         if self.is_disabled(name):
             return False
-        if profile and self.is_suppressed(name, profile):
+        if profile and self.is_suppressed(name, profile, kind=SUPPRESS_SHARED):
             return False
         return True
 
@@ -305,13 +313,13 @@ class FilteredSkillRuntime:
     set.
     """
 
-    def __init__(self, inner, is_available: Callable[[str], bool]) -> None:
+    def __init__(self, inner, is_available: Callable[[object], bool]) -> None:
         self._inner = inner
         self._is_available = is_available
 
     @property
     def skills(self):
-        return [s for s in self._inner.skills if self._is_available(s.name)]
+        return [skill for skill in self._inner.skills if self._is_available(skill)]
 
     def read(self, name: str) -> str:
         self._guard(name)
@@ -326,7 +334,8 @@ class FilteredSkillRuntime:
         return await self._inner.execute(name, script, context, args)
 
     def _guard(self, name: str) -> None:
-        if not self._is_available(name):
+        skill = next((item for item in self._inner.skills if item.name == name), None)
+        if skill is not None and not self._is_available(skill):
             # Same signal the toolkit's multi-runtime chain uses for "not mine",
             # so a disabled skill reads exactly like an absent one.
             raise SkillNotFoundError(f"Skill {name!r} is not available")

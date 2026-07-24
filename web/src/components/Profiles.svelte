@@ -180,10 +180,10 @@
         busyLabel="Creating…"
         onSubmit={doCreate}
       />
-      <button class="linkbtn padd-cancel" onclick={() => (creating = false)}>Cancel</button>
+      <button class="linkbtn profile-add-cancel" onclick={() => (creating = false)}>Cancel</button>
     </div>
   {:else}
-    <button class="padd" onclick={() => { err = ''; creating = true }}>
+    <button class="profile-add" onclick={() => { err = ''; creating = true }}>
       <Icon name="plus" size={14} /> Add profile
     </button>
   {/if}
@@ -295,15 +295,15 @@
   .peditactions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
 
   /* "Add profile" affordance at the foot of the live list. */
-  .padd {
+  .profile-add {
     display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
     margin-top: 6px; padding: 8px 4px;
     background: none; border: none; cursor: pointer; font: inherit;
     font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--text-muted);
   }
-  .padd:hover { color: var(--accent); }
-  .padd:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
-  .padd-cancel { align-self: flex-end; }
+  .profile-add:hover { color: var(--accent); }
+  .profile-add:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+  .profile-add-cancel { align-self: flex-end; }
 
   .pconfirm {
     display: flex; flex-direction: column; gap: 10px;

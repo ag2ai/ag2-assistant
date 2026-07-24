@@ -157,6 +157,22 @@ def test_discover_upload_invalid_is_400(monkeypatch):
         assert r.status_code == 400
 
 
+def test_install_upload_rejects_skill_name_outside_target(monkeypatch):
+    """A source-controlled frontmatter name cannot escape the skills directory."""
+    client, _pid = _client(monkeypatch)
+    with client:
+        escaped = load_config().skills_dir.parent / "escaped"
+        data = _skill_md("../escaped", "unsafe destination").encode()
+        r = client.post(
+            "/api/skills/install-upload",
+            files={"file": ("SKILL.md", data, "text/markdown")},
+            data={"names": "../escaped"},
+        )
+        assert r.status_code == 400
+        assert "invalid skill name" in r.json()["error"].lower()
+        assert not escaped.exists()
+
+
 def test_discover_git_rejects_ext_transport(monkeypatch):
     """git's ext:: transport runs a shell command at clone time (RCE on the host); the
     installer must refuse it before ever invoking git (finding 2)."""

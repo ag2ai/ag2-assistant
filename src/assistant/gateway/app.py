@@ -1514,8 +1514,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 "enabled": True,
             }
         for r in rows.values():
-            r["suppressed"] = store.is_suppressed(r["name"], profile)
-            r["available"] = store.is_available(r["name"], profile)
+            kind = DISABLE_OWN if r["origin"] == ORIGIN_PROFILE else SUPPRESS_SHARED
+            r["suppressed"] = store.is_suppressed(r["name"], profile, kind=kind)
+            r["available"] = store.is_available(r["name"], profile, origin=r["origin"])
         order = {ORIGIN_BUNDLED: 0, ORIGIN_GLOBAL: 1, ORIGIN_PROFILE: 2}
         return sorted(rows.values(), key=lambda r: (order.get(r["origin"], 9), r["name"]))
 

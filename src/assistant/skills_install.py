@@ -43,6 +43,10 @@ _ALLOWED_GIT_SCHEMES = frozenset({"https", "http", "ssh", "git"})
 _MAX_MEMBER_BYTES = 25 * 1024 * 1024  # 25 MB per extracted file (matches the registry)
 _MAX_TOTAL_BYTES = 100 * 1024 * 1024  # 100 MB total uncompressed across the archive
 
+# Agent Skills names are one safe path component: lowercase alphanumeric words joined
+# by single hyphens, capped at 64 characters.
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
 
 class SkillSourceError(Exception):
     """A git/upload source could not be fetched, unpacked, or validated (ADR 0017 t05).
@@ -114,6 +118,14 @@ async def registry_install(runtime, install_id: str) -> dict:
 # --- git / upload (discover-and-pick) -------------------------------------------
 
 
+def _validate_skill_name(name: str) -> None:
+    if not (1 <= len(name) <= 64) or not _SKILL_NAME_RE.fullmatch(name):
+        raise SkillSourceError(
+            f"invalid skill name {name!r}: expected lowercase alphanumeric words "
+            "separated by single hyphens"
+        )
+
+
 def _scan_skills(root: Path) -> list[dict]:
     """Every skill discoverable **anywhere** under ``root`` (a repo/archive may nest
     skills at the top level OR under a ``skills/`` subdir — a monorepo), as
@@ -137,7 +149,10 @@ def _scan_skills(root: Path) -> list[dict]:
         except Exception:
             continue
         name = str(fm.get("name") or "").strip()
-        if not name or name in seen:
+        if not name:
+            continue
+        _validate_skill_name(name)
+        if name in seen:
             continue
         seen.add(name)
         rows.append(
@@ -314,6 +329,10 @@ def _install_skill_dir(runtime, skill_dir: Path, name: str, all_dirs: set[Path])
     dragging B's files inside A. When A has no nested skills (the common case) this is a
     plain ``runtime.install``; only the nesting case stages a pruned copy first, so the
     single writer stays ``runtime.install``."""
+    _validate_skill_name(name)
+    install_root = Path(runtime.install_dir).resolve()
+    if (install_root / name).resolve().parent != install_root:
+        raise SkillSourceError(f"invalid skill destination for {name!r}")
     skill_dir = skill_dir.resolve()
     nested = {d for d in all_dirs if d != skill_dir and skill_dir in d.parents}
     if not nested:

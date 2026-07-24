@@ -10,6 +10,7 @@ from assistant.skills import (
     DISABLE_OWN,
     ORIGIN_BUNDLED,
     ORIGIN_GLOBAL,
+    ORIGIN_PROFILE,
     SUPPRESS_SHARED,
     SkillStateStore,
     skill_origin,
@@ -227,13 +228,13 @@ def test_global_purge_leaves_same_named_profile_own_disable_intact(tmp_path):
     still-on-disk own 'foo' silently flips back to available."""
     store = _store(tmp_path)
     store.set_suppressed("foo", "work", True, kind=DISABLE_OWN)  # P's own foo, Disabled
-    assert store.is_available("foo", "work") is False
+    assert store.is_available("foo", "work", origin=ORIGIN_PROFILE) is False
 
     store.purge("foo")  # delete the unrelated Global "foo" install-wide
 
     # The own off-record survives — P's own foo stays Disabled across a reload.
     assert store.is_suppressed("foo", "work") is True
-    assert _store(tmp_path).is_available("foo", "work") is False
+    assert _store(tmp_path).is_available("foo", "work", origin=ORIGIN_PROFILE) is False
 
 
 def test_global_purge_clears_shared_suppression_but_not_own(tmp_path):

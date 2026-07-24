@@ -142,10 +142,10 @@ def test_nested_folder_appears_once_under_outermost(monkeypatch, tmp_path):
     (outer / "pkg").mkdir(parents=True)
     client, pid = _client(monkeypatch)
     with client:
-        fo = _register_folder(client, outer)
-        fi = _register_folder(client, outer / "pkg")
-        _grant(client, fo["id"], pid, "read")
-        _grant(client, fi["id"], pid, "read")
+        outer_folder = _register_folder(client, outer)
+        inner_folder = _register_folder(client, outer / "pkg")
+        _grant(client, outer_folder["id"], pid, "read")
+        _grant(client, inner_folder["id"], pid, "read")
         roots = _roots(client, pid).json()["roots"]
         assert [r["path"] for r in roots] == [str(outer.resolve())]  # inner deduped away
 

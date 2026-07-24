@@ -7,6 +7,7 @@ through here too, and that a per-profile change reloads ONLY the active profile.
 
 from fastapi.testclient import TestClient
 
+from assistant.config import load_config
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
 from tests.conftest import api, make_profile_app, use_fake_agent
@@ -16,6 +17,14 @@ def _client(monkeypatch):
     use_fake_agent(monkeypatch)
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
+
+
+def _write_skill(skills_dir, name, description):
+    skill_dir = skills_dir / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n# {name}\n"
+    )
 
 
 def test_profile_projection_has_origin_enabled_suppressed_available(monkeypatch):
@@ -100,6 +109,29 @@ def test_profile_owned_skill_state_scoped_to_profile(monkeypatch):
             client.post(api(pid, "/skills/web-research/state"), json={"enabled": False}).status_code
             == 404
         )
+
+
+def test_profile_skill_shadow_ignores_same_named_shared_off_state(monkeypatch):
+    """A Profile skill wins the name clash and uses only its own Enabled state."""
+    client, pid = _client(monkeypatch)
+    with client:
+        global_skills = load_config().skills_dir
+        profile_skills = client.app.state.profiles.get(pid).config.skills_dir
+
+        _write_skill(global_skills, "global-off", "global copy")
+        _write_skill(profile_skills, "global-off", "profile copy")
+        client.post("/api/skills/global-off/state", json={"enabled": False})
+
+        _write_skill(global_skills, "shared-off", "global copy")
+        client.post(api(pid, "/skills/shared-off/suppress"))
+        _write_skill(profile_skills, "shared-off", "profile copy")
+
+        rows = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
+        for name in ("global-off", "shared-off"):
+            assert rows[name]["origin"] == "profile"
+            assert rows[name]["enabled"] is True
+            assert rows[name]["suppressed"] is False
+            assert rows[name]["available"] is True
 
 
 def test_per_profile_change_reloads_only_active_profile(monkeypatch):

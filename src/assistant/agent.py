@@ -36,7 +36,7 @@ from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.settings import profile_settings
-from assistant.skills import FilteredSkillRuntime, SkillStateStore
+from assistant.skills import FilteredSkillRuntime, SkillStateStore, skill_origin
 from assistant.tools import build_agent_tools
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 
@@ -167,16 +167,20 @@ def bundled_skills_dir():
 def build_skills_runtime(config: Config):
     """The runtime backing skill discovery, load, and script execution.
 
-    Skills install into `config.skills_dir`; AG2 Assistant's bundled first-party
-    skills are always available too (read-only, via `extra_paths`), so it's
-    capable on first run.
+    Skills install into ``config.skills_dir``. Profile runtimes inherit the Global
+    skills directory read-only, and every runtime inherits Bundled first-party
+    skills. Search order is Profile → Global → Bundled.
 
     When the Docker sandbox is selected (`config.tools.sandbox == "docker"`),
     skill *scripts* run inside a one-shot, bind-mounted container — so untrusted
     skill code can't reach the user's files. Storage/discovery stay local.
     """
     config.skills_dir.mkdir(parents=True, exist_ok=True)
-    extra = [str(bundled_skills_dir())]
+    global_skills = config.root_dir / "skills"
+    extra = []
+    if config.skills_dir.resolve() != global_skills.resolve():
+        extra.append(str(global_skills))
+    extra.append(str(bundled_skills_dir()))
 
     if config.tools.sandbox == "docker":
         if docker_available():
@@ -212,7 +216,15 @@ def build_skills_plugin(config: Config, runtime):
     """
     store = SkillStateStore(config.root_dir / "skills.json")
     profile = config.data_dir.name
-    filtered = FilteredSkillRuntime(runtime, lambda name: store.is_available(name, profile))
+    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
+    filtered = FilteredSkillRuntime(
+        runtime,
+        lambda skill: store.is_available(
+            skill.name,
+            profile,
+            origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
+        ),
+    )
     return SkillPlugin(filtered)
 
 

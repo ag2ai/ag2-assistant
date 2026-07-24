@@ -14,7 +14,15 @@ from assistant.agent import (
     create_agent,
 )
 from assistant.config import Config
-from assistant.skills import SkillStateStore
+from assistant.skills import DISABLE_OWN, SkillStateStore
+
+
+def _write_skill(skills_dir, name, description):
+    skill_dir = skills_dir / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n# {name}\n"
+    )
 
 
 def test_skills_runtime_builds_and_creates_dir(tmp_path):
@@ -100,6 +108,46 @@ def test_suppressed_skill_absent_from_one_profiles_catalog(tmp_path):
 
     store.set_suppressed("web-research", "work", False)
     assert "web-research" in catalog("work")  # clearing restores it
+
+
+def test_profile_skill_shadow_uses_own_state_in_catalog(tmp_path):
+    """Same-named shared state cannot remove the winning Profile skill."""
+    root = tmp_path / "root"
+    config = Config()
+    config.root_dir = root
+    config.data_dir = root / "profiles" / "work"
+    config.skills_dir = config.data_dir / "skills"
+    _write_skill(root / "skills", "shadowed", "global copy")
+    _write_skill(config.skills_dir, "shadowed", "profile copy")
+    store = SkillStateStore(root / "skills.json")
+
+    def catalog() -> str:
+        runtime = build_skills_runtime(config)
+        return "\n".join(build_skills_plugin(config, runtime)._system_prompt)
+
+    store.set_enabled("shadowed", False)
+    assert "shadowed" in catalog()
+
+    store.set_suppressed("shadowed", "work", True)
+    assert "shadowed" in catalog()
+
+    store.set_suppressed("shadowed", "work", True, kind=DISABLE_OWN)
+    assert "shadowed" not in catalog()
+
+
+def test_profile_catalog_inherits_global_skill(tmp_path):
+    """A Global skill is available to a profile that has no same-named copy."""
+    root = tmp_path / "root"
+    config = Config()
+    config.root_dir = root
+    config.data_dir = root / "profiles" / "work"
+    config.skills_dir = config.data_dir / "skills"
+    _write_skill(root / "skills", "shared-skill", "global copy")
+
+    runtime = build_skills_runtime(config)
+    prompt = "\n".join(build_skills_plugin(config, runtime)._system_prompt)
+
+    assert "shared-skill" in prompt
 
 
 def test_installed_skill_appears_in_catalog_after_rebuild(tmp_path):

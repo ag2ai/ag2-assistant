@@ -703,7 +703,7 @@
   .pc-lead { font-size: var(--text-sm); color: var(--text-muted); line-height: var(--leading-normal); margin: -2px 0 6px; }
 
   /* Chat row: title + a hover-revealed kebab (⋮) that opens a Star/Rename/Delete
-     menu. Delete re-uses the inline "Delete?" confirm (same idiom as the Files
+     menu. Delete reuses the inline "Delete?" confirm (same idiom as the Files
      modal) and is permanent. */
   /* Date section header between chat rows: last-message day, left-aligned and
      muted so it frames the group without competing with the chat titles. The
