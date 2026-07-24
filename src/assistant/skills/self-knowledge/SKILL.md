@@ -69,18 +69,20 @@ Name the page, don't invent a click path beyond that — layouts change.
 This is the thing most likely to make you wrong.
 
 **Install-wide** (shared by every persona): the active model, secrets, command
-permissions, the Folder registry, Google sign-in, and the universal "who the
-user is" memory.
+permissions, the Folder registry, the shared skill catalog — which Bundled and
+Global skills exist and whether each is enabled — Google sign-in, and the
+universal "who the user is" memory.
 
 **Per-persona** (a profile — its own runtime): voice, focus areas, MCP servers,
-installed skills, workspace folder, persona memory, and folder grants held at
-profile scope.
+a persona's own Profile-layer skills and its suppression of shared skills
+(turning a Global or Bundled skill off for itself only), workspace folder,
+persona memory, and folder grants held at profile scope.
 
 **Per-chat**: folder grants held at chat scope.
 
 So: switching persona does **not** change the model. It **does** change voice,
-focus, MCP servers, skills, workspace, memory, and reachable folders. Connecting
-Google once connects it for every persona.
+focus, MCP servers, which skills are active, workspace, memory, and reachable
+folders. Connecting Google once connects it for every persona.
 
 Memory has two layers. Identity facts about the user as a person are shared
 across every persona; preferences about how *this* persona works are not.
