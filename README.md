@@ -147,9 +147,14 @@ each release):
 
 ```bash
 docker run -d --name ag2-assistant -p 8800:8800 \
+  -e TZ=Australia/Sydney \
   -v ag2_data:/data -v ag2_workspace:/workspace \
   ghcr.io/ag2ai/ag2-assistant:latest
 ```
+
+Set `TZ` to your own zone — scheduled tasks use the container's local time, and the image
+defaults to UTC, so without it "remind me at 6am" means 6am UTC. The startup banner prints
+the resolved local time.
 
 Or from a checkout, with Compose:
 

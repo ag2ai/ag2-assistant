@@ -3,13 +3,14 @@
 import asyncio
 import os
 import secrets as _secrets
+from datetime import datetime
 from pathlib import Path
 
 import typer
 import uvicorn
 
 from assistant import __version__, codex_auth, profiles
-from assistant.agent import ask
+from assistant.agent import ask, tz_unset_in_container
 from assistant.channels import get_channel
 from assistant.config import Config, load_config
 from assistant.folders import DuplicatePath, FolderStore
@@ -51,6 +52,29 @@ def _global_options(
     """Global options, applied before any command runs."""
     if data_dir:
         os.environ["AG2ASSISTANT_DATA_DIR"] = str(Path(data_dir).expanduser())
+
+
+def _echo_local_time() -> None:
+    """Print the server's local time at startup, and flag an unset container TZ.
+
+    Scheduling is wall-clock in the local timezone (see ``tasks.scheduling``), so the
+    process timezone decides when "remind me at 6am" actually fires. Container base
+    images default to UTC, which silently books reminders in the wrong hour for anyone
+    who isn't on UTC — the task is created and confirmed, and only the reminder is
+    wrong. Printing the resolved local time makes that visible in one glance.
+
+    The hint is limited to containers with no TZ set: a UTC host is a deliberate,
+    ordinary choice and shouldn't be nagged.
+    """
+    now = datetime.now().astimezone()
+    typer.echo(f"  Time    {now:%Y-%m-%d %H:%M %Z} (UTC{now:%z})")
+
+    if tz_unset_in_container():
+        typer.echo(
+            "  Note: no TZ set, so this container is on UTC — scheduled tasks "
+            '("remind me at 6am") will use UTC.'
+        )
+        typer.echo("        Set it to your zone, e.g. -e TZ=Australia/Sydney")
 
 
 def _resolve_profile_config(profile: str | None) -> Config:
@@ -503,6 +527,7 @@ def gateway(
     typer.echo(f"AG2 Assistant gateway starting on http://{host}:{port}")
     typer.echo(f"  Web UI  http://{host}:{port}/")
     typer.echo(f"  API     http://{host}:{port}/api/p/{{pid}}/…")
+    _echo_local_time()
     uvicorn.run(create_app(ProfileManager(memory=memory)), host=host, port=port)
 
 
@@ -671,6 +696,7 @@ def run(
             for runtime in manager.runtimes():
                 for platform in getattr(runtime, "channels", []):
                     typer.echo(f"  channel: {getattr(platform, 'platform', '?')} ({runtime.pid})")
+            _echo_local_time()
             typer.echo("AG2 Assistant is running (no REST). Press Ctrl+C to stop.")
             try:
                 await asyncio.Event().wait()
@@ -686,6 +712,7 @@ def run(
     # REST path: create_app starts/stops the manager in its lifespan; uvicorn runs it.
     app = create_app(manager)
     typer.echo(f"  Web UI + REST/WS: http://{host}:{port}/")
+    _echo_local_time()
     typer.echo("AG2 Assistant is running. Press Ctrl+C to stop.")
     try:
         uvicorn.run(app, host=host, port=port, log_level="warning")
