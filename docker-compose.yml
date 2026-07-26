@@ -39,6 +39,14 @@ services:
       # In-container code execution — the container is the sandbox (see the
       # docker-out-of-docker block below to change this).
       AG2ASSISTANT_SANDBOX: local
+      # Timezone for scheduled tasks, which are wall-clock LOCAL time. The base image
+      # is UTC, so without this "remind me at 6am" means 6am UTC — silently the wrong
+      # hour everywhere else (the task is still created and confirmed, so nothing looks
+      # broken until it fires). Put `TZ=Australia/Sydney` in .env, or export TZ on the
+      # host; ${TZ:-UTC} just forwards it (the host's TZ is often unset, notably on
+      # macOS, so .env is the reliable route). The startup banner prints the resolved
+      # local time — check it after changing this.
+      TZ: ${TZ:-UTC}
     volumes:
       # Persistent state: secrets, profiles, config, memory, tasks.
       - ag2_data:/data

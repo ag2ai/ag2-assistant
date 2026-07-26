@@ -86,6 +86,7 @@ and ARM servers pull a native image.
 
 ```bash
 cp .env.example .env         # add GEMINI_API_KEY (or another provider key) — optional
+                             # and set TZ (see "Timezone" below)
 docker compose up -d         # build + run
 ```
 
@@ -106,6 +107,29 @@ docker run -d --name ag2-assistant \
 ```
 
 (Or in `docker-compose.yml`, comment out `build: .` and keep the `image:` line.)
+
+### Timezone
+
+Scheduled tasks are **wall-clock in the container's local timezone**, and container base
+images default to UTC. So on a UTC container, "remind me at 6am" is booked for 6am UTC —
+which is the wrong hour for anyone not on UTC. Nothing looks broken when this happens: the
+task is created and confirmed normally, and only the reminder fires late or early.
+
+Set `TZ` to an IANA zone name, via `.env` (Compose reads it) or `-e` on `docker run`:
+
+```bash
+TZ=Australia/Sydney
+```
+
+The startup banner prints the resolved local time, so you can confirm it:
+
+```
+AG2 Assistant gateway starting on http://0.0.0.0:8800
+  Time    2026-07-27 06:00 AEST (UTC+1000)
+```
+
+If `TZ` is unset in a container, the banner says so explicitly. Non-Docker installs already
+follow your system timezone and need nothing.
 
 ### Messaging channels
 
@@ -202,6 +226,7 @@ Notes:
 | `AG2ASSISTANT_DATA_DIR` | install root: secrets, profiles, config, memory | `/data` |
 | `AG2ASSISTANT_WORKSPACE` | the agent's readable/writable file space | `/workspace` |
 | `AG2ASSISTANT_SANDBOX` | `local` (in-container) or `docker` (sibling containers) | `local` |
+| `TZ` | IANA timezone for scheduled tasks (wall-clock local) — **set this** | unset → `UTC` |
 | `AG2ASSISTANT_ACP_BRIDGE` | `host:port` of the ACP host bridge; unset = spawn coding agents locally | — |
 | `AG2ASSISTANT_ACP_BRIDGE_TOKEN` | shared secret for the bridge (must match `acp-bridge --token`) | — |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | provider keys | — |

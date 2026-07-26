@@ -378,11 +378,26 @@ def build_memory_tool(store_path, user_store_path):
     return remember
 
 
+def tz_unset_in_container() -> bool:
+    """True when containerised with no TZ set — i.e. silently running on UTC.
+
+    Scheduled tasks are wall-clock local, so this is the one configuration where the
+    clock is probably not the one the user means. The startup banner and the agent's
+    environment block both key off this predicate so they cannot disagree.
+    """
+    return Path("/.dockerenv").exists() and not os.environ.get("TZ")
+
+
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
     Local date/time is read from the system clock at call time; location comes
     from config if set. Passed each turn.
+
+    When the timezone is probably wrong (container, no TZ) one line is added asking the
+    agent to name the zone as it confirms a schedule, so "6:00 AM UTC" gives the user
+    something to notice. It is deliberately omitted otherwise: once the clock is right,
+    repeating "AEST" on every reply is noise, and this text ships on every turn.
     """
     now = datetime.now().astimezone()
     when = now.strftime("%A, %d %B %Y, %-I:%M %p")
@@ -392,6 +407,8 @@ def environment_context(config: Config) -> str:
     lines = [f"- Current date and time: {when} {tz} ({off})".rstrip()]
     if config.agent.location:
         lines.append(f"- User location: {config.agent.location}")
+    if tz_unset_in_container():
+        lines.append("- Tasks fire in this timezone — say it when confirming a time.")
     return "Environment (live):\n" + "\n".join(lines)
 
 
