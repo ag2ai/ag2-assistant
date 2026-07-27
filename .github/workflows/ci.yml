@@ -46,11 +46,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.11.28" # matches the pin in Dockerfile
-      # Install from the committed uv.lock, which pins ag2 to git-main (rev=main) —
-      # the same ag2 the Dockerfile and local dev already use. The prior
-      # `pip install -e` resolved ag2 from RELEASED PyPI (>=1.0.0b0), so main-only
-      # ag2 APIs (e.g. ModelProvider) passed locally but failed only here.
-      - name: Install (ag2 from git-main via uv.lock)
+      # Install from the committed uv.lock, so CI, the Dockerfile and local dev all
+      # get the same pinned dependency set. (Don't swap this for `pip install -e`:
+      # that re-resolves, so CI would silently test a different ag2 than ships.)
+      - name: Install (pinned deps via uv.lock)
         run: uv sync --frozen --extra dev --extra google
       - name: Unit tests
         run: uv run pytest -m "not integration" -q

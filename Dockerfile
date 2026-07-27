@@ -9,8 +9,7 @@
 # and runs as a non-root user.
 
 # ---------------------------------------------------------------------------
-# Stage 1: builder — slim base + git (ag2 is a git+https dependency, uv shells out
-# to git to clone it) + the uv installer.
+# Stage 1: builder — slim base + the uv installer, nothing else.
 # ---------------------------------------------------------------------------
 FROM python:3.14-slim AS builder
 
@@ -18,10 +17,6 @@ FROM python:3.14-slim AS builder
 # unpinned `:latest` would silently change the resolver between builds, which
 # defeats the point of installing from a committed lockfile.
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /bin/
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \

@@ -249,10 +249,13 @@ Release flow: pushing the tag publishes the Docker image; publishing the GitHub 
 that tag publishes to PyPI. The workflow refuses to publish if the tag doesn't match
 `pyproject.toml`'s version.
 
-The published package depends on the released `ag2` from PyPI (`>=1.0.0b0`). Development
-installs are different on purpose: `[tool.uv.sources]` in `pyproject.toml` points `uv sync`
-(and the Docker build) at AG2's git `main`, and that overlay never reaches the built wheel's
-metadata. So contributors track AG2 main; PyPI users get reproducible releases.
+Every install path resolves the released `ag2` from PyPI (`>=1.0.0`): the published wheel via
+its metadata, and dev installs, CI and the Docker image via the pinned version in `uv.lock`.
+So a contributor's checkout, CI, and the shipped image all run the same AG2.
+
+To test against unreleased AG2, add a `[tool.uv.sources]` entry pointing `ag2` at a git ref and
+run `uv lock`. That overlay is uv-only — it never reaches the published wheel's metadata — but
+the Docker builder will need `git` installed to clone it.
 
 One-time setup before the first publish: on pypi.org, add a pending trusted publisher under
 the **ag2ai organization** (project `ag2-assistant`, this repository, workflow
