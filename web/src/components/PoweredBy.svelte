@@ -1,7 +1,7 @@
 <script>
   // The architecture map: which AG2 primitives power this assistant, and
   // (honestly) what's the app layer built on top.
-  import { poweredByOpen, appVersion } from '../store.js'
+  import { poweredByOpen, appVersion, ag2Version } from '../store.js'
   import { PRIMITIVES, SUBSYSTEMS, AG2_DOCS } from '../lib/ag2map.js'
 
   const close = () => ($poweredByOpen = false)
@@ -38,7 +38,7 @@
   </div>
   <div class="mfoot">
     {#if $appVersion}
-      <span class="pbver">AG2 Assistant v{$appVersion}</span>
+      <span class="pbver">AG2 Assistant v{$appVersion}{#if $ag2Version} · AG2 v{$ag2Version}{/if}</span>
     {/if}
     <a class="open" href={AG2_DOCS} target="_blank" rel="noopener noreferrer">AG2 docs ↗</a>
   </div>

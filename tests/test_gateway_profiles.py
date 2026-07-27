@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import assistant.secrets as secrets_mod
-from assistant import __version__, profiles
+from assistant import AG2_VERSION, __version__, profiles
 from assistant import profiles as profiles_mod
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
@@ -39,6 +39,7 @@ def test_profiles_zero_state_contract(monkeypatch):
             "active_default": None,
             "onboarded": False,
             "version": __version__,
+            "ag2_version": AG2_VERSION,
         }
         # health still serves (SPA shell + global routes live with zero profiles)
         assert client.get("/api/health").json()["status"] == "ok"
@@ -477,3 +478,13 @@ def test_usage_rollup_single_profile(monkeypatch):
         assert [p["pid"] for p in body["profiles"]] == ["work"]
         assert body["total"]["total"] == 150.0
         assert body["total"]["priced"] is True
+
+
+def test_boot_payload_reports_the_running_ag2_version(monkeypatch):
+    """The "Powered by" dialog shows which AG2 the app is actually running on, so the
+    boot payload must carry a real version read from installed metadata — not a
+    hardcoded string that can drift from the dependency."""
+    from importlib.metadata import version
+
+    with TestClient(_app(monkeypatch)) as client:
+        assert client.get("/api/profiles").json()["ag2_version"] == version("ag2")

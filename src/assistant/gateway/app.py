@@ -104,7 +104,15 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel, Field
 
-from assistant import __version__, codex_auth, live_configs, llm_configs, secrets, voice_providers
+from assistant import (
+    AG2_VERSION,
+    __version__,
+    codex_auth,
+    live_configs,
+    llm_configs,
+    secrets,
+    voice_providers,
+)
 from assistant import feedback as feedback_learner
 from assistant import profiles as profiles_mod
 from assistant.a2ui import A2UI_SERVER_ACTIONS
@@ -1779,8 +1787,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "archived": [_profile_view(m) for m in allp if m.archived],
             "active_default": reg.get("active_default"),
             "onboarded": bool(reg.get("onboarded")),
-            # App version rides the boot payload so the UI needn't make a second request.
+            # Versions ride the boot payload so the UI needn't make a second request.
             "version": __version__,
+            "ag2_version": AG2_VERSION,
         }
 
     @app.post("/api/profiles")

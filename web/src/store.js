@@ -116,6 +116,10 @@ export const poweredByOpen = writable(false)
 // "Powered by AG2" modal footer. Empty until boot completes.
 export const appVersion = writable('')
 
+// The AG2 version the app is running on, from the same boot payload. Empty when the
+// server couldn't read it, which the footer treats as "just omit it".
+export const ag2Version = writable('')
+
 // A bounded buffer of the raw {type,data} events the current chat's stream
 // already delivers — the AG2 Inspector renders it to show the live AG2 events
 // behind the UI. Reset when a thread opens (see controller.openThread).
