@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile, closeAside } from './router.js'
   import { openThread, closeThread, switchProfile } from './controller.js'
-  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
+  import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, ag2Version, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.js'
   import { api } from './transport/api.js'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
@@ -60,6 +60,7 @@ import AppBar from './components/AppBar.svelte'
       const list = reg.profiles || []
       registryOnboarded = !!reg.onboarded
       $appVersion = reg.version || ''
+      $ag2Version = reg.ag2_version || ''
       $profiles = { list, activeId: null }
       if (!list.length) { boot = 'create'; return }
       resolveActive(list, reg.active_default)

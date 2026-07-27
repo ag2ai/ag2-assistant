@@ -5,9 +5,8 @@
 # must be configured on PyPI for (owner=ag2ai, repo=ag2-assistant, workflow=pypi-publish.yml,
 # environment=package), mirroring ag2-classic's python-package.yml setup.
 #
-# The published wheel depends on the released `ag2` from PyPI ([project.dependencies]);
-# only development installs track AG2 main (via [tool.uv.sources], which never
-# reaches built metadata).
+# The published wheel depends on the released `ag2` from PyPI ([project.dependencies]),
+# the same source dev installs and the Docker image resolve through uv.lock.
 name: Publish to PyPI
 
 on:
