@@ -28,10 +28,12 @@ export async function loadLlmConfigs() {
   })
 }
 
-// type -> provider logo (all three OpenAI surfaces share the OpenAI mark).
+// type -> provider logo (all three OpenAI surfaces share the OpenAI mark;
+// claude_code is Anthropic's CLI, so it wears the Anthropic mark).
 export const LOGO = {
   openai: openaiLogo, openai_responses: openaiLogo, openai_subscription: openaiLogo,
   anthropic: anthropicLogo, gemini: geminiLogo, ollama: ollamaLogo,
+  claude_code: anthropicLogo,
 }
 
 // type -> the label the UI shows for it.
@@ -39,6 +41,7 @@ export const TYPE_LABEL = {
   openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
   openai_subscription: 'OpenAI · ChatGPT subscription',
   anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
+  claude_code: 'Claude Code · CLI login',
 }
 
 // Whether a config can actually run right now — the signal behind the health dot.
