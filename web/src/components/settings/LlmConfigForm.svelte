@@ -30,6 +30,7 @@
     { id: 'anthropic', label: 'Anthropic' },
     { id: 'gemini', label: 'Gemini' },
     { id: 'ollama', label: 'Ollama' },
+    { id: 'claude_code', label: 'Claude Code · CLI login' },
   ]
   // base_url applies to openai/openai_responses/anthropic; host to ollama only.
   // Subscription mode has no endpoint or key fields — both come from codex_auth.
@@ -95,6 +96,8 @@
   const keyUsage = $derived.by(() => {
     if (type === 'openai_subscription')
       return 'Requests use your ChatGPT/Codex subscription — no API key is involved.'
+    if (type === 'claude_code')
+      return 'Runs on your Claude Code CLI login (claude-agent-acp) — no API key is involved.'
     if (type === 'ollama') return 'Ollama is local — no API key is used.'
     const env = ENV_OF[type]
     const shared = ctx?.s?.keys?.[PROV_OF[type]]
@@ -190,7 +193,7 @@
   </div>
   <div class="llmfield">
     <label for="lf-model">Model</label>
-    <input id="lf-model" bind:value={model} placeholder="e.g. gemini-3.5-flash" />
+    <input id="lf-model" bind:value={model} placeholder={type === 'claude_code' ? 'sonnet' : 'e.g. gemini-3.5-flash'} />
   </div>
 
   {#if usesBaseUrl(type)}
@@ -217,6 +220,14 @@
         <span class="llmtest" class:ok={codexSignedIn} class:bad={!codexSignedIn}>{codexSignedIn ? 'Signed in' : 'Not signed in'}</span>
       </div>
       <span class="llmhint">{keyUsage}</span>
+    </div>
+  {:else if type === 'claude_code'}
+    <!-- No endpoint or key fields: auth is the Claude Code CLI's own on-disk login,
+         and the ACP adapter is found on PATH (or via the Docker host bridge). -->
+    <div class="llmfield">
+      <span class="llmlabel">Authentication</span>
+      <span class="llmhint">{keyUsage}</span>
+      <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH and a logged-in Claude Code CLI. Model accepts <code>sonnet</code> / <code>opus</code> / <code>haiku</code> or a full model id.</span>
     </div>
   {:else}
     <div class="llmfield">
