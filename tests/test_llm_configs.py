@@ -396,3 +396,48 @@ def test_key_source_resolution(monkeypatch):
     llm_configs.set_secret_id(local["id"], s2["id"])
     local = llm_configs.get_config(local["id"])
     assert llm_configs.key_source(local) == "secret"
+
+
+# ---- claude_code (Claude Code CLI login over ACP) -------------------------------
+
+
+def test_claude_code_type_registered():
+    assert "claude_code" in llm_configs.TYPES
+    assert llm_configs.PROVIDER_OF["claude_code"] == "claude_code"
+
+
+def test_claude_code_clean_entry_strips_endpoint_and_secret():
+    entry = llm_configs._clean_entry(
+        {
+            "type": "claude_code",
+            "name": "CC",
+            "model": "sonnet",
+            "base_url": "http://x",
+            "host": "h",
+            "secret_id": "s1",
+            "options": {"turn_timeout": 60.0},
+        }
+    )
+    # No endpoint/key concepts — auth is the CLI's on-disk login. Options stay:
+    # they are ACPConfig constructor overrides, not provider-API kwargs.
+    assert entry["base_url"] == "" and entry["host"] == "" and entry["secret_id"] == ""
+    assert entry["options"] == {"turn_timeout": 60.0}
+
+
+def test_claude_code_entry_options_passthrough():
+    entry = {"type": "claude_code", "options": {"turn_timeout": 60.0}}
+    assert llm_configs.entry_options(entry) == {"turn_timeout": 60.0}
+
+
+def test_claude_code_usable_and_key_source(monkeypatch):
+    entry = {"type": "claude_code", "model": "sonnet"}
+    monkeypatch.setattr(llm_configs, "_claude_cli_present", lambda: True)
+    assert llm_configs.usable(entry) is True
+    assert llm_configs.key_source(entry) == "cli_login"
+    monkeypatch.setattr(llm_configs, "_claude_cli_present", lambda: False)
+    assert llm_configs.usable(entry) is False
+    assert llm_configs.key_source(entry) == "none"
+
+
+def test_claude_code_not_image_capable():
+    assert llm_configs.image_capable({"type": "claude_code"}) is False
