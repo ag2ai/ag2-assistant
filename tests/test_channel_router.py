@@ -95,7 +95,7 @@ async def test_dm_returns_the_gateway_reply():
 
 
 async def test_turn_runs_on_the_peers_own_chat():
-    router, gateway = _router()
+    router, gateway = _router(default="work")
     await router.handle(_inbound(platform="discord"))
     assert gateway.calls[0]["chat_id"] == "discord:c1"
 
@@ -123,6 +123,15 @@ async def test_the_profile_is_resolved_per_message():
     first = await router.handle(_inbound("hi", chat_id="c1"))
     second = await router.handle(_inbound("hi", chat_id="c2"))
     assert (first, second) == (Reply("from work"), Reply("from home"))
+
+
+async def test_a_settled_peer_is_not_rewritten_on_every_message():
+    """Resolving a profile reads the registry; it only writes when something moved."""
+    router, _ = _router()
+    await router.handle(_inbound("hi"))
+    before = peers.get_peer("telegram", "c1")
+    await router.handle(_inbound("again"))
+    assert peers.get_peer("telegram", "c1") == before
 
 
 async def test_the_only_profile_is_chosen_without_asking():
@@ -169,6 +178,17 @@ async def test_no_reachable_profile_is_refused():
     silently or raising into the adapter."""
     router = ChannelRouter(FakeDirectory())
     assert await router.handle(_inbound("hi")) == Refuse(NO_PROFILE)
+
+
+async def test_a_platform_without_commands_is_never_placed_without_a_default():
+    """The default profile is the only mode Discord and Slack have (ADR 0019). Placing
+    one in the sole profile would record a selection it has no command to correct, and
+    that selection would then outrank the default the operator later sets."""
+    for platform in ("discord", "slack"):
+        directory = FakeDirectory("work")
+        outcome = await ChannelRouter(directory).handle(_inbound("hi", platform=platform))
+        assert outcome == Refuse(NO_PROFILE)
+        assert peers.get_peer(platform, "c1") is None
 
 
 async def test_a_platform_without_commands_is_refused_rather_than_asked():

@@ -106,11 +106,7 @@ class AvailableProfile:
 
 
 class ProfileDirectory(Protocol):
-    """What the router needs to know about profiles — implemented by ProfileManager.
-
-    Read fresh on every message: which profiles are running changes underneath a
-    long-lived adapter, and no answer here is ever cached.
-    """
+    """What the router knows about profiles. Every answer is read fresh per message."""
 
     def available_profiles(self) -> tuple[AvailableProfile, ...]:
         """Every profile a conversation could be pointed at right now."""
@@ -130,10 +126,7 @@ def spoken_text(outcome: Outcome) -> str | None:
 
 def parse_command(text: str) -> tuple[str, str] | None:
     """Split ``/name rest`` into (name, rest), or None when this isn't a command.
-
-    Telegram addresses a command to a specific bot in groups (``/profile@thebot``),
-    so the handle is stripped off the name.
-    """
+    A command addressed to a specific bot (``/profile@thebot``) loses the handle."""
     stripped = text.strip()
     if not stripped.startswith("/") or len(stripped) < 2:
         return None

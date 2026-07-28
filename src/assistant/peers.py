@@ -2,11 +2,8 @@
 
 A **Peer** is one conversation on the platform side — a direct message or a group —
 identified by platform plus that platform's chat id. It holds the **Profile** that
-conversation talks to, so a selection survives a restart.
-
-Peer state is install-level (ADR 0019), a sibling of the profile registry rather
-than something inside a profile: a Peer spans Profiles by construction, since
-switching Profile is exactly what it records.
+conversation talks to, so a selection survives a restart. Install-level state, a
+sibling of the profile registry (ADR 0019).
 
 Read/write style mirrors ``profiles.py``: a small read-modify-write over a JSON
 file, tolerant of a missing/malformed file (treated as no peers).
@@ -18,11 +15,8 @@ from pathlib import Path
 
 from assistant.config import data_dir
 
-# A Peer's Chat id is its platform address plus a discriminator for how many times
-# the Peer has switched Profile — a Chat cannot cross Profiles, so every switch
-# moves the Peer to a fresh one. The address before the separator stays recoverable
-# so a task can still push its outcome back to the conversation it came from.
-# Splitting the Chat id from the platform address outright is ticket 07.
+# Separates a Chat id's platform address from its switch count:
+# "telegram:42#2". ``chat_address`` recovers the address a push is delivered to.
 _CHAT_SEP = "#"
 
 
@@ -93,13 +87,9 @@ def list_peers() -> list[Peer]:
 
 def select_profile(platform: str, chat_id: str, pid: str, *, surface: str = "dm") -> Peer:
     """Point this conversation at profile ``pid`` and return the resulting Peer.
-
-    A *switch* — replacing a different profile — also moves the Peer to a fresh Chat,
-    because a Chat cannot cross Profiles. Re-selecting the profile a Peer is already
-    in is not a switch and leaves its Chat alone. The Chat itself is not created
-    here: it is materialised by the first message, so flipping between Profiles
-    without saying anything litters nothing.
-    """
+    Replacing a different profile also moves the Peer to a fresh Chat; re-selecting
+    the one it already holds leaves its Chat alone. The Chat is minted lazily by the
+    first message, not here."""
     entries = _load()
     for entry in entries:
         if entry.get("platform") == platform and entry.get("chat_id") == chat_id:
