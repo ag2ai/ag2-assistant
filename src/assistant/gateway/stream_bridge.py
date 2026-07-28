@@ -39,7 +39,14 @@ class StreamBridge:
         with contextlib.suppress(Exception):
             await self._ws.send_json({"event": to_wire(event)})
 
-    async def run_turn(self, text: str, asker=None, attachments=None, surface: str = "") -> None:
+    async def run_turn(
+        self,
+        text: str,
+        asker=None,
+        attachments=None,
+        surface: str = "",
+        attachment_names: tuple[str, ...] = (),
+    ) -> None:
         """Run a user turn; its events flow back out through the subscription."""
         try:
             await self._gw.send_message(
@@ -48,6 +55,7 @@ class StreamBridge:
                 asker=asker,
                 attachments=attachments,
                 surface=surface,
+                attachment_names=attachment_names,
             )
             with contextlib.suppress(Exception):
                 await self._ws.send_json({"type": "turn_end", "chat": self._sid})

@@ -3440,7 +3440,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                         await websocket.send_json({"type": "queued", "text": text, "chat": chat_id})
                 else:
                     asyncio.create_task(
-                        bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
+                        bridge.run_turn(
+                            text,
+                            asker=asker,
+                            attachments=attachments,
+                            surface=surface,
+                            attachment_names=tuple(name for _, name in saved),
+                        )
                     )
         except WebSocketDisconnect:
             return

@@ -162,13 +162,26 @@ async def test_only_the_completed_turn_is_mirrored(fake_gateway):
     deltas, tool calls and produce events the turn emitted on the way (ADR 0020)."""
     mirrored: list = []
 
-    async def mirror(chat_id, text, reply, *, origin=""):
-        mirrored.append((chat_id, text, reply, origin))
+    async def mirror(chat_id, text, reply, *, origin="", files=()):
+        mirrored.append((chat_id, text, reply, origin, files))
 
     fake_gateway.set_mirror(mirror)
     await fake_gateway.send_message("hello", chat_id="s1", origin="telegram:42")
 
-    assert mirrored == [("s1", "hello", "echo[1]: hello", "telegram:42")]
+    assert mirrored == [("s1", "hello", "echo[1]: hello", "telegram:42", ())]
+
+
+async def test_the_names_of_attached_files_reach_the_mirror(fake_gateway):
+    """The mirror names a file instead of carrying it, so it needs what it is called."""
+    mirrored: list = []
+
+    async def mirror(chat_id, text, reply, *, origin="", files=()):
+        mirrored.append(files)
+
+    fake_gateway.set_mirror(mirror)
+    await fake_gateway.send_message("look", chat_id="s1", attachment_names=("report.pdf",))
+
+    assert mirrored == [("report.pdf",)]
 
 
 async def test_a_mirror_that_fails_does_not_fail_the_turn(fake_gateway):

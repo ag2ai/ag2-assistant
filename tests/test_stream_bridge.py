@@ -41,7 +41,9 @@ class _GW:
     async def stream_for(self, sid):
         return self._stream
 
-    async def send_message(self, text, chat_id=None, asker=None, attachments=None, surface=""):
+    async def send_message(
+        self, text, chat_id=None, asker=None, attachments=None, surface="", attachment_names=()
+    ):
         self.turns.append((text, chat_id))
         return "ok"
 

@@ -76,6 +76,15 @@ CHATS_OFFERED = 10
 TAIL_MESSAGES = 6
 TAIL_CHARS = 300
 
+# How files on a message are named to a Peer: their names, never their bytes and never
+# their paths (ADR 0020).
+FILES_LABEL = "Files:"
+
+# The block of absolute paths the browser appends for the File references a message
+# carries (ADR 0012), and the marker a referenced directory ends with.
+REFERENCES = "Referenced files:\n"
+DIRECTORY_SUFFIX = " (directory — list its contents)"
+
 
 @dataclass(frozen=True)
 class Command:
@@ -160,24 +169,55 @@ def speaker(role: str) -> str:
     return "You" if role == "user" else "Me"
 
 
+def fold_references(text: str) -> tuple[str, tuple[str, ...]]:
+    """A sent message split into the words it says and the names of the Files its
+    trailing block references. Text without a well-formed block passes through, so
+    prose that merely mentions the marker stays prose."""
+    at = text.rfind(f"\n{REFERENCES}")
+    start = at + 1 if at != -1 else (0 if text.startswith(REFERENCES) else -1)
+    if start == -1:
+        return text, ()
+    names = []
+    for line in text[start + len(REFERENCES) :].splitlines():
+        if not line.strip():
+            continue
+        if not line.startswith("- "):
+            return text, ()
+        path = line[2:].strip().removesuffix(DIRECTORY_SUFFIX).strip()
+        names.append(path.rsplit("/", 1)[-1])
+    if not names:
+        return text, ()
+    return text[:start].rstrip(), tuple(names)
+
+
+def said(text: str, files: tuple[str, ...] = (), *, clip: int = 0) -> str:
+    """One message as a Peer reads it: the words, clipped when asked, followed by the
+    names of the files on it — the ones attached and the ones referenced."""
+    body, referenced = fold_references(text)
+    body = body.strip()
+    if clip and len(body) > clip:
+        body = f"{body[:clip].rstrip()}…"
+    named = (*files, *referenced)
+    return "\n".join(
+        part for part in (body, f"{FILES_LABEL} {', '.join(named)}" if named else "") if part
+    )
+
+
 def transcript_tail(messages: list[dict]) -> str:
     """The last few turns, speaker-labelled and clipped, as one block of text."""
-    lines = []
-    for message in messages[-TAIL_MESSAGES:]:
-        text = (message.get("text") or "").strip()
-        if len(text) > TAIL_CHARS:
-            text = f"{text[:TAIL_CHARS].rstrip()}…"
-        lines.append(f"{speaker(message.get('role') or '')}: {text}")
-    return "\n\n".join(lines)
+    return "\n\n".join(
+        f"{speaker(message.get('role') or '')}: {said(message.get('text') or '', clip=TAIL_CHARS)}"
+        for message in messages[-TAIL_MESSAGES:]
+    )
 
 
-def mirrored_turn(text: str, reply: str) -> str:
+def mirrored_turn(text: str, reply: str, files: tuple[str, ...] = ()) -> str:
     """A completed turn as the Attached Peer reads it — the same speaker labels a
     resumed transcript shows, unclipped (the adapter splits what is too long)."""
     return "\n\n".join(
-        f"{speaker(role)}: {body.strip()}"
-        for role, body in (("user", text), ("agent", reply))
-        if body.strip()
+        f"{speaker(role)}: {body}"
+        for role, body in (("user", said(text, files)), ("agent", reply.strip()))
+        if body
     )
 
 
@@ -485,16 +525,20 @@ class ChannelRouter:
         tail = transcript_tail(await gateway.transcript(chat))
         return Reply(f"{header}\n\n{tail}" if tail else header)
 
-    async def mirror(self, chat: str, text: str, reply: str, *, origin: str = "") -> None:
+    async def mirror(
+        self, chat: str, text: str, reply: str, *, origin: str = "", files: tuple[str, ...] = ()
+    ) -> None:
         """Send a completed turn in ``chat`` to the Peer Attached to it (ADR 0020).
 
         Nothing goes anywhere when no Peer is attached, and a Peer never gets back
         the turn it wrote itself — ``origin`` names the conversation that ran it.
+        ``files`` are the names of the files attached to the message; they are named,
+        never carried.
         """
         peer = peers.attached_to(chat)
         if peer is None or peer_key(peer.platform, peer.chat_id) == origin:
             return
-        body = mirrored_turn(text, reply)
+        body = mirrored_turn(text, reply, files)
         if body:
             await self._directory.notify_channel(peer.platform, peer.chat_id, body)
 

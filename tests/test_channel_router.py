@@ -96,7 +96,14 @@ class FakeGateway:
         return chat_id
 
     async def send_message(
-        self, text, chat_id="default", asker=None, attachments=None, origin="", **kw
+        self,
+        text,
+        chat_id="default",
+        asker=None,
+        attachments=None,
+        origin="",
+        attachment_names=(),
+        **kw,
     ):
         self.calls.append(
             {"text": text, "chat_id": chat_id, "asker": asker, "attachments": attachments}
@@ -111,7 +118,9 @@ class FakeGateway:
             [{"role": "user", "text": text}, {"role": "agent", "text": self.reply}]
         )
         if self._mirror is not None:
-            await self._mirror(chat_id, text, self.reply, origin=origin)
+            await self._mirror(
+                chat_id, text, self.reply, origin=origin, files=tuple(attachment_names)
+            )
         return self.reply
 
     async def list_chats(self) -> list[dict]:
@@ -924,9 +933,10 @@ def _mirroring(*names, **kw) -> tuple[ChannelRouter, FakeDirectory]:
     return router, directory
 
 
-async def _browser_turn(directory: FakeDirectory, chat: str, text: str) -> None:
-    """A turn run from the browser — nobody's Peer wrote it."""
-    await directory.gateways["work"].send_message(text, chat_id=chat)
+async def _browser_turn(directory: FakeDirectory, chat: str, text: str, files=()) -> None:
+    """A turn run from the browser — nobody's Peer wrote it. ``files`` are the names of
+    the files attached to the message, the way the browser hands them over."""
+    await directory.gateways["work"].send_message(text, chat_id=chat, attachment_names=files)
 
 
 async def _resume(router: ChannelRouter, chat: str) -> None:
@@ -1018,6 +1028,98 @@ async def test_a_mirrored_turn_reads_like_a_resumed_one():
     await _browser_turn(directory, "web-1", "book a table")
 
     assert directory.pushed[0][2] in attached.text
+
+
+# --- files in the mirror ---
+
+# What the browser appends to a message that carries File references (ADR 0012): a
+# block of absolute paths, which is what must not reach the platform verbatim.
+REFERENCE_BLOCK = "Referenced files:\n- /home/me/work/notes.md"
+
+
+async def _mirroring_peer(reply: str = "the answer") -> tuple[ChannelRouter, FakeDirectory]:
+    """A Peer attached to a browser Chat, ready to read what happens in it."""
+    router, directory = _mirroring(reply=reply)
+    directory.gateways["work"].add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await _resume(router, "web-1")
+    return router, directory
+
+
+async def test_a_file_attached_in_the_browser_mirrors_as_its_name():
+    """The name, not the bytes — the mirror is text, and nothing is uploaded."""
+    router, directory = await _mirroring_peer(reply="Looks fine.")
+
+    await _browser_turn(directory, "web-1", "what do you make of this?", files=("report.pdf",))
+
+    assert directory.pushed == [
+        ("telegram", "c1", "You: what do you make of this?\nFiles: report.pdf\n\nMe: Looks fine.")
+    ]
+
+
+async def test_every_attachment_on_one_message_is_named():
+    router, directory = await _mirroring_peer(reply="Both read.")
+
+    await _browser_turn(directory, "web-1", "these two", files=("a.png", "b.csv"))
+
+    assert directory.pushed[0][2].startswith("You: these two\nFiles: a.png, b.csv")
+
+
+async def test_a_file_reference_mirrors_as_a_filename_not_a_path():
+    """The `@`-pointer's block of absolute paths is folded to the names it points at."""
+    router, directory = await _mirroring_peer(reply="Read it.")
+
+    await _browser_turn(directory, "web-1", f"summarise @notes.md\n\n{REFERENCE_BLOCK}")
+
+    assert directory.pushed == [
+        ("telegram", "c1", "You: summarise @notes.md\nFiles: notes.md\n\nMe: Read it.")
+    ]
+
+
+async def test_a_referenced_directory_mirrors_as_its_name():
+    router, directory = await _mirroring_peer()
+
+    await _browser_turn(
+        directory,
+        "web-1",
+        "what's in @src\n\nReferenced files:\n- /home/me/work/src (directory — list its contents)",
+    )
+
+    assert directory.pushed[0][2].startswith("You: what's in @src\nFiles: src")
+
+
+async def test_a_message_with_no_files_mirrors_unchanged():
+    router, directory = await _mirroring_peer(reply="It's sunny.")
+
+    await _browser_turn(directory, "web-1", "what's the weather?")
+
+    assert directory.pushed == [("telegram", "c1", "You: what's the weather?\n\nMe: It's sunny.")]
+
+
+async def test_prose_that_merely_says_referenced_files_is_left_alone():
+    """Only a well-formed block is a File reference; the words stay words."""
+    router, directory = await _mirroring_peer(reply="Sure.")
+
+    await _browser_turn(directory, "web-1", "Referenced files:\nare listed in the README")
+
+    assert directory.pushed == [
+        ("telegram", "c1", "You: Referenced files:\nare listed in the README\n\nMe: Sure.")
+    ]
+
+
+async def test_the_tail_an_attach_shows_folds_file_references_too():
+    """The same message read on resume rather than live — same folding, one renderer."""
+    router, directory = _mirroring()
+    directory.gateways["work"].add_chat(
+        "web-1",
+        "Dinner plans",
+        _ago(minutes=1),
+        [{"role": "user", "text": f"summarise @notes.md\n\n{REFERENCE_BLOCK}"}],
+    )
+
+    attached = await router.choose(_inbound(""), "resume:web-1")
+
+    assert "/home/me/work" not in attached.text
+    assert "You: summarise @notes.md\nFiles: notes.md" in attached.text
 
 
 # --- questions in the mirror ---

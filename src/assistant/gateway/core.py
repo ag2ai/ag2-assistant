@@ -460,6 +460,7 @@ class Gateway:
         llm_config_id: str | None = None,
         task_id: str | None = None,
         origin: str = "",
+        attachment_names: tuple[str, ...] = (),
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -483,7 +484,8 @@ class Gateway:
         typed there is scoped the same as the run itself, and this also feeds
         folder-grant resolution for that turn. `origin` names the Peer this message
         was written from, when a Channel wrote it — the mirror never sends a Peer its
-        own turn back (ADR 0020).
+        own turn back (ADR 0020). `attachment_names` are what those attachments are
+        called, so the mirror can name a file instead of carrying it.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -601,7 +603,7 @@ class Gateway:
             else:
                 await self._emit_a2ui_surfaces(stream, a2ui_handle)
                 await self._persist_turn(chat_id, stream, text, reply.body)
-                await self._mirror_turn(chat_id, text, reply.body, origin)
+                await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
                 return reply.body
             finally:
                 self._unwatch_a2ui(stream, a2ui_handle)
@@ -788,13 +790,14 @@ class Gateway:
                 out.append(f"{who}: {text}")
         return "\n".join(out)
 
-    async def _mirror_turn(self, chat_id, user_text, reply_text, origin) -> None:
-        """Hand the completed turn to the mirror — only the message and the answer,
-        never the turn's own events. Best-effort: a platform push never fails a turn."""
+    async def _mirror_turn(self, chat_id, user_text, reply_text, origin, files=()) -> None:
+        """Hand the completed turn to the mirror — only the message, the names of the
+        files on it, and the answer, never the turn's own events. Best-effort: a
+        platform push never fails a turn."""
         if self._mirror is None:
             return
         try:
-            await self._mirror(chat_id, user_text, reply_text, origin=origin)
+            await self._mirror(chat_id, user_text, reply_text, origin=origin, files=tuple(files))
         except Exception as exc:
             log_suppressed("chat mirror", exc, chat_id=chat_id)
 
