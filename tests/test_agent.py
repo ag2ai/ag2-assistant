@@ -1,9 +1,11 @@
 """Tests for AG2 Assistant agent."""
 
 import pytest
+from ag2.acp import ClaudeCodeConfig
 
-from assistant.agent import ask, create_agent
+from assistant.agent import _build_middleware, ask, create_agent, model_config
 from assistant.config import Config
+from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
 
 
 def test_create_agent_default():
@@ -27,10 +29,6 @@ async def test_ask_returns_response():
 
 
 def test_model_config_claude_code(tmp_path):
-    from ag2.acp import ClaudeCodeConfig
-
-    from assistant.agent import model_config
-
     cfg = Config()
     cfg.llm.provider = "claude_code"
     cfg.llm.model = "sonnet"
@@ -44,9 +42,6 @@ def test_model_config_claude_code(tmp_path):
 
 
 def test_build_middleware_claude_code_skips_llm_timeout():
-    from assistant.agent import _build_middleware
-    from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
-
     cfg = Config()
     # One ACP "LLM call" is a whole inner tool loop; the 180s per-call ceiling
     # would kill normal turns. ACPConfig.turn_timeout is the ceiling instead.

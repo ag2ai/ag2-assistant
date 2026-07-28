@@ -4,7 +4,7 @@ import pytest
 from ag2.acp import ClaudeCodeConfig
 from pydantic import BaseModel
 
-from assistant.structured import ask_structured
+from assistant.structured import aclose_config, ask_structured
 
 
 class _Title(BaseModel):
@@ -75,26 +75,21 @@ class _ClosingConfig:
         self.closed += 1
 
 
-async def test_aclose_config_closes_acp_style_configs():
-    from assistant.structured import aclose_config
+class _BadConfig:
+    async def aclose(self):
+        raise RuntimeError("boom")
 
+
+async def test_aclose_config_closes_acp_style_configs():
     cfg = _ClosingConfig()
     await aclose_config(cfg)
     assert cfg.closed == 1
 
 
 async def test_aclose_config_noop_without_aclose():
-    from assistant.structured import aclose_config
-
     await aclose_config(object())  # ordinary provider configs — nothing to do
     await aclose_config(None)
 
 
 async def test_aclose_config_suppresses_teardown_failures():
-    from assistant.structured import aclose_config
-
-    class _Bad:
-        async def aclose(self):
-            raise RuntimeError("boom")
-
-    await aclose_config(_Bad())  # must not raise — teardown never masks results
+    await aclose_config(_BadConfig())  # must not raise — teardown never masks results
