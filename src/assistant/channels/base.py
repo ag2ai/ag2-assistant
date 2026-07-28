@@ -33,14 +33,6 @@ class InboundMessage:
     sender_name: str | None = None
     raw: object = field(default=None, repr=False)  # original platform object
 
-    def stable_id(self) -> str:
-        """Stable chat id — one isolated conversation per channel chat.
-
-        Named distinctly from ``chat_id`` (the platform's own chat/conversation id,
-        above) to avoid shadowing that dataclass field: this is the gateway-facing id
-        (``{platform}:{chat_id}``) passed as ``chat_id=`` to ``send_message``."""
-        return f"{self.platform}:{self.chat_id}"
-
 
 def should_respond(msg: InboundMessage) -> bool:
     """Mention-gating: respond to all DMs, but only to @mentions in groups.

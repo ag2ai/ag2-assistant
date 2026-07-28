@@ -9,7 +9,7 @@ back to the router.
 from types import SimpleNamespace
 
 import assistant.channels.telegram as telegram_mod
-from assistant.channels.router import Choose, Nothing, Option, Reply
+from assistant.channels.router import COMMANDS, Choose, Nothing, Option, Reply
 from assistant.channels.telegram import TelegramChannel
 
 
@@ -89,6 +89,31 @@ async def test_a_failed_edit_still_delivers_the_choice():
     message = _FakeMessage()
     await ch._render(Choose("pick", (Option("Work", "work"),)), _Unwritable(), message)
     assert message.replies == ["pick"]
+
+
+# --- the command menu ---
+
+
+async def test_the_commands_are_registered_with_telegrams_own_menu():
+    """So they're discoverable from the menu button, not only by typing."""
+    registered: list = []
+    ch = _telegram_channel()
+    ch._app = SimpleNamespace(
+        bot=SimpleNamespace(set_my_commands=lambda cmds: registered.append(cmds) or _noop())
+    )
+
+    await ch._publish_commands()
+
+    assert registered[0] == [(c.name, c.description) for c in COMMANDS]
+
+
+async def test_a_menu_that_will_not_register_does_not_stop_the_bot():
+    def _boom(cmds):
+        raise RuntimeError("telegram said no")
+
+    ch = _telegram_channel()
+    ch._app = SimpleNamespace(bot=SimpleNamespace(set_my_commands=_boom))
+    await ch._publish_commands()
 
 
 # --- tapping an option ---

@@ -1,5 +1,6 @@
 """The 6 task tools mirror the UI/REST surface exactly."""
 
+from assistant import peers
 from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
@@ -36,10 +37,18 @@ def _tools(*args, **kwargs):
     return {t.name: t.model.call for t in build_system_tools(*args, **kwargs)}
 
 
-def test_origin_detects_channel_streams():
-    assert _origin(_Ctx("telegram:42")) == ("telegram", "42")
+def test_origin_is_the_peer_a_chat_was_started_from():
+    chat = peers.start_chat("telegram", "42")
+    assert _origin(_Ctx(chat)) == ("telegram", "42")
     assert _origin(_Ctx("web-abc")) == (None, None)
     assert _origin(_Ctx("task-run:run_1")) == (None, None)
+
+
+def test_origin_survives_the_peer_moving_to_another_chat():
+    """A task delivers back to the conversation, not to the Chat it was created in."""
+    chat = peers.start_chat("telegram", "42")
+    peers.start_chat("telegram", "42")
+    assert _origin(_Ctx(chat)) == ("telegram", "42")
 
 
 def test_schedule_arg_shapes():
@@ -68,7 +77,7 @@ async def test_create_update_run_delete_via_tools(tmp_path):
         "delete_task",
     ):
         assert name in tools, f"missing tool {name}"
-    ctx = _Ctx("telegram:42")
+    ctx = _Ctx(peers.start_chat("telegram", "42"))
     msg = await tools["create_task"](
         name="Digest", prompt="collect news", schedule_kind="cron", cron="0 9 * * *", context=ctx
     )

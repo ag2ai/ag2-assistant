@@ -15,7 +15,7 @@ from typing import Annotated
 from ag2 import Context, tool
 from pydantic import Field
 
-from assistant.peers import chat_address
+from assistant.peers import peer_for_chat
 
 _CHAT_TAIL_TURNS = 20  # turns of a past conversation read_chat returns
 
@@ -45,16 +45,15 @@ async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
 
 
 def _origin(context) -> tuple[str | None, str | None]:
-    """(platform, platform_chat_id) when the current turn runs on a messaging
-    channel stream ("{platform}:{chat_id}") — run outcomes get pushed back
-    there. (None, None) for web/CLI/task-run streams."""
+    """The Peer the current turn is running for, as (platform, platform_chat_id) —
+    run outcomes get pushed back there, whichever Chat the Peer has moved to since.
+    (None, None) for a Chat no Peer started (web/CLI/task-run streams)."""
     from assistant.channels.base import PUSH_CHANNELS
 
     sid = str(getattr(getattr(context, "stream", None), "id", "") or "")
-    platform, _, chat = sid.partition(":")
-    chat = chat_address(chat)
-    if chat and platform in PUSH_CHANNELS:
-        return platform, chat
+    peer = peer_for_chat(sid) if sid else None
+    if peer is not None and peer.platform in PUSH_CHANNELS:
+        return peer.platform, peer.chat_id
     return None, None
 
 

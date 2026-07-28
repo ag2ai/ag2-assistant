@@ -22,9 +22,10 @@ from telegram.ext import (
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import markdown_to_plain
-from assistant.channels.router import ChannelRouter, Choose, Outcome, spoken_text
+from assistant.channels.router import COMMANDS, ChannelRouter, Choose, Outcome, spoken_text
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
+from assistant.observability import log_suppressed
 
 WORKING_PLACEHOLDER = "⏳ Sorting that out…"
 _CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
@@ -127,8 +128,17 @@ class TelegramChannel(Channel):
         me = await self._app.bot.get_me()
         self._bot_username = me.username
         self._bot_id = me.id
+        await self._publish_commands()
         await self._app.start()
         await self._app.updater.start_polling()
+
+    async def _publish_commands(self) -> None:
+        """Put the router's commands in Telegram's own command menu, so they are
+        discoverable without typing. Best-effort: the bot works without the menu."""
+        try:
+            await self._app.bot.set_my_commands([(c.name, c.description) for c in COMMANDS])
+        except Exception as exc:
+            log_suppressed("telegram command menu registration", exc)
 
     def _asker_for(self, chat_id: str) -> Asker:
         return TelegramAsker(self._app.bot, chat_id, self._pending)

@@ -9,6 +9,7 @@ from assistant.channels.base import InboundMessage
 from assistant.channels.router import (
     ATTACHMENT_ONLY_PROMPT,
     ATTACHMENT_UNREADABLE,
+    COMMANDS,
     NO_PROFILE,
     Ack,
     AvailableProfile,
@@ -23,20 +24,32 @@ from assistant.channels.router import (
 
 
 class FakeGateway:
-    """Records send_message calls; returns a canned reply or raises."""
+    """Records send_message calls; returns a canned reply or raises. Keeps a tiny
+    chat store so the lifecycle commands have something to report on and delete."""
 
     def __init__(self, reply: str = "the answer", error: Exception | None = None) -> None:
         self.reply = reply
         self.error = error
         self.calls: list[dict] = []
+        self.chats: dict[str, dict] = {}
+        self.deleted: list[str] = []
 
     async def send_message(self, text, chat_id="default", asker=None, attachments=None, **kw):
         self.calls.append(
             {"text": text, "chat_id": chat_id, "asker": asker, "attachments": attachments}
         )
+        chat = self.chats.setdefault(chat_id, {"chat_id": chat_id, "title": "", "turns": 0})
+        chat["turns"] += 1
         if self.error is not None:
             raise self.error
         return self.reply
+
+    async def list_chats(self) -> list[dict]:
+        return list(self.chats.values())
+
+    async def delete_chat(self, chat_id: str) -> bool:
+        self.deleted.append(chat_id)
+        return self.chats.pop(chat_id, None) is not None
 
 
 class FakeDirectory:
@@ -95,9 +108,15 @@ async def test_dm_returns_the_gateway_reply():
 
 
 async def test_turn_runs_on_the_peers_own_chat():
+    """The Chat is the Peer's, and opaque: a Chat id is not a platform address, so
+    one conversation can own several over time."""
     router, gateway = _router(default="work")
     await router.handle(_inbound(platform="discord"))
-    assert gateway.calls[0]["chat_id"] == "discord:c1"
+    await router.handle(_inbound("again", platform="discord"))
+
+    chat = gateway.calls[0]["chat_id"]
+    assert chat.startswith("discord-") and "c1" not in chat.removeprefix("discord-")
+    assert gateway.calls[1]["chat_id"] == chat
 
 
 async def test_gateway_failure_becomes_a_reply_not_an_exception():
@@ -146,7 +165,7 @@ async def test_a_new_peer_facing_several_profiles_is_asked_to_choose():
     directory = FakeDirectory("work", "home")
     outcome = await ChannelRouter(directory).handle(_inbound("hi"))
     assert isinstance(outcome, Choose)
-    assert {opt.token for opt in outcome.options} == {"work", "home"}
+    assert {opt.token for opt in outcome.options} == {"profile:work", "profile:home"}
     assert directory.gateways["work"].calls == []
     assert peers.get_peer("telegram", "c1") is None
 
@@ -285,6 +304,7 @@ async def test_an_unrecognised_command_is_reported_not_sent_to_the_agent():
     directory = FakeDirectory("work", default="work")
     outcome = await ChannelRouter(directory).handle(_inbound("/wat"))
     assert isinstance(outcome, Refuse)
+    assert "/help" in outcome.text
     assert directory.gateways["work"].calls == []
 
 
@@ -303,9 +323,128 @@ async def test_choosing_an_option_selects_that_profile():
 
 async def test_choosing_a_profile_that_has_since_gone_is_refused():
     directory = FakeDirectory("work", "home")
-    outcome = await ChannelRouter(directory).choose(_inbound(""), "gone")
+    outcome = await ChannelRouter(directory).choose(_inbound(""), "profile:gone")
     assert isinstance(outcome, Refuse)
     assert peers.get_peer("telegram", "c1") is None
+
+
+async def test_an_option_from_no_known_picker_is_refused():
+    """Tokens are namespaced per picker: a stale tap can't land in the wrong one."""
+    directory = FakeDirectory("work")
+    assert isinstance(await ChannelRouter(directory).choose(_inbound(""), "work"), Refuse)
+
+
+# --- /new ---
+
+
+async def test_new_starts_a_fresh_chat_and_leaves_the_old_one_alone():
+    router, gateway = _router()
+    await router.handle(_inbound("first"))
+    left = gateway.calls[0]["chat_id"]
+
+    assert isinstance(await router.handle(_inbound("/new")), Reply)
+    await router.handle(_inbound("second"))
+
+    assert gateway.calls[1]["chat_id"] != left
+    assert left in gateway.chats  # still there, still listed
+    assert gateway.deleted == []
+
+
+async def test_new_before_anything_was_said_still_answers():
+    router, gateway = _router()
+    assert isinstance(await router.handle(_inbound("/new")), Reply)
+    assert gateway.calls == []
+
+
+# --- /clear ---
+
+
+async def test_clear_asks_before_deleting_anything():
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    outcome = await router.handle(_inbound("/clear"))
+    assert isinstance(outcome, Choose)
+    assert gateway.deleted == []
+
+
+async def test_confirming_clear_deletes_the_chat_the_peer_is_in():
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    chat = gateway.calls[0]["chat_id"]
+
+    outcome = await router.handle(_inbound("/clear"))
+    confirm = next(opt.token for opt in outcome.options if opt.token.endswith("yes"))
+    assert isinstance(await router.choose(_inbound(""), confirm), Reply)
+
+    assert gateway.deleted == [chat]
+    assert peers.get_peer("telegram", "c1").chat is None
+    assert peers.peer_for_chat(chat) is None
+
+
+async def test_declining_clear_leaves_the_chat_untouched():
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    chat = gateway.calls[0]["chat_id"]
+
+    outcome = await router.handle(_inbound("/clear"))
+    decline = next(opt.token for opt in outcome.options if opt.token.endswith("no"))
+    assert isinstance(await router.choose(_inbound(""), decline), Reply)
+
+    assert gateway.deleted == []
+    assert peers.get_peer("telegram", "c1").chat == chat
+
+
+async def test_the_message_after_a_cleared_chat_starts_a_new_one():
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    outcome = await router.handle(_inbound("/clear"))
+    confirm = next(opt.token for opt in outcome.options if opt.token.endswith("yes"))
+    await router.choose(_inbound(""), confirm)
+
+    await router.handle(_inbound("hello again"))
+    assert gateway.calls[1]["chat_id"] != gateway.calls[0]["chat_id"]
+
+
+async def test_clear_with_nothing_to_delete_says_so():
+    router, gateway = _router()
+    outcome = await router.handle(_inbound("/clear"))
+    assert isinstance(outcome, Reply)
+    assert gateway.deleted == []
+
+
+# --- /status ---
+
+
+async def test_status_reports_the_profile_the_chat_and_its_size():
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    gateway.chats[gateway.calls[0]["chat_id"]]["title"] = "Tax questions"
+
+    outcome = await router.handle(_inbound("/status"))
+    assert isinstance(outcome, Reply)
+    assert "Work" in outcome.text
+    assert "Tax questions" in outcome.text
+    assert "1" in outcome.text
+
+
+async def test_status_before_the_first_message_says_there_is_no_chat_yet():
+    router, _ = _router()
+    outcome = await router.handle(_inbound("/status"))
+    assert isinstance(outcome, Reply)
+    assert "Work" in outcome.text
+
+
+# --- /help ---
+
+
+async def test_help_lists_every_command():
+    router, gateway = _router()
+    outcome = await router.handle(_inbound("/help"))
+    assert isinstance(outcome, Reply)
+    for command in COMMANDS:
+        assert f"/{command.name}" in outcome.text
+        assert command.description in outcome.text
+    assert gateway.calls == []
 
 
 # --- who gets answered ---
