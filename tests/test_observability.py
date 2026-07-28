@@ -97,3 +97,29 @@ def test_log_suppressed_records_context(caplog):
     assert "suppressed failure during task event emit" in caplog.text
     assert "task-1" in caplog.text
     assert "emit failed" in caplog.text
+
+
+def test_acp_shutdown_noise_filter_drops_only_the_known_race():
+    import logging
+
+    from assistant.observability import _AcpShutdownNoise
+
+    f = _AcpShutdownNoise()
+
+    def rec(msg, exc=None):
+        try:
+            if exc:
+                raise exc
+            return logging.LogRecord("root", logging.ERROR, __file__, 1, msg, None, None)
+        except Exception:
+            import sys
+
+            return logging.LogRecord("root", logging.ERROR, __file__, 1, msg, None, sys.exc_info())
+
+    # The benign teardown race (acp lib: queue closed before receive loop stops) → dropped.
+    assert f.filter(rec("Receive loop failed", RuntimeError("mssage queue already closed"))) is False
+    # Same message with a DIFFERENT error → kept (a real receive failure).
+    assert f.filter(rec("Receive loop failed", ValueError("broken pipe"))) is True
+    # Different messages → kept.
+    assert f.filter(rec("Receive loop failed")) is True
+    assert f.filter(rec("something else", RuntimeError("mssage queue already closed"))) is True

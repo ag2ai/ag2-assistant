@@ -38,6 +38,24 @@ class _ProfileFilter(logging.Filter):
         return True
 
 
+class _AcpShutdownNoise(logging.Filter):
+    """Drop the acp library's known-benign teardown race, nothing else.
+
+    ``acp.Connection.close()`` closes the dispatcher queue BEFORE stopping the
+    receive loop, so a trailing notification from the exiting adapter makes the
+    loop die with ``RuntimeError("mssage queue already closed")`` (typo theirs),
+    logged as "Receive loop failed" at ERROR on the ROOT logger. It fires after
+    every one-shot ACP close (chat titles, task summaries…) when everything has
+    already completed — pure noise that reads like a crash. The same message
+    with any OTHER exception is a real receive failure and passes through."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.getMessage() != "Receive loop failed":
+            return True
+        exc = record.exc_info[1] if record.exc_info else None
+        return not (isinstance(exc, RuntimeError) and "queue already closed" in str(exc))
+
+
 def setup_logging(config) -> logging.Logger:
     """Initialise rolling file logging (idempotent). Returns the 'ag2assistant' logger.
 
@@ -62,6 +80,9 @@ def setup_logging(config) -> logging.Logger:
     ag2 = logging.getLogger("ag2")
     ag2.addHandler(fh)
     ag2.setLevel(logging.INFO)
+    # The acp library logs its teardown race module-level on the ROOT logger, so
+    # the filter must sit there (logger filters only see records born on it).
+    logging.getLogger().addFilter(_AcpShutdownNoise())
     _CONFIGURED = True
     logger.info("logging initialised → %s", root_dir / "ag2assistant.log")
     return logger
