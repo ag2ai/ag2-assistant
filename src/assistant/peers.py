@@ -26,7 +26,7 @@ class Peer:
     surface: str = "dm"  # "dm" | "group"
     profile: str | None = None  # the selected profile's id
     chat: str | None = None  # the Chat it is Attached to, if any
-    chats: list[str] = field(default_factory=list)  # every Chat it has started
+    chats: list[str] = field(default_factory=list)  # every Chat it has spoken in
 
 
 def _path() -> Path:
@@ -93,7 +93,7 @@ def list_peers() -> list[Peer]:
 
 
 def peer_for_chat(chat: str) -> Peer | None:
-    """The Peer that started this Chat, or None for a Chat begun anywhere else."""
+    """The Peer this Chat belongs to, or None for one no Peer has ever been in."""
     for entry in _load():
         if chat in (entry.get("chats") or []):
             return _peer(entry)
@@ -119,14 +119,21 @@ def select_profile(platform: str, chat_id: str, pid: str, *, surface: str = "dm"
     )
 
 
+def attach(platform: str, chat_id: str, chat: str, *, surface: str = "dm") -> Peer:
+    """Attach this conversation to ``chat``, creating nothing. The Chat joins the
+    Peer's own, so a Task started in it still delivers back to this conversation."""
+    entries = _load()
+    index = _index(entries, platform, chat_id)
+    current = _peer(entries[index]) if index is not None else Peer(platform, chat_id, surface)
+    chats = current.chats if chat in current.chats else [*current.chats, chat]
+    return _save(entries, index, replace(current, chat=chat, chats=chats))
+
+
 def start_chat(platform: str, chat_id: str, *, surface: str = "dm") -> str:
     """Start a fresh Chat for this conversation, attach the Peer to it, and return
     its id — opaque and origin-prefixed, never a platform address."""
     chat = f"{platform}-{secrets.token_hex(4)}"
-    entries = _load()
-    index = _index(entries, platform, chat_id)
-    current = _peer(entries[index]) if index is not None else Peer(platform, chat_id, surface)
-    _save(entries, index, replace(current, chat=chat, chats=[*current.chats, chat]))
+    attach(platform, chat_id, chat, surface=surface)
     return chat
 
 

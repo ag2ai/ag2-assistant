@@ -6,6 +6,7 @@ lives here; adapters keep only platform concerns.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from assistant import pairing, peers
@@ -62,6 +63,16 @@ NOTHING_TO_CLEAR = "There's no chat to delete yet — nothing has been said here
 NO_CHAT_YET = "no chat yet"
 STALE_OPTION = "That option has expired. Send /help for what I can do."
 
+CHOOSE_CHAT = "Which chat should I pick up?"
+NO_CHATS = "There are no chats in this profile yet — send me anything to start one."
+CHAT_GONE = "That chat is gone. Send /resume for the ones that are left."
+
+# How much of a Chat a picker and an attach show: enough to tell chats apart and to
+# remember where things stood, not a wall of text.
+CHATS_OFFERED = 10
+TAIL_MESSAGES = 6
+TAIL_CHARS = 300
+
 
 @dataclass(frozen=True)
 class Command:
@@ -73,6 +84,7 @@ class Command:
 
 COMMANDS = (
     Command("new", "Start a fresh chat"),
+    Command("resume", "Pick up an earlier chat"),
     Command("clear", "Delete this chat permanently"),
     Command("status", "Show the profile and chat you're in"),
     Command("profile", "Choose which profile to talk to"),
@@ -84,6 +96,7 @@ COMMANDS = (
 PROFILE_TOKEN = "profile:"
 CLEAR_TOKEN = "clear:"
 KEEP_TOKEN = "keep:"
+RESUME_TOKEN = "resume:"
 
 
 def unknown_profile(name: str) -> str:
@@ -100,6 +113,51 @@ def help_text() -> str:
 
 def status_text(profile: str, title: str, turns: int) -> str:
     return f"Profile: {profile}\nChat: {title}\nSize: {turns} exchanges"
+
+
+def relative_time(stamp: str) -> str:
+    """How long ago an ISO timestamp was, in one short phrase."""
+    try:
+        then = datetime.fromisoformat(stamp)
+    except ValueError:
+        return "recently"
+    minutes = int((datetime.now().astimezone() - then).total_seconds() // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes}m ago"
+    if minutes < 60 * 24:
+        return f"{minutes // 60}h ago"
+    return f"{minutes // (60 * 24)}d ago"
+
+
+def chat_title(entry: dict) -> str:
+    """What a Chat is called in a list or a header, falling back to its opening line."""
+    return entry.get("title") or entry.get("preview") or "untitled"
+
+
+def chat_label(entry: dict) -> str:
+    """One line in the `/resume` picker: what the chat is about, and how stale it is."""
+    return f"{chat_title(entry)} · {relative_time(entry.get('updated', ''))}"
+
+
+def attached_header(profile: str, entry: dict) -> str:
+    """What a Peer is shown about the Chat it has just attached to."""
+    return (
+        f"{status_text(profile, chat_title(entry), entry['turns'])}\n"
+        f"Last active: {relative_time(entry.get('updated', ''))}"
+    )
+
+
+def transcript_tail(messages: list[dict]) -> str:
+    """The last few turns, speaker-labelled and clipped, as one block of text."""
+    lines = []
+    for message in messages[-TAIL_MESSAGES:]:
+        text = (message.get("text") or "").strip()
+        if len(text) > TAIL_CHARS:
+            text = f"{text[:TAIL_CHARS].rstrip()}…"
+        lines.append(f"{'You' if message.get('role') == 'user' else 'Me'}: {text}")
+    return "\n\n".join(lines)
 
 
 def switched_to(name: str) -> str:
@@ -328,9 +386,23 @@ class ChannelRouter:
             return Reply(KEPT)
         if token.startswith(CLEAR_TOKEN):
             return await self._delete_chat(inbound, token.removeprefix(CLEAR_TOKEN))
+        if token.startswith(RESUME_TOKEN):
+            return await self._attach_chat(inbound, token.removeprefix(RESUME_TOKEN))
         return Refuse(STALE_OPTION)
 
     # ---- the Chat a Peer is in ----
+
+    def _runtime(self, inbound: InboundMessage) -> "tuple[str, Gateway] | Outcome":
+        """The profile id this Peer talks to and the gateway behind it, or the outcome
+        to return instead. Every Chat operation goes through here, so a profile out of
+        reach from this surface takes its Chats with it."""
+        resolved = self._resolve(inbound)
+        if not isinstance(resolved, str):
+            return resolved
+        gateway = self._directory.gateway_for_profile(resolved)
+        if gateway is None:
+            return Refuse(NO_PROFILE)
+        return resolved, gateway
 
     def _attached_chat(self, inbound: InboundMessage) -> str | None:
         peer = peers.get_peer(inbound.platform, inbound.chat_id)
@@ -342,17 +414,38 @@ class ChannelRouter:
             inbound.platform, inbound.chat_id, surface=inbound.surface()
         )
 
+    async def _chats_in_profile(self, inbound: InboundMessage) -> "list[dict] | Outcome":
+        """Every Chat of this Peer's profile, most recently touched first — the ones
+        begun in the browser among them (ADR 0020)."""
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        listing = await runtime[1].list_chats()
+        return sorted(listing, key=lambda entry: entry.get("updated") or "", reverse=True)
+
+    async def _attach_chat(self, inbound: InboundMessage, chat: str) -> Outcome:
+        """Attach the Peer to a Chat it was offered, and show it where things stood.
+        Pure navigation: nothing is created, and the Chat left behind is untouched."""
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        resolved, gateway = runtime
+        entry = next((e for e in await gateway.list_chats() if e.get("chat_id") == chat), None)
+        if entry is None:
+            return Refuse(CHAT_GONE)
+        peers.attach(inbound.platform, inbound.chat_id, chat, surface=inbound.surface())
+        header = attached_header(self._by_id(inbound)[resolved].name, entry)
+        tail = transcript_tail(await gateway.transcript(chat))
+        return Reply(f"{header}\n\n{tail}" if tail else header)
+
     async def _delete_chat(self, inbound: InboundMessage, chat: str) -> Outcome:
         """Delete the Chat the confirmation was raised for, and only that one."""
         if chat != self._attached_chat(inbound):
             return Refuse(STALE_OPTION)
-        resolved = self._resolve(inbound)
-        if not isinstance(resolved, str):
-            return resolved
-        gateway = self._directory.gateway_for_profile(resolved)
-        if gateway is None:
-            return Refuse(NO_PROFILE)
-        await gateway.delete_chat(chat)
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        await runtime[1].delete_chat(chat)
         peers.forget_chat(chat)
         return Reply(CLEARED)
 
@@ -391,24 +484,33 @@ class ChannelRouter:
             (Option("Delete it", f"{CLEAR_TOKEN}{chat}"), Option("Keep it", KEEP_TOKEN)),
         )
 
+    async def _resume_command(self, inbound: InboundMessage, arg: str) -> Outcome:
+        listing = await self._chats_in_profile(inbound)
+        if not isinstance(listing, list):
+            return listing
+        if not listing:
+            return Reply(NO_CHATS)
+        return Choose(
+            CHOOSE_CHAT,
+            tuple(
+                Option(chat_label(entry), f"{RESUME_TOKEN}{entry['chat_id']}")
+                for entry in listing[:CHATS_OFFERED]
+            ),
+        )
+
     async def _status_command(self, inbound: InboundMessage, arg: str) -> Outcome:
-        resolved = self._resolve(inbound)
-        if not isinstance(resolved, str):
-            return resolved
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        resolved, gateway = runtime
         name = self._by_id(inbound)[resolved].name
         chat = self._attached_chat(inbound)
-        gateway = self._directory.gateway_for_profile(resolved)
         entry = None
-        if chat is not None and gateway is not None:
-            listing = await gateway.list_chats()
-            entry = next((e for e in listing if e.get("chat_id") == chat), None)
+        if chat is not None:
+            entry = next((e for e in await gateway.list_chats() if e.get("chat_id") == chat), None)
         if entry is None:
             return Reply(status_text(name, NO_CHAT_YET, 0))
-        return Reply(
-            status_text(
-                name, entry.get("title") or entry.get("preview") or "untitled", entry["turns"]
-            )
-        )
+        return Reply(status_text(name, chat_title(entry), entry["turns"]))
 
     async def _help_command(self, inbound: InboundMessage, arg: str) -> Outcome:
         return Reply(help_text())
@@ -417,6 +519,7 @@ class ChannelRouter:
         handlers = {
             "profile": self._profile_command,
             "new": self._new_command,
+            "resume": self._resume_command,
             "clear": self._clear_command,
             "status": self._status_command,
             "help": self._help_command,
@@ -448,12 +551,10 @@ class ChannelRouter:
             if command is not None:
                 return await self._command(inbound, *command)
 
-        resolved = self._resolve(inbound)
-        if not isinstance(resolved, str):
-            return resolved
-        gateway = self._directory.gateway_for_profile(resolved)
-        if gateway is None:
-            return Refuse(NO_PROFILE)
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        gateway = runtime[1]
 
         chat_id = self._chat_for(inbound)
 

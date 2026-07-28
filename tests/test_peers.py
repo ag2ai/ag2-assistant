@@ -93,6 +93,22 @@ def test_reselecting_the_same_profile_keeps_the_attachment():
     assert peers.select_profile("telegram", "42", "work").chat == chat
 
 
+def test_attaching_to_an_existing_chat_moves_the_peer_without_starting_one():
+    """Attaching is pure navigation — nothing is minted, nothing is left behind."""
+    peers.select_profile("telegram", "42", "work")
+    started = peers.start_chat("telegram", "42")
+    peers.attach("telegram", "42", "web-abc123")
+    peer = peers.get_peer("telegram", "42")
+    assert (peer.chat, peer.chats) == ("web-abc123", [started, "web-abc123"])
+
+
+def test_attaching_back_to_a_chat_records_it_once():
+    started = peers.start_chat("telegram", "42")
+    peers.attach("telegram", "42", "web-abc123")
+    peers.attach("telegram", "42", started)
+    assert peers.get_peer("telegram", "42").chats == [started, "web-abc123"]
+
+
 # --- which Peer a Chat came from ---
 
 

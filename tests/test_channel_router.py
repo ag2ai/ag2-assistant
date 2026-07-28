@@ -5,6 +5,7 @@ returns, plus what reached the gateway underneath.
 """
 
 import re
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -16,6 +17,7 @@ from assistant.channels.router import (
     ATTACHMENT_UNREADABLE,
     CHOOSE_INSTEAD,
     COMMANDS,
+    NO_CHATS,
     NO_PROFILE,
     NO_PROFILE_HERE,
     PROFILE_WITHDRAWN,
@@ -44,23 +46,45 @@ class FakeGateway:
         self.error = error
         self.calls: list[dict] = []
         self.chats: dict[str, dict] = {}
+        self.transcripts: dict[str, list[dict]] = {}
         self.deleted: list[str] = []
+
+    def add_chat(self, chat_id: str, title: str, updated: str, messages=()) -> str:
+        """A Chat this gateway already holds — a browser one, or one made earlier."""
+        self.chats[chat_id] = {
+            "chat_id": chat_id,
+            "title": title,
+            "preview": "",
+            "updated": updated,
+            "turns": len(messages) // 2,
+        }
+        self.transcripts[chat_id] = list(messages)
+        return chat_id
 
     async def send_message(self, text, chat_id="default", asker=None, attachments=None, **kw):
         self.calls.append(
             {"text": text, "chat_id": chat_id, "asker": asker, "attachments": attachments}
         )
-        chat = self.chats.setdefault(chat_id, {"chat_id": chat_id, "title": "", "turns": 0})
+        chat = self.chats.setdefault(
+            chat_id, {"chat_id": chat_id, "title": "", "updated": "", "turns": 0}
+        )
         chat["turns"] += 1
         if self.error is not None:
             raise self.error
+        self.transcripts.setdefault(chat_id, []).extend(
+            [{"role": "user", "text": text}, {"role": "agent", "text": self.reply}]
+        )
         return self.reply
 
     async def list_chats(self) -> list[dict]:
         return list(self.chats.values())
 
+    async def transcript(self, chat_id: str) -> list[dict]:
+        return list(self.transcripts.get(chat_id, []))
+
     async def delete_chat(self, chat_id: str) -> bool:
         self.deleted.append(chat_id)
+        self.transcripts.pop(chat_id, None)
         return self.chats.pop(chat_id, None) is not None
 
 
@@ -671,6 +695,167 @@ async def test_status_before_the_first_message_says_there_is_no_chat_yet():
     outcome = await router.handle(_inbound("/status"))
     assert isinstance(outcome, Reply)
     assert "Work" in outcome.text
+
+
+# --- /resume ---
+
+
+def _ago(**delta) -> str:
+    return (datetime.now().astimezone() - timedelta(**delta)).isoformat()
+
+
+def _resume_tokens(outcome) -> list[str]:
+    return [opt.token.removeprefix("resume:") for opt in outcome.options]
+
+
+async def test_resume_lists_the_chats_of_the_profile_most_recent_first():
+    router, gateway = _router()
+    gateway.add_chat("web-old", "Last month's taxes", _ago(days=30))
+    gateway.add_chat("web-new", "Dinner plans", _ago(minutes=5))
+
+    outcome = await router.handle(_inbound("/resume"))
+    assert isinstance(outcome, Choose)
+    assert _resume_tokens(outcome) == ["web-new", "web-old"]
+
+
+async def test_a_resume_entry_shows_a_title_and_a_relative_time():
+    router, gateway = _router()
+    gateway.add_chat("web-1", "Dinner plans", _ago(hours=3))
+    outcome = await router.handle(_inbound("/resume"))
+    assert outcome.options[0].label == "Dinner plans · 3h ago"
+
+
+async def test_a_chat_begun_in_the_browser_is_offered_beside_a_channel_one():
+    """The Peer's own Chats and the browser's are the same Chats (ADR 0020)."""
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    mine = gateway.calls[0]["chat_id"]
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+
+    outcome = await router.handle(_inbound("/resume"))
+    assert set(_resume_tokens(outcome)) == {mine, "web-1"}
+
+
+async def test_resuming_attaches_the_peer_and_the_next_message_continues_that_chat():
+    router, gateway = _router()
+    gateway.add_chat(
+        "web-1",
+        "Dinner plans",
+        _ago(hours=2),
+        [{"role": "user", "text": "book a table"}, {"role": "agent", "text": "for when?"}],
+    )
+
+    outcome = await router.handle(_inbound("/resume"))
+    assert isinstance(await router.choose(_inbound(""), outcome.options[0].token), Reply)
+    assert peers.get_peer("telegram", "c1").chat == "web-1"
+
+    await router.handle(_inbound("friday"))
+    assert gateway.calls[0]["chat_id"] == "web-1"
+
+
+async def test_attaching_shows_a_header_and_the_tail_of_the_transcript():
+    router, gateway = _router()
+    gateway.add_chat(
+        "web-1",
+        "Dinner plans",
+        _ago(hours=2),
+        [{"role": "user", "text": "book a table"}, {"role": "agent", "text": "for when?"}],
+    )
+
+    outcome = await router.choose(_inbound(""), "resume:web-1")
+    assert isinstance(outcome, Reply)
+    assert "Dinner plans" in outcome.text  # title
+    assert "Work" in outcome.text  # profile
+    assert "1 exchanges" in outcome.text  # size
+    assert "2h ago" in outcome.text  # when it was last touched
+    assert "book a table" in outcome.text and "for when?" in outcome.text
+
+
+async def test_attaching_shows_only_the_tail_of_a_long_transcript():
+    router, gateway = _router()
+    messages = [{"role": "user", "text": f"turn {i}"} for i in range(40)]
+    gateway.add_chat("web-1", "Long one", _ago(minutes=1), messages)
+
+    outcome = await router.choose(_inbound(""), "resume:web-1")
+    assert "turn 39" in outcome.text
+    assert "turn 0" not in outcome.text
+
+
+async def test_the_chat_a_peer_leaves_is_unchanged_and_can_be_returned_to():
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    left = gateway.calls[0]["chat_id"]
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+
+    await router.choose(_inbound(""), "resume:web-1")
+    await router.handle(_inbound("friday"))
+    await router.choose(_inbound(""), f"resume:{left}")
+    await router.handle(_inbound("back again"))
+
+    assert [call["chat_id"] for call in gateway.calls] == [left, "web-1", left]
+    assert gateway.deleted == []
+
+
+async def test_attaching_creates_no_chat_and_deletes_none():
+    router, gateway = _router()
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    before = set(gateway.chats)
+
+    assert isinstance(await router.handle(_inbound("/resume")), Choose)
+    assert isinstance(await router.choose(_inbound(""), "resume:web-1"), Reply)
+
+    assert set(gateway.chats) == before
+    assert gateway.deleted == []
+    assert gateway.calls == []
+
+
+async def test_resume_in_a_profile_with_no_chats_says_so_rather_than_offering_nothing():
+    router, gateway = _router()
+    outcome = await router.handle(_inbound("/resume"))
+    assert outcome == Reply(NO_CHATS)
+    assert gateway.calls == []
+
+
+async def test_resume_offers_only_the_chats_of_the_profile_the_peer_is_in():
+    directory = FakeDirectory("work", "home", default="work")
+    directory.gateways["home"].add_chat("web-home", "Home things", _ago(minutes=1))
+    directory.gateways["work"].add_chat("web-work", "Work things", _ago(minutes=1))
+    router = ChannelRouter(directory)
+
+    outcome = await router.handle(_inbound("/resume"))
+    assert _resume_tokens(outcome) == ["web-work"]
+
+
+async def test_no_chat_is_offered_from_a_profile_withdrawn_from_this_surface():
+    """Exposure withdraws the Profile's Chats along with the Profile itself."""
+    directory = FakeDirectory("home")
+    directory.gateways["home"].add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    router = ChannelRouter(directory)
+    await router.handle(_inbound("hi"))
+
+    directory.withdraw("home", "telegram:dm")
+    assert await router.handle(_inbound("/resume")) == Refuse(NO_PROFILE_HERE)
+    assert await router.choose(_inbound(""), "resume:web-1") == Refuse(NO_PROFILE_HERE)
+    assert peers.get_peer("telegram", "c1").chat != "web-1"
+
+
+async def test_resuming_a_chat_that_has_since_gone_is_refused():
+    router, gateway = _router()
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    outcome = await router.handle(_inbound("/resume"))
+
+    gateway.chats.pop("web-1")  # deleted from the browser while the picker was open
+    assert isinstance(await router.choose(_inbound(""), outcome.options[0].token), Refuse)
+    assert peers.get_peer("telegram", "c1").chat is None
+
+
+async def test_a_resumed_chat_still_delivers_a_task_outcome_to_the_peer():
+    """Attaching makes the Chat the Peer's own, so a task started in it comes back
+    here rather than nowhere."""
+    router, gateway = _router()
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await router.choose(_inbound(""), "resume:web-1")
+    assert peers.peer_for_chat("web-1").chat_id == "c1"
 
 
 # --- /help ---
