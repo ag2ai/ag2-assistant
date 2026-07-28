@@ -161,6 +161,7 @@ from assistant.skills_install import (
     registry_install,
     registry_search,
 )
+from assistant.structured import aclose_config
 from assistant.tasks import TaskStoreCorruptionError
 from assistant.tools.mcp import build_mcp_tools
 from assistant.voice import synthesize_preview
@@ -1097,10 +1098,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     opts["api_key"] = draft_key
                 elif entry.get("base_url"):
                     opts["api_key"] = "unused"  # mirror entry_options' placeholder
-            agent = ag2.Agent("ping", config=model_config(probe))
-            reply = await asyncio.wait_for(
-                agent.ask("Reply with exactly: PONG"), timeout=_LLM_TEST_TIMEOUT_S
-            )
+            probe_cfg = model_config(probe)
+            agent = ag2.Agent("ping", config=probe_cfg)
+            try:
+                reply = await asyncio.wait_for(
+                    agent.ask("Reply with exactly: PONG"), timeout=_LLM_TEST_TIMEOUT_S
+                )
+            finally:
+                # One-shot probe: an ACP config spawned an adapter subprocess for
+                # this ping — reap it here (no-op for ordinary provider configs).
+                await aclose_config(probe_cfg)
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=502)
         return {
