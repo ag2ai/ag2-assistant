@@ -38,6 +38,11 @@
       type: 'claude_code', model: 'sonnet',
       blurb: 'Run on your Claude Code CLI login (subscription) over ACP — no API key',
     },
+    {
+      name: 'Codex', card: 'Codex · CLI login',
+      type: 'codex', model: '',
+      blurb: 'Run on your Codex CLI login (ChatGPT subscription) over ACP — no API key',
+    },
     { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Local Ollama' },
     {
       name: 'Local server', card: 'Local server — llama.cpp / vLLM / LM Studio',
@@ -114,8 +119,9 @@
   function keyChip(c) {
     if (c.key_source === 'subscription')
       return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
-    if (c.key_source === 'cli_login') return 'Claude Code CLI login'
+    if (c.key_source === 'cli_login') return c.type === 'codex' ? 'Codex CLI login' : 'Claude Code CLI login'
     if (c.type === 'claude_code') return 'Claude Code adapter not found — install claude-agent-acp'
+    if (c.type === 'codex') return 'Codex adapter not found — install @agentclientprotocol/codex-acp'
     if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
     if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
     if (c.key_source === 'not_needed') return 'no key needed'

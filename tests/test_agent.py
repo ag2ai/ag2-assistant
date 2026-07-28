@@ -51,3 +51,47 @@ def test_build_middleware_claude_code_skips_llm_timeout():
     assert any(isinstance(m, LLMRetryMiddleware) for m in mw)
     cfg.llm.provider = "gemini"
     assert any(isinstance(m, LLMTimeoutMiddleware) for m in _build_middleware(cfg))
+
+
+def test_model_config_codex(tmp_path):
+    import json
+
+    from ag2.acp import CodexConfig
+
+    cfg = Config()
+    cfg.llm.provider = "codex"
+    cfg.llm.model = "gpt-5.6-sol[medium]"
+    cfg.workspace_dir = tmp_path
+    cfg.llm.provider_options["codex"] = {"turn_timeout": 120.0}
+    mc = model_config(cfg)
+    assert isinstance(mc, CodexConfig)
+    assert mc.cwd == str(tmp_path)
+    assert mc.turn_timeout == 120.0  # Advanced options reach the constructor
+    # The model field's "name[effort]" form reaches the adapter split into the
+    # CODEX_CONFIG env JSON (ACPConfig.model itself is response metadata only).
+    assert json.loads(mc.env["CODEX_CONFIG"]) == {
+        "model": "gpt-5.6-sol",
+        "model_reasoning_effort": "medium",
+    }
+
+
+def test_model_config_codex_empty_model(tmp_path):
+    from ag2.acp import CodexConfig
+
+    cfg = Config()
+    cfg.llm.provider = "codex"
+    cfg.llm.model = ""  # empty entry model = the CLI's own default
+    cfg.workspace_dir = tmp_path
+    mc = model_config(cfg)
+    assert isinstance(mc, CodexConfig)
+    assert mc.env is None
+
+
+def test_build_middleware_codex_skips_llm_timeout():
+    cfg = Config()
+    # Same reasoning as claude_code: one ACP "LLM call" is a whole inner tool
+    # loop; ACPConfig.turn_timeout is the ceiling instead.
+    cfg.llm.provider = "codex"
+    mw = _build_middleware(cfg)
+    assert not any(isinstance(m, LLMTimeoutMiddleware) for m in mw)
+    assert any(isinstance(m, LLMRetryMiddleware) for m in mw)

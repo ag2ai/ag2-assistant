@@ -31,6 +31,7 @@
     { id: 'gemini', label: 'Gemini' },
     { id: 'ollama', label: 'Ollama' },
     { id: 'claude_code', label: 'Claude Code · CLI login' },
+    { id: 'codex', label: 'Codex · CLI login' },
   ]
   // base_url applies to openai/openai_responses/anthropic; host to ollama only.
   // Subscription mode has no endpoint or key fields — both come from codex_auth.
@@ -98,6 +99,8 @@
       return 'Requests use your ChatGPT/Codex subscription — no API key is involved.'
     if (type === 'claude_code')
       return 'Runs on your Claude Code CLI login (claude-agent-acp) — no API key is involved.'
+    if (type === 'codex')
+      return 'Runs on your Codex CLI login (codex-acp) — no API key is involved.'
     if (type === 'ollama') return 'Ollama is local — no API key is used.'
     const env = ENV_OF[type]
     const shared = ctx?.s?.keys?.[PROV_OF[type]]
@@ -112,6 +115,10 @@
     if (shared?.set) return `No secret selected — uses your ${env} (${shared.hint || 'set'}).`
     return `No key available — pick or paste one above, or set ${env}.`
   })
+
+  // Empty model is valid for codex only (= the CLI's own default) — every other
+  // type requires an explicit model name.
+  const modelOptional = $derived(type === 'codex')
 
   // The request body both Save and Test send — one source of truth so the Test
   // button exercises exactly what a save would persist. Parses the Advanced JSON
@@ -193,7 +200,7 @@
   </div>
   <div class="llmfield">
     <label for="lf-model">Model</label>
-    <input id="lf-model" bind:value={model} placeholder={type === 'claude_code' ? 'sonnet' : 'e.g. gemini-3.5-flash'} />
+    <input id="lf-model" bind:value={model} placeholder={type === 'claude_code' ? 'sonnet' : type === 'codex' ? 'empty = CLI default · e.g. gpt-5.6-sol[medium]' : 'e.g. gemini-3.5-flash'} />
   </div>
 
   {#if usesBaseUrl(type)}
@@ -221,13 +228,17 @@
       </div>
       <span class="llmhint">{keyUsage}</span>
     </div>
-  {:else if type === 'claude_code'}
-    <!-- No endpoint or key fields: auth is the Claude Code CLI's own on-disk login,
-         and the ACP adapter is found on PATH (or via the Docker host bridge). -->
+  {:else if type === 'claude_code' || type === 'codex'}
+    <!-- No endpoint or key fields: auth is the CLI's own on-disk login, and the ACP
+         adapter is found on PATH (or via the Docker host bridge). -->
     <div class="llmfield">
       <span class="llmlabel">Authentication</span>
       <span class="llmhint">{keyUsage}</span>
-      <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH and a logged-in Claude Code CLI. Model accepts <code>sonnet</code> / <code>opus</code> / <code>haiku</code> or a full model id.</span>
+      {#if type === 'claude_code'}
+        <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH and a logged-in Claude Code CLI. Model accepts <code>sonnet</code> / <code>opus</code> / <code>haiku</code> or a full model id.</span>
+      {:else}
+        <span class="llmhint">Requires the <code>codex-acp</code> adapter on PATH (<code>npm i -g @agentclientprotocol/codex-acp</code>) and a logged-in Codex CLI. Model takes the adapter's <code>name[reasoning]</code> form (e.g. <code>gpt-5.6-sol[medium]</code>); empty uses the CLI's default.</span>
+      {/if}
     </div>
   {:else}
     <div class="llmfield">
@@ -272,13 +283,13 @@
         {testResult.ok ? `${testResult.reply} · ${testResult.latency_ms} ms` : testResult.error}
       </span>
     {/if}
-    <button class="open" disabled={busy || testing || !model.trim()} onclick={testDraft}>Test</button>
+    <button class="open" disabled={busy || testing || (!model.trim() && !modelOptional)} onclick={testDraft}>Test</button>
     <button class="linkbtn" disabled={busy} onclick={onCancel}>Cancel</button>
-    <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={() => save()}>{busy ? 'Saving…' : 'Save'}</button>
+    <button class="open" disabled={busy || testing || !name.trim() || (!model.trim() && !modelOptional)} onclick={() => save()}>{busy ? 'Saving…' : 'Save'}</button>
     <!-- One-click "save and make it the active model" — hidden when the save would
          activate anyway (first config, or re-saving the already-active one). -->
     {#if !activate}
-      <button class="open" disabled={busy || testing || !name.trim() || !model.trim()} onclick={() => save(true)}>Save &amp; Use</button>
+      <button class="open" disabled={busy || testing || !name.trim() || (!model.trim() && !modelOptional)} onclick={() => save(true)}>Save &amp; Use</button>
     {/if}
   </div>
 </div>

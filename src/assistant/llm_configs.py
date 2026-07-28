@@ -26,6 +26,7 @@ anthropic        anthropic         ``{base_url?}``
 gemini           gemini            ``{}``
 ollama           ollama            ``{host?}``
 claude_code      claude_code       ``options passed to ACPConfig``
+codex            codex             ``options passed to ACPConfig``
 ===============  ================  =============================
 
 An entry's ``options`` merge FIRST, the type-forced fields (``api`` and the lifted
@@ -48,7 +49,8 @@ from assistant.config import read_global_config, update_global_section
 # reaching the ChatGPT backend on the user's Codex/ChatGPT subscription (no API key,
 # no endpoint — both come from ``codex_auth`` at call time); ``claude_code`` = the
 # user's Claude Code CLI driven over ACP (auth is the CLI's own disk login, options
-# are ACPConfig constructor overrides). The rest map 1:1 to a provider.
+# are ACPConfig constructor overrides); ``codex`` = the user's Codex CLI driven over
+# ACP the same way (ChatGPT-subscription disk login). The rest map 1:1 to a provider.
 TYPES = (
     "openai",
     "openai_responses",
@@ -57,6 +59,7 @@ TYPES = (
     "gemini",
     "ollama",
     "claude_code",
+    "codex",
 )
 
 # type → the ``cfg.llm.provider`` it derives to (all three OpenAI surfaces are provider
@@ -70,6 +73,7 @@ PROVIDER_OF = {
     "gemini": "gemini",
     "ollama": "ollama",
     "claude_code": "claude_code",
+    "codex": "codex",
 }
 
 
@@ -85,18 +89,26 @@ def _subscription_signed_in() -> bool:
         return False
 
 
-def _claude_cli_present() -> bool:
-    """Whether the Claude Code ACP adapter is reachable — on PATH locally, or via
-    a configured host bridge (Docker). Lazy + guarded like _subscription_signed_in:
-    a missing/broken coding module must read as "not available", never raise."""
+def _acp_adapter_present(name: str) -> bool:
+    """Whether a coding CLI's ACP adapter is reachable — on PATH locally, or via
+    a configured host bridge (Docker). Lazy + guarded: a missing/broken coding
+    module must read as "not available", never raise into the health path."""
     try:
         from assistant.coding import detect  # local: keep the health path lazy
 
         if detect.bridge_endpoint() is not None:
             return True  # inventory is async; presence of a bridge is the signal
-        return detect.resolve_agent("claude") is not None
+        return detect.resolve_agent(name) is not None
     except Exception:
         return False
+
+
+def _claude_cli_present() -> bool:
+    return _acp_adapter_present("claude")
+
+
+def _codex_cli_present() -> bool:
+    return _acp_adapter_present("codex")
 
 
 _SECTION = "llm_configs"
@@ -135,7 +147,9 @@ def _clean_entry(raw: dict) -> dict:
     if not name:
         raise ValueError("configuration name is required")
     model = str(raw.get("model") or "").strip()
-    if not model:
+    if not model and ctype != "codex":
+        # Codex model names rotate with no stable aliases; empty = the CLI's own
+        # default model. Every other type still requires an explicit model.
         raise ValueError("model is required")
     options = raw.get("options") or {}
     if not isinstance(options, dict):
@@ -146,9 +160,9 @@ def _clean_entry(raw: dict) -> dict:
     # parameter we probed live (temperature, top_p, max_output_tokens → "Unsupported
     # parameter"), so a stored option only breaks calls; the form hides the editor.
     is_subscription = ctype == "openai_subscription"
-    # claude_code also has no endpoint/key fields (auth = the CLI's disk login),
-    # but KEEPS options: they override ACPConfig constructor fields.
-    strip_endpoint = is_subscription or ctype == "claude_code"
+    # claude_code and codex also have no endpoint/key fields (auth = the CLI's disk login),
+    # but KEEP options: they override ACPConfig constructor fields.
+    strip_endpoint = is_subscription or ctype in ("claude_code", "codex")
     entry = {
         "id": str(raw.get("id") or "").strip(),
         "name": name,
@@ -272,9 +286,9 @@ def entry_options(entry: dict) -> dict:
         # ignores provider_options entirely — so no api/base_url/key derivation here;
         # return only the entry's own free-form options untouched.
         return opts
-    if ctype == "claude_code":
+    if ctype in ("claude_code", "codex"):
         # ACPConfig constructor overrides ride through untouched; there is no
-        # api/base_url/key derivation for a CLI-login provider.
+        # api/base_url/key derivation for CLI-login providers.
         return opts
     if ctype == "openai":
         opts["api"] = "chat"
@@ -334,6 +348,9 @@ def usable(entry: dict) -> bool:
     if ctype == "claude_code":
         # No key either — usable exactly when the ACP adapter (or bridge) exists.
         return _claude_cli_present()
+    if ctype == "codex":
+        # Same CLI-login shape as claude_code, keyed on the codex-acp adapter.
+        return _codex_cli_present()
     if ctype == "ollama":
         return True
     if entry.get("base_url"):
@@ -354,8 +371,8 @@ def key_source(entry: dict) -> str:
       is what ``model_config``'s fallback will send to the provider's own endpoint.
     - ``"subscription"`` — ChatGPT sign-in (``openai_subscription``); no API key at
       all, the bearer token rides from ``codex_auth``.
-    - ``"cli_login"`` — Claude Code (``claude_code``); the ACP adapter/bridge is
-      present and auth is the CLI's own on-disk login.
+    - ``"cli_login"`` — Claude Code (``claude_code``) or Codex (``codex``); the ACP
+      adapter/bridge is present and auth is the CLI's own on-disk login.
     - ``"none"`` — nothing available; the config can't run (mirrors :func:`usable`).
     """
     if entry.get("type") == "openai_subscription":
@@ -365,6 +382,8 @@ def key_source(entry: dict) -> str:
         # so the web isUsable() predicate (key_source === 'none' → dead) works
         # for this type with no client-side special case.
         return "cli_login" if _claude_cli_present() else "none"
+    if entry.get("type") == "codex":
+        return "cli_login" if _codex_cli_present() else "none"
     if secrets.secret_value(entry.get("secret_id") or ""):
         return "secret"
     if entry.get("type") == "ollama" or entry.get("base_url"):

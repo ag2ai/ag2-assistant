@@ -108,6 +108,17 @@ Add a "Claude Code" config in **Settings → Models** (the model field takes `so
 
 Limitations: in Docker the assistant reaches the host CLI through the ACP bridge (`AG2ASSISTANT_ACP_BRIDGE` — container-only plumbing; don't set it for host runs) and tool exposure is disabled there; per-token usage/cost isn't reported for ACP turns. Note Anthropic's terms restrict *distributing* products that ride a claude.ai login — a locally-run personal instance driving your own CLI is the same shape as Zed's adapter.
 
+#### Codex (ChatGPT subscription) as the main model
+
+The **Codex · CLI login** configuration type is the same integration for OpenAI's Codex CLI: the main agent runs over ACP on your Codex CLI login (`~/.codex`), no API key. Requirements:
+
+```bash
+npm install -g @agentclientprotocol/codex-acp   # the ACP adapter, must be on PATH
+codex login status                               # Codex CLI logged in (ChatGPT subscription)
+```
+
+Add a "Codex" config in **Settings → Models**. The model field takes the adapter's `name[reasoning]` form (e.g. `gpt-5.6-sol[medium]`); leave it empty to use the CLI's own default model. Everything from the Claude Code section applies unchanged: the assistant's tools are exposed over the local MCP gateway, filesystem access is confined to the profile workspace, Advanced options are ACP constructor overrides, and the same Docker-bridge and usage-reporting limitations hold.
+
 ### Google
 
 Connect Google in Settings and the assistant can search and read your Gmail, draft and send mail (with your approval), read and create calendar events, and read Drive/Docs/Sheets.
