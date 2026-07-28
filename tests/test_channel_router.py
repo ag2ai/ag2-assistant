@@ -13,6 +13,7 @@ from assistant import pairing, peers
 from assistant.channels.base import InboundMessage
 from assistant.channels.router import (
     ALREADY_NEW,
+    ANSWERED_ELSEWHERE,
     ATTACHMENT_ONLY_PROMPT,
     ATTACHMENT_UNREADABLE,
     CHOOSE_INSTEAD,
@@ -48,11 +49,39 @@ class FakeGateway:
         self.chats: dict[str, dict] = {}
         self.transcripts: dict[str, list[dict]] = {}
         self.deleted: list[str] = []
+        # inquiry id -> the chat it was raised in, its options, and its answer.
+        self.inquiries: dict[str, dict] = {}
         self._mirror = None
+        self._questions = None
 
     def set_mirror(self, mirror) -> None:
         """The callback a completed turn is handed to (the router's mirror)."""
         self._mirror = mirror
+
+    def set_question_mirror(self, questions) -> None:
+        """Who this runtime's questions — and their resolutions — are announced to."""
+        self._questions = questions
+
+    async def raise_question(self, chat_id: str, text: str, options=(), inquiry="inq-1") -> str:
+        """A question a turn in ``chat_id`` has raised, persisted and announced the way
+        the durable inquiry store does."""
+        self.inquiries[inquiry] = {"chat": chat_id, "options": list(options), "answer": None}
+        if self._questions is not None:
+            await self._questions.ask(chat_id, inquiry, text, tuple(options))
+        return inquiry
+
+    async def answer_inquiry(self, inquiry: str, text: str = "", *, option: int | None = None):
+        entry = self.inquiries.get(inquiry)
+        if entry is None or entry["answer"] is not None:
+            return False  # first answer wins, whichever surface it came from
+        if option is not None:
+            if not 0 <= option < len(entry["options"]):
+                return False
+            text = entry["options"][option]
+        entry["answer"] = text
+        if self._questions is not None:
+            await self._questions.retract(entry["chat"], inquiry)
+        return True
 
     def add_chat(self, chat_id: str, title: str, updated: str, messages=()) -> str:
         """A Chat this gateway already holds — a browser one, or one made earlier."""
@@ -108,6 +137,9 @@ class FakeDirectory:
         self.withdrawn: dict[str, set[str]] = {}
         # (platform, chat_id, text) pushed into a platform conversation.
         self.pushed: list[tuple[str, str, str]] = []
+        # Questions shown in a platform conversation, and the ones taken back.
+        self.asked: list[tuple[str, str, str, Choose]] = []
+        self.retracted: list[tuple[str, str, str]] = []
 
     def withdraw(self, pid: str, *surfaces: str) -> None:
         self.withdrawn.setdefault(pid, set()).update(surfaces)
@@ -127,6 +159,12 @@ class FakeDirectory:
 
     async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
         self.pushed.append((platform, chat_id, text))
+
+    async def ask_channel(self, platform: str, chat_id: str, inquiry: str, question) -> None:
+        self.asked.append((platform, chat_id, inquiry, question))
+
+    async def retract_channel(self, platform: str, chat_id: str, inquiry: str) -> None:
+        self.retracted.append((platform, chat_id, inquiry))
 
 
 @pytest.fixture(autouse=True)
@@ -882,6 +920,7 @@ def _mirroring(*names, **kw) -> tuple[ChannelRouter, FakeDirectory]:
     router = ChannelRouter(directory)
     for gateway in directory.gateways.values():
         gateway.set_mirror(router.mirror)
+        gateway.set_question_mirror(router)
     return router, directory
 
 
@@ -979,6 +1018,110 @@ async def test_a_mirrored_turn_reads_like_a_resumed_one():
     await _browser_turn(directory, "web-1", "book a table")
 
     assert directory.pushed[0][2] in attached.text
+
+
+# --- questions in the mirror ---
+
+
+async def _attached() -> tuple[ChannelRouter, FakeGateway, FakeDirectory]:
+    """A Peer attached to a Chat that was started in the browser."""
+    router, directory = _mirroring()
+    gateway = directory.gateways["work"]
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await _resume(router, "web-1")
+    return router, gateway, directory
+
+
+async def test_a_question_from_a_browser_turn_reaches_the_attached_peer():
+    """With its options, so the phone shows exactly what the browser shows."""
+    router, gateway, directory = await _attached()
+
+    await gateway.raise_question("web-1", "Which table?", ("By the window", "Out back"))
+
+    platform, chat_id, inquiry, question = directory.asked[0]
+    assert (platform, chat_id, inquiry) == ("telegram", "c1", "inq-1")
+    assert question.text == "Which table?"
+    assert [option.label for option in question.options] == ["By the window", "Out back"]
+
+
+async def test_a_question_in_a_chat_no_peer_is_attached_to_reaches_nobody():
+    router, directory = _mirroring()
+    await directory.gateways["work"].raise_question("web-1", "Which table?", ("Either",))
+    assert directory.asked == []
+
+
+async def test_tapping_a_mirrored_option_answers_the_question():
+    router, gateway, directory = await _attached()
+    await gateway.raise_question("web-1", "Which table?", ("By the window", "Out back"))
+    question = directory.asked[0][3]
+
+    outcome = await router.choose(_inbound(""), question.options[1].token)
+
+    assert isinstance(outcome, Nothing)
+    assert gateway.inquiries["inq-1"]["answer"] == "Out back"
+
+
+async def test_replying_to_a_mirrored_question_answers_it():
+    """A free-text question has no options to tap, so the reply is the answer."""
+    router, gateway, _ = await _attached()
+    await gateway.raise_question("web-1", "What time?", ())
+
+    outcome = await router.answer(_inbound("eight"), "inq-1", "eight")
+
+    assert isinstance(outcome, Nothing)
+    assert gateway.inquiries["inq-1"]["answer"] == "eight"
+
+
+async def test_answering_in_the_browser_retracts_the_prompt_on_the_platform():
+    router, gateway, directory = await _attached()
+    await gateway.raise_question("web-1", "Which table?", ("By the window",))
+
+    await gateway.answer_inquiry("inq-1", "By the window")
+
+    assert directory.retracted == [("telegram", "c1", "inq-1")]
+
+
+async def test_a_question_is_resolved_exactly_once():
+    """Both surfaces are showing it; the second one to answer is told it arrived late
+    and cannot overwrite what the first one said."""
+    router, gateway, directory = await _attached()
+    await gateway.raise_question("web-1", "Which table?", ("By the window", "Out back"))
+    question = directory.asked[0][3]
+
+    await router.choose(_inbound(""), question.options[0].token)
+    late = await router.choose(_inbound(""), question.options[1].token)
+
+    assert late == Refuse(ANSWERED_ELSEWHERE)
+    assert gateway.inquiries["inq-1"]["answer"] == "By the window"
+
+
+async def test_an_unpaired_account_cannot_answer_a_mirrored_question():
+    router, gateway, directory = await _attached()
+    await gateway.raise_question("web-1", "Which table?", ("By the window",))
+    question = directory.asked[0][3]
+
+    outcome = await router.choose(_inbound("", sender_id="9999"), question.options[0].token)
+
+    assert isinstance(outcome, Nothing)
+    assert gateway.inquiries["inq-1"]["answer"] is None
+
+
+async def test_a_question_whose_profile_is_out_of_reach_is_not_answered():
+    router, gateway, directory = await _attached()
+    await gateway.raise_question("web-1", "Which table?", ("By the window",))
+    question = directory.asked[0][3]
+    directory.withdraw("work", "telegram:dm")
+
+    assert isinstance(await router.choose(_inbound(""), question.options[0].token), Refuse)
+    assert gateway.inquiries["inq-1"]["answer"] is None
+
+
+async def test_a_tapped_option_that_no_longer_exists_is_refused():
+    router, gateway, _ = await _attached()
+    await gateway.raise_question("web-1", "Which table?", ("By the window",))
+
+    assert isinstance(await router.choose(_inbound(""), "answer:inq-1:7"), Refuse)
+    assert isinstance(await router.choose(_inbound(""), "answer:inq-1:"), Refuse)
 
 
 # --- /help ---

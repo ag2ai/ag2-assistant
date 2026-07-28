@@ -105,6 +105,7 @@ class ProfileRuntime:
         persist: bool = True,
         notifier: Callable | None = None,
         mirror: Callable | None = None,
+        questions=None,
     ) -> None:
         self.meta = meta
         self._memory = memory
@@ -118,6 +119,9 @@ class ProfileRuntime:
         # Where this profile's completed turns go so an Attached Peer sees them
         # (ADR 0020) — the install's one router, which owns the Peers.
         self._mirror = mirror
+        # Where this profile's questions go so an Attached Peer can answer them too —
+        # the same router, which knows which Peer that is.
+        self._questions = questions
         # This profile's own HITL registry (permission/question prompts). Its request
         # ids are globally unique, so the global /hitl/{id} dispatcher (app.py) can
         # find the right profile by asking each runtime's registry in turn (§4.1).
@@ -179,6 +183,7 @@ class ProfileRuntime:
         )
         await self.gateway.start()
         self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
+        self.gateway.set_question_mirror(self._questions)  # questions -> the same Peer
         self.tasks.set_emitter(self.gateway.emit_event)  # lifecycle → AG2 stream
         self.tasks.set_gateway(self.gateway)  # turns/stops/stream deletion for runs
         self.tasks.set_notifier(self.notify_channel)  # run outcomes -> the origin channel
@@ -264,18 +269,33 @@ class ProfileManager:
             persist=self._persist,
             notifier=self.notify_channel,
             mirror=self.router.mirror,
+            questions=self.router,
         )
         await runtime.start()
         self._runtimes[meta.id] = runtime
         return runtime
 
-    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
-        """Push a message into a platform chat through the install's live Channel —
-        task-run outcomes are delivered this way."""
+    def _channel(self, platform: str) -> channels.Channel:
+        """The install's live adapter for ``platform``, or a refusal to reach it."""
         channel = self.channels.get(platform)
         if channel is None:
             raise RuntimeError(f"channel {platform!r} is not running")
-        await channel.notify(chat_id, text)
+        return channel
+
+    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
+        """Push a message into a platform chat through the install's live Channel —
+        task-run outcomes are delivered this way."""
+        await self._channel(platform).notify(chat_id, text)
+
+    async def ask_channel(
+        self, platform: str, chat_id: str, inquiry: str, question: channels.Choose
+    ) -> None:
+        """Show a question with its options in a platform chat (ADR 0020)."""
+        await self._channel(platform).ask(chat_id, inquiry, question)
+
+    async def retract_channel(self, platform: str, chat_id: str, inquiry: str) -> None:
+        """Take back a question shown in a platform chat — it has been resolved."""
+        await self._channel(platform).retract(chat_id, inquiry)
 
     async def start_channel(self, platform: str) -> tuple[bool, str | None]:
         """Start ``platform`` at install level if its tokens are present, handing it the

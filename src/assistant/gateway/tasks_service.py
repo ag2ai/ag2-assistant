@@ -135,6 +135,7 @@ class TaskService:
         self._gateway = None
         self._notify = None  # async (platform, chat_id, text) -> None
         self._emit = None  # async (chat_id, event) -> None
+        self._questions = None  # the question mirror: ask(...) / retract(...)
         if self._inquiries is not None:
             # InquiryStore only takes its change hook at construction (`on_change=`,
             # stored privately as `_on_change`) — there is no public setter. A store
@@ -152,6 +153,10 @@ class TaskService:
 
     def set_emitter(self, emitter) -> None:
         self._emit = emitter
+
+    def set_question_mirror(self, questions) -> None:
+        """Where a chat's questions go so an Attached Peer can answer them (ADR 0020)."""
+        self._questions = questions
 
     @property
     def store(self):
@@ -518,6 +523,7 @@ class TaskService:
         """InquiryStore change hook: surface the event on its stream AND flip the
         owning run between running ↔ needs_input."""
         await self._emit_inquiry(inquiry, kind)
+        await self._mirror_inquiry(inquiry, kind)
         rid = inquiry.task_id or ""
         if not rid.startswith("run-") or self._store is None:
             return
@@ -530,6 +536,23 @@ class TaskService:
             await self._store.set_run_status(rid, RunStatus.NEEDS_INPUT)
         elif kind in InquiryStatus.TERMINAL and run.status == RunStatus.NEEDS_INPUT:
             await self._store.set_run_status(rid, RunStatus.RUNNING)
+
+    async def _mirror_inquiry(self, inquiry, kind) -> None:
+        """Durable HITL lifecycle → the Attached Peer: a raised question is shown there
+        with its options, and any resolution takes it back."""
+        if self._questions is None or not inquiry.chat:
+            return
+        from assistant.observability import log_suppressed
+
+        try:
+            if kind == "raised":
+                await self._questions.ask(
+                    inquiry.chat, inquiry.id, inquiry.text, tuple(inquiry.options or ())
+                )
+            else:
+                await self._questions.retract(inquiry.chat, inquiry.id)
+        except Exception as exc:
+            log_suppressed("question mirror", exc, inquiry_id=inquiry.id, kind=kind)
 
     async def _emit_inquiry(self, inquiry, kind) -> None:
         """Durable HITL lifecycle → InquiryRaised/InquiryAnswered on its stream."""

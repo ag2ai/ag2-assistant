@@ -9,7 +9,7 @@ back to the router.
 from types import SimpleNamespace
 
 import assistant.channels.telegram as telegram_mod
-from assistant.channels.router import COMMANDS, Choose, Nothing, Option, Reply
+from assistant.channels.router import COMMANDS, Choose, Nothing, Option, Refuse, Reply
 from assistant.channels.telegram import TelegramChannel
 
 
@@ -23,7 +23,11 @@ def _telegram_channel():
 class _FakeMessage:
     """A Telegram message the adapter edits, replies to, or deletes."""
 
+    _next_id = 100
+
     def __init__(self) -> None:
+        _FakeMessage._next_id += 1
+        self.message_id = _FakeMessage._next_id
         self.text: str | None = None
         self.markup = None
         self.replies: list[str] = []
@@ -157,7 +161,12 @@ class _RecordingRouter:
         self.outcome = outcome
         self.chosen: list[tuple] = []
         self.handled: list[object] = []
+        self.answered: list[tuple] = []
         self._paired = paired
+
+    async def answer(self, inbound, inquiry, text):
+        self.answered.append((inquiry, text))
+        return self.outcome
 
     def paired(self, inbound) -> bool:
         return self._paired
@@ -218,23 +227,16 @@ async def test_tapping_an_option_that_says_nothing_sends_nothing():
     assert sent == []
 
 
-async def test_an_unpaired_message_cannot_answer_a_running_question():
-    """The typed-answer path runs ahead of the turn machinery, so it has to be behind
-    the pairing gate too — otherwise a stranger in a group answers for the user."""
+async def test_an_unpaired_reply_cannot_answer_a_running_question():
+    """The answer path runs ahead of the turn machinery, so it has to be behind the
+    pairing gate too — otherwise a stranger in a group answers for the user."""
     ch = _telegram_channel()
     ch._router = _RecordingRouter(Nothing(), paired=False)
     ch._pending.create("42")
-    ch._app = SimpleNamespace(bot=SimpleNamespace(send_message=lambda cid, text: _noop()))
+    question = _FakeMessage()
+    ch._questions[question.message_id] = ""
 
-    message = _FakeMessage()
-    message.text = "yes, delete it"
-    message.caption = None
-    message.chat = SimpleNamespace(type="private", PRIVATE="private", id=42)
-    message.from_user = SimpleNamespace(id=7, full_name="Stranger", username="stranger")
-    message.reply_to_message = None
-    for attr in ("document", "photo", "audio", "voice", "video"):
-        setattr(message, attr, None)
-
+    message = _incoming("yes, delete it", reply_to=question)
     await ch._on_message(SimpleNamespace(message=message), None)
 
     assert ch._pending.is_awaiting("42") is True  # still waiting for the real answer
@@ -257,3 +259,127 @@ async def test_an_unpaired_tap_reaches_neither_the_router_nor_the_button():
     assert ch._router.chosen == []
     assert answered == []
     assert deleted.deleted is False
+
+
+# --- questions, mirrored and answered ---
+
+
+class _FakeBot:
+    """Hands back the message it sent, so the adapter can take it back later."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple] = []
+        self.messages: list[_FakeMessage] = []
+
+    async def send_message(self, chat_id, text, reply_markup=None):
+        message = _FakeMessage()
+        self.sent.append((chat_id, text, reply_markup))
+        self.messages.append(message)
+        return message
+
+
+def _asking_channel(outcome=Nothing()) -> tuple[TelegramChannel, _FakeBot]:
+    ch = _telegram_channel()
+    ch._router = _RecordingRouter(outcome)
+    bot = _FakeBot()
+    ch._app = SimpleNamespace(bot=bot)
+    return ch, bot
+
+
+def _context() -> SimpleNamespace:
+    """The PTB context a handler is called with — only its bot is ever read."""
+    return SimpleNamespace(bot=None)
+
+
+def _incoming(text="hi", reply_to=None) -> _FakeMessage:
+    """A plain direct message from the paired user, optionally replying to something."""
+    message = _FakeMessage()
+    message.text = text
+    message.caption = None
+    message.chat = SimpleNamespace(type="private", PRIVATE="private", id=42)
+    message.from_user = SimpleNamespace(id=7, full_name="Test User", username="tester")
+    message.reply_to_message = reply_to
+    for attr in ("document", "photo", "audio", "voice", "video"):
+        setattr(message, attr, None)
+    return message
+
+
+async def test_a_mirrored_question_is_shown_with_its_options():
+    ch, bot = _asking_channel()
+    question = Choose("Which table?", (Option("By the window", "answer:inq-1:0"),))
+
+    await ch.ask("42", "inq-1", question)
+
+    chat_id, text, markup = bot.sent[0]
+    assert (chat_id, text) == (42, "Which table?")
+    assert _callback_data(markup) == ["acc:answer:inq-1:0"]
+
+
+async def test_a_question_answered_elsewhere_is_taken_back():
+    ch, bot = _asking_channel()
+    await ch.ask("42", "inq-1", Choose("Which table?", ()))
+
+    await ch.retract("42", "inq-1")
+
+    assert bot.messages[0].deleted is True
+    assert ch._shown == {} and ch._questions == {}
+
+
+async def test_taking_back_a_question_that_was_never_shown_does_nothing():
+    ch, _ = _asking_channel()
+    await ch.retract("42", "inq-9")
+
+
+async def test_a_typed_message_no_longer_answers_an_open_question():
+    """The hijack is gone: a question can arrive here from a turn this conversation
+    never started, so an unrelated message must still be a message."""
+    ch, _ = _asking_channel(Reply("the answer"))
+    ch._pending.create("42")
+    ch._questions[_FakeMessage().message_id] = ""
+
+    await ch._on_message(SimpleNamespace(message=_incoming("what's the weather?")), _context())
+
+    assert ch._pending.is_awaiting("42") is True  # the question is still open
+    assert len(ch._router.handled) == 1  # and the message ran a turn of its own
+
+
+async def test_replying_to_a_question_answers_the_turn_that_asked_it():
+    ch, _ = _asking_channel()
+    fut = ch._pending.create("42")
+    question = _FakeMessage()
+    ch._questions[question.message_id] = ""
+
+    await ch._on_message(SimpleNamespace(message=_incoming("yes", reply_to=question)), None)
+
+    assert fut.result() == "yes"
+    assert ch._router.handled == []  # answering is not a turn of its own
+
+
+async def test_replying_to_a_mirrored_question_goes_to_the_router():
+    ch, _ = _asking_channel()
+    await ch.ask("42", "inq-1", Choose("What time?", ()))
+    question = ch._shown["inq-1"]
+
+    await ch._on_message(SimpleNamespace(message=_incoming("eight", reply_to=question)), None)
+
+    assert ch._router.answered == [("inq-1", "eight")]
+    assert ch._router.handled == []
+
+
+async def test_a_late_answer_is_told_so():
+    ch, bot = _asking_channel(Refuse("That question was already answered."))
+    await ch.ask("42", "inq-1", Choose("What time?", ()))
+    question = ch._shown["inq-1"]
+
+    await ch._on_message(SimpleNamespace(message=_incoming("eight", reply_to=question)), None)
+
+    assert bot.sent[-1][:2] == (42, "That question was already answered.")
+
+
+async def test_a_reply_to_anything_else_is_an_ordinary_message():
+    ch, _ = _asking_channel(Reply("the answer"))
+
+    message = _incoming("and this?", reply_to=_FakeMessage())
+    await ch._on_message(SimpleNamespace(message=message), _context())
+
+    assert len(ch._router.handled) == 1

@@ -201,6 +201,29 @@ class Gateway:
         """Register who receives this gateway's completed turns (ADR 0020)."""
         self._mirror = mirror
 
+    def set_question_mirror(self, questions) -> None:
+        """Register who receives this gateway's questions — ``ask``/``retract``. The
+        durable inquiry store announces them, so the task service holds the hook."""
+        if self._tasks is not None:
+            self._tasks.set_question_mirror(questions)
+
+    async def answer_inquiry(
+        self, inquiry: str, text: str = "", *, option: int | None = None
+    ) -> bool:
+        """Resolve one of this profile's persisted inquiries — by the index of a tapped
+        option, or by replied text. False when there is none left to resolve."""
+        store = getattr(self._tasks, "inquiries", None) if self._tasks is not None else None
+        if store is None:
+            return False
+        inq = await store.get(inquiry)
+        if inq is None or inq.is_terminal:
+            return False
+        if option is not None:
+            if not 0 <= option < len(inq.options):
+                return False
+            text = inq.options[option]
+        return await store.answer(inquiry, text) is not None
+
     @property
     def config(self) -> Config:
         """The gateway's live config — re-resolved on ``reload()`` (so a profile

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal, get_args
 from assistant import profiles
 
 if TYPE_CHECKING:
-    from assistant.channels.router import ChannelRouter  # type-only (would cycle)
+    from assistant.channels.router import ChannelRouter, Choose  # type-only (would cycle)
 
 # Platforms whose adapters can push an unsolicited message (task-run outcomes
 # delivered back to the chat a task came from). Single source of truth: the
@@ -78,3 +78,12 @@ class Channel(ABC):
         """Push an unsolicited message to a platform chat (task-run outcomes).
         Override per platform; the default says this channel can't push."""
         raise NotImplementedError(f"{self.platform} channel cannot push messages")
+
+    async def ask(self, chat_id: str, inquiry: str, question: "Choose") -> None:
+        """Show a question mirrored from another surface, with its options as buttons,
+        keyed by ``inquiry`` so it can be taken back (ADR 0020)."""
+        raise NotImplementedError(f"{self.platform} channel cannot show a question")
+
+    async def retract(self, chat_id: str, inquiry: str) -> None:
+        """Take back a question shown here — it has been resolved elsewhere."""
+        raise NotImplementedError(f"{self.platform} channel cannot show a question")

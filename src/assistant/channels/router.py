@@ -63,6 +63,9 @@ NOTHING_TO_CLEAR = "There's no chat to delete yet — nothing has been said here
 NO_CHAT_YET = "no chat yet"
 STALE_OPTION = "That option has expired. Send /help for what I can do."
 
+# Said when the question a tap or a reply answers has already been resolved elsewhere.
+ANSWERED_ELSEWHERE = "That question was already answered."
+
 CHOOSE_CHAT = "Which chat should I pick up?"
 NO_CHATS = "There are no chats in this profile yet — send me anything to start one."
 CHAT_GONE = "That chat is gone. Send /resume for the ones that are left."
@@ -97,6 +100,9 @@ PROFILE_TOKEN = "profile:"
 CLEAR_TOKEN = "clear:"
 KEEP_TOKEN = "keep:"
 RESUME_TOKEN = "resume:"
+# An answer names the Inquiry it resolves and the index of the option that was
+# tapped — an index, so a long option label cannot outgrow a platform's token cap.
+ANSWER_TOKEN = "answer:"
 
 
 def unknown_profile(name: str) -> str:
@@ -257,6 +263,14 @@ class ProfileDirectory(Protocol):
     async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
         """Push a message into a platform conversation through its live Channel."""
 
+    async def ask_channel(
+        self, platform: str, chat_id: str, inquiry: str, question: Choose
+    ) -> None:
+        """Show a question, with its options, in a platform conversation."""
+
+    async def retract_channel(self, platform: str, chat_id: str, inquiry: str) -> None:
+        """Take back a question shown there — it has been resolved."""
+
 
 def spoken_text(outcome: Outcome) -> str | None:
     """The plain text an outcome says back, or None when it says nothing.
@@ -416,6 +430,11 @@ class ChannelRouter:
             return await self._delete_chat(inbound, token.removeprefix(CLEAR_TOKEN))
         if token.startswith(RESUME_TOKEN):
             return await self._attach_chat(inbound, token.removeprefix(RESUME_TOKEN))
+        if token.startswith(ANSWER_TOKEN):
+            inquiry, _, index = token.removeprefix(ANSWER_TOKEN).partition(":")
+            if not index.isdigit():
+                return Refuse(STALE_OPTION)
+            return await self._answer(inbound, inquiry, option=int(index))
         return Refuse(STALE_OPTION)
 
     # ---- the Chat a Peer is in ----
@@ -478,6 +497,47 @@ class ChannelRouter:
         body = mirrored_turn(text, reply)
         if body:
             await self._directory.notify_channel(peer.platform, peer.chat_id, body)
+
+    async def ask(self, chat: str, inquiry: str, text: str, options: tuple[str, ...]) -> None:
+        """Show a question raised in ``chat`` to the Peer Attached to it, carrying the
+        same options the browser offers so either surface can resolve it (ADR 0020)."""
+        peer = peers.attached_to(chat)
+        if peer is None:
+            return
+        question = Choose(
+            text,
+            tuple(
+                Option(label, f"{ANSWER_TOKEN}{inquiry}:{index}")
+                for index, label in enumerate(options)
+            ),
+        )
+        await self._directory.ask_channel(peer.platform, peer.chat_id, inquiry, question)
+
+    async def retract(self, chat: str, inquiry: str) -> None:
+        """Take back a question the Attached Peer was shown, once it has been resolved
+        — on that platform, in the browser, or anywhere else."""
+        peer = peers.attached_to(chat)
+        if peer is None:
+            return
+        await self._directory.retract_channel(peer.platform, peer.chat_id, inquiry)
+
+    async def answer(self, inbound: InboundMessage, inquiry: str, text: str) -> Outcome:
+        """Resolve a mirrored question with what this conversation replied."""
+        return await self._answer(inbound, inquiry, text=text)
+
+    async def _answer(
+        self, inbound: InboundMessage, inquiry: str, *, text: str = "", option: int | None = None
+    ) -> Outcome:
+        """Resolve an Inquiry from this Peer, by tapped option or by replied text. The
+        store keeps first-answer-wins, so a second surface is told it arrived late."""
+        if not self.paired(inbound):
+            return NOTHING
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        if await runtime[1].answer_inquiry(inquiry, text, option=option):
+            return NOTHING
+        return Refuse(ANSWERED_ELSEWHERE)
 
     async def _delete_chat(self, inbound: InboundMessage, chat: str) -> Outcome:
         """Delete the Chat the confirmation was raised for, and only that one."""

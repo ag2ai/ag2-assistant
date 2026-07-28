@@ -75,10 +75,11 @@ async def _download_attachments(msg, bot) -> list:
 class TelegramAsker(PendingGuard):
     """Asks a question in a specific Telegram chat and awaits the answer."""
 
-    def __init__(self, bot, chat_id: str, pending: PendingAsks) -> None:
+    def __init__(self, bot, chat_id: str, pending: PendingAsks, questions: dict) -> None:
         self._bot = bot
         self._chat_id = chat_id
         self._pending = pending
+        self._questions = questions
 
     async def ask(self, question: Question, timeout: float | None = None) -> str:
         fut = self._pending.create(self._chat_id)
@@ -93,11 +94,14 @@ class TelegramAsker(PendingGuard):
                     for opt in question.options
                 ]
             )
-        await self._bot.send_message(int(self._chat_id), text, reply_markup=markup)
+        message = await self._bot.send_message(int(self._chat_id), text, reply_markup=markup)
+        # A reply to this message is the answer; nothing else typed here is.
+        self._questions[message.message_id] = ""
         try:
             with self.pending_guard():
                 return await asyncio.wait_for(fut, timeout=timeout or _ASK_TIMEOUT)
         finally:
+            self._questions.pop(message.message_id, None)
             self._pending.discard(self._chat_id)
 
 
@@ -113,6 +117,11 @@ class TelegramChannel(Channel):
         self._bot_username: str | None = None
         self._bot_id: int | None = None
         self._pending = PendingAsks()
+        # Message id of a question this bot has asked -> the Inquiry it resolves, or
+        # "" for one a turn in that same chat is waiting on.
+        self._questions: dict[int, str] = {}
+        # Inquiry id -> the message showing it, so a resolution can take it back.
+        self._shown: dict[str, object] = {}
 
     async def start(self, router: ChannelRouter) -> None:
         self._router = router
@@ -142,7 +151,7 @@ class TelegramChannel(Channel):
             log_suppressed("telegram command menu registration", exc)
 
     def _asker_for(self, chat_id: str) -> Asker:
-        return TelegramAsker(self._app.bot, chat_id, self._pending)
+        return TelegramAsker(self._app.bot, chat_id, self._pending, self._questions)
 
     async def _answer_unpaired(self, inbound: InboundMessage) -> None:
         """Run an unpaired account's message for its one possible effect — pairing.
@@ -206,6 +215,42 @@ class TelegramChannel(Channel):
         """Push a task-run outcome into a Telegram chat — no placeholder to edit,
         this isn't a reply."""
         await self._send(chat_id, text)
+
+    def _options_markup(self, question: Choose) -> InlineKeyboardMarkup | None:
+        return (
+            InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(opt.label, callback_data=f"{_CHOICE_PREFIX}{opt.token}")]
+                    for opt in question.options
+                ]
+            )
+            if question.options
+            else None
+        )
+
+    async def ask(self, chat_id: str, inquiry: str, question: Choose) -> None:
+        """Show a question mirrored from another surface, remembering the message so a
+        reply to it answers it and a resolution elsewhere can take it back."""
+        markup = self._options_markup(question)
+        chunks = split_for_limit(self.format_outbound(question.text), TELEGRAM_LIMIT)
+        message = None
+        for index, chunk in enumerate(chunks):
+            # Buttons belong under the whole question, so only the last chunk carries them.
+            message = await self._app.bot.send_message(
+                int(chat_id), chunk, reply_markup=markup if index == len(chunks) - 1 else None
+            )
+        if message is not None:
+            self._questions[message.message_id] = inquiry
+            self._shown[inquiry] = message
+
+    async def retract(self, chat_id: str, inquiry: str) -> None:
+        """Take back a mirrored question — it has been answered somewhere else."""
+        message = self._shown.pop(inquiry, None)
+        if message is None:
+            return
+        self._questions.pop(message.message_id, None)
+        with contextlib.suppress(Exception):
+            await message.delete()
 
     async def stop(self) -> None:
         if self._app is None:
@@ -273,10 +318,9 @@ class TelegramChannel(Channel):
             await self._answer_unpaired(inbound)
             return
 
-        # If a question is awaiting a typed answer in this chat, this message IS
-        # the answer — resolve it instead of starting a new turn.
-        if msg.text and self._pending.is_awaiting(chat_id):
-            self._pending.resolve(chat_id, msg.text)
+        # An answer is a reply to the question, never merely the next thing said: a
+        # question can be mirrored here from a turn this conversation never started.
+        if msg.reply_to_message is not None and await self._answer_question(inbound, msg):
             return
 
         if not self._router.accepts(inbound):
@@ -293,16 +337,28 @@ class TelegramChannel(Channel):
         )
         await self._render(outcome, placeholder, update.message)
 
+    async def _answer_question(self, inbound: InboundMessage, msg) -> bool:
+        """Resolve the question this message replies to, if it replies to one. A
+        mirrored question goes back through the router; a live one resolves here."""
+        message_id = msg.reply_to_message.message_id
+        inquiry = self._questions.get(message_id)
+        if inquiry is None:
+            return False
+        text = msg.text or msg.caption or ""
+        if not inquiry:
+            self._questions.pop(message_id, None)
+            self._pending.resolve(inbound.chat_id, text)
+            return True
+        spoken = spoken_text(await self._router.answer(inbound, inquiry, text))
+        if spoken:
+            await self._send(inbound.chat_id, spoken)
+        return True
+
     async def _render(self, outcome: Outcome, placeholder, message) -> None:
         """Turn the router's outcome into Telegram: text edited into the placeholder,
         a choice as option buttons, silence as a deleted placeholder."""
         if isinstance(outcome, Choose):
-            markup = InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton(opt.label, callback_data=f"{_CHOICE_PREFIX}{opt.token}")]
-                    for opt in outcome.options
-                ]
-            )
+            markup = self._options_markup(outcome)
             await self._say(self.format_outbound(outcome.text), placeholder, message, markup)
             return
 
