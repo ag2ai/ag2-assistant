@@ -40,7 +40,7 @@ def test_normalize_dm():
     inbound = ch._normalize(_fake_message("hello", guild=False))
     assert inbound is not None
     assert inbound.is_direct is True
-    assert inbound.stable_id() == "discord:42"
+    assert (inbound.platform, inbound.chat_id) == ("discord", "42")
 
 
 def test_normalize_guild_with_mention_strips_token():

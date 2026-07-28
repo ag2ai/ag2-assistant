@@ -300,7 +300,9 @@ fallback Profile, an unrelated install-level setting)
 One conversation on the platform side — a direct message or a group — identified by
 its platform and that platform's own chat id. This is what a Channel actually talks
 to, and what holds everything persisting between messages: its **Peer profile** and
-the **Chat** it is currently attached to.
+the **Chat** it is currently attached to. A Peer starts many Chats over time and keeps
+owning the ones it leaves — that is how a **Task** started in a conversation delivers
+its outcome back there.
 _Avoid_: session (the retired chat-sense name — see **Chat**), chat (that is the
 persisted entity a Peer attaches to), user (a Peer is a conversation; several people
 speak in a group Peer), conversation

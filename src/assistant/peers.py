@@ -10,14 +10,11 @@ file, tolerant of a missing/malformed file (treated as no peers).
 """
 
 import json
-from dataclasses import asdict, dataclass
+import secrets
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from assistant.config import data_dir
-
-# Separates a Chat id's platform address from its switch count:
-# "telegram:42#2". ``chat_address`` recovers the address a push is delivered to.
-_CHAT_SEP = "#"
 
 
 @dataclass(frozen=True)
@@ -28,18 +25,8 @@ class Peer:
     chat_id: str  # the platform's own chat/conversation id
     surface: str = "dm"  # "dm" | "group"
     profile: str | None = None  # the selected profile's id
-    chat_seq: int = 0  # bumped on every Profile switch (see _CHAT_SEP)
-
-    def chat(self) -> str:
-        """The gateway Chat id this Peer's turns run on."""
-        address = f"{self.platform}:{self.chat_id}"
-        return address if self.chat_seq == 0 else f"{address}{_CHAT_SEP}{self.chat_seq}"
-
-
-def chat_address(chat_id: str) -> str:
-    """Strip a Chat id's switch discriminator, leaving the platform address a push
-    is delivered to. Already-plain ids pass through unchanged."""
-    return chat_id.partition(_CHAT_SEP)[0]
+    chat: str | None = None  # the Chat it is Attached to, if any
+    chats: list[str] = field(default_factory=list)  # every Chat it has started
 
 
 def _path() -> Path:
@@ -63,13 +50,33 @@ def _write(entries: list[dict]) -> None:
 
 
 def _peer(entry: dict) -> Peer:
+    chats = entry.get("chats")
     return Peer(
         platform=entry["platform"],
         chat_id=entry["chat_id"],
         surface=entry.get("surface", "dm"),
         profile=entry.get("profile"),
-        chat_seq=int(entry.get("chat_seq", 0)),
+        chat=entry.get("chat"),
+        chats=list(chats) if isinstance(chats, list) else [],
     )
+
+
+def _index(entries: list[dict], platform: str, chat_id: str) -> int | None:
+    """Where this conversation sits in the registry, or None when it is new."""
+    for i, entry in enumerate(entries):
+        if entry.get("platform") == platform and entry.get("chat_id") == chat_id:
+            return i
+    return None
+
+
+def _save(entries: list[dict], index: int | None, peer: Peer) -> Peer:
+    """Write ``peer`` at ``index``, appending when it is new."""
+    if index is None:
+        entries.append(asdict(peer))
+    else:
+        entries[index] = asdict(peer)
+    _write(entries)
+    return peer
 
 
 def get_peer(platform: str, chat_id: str) -> Peer | None:
@@ -85,28 +92,69 @@ def list_peers() -> list[Peer]:
     return [_peer(entry) for entry in _load()]
 
 
+def peer_for_chat(chat: str) -> Peer | None:
+    """The Peer that started this Chat, or None for a Chat begun anywhere else."""
+    for entry in _load():
+        if chat in (entry.get("chats") or []):
+            return _peer(entry)
+    return None
+
+
 def select_profile(platform: str, chat_id: str, pid: str, *, surface: str = "dm") -> Peer:
     """Point this conversation at profile ``pid`` and return the resulting Peer.
-    Replacing a different profile also moves the Peer to a fresh Chat; re-selecting
-    the one it already holds leaves its Chat alone. The Chat is minted lazily by the
-    first message, not here."""
+    Replacing a different profile detaches it; the Chat is started lazily."""
     entries = _load()
-    for entry in entries:
-        if entry.get("platform") == platform and entry.get("chat_id") == chat_id:
-            current = _peer(entry)
-            switched = current.profile is not None and current.profile != pid
-            peer = Peer(
-                platform=platform,
-                chat_id=chat_id,
-                surface=surface,
-                profile=pid,
-                chat_seq=current.chat_seq + 1 if switched else current.chat_seq,
-            )
-            entries[entries.index(entry)] = asdict(peer)
-            _write(entries)
-            return peer
+    index = _index(entries, platform, chat_id)
+    current = _peer(entries[index]) if index is not None else Peer(platform, chat_id)
+    switched = current.profile is not None and current.profile != pid
+    return _save(
+        entries,
+        index,
+        replace(
+            current,
+            surface=surface,
+            profile=pid,
+            chat=None if switched else current.chat,
+        ),
+    )
 
-    peer = Peer(platform=platform, chat_id=chat_id, surface=surface, profile=pid)
-    entries.append(asdict(peer))
-    _write(entries)
-    return peer
+
+def start_chat(platform: str, chat_id: str, *, surface: str = "dm") -> str:
+    """Start a fresh Chat for this conversation, attach the Peer to it, and return
+    its id — opaque and origin-prefixed, never a platform address."""
+    chat = f"{platform}-{secrets.token_hex(4)}"
+    entries = _load()
+    index = _index(entries, platform, chat_id)
+    current = _peer(entries[index]) if index is not None else Peer(platform, chat_id, surface)
+    _save(entries, index, replace(current, chat=chat, chats=[*current.chats, chat]))
+    return chat
+
+
+def detach(platform: str, chat_id: str) -> None:
+    """Leave the attached Chat as it is; the next message starts a fresh one."""
+    entries = _load()
+    index = _index(entries, platform, chat_id)
+    if index is None:
+        return
+    current = _peer(entries[index])
+    if current.chat is not None:
+        _save(entries, index, replace(current, chat=None))
+
+
+def forget_chat(chat: str) -> None:
+    """Drop a deleted Chat from the Peer that started it."""
+    entries = _load()
+    for i, entry in enumerate(entries):
+        current = _peer(entry)
+        if chat not in current.chats:
+            continue
+        _save(
+            entries,
+            i,
+            replace(
+                current,
+                chat=None if current.chat == chat else current.chat,
+                chats=[c for c in current.chats if c != chat],
+            ),
+        )
+        return

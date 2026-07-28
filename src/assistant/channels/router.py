@@ -43,13 +43,53 @@ CODE_EXPIRED = "That pairing code has expired. Generate a new one in Settings �
 # A group's profile is not the group's to change — it is set from the WebUI.
 PROFILE_IN_GROUP = "/profile only works in a direct message. Set a group's profile in Settings."
 
+NEW_CHAT = "Started a fresh chat. The one you were in is still in your chat list."
+ALREADY_NEW = "You're already in a fresh chat — nothing has been said in it yet."
+CONFIRM_CLEAR = "Delete this chat permanently? Its whole transcript goes with it."
+CLEARED = "Deleted. Your next message starts a fresh chat."
+KEPT = "Left it as it was."
+NOTHING_TO_CLEAR = "There's no chat to delete yet — nothing has been said here."
+NO_CHAT_YET = "no chat yet"
+STALE_OPTION = "That option has expired. Send /help for what I can do."
+
+
+@dataclass(frozen=True)
+class Command:
+    """One command a Peer can send, and the one-liner that describes it."""
+
+    name: str
+    description: str
+
+
+COMMANDS = (
+    Command("new", "Start a fresh chat"),
+    Command("clear", "Delete this chat permanently"),
+    Command("status", "Show the profile and chat you're in"),
+    Command("profile", "Choose which profile to talk to"),
+    Command("help", "List these commands"),
+)
+
+# An option token names the picker that offered it; a delete also names the Chat it
+# was raised for, so a tap can only ever act on what the user was shown.
+PROFILE_TOKEN = "profile:"
+CLEAR_TOKEN = "clear:"
+KEEP_TOKEN = "keep:"
+
 
 def unknown_profile(name: str) -> str:
     return f"There is no profile called '{name}'. Send /profile to pick from the list."
 
 
 def unknown_command(name: str) -> str:
-    return f"I don't know the command /{name}. Send /profile to choose a profile."
+    return f"I don't know the command /{name}. Send /help for what I do know."
+
+
+def help_text() -> str:
+    return "\n".join(f"/{c.name} — {c.description}" for c in COMMANDS)
+
+
+def status_text(profile: str, title: str, turns: int) -> str:
+    return f"Profile: {profile}\nChat: {title}\nSize: {turns} exchanges"
 
 
 def switched_to(name: str) -> str:
@@ -190,19 +230,17 @@ class ChannelRouter:
         return {p.id: p for p in self._directory.available_profiles()}
 
     def _ask_which_profile(self, by_id: dict[str, AvailableProfile]) -> Choose:
-        return Choose(CHOOSE_PROFILE, tuple(Option(p.name, p.id) for p in by_id.values()))
+        return Choose(
+            CHOOSE_PROFILE,
+            tuple(Option(p.name, f"{PROFILE_TOKEN}{p.id}") for p in by_id.values()),
+        )
 
     def _select(self, inbound: InboundMessage, pid: str) -> None:
         """Record this Peer's profile, leaving an unchanged selection alone."""
         peer = peers.get_peer(inbound.platform, inbound.chat_id)
         if peer is not None and peer.profile == pid:
             return  # nothing moved; don't rewrite the registry on every message
-        peers.select_profile(
-            inbound.platform,
-            inbound.chat_id,
-            pid,
-            surface="dm" if inbound.is_direct else "group",
-        )
+        peers.select_profile(inbound.platform, inbound.chat_id, pid, surface=inbound.surface())
 
     def _current_profile(
         self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]
@@ -246,19 +284,49 @@ class ChannelRouter:
         return Refuse(NO_PROFILE)
 
     async def choose(self, inbound: InboundMessage, token: str) -> Outcome:
-        """Apply an option token sent back from a `Choose` — a profile id here."""
+        """Apply an option token sent back from a `Choose`."""
         if not self.paired(inbound):
             return NOTHING
-        profile = self._by_id().get(token)
-        if profile is None:
+        if token.startswith(PROFILE_TOKEN):
+            profile = self._by_id().get(token.removeprefix(PROFILE_TOKEN))
+            if profile is None:
+                return Refuse(NO_PROFILE)
+            return self._switch_to(inbound, profile)
+        if token.startswith(KEEP_TOKEN):
+            return Reply(KEPT)
+        if token.startswith(CLEAR_TOKEN):
+            return await self._delete_chat(inbound, token.removeprefix(CLEAR_TOKEN))
+        return Refuse(STALE_OPTION)
+
+    # ---- the Chat a Peer is in ----
+
+    def _attached_chat(self, inbound: InboundMessage) -> str | None:
+        peer = peers.get_peer(inbound.platform, inbound.chat_id)
+        return peer.chat if peer is not None else None
+
+    def _chat_for(self, inbound: InboundMessage) -> str:
+        """The Chat this Peer speaks in, started on first use."""
+        return self._attached_chat(inbound) or peers.start_chat(
+            inbound.platform, inbound.chat_id, surface=inbound.surface()
+        )
+
+    async def _delete_chat(self, inbound: InboundMessage, chat: str) -> Outcome:
+        """Delete the Chat the confirmation was raised for, and only that one."""
+        if chat != self._attached_chat(inbound):
+            return Refuse(STALE_OPTION)
+        resolved = self._resolve(inbound)
+        if not isinstance(resolved, str):
+            return resolved
+        gateway = self._directory.gateway_for_profile(resolved)
+        if gateway is None:
             return Refuse(NO_PROFILE)
-        return self._switch_to(inbound, profile)
+        await gateway.delete_chat(chat)
+        peers.forget_chat(chat)
+        return Reply(CLEARED)
 
     # ---- commands ----
 
-    async def _command(self, inbound: InboundMessage, name: str, arg: str) -> Outcome:
-        if name != "profile":
-            return Refuse(unknown_command(name))
+    async def _profile_command(self, inbound: InboundMessage, arg: str) -> Outcome:
         if not inbound.is_direct:
             return Refuse(PROFILE_IN_GROUP)
 
@@ -275,6 +343,56 @@ class ChannelRouter:
         if match is None:
             return Refuse(unknown_profile(arg))
         return self._switch_to(inbound, match)
+
+    async def _new_command(self, inbound: InboundMessage, arg: str) -> Outcome:
+        if self._attached_chat(inbound) is None:
+            return Reply(ALREADY_NEW)
+        peers.detach(inbound.platform, inbound.chat_id)
+        return Reply(NEW_CHAT)
+
+    async def _clear_command(self, inbound: InboundMessage, arg: str) -> Outcome:
+        chat = self._attached_chat(inbound)
+        if chat is None:
+            return Reply(NOTHING_TO_CLEAR)
+        return Choose(
+            CONFIRM_CLEAR,
+            (Option("Delete it", f"{CLEAR_TOKEN}{chat}"), Option("Keep it", KEEP_TOKEN)),
+        )
+
+    async def _status_command(self, inbound: InboundMessage, arg: str) -> Outcome:
+        resolved = self._resolve(inbound)
+        if not isinstance(resolved, str):
+            return resolved
+        name = self._by_id()[resolved].name
+        chat = self._attached_chat(inbound)
+        gateway = self._directory.gateway_for_profile(resolved)
+        entry = None
+        if chat is not None and gateway is not None:
+            listing = await gateway.list_chats()
+            entry = next((e for e in listing if e.get("chat_id") == chat), None)
+        if entry is None:
+            return Reply(status_text(name, NO_CHAT_YET, 0))
+        return Reply(
+            status_text(
+                name, entry.get("title") or entry.get("preview") or "untitled", entry["turns"]
+            )
+        )
+
+    async def _help_command(self, inbound: InboundMessage, arg: str) -> Outcome:
+        return Reply(help_text())
+
+    async def _command(self, inbound: InboundMessage, name: str, arg: str) -> Outcome:
+        handlers = {
+            "profile": self._profile_command,
+            "new": self._new_command,
+            "clear": self._clear_command,
+            "status": self._status_command,
+            "help": self._help_command,
+        }
+        handler = handlers.get(name)
+        if handler is None:
+            return Refuse(unknown_command(name))
+        return await handler(inbound, arg)
 
     # ---- messages ----
 
@@ -305,8 +423,7 @@ class ChannelRouter:
         if gateway is None:
             return Refuse(NO_PROFILE)
 
-        peer = peers.get_peer(inbound.platform, inbound.chat_id)
-        chat_id = peer.chat() if peer is not None else inbound.stable_id()
+        chat_id = self._chat_for(inbound)
 
         text = inbound.text
         if not text.strip() and inbound.has_attachment:
