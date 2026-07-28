@@ -7,6 +7,7 @@ returns, plus what reached the gateway underneath.
 from assistant import peers
 from assistant.channels.base import InboundMessage
 from assistant.channels.router import (
+    ALREADY_NEW,
     ATTACHMENT_ONLY_PROMPT,
     ATTACHMENT_UNREADABLE,
     COMMANDS,
@@ -350,9 +351,10 @@ async def test_new_starts_a_fresh_chat_and_leaves_the_old_one_alone():
     assert gateway.deleted == []
 
 
-async def test_new_before_anything_was_said_still_answers():
+async def test_new_in_a_chat_nothing_was_said_in_says_so():
+    """There is nothing to leave behind, so it doesn't claim to have left one."""
     router, gateway = _router()
-    assert isinstance(await router.handle(_inbound("/new")), Reply)
+    assert await router.handle(_inbound("/new")) == Reply(ALREADY_NEW)
     assert gateway.calls == []
 
 
@@ -373,7 +375,7 @@ async def test_confirming_clear_deletes_the_chat_the_peer_is_in():
     chat = gateway.calls[0]["chat_id"]
 
     outcome = await router.handle(_inbound("/clear"))
-    confirm = next(opt.token for opt in outcome.options if opt.token.endswith("yes"))
+    confirm = next(opt.token for opt in outcome.options if opt.token.startswith("clear:"))
     assert isinstance(await router.choose(_inbound(""), confirm), Reply)
 
     assert gateway.deleted == [chat]
@@ -387,7 +389,7 @@ async def test_declining_clear_leaves_the_chat_untouched():
     chat = gateway.calls[0]["chat_id"]
 
     outcome = await router.handle(_inbound("/clear"))
-    decline = next(opt.token for opt in outcome.options if opt.token.endswith("no"))
+    decline = next(opt.token for opt in outcome.options if opt.token.startswith("keep:"))
     assert isinstance(await router.choose(_inbound(""), decline), Reply)
 
     assert gateway.deleted == []
@@ -398,7 +400,7 @@ async def test_the_message_after_a_cleared_chat_starts_a_new_one():
     router, gateway = _router()
     await router.handle(_inbound("hi"))
     outcome = await router.handle(_inbound("/clear"))
-    confirm = next(opt.token for opt in outcome.options if opt.token.endswith("yes"))
+    confirm = next(opt.token for opt in outcome.options if opt.token.startswith("clear:"))
     await router.choose(_inbound(""), confirm)
 
     await router.handle(_inbound("hello again"))
@@ -409,6 +411,21 @@ async def test_clear_with_nothing_to_delete_says_so():
     router, gateway = _router()
     outcome = await router.handle(_inbound("/clear"))
     assert isinstance(outcome, Reply)
+    assert gateway.deleted == []
+
+
+async def test_a_confirmation_only_deletes_the_chat_it_was_raised_for():
+    """The picker can outlive the Chat it was shown in — a stale tap must not take
+    whatever Chat the Peer has moved to since."""
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    outcome = await router.handle(_inbound("/clear"))
+    confirm = next(opt.token for opt in outcome.options if opt.token.startswith("clear:"))
+
+    await router.handle(_inbound("/new"))
+    await router.handle(_inbound("somewhere else"))
+
+    assert isinstance(await router.choose(_inbound(""), confirm), Refuse)
     assert gateway.deleted == []
 
 
@@ -435,6 +452,14 @@ async def test_status_before_the_first_message_says_there_is_no_chat_yet():
 
 
 # --- /help ---
+
+
+async def test_every_listed_command_is_one_the_router_answers():
+    """`/help` and the menu are built from COMMANDS, so nothing there can be a name
+    the router refuses."""
+    router, _ = _router()
+    for command in COMMANDS:
+        assert not isinstance(await router.handle(_inbound(f"/{command.name}")), Refuse)
 
 
 async def test_help_lists_every_command():

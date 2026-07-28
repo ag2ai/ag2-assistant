@@ -33,6 +33,10 @@ class InboundMessage:
     sender_name: str | None = None
     raw: object = field(default=None, repr=False)  # original platform object
 
+    def surface(self) -> str:
+        """Which surface of its platform this conversation is — "dm" or "group"."""
+        return "dm" if self.is_direct else "group"
+
 
 def should_respond(msg: InboundMessage) -> bool:
     """Mention-gating: respond to all DMs, but only to @mentions in groups.

@@ -11,7 +11,7 @@ file, tolerant of a missing/malformed file (treated as no peers).
 
 import json
 import secrets
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from assistant.config import data_dir
@@ -102,46 +102,31 @@ def peer_for_chat(chat: str) -> Peer | None:
 
 def select_profile(platform: str, chat_id: str, pid: str, *, surface: str = "dm") -> Peer:
     """Point this conversation at profile ``pid`` and return the resulting Peer.
-    Replacing a different profile detaches the Peer, because a Chat cannot cross
-    Profiles; re-selecting the one it already holds leaves the attachment alone.
-    The Chat itself is started lazily by the first message, not here."""
+    Replacing a different profile detaches it; the Chat is started lazily."""
     entries = _load()
     index = _index(entries, platform, chat_id)
-    current = _peer(entries[index]) if index is not None else None
-    switched = current is not None and current.profile is not None and current.profile != pid
+    current = _peer(entries[index]) if index is not None else Peer(platform, chat_id)
+    switched = current.profile is not None and current.profile != pid
     return _save(
         entries,
         index,
-        Peer(
-            platform=platform,
-            chat_id=chat_id,
+        replace(
+            current,
             surface=surface,
             profile=pid,
-            chat=None if switched or current is None else current.chat,
-            chats=current.chats if current is not None else [],
+            chat=None if switched else current.chat,
         ),
     )
 
 
 def start_chat(platform: str, chat_id: str, *, surface: str = "dm") -> str:
     """Start a fresh Chat for this conversation, attach the Peer to it, and return
-    its id. Opaque and origin-prefixed — a Chat id is never a platform address."""
+    its id — opaque and origin-prefixed, never a platform address."""
     chat = f"{platform}-{secrets.token_hex(4)}"
     entries = _load()
     index = _index(entries, platform, chat_id)
-    current = _peer(entries[index]) if index is not None else None
-    _save(
-        entries,
-        index,
-        Peer(
-            platform=platform,
-            chat_id=chat_id,
-            surface=current.surface if current is not None else surface,
-            profile=current.profile if current is not None else None,
-            chat=chat,
-            chats=[*(current.chats if current is not None else []), chat],
-        ),
-    )
+    current = _peer(entries[index]) if index is not None else Peer(platform, chat_id, surface)
+    _save(entries, index, replace(current, chat=chat, chats=[*current.chats, chat]))
     return chat
 
 
@@ -152,9 +137,8 @@ def detach(platform: str, chat_id: str) -> None:
     if index is None:
         return
     current = _peer(entries[index])
-    if current.chat is None:
-        return
-    _save(entries, index, Peer(**{**asdict(current), "chat": None}))
+    if current.chat is not None:
+        _save(entries, index, replace(current, chat=None))
 
 
 def forget_chat(chat: str) -> None:
@@ -167,12 +151,10 @@ def forget_chat(chat: str) -> None:
         _save(
             entries,
             i,
-            Peer(
-                **{
-                    **asdict(current),
-                    "chat": None if current.chat == chat else current.chat,
-                    "chats": [c for c in current.chats if c != chat],
-                }
+            replace(
+                current,
+                chat=None if current.chat == chat else current.chat,
+                chats=[c for c in current.chats if c != chat],
             ),
         )
         return
