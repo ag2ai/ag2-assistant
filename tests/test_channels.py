@@ -64,9 +64,11 @@ def _telegram_channel():
     return ch
 
 
-def _fake_update(text, chat_type="private", chat_id=42, user_id=7, reply_to_bot=False):
+def _fake_update(
+    text, chat_type="private", chat_id=42, user_id=7, reply_to_bot=False, username="tester"
+):
     chat = SimpleNamespace(type=chat_type, PRIVATE="private", id=chat_id)
-    from_user = SimpleNamespace(id=user_id, full_name="Test User")
+    from_user = SimpleNamespace(id=user_id, full_name="Test User", username=username)
     reply_to = None
     if reply_to_bot:
         reply_to = SimpleNamespace(from_user=SimpleNamespace(id=999))

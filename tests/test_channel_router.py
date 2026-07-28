@@ -4,7 +4,9 @@ Drives the router with normalised inbound messages and asserts the outcome it
 returns, plus what reached the gateway underneath.
 """
 
-from assistant import peers
+import pytest
+
+from assistant import pairing, peers
 from assistant.channels.base import InboundMessage
 from assistant.channels.router import (
     ATTACHMENT_ONLY_PROMPT,
@@ -20,6 +22,10 @@ from assistant.channels.router import (
     Reply,
     spoken_text,
 )
+
+# The account every test below speaks as. Numeric, because a numeric id is what a
+# Paired account is ultimately keyed by (ADR 0021).
+PAIRED_SENDER = "1001"
 
 
 class FakeGateway:
@@ -57,6 +63,15 @@ class FakeDirectory:
         return self.gateways.get(pid)
 
 
+@pytest.fixture(autouse=True)
+def _pair_the_sender():
+    """A Channel serves nobody but a Paired account (ADR 0021), so the sender every
+    test below speaks as is paired up front. The gate itself is exercised in its own
+    section, by senders this fixture has not paired."""
+    for platform in ("telegram", "discord", "slack"):
+        pairing.add_account(platform, PAIRED_SENDER)
+
+
 def _inbound(
     text="hi",
     *,
@@ -65,15 +80,18 @@ def _inbound(
     platform="telegram",
     chat_id="c1",
     has_attachment=False,
+    sender_id=PAIRED_SENDER,
+    sender_handle=None,
 ):
     return InboundMessage(
         text=text,
-        sender_id="u1",
+        sender_id=sender_id,
         chat_id=chat_id,
         platform=platform,
         is_direct=is_direct,
         mentioned=mentioned,
         has_attachment=has_attachment,
+        sender_handle=sender_handle,
     )
 
 
@@ -306,6 +324,113 @@ async def test_choosing_a_profile_that_has_since_gone_is_refused():
     outcome = await ChannelRouter(directory).choose(_inbound(""), "gone")
     assert isinstance(outcome, Refuse)
     assert peers.get_peer("telegram", "c1") is None
+
+
+# --- who may reach the bot at all (ADR 0021) ---
+
+
+UNPAIRED = "2002"
+
+
+async def test_an_unpaired_account_is_told_nothing_at_all():
+    """Not that a profile named 'work' exists, not that the install does."""
+    directory = FakeDirectory("work", default="work")
+    outcome = await ChannelRouter(directory).handle(_inbound("hi", sender_id=UNPAIRED))
+    assert isinstance(outcome, Nothing)
+    assert directory.gateways["work"].calls == []
+
+
+async def test_an_unpaired_account_cannot_enumerate_profiles_with_a_command():
+    """Pairing gates commands exactly as it gates ordinary messages."""
+    directory = FakeDirectory("work", "home", default="work")
+    router = ChannelRouter(directory)
+    assert isinstance(await router.handle(_inbound("/profile", sender_id=UNPAIRED)), Nothing)
+    assert isinstance(await router.handle(_inbound("/wat", sender_id=UNPAIRED)), Nothing)
+
+
+async def test_an_unpaired_account_cannot_answer_a_picker():
+    directory = FakeDirectory("work", "home")
+    outcome = await ChannelRouter(directory).choose(_inbound("", sender_id=UNPAIRED), "work")
+    assert isinstance(outcome, Nothing)
+    assert peers.get_peer("telegram", "c1") is None
+
+
+async def test_an_unpaired_account_is_visible_to_an_adapter_as_unpaired():
+    """``paired`` is what an adapter checks before acting on anything a message
+    implies — a button tap or a typed answer to a running question, not just a turn."""
+    router, _ = _router()
+    assert router.paired(_inbound("hi", sender_id=UNPAIRED)) is False
+    assert router.paired(_inbound("hi")) is True
+
+
+async def test_the_adapter_gate_stays_shut_for_an_unpaired_account():
+    """``accepts`` is what an adapter shows a placeholder on — it must not light up
+    for someone who will be answered with silence, even when what they sent is
+    code-shaped and so does reach the router."""
+    router, _ = _router()
+    assert router.accepts(_inbound("hi", sender_id=UNPAIRED)) is False
+    assert router.accepts(_inbound("AAAA-1111", sender_id=UNPAIRED)) is False
+    assert router.accepts(_inbound("hi")) is True
+
+
+async def test_a_pairing_code_admits_the_account_that_sends_it():
+    code = pairing.issue_code("telegram")
+    directory = FakeDirectory("work", default="work")
+    router = ChannelRouter(directory)
+
+    outcome = await router.handle(_inbound(code, sender_id=UNPAIRED))
+    assert isinstance(outcome, Reply)
+    # The code itself is not a turn — it pairs, and the next message is the first one.
+    assert directory.gateways["work"].calls == []
+    assert isinstance(await router.handle(_inbound("hi", sender_id=UNPAIRED)), Reply)
+
+
+async def test_an_expired_code_is_reported_as_expired():
+    code = pairing.issue_code("telegram", ttl=-1)
+    router, _ = _router(default="work")
+    outcome = await router.handle(_inbound(code, sender_id=UNPAIRED))
+    assert isinstance(outcome, Refuse)
+    assert "expired" in outcome.text.lower()
+
+
+async def test_a_code_that_was_never_issued_is_met_with_silence():
+    router, _ = _router(default="work")
+    assert isinstance(await router.handle(_inbound("AAAA-1111", sender_id=UNPAIRED)), Nothing)
+
+
+async def test_an_invited_handle_is_admitted_and_pinned_when_it_first_speaks():
+    pairing.add_account("telegram", "@nikita")
+    router, gateway = _router(default="work")
+    outcome = await router.handle(_inbound("hi", sender_id=UNPAIRED, sender_handle="nikita"))
+    assert isinstance(outcome, Reply)
+    assert gateway.calls != []
+    assert pairing.is_paired("telegram", UNPAIRED) is True
+
+
+async def test_a_later_holder_of_a_pinned_handle_is_not_admitted():
+    pairing.add_account("telegram", "@nikita")
+    router, gateway = _router(default="work")
+    await router.handle(_inbound("hi", sender_id=UNPAIRED, sender_handle="nikita"))
+    outcome = await router.handle(_inbound("hi", sender_id="3003", sender_handle="nikita"))
+    assert isinstance(outcome, Nothing)
+    assert len(gateway.calls) == 1
+
+
+async def test_a_platform_with_no_paired_accounts_answers_nobody():
+    """The intended failure mode of a token pasted before anyone is paired."""
+    directory = FakeDirectory("work", default="work")
+    outcome = await ChannelRouter(directory).handle(
+        _inbound("hi", platform="discord", sender_id=UNPAIRED)
+    )
+    assert isinstance(outcome, Nothing)
+
+
+async def test_revoking_an_account_takes_effect_on_its_next_message():
+    router, gateway = _router(default="work")
+    assert isinstance(await router.handle(_inbound("hi")), Reply)
+    pairing.revoke("telegram", PAIRED_SENDER)
+    assert isinstance(await router.handle(_inbound("hi again")), Nothing)
+    assert len(gateway.calls) == 1
 
 
 # --- who gets answered ---

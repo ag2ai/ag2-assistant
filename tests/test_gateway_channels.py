@@ -77,6 +77,7 @@ def test_get_channels_zero_profile_all_null(monkeypatch):
                 "token_present": False,
                 "active": False,
                 "error": f"no token configured for {platform}",
+                "paired_accounts": 0,
             }
 
 
@@ -204,6 +205,7 @@ def test_setting_the_default_profile_routes_messages_there(monkeypatch):
                 "token_present": True,
                 "active": True,
                 "error": None,
+                "paired_accounts": 0,
             }
         }
         assert profiles.channel_defaults()["telegram"] == "work"
@@ -250,6 +252,7 @@ def test_clearing_the_default_leaves_the_channel_running(monkeypatch):
                 "token_present": True,
                 "active": True,
                 "error": None,
+                "paired_accounts": 0,
             }
         }
         assert manager.channels["telegram"].stopped is False
@@ -319,6 +322,7 @@ def test_archiving_the_default_profile_leaves_the_channel_live_and_unrouted(monk
             "token_present": True,
             "active": True,
             "error": None,
+            "paired_accounts": 0,
         }
         assert _default_gateway(manager) is None
 

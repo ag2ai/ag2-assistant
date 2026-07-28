@@ -31,6 +31,7 @@ _ALLOWLIST = {
     "codex_auth.py",  # global ChatGPT-subscription tokens (account-level, like google_auth)
     "profiles.py",  # the registry + default-workspace seed
     "peers.py",  # install-level Peer registry (peers.json) — spans profiles by design (ADR 0019)
+    "pairing.py",  # install-level Channel allowlist (pairing.json) — per Channel, not per profile
     "usage.py",  # pricing read ONLY (asserted below)
     "integrations/google_auth.py",  # global OAuth files (routed via data_dir())
     "gateway/app.py",  # fs-browser Path.home() starting points ONLY

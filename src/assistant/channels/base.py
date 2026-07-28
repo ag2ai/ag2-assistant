@@ -31,6 +31,7 @@ class InboundMessage:
     mentioned: bool = False  # was the bot @mentioned (groups)
     has_attachment: bool = False  # did the message carry a file (caption may be empty)
     sender_name: str | None = None
+    sender_handle: str | None = None  # platform @handle, when the platform exposes one
     raw: object = field(default=None, repr=False)  # original platform object
 
     def stable_id(self) -> str:

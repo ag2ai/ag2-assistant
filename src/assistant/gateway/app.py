@@ -110,6 +110,7 @@ from assistant import (
     codex_auth,
     live_configs,
     llm_configs,
+    pairing,
     secrets,
     voice_providers,
 )
@@ -535,6 +536,10 @@ class ChannelDefaultRequest(BaseModel):
 class ChannelTokenRequest(BaseModel):
     platform: str
     tokens: dict[str, str] = Field(default_factory=dict)  # {ENV_NAME: value_or_empty}
+
+
+class PairAccountRequest(BaseModel):
+    value: str  # a numeric account id (authoritative) or a handle (an invitation)
 
 
 class MemoryRequest(BaseModel):
@@ -1874,6 +1879,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "token_present": all(os.environ.get(e) for e in _CHANNEL_TOKENS[platform]),
             "active": platform in manager.channels,
             "error": manager.channel_errors.get(platform),
+            # A live Channel with nobody paired answers nobody (ADR 0021) — the count
+            # is what lets Settings say so rather than leave it looking healthy.
+            "paired_accounts": len(pairing.list_accounts(platform)),
         }
 
     def _channel_entries() -> dict:
@@ -1922,6 +1930,66 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         with contextlib.suppress(Exception):
             await manager.restart_channel(platform)
         return {platform: _channel_entry(platform, profiles_mod.channel_defaults().get(platform))}
+
+    # ---- Paired accounts (per Channel; who may speak to it at all — ADR 0021) ----
+
+    def _account_view(account: pairing.PairedAccount) -> dict:
+        """One paired account. ``pending`` is what the UI shows differently: an
+        invitation to a handle, not yet an identity."""
+        return {
+            "key": account.key,
+            "account_id": account.account_id,
+            "handle": account.handle,
+            "pending": account.pending,
+        }
+
+    def _pairing_view(platform: str) -> dict:
+        code = pairing.live_code(platform)
+        return {
+            "accounts": [_account_view(a) for a in pairing.list_accounts(platform)],
+            "code": None if code is None else {"code": code.code, "expires_at": code.expires_at},
+        }
+
+    def _reject_unknown_platform(platform: str):
+        if platform in profiles_mod.CHANNEL_PLATFORMS:
+            return None
+        return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
+
+    @app.get("/api/channels/{platform}/pairing")
+    async def list_pairing(platform: str):
+        """A Channel's paired accounts and its live one-time code (or null)."""
+        return _reject_unknown_platform(platform) or _pairing_view(platform)
+
+    @app.post("/api/channels/{platform}/pairing")
+    async def add_pairing(platform: str, req: PairAccountRequest):
+        """Allow an account by numeric id (authoritative at once) or by handle (an
+        invitation that pins to the first account presenting it). Effective
+        immediately — the Channel keeps running either way."""
+        if (bad := _reject_unknown_platform(platform)) is not None:
+            return bad
+        try:
+            pairing.add_account(platform, req.value)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _pairing_view(platform)
+
+    @app.delete("/api/channels/{platform}/pairing/{key:path}")
+    async def revoke_pairing(platform: str, key: str):
+        """Withdraw one entry, by numeric id or by ``@handle``. Takes effect on that
+        account's next message. Nothing to withdraw → 404."""
+        if (bad := _reject_unknown_platform(platform)) is not None:
+            return bad
+        if not pairing.revoke(platform, key):
+            return JSONResponse({"error": f"not paired: {key}"}, status_code=404)
+        return _pairing_view(platform)
+
+    @app.post("/api/channels/{platform}/pairing/code")
+    async def issue_pairing_code(platform: str):
+        """Mint the Channel's one live pairing code, replacing any earlier one."""
+        if (bad := _reject_unknown_platform(platform)) is not None:
+            return bad
+        pairing.issue_code(platform)
+        return _pairing_view(platform)["code"]
 
     # ---- Google OAuth (global, account-level) ----
 

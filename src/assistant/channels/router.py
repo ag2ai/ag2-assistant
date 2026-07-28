@@ -8,7 +8,7 @@ lives here; adapters keep only platform concerns.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from assistant import peers
+from assistant import pairing, peers
 from assistant.channels.base import InboundMessage, should_respond
 
 if TYPE_CHECKING:
@@ -31,6 +31,14 @@ NO_PROFILE = (
 )
 
 CHOOSE_PROFILE = "Which profile should I use for this conversation?"
+
+# Said to whoever has just paired. Deliberately says nothing about the install yet —
+# the next message is the one that gets a profile and a turn.
+PAIRED = "You're paired. Send me anything to get started."
+
+# The one thing an unpaired account is ever told, and only when it presents a code
+# that was plainly issued to it (ADR 0021).
+CODE_EXPIRED = "That pairing code has expired. Generate a new one in Settings → Channels."
 
 # A group's profile is not the group's to change — it is set from the WebUI.
 PROFILE_IN_GROUP = "/profile only works in a direct message. Set a group's profile in Settings."
@@ -146,9 +154,31 @@ class ChannelRouter:
         self._directory = directory
 
     def accepts(self, inbound: InboundMessage) -> bool:
-        """Whether this message will be handled at all — an adapter's gate for
-        showing platform feedback before the slow path."""
-        return should_respond(inbound)
+        """Whether this message runs a turn — an adapter's gate for showing platform
+        feedback before the slow path. An unpaired account never opens it, so no
+        placeholder betrays that anything is listening; its message still goes to
+        ``handle``, which may pair it."""
+        return should_respond(inbound) and self.paired(inbound)
+
+    # ---- who may be served (ADR 0021) ----
+
+    def paired(self, inbound: InboundMessage) -> bool:
+        """Whether this account may be served — pinning a pending handle it presents,
+        so an invitation becomes an identity on first contact. Adapters call this
+        before acting on anything a message implies, taps and answers included."""
+        return pairing.is_paired(inbound.platform, inbound.sender_id, inbound.sender_handle)
+
+    def _pair(self, inbound: InboundMessage) -> Outcome:
+        """Redeem the code an unpaired account has sent. A code it was never given is
+        met with the same silence as anything else it might say."""
+        outcome = pairing.redeem(
+            inbound.platform, inbound.text, inbound.sender_id, inbound.sender_handle
+        )
+        if outcome == pairing.PAIRED:
+            return Reply(PAIRED)
+        if outcome == pairing.EXPIRED:
+            return Refuse(CODE_EXPIRED)
+        return NOTHING
 
     # ---- profile selection ----
 
@@ -217,6 +247,8 @@ class ChannelRouter:
 
     async def choose(self, inbound: InboundMessage, token: str) -> Outcome:
         """Apply an option token sent back from a `Choose` — a profile id here."""
+        if not self.paired(inbound):
+            return NOTHING
         profile = self._by_id().get(token)
         if profile is None:
             return Refuse(NO_PROFILE)
@@ -254,8 +286,12 @@ class ChannelRouter:
         attachments: list | None = None,
     ) -> Outcome:
         """Run ``inbound`` and return what the adapter should render."""
-        if not self.accepts(inbound):
+        if not should_respond(inbound):
             return NOTHING
+        if not self.paired(inbound):
+            # Everything past here reaches a Profile, so pairing is the first gate —
+            # ahead of the command surface, which is just as much of a disclosure.
+            return self._pair(inbound)
 
         if self._has_commands(inbound):
             command = parse_command(inbound.text)

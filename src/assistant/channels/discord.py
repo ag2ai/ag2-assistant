@@ -167,6 +167,9 @@ class DiscordChannel(Channel):
             mentioned=mentioned,
             has_attachment=bool(message.attachments),
             sender_name=getattr(message.author, "display_name", None),
+            # The @handle a Paired-account invitation is matched against once, before
+            # it pins to the numeric id above (ADR 0021).
+            sender_handle=getattr(message.author, "name", None),
             raw=message,
         )
 

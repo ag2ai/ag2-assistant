@@ -16,18 +16,26 @@
   // Token env var(s) per platform — mirrors the backend CHANNEL_TOKEN_ENVS. Slack
   // needs two (bot + app); the others a single token. `label` is null for a
   // single-field platform (no need to name it) and set when there's more than one.
+  // `handles` mirrors the backend HANDLE_PLATFORMS: Slack messages carry no handle,
+  // so an invitation by handle could never be presented there.
   const PLATFORMS = [
-    { id: 'telegram', label: 'Telegram', fields: [{ env: 'TELEGRAM_BOT_TOKEN', label: null }] },
-    { id: 'discord', label: 'Discord', fields: [{ env: 'DISCORD_BOT_TOKEN', label: null }] },
-    { id: 'slack', label: 'Slack', fields: [{ env: 'SLACK_BOT_TOKEN', label: 'Bot token' }, { env: 'SLACK_APP_TOKEN', label: 'App token' }] },
+    { id: 'telegram', label: 'Telegram', handles: true, fields: [{ env: 'TELEGRAM_BOT_TOKEN', label: null }] },
+    { id: 'discord', label: 'Discord', handles: true, fields: [{ env: 'DISCORD_BOT_TOKEN', label: null }] },
+    { id: 'slack', label: 'Slack', handles: false, fields: [{ env: 'SLACK_BOT_TOKEN', label: 'Bot token' }, { env: 'SLACK_APP_TOKEN', label: 'App token' }] },
   ]
 
-  // {telegram|discord|slack: {default_profile: pid|null, token_present, active, error}}
+  // {telegram|discord|slack: {default_profile: pid|null, token_present, active, error,
+  // paired_accounts}}
   let channels = $state(null)
   let busy = $state('') // platform id currently saving (disables its row)
   let err = $state('')
   // Per-env token draft inputs (ENV_NAME -> string). Emptied after a successful save.
   let drafts = $state({})
+  // Paired accounts per platform: {platform: {accounts:[…], code:{…}|null}}. A channel
+  // serves nobody who is not on this list (ADR 0021), so it sits with the token.
+  let pairing = $state({})
+  // Draft "numeric id or @handle" input per platform.
+  let pairDrafts = $state({})
 
   // Unarchived profiles, for the pickers + name/accent lookup.
   const list = $derived(($profiles.list || []).filter((p) => !p.archived))
@@ -36,9 +44,59 @@
   async function load() {
     try {
       channels = await api.channels()
+      const entries = await Promise.all(
+        PLATFORMS.map(async (pf) => [pf.id, await api.channelPairing(pf.id)]),
+      )
+      pairing = Object.fromEntries(entries)
     } catch (e) { err = String(e.message || e) }
   }
   onMount(load)
+
+  // Every pairing route returns the platform's whole {accounts, code} view, so each
+  // mutation is "run it, keep what came back" — and the channel row is refreshed too,
+  // because its "nobody paired" status is derived from the same count.
+  async function pair(platform, run) {
+    if (busy) return
+    busy = platform; err = ''
+    try {
+      pairing = { ...pairing, [platform]: await run() }
+      channels = { ...channels, [platform]: (await api.channels())[platform] }
+    } catch (e) {
+      err = String(e.message || e)
+    }
+    busy = ''
+  }
+
+  function addAccount(platform) {
+    const value = (pairDrafts[platform] || '').trim()
+    if (!value) return
+    pair(platform, async () => {
+      const view = await api.channelPair(platform, value)
+      pairDrafts = { ...pairDrafts, [platform]: '' }
+      return view
+    })
+  }
+
+  const revoke = (platform, key) => pair(platform, () => api.channelUnpair(platform, key))
+
+  function issueCode(platform) {
+    pair(platform, async () => {
+      await api.channelPairingCode(platform)
+      return api.channelPairing(platform)
+    })
+  }
+
+  // How an entry reads in the list: a pinned account by its id (with the handle it
+  // came in under, when it had one), a pending invitation by the handle it awaits.
+  function accountLabel(a) {
+    if (a.pending) return `@${a.handle}`
+    return a.handle ? `${a.account_id} (@${a.handle})` : a.account_id
+  }
+
+  function codeExpiry(code) {
+    const mins = Math.max(0, Math.round((code.expires_at * 1000 - Date.now()) / 60000))
+    return mins ? `expires in ${mins} min` : 'expiring now'
+  }
 
   async function setDefault(platform, profile) {
     if (busy) return
@@ -105,6 +163,9 @@
     if (!c || !c.token_present) return { kind: 'off', text: 'not connected — paste the bot token below' }
     if (c.error) return { kind: 'err', text: c.error }
     if (!c.active) return { kind: 'wait', text: 'not connected' }
+    // A live channel with nobody paired looks healthy and answers nobody — say
+    // which of the two it is before anything else about where messages land.
+    if (!c.paired_accounts) return { kind: 'err', text: 'connected — but nobody is paired, so it answers nobody' }
     if (c.default_profile == null) return { kind: 'wait', text: 'connected — pick a default profile' }
     const name = profById[c.default_profile]?.name || c.default_profile
     return { kind: 'ok', text: `connected — messages go to ${name}` }
@@ -121,6 +182,7 @@
       {@const c = channels[pf.id]}
       {@const st = statusOf(pf.id, c)}
       {@const defaultAccent = c && c.default_profile != null ? profById[c.default_profile]?.accent : null}
+      {@const pr = pairing[pf.id]}
       <div class="chrow">
         <div class="chtop">
           <div class="chmeta">
@@ -171,6 +233,47 @@
             {#if c?.token_present}
               <button class="chclear" disabled={busy === pf.id} onclick={() => clearTokens(pf)}>Clear</button>
             {/if}
+          </div>
+        </div>
+
+        <div class="chpair">
+          <div class="chpairhead">
+            <span class="chpairlab">Paired accounts</span>
+            <button class="chclear" disabled={busy === pf.id} onclick={() => issueCode(pf.id)}>
+              {pr?.code ? 'New code' : 'Pairing code'}
+            </button>
+          </div>
+
+          {#if pr?.code}
+            <p class="chcode">
+              Send <b>{pr.code.code}</b> to the bot from the account you want to pair — {codeExpiry(pr.code)}.
+            </p>
+          {/if}
+
+          {#if pr && !pr.accounts.length}
+            <p class="chnone">Nobody yet. Until someone is paired, this channel answers nobody.</p>
+          {:else if pr}
+            <ul class="chaccs">
+              {#each pr.accounts as a (a.key)}
+                <li class="chacc">
+                  <span class="chaccid">{accountLabel(a)}</span>
+                  {#if a.pending}<span class="chpending">pending — pins to whoever answers to it first</span>{/if}
+                  <button class="chclear" disabled={busy === pf.id} onclick={() => revoke(pf.id, a.key)}>Revoke</button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+
+          <div class="chtokrow">
+            <input
+              class="chtokinput"
+              placeholder={pf.handles ? 'numeric account id, or @handle' : 'numeric account id'}
+              aria-label="Pair a {pf.label} account"
+              bind:value={pairDrafts[pf.id]}
+              disabled={busy === pf.id}
+              onkeydown={(e) => { if (e.key === 'Enter') addAccount(pf.id) }}
+            />
+            <button class="chsave" disabled={busy === pf.id} onclick={() => addAccount(pf.id)}>Pair</button>
           </div>
         </div>
       </div>
@@ -237,6 +340,19 @@
   }
   .chclear:hover:not(:disabled) { color: var(--danger, var(--danger)); }
   .chclear:disabled { opacity: .6; cursor: default; }
+
+  /* Paired accounts — who the channel answers at all. */
+  .chpair { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .chpairhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .chpairlab { font-size: var(--text-xs); color: var(--text-muted); }
+  .chcode { margin: 0; font-size: var(--text-xs); color: var(--text-muted); line-height: var(--leading-snug); }
+  .chcode b { font-family: var(--font-mono, monospace); font-size: var(--text-sm); color: var(--text); letter-spacing: .04em; }
+  .chnone { margin: 0; font-size: var(--text-xs); color: var(--warning, #e0b400); line-height: var(--leading-snug); }
+  .chaccs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .chacc { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); }
+  .chaccid { font-family: var(--font-mono, monospace); font-size: var(--text-xs); }
+  .chpending { flex: 1; min-width: 0; font-size: var(--text-xs); color: var(--text-muted); }
+  .chacc .chclear { margin-left: auto; }
 
   .chmuted { font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
   .cherr { font-size: var(--text-sm); color: var(--danger, var(--danger)); margin: 0 0 6px; }

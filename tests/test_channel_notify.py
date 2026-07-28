@@ -22,7 +22,8 @@ async def test_base_notify_raises_by_default():
 
 
 # --- Telegram: mirrors the reply path's `self._app.bot.send_message`, formatted
-# via `format_outbound` (markdown_to_plain). Telegram's reply path never chunks. ---
+# via `format_outbound` (markdown_to_plain) and chunked by
+# `split_for_limit(..., TELEGRAM_LIMIT)`. ---
 
 
 async def test_telegram_notify_sends_formatted_text_via_bot():
@@ -39,6 +40,23 @@ async def test_telegram_notify_sends_formatted_text_via_bot():
     await ch.notify("42", "**bold**")
 
     assert sent == [(42, "bold")]  # chat_id cast to int; markdown stripped
+
+
+async def test_telegram_notify_chunks_long_text(monkeypatch):
+    import assistant.channels.telegram as telegram_mod
+
+    monkeypatch.setattr(telegram_mod, "TELEGRAM_LIMIT", 15)
+    ch = telegram_mod.TelegramChannel(token="fake-token")
+    sent = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text):
+            sent.append((chat_id, text))
+
+    ch._app = SimpleNamespace(bot=FakeBot())
+    await ch.notify("42", "First part.\n\nSecond part.")
+
+    assert sent == [(42, "First part."), (42, "Second part.")]
 
 
 # --- Discord: mirrors `self._client.get_channel(...) or fetch_channel(...)` plus

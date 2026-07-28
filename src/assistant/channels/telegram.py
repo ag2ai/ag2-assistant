@@ -21,12 +21,13 @@ from telegram.ext import (
 
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage
-from assistant.channels.formatting import markdown_to_plain
+from assistant.channels.formatting import markdown_to_plain, split_for_limit
 from assistant.channels.router import ChannelRouter, Choose, Outcome, spoken_text
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
 WORKING_PLACEHOLDER = "⏳ Sorting that out…"
+TELEGRAM_LIMIT = 4096  # Telegram's per-message character cap
 _CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
 _CHOICE_PREFIX = "acc:"  # callback_data namespace for router `Choose` option tokens
 _ASK_TIMEOUT = 300.0
@@ -133,9 +134,20 @@ class TelegramChannel(Channel):
     def _asker_for(self, chat_id: str) -> Asker:
         return TelegramAsker(self._app.bot, chat_id, self._pending)
 
+    async def _answer_unpaired(self, inbound: InboundMessage) -> None:
+        """Run an unpaired account's message for its one possible effect — pairing.
+        Anything else comes back as silence, which is sent as nothing at all."""
+        spoken = spoken_text(await self._router.handle(inbound))
+        if spoken:
+            await self._send(inbound.chat_id, spoken)
+
     async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if query is None or not query.data:
+            return
+        # A tap is as much of a disclosure as a message: an unpaired account must not
+        # answer a question, spend a picker, or see the button acknowledged.
+        if not self._router.paired(self._from_callback(query)):
             return
         await query.answer()
         chat_id = str(query.message.chat.id)
@@ -153,7 +165,7 @@ class TelegramChannel(Channel):
                 await query.message.delete()  # the picker is spent
             spoken = spoken_text(outcome)
             if spoken:
-                await self._app.bot.send_message(int(chat_id), self.format_outbound(spoken))
+                await self._send(chat_id, spoken)
 
     def _from_callback(self, query) -> InboundMessage:
         """The Peer a button tap came from — enough for the router to place it, with
@@ -167,6 +179,7 @@ class TelegramChannel(Channel):
             is_direct=chat.type == chat.PRIVATE,
             mentioned=True,
             sender_name=query.from_user.full_name if query.from_user else None,
+            sender_handle=query.from_user.username if query.from_user else None,
             raw=query,
         )
 
@@ -174,11 +187,15 @@ class TelegramChannel(Channel):
         """Telegram renders raw Markdown literally, so send clean plain text."""
         return markdown_to_plain(text)
 
+    async def _send(self, chat_id: str, text: str) -> None:
+        """Send text to a chat as fresh message(s), rendered and within the size cap."""
+        for chunk in split_for_limit(self.format_outbound(text), TELEGRAM_LIMIT):
+            await self._app.bot.send_message(int(chat_id), chunk)
+
     async def notify(self, chat_id: str, text: str) -> None:
-        """Push a task-run outcome into a Telegram chat (no reply-to-edit here,
-        this isn't a reply). Mirrors `_on_message`'s send path; that path never
-        chunks long text, so neither does this."""
-        await self._app.bot.send_message(int(chat_id), self.format_outbound(text))
+        """Push a task-run outcome into a Telegram chat — no placeholder to edit,
+        this isn't a reply."""
+        await self._send(chat_id, text)
 
     async def stop(self) -> None:
         if self._app is None:
@@ -224,6 +241,9 @@ class TelegramChannel(Channel):
             mentioned=mentioned,
             has_attachment=has_attachment,
             sender_name=msg.from_user.full_name if msg.from_user else None,
+            # The @handle a Paired-account invitation is matched against once, before
+            # it pins to the numeric id above (ADR 0021).
+            sender_handle=msg.from_user.username if msg.from_user else None,
             raw=update,
         )
 
@@ -232,15 +252,24 @@ class TelegramChannel(Channel):
         if msg is None:
             return
 
+        inbound = self._normalize(update)
+        if inbound is None:
+            return
+
+        chat_id = str(msg.chat.id)
+        if not self._router.paired(inbound):
+            # Nothing an unpaired account sends may touch a running turn. Its message
+            # goes to the router with no placeholder, in case it carries a code.
+            await self._answer_unpaired(inbound)
+            return
+
         # If a question is awaiting a typed answer in this chat, this message IS
         # the answer — resolve it instead of starting a new turn.
-        chat_id = str(msg.chat.id)
         if msg.text and self._pending.is_awaiting(chat_id):
             self._pending.resolve(chat_id, msg.text)
             return
 
-        inbound = self._normalize(update)
-        if inbound is None or not self._router.accepts(inbound):
+        if not self._router.accepts(inbound):
             return
 
         # Immediate, always-visible feedback: a placeholder we edit into the reply.
@@ -276,10 +305,17 @@ class TelegramChannel(Channel):
         await self._say(self.format_outbound(spoken), placeholder, message, None)
 
     async def _say(self, text: str, placeholder, message, markup) -> None:
-        try:
-            await placeholder.edit_text(text, reply_markup=markup)
-        except Exception:
-            # Edit can fail (e.g. reply too long to edit-in-place); fall back to a
-            # fresh message so the user still gets the answer.
+        """Deliver text within Telegram's size cap: the first chunk edits the
+        placeholder, the rest follow as new messages in order."""
+        chunks = split_for_limit(text, TELEGRAM_LIMIT)
+        for index, chunk in enumerate(chunks):
+            # Buttons belong under the whole answer, so only the last chunk carries them.
+            markup_for_chunk = markup if index == len(chunks) - 1 else None
+            if index == 0:
+                try:
+                    await placeholder.edit_text(chunk, reply_markup=markup_for_chunk)
+                    continue
+                except Exception:
+                    pass  # editing can fail; fall through to a fresh message
             with contextlib.suppress(Exception):
-                await message.reply_text(text, reply_markup=markup)
+                await message.reply_text(chunk, reply_markup=markup_for_chunk)

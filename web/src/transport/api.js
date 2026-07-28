@@ -158,6 +158,16 @@ export const api = {
   // Save/clear channel bot token(s), like setKey — tokens is {ENV_NAME: value|''}
   // (empty clears). Returns the one updated entry {platform: {…}}. Values never echoed.
   channelTokens: (platform, tokens) => j('POST', G('/channels/token'), { platform, tokens }),
+  // Paired accounts — a channel serves nobody else (ADR 0021). channelPairing() →
+  // {accounts:[{key, account_id, handle, pending}], code:{code, expires_at}|null}; the
+  // add/revoke routes return that same shape. A numeric id is authoritative at once; a
+  // handle is an invitation that stays `pending` until an account bearing it speaks.
+  // channelPairingCode mints the one live code, replacing any earlier one.
+  channelPairing: (platform) => j('GET', G(`/channels/${platform}/pairing`)),
+  channelPair: (platform, value) => j('POST', G(`/channels/${platform}/pairing`), { value }),
+  channelUnpair: (platform, key) =>
+    j('DELETE', G(`/channels/${platform}/pairing/${encodeURIComponent(key)}`)),
+  channelPairingCode: (platform) => j('POST', G(`/channels/${platform}/pairing/code`)),
   // Universal "who the user is" memory — a single install-wide doc shared by every
   // profile (identity facts). GLOBAL routes; the per-profile persona memory is
   // getMemory/setMemory below.
