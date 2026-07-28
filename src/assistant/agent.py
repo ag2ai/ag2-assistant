@@ -73,6 +73,12 @@ def model_config(config: Config, model: str | None = None):
     provider = config.llm.provider.lower()
     api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     opts = dict(config.llm.provider_options.get(provider) or {})
+    if provider == "claude_code":
+        # Claude Code over ACP: the CLI's own disk login is the auth (no key),
+        # and the entry's Advanced options are ACPConfig constructor overrides.
+        from assistant.coding import acp_provider
+
+        return acp_provider.build_model_config(config, model=model, options=opts)
     if provider == "anthropic":
         return AnthropicConfig(
             **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
@@ -142,6 +148,26 @@ def model_config(config: Config, model: str | None = None):
             **opts,
         }
     )
+
+
+def _build_middleware(config: Config) -> list:
+    """The per-agent LLM middleware stack for this provider."""
+    middleware = [
+        agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
+        # Retry a failed call before it kills the attempt/task. Listed BEFORE
+        # the timeout so it wraps it (AG2 nests later middleware closer to the
+        # call): each retry re-enters the timeout, getting a fresh window. A
+        # transient hang or 429/5xx becomes a hiccup, not a failure.
+        LLMRetryMiddleware(config.llm.call_retries),
+    ]
+    if config.llm.provider.lower() != "claude_code":
+        # Wall-clock ceiling per LLM call: a hung/stalled provider call raises
+        # instead of awaiting forever (the incident's silent 2-hour hang). NOT
+        # for ACP-backed models: there one "call" is Claude Code's whole inner
+        # tool loop, so the per-call ceiling is ACPConfig.turn_timeout; the
+        # silence watchdog covers wedges.
+        middleware.append(LLMTimeoutMiddleware(config.llm.call_timeout_s))
+    return middleware
 
 
 def _default_aggregate_model(config: Config) -> str | None:
@@ -678,17 +704,7 @@ def create_agent(
         assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
-        middleware=[
-            agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
-            # Retry a failed call before it kills the attempt/task. Listed BEFORE
-            # the timeout so it wraps it (AG2 nests later middleware closer to the
-            # call): each retry re-enters the timeout, getting a fresh window. A
-            # transient hang or 429/5xx becomes a hiccup, not a failure.
-            LLMRetryMiddleware(config.llm.call_retries),
-            # Wall-clock ceiling per LLM call: a hung/stalled provider call raises
-            # instead of awaiting forever (the incident's silent 2-hour hang).
-            LLMTimeoutMiddleware(config.llm.call_timeout_s),
-        ],
+        middleware=_build_middleware(config),
         observers=build_observers(  # stuck-turn + wedged-turn guards → stream alerts
             silence_alert_s=config.llm.silence_alert_s,
             silence_halt_s=config.llm.silence_halt_s,
