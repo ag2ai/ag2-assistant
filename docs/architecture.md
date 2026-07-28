@@ -254,10 +254,13 @@ interleaved. No state is persisted per voice session.
 ### 5.9 Channels — `src/assistant/channels/*`
 
 `Channel` adapters (`telegram.py`, `discord.py`, `slack.py`) normalize inbound
-messages to `InboundMessage`, apply **mention-gating** (`should_respond()`: DMs
-always, groups only on @mention), call `gateway.send_message()` with a per-chat
-id, and format replies (`formatting.py`). HITL surfaces through `ChannelAsker`.
-All channels share the one agent.
+messages to `InboundMessage`, hand them to the shared `ChannelRouter`
+(`router.py`) and render the platform-neutral `Outcome` it returns —
+`Reply` / `Choose` / `Refuse` / `Ack` / `Nothing` — formatting per platform
+(`formatting.py`). The router owns every decision: **mention-gating**
+(`should_respond()`: DMs always, groups only on @mention), which runtime the turn
+runs on, and `gateway.send_message()` with a per-chat id. Adapters keep only
+platform concerns. HITL surfaces through `ChannelAsker`.
 
 ### 5.10 Storage, config & cross-cutting — `storage.py`, `config.py`, …
 
@@ -571,8 +574,8 @@ folders. A run's own output lives in its chat transcript, not the workspace.
 
 One install hosts several **isolated profiles** (e.g. *Work* / *Personal*) — each a
 named, colour-coded runtime. A profile is a **directory** on disk and, at runtime,
-**one `Gateway` + one `TaskService` + its own channels**, all alive at once inside
-the single process. The web client is a viewer pointed at exactly one profile.
+**one `Gateway` + one `TaskService`**, all alive at once inside the single process
+(channels sit beside them at install level, not within them). The web client is a viewer pointed at exactly one profile.
 
 - **Registry & layout.** `profiles.json` (`src/assistant/profiles.py`) is the
   registry: `{active_default, onboarded, profiles:[{id, name, palette, workspace,
@@ -606,21 +609,26 @@ the single process. The web client is a viewer pointed at exactly one profile.
   `get_runtime` FastAPI dependency; global routes stay unprefixed (`/api/profiles`,
   `/api/secrets/key`, `/api/onboarded`, `/api/google/*`, `/api/status`,
   `/hitl/{id}`). No unprefixed aliases — a clean cutover.
-- **Channels — install-level assignment.** A bot token serves one live connection,
-  so each platform (Telegram / Discord / Slack) is an **install-level resource
-  assigned to exactly one profile or disabled** — not a per-profile toggle. The
-  binding lives in the registry (`profiles.json` `channels: {platform: pid|null}`),
-  so two profiles claiming one platform is structurally unrepresentable; there is no
-  first-wins race and no conflict state. The global `GET /api/channels` returns
-  `{platform: {profile, token_present, active, error}}`; `POST /api/channels`
-  `{platform, profile}` rebinds and hot-applies (stop on the old runtime, start on
-  the new), returning the updated entry. The binding **persists even if start
-  fails** — `active:false` with `error` set (bad/missing token, network). Bot tokens
-  are stored in the global secrets store (like provider keys) and are editable inline
-  in Settings → Channels via `POST /api/channels/token` `{platform, tokens:{ENV: val}}`
-  (empty value clears; saving re-applies the live channel; values are never echoed).
-  The Settings → Channels section is one profile-picker per platform, plus its token
-  field(s) underneath.
+- **Channels — install-global, never owned by a profile (ADR 0019).** A bot token
+  serves one live connection, so each platform (Telegram / Discord / Slack) starts
+  **once for the whole install**, on the `ProfileManager` rather than inside any
+  runtime, as soon as its tokens are present. Every adapter is handed the one shared
+  `ChannelRouter`, which resolves the runtime **per inbound message** — so nothing
+  about a live adapter depends on a profile. What the registry holds is a per-Channel
+  **default profile** (`profiles.json` `channel_defaults: {platform: pid|null}`):
+  where that platform's conversations land when nothing else has been chosen. The
+  global `GET /api/channels` returns `{platform: {default_profile, token_present,
+  active, error}}`; `POST /api/channels/default` `{platform, profile}` sets or clears
+  it, taking effect on the next message with no restart. A Channel with no default (or
+  one whose profile has been archived) stays connected and refuses messages with
+  `NO_PROFILE` rather than routing them somewhere unintended. A start failure is
+  recorded per Channel (`active:false` with `error`, a missing token included) and
+  never crashes boot. Bot tokens are stored in the global
+  secrets store (like provider keys) and are editable inline in Settings → Channels via
+  `POST /api/channels/token` `{platform, tokens:{ENV: val}}` (empty value clears;
+  saving re-applies the live channel; values are never echoed). The Settings → Channels
+  section is one default-profile picker per platform, plus its token field(s)
+  underneath.
 - **Archive.** Refuses the last profile; archiving the `active_default` requires a
   replacement. It cancels in-flight tasks (→ CANCELLED), closes WS with code `4001`,
   drops the runtime, and marks `archived: true` — durable across restarts (not

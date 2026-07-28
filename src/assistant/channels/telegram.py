@@ -111,8 +111,8 @@ class TelegramChannel(Channel):
         self._bot_id: int | None = None
         self._pending = PendingAsks()
 
-    async def start(self, gateway) -> None:
-        self._router = ChannelRouter(gateway)
+    async def start(self, router: ChannelRouter) -> None:
+        self._router = router
         # concurrent_updates lets a button-tap (callback) be handled WHILE a
         # message handler is blocked awaiting that very answer — otherwise PTB
         # processes updates one-at-a-time and HITL deadlocks.

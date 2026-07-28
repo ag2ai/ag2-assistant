@@ -6,6 +6,7 @@ returns, plus what reached the gateway underneath.
 
 from assistant.channels.base import InboundMessage
 from assistant.channels.router import (
+    NO_PROFILE,
     Ack,
     ChannelRouter,
     Choose,
@@ -47,7 +48,7 @@ def _inbound(text="hi", *, is_direct=True, mentioned=False, platform="telegram")
 
 def _router(**kw) -> tuple[ChannelRouter, FakeGateway]:
     gateway = FakeGateway(**kw)
-    return ChannelRouter(gateway), gateway
+    return ChannelRouter(lambda inbound: gateway), gateway
 
 
 # --- what comes back ---
@@ -71,6 +72,30 @@ async def test_gateway_failure_becomes_a_reply_not_an_exception():
     outcome = await router.handle(_inbound())
     assert isinstance(outcome, Reply)
     assert "boom" in outcome.text
+
+
+# --- which profile the turn lands in ---
+
+
+async def test_the_profile_is_resolved_per_message():
+    """One adapter serves the whole install: the runtime is picked when the message
+    arrives, not captured when the channel started."""
+    work, home = FakeGateway(reply="from work"), FakeGateway(reply="from home")
+    by_chat = {"c1": work, "c2": home}
+    router = ChannelRouter(lambda inbound: by_chat.get(inbound.chat_id))
+
+    first = await router.handle(_inbound("hi"))
+    second = await router.handle(
+        InboundMessage(text="hi", sender_id="u1", chat_id="c2", platform="telegram", is_direct=True)
+    )
+    assert (first, second) == (Reply("from work"), Reply("from home"))
+
+
+async def test_no_reachable_profile_is_refused():
+    """Nothing to route to (no default profile, or its runtime is gone): say so
+    rather than failing silently or raising into the adapter."""
+    router = ChannelRouter(lambda inbound: None)
+    assert await router.handle(_inbound("hi")) == Refuse(NO_PROFILE)
 
 
 # --- who gets answered ---

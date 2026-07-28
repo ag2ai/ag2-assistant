@@ -263,6 +263,9 @@ voice sessions are different, protocol-level concepts that keep the word),
 conversation
 _Note_: a Chat opened in the main pane is a **Thread** (the chat-or-task union) —
 "thread" names that union, never the persisted Chat entity itself.
+_Note_: a Chat is not owned by the surface that started it. The browser and a
+**Peer** reach the same Chats, and a Peer may attach to a Chat begun in the browser
+(ADR 0020). What a Chat can never do is cross Profiles.
 
 **Starred**:
 A user-set flag on a listed **Chat** or **Task** that lifts it into a "Starred"
@@ -274,6 +277,77 @@ item's content, last-update time, scheduling, or runs. For a Task the pin also
 outranks the needs-input float — a starred task that needs input stays in the
 Starred section, its row's status icon still signalling the request.
 _Avoid_: pinned, favorite
+
+## Channels
+
+**Channel**:
+A messaging platform the assistant is reachable through — Telegram, Discord, or
+Slack. Install-wide: one connection per platform, shared by every Profile and
+configured once. A Channel is never owned by a Profile (ADR 0019).
+_Avoid_: integration, bot (that is the platform-side account, not the concept),
+binding (the retired one-platform-one-Profile link)
+
+**Channel default profile**:
+The Profile a **Channel**'s conversations land in when nothing else has been chosen —
+one per Channel, set install-wide. A fallback, not an owner: it never decides whether
+the Channel connects (its token does), changing it needs no restart, and a **Peer**
+that has chosen its own **Peer profile** ignores it entirely. A Channel with no
+default answers that it has nowhere to go rather than guessing.
+_Avoid_: binding, assignment, owning profile, active default (that is the WebUI's
+fallback Profile, an unrelated install-level setting)
+
+**Peer**:
+One conversation on the platform side — a direct message or a group — identified by
+its platform and that platform's own chat id. This is what a Channel actually talks
+to, and what holds everything persisting between messages: its **Peer profile** and
+the **Chat** it is currently attached to.
+_Avoid_: session (the retired chat-sense name — see **Chat**), chat (that is the
+persisted entity a Peer attaches to), user (a Peer is a conversation; several people
+speak in a group Peer), conversation
+
+**Peer profile**:
+The Profile a **Peer** currently speaks to — persistent, platform-side, surviving
+restarts. Chosen per Peer and never inherited from another Peer. Changing it always
+moves the Peer to a fresh **Chat**, because a Chat cannot cross Profiles.
+_Avoid_: active profile (**Active** names the model selection, and the WebUI's
+"active Profile" is whichever Profile the open client is viewing — both are unrelated
+senses), current profile, bound profile
+
+**Attached** (Peer → Chat):
+The link from a **Peer** to the one **Chat** it is speaking in. At most one Chat per
+Peer. Attaching is pure navigation — it neither creates nor destroys a Chat, and the
+Chat it leaves stays exactly as it was, reachable again later and from the browser
+throughout.
+_Avoid_: open (that is the browser's **Thread**), selected, bound, current
+
+**Channel exposure**:
+The set of surfaces a Profile is reachable from — Telegram direct messages, Telegram
+groups, Discord, Slack — each independently withdrawable. Default-allow: absence of a
+record means reachable, so a record exists only ever to withdraw. A Profile withdrawn
+from a surface cannot be chosen there and none of its **Chats** are offered there.
+_Avoid_: grant (Folders are default-deny + opt-in; exposure is the exact opposite),
+permission (that is the commands policy), suppression (the per-profile skill override
+— same shape, different subject)
+
+**Paired account**:
+A platform account allowed to speak to a **Channel**. Identity is the platform's
+numeric user id. A handle (`@username`) is only an *invitation*: it pins to a numeric
+id the first time that handle speaks, and is matched by id ever after — so releasing
+or changing a handle neither breaks the pairing nor opens it to whoever takes the
+handle next. An unpaired account gets no answer and learns nothing about the install
+(ADR 0021).
+_Avoid_: user (**Profile**'s _Avoid_ already reserves the word), member, allowlist
+entry
+
+**Mirror**:
+What an **Attached** Peer receives from its Chat: every completed message in that
+Chat, whoever wrote it and from whichever surface — so a conversation held in the
+browser reads back on the platform, and the reverse. Completed messages and the
+agent's questions only; the intermediate work of a turn is not mirrored. A Peer
+mirrors exactly the Chat it is attached to and stops the instant it attaches
+elsewhere (ADR 0020).
+_Avoid_: sync, broadcast, echo, notification (a task outcome pushed to a Peer is a
+separate, unattached-delivery concept)
 
 ## Folders
 

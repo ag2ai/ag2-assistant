@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
-    from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
+    from assistant.channels.router import ChannelRouter  # type-only (would cycle)
 
 # Platforms whose adapters can push an unsolicited message (task-run outcomes
 # delivered back to the chat a task came from). Single source of truth: the
@@ -49,12 +49,16 @@ def should_respond(msg: InboundMessage) -> bool:
 
 
 class Channel(ABC):
-    """A messaging-platform adapter driven by the gateway."""
+    """A messaging-platform adapter driven by the channel router.
+
+    One adapter per platform per install (ADR 0019) — it is never owned by a
+    profile, and the router it is handed decides which runtime each message runs on.
+    """
 
     platform: str
 
     @abstractmethod
-    async def start(self, gateway: "Gateway") -> None:
+    async def start(self, router: "ChannelRouter") -> None:
         """Connect to the platform and begin handling messages."""
 
     @abstractmethod

@@ -1,9 +1,14 @@
 """ProfileManager — N isolated profile runtimes in one process (§4.1).
 
-A profile is a named, colour-coded runtime: one ``Gateway`` + one ``TaskService``
-+ its own channels, all alive simultaneously so background tasks in a non-viewed
-profile keep running. This module boots them all at server start and owns the
-create / archive / reload lifecycle.
+A profile is a named, colour-coded runtime: one ``Gateway`` + one ``TaskService``,
+all alive simultaneously so background tasks in a non-viewed profile keep running.
+This module boots them all at server start and owns the create / archive / reload
+lifecycle.
+
+Channels are NOT part of a runtime (ADR 0019): each adapter starts once for the
+whole install, here on the manager, and routes each inbound message to a runtime
+through the shared ``ChannelRouter``. Which runtime that is comes from the
+Channel's **default profile** in the registry, resolved per message.
 
 Isolation is structural (directory-per-profile), not query discipline: each
 runtime is constructed from a **derived config** (``Config.with_profile(meta)``)
@@ -90,16 +95,25 @@ def resolve_active_profile(pid: str | None = None) -> tuple[str, Config, Callabl
 
 
 class ProfileRuntime:
-    """One profile's live runtime: gateway + task service + channels + logger."""
+    """One profile's live runtime: gateway + task service + logger."""
 
-    def __init__(self, meta: ProfileMeta, *, memory: bool = True, persist: bool = True) -> None:
+    def __init__(
+        self,
+        meta: ProfileMeta,
+        *,
+        memory: bool = True,
+        persist: bool = True,
+        notifier: Callable | None = None,
+    ) -> None:
         self.meta = meta
         self._memory = memory
         self._persist = persist
         self._config: Config | None = None
         self.gateway: Gateway | None = None
         self.tasks = None
-        self.channels: dict[str, object] = {}  # platform → live Channel on this runtime
+        # ``(platform, chat_id, text)`` push for task-run outcomes. Channels are
+        # install-level, so this reaches out to whoever owns them (the manager).
+        self._notifier = notifier
         # This profile's own HITL registry (permission/question prompts). Its request
         # ids are globally unique, so the global /hitl/{id} dispatcher (app.py) can
         # find the right profile by asking each runtime's registry in turn (§4.1).
@@ -135,17 +149,17 @@ class ProfileRuntime:
         self._close_callbacks.append(callback)
 
     async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
-        """Push a message to a platform chat on THIS profile's live channel —
-        the task service delivers run outcomes through here."""
-        ch = self.channels.get(platform)
-        if ch is None:
-            raise RuntimeError(f"channel {platform!r} is not running on this profile")
-        await ch.notify(chat_id, text)
+        """Push a message to a platform chat — the task service delivers run outcomes
+        through here. The Channel is install-level, so the push is handed to the
+        notifier this runtime was built with."""
+        if self._notifier is None:
+            raise RuntimeError(f"channel {platform!r} is not reachable from this runtime")
+        await self._notifier(platform, chat_id, text)
 
     async def start(self) -> None:
         """Build the derived config, construct + start gateway and task service the same
-        way the base wiring does. Channel startup is driven by the ProfileManager after
-        all runtimes are booted, per the install-level registry bindings.
+        way the base wiring does. Channels are not started here — they are install-level
+        and owned by the ProfileManager (ADR 0019).
         """
         factory = config_factory(self.pid)
         self._config = factory()
@@ -166,7 +180,8 @@ class ProfileRuntime:
         await self.tasks.start()  # task tools + scheduler (per-profile lock)
 
     async def close(self) -> None:
-        """Stop channels, close tasks, close gateway. Idempotent-ish (safe to call once)."""
+        """Close tasks and gateway. Idempotent-ish (safe to call once). Channels are
+        install-level and outlive any one runtime — the manager stops those."""
         self.closing.set()
         for cb in list(self._close_callbacks):
             try:
@@ -175,12 +190,6 @@ class ProfileRuntime:
                     await res
             except Exception as exc:
                 log_suppressed("profile close callback", exc, profile=self.pid)
-        for ch in list(self.channels.values()):
-            try:
-                await ch.stop()
-            except Exception as exc:
-                log_suppressed("channel stop", exc, profile=self.pid)
-        self.channels.clear()
         if self.tasks is not None:
             await self.tasks.close()
         if self.gateway is not None:
@@ -194,14 +203,27 @@ class ProfileManager:
         self._memory = memory
         self._persist = persist
         self._runtimes: dict[str, ProfileRuntime] = {}
+        # platform → the live install-level adapter (ADR 0019). One per platform for
+        # the whole install; never owned by a runtime.
+        self.channels: dict[str, channels.Channel] = {}
         # platform → last start-failure message (bad/missing token, network). Install-
-        # level, surfaced in GET /api/channels; cleared on a successful start, rebind,
-        # or disable of that platform.
+        # level, surfaced in GET /api/channels; cleared on a successful start or stop.
         self.channel_errors: dict[str, str] = {}
+        # The one router every adapter is handed. It resolves the runtime per inbound
+        # message, so changing a Channel's default profile needs no restart.
+        self.router = channels.ChannelRouter(self.gateway_for)
+
+    def gateway_for(self, inbound) -> Gateway | None:
+        """The gateway an inbound platform message runs on, or None when there is
+        none to reach: the Channel has no default profile, or the profile it names is
+        not running. Read fresh from the registry on every message."""
+        pid = profiles.channel_defaults().get(inbound.platform)
+        runtime = self._runtimes.get(pid) if pid else None
+        return runtime.gateway if runtime is not None else None
 
     async def start(self) -> None:
-        """Boot every UNARCHIVED registered profile, then start each channel the
-        registry binds to a booted profile.
+        """Boot every UNARCHIVED registered profile, then start every Channel whose
+        tokens are configured.
 
         Zero profiles is a legal no-op (fresh install, §3.5). Logging is set up once
         against the root config here so per-profile loggers write to the shared file.
@@ -209,38 +231,39 @@ class ProfileManager:
         setup_logging(load_config())
         for meta in profiles.list_profiles(include_archived=False):
             await self._boot(meta)
-        await self._start_bound_channels()
+        for platform in profiles.CHANNEL_PLATFORMS:
+            await self.start_channel(platform)
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
-        runtime = ProfileRuntime(meta, memory=self._memory, persist=self._persist)
+        runtime = ProfileRuntime(
+            meta,
+            memory=self._memory,
+            persist=self._persist,
+            notifier=self.notify_channel,
+        )
         await runtime.start()
         self._runtimes[meta.id] = runtime
         return runtime
 
-    async def _start_bound_channels(self) -> None:
-        """For each platform bound in the registry to a currently-booted profile, start
-        it on that runtime. A binding to an archived/unknown profile is treated as
-        unbound (logged, skipped) — the registry should already clear those, but boot
-        is defensive."""
-        for platform, pid in profiles.channel_bindings().items():
-            if pid is None:
-                continue
-            runtime = self._runtimes.get(pid)
-            if runtime is None:
-                profile_logger("default").warning(
-                    "channel '%s' bound to '%s' which is not booted; skipping", platform, pid
-                )
-                continue
-            await self._start_channel_on(runtime, platform)
+    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
+        """Push a message into a platform chat through the install's live Channel —
+        task-run outcomes are delivered this way."""
+        channel = self.channels.get(platform)
+        if channel is None:
+            raise RuntimeError(f"channel {platform!r} is not running")
+        await channel.notify(chat_id, text)
 
-    async def _start_channel_on(
-        self, runtime: "ProfileRuntime", platform: str
-    ) -> tuple[bool, str | None]:
-        """Start ``platform`` on ``runtime`` if its tokens are present. Guarded: a bad
-        token / network failure logs + records ``channel_errors[platform]`` and returns
-        (False, reason) instead of crashing. Success clears any prior error.
+    async def start_channel(self, platform: str) -> tuple[bool, str | None]:
+        """Start ``platform`` at install level if its tokens are present, handing it the
+        shared router. Guarded: a bad token / network failure logs + records
+        ``channel_errors[platform]`` and returns (False, reason) instead of crashing —
+        a Channel that cannot connect must never take the server down with it. Success
+        clears any prior error. Already running is a no-op.
 
-        Returns ``(active, reason)``: active True iff the channel is now live."""
+        Returns ``(active, reason)``: active True iff the Channel is now live."""
+        log = profile_logger("default")
+        if platform in self.channels:
+            return True, None
         envs = _CHANNEL_TOKENS[platform]
         if not all(os.environ.get(e) for e in envs):
             msg = f"no token configured for {platform}"
@@ -252,95 +275,50 @@ class ProfileManager:
         # and crash boot. Record the reason, stay inactive.
         try:
             channel = channels.get_channel(platform)
-            await channel.start(runtime.gateway)
+            await channel.start(self.router)
         except Exception as exc:
             # Platform libraries embed the raw token in some error messages
             # (e.g. Telegram's "The token <value> was rejected"); scrub it —
             # this string is logged AND returned via GET /api/channels.
             msg = _scrub_tokens(f"could not start '{platform}': {exc}", envs)
-            runtime.log.error(msg)
+            log.error(msg)
             self.channel_errors[platform] = msg
             return False, msg
-        runtime.channels[platform] = channel
+        self.channels[platform] = channel
         self.channel_errors.pop(platform, None)
-        runtime.log.info("channel '%s' started for profile '%s'", platform, runtime.pid)
+        log.info("channel '%s' started", platform)
         return True, None
 
-    async def _stop_channel_on(self, runtime: "ProfileRuntime", platform: str) -> bool:
-        """Stop ``platform`` on ``runtime`` if it is live there. Returns True if a live
-        channel was stopped."""
-        channel = runtime.channels.pop(platform, None)
+    async def stop_channel(self, platform: str) -> bool:
+        """Stop ``platform`` if it is live. Returns True if a live Channel was stopped."""
+        channel = self.channels.pop(platform, None)
         if channel is None:
             return False
         try:
             await channel.stop()
         except Exception as exc:
-            log_suppressed("channel stop", exc, profile=runtime.pid)
-        runtime.log.info("channel '%s' stopped for profile '%s'", platform, runtime.pid)
+            log_suppressed("channel stop", exc)
+        self.channel_errors.pop(platform, None)
+        profile_logger("default").info("channel '%s' stopped", platform)
         return True
 
-    async def bind_channel(self, platform: str, pid: str | None) -> dict:
-        """Assign ``platform`` to profile ``pid`` (install-level) and hot-apply it.
-
-        Persists the binding in the registry first (via ``profiles.bind_channel``,
-        which validates the platform + that ``pid`` exists and is unarchived), stops the
-        channel wherever it is currently live, then — if ``pid`` is given — starts it on
-        that profile's runtime (guarded). ``pid`` None disables the platform.
-
-        The binding is persisted even if the start fails (missing/bad token): the
-        registry reflects intent, ``active`` reports whether it is actually live, and
-        ``reason`` explains any failure. Returns ``{"bound": pid, "active": bool,
-        "reason": str|None}``. Raises ``ValueError`` for an unknown platform / pid.
-        """
-        # Stop the platform wherever it is currently live (may be a different runtime).
-        for runtime in self._runtimes.values():
-            if platform in runtime.channels:
-                await self._stop_channel_on(runtime, platform)
-        self.channel_errors.pop(platform, None)
-
-        # Persist the binding (validates platform + pid; raises ValueError otherwise).
-        profiles.bind_channel(platform, pid)
-
-        if pid is None:
-            return {"bound": None, "active": False, "reason": None}
-        runtime = self.get(pid)
-        active, reason = await self._start_channel_on(runtime, platform)
-        return {"bound": pid, "active": active, "reason": reason}
-
-    async def restart_channel(self, platform: str) -> dict:
+    async def restart_channel(self, platform: str) -> tuple[bool, str | None]:
         """Re-apply the live state of ``platform`` after its tokens changed (e.g. a
-        token was saved/cleared via the secrets store).
-
-        Stops the channel wherever it is currently live, then — if the registry binds
-        it to a booted profile — starts it again on that runtime (guarded; requires all
-        tokens present). Leaves the registry binding untouched: this only reconciles the
-        running channel with the current tokens. Returns ``{"bound", "active", "reason"}``
-        mirroring ``bind_channel``. Raises ``ValueError`` for an unknown platform.
-        """
+        token was saved/cleared via the secrets store): stop it, then start it again if
+        all its tokens are now present (guarded). Returns ``(active, reason)`` like
+        ``start_channel``. Raises ``ValueError`` for an unknown platform."""
         if platform not in profiles.CHANNEL_PLATFORMS:
             raise ValueError(
                 f"unknown channel platform: {platform} "
                 f"(choose from {', '.join(profiles.CHANNEL_PLATFORMS)})"
             )
-        # Stop the channel wherever it is currently live (any runtime).
-        for runtime in self._runtimes.values():
-            if platform in runtime.channels:
-                await self._stop_channel_on(runtime, platform)
-        self.channel_errors.pop(platform, None)
-
-        pid = profiles.channel_bindings().get(platform)
-        if pid is None:
-            return {"bound": None, "active": False, "reason": None}
-        runtime = self._runtimes.get(pid)
-        if runtime is None:
-            # Bound to a profile that isn't running (archived/unknown): treat as unbound
-            # for the live view — the registry should already have cleared it.
-            return {"bound": pid, "active": False, "reason": None}
-        active, reason = await self._start_channel_on(runtime, platform)
-        return {"bound": pid, "active": active, "reason": reason}
+        await self.stop_channel(platform)
+        return await self.start_channel(platform)
 
     async def close(self) -> None:
-        """Close all running runtimes."""
+        """Stop every Channel, then close all running runtimes."""
+        for platform in list(self.channels):
+            await self.stop_channel(platform)
         for runtime in list(self._runtimes.values()):
             await runtime.close()
         self._runtimes.clear()
@@ -419,18 +397,14 @@ class ProfileManager:
                 )
             profiles.set_active_default(new_default)
 
-        # Any channels bound to this profile must have their errors + registry bindings
-        # cleared. The registry clearing happens in profiles.archive_profile below; the
-        # runtime's live channels are stopped by runtime.close(). Drop stale errors for
-        # the platforms this profile owned.
-        for platform, owner in profiles.channel_bindings().items():
-            if owner == pid:
-                self.channel_errors.pop(platform, None)
-
+        # Channels stay up: they are install-level and never owned by a profile. Any
+        # that defaulted to this one are cleared in profiles.archive_profile below, and
+        # land in the no-default state — the router refuses there rather than routing a
+        # message into a profile that is no longer running.
         runtime = self._runtimes.get(pid)
         if runtime is not None:
             # Cascade-cancel in-flight tasks so they land CANCELLED (not limbo), then
-            # close (stops scheduler + channels + fires WS-close callbacks).
+            # close (stops the scheduler + fires WS-close callbacks).
             if runtime.tasks is not None:
                 try:
                     await runtime.tasks.cancel_all(reason="profile-archived")

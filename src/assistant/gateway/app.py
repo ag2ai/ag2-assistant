@@ -28,8 +28,8 @@ Route map:
     POST /api/profiles/{pid}                 -> rename / accent (display-only)
     POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
-    GET  /api/channels                       -> {platform: {profile, token_present, active, error}} (install-level)
-    POST /api/channels                       -> bind {platform, profile:pid|null}; hot-applies; returns updated entry
+    GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
+    POST /api/channels/default               -> set {platform, profile:pid|null} default profile; returns updated entry
     GET  /api/google/*                       -> account-level OAuth (shared like keys)
     GET  /api/fs/list                        -> generic folder browser (pickers)
     GET  /hitl/{req_id}, POST .../answer     -> styled HITL pages over a cross-profile dispatcher
@@ -527,9 +527,9 @@ class VoiceProviderRequest(BaseModel):
     provider: str
 
 
-class ChannelBindRequest(BaseModel):
+class ChannelDefaultRequest(BaseModel):
     platform: str
-    profile: str | None = None  # pid to bind to, or null to disable
+    profile: str | None = None  # pid conversations land in by default, or null for none
 
 
 class ChannelTokenRequest(BaseModel):
@@ -1863,40 +1863,37 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse({"error": f"could not restore profile: {exc}"}, status_code=500)
         return {"profile": _profile_view(runtime.meta)}
 
-    # ---- Channels (global, install-level: platform → one profile or disabled) ----
+    # ---- Channels (global, install-level; never owned by a profile — ADR 0019) ----
 
-    def _channel_entry(platform: str, pid: str | None) -> dict:
-        """The install-level state of one platform: which profile owns it (or null),
-        whether its token env is present, whether it is live on that runtime, and the
-        last start error (or null)."""
-        active = False
-        if pid is not None:
-            runtime = manager.runtimes_by_id().get(pid)
-            active = bool(runtime and platform in runtime.channels)
+    def _channel_entry(platform: str, default_pid: str | None) -> dict:
+        """The install-level state of one platform: the profile its conversations land
+        in by default (or null), whether its token env is present, whether the adapter
+        is live, and the last start error (or null)."""
         return {
-            "profile": pid,
+            "default_profile": default_pid,
             "token_present": all(os.environ.get(e) for e in _CHANNEL_TOKENS[platform]),
-            "active": active,
+            "active": platform in manager.channels,
             "error": manager.channel_errors.get(platform),
         }
 
+    def _channel_entries() -> dict:
+        """Every platform's entry, off one read of the registry."""
+        return {p: _channel_entry(p, pid) for p, pid in profiles_mod.channel_defaults().items()}
+
     @app.get("/api/channels")
     async def list_channels() -> dict:
-        """Install-level channel bindings: ``{platform: {profile, token_present, active,
-        error}}``. A fresh (zero-profile) install returns all profiles null."""
-        return {
-            platform: _channel_entry(platform, pid)
-            for platform, pid in profiles_mod.channel_bindings().items()
-        }
+        """Install-level channel state: ``{platform: {default_profile, token_present,
+        active, error}}``. A fresh (zero-profile) install returns all defaults null."""
+        return _channel_entries()
 
-    @app.post("/api/channels")
-    async def bind_channel(req: ChannelBindRequest):
-        """Assign a platform to a profile (or disable it with profile:null) and hot-apply
-        it. Returns the updated platform entry. Unknown platform → 400; unknown/archived
-        pid → 400. The binding persists even if the channel fails to start (bad/missing
-        token): ``active`` reports live state, ``error`` explains any failure."""
+    @app.post("/api/channels/default")
+    async def set_channel_default(req: ChannelDefaultRequest):
+        """Set the profile a platform's conversations land in by default (or clear it
+        with profile:null). Takes effect on the next message — the Channel itself keeps
+        running either way. Returns the updated platform entry. Unknown platform → 400;
+        unknown/archived pid → 400."""
         try:
-            await manager.bind_channel(req.platform, req.profile)
+            profiles_mod.set_channel_default(req.platform, req.profile)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {req.platform: _channel_entry(req.platform, req.profile)}
@@ -1907,7 +1904,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         keys) and re-apply the channel live. Body: ``{platform, tokens:{ENV_NAME: value}}``
         — an empty value clears that token. Only env names valid for the platform are
         accepted; an unknown platform or env name → 400. Saving sets os.environ, so the
-        bound channel is restarted (stopped, then started if all tokens are now present).
+        channel is restarted (stopped, then started if all tokens are now present).
         Returns the updated GET /api/channels entry. Token values are never echoed."""
         platform = req.platform
         if platform not in profiles_mod.CHANNEL_PLATFORMS:
@@ -1921,12 +1918,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             )
         for env_name, value in req.tokens.items():
             secrets.set_channel_token(env_name, value)
-        # Reconcile the live channel with the new tokens if the platform is bound.
-        bound = profiles_mod.channel_bindings().get(platform)
-        if bound is not None:
-            with contextlib.suppress(Exception):
-                await manager.restart_channel(platform)
-        return {platform: _channel_entry(platform, bound)}
+        # Reconcile the live channel with the new tokens.
+        with contextlib.suppress(Exception):
+            await manager.restart_channel(platform)
+        return {platform: _channel_entry(platform, profiles_mod.channel_defaults().get(platform))}
 
     # ---- Google OAuth (global, account-level) ----
 
@@ -2478,12 +2473,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             }
         )
 
-        # Messaging channels bound to THIS profile (start-time active/error).
+        # Messaging channels DEFAULTING to this profile — the ones whose conversations
+        # land here (start-time active/error). Channels themselves are install-level.
         items = []
-        for platform, bound_pid in profiles_mod.channel_bindings().items():
-            if bound_pid != runtime.pid:
+        for platform, entry in _channel_entries().items():
+            if entry["default_profile"] != runtime.pid:
                 continue
-            entry = _channel_entry(platform, bound_pid)
             items.append(
                 {
                     "platform": platform,
@@ -2507,7 +2502,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                         else f"{it['platform']} idle"
                         for it in items
                     )
-                    or "none bound"
+                    or "none default here"
                 ),
                 "items": items,
             }

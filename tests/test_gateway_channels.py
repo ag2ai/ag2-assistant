@@ -1,9 +1,10 @@
-"""Phase 3B: install-level channel bindings API + hot start/stop/rebind.
+"""Install-level Channels: the API, boot, and the per-Channel default profile.
 
-A channel (telegram/discord/slack) is an install-level resource assigned to
-exactly one profile or disabled. The binding lives in the global registry, so
-two-profiles-enable conflicts are structurally impossible. Endpoints:
-GET /api/channels (state) and POST /api/channels (bind/rebind/disable).
+A channel (telegram/discord/slack) starts ONCE for the whole install as soon as its
+token is configured — it is never owned by a profile (ADR 0019). What the registry
+holds is a per-Channel *default profile*: where that platform's conversations land
+when nothing else has been chosen. Endpoints: GET /api/channels (state),
+POST /api/channels/default (set/clear the default) and POST /api/channels/token.
 """
 
 import os
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import assistant.channels as channels_mod
 from assistant import profiles, secrets
+from assistant.channels.base import InboundMessage
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
 from tests.conftest import use_fake_agent
@@ -24,16 +26,18 @@ class FakeChannel:
         self.platform = platform
         self.started = False
         self.stopped = False
+        self.router = None
 
-    async def start(self, gateway) -> None:
+    async def start(self, router) -> None:
         self.started = True
+        self.router = router
 
     async def stop(self) -> None:
         self.stopped = True
 
 
 def _stub_channels(monkeypatch):
-    """Make get_channel return FakeChannels (patched where _start_channel_on imports it)."""
+    """Make get_channel return FakeChannels (patched where start_channel imports it)."""
     monkeypatch.setattr(channels_mod, "get_channel", lambda platform, **kw: FakeChannel(platform))
 
 
@@ -53,6 +57,12 @@ def _no_channel_env(monkeypatch):
         monkeypatch.delenv(env, raising=False)
 
 
+def _inbound(platform: str = "telegram") -> InboundMessage:
+    return InboundMessage(
+        text="hi", sender_id="u1", chat_id="c1", platform=platform, is_direct=True
+    )
+
+
 # --- GET /api/channels: shape, zero-profile install all-null ---
 
 
@@ -61,251 +71,67 @@ def test_get_channels_zero_profile_all_null(monkeypatch):
     with _new_client(monkeypatch) as client:
         chans = client.get("/api/channels").json()
         assert set(chans) == {"telegram", "discord", "slack"}
-        for entry in chans.values():
+        for platform, entry in chans.items():
             assert entry == {
-                "profile": None,
+                "default_profile": None,
                 "token_present": False,
                 "active": False,
-                "error": None,
+                "error": f"no token configured for {platform}",
             }
 
 
 def test_get_channels_reflects_token_present(monkeypatch):
     _no_channel_env(monkeypatch)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
         chans = client.get("/api/channels").json()
         assert chans["telegram"]["token_present"] is True
         assert chans["discord"]["token_present"] is False
 
 
-# --- POST /api/channels: bind + start ---
+# --- boot: a token is all a Channel needs; no profile owns it ---
 
 
-def test_post_binds_and_starts(monkeypatch):
-
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
-    _stub_channels(monkeypatch)
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        assert r.json() == {
-            "telegram": {
-                "profile": "work",
-                "token_present": True,
-                "active": True,
-                "error": None,
-            }
-        }
-        # persisted in the registry + live on the runtime
-        assert profiles.channel_bindings()["telegram"] == "work"
-        runtime = client.app.state.profiles.get("work")
-        assert "telegram" in runtime.channels
-        assert runtime.channels["telegram"].started is True
-        # reflected in GET
-        assert client.get("/api/channels").json()["telegram"]["profile"] == "work"
-
-
-def test_post_unknown_platform_400(monkeypatch):
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "irc", "profile": "work"})
-        assert r.status_code == 400
-        assert "irc" in r.json()["error"]
-
-
-def test_post_unknown_profile_400(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
-    _stub_channels(monkeypatch)
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "ghost"})
-        assert r.status_code == 400
-        assert "ghost" in r.json()["error"]
-
-
-def test_post_archived_profile_400(monkeypatch):
-
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
-    _stub_channels(monkeypatch)
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-        # archive personal (non-default needs no replacement)
-        assert client.request("DELETE", "/api/profiles/personal").status_code == 200
-        assert profiles.get_profile("personal").archived is True
-
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "personal"})
-        assert r.status_code == 400
-        assert "personal" in r.json()["error"]
-
-
-# --- rebind: moves the live channel from A's runtime to B's ---
-
-
-def test_rebind_moves_live_channel(monkeypatch):
-
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
-    _stub_channels(monkeypatch)
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-
-        # bind to work
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        work_rt = client.app.state.profiles.get("work")
-        personal_rt = client.app.state.profiles.get("personal")
-        assert "telegram" in work_rt.channels
-        work_chan = work_rt.channels["telegram"]
-
-        # rebind to personal → work loses it (stopped), personal gains a fresh one
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "personal"})
-        assert r.json()["telegram"]["profile"] == "personal"
-        assert r.json()["telegram"]["active"] is True
-        assert "telegram" not in work_rt.channels
-        assert work_chan.stopped is True
-        assert "telegram" in personal_rt.channels
-        assert personal_rt.channels["telegram"].started is True
-        assert profiles.channel_bindings()["telegram"] == "personal"
-
-
-# --- disable: profile null stops the channel ---
-
-
-def test_disable_stops_channel(monkeypatch):
-
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
-    _stub_channels(monkeypatch)
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        work_rt = client.app.state.profiles.get("work")
-        chan = work_rt.channels["telegram"]
-
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": None})
-        assert r.json() == {
-            "telegram": {
-                "profile": None,
-                "token_present": True,
-                "active": False,
-                "error": None,
-            }
-        }
-        assert "telegram" not in work_rt.channels
-        assert chan.stopped is True
-        assert profiles.channel_bindings()["telegram"] is None
-
-
-# --- bad-token start failure: binding persisted, inactive, error surfaced ---
-
-
-def test_bad_token_start_failure_binding_persisted(monkeypatch):
-    """A real channel's start() raises on a bad token/network. The binding must persist
-    (registry reflects intent), active:false, and the error surfaces in GET /api/channels
-    — never a 500, never a boot crash."""
-
-    class BoomChannel:
-        platform = "telegram"
-
-        async def start(self, gateway):
-            raise RuntimeError("Unauthorized: invalid token")
-
-        async def stop(self):
-            pass
-
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "bad")
-    monkeypatch.setattr(channels_mod, "get_channel", lambda platform, **kw: BoomChannel())
-
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        entry = r.json()["telegram"]
-        assert entry["profile"] == "work"  # binding persisted
-        assert entry["active"] is False
-        assert "could not start 'telegram'" in entry["error"]
-        # binding really is in the registry
-        assert profiles.channel_bindings()["telegram"] == "work"
-        # surfaced in GET /api/channels too
-        got = client.get("/api/channels").json()["telegram"]
-        assert got["profile"] == "work"
-        assert got["active"] is False
-        assert "could not start 'telegram'" in got["error"]
-
-
-def test_start_failure_error_never_echoes_token(monkeypatch):
-    """Platform libraries embed the raw token in some error messages (Telegram:
-    "The token <value> was rejected"). The recorded/returned error must be scrubbed."""
-
-    class EchoBoomChannel:
-        platform = "telegram"
-
-        async def start(self, gateway):
-            raise RuntimeError(f"The token `{os.environ['TELEGRAM_BOT_TOKEN']}` was rejected")
-
-        async def stop(self):
-            pass
-
-    secret = "8123456:very-secret-token-value"
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", secret)
-    monkeypatch.setattr(channels_mod, "get_channel", lambda platform, **kw: EchoBoomChannel())
-
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        assert secret not in r.text
-        assert "•••" in r.json()["telegram"]["error"]
-        assert secret not in client.get("/api/channels").text
-
-
-def test_missing_token_bind_persisted_inactive(monkeypatch):
-    """Binding a platform whose token env is absent persists the binding but stays
-    inactive with a 'no token configured' reason."""
-
-    _no_channel_env(monkeypatch)
-    with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        entry = r.json()["telegram"]
-        assert entry["profile"] == "work"
-        assert entry["active"] is False
-        assert entry["token_present"] is False
-        assert "no token configured for telegram" in entry["error"]
-        assert profiles.channel_bindings()["telegram"] == "work"
-
-
-# --- boot: a bound channel starts at boot ---
-
-
-def test_bound_channel_starts_on_boot(monkeypatch):
+def test_a_configured_channel_starts_at_install_level(monkeypatch):
+    """No binding, no profile — a token is enough for the adapter to come up, and it
+    lives on the manager rather than inside any runtime."""
 
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
     _stub_channels(monkeypatch)
 
-    # Pre-create a profile + registry binding BEFORE the app boots.
     meta = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    profiles.bind_channel("discord", meta.id)
 
     with _new_client(monkeypatch) as client:
-        runtime = client.app.state.profiles.get(meta.id)
-        assert "discord" in runtime.channels
-        assert runtime.channels["discord"].started is True
+        manager = client.app.state.profiles
+        assert manager.channels["discord"].started is True
+        assert manager.channels["discord"].router is manager.router
         assert client.get("/api/channels").json()["discord"]["active"] is True
+        # the runtime knows nothing about it
+        assert not hasattr(manager.get(meta.id), "channels")
 
 
-def test_bound_channel_start_failure_does_not_crash_boot(monkeypatch):
-    """A bound channel whose start() raises must still boot the runtime; the failure is
-    recorded on manager.channel_errors and surfaced, not fatal."""
+def test_a_channel_starts_with_no_profiles_at_all(monkeypatch):
+    """A fresh install with a token configured: the Channel is live and simply has
+    nowhere to route yet."""
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        assert manager.channels["telegram"].started is True
+        assert manager.gateway_for(_inbound()) is None
+
+
+def test_channel_start_failure_does_not_crash_boot(monkeypatch):
+    """A channel whose start() raises must still leave the server booted; the failure
+    is recorded on manager.channel_errors and surfaced, not fatal."""
 
     class BoomChannel:
         platform = "discord"
 
-        async def start(self, gateway):
+        async def start(self, router):
             raise RuntimeError("connect failed")
 
         async def stop(self):
@@ -316,22 +142,163 @@ def test_bound_channel_start_failure_does_not_crash_boot(monkeypatch):
 
     meta = profiles.create_profile("Work", "#109e91")
     profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    profiles.bind_channel("discord", meta.id)
 
     with _new_client(monkeypatch) as client:
-        runtime = client.app.state.profiles.get(meta.id)  # booted despite failure
-        assert "discord" not in runtime.channels
-        assert "could not start 'discord'" in client.app.state.profiles.channel_errors["discord"]
+        manager = client.app.state.profiles
+        assert manager.get(meta.id) is not None  # booted despite the failure
+        assert "discord" not in manager.channels
+        assert "could not start 'discord'" in manager.channel_errors["discord"]
         got = client.get("/api/channels").json()["discord"]
-        assert got["profile"] == meta.id
         assert got["active"] is False
         assert "could not start 'discord'" in got["error"]
 
 
-# --- archive: a bound-profile archive clears the binding + stops the channel ---
+def test_start_failure_error_never_echoes_token(monkeypatch):
+    """Platform libraries embed the raw token in some error messages (Telegram:
+    "The token <value> was rejected"). The recorded/returned error must be scrubbed."""
+
+    class EchoBoomChannel:
+        platform = "telegram"
+
+        async def start(self, router):
+            raise RuntimeError(f"The token `{os.environ['TELEGRAM_BOT_TOKEN']}` was rejected")
+
+        async def stop(self):
+            pass
+
+    secret = "8123456:very-secret-token-value"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", secret)
+    monkeypatch.setattr(channels_mod, "get_channel", lambda platform, **kw: EchoBoomChannel())
+
+    with _new_client(monkeypatch) as client:
+        got = client.get("/api/channels")
+        assert secret not in got.text
+        assert "•••" in got.json()["telegram"]["error"]
 
 
-def test_archive_owner_clears_binding_and_stops(monkeypatch):
+def test_no_token_channel_stays_down_with_a_reason(monkeypatch):
+    _no_channel_env(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        entry = client.get("/api/channels").json()["telegram"]
+        assert entry["active"] is False
+        assert entry["token_present"] is False
+        assert "no token configured for telegram" in entry["error"]
+
+
+# --- POST /api/channels/default: where conversations land ---
+
+
+def test_setting_the_default_profile_routes_messages_there(monkeypatch):
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        manager = client.app.state.profiles
+
+        r = client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
+        assert r.status_code == 200
+        assert r.json() == {
+            "telegram": {
+                "default_profile": "work",
+                "token_present": True,
+                "active": True,
+                "error": None,
+            }
+        }
+        assert profiles.channel_defaults()["telegram"] == "work"
+        assert manager.gateway_for(_inbound()) is manager.get("work").gateway
+        assert client.get("/api/channels").json()["telegram"]["default_profile"] == "work"
+
+
+def test_changing_the_default_needs_no_restart(monkeypatch):
+    """The router resolves the profile per message, so a new default takes effect on
+    the next message with the same live adapter."""
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        manager = client.app.state.profiles
+
+        client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
+        adapter = manager.channels["telegram"]
+
+        r = client.post(
+            "/api/channels/default", json={"platform": "telegram", "profile": "personal"}
+        )
+        assert r.json()["telegram"]["default_profile"] == "personal"
+        assert manager.channels["telegram"] is adapter  # same live adapter
+        assert adapter.stopped is False
+        assert manager.gateway_for(_inbound()) is manager.get("personal").gateway
+
+
+def test_clearing_the_default_leaves_the_channel_running(monkeypatch):
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
+        manager = client.app.state.profiles
+
+        r = client.post("/api/channels/default", json={"platform": "telegram", "profile": None})
+        assert r.json() == {
+            "telegram": {
+                "default_profile": None,
+                "token_present": True,
+                "active": True,
+                "error": None,
+            }
+        }
+        assert manager.channels["telegram"].stopped is False
+        assert manager.gateway_for(_inbound()) is None
+        assert profiles.channel_defaults()["telegram"] is None
+
+
+def test_default_unknown_platform_400(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        r = client.post("/api/channels/default", json={"platform": "irc", "profile": "work"})
+        assert r.status_code == 400
+        assert "irc" in r.json()["error"]
+
+
+def test_default_unknown_profile_400(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        r = client.post("/api/channels/default", json={"platform": "telegram", "profile": "ghost"})
+        assert r.status_code == 400
+        assert "ghost" in r.json()["error"]
+
+
+def test_default_archived_profile_400(monkeypatch):
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        # archive personal (non-default needs no replacement)
+        assert client.request("DELETE", "/api/profiles/personal").status_code == 200
+        assert profiles.get_profile("personal").archived is True
+
+        r = client.post(
+            "/api/channels/default", json={"platform": "telegram", "profile": "personal"}
+        )
+        assert r.status_code == 400
+        assert "personal" in r.json()["error"]
+
+
+# --- a default profile that goes away ---
+
+
+def test_archiving_the_default_profile_leaves_the_channel_live_and_unrouted(monkeypatch):
+    """Archiving is not a reason to disconnect an install-level Channel: it stays up,
+    its default is cleared, and messages have nowhere to land until a new one is set."""
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     _stub_channels(monkeypatch)
@@ -339,83 +306,83 @@ def test_archive_owner_clears_binding_and_stops(monkeypatch):
     with _new_client(monkeypatch) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
+        manager = client.app.state.profiles
+        adapter = manager.channels["telegram"]
 
-        # work owns telegram
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        work_rt = client.app.state.profiles.get("work")
-        chan = work_rt.channels["telegram"]
-        assert profiles.channel_bindings()["telegram"] == "work"
-
-        # archive work (naming personal as the replacement default)
         r = client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})
         assert r.status_code == 200
-        # binding cleared, channel stopped
-        assert profiles.channel_bindings()["telegram"] is None
-        assert chan.stopped is True
+        assert profiles.channel_defaults()["telegram"] is None
+        assert adapter.stopped is False
         assert client.get("/api/channels").json()["telegram"] == {
-            "profile": None,
+            "default_profile": None,
             "token_present": True,
-            "active": False,
+            "active": True,
             "error": None,
         }
+        assert manager.gateway_for(_inbound()) is None
 
-        # personal can now bind
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "personal"})
-        assert r.json()["telegram"]["active"] is True
+        # personal can take over
+        r = client.post(
+            "/api/channels/default", json={"platform": "telegram", "profile": "personal"}
+        )
+        assert r.json()["telegram"]["default_profile"] == "personal"
+        assert manager.gateway_for(_inbound()) is manager.get("personal").gateway
+
+
+def test_deleting_a_profile_clears_it_as_a_default(monkeypatch):
+    """Belt-and-braces on the registry itself: archiving clears the default, but a
+    delete must never leave a Channel defaulting to an id that no longer exists."""
+
+    profiles.create_profile("Work", "#109e91")
+    profiles.set_channel_default("telegram", "work")
+    profiles.delete_profile("work")
+
+    assert profiles.get_profile("work") is None
+    assert profiles.channel_defaults()["telegram"] is None
 
 
 # --- POST /api/channels/token: secrets-backed tokens, live apply ---
 
 
 def test_post_token_saves_flips_present_and_starts(monkeypatch):
-    """Saving a token for a BOUND platform: token_present flips true, the channel
-    starts live on the bound runtime, and the value is never echoed."""
+    """Saving a token starts the Channel live — no profile involved — and the value is
+    never echoed."""
 
     _no_channel_env(monkeypatch)
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        # bind first (no token yet → inactive, waiting)
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.json()["telegram"]["active"] is False
-        assert r.json()["telegram"]["token_present"] is False
+        assert client.get("/api/channels").json()["telegram"]["active"] is False
 
-        # now supply the token via the secrets endpoint
         r = client.post(
             "/api/channels/token",
             json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "live-secret-tok"}},
         )
         assert r.status_code == 200
         entry = r.json()["telegram"]
-        assert entry["profile"] == "work"
         assert entry["token_present"] is True
         assert entry["active"] is True
         assert entry["error"] is None
-        # value never echoed anywhere in the response
         assert "live-secret-tok" not in r.text
-        # started live on the bound runtime
-        runtime = client.app.state.profiles.get("work")
-        assert runtime.channels["telegram"].started is True
-        # persisted to the secrets store
+        assert client.app.state.profiles.channels["telegram"].started is True
         assert secrets.channel_token_status()["TELEGRAM_BOT_TOKEN"] is True
-        assert profiles.channel_bindings()["telegram"] == "work"
 
 
 def test_post_token_clear_stops_channel(monkeypatch):
-    """Clearing the token for a live bound platform stops it and returns to waiting."""
+    """Clearing the token for a live Channel stops it and returns to waiting."""
     _no_channel_env(monkeypatch)
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
+        client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
         client.post(
             "/api/channels/token",
             json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "tok"}},
         )
-        runtime = client.app.state.profiles.get("work")
-        chan = runtime.channels["telegram"]
+        manager = client.app.state.profiles
+        chan = manager.channels["telegram"]
 
-        # clear it
         r = client.post(
             "/api/channels/token",
             json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": ""}},
@@ -423,8 +390,8 @@ def test_post_token_clear_stops_channel(monkeypatch):
         entry = r.json()["telegram"]
         assert entry["token_present"] is False
         assert entry["active"] is False
-        assert entry["profile"] == "work"  # binding intact — just waiting for a token
-        assert "telegram" not in runtime.channels
+        assert entry["default_profile"] == "work"  # the default survives the token going
+        assert "telegram" not in manager.channels
         assert chan.stopped is True
 
 
@@ -434,8 +401,7 @@ def test_post_token_slack_requires_both(monkeypatch):
     _no_channel_env(monkeypatch)
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels", json={"platform": "slack", "profile": "work"})
+        manager = client.app.state.profiles
 
         # only the bot token
         r = client.post(
@@ -445,8 +411,7 @@ def test_post_token_slack_requires_both(monkeypatch):
         entry = r.json()["slack"]
         assert entry["token_present"] is False
         assert entry["active"] is False
-        runtime = client.app.state.profiles.get("work")
-        assert "slack" not in runtime.channels
+        assert "slack" not in manager.channels
 
         # add the app token → now both present → starts
         r = client.post(
@@ -456,7 +421,7 @@ def test_post_token_slack_requires_both(monkeypatch):
         entry = r.json()["slack"]
         assert entry["token_present"] is True
         assert entry["active"] is True
-        assert "slack" in runtime.channels
+        assert "slack" in manager.channels
 
 
 def test_post_token_unknown_platform_400(monkeypatch):
@@ -484,9 +449,9 @@ def test_post_token_invalid_env_for_platform_400(monkeypatch):
         assert secrets.channel_token_status()["SLACK_BOT_TOKEN"] is False
 
 
-def test_post_token_unbound_platform_saves_without_start(monkeypatch):
-    """Saving a token for an UNBOUND platform persists it + flips token_present, but
-    starts nothing (no owning profile). Value never echoed."""
+def test_post_token_with_no_default_profile_still_starts(monkeypatch):
+    """A Channel does not wait for a profile to be chosen: it connects, and refuses
+    messages until a default is set."""
 
     _no_channel_env(monkeypatch)
     _stub_channels(monkeypatch)
@@ -497,8 +462,9 @@ def test_post_token_unbound_platform_saves_without_start(monkeypatch):
         )
         assert r.status_code == 200
         entry = r.json()["discord"]
-        assert entry["profile"] is None
+        assert entry["default_profile"] is None
         assert entry["token_present"] is True
-        assert entry["active"] is False
+        assert entry["active"] is True
         assert "hidden-tok" not in r.text
         assert secrets.channel_token_status()["DISCORD_BOT_TOKEN"] is True
+        assert client.app.state.profiles.gateway_for(_inbound("discord")) is None

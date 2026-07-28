@@ -114,8 +114,8 @@ class DiscordChannel(Channel):
     def _asker_for(self, channel_id: str) -> Asker:
         return DiscordAsker(self._client, channel_id, self._pending)
 
-    async def start(self, gateway) -> None:
-        self._router = ChannelRouter(gateway)
+    async def start(self, router: ChannelRouter) -> None:
+        self._router = router
         # login() initialises the client (so wait_until_ready works), then
         # connect() runs the gateway loop as a background task.
         await self._client.login(self._token)

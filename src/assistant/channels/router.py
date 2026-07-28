@@ -5,12 +5,24 @@ renders the outcome that comes back. Every decision about what a message means
 lives here; adapters keep only platform concerns.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from assistant.channels.base import InboundMessage, should_respond
 
+if TYPE_CHECKING:
+    from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
+
 # A bare attachment carries no words, so the model is given a prompt for it.
 ATTACHMENT_ONLY_PROMPT = "Here is a file I'm sharing with you."
+
+# Said when a message has no profile to land in — the channel's default profile is
+# unset, or the profile it names is no longer running.
+NO_PROFILE = (
+    "No profile is set up for this channel yet. "
+    "Pick a default profile for it in Settings → Channels."
+)
 
 
 @dataclass(frozen=True)
@@ -65,10 +77,14 @@ def spoken_text(outcome: Outcome) -> str | None:
 
 
 class ChannelRouter:
-    """Turns a normalised inbound message into a platform-neutral outcome."""
+    """Turns a normalised inbound message into a platform-neutral outcome.
 
-    def __init__(self, gateway) -> None:
-        self._gateway = gateway
+    Built once per install and shared by every adapter (ADR 0019): the runtime a
+    message runs on is resolved when the message arrives, not captured at start.
+    """
+
+    def __init__(self, resolve_gateway: "Callable[[InboundMessage], Gateway | None]") -> None:
+        self._resolve_gateway = resolve_gateway
 
     def accepts(self, inbound: InboundMessage) -> bool:
         """Whether this message will be handled at all — an adapter's gate for
@@ -86,9 +102,13 @@ class ChannelRouter:
         if not self.accepts(inbound):
             return NOTHING
 
+        gateway = self._resolve_gateway(inbound)
+        if gateway is None:
+            return Refuse(NO_PROFILE)
+
         text = inbound.text or (ATTACHMENT_ONLY_PROMPT if attachments else "")
         try:
-            reply = await self._gateway.send_message(
+            reply = await gateway.send_message(
                 text,
                 chat_id=inbound.stable_id(),
                 asker=asker,

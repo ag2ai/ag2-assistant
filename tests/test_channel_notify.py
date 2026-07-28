@@ -11,7 +11,7 @@ async def test_base_notify_raises_by_default():
     class Dumb(Channel):
         platform = "dumb"
 
-        async def start(self, gateway):
+        async def start(self, router):
             pass
 
         async def stop(self):

@@ -136,8 +136,16 @@ def _isolate_ag2assistant_home(monkeypatch, tmp_path):
     We also redirect HOME to a tmp dir so anything resolving `~/.ag2assistant`
     (PermissionStore, the gateway's task/inquiry stores) writes to disposable
     space instead of the developer's real state.
+
+    Channel bot tokens are cleared for the same reason, and one more: a Channel is
+    install-level and starts as soon as its tokens are present (ADR 0019), so a
+    developer's real TELEGRAM_BOT_TOKEN in the environment would have every
+    app-booting test open a live connection to Telegram. Tests that want a channel
+    set the token themselves and stub `get_channel`.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
+    for env in profiles.CHANNEL_TOKEN_ENV_NAMES:
+        monkeypatch.delenv(env, raising=False)
     try:
         import assistant.integrations.google_auth as ga  # local: guarded (google_auth may be absent)
 

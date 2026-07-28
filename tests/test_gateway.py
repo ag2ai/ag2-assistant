@@ -1071,14 +1071,14 @@ def test_profile_health_ok_and_down(profile_app, monkeypatch):
 
 
 def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
-    """A messaging channel bound to this profile that failed to start (start error
-    recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
+    """A messaging channel that defaults to this profile and failed to start (start
+    error recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
 
     client, pid = profile_app
 
     monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
-    # Bind discord to this profile and record a start error on the live manager.
-    monkeypatch.setattr(profiles_mod, "channel_bindings", lambda: {"discord": pid})
+    # Point discord's default at this profile and record a start error on the manager.
+    monkeypatch.setattr(profiles_mod, "channel_defaults", lambda: {"discord": pid})
     client.app.state.profiles.channel_errors["discord"] = "invalid bot token"
 
     body = client.get(api(pid, "/health")).json()

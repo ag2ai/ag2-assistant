@@ -118,8 +118,8 @@ class SlackChannel(Channel):
     def _asker_for(self, channel_id: str) -> Asker:
         return SlackAsker(self._app.client, channel_id, self._pending)
 
-    async def start(self, gateway) -> None:
-        self._router = ChannelRouter(gateway)
+    async def start(self, router: ChannelRouter) -> None:
+        self._router = router
         self._app = AsyncApp(token=self._bot_token)
         self._app.event("app_mention")(self._handle_app_mention)
         self._app.event("message")(self._handle_message)

@@ -1,11 +1,13 @@
 <script>
-  // Settings → "Channels" section (§4.5). Channels are an INSTALL-LEVEL resource:
-  // each platform (Telegram / Discord / Slack) binds to exactly one profile or is
-  // disabled — never per-profile toggles, never conflicts. State comes from the
-  // GLOBAL GET /api/channels; changing a row's profile picker POSTs to the GLOBAL
-  // /api/channels and applies the returned entry. The bot token(s) for each platform
-  // are edited inline here (POST /api/channels/token) — stored in the global secrets
-  // store, mirroring the API-key inputs in Settings; values are never echoed back.
+  // Settings → "Channels" section (§4.5). Channels are an INSTALL-LEVEL resource and
+  // are never owned by a profile (ADR 0019): each platform (Telegram / Discord /
+  // Slack) connects once for the whole install as soon as its token is set. The row's
+  // picker chooses that channel's DEFAULT PROFILE — where its conversations land when
+  // nothing else has been chosen — and POSTs to the GLOBAL /api/channels/default,
+  // applying the returned entry. It never starts or stops the connection. State comes
+  // from the GLOBAL GET /api/channels. The bot token(s) are edited inline here (POST
+  // /api/channels/token) — stored in the global secrets store, mirroring the API-key
+  // inputs in Settings; values are never echoed back.
   import { onMount } from 'svelte'
   import { profiles } from '../store.js'
   import { api } from '../transport/api.js'
@@ -20,9 +22,9 @@
     { id: 'slack', label: 'Slack', fields: [{ env: 'SLACK_BOT_TOKEN', label: 'Bot token' }, { env: 'SLACK_APP_TOKEN', label: 'App token' }] },
   ]
 
-  // {telegram|discord|slack: {profile: pid|null, token_present, active, error}}
+  // {telegram|discord|slack: {default_profile: pid|null, token_present, active, error}}
   let channels = $state(null)
-  let busy = $state('') // platform id currently rebinding/saving (disables its row)
+  let busy = $state('') // platform id currently saving (disables its row)
   let err = $state('')
   // Per-env token draft inputs (ENV_NAME -> string). Emptied after a successful save.
   let drafts = $state({})
@@ -38,13 +40,13 @@
   }
   onMount(load)
 
-  async function bind(platform, profile) {
+  async function setDefault(platform, profile) {
     if (busy) return
     busy = platform; err = ''
-    // Empty <select> value means "Disabled" → null binding.
+    // Empty <select> value means "No default" → cleared.
     const pid = profile || null
     try {
-      const res = await api.channelBind(platform, pid)
+      const res = await api.channelDefault(platform, pid)
       // Merge the single updated entry the POST returns.
       channels = { ...channels, [platform]: res[platform] }
     } catch (e) {
@@ -96,22 +98,21 @@
     busy = ''
   }
 
-  // Status line for a platform, given its entry. Order matters: disabled → live
-  // (active) → bound-without-token (a normal "waiting" state, even though the
-  // backend records a no-token error for it, so it takes precedence over the raw
-  // error string) → a genuine start error (bad token / network) → bound.
+  // Status line for a platform, given its entry. Order matters: no token (the resting
+  // state of a fresh install, not an error) → a genuine start error (bad token /
+  // network) → live, with or without somewhere to send its messages.
   function statusOf(id, c) {
-    if (!c || c.profile == null) return { kind: 'off', text: 'disabled' }
-    const name = profById[c.profile]?.name || c.profile
-    if (c.active) return { kind: 'ok', text: `connected to ${name}` }
-    if (!c.token_present) return { kind: 'wait', text: `assigned to ${name} — paste the bot token below`, name }
+    if (!c || !c.token_present) return { kind: 'off', text: 'not connected — paste the bot token below' }
     if (c.error) return { kind: 'err', text: c.error }
-    return { kind: 'wait', text: `assigned to ${name}`, name }
+    if (!c.active) return { kind: 'wait', text: 'not connected' }
+    if (c.default_profile == null) return { kind: 'wait', text: 'connected — pick a default profile' }
+    const name = profById[c.default_profile]?.name || c.default_profile
+    return { kind: 'ok', text: `connected — messages go to ${name}` }
   }
 </script>
 
 <div class="channels">
-  <p class="chintro">Channels are shared across the install — each connects to one profile.</p>
+  <p class="chintro">Channels are shared across the install. Each connects once; its default profile is where conversations land unless something else is chosen.</p>
   {#if err}<p class="cherr">{err}</p>{/if}
   {#if !channels}
     <p class="chmuted">Loading…</p>
@@ -119,15 +120,15 @@
     {#each PLATFORMS as pf}
       {@const c = channels[pf.id]}
       {@const st = statusOf(pf.id, c)}
-      {@const boundAccent = c && c.profile != null ? profById[c.profile]?.accent : null}
+      {@const defaultAccent = c && c.default_profile != null ? profById[c.default_profile]?.accent : null}
       <div class="chrow">
         <div class="chtop">
           <div class="chmeta">
             <div class="chname">
               <span
                 class="chdot"
-                class:on={!!boundAccent}
-                style={boundAccent ? `--dot:${boundAccent}` : ''}
+                class:on={!!defaultAccent}
+                style={defaultAccent ? `--dot:${defaultAccent}` : ''}
               ></span>
               {pf.label}
             </div>
@@ -139,11 +140,12 @@
           </div>
           <select
             class="chpick"
-            value={c?.profile ?? ''}
+            aria-label="{pf.label} default profile"
+            value={c?.default_profile ?? ''}
             disabled={busy === pf.id}
-            onchange={(e) => bind(pf.id, e.target.value)}
+            onchange={(e) => setDefault(pf.id, e.target.value)}
           >
-            <option value="">Disabled</option>
+            <option value="">No default</option>
             {#each list as p (p.id)}
               <option value={p.id}>{p.name}</option>
             {/each}

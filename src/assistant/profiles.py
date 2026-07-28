@@ -32,7 +32,7 @@ def _norm_accent(accent: str) -> str:
     return s.lower()
 
 
-# The canonical messaging platforms a channel can bind to. This is the single
+# The canonical messaging platforms a channel can run on. This is the single
 # source of truth for platform names.
 CHANNEL_PLATFORMS = ("telegram", "discord", "slack")
 
@@ -92,7 +92,7 @@ def _empty_registry() -> dict:
         "active_default": None,
         "onboarded": False,
         "profiles": [],
-        "channels": {p: None for p in CHANNEL_PLATFORMS},
+        "channel_defaults": {p: None for p in CHANNEL_PLATFORMS},
     }
 
 
@@ -108,12 +108,12 @@ def load_registry() -> dict:
     data.setdefault("onboarded", False)
     if not isinstance(data.get("profiles"), list):
         data["profiles"] = []
-    # channels is a top-level {platform: owning-pid|null} map; absent platforms
-    # read as null (unbound). Malformed → treated as all-unbound.
-    chans = data.get("channels")
-    if not isinstance(chans, dict):
-        chans = {}
-    data["channels"] = {p: chans.get(p) for p in CHANNEL_PLATFORMS}
+    # channel_defaults is a top-level {platform: default-pid|null} map; absent
+    # platforms read as null (no default). Malformed → treated as all-unset.
+    defaults = data.get("channel_defaults")
+    if not isinstance(defaults, dict):
+        defaults = {}
+    data["channel_defaults"] = {p: defaults.get(p) for p in CHANNEL_PLATFORMS}
     return data
 
 
@@ -215,14 +215,13 @@ def set_accent(pid: str, accent: str) -> ProfileMeta:
 
 
 def archive_profile(pid: str) -> ProfileMeta:
-    """Mark a profile archived and clear any channel bindings pointing at it
-    (registry-level only; runtime guardrails live in ProfileManager)."""
+    """Mark a profile archived and clear it as any Channel's default profile
+    (registry-level only; runtime guardrails live in ProfileManager). The Channels
+    themselves keep running — they are install-level and never owned by a profile."""
     data = load_registry()
     entry = _find(data, pid)
     entry["archived"] = True
-    for platform, owner in data["channels"].items():
-        if owner == pid:
-            data["channels"][platform] = None
+    _clear_channel_defaults(data, pid)
     _write(data)
     return _meta(entry)
 
@@ -245,6 +244,9 @@ def delete_profile(pid: str) -> ProfileMeta:
     data = load_registry()
     entry = _find(data, pid)
     data["profiles"] = [e for e in data["profiles"] if e["id"] != pid]
+    # Archiving already cleared these, but deletion must never leave a Channel
+    # defaulting to a profile that no longer exists.
+    _clear_channel_defaults(data, pid)
     _write(data)
     return _meta(entry)
 
@@ -269,21 +271,29 @@ def set_onboarded(value: bool = True) -> None:
     _write(data)
 
 
-# --- channel bindings (install-level: a platform binds to one profile or is off) ---
+# --- channel default profiles (install-level; a Channel is never owned, ADR 0019) ---
 
 
-def channel_bindings() -> dict[str, str | None]:
-    """The install-level channel→profile map. Every canonical platform is present;
-    an unbound platform reads as ``None``."""
-    return dict(load_registry()["channels"])
+def _clear_channel_defaults(data: dict, pid: str) -> None:
+    """Drop ``pid`` as any Channel's default (in-memory; the caller writes)."""
+    for platform, default in data["channel_defaults"].items():
+        if default == pid:
+            data["channel_defaults"][platform] = None
 
 
-def bind_channel(platform: str, pid: str | None) -> None:
-    """Bind ``platform`` to profile ``pid`` (or ``None`` to disable it).
+def channel_defaults() -> dict[str, str | None]:
+    """The install-level Channel→default-profile map — where a conversation on that
+    platform lands when nothing else has been chosen. Every canonical platform is
+    present; a platform with no default reads as ``None``."""
+    return dict(load_registry()["channel_defaults"])
+
+
+def set_channel_default(platform: str, pid: str | None) -> None:
+    """Set (or clear, with ``None``) the default profile for ``platform``.
 
     Validates the platform against the canonical list and, when ``pid`` is given,
-    that the profile exists and is not archived. Two profiles enabling the same
-    channel is structurally impossible — a platform maps to exactly one pid."""
+    that the profile exists and is not archived. This says nothing about whether the
+    Channel runs — it runs whenever its tokens are present."""
     if platform not in CHANNEL_PLATFORMS:
         raise ValueError(
             f"unknown channel platform: {platform} (choose from {', '.join(CHANNEL_PLATFORMS)})"
@@ -295,5 +305,5 @@ def bind_channel(platform: str, pid: str | None) -> None:
             raise ValueError(f"unknown profile: {pid}")
         if entry.get("archived"):
             raise ValueError(f"profile archived: {pid}")
-    data["channels"][platform] = pid
+    data["channel_defaults"][platform] = pid
     _write(data)

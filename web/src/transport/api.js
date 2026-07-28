@@ -147,13 +147,14 @@ export const api = {
   codexLoginUrl: () => j('POST', G('/codex/login_url')),
   codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
   codexLogout: () => j('POST', G('/codex/logout')),
-  // Messaging channels are install-level: a platform binds to exactly one profile
-  // (or is disabled). Both routes are GLOBAL. channels() → {telegram|discord|slack:
-  // {profile:pid|null, token_present, active, error}}. channelBind returns the one
-  // updated entry {platform: {…}}. The binding persists even if start fails
-  // (active:false + error).
+  // Messaging channels are install-level and never owned by a profile: one connection
+  // per platform, live as soon as its token is set. Both routes are GLOBAL. channels()
+  // → {telegram|discord|slack: {default_profile:pid|null, token_present, active,
+  // error}}. channelDefault sets where that platform's conversations land when nothing
+  // else is chosen (null clears it) and returns the one updated entry {platform: {…}};
+  // it takes effect on the next message and never restarts the channel.
   channels: () => j('GET', G('/channels')),
-  channelBind: (platform, profile) => j('POST', G('/channels'), { platform, profile }),
+  channelDefault: (platform, profile) => j('POST', G('/channels/default'), { platform, profile }),
   // Save/clear channel bot token(s), like setKey — tokens is {ENV_NAME: value|''}
   // (empty clears). Returns the one updated entry {platform: {…}}. Values never echoed.
   channelTokens: (platform, tokens) => j('POST', G('/channels/token'), { platform, tokens }),

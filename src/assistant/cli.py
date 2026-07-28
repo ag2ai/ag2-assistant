@@ -11,7 +11,7 @@ import uvicorn
 
 from assistant import __version__, codex_auth, profiles
 from assistant.agent import ask, tz_unset_in_container
-from assistant.channels import get_channel
+from assistant.channels import ChannelRouter, get_channel
 from assistant.config import Config, load_config
 from assistant.folders import DuplicatePath, FolderStore
 from assistant.gateway.app import create_app
@@ -576,7 +576,8 @@ def telegram(
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
-        await channel.start(gateway)
+        # Single-profile CLI: every message runs on the one gateway built here.
+        await channel.start(ChannelRouter(lambda inbound: gateway))
         typer.echo("AG2 Assistant is live on Telegram. Press Ctrl+C to stop.")
         try:
             await asyncio.Event().wait()
@@ -612,7 +613,8 @@ def discord(
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
-        await channel.start(gateway)
+        # Single-profile CLI: every message runs on the one gateway built here.
+        await channel.start(ChannelRouter(lambda inbound: gateway))
         typer.echo("AG2 Assistant is live on Discord. Press Ctrl+C to stop.")
         try:
             await asyncio.Event().wait()
@@ -647,7 +649,8 @@ def slack(
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
-        await channel.start(gateway)
+        # Single-profile CLI: every message runs on the one gateway built here.
+        await channel.start(ChannelRouter(lambda inbound: gateway))
         typer.echo("AG2 Assistant is live on Slack. Press Ctrl+C to stop.")
         try:
             await asyncio.Event().wait()
@@ -676,8 +679,8 @@ def run(
     ),
 ) -> None:
     """Run everything in one process — the ProfileManager boots every unarchived
-    profile (each with its own gateway, scheduler, and enabled channels), and the
-    REST/WS API serves every profile under ``/api/p/{pid}/…``. The manager is built
+    profile (each with its own gateway and scheduler) plus the install's channels, and
+    the REST/WS API serves every profile under ``/api/p/{pid}/…``. The manager is built
     here and handed to ``create_app``, which owns its lifecycle (started in the app
     lifespan). Zero profiles is a legal state — the SPA shell + global routes serve,
     and ``/api/p/*`` 404s until the first profile is created (§3.5)."""
@@ -693,9 +696,8 @@ def run(
         # no HTTP surface. Same lifecycle create_app would drive, minus the server.
         async def headless() -> None:
             await manager.start()
-            for runtime in manager.runtimes():
-                for platform in getattr(runtime, "channels", []):
-                    typer.echo(f"  channel: {getattr(platform, 'platform', '?')} ({runtime.pid})")
+            for platform in manager.channels:
+                typer.echo(f"  channel: {platform}")
             _echo_local_time()
             typer.echo("AG2 Assistant is running (no REST). Press Ctrl+C to stop.")
             try:
