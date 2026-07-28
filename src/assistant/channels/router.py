@@ -149,6 +149,11 @@ def attached_header(profile: str, entry: dict) -> str:
     )
 
 
+def speaker(role: str) -> str:
+    """How a message's author is labelled in anything a Peer reads."""
+    return "You" if role == "user" else "Me"
+
+
 def transcript_tail(messages: list[dict]) -> str:
     """The last few turns, speaker-labelled and clipped, as one block of text."""
     lines = []
@@ -156,8 +161,23 @@ def transcript_tail(messages: list[dict]) -> str:
         text = (message.get("text") or "").strip()
         if len(text) > TAIL_CHARS:
             text = f"{text[:TAIL_CHARS].rstrip()}…"
-        lines.append(f"{'You' if message.get('role') == 'user' else 'Me'}: {text}")
+        lines.append(f"{speaker(message.get('role') or '')}: {text}")
     return "\n\n".join(lines)
+
+
+def mirrored_turn(text: str, reply: str) -> str:
+    """A completed turn as the Attached Peer reads it — the same speaker labels a
+    resumed transcript shows, unclipped (the adapter splits what is too long)."""
+    return "\n\n".join(
+        f"{speaker(role)}: {body.strip()}"
+        for role, body in (("user", text), ("agent", reply))
+        if body.strip()
+    )
+
+
+def peer_key(platform: str, chat_id: str) -> str:
+    """How a Peer is named when a turn records which conversation wrote it."""
+    return f"{platform}:{chat_id}"
 
 
 def switched_to(name: str) -> str:
@@ -233,6 +253,9 @@ class ProfileDirectory(Protocol):
 
     def gateway_for_profile(self, pid: str) -> "Gateway | None":
         """The running gateway for a profile id, or None when it is not running."""
+
+    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
+        """Push a message into a platform conversation through its live Channel."""
 
 
 def spoken_text(outcome: Outcome) -> str | None:
@@ -338,6 +361,11 @@ class ChannelRouter:
         """Point this Peer at ``profile`` and say what happened. An explicit choice is
         recorded even when it names the profile the Channel default already gives."""
         moved = self._current_profile(inbound, self._by_id(inbound)) != profile.id
+        if moved:
+            # A Chat cannot cross Profiles, so leaving one always leaves its Chat —
+            # including for a Peer that was riding the Channel default rather than a
+            # selection of its own.
+            peers.detach(inbound.platform, inbound.chat_id)
         self._select(inbound, profile.id)
         return Reply(switched_to(profile.name) if moved else already_in(profile.name))
 
@@ -437,6 +465,19 @@ class ChannelRouter:
         header = attached_header(self._by_id(inbound)[resolved].name, entry)
         tail = transcript_tail(await gateway.transcript(chat))
         return Reply(f"{header}\n\n{tail}" if tail else header)
+
+    async def mirror(self, chat: str, text: str, reply: str, *, origin: str = "") -> None:
+        """Send a completed turn in ``chat`` to the Peer Attached to it (ADR 0020).
+
+        Nothing goes anywhere when no Peer is attached, and a Peer never gets back
+        the turn it wrote itself — ``origin`` names the conversation that ran it.
+        """
+        peer = peers.attached_to(chat)
+        if peer is None or peer_key(peer.platform, peer.chat_id) == origin:
+            return
+        body = mirrored_turn(text, reply)
+        if body:
+            await self._directory.notify_channel(peer.platform, peer.chat_id, body)
 
     async def _delete_chat(self, inbound: InboundMessage, chat: str) -> Outcome:
         """Delete the Chat the confirmation was raised for, and only that one."""
@@ -568,6 +609,7 @@ class ChannelRouter:
                 chat_id=chat_id,
                 asker=asker,
                 attachments=attachments or [],
+                origin=peer_key(inbound.platform, inbound.chat_id),
             )
         except Exception as exc:  # surface failures to the user
             return Reply(f"Sorry, something went wrong: {exc}")

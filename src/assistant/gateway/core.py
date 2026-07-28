@@ -181,6 +181,9 @@ class Gateway:
         self._folders = None
         self._event_store = None
         self._writer = None
+        # async (chat_id, user_text, reply, origin=…) -> None, called once a turn
+        # completes: the router pushes it to the Peer Attached to that chat.
+        self._mirror = None
         # chat_id -> live Stream; plus which chats we've hydrated from disk
         self._streams: dict[str, object] = {}
         self._loaded: set[str] = set()
@@ -193,6 +196,10 @@ class Gateway:
         self._active: dict[str, _ActiveTurn] = {}
         # Per-profile daily token/cost tally for the activity HUD.
         self._usage = UsageLedger(self._config.data_dir / "usage.json")
+
+    def set_mirror(self, mirror) -> None:
+        """Register who receives this gateway's completed turns (ADR 0020)."""
+        self._mirror = mirror
 
     @property
     def config(self) -> Config:
@@ -429,6 +436,7 @@ class Gateway:
         on_event=None,
         llm_config_id: str | None = None,
         task_id: str | None = None,
+        origin: str = "",
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -450,7 +458,9 @@ class Gateway:
         instead of persisting it globally; when omitted it is auto-resolved from
         `chat_id` for a run's thread (``task-run:{run_id}``), so a manual reply
         typed there is scoped the same as the run itself, and this also feeds
-        folder-grant resolution for that turn.
+        folder-grant resolution for that turn. `origin` names the Peer this message
+        was written from, when a Channel wrote it — the mirror never sends a Peer its
+        own turn back (ADR 0020).
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -568,6 +578,7 @@ class Gateway:
             else:
                 await self._emit_a2ui_surfaces(stream, a2ui_handle)
                 await self._persist_turn(chat_id, stream, text, reply.body)
+                await self._mirror_turn(chat_id, text, reply.body, origin)
                 return reply.body
             finally:
                 self._unwatch_a2ui(stream, a2ui_handle)
@@ -753,6 +764,16 @@ class Gateway:
             if text:
                 out.append(f"{who}: {text}")
         return "\n".join(out)
+
+    async def _mirror_turn(self, chat_id, user_text, reply_text, origin) -> None:
+        """Hand the completed turn to the mirror — only the message and the answer,
+        never the turn's own events. Best-effort: a platform push never fails a turn."""
+        if self._mirror is None:
+            return
+        try:
+            await self._mirror(chat_id, user_text, reply_text, origin=origin)
+        except Exception as exc:
+            log_suppressed("chat mirror", exc, chat_id=chat_id)
 
     async def _persist_turn(self, chat_id, stream, user_text, reply_text) -> None:
         """Write the chat's events + a display transcript to disk."""

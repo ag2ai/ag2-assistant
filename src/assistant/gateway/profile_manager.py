@@ -104,6 +104,7 @@ class ProfileRuntime:
         memory: bool = True,
         persist: bool = True,
         notifier: Callable | None = None,
+        mirror: Callable | None = None,
     ) -> None:
         self.meta = meta
         self._memory = memory
@@ -114,6 +115,9 @@ class ProfileRuntime:
         # ``(platform, chat_id, text)`` push for task-run outcomes. Channels are
         # install-level, so this reaches out to whoever owns them (the manager).
         self._notifier = notifier
+        # Where this profile's completed turns go so an Attached Peer sees them
+        # (ADR 0020) — the install's one router, which owns the Peers.
+        self._mirror = mirror
         # This profile's own HITL registry (permission/question prompts). Its request
         # ids are globally unique, so the global /hitl/{id} dispatcher (app.py) can
         # find the right profile by asking each runtime's registry in turn (§4.1).
@@ -174,6 +178,7 @@ class ProfileRuntime:
             config_factory=factory,
         )
         await self.gateway.start()
+        self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
         self.tasks.set_emitter(self.gateway.emit_event)  # lifecycle → AG2 stream
         self.tasks.set_gateway(self.gateway)  # turns/stops/stream deletion for runs
         self.tasks.set_notifier(self.notify_channel)  # run outcomes -> the origin channel
@@ -258,6 +263,7 @@ class ProfileManager:
             memory=self._memory,
             persist=self._persist,
             notifier=self.notify_channel,
+            mirror=self.router.mirror,
         )
         await runtime.start()
         self._runtimes[meta.id] = runtime

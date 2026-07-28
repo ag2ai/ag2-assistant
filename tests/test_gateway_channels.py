@@ -12,10 +12,10 @@ import os
 from fastapi.testclient import TestClient
 
 import assistant.channels as channels_mod
-from assistant import profiles, secrets
+from assistant import peers, profiles, secrets
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
-from tests.conftest import use_fake_agent
+from tests.conftest import api, use_fake_agent
 
 
 class FakeChannel:
@@ -26,6 +26,10 @@ class FakeChannel:
         self.started = False
         self.stopped = False
         self.router = None
+        self.pushed: list[tuple[str, str]] = []
+
+    async def notify(self, chat_id: str, text: str) -> None:
+        self.pushed.append((chat_id, text))
 
     async def start(self, router) -> None:
         self.started = True
@@ -472,3 +476,36 @@ def test_post_token_with_no_default_profile_still_starts(monkeypatch):
         assert "hidden-tok" not in r.text
         assert secrets.channel_token_status()["DISCORD_BOT_TOKEN"] is True
         assert _default_gateway(client.app.state.profiles, "discord") is None
+
+
+# --- the mirror: a browser turn reaches the Peer attached to that Chat (ADR 0020) ---
+
+
+def test_a_browser_turn_is_pushed_to_the_peer_attached_to_that_chat(monkeypatch):
+    """End to end through the real wiring: the profile's gateway hands the completed
+    turn to the install's router, which pushes it through the live adapter."""
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        manager = client.app.state.profiles
+        peers.attach("telegram", "42", "web-1")
+
+        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
+        assert r.status_code == 200
+
+        assert manager.channels["telegram"].pushed == [("42", "You: hello\n\nMe: echo[1]: hello")]
+
+
+def test_a_chat_no_peer_is_attached_to_is_pushed_nowhere(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        manager = client.app.state.profiles
+
+        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
+        assert r.status_code == 200
+
+        assert manager.channels["telegram"].pushed == []

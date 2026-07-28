@@ -92,6 +92,14 @@ def list_peers() -> list[Peer]:
     return [_peer(entry) for entry in _load()]
 
 
+def attached_to(chat: str) -> Peer | None:
+    """The Peer Attached to this Chat right now, or None when no Peer is in it."""
+    for entry in _load():
+        if entry.get("chat") == chat:
+            return _peer(entry)
+    return None
+
+
 def peer_for_chat(chat: str) -> Peer | None:
     """The Peer this Chat belongs to, or None for one no Peer has ever been in."""
     for entry in _load():

@@ -48,6 +48,11 @@ class FakeGateway:
         self.chats: dict[str, dict] = {}
         self.transcripts: dict[str, list[dict]] = {}
         self.deleted: list[str] = []
+        self._mirror = None
+
+    def set_mirror(self, mirror) -> None:
+        """The callback a completed turn is handed to (the router's mirror)."""
+        self._mirror = mirror
 
     def add_chat(self, chat_id: str, title: str, updated: str, messages=()) -> str:
         """A Chat this gateway already holds — a browser one, or one made earlier."""
@@ -61,7 +66,9 @@ class FakeGateway:
         self.transcripts[chat_id] = list(messages)
         return chat_id
 
-    async def send_message(self, text, chat_id="default", asker=None, attachments=None, **kw):
+    async def send_message(
+        self, text, chat_id="default", asker=None, attachments=None, origin="", **kw
+    ):
         self.calls.append(
             {"text": text, "chat_id": chat_id, "asker": asker, "attachments": attachments}
         )
@@ -74,6 +81,8 @@ class FakeGateway:
         self.transcripts.setdefault(chat_id, []).extend(
             [{"role": "user", "text": text}, {"role": "agent", "text": self.reply}]
         )
+        if self._mirror is not None:
+            await self._mirror(chat_id, text, self.reply, origin=origin)
         return self.reply
 
     async def list_chats(self) -> list[dict]:
@@ -97,6 +106,8 @@ class FakeDirectory:
         self.default = default
         # profile id → the surfaces it has been withdrawn from (default-allow).
         self.withdrawn: dict[str, set[str]] = {}
+        # (platform, chat_id, text) pushed into a platform conversation.
+        self.pushed: list[tuple[str, str, str]] = []
 
     def withdraw(self, pid: str, *surfaces: str) -> None:
         self.withdrawn.setdefault(pid, set()).update(surfaces)
@@ -113,6 +124,9 @@ class FakeDirectory:
 
     def gateway_for_profile(self, pid):
         return self.gateways.get(pid)
+
+    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
+        self.pushed.append((platform, chat_id, text))
 
 
 @pytest.fixture(autouse=True)
@@ -856,6 +870,115 @@ async def test_a_resumed_chat_still_delivers_a_task_outcome_to_the_peer():
     gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
     await router.choose(_inbound(""), "resume:web-1")
     assert peers.peer_for_chat("web-1").chat_id == "c1"
+
+
+# --- the mirror ---
+
+
+def _mirroring(*names, **kw) -> tuple[ChannelRouter, FakeDirectory]:
+    """A router wired the way a running install is: every gateway hands its completed
+    turns back to the router, which pushes them to the Peer attached to that Chat."""
+    directory = FakeDirectory(*(names or ("work",)), **kw)
+    router = ChannelRouter(directory)
+    for gateway in directory.gateways.values():
+        gateway.set_mirror(router.mirror)
+    return router, directory
+
+
+async def _browser_turn(directory: FakeDirectory, chat: str, text: str) -> None:
+    """A turn run from the browser — nobody's Peer wrote it."""
+    await directory.gateways["work"].send_message(text, chat_id=chat)
+
+
+async def _resume(router: ChannelRouter, chat: str) -> None:
+    await router.choose(_inbound(""), f"resume:{chat}")
+
+
+async def test_a_browser_turn_reaches_the_peer_attached_to_that_chat():
+    """Both halves of it: what was written there, and what the agent answered."""
+    router, directory = _mirroring(reply="It's sunny.")
+    directory.gateways["work"].add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await _resume(router, "web-1")
+
+    await _browser_turn(directory, "web-1", "what's the weather?")
+
+    assert directory.pushed == [("telegram", "c1", "You: what's the weather?\n\nMe: It's sunny.")]
+
+
+async def test_a_peer_does_not_get_its_own_message_back():
+    router, directory = _mirroring()
+    await router.handle(_inbound("hi"))
+    assert directory.pushed == []
+
+
+async def test_a_chat_no_peer_is_attached_to_mirrors_to_nobody():
+    router, directory = _mirroring()
+    await _browser_turn(directory, "web-1", "just me here")
+    assert directory.pushed == []
+
+
+async def test_a_chat_a_peer_has_left_mirrors_to_nobody():
+    """Owning a Chat is not being attached to it — only the attached one mirrors."""
+    router, directory = _mirroring()
+    gateway = directory.gateways["work"]
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=2))
+    gateway.add_chat("web-2", "Taxes", _ago(minutes=1))
+    await _resume(router, "web-1")
+    await _resume(router, "web-2")
+
+    await _browser_turn(directory, "web-1", "still there?")
+
+    assert directory.pushed == []
+
+
+async def test_starting_a_fresh_chat_stops_the_mirror_of_the_one_left_behind():
+    router, directory = _mirroring()
+    await router.handle(_inbound("hi"))
+    left = directory.gateways["work"].calls[0]["chat_id"]
+    await router.handle(_inbound("/new"))
+
+    await _browser_turn(directory, left, "anyone?")
+
+    assert directory.pushed == []
+
+
+async def test_switching_profile_stops_the_mirror_of_the_chat_left_behind():
+    """A switch always opens a fresh Chat, so the one left behind goes quiet too."""
+    router, directory = _mirroring("work", "home", default="work")
+    await router.handle(_inbound("hi"))
+    left = directory.gateways["work"].calls[0]["chat_id"]
+    await router.handle(_inbound("/profile home"))
+
+    await _browser_turn(directory, left, "anyone?")
+
+    assert directory.pushed == []
+
+
+async def test_a_wordless_reply_is_not_mirrored_as_an_empty_line():
+    router, directory = _mirroring(reply="")
+    directory.gateways["work"].add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await _resume(router, "web-1")
+
+    await _browser_turn(directory, "web-1", "hello")
+
+    assert directory.pushed == [("telegram", "c1", "You: hello")]
+
+
+async def test_a_mirrored_turn_reads_like_a_resumed_one():
+    """Same speaker labels as the transcript tail an attach shows, so a conversation
+    looks the same however it got to the platform."""
+    router, directory = _mirroring(reply="for when?")
+    directory.gateways["work"].add_chat(
+        "web-1",
+        "Dinner plans",
+        _ago(minutes=1),
+        [{"role": "user", "text": "book a table"}, {"role": "agent", "text": "for when?"}],
+    )
+    attached = await router.choose(_inbound(""), "resume:web-1")
+
+    await _browser_turn(directory, "web-1", "book a table")
+
+    assert directory.pushed[0][2] in attached.text
 
 
 # --- /help ---

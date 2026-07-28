@@ -157,6 +157,30 @@ async def test_chats_are_isolated(fake_gateway):
     assert reply == "echo[1]: c"
 
 
+async def test_only_the_completed_turn_is_mirrored(fake_gateway):
+    """The mirror gets the user's message and the final answer, once — never the
+    deltas, tool calls and produce events the turn emitted on the way (ADR 0020)."""
+    mirrored: list = []
+
+    async def mirror(chat_id, text, reply, *, origin=""):
+        mirrored.append((chat_id, text, reply, origin))
+
+    fake_gateway.set_mirror(mirror)
+    await fake_gateway.send_message("hello", chat_id="s1", origin="telegram:42")
+
+    assert mirrored == [("s1", "hello", "echo[1]: hello", "telegram:42")]
+
+
+async def test_a_mirror_that_fails_does_not_fail_the_turn(fake_gateway):
+    """A platform that is down loses the mirror, not the user's answer."""
+
+    async def mirror(*args, **kwargs):
+        raise RuntimeError("telegram is down")
+
+    fake_gateway.set_mirror(mirror)
+    assert await fake_gateway.send_message("hello", chat_id="s1") == "echo[1]: hello"
+
+
 def test_status_shape(fake_gateway):
     status = fake_gateway.status()
     assert status["status"] == "ok"
