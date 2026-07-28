@@ -8,7 +8,7 @@ from assistant.channels.base import InboundMessage, should_respond
 from assistant.channels.telegram import TelegramChannel
 
 
-def _msg(text="hi", is_direct=True, mentioned=False) -> InboundMessage:
+def _msg(text="hi", is_direct=True, mentioned=False, has_attachment=False) -> InboundMessage:
     return InboundMessage(
         text=text,
         sender_id="u1",
@@ -16,6 +16,7 @@ def _msg(text="hi", is_direct=True, mentioned=False) -> InboundMessage:
         platform="telegram",
         is_direct=is_direct,
         mentioned=mentioned,
+        has_attachment=has_attachment,
     )
 
 
@@ -37,6 +38,19 @@ def test_should_respond_group_with_mention():
 
 def test_should_respond_empty_text():
     assert should_respond(_msg(text="   ", is_direct=True)) is False
+
+
+def test_should_respond_wordless_file_in_a_dm():
+    """Dropping a file in with no caption is a message, not silence."""
+    assert should_respond(_msg(text="", is_direct=True, has_attachment=True)) is True
+
+
+def test_should_respond_wordless_file_in_a_group_still_needs_a_mention():
+    """Gating is unchanged: a file is ignored in a group exactly as words would be."""
+    assert should_respond(_msg(text="", is_direct=False, has_attachment=True)) is False
+    assert should_respond(_msg(text="", is_direct=False, mentioned=True, has_attachment=True)) is (
+        True
+    )
 
 
 # --- Telegram normalization (fake Update objects) ---
@@ -126,6 +140,12 @@ def test_normalize_accepts_attachment_only_dm():
     assert inbound is not None
     assert inbound.is_direct is True
     assert inbound.text == ""
+    assert inbound.has_attachment is True
+
+
+def test_normalize_marks_a_text_only_message_as_carrying_no_file():
+    ch = _telegram_channel()
+    assert ch._normalize(_fake_update("hello")).has_attachment is False
 
 
 def test_telegram_requires_token(monkeypatch):

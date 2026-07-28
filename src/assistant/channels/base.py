@@ -29,6 +29,7 @@ class InboundMessage:
     platform: str  # "telegram", "discord", ...
     is_direct: bool  # True for DMs, False for group/channel
     mentioned: bool = False  # was the bot @mentioned (groups)
+    has_attachment: bool = False  # did the message carry a file (caption may be empty)
     sender_name: str | None = None
     raw: object = field(default=None, repr=False)  # original platform object
 
@@ -42,8 +43,9 @@ class InboundMessage:
 
 
 def should_respond(msg: InboundMessage) -> bool:
-    """Mention-gating: respond to all DMs, but only to @mentions in groups."""
-    if not msg.text.strip():
+    """Mention-gating: respond to all DMs, but only to @mentions in groups.
+    A wordless message counts when it carries a file, and is gated the same way."""
+    if not msg.text.strip() and not msg.has_attachment:
         return False
     return msg.is_direct or msg.mentioned
 

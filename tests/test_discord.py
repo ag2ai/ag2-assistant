@@ -77,6 +77,12 @@ def test_normalize_accepts_attachment_only_dm():
     inbound = ch._normalize(_fake_message("", guild=False, attachments=[att]))
     assert inbound is not None
     assert inbound.is_direct is True
+    assert inbound.has_attachment is True
+
+
+def test_normalize_marks_a_text_only_message_as_carrying_no_file():
+    ch = _discord_channel()
+    assert ch._normalize(_fake_message("hello", guild=False)).has_attachment is False
 
 
 def test_requires_token(monkeypatch):

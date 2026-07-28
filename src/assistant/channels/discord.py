@@ -165,6 +165,7 @@ class DiscordChannel(Channel):
             platform=self.platform,
             is_direct=is_direct,
             mentioned=mentioned,
+            has_attachment=bool(message.attachments),
             sender_name=getattr(message.author, "display_name", None),
             raw=message,
         )

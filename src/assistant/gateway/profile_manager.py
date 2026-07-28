@@ -209,16 +209,29 @@ class ProfileManager:
         # platform → last start-failure message (bad/missing token, network). Install-
         # level, surfaced in GET /api/channels; cleared on a successful start or stop.
         self.channel_errors: dict[str, str] = {}
-        # The one router every adapter is handed. It resolves the runtime per inbound
-        # message, so changing a Channel's default profile needs no restart.
-        self.router = channels.ChannelRouter(self.gateway_for)
+        # The one router every adapter is handed. It resolves the profile per inbound
+        # message through the directory methods below, so changing a Channel's default
+        # profile — or a Peer's own selection — needs no restart.
+        self.router = channels.ChannelRouter(self)
 
-    def gateway_for(self, inbound) -> Gateway | None:
-        """The gateway an inbound platform message runs on, or None when there is
-        none to reach: the Channel has no default profile, or the profile it names is
-        not running. Read fresh from the registry on every message."""
-        pid = profiles.channel_defaults().get(inbound.platform)
-        runtime = self._runtimes.get(pid) if pid else None
+    # ---- the router's ProfileDirectory (read fresh on every message) ----
+
+    def available_profiles(self) -> tuple[channels.AvailableProfile, ...]:
+        """Every profile a platform conversation could be pointed at right now —
+        the running runtimes, named as their user sees them."""
+        return tuple(
+            channels.AvailableProfile(r.meta.id, r.meta.name) for r in self._runtimes.values()
+        )
+
+    def default_profile(self, platform: str) -> str | None:
+        """The Channel's default profile, or None when it has none or the profile it
+        names is not running."""
+        pid = profiles.channel_defaults().get(platform)
+        return pid if pid in self._runtimes else None
+
+    def gateway_for_profile(self, pid: str) -> Gateway | None:
+        """The running gateway for a profile id, or None when it is not running."""
+        runtime = self._runtimes.get(pid)
         return runtime.gateway if runtime is not None else None
 
     async def start(self) -> None:

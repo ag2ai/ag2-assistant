@@ -2,11 +2,12 @@
 
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.discord import DiscordChannel
-from assistant.channels.router import ChannelRouter, Outcome
+from assistant.channels.router import AvailableProfile, ChannelRouter, Outcome
 from assistant.channels.slack import SlackChannel
 from assistant.channels.telegram import TelegramChannel
 
 __all__ = [
+    "AvailableProfile",
     "Channel",
     "ChannelRouter",
     "InboundMessage",

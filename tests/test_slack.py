@@ -50,6 +50,37 @@ def test_dm_inbound_basic():
     assert inbound.stable_id() == "slack:D1"
 
 
+def test_mention_inbound_carries_the_fact_that_a_file_came_with_it():
+    ch = _slack_channel()
+    event = {"text": "<@UBOT>", "user": "U123", "channel": "C1", "files": [{"id": "F1"}]}
+    inbound = ch._mention_inbound(event)
+    assert inbound is not None
+    assert inbound.text == ""
+    assert inbound.has_attachment is True
+
+
+def test_dm_inbound_carries_the_fact_that_a_file_came_with_it():
+    ch = _slack_channel()
+    event = {
+        "channel_type": "im",
+        "subtype": "file_share",
+        "text": "",
+        "user": "U123",
+        "channel": "D1",
+        "files": [{"id": "F1"}],
+    }
+    inbound = ch._dm_inbound(event)
+    assert inbound is not None
+    assert inbound.has_attachment is True
+
+
+def test_inbound_without_files_carries_no_attachment():
+    ch = _slack_channel()
+    event = {"channel_type": "im", "text": "hello", "user": "U123", "channel": "D1"}
+    assert ch._dm_inbound(event).has_attachment is False
+    assert ch._mention_inbound({"text": "<@UBOT> hi", "channel": "C1"}).has_attachment is False
+
+
 def test_dm_inbound_ignores_non_im():
     ch = _slack_channel()
     event = {"channel_type": "channel", "text": "hi", "user": "U123", "channel": "C1"}

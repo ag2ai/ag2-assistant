@@ -13,7 +13,6 @@ from fastapi.testclient import TestClient
 
 import assistant.channels as channels_mod
 from assistant import profiles, secrets
-from assistant.channels.base import InboundMessage
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
 from tests.conftest import use_fake_agent
@@ -57,10 +56,11 @@ def _no_channel_env(monkeypatch):
         monkeypatch.delenv(env, raising=False)
 
 
-def _inbound(platform: str = "telegram") -> InboundMessage:
-    return InboundMessage(
-        text="hi", sender_id="u1", chat_id="c1", platform=platform, is_direct=True
-    )
+def _default_gateway(manager, platform: str = "telegram"):
+    """Where a conversation on ``platform`` lands when the Peer has chosen nothing —
+    i.e. what the Channel's default profile resolves to right now."""
+    pid = manager.default_profile(platform)
+    return manager.gateway_for_profile(pid) if pid else None
 
 
 # --- GET /api/channels: shape, zero-profile install all-null ---
@@ -121,7 +121,7 @@ def test_a_channel_starts_with_no_profiles_at_all(monkeypatch):
     with _new_client(monkeypatch) as client:
         manager = client.app.state.profiles
         assert manager.channels["telegram"].started is True
-        assert manager.gateway_for(_inbound()) is None
+        assert _default_gateway(manager) is None
 
 
 def test_channel_start_failure_does_not_crash_boot(monkeypatch):
@@ -207,7 +207,7 @@ def test_setting_the_default_profile_routes_messages_there(monkeypatch):
             }
         }
         assert profiles.channel_defaults()["telegram"] == "work"
-        assert manager.gateway_for(_inbound()) is manager.get("work").gateway
+        assert _default_gateway(manager) is manager.get("work").gateway
         assert client.get("/api/channels").json()["telegram"]["default_profile"] == "work"
 
 
@@ -231,7 +231,7 @@ def test_changing_the_default_needs_no_restart(monkeypatch):
         assert r.json()["telegram"]["default_profile"] == "personal"
         assert manager.channels["telegram"] is adapter  # same live adapter
         assert adapter.stopped is False
-        assert manager.gateway_for(_inbound()) is manager.get("personal").gateway
+        assert _default_gateway(manager) is manager.get("personal").gateway
 
 
 def test_clearing_the_default_leaves_the_channel_running(monkeypatch):
@@ -253,7 +253,7 @@ def test_clearing_the_default_leaves_the_channel_running(monkeypatch):
             }
         }
         assert manager.channels["telegram"].stopped is False
-        assert manager.gateway_for(_inbound()) is None
+        assert _default_gateway(manager) is None
         assert profiles.channel_defaults()["telegram"] is None
 
 
@@ -320,14 +320,14 @@ def test_archiving_the_default_profile_leaves_the_channel_live_and_unrouted(monk
             "active": True,
             "error": None,
         }
-        assert manager.gateway_for(_inbound()) is None
+        assert _default_gateway(manager) is None
 
         # personal can take over
         r = client.post(
             "/api/channels/default", json={"platform": "telegram", "profile": "personal"}
         )
         assert r.json()["telegram"]["default_profile"] == "personal"
-        assert manager.gateway_for(_inbound()) is manager.get("personal").gateway
+        assert _default_gateway(manager) is manager.get("personal").gateway
 
 
 def test_deleting_a_profile_clears_it_as_a_default(monkeypatch):
@@ -467,4 +467,4 @@ def test_post_token_with_no_default_profile_still_starts(monkeypatch):
         assert entry["active"] is True
         assert "hidden-tok" not in r.text
         assert secrets.channel_token_status()["DISCORD_BOT_TOKEN"] is True
-        assert client.app.state.profiles.gateway_for(_inbound("discord")) is None
+        assert _default_gateway(client.app.state.profiles, "discord") is None

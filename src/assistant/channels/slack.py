@@ -29,6 +29,11 @@ _ACTION_RE = re.compile(r"ag2assistant_opt_\d+")
 _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
+def _has_files(event: dict) -> bool:
+    """Whether a Slack event carried an upload."""
+    return bool(event.get("files"))
+
+
 async def _download_attachments(event: dict, bot_token: str) -> list:
     """Download a Slack message's files and build AG2 multimodal inputs.
 
@@ -148,7 +153,8 @@ class SlackChannel(Channel):
 
     def _mention_inbound(self, event: dict) -> InboundMessage | None:
         text = re.sub(rf"<@{self._bot_user_id}>", "", event.get("text", "")).strip()
-        if not text and not event.get("files"):
+        has_attachment = _has_files(event)
+        if not text and not has_attachment:
             return None
         return InboundMessage(
             text=text,
@@ -157,6 +163,7 @@ class SlackChannel(Channel):
             platform=self.platform,
             is_direct=False,
             mentioned=True,
+            has_attachment=has_attachment,
             raw=event,
         )
 
@@ -178,6 +185,7 @@ class SlackChannel(Channel):
             platform=self.platform,
             is_direct=True,
             mentioned=False,
+            has_attachment=_has_files(event),
             raw=event,
         )
 

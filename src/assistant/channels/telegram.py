@@ -22,12 +22,13 @@ from telegram.ext import (
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import markdown_to_plain
-from assistant.channels.router import ChannelRouter, spoken_text
+from assistant.channels.router import ChannelRouter, Choose, Outcome, spoken_text
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
 WORKING_PLACEHOLDER = "⏳ Sorting that out…"
-_CB_PREFIX = "acw:"  # callback_data namespace for option buttons
+_CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
+_CHOICE_PREFIX = "acc:"  # callback_data namespace for router `Choose` option tokens
 _ASK_TIMEOUT = 300.0
 _MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # Telegram bot download cap is ~20 MB
 
@@ -118,12 +119,9 @@ class TelegramChannel(Channel):
         # processes updates one-at-a-time and HITL deadlocks.
         self._app = Application.builder().token(self._token).concurrent_updates(True).build()
         self._app.add_handler(CallbackQueryHandler(self._on_callback))
-        self._app.add_handler(
-            MessageHandler(
-                (filters.TEXT | filters.ATTACHMENT) & ~filters.COMMAND,
-                self._on_message,
-            )
-        )
+        # Commands are NOT excluded: the router owns the command surface (ADR 0019),
+        # so `/profile` has to reach it rather than being dropped here.
+        self._app.add_handler(MessageHandler(filters.TEXT | filters.ATTACHMENT, self._on_message))
 
         await self._app.initialize()
         me = await self._app.bot.get_me()
@@ -148,6 +146,29 @@ class TelegramChannel(Channel):
             # doesn't linger below the reply.
             with contextlib.suppress(Exception):
                 await query.message.delete()
+        elif query.data.startswith(_CHOICE_PREFIX):
+            token = query.data[len(_CHOICE_PREFIX) :]
+            outcome = await self._router.choose(self._from_callback(query), token)
+            with contextlib.suppress(Exception):
+                await query.message.delete()  # the picker is spent
+            spoken = spoken_text(outcome)
+            if spoken:
+                await self._app.bot.send_message(int(chat_id), self.format_outbound(spoken))
+
+    def _from_callback(self, query) -> InboundMessage:
+        """The Peer a button tap came from — enough for the router to place it, with
+        no text of its own (the token carries the meaning)."""
+        chat = query.message.chat
+        return InboundMessage(
+            text="",
+            sender_id=str(query.from_user.id) if query.from_user else "unknown",
+            chat_id=str(chat.id),
+            platform=self.platform,
+            is_direct=chat.type == chat.PRIVATE,
+            mentioned=True,
+            sender_name=query.from_user.full_name if query.from_user else None,
+            raw=query,
+        )
 
     def format_outbound(self, text: str) -> str:
         """Telegram renders raw Markdown literally, so send clean plain text."""
@@ -174,7 +195,8 @@ class TelegramChannel(Channel):
             return None
         # Media messages carry their text in `caption`; pure attachments have none.
         text = msg.text or msg.caption or ""
-        if not text and not _has_attachment(msg):
+        has_attachment = _has_attachment(msg)
+        if not text and not has_attachment:
             return None
 
         chat = msg.chat
@@ -200,6 +222,7 @@ class TelegramChannel(Channel):
             platform=self.platform,
             is_direct=is_direct,
             mentioned=mentioned,
+            has_attachment=has_attachment,
             sender_name=msg.from_user.full_name if msg.from_user else None,
             raw=update,
         )
@@ -229,18 +252,34 @@ class TelegramChannel(Channel):
             asker=self._asker_for(chat_id),
             attachments=attachments,
         )
+        await self._render(outcome, placeholder, update.message)
+
+    async def _render(self, outcome: Outcome, placeholder, message) -> None:
+        """Turn the router's outcome into Telegram: text edited into the placeholder,
+        a choice as option buttons, silence as a deleted placeholder."""
+        if isinstance(outcome, Choose):
+            markup = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(opt.label, callback_data=f"{_CHOICE_PREFIX}{opt.token}")]
+                    for opt in outcome.options
+                ]
+            )
+            await self._say(self.format_outbound(outcome.text), placeholder, message, markup)
+            return
+
         spoken = spoken_text(outcome)
         if spoken is None:
             # Nothing to say — drop the placeholder rather than leave it "working".
             with contextlib.suppress(Exception):
                 await placeholder.delete()
             return
+        await self._say(self.format_outbound(spoken), placeholder, message, None)
 
-        text = self.format_outbound(spoken)
+    async def _say(self, text: str, placeholder, message, markup) -> None:
         try:
-            await placeholder.edit_text(text)
+            await placeholder.edit_text(text, reply_markup=markup)
         except Exception:
             # Edit can fail (e.g. reply too long to edit-in-place); fall back to a
             # fresh message so the user still gets the answer.
             with contextlib.suppress(Exception):
-                await update.message.reply_text(text)
+                await message.reply_text(text, reply_markup=markup)
