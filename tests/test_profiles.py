@@ -168,6 +168,51 @@ def test_delete_unknown_raises():
         profiles.delete_profile("nope")
 
 
+# --- channel exposure (default-allow; a record only ever withdraws) ---
+
+
+def test_a_new_profile_is_reachable_from_every_surface():
+    meta = profiles.create_profile("Work", TEAL)
+    assert meta.withdrawn == []
+    assert profiles.exposure("work") == dict.fromkeys(profiles.CHANNEL_SURFACES, True)
+
+
+def test_withdrawing_records_only_that_surface():
+    profiles.create_profile("Work", TEAL)
+    profiles.set_exposure("work", "telegram:group", False)
+
+    assert profiles.get_profile("work").withdrawn == ["telegram:group"]
+    assert profiles.exposure("work")["telegram:group"] is False
+    # telegram's direct messages are a surface of their own and stay reachable
+    assert profiles.exposure("work")["telegram:dm"] is True
+    assert profiles.withdrawn_from("telegram:group") == {"work"}
+    assert profiles.withdrawn_from("telegram:dm") == set()
+
+
+def test_exposing_drops_the_record_rather_than_storing_an_allow():
+    profiles.create_profile("Work", TEAL)
+    profiles.set_exposure("work", "discord", False)
+    profiles.set_exposure("work", "discord", True)
+    assert profiles.get_profile("work").withdrawn == []
+
+
+def test_withdrawing_twice_is_recorded_once():
+    profiles.create_profile("Work", TEAL)
+    profiles.set_exposure("work", "slack", False)
+    profiles.set_exposure("work", "slack", False)
+    assert profiles.get_profile("work").withdrawn == ["slack"]
+
+
+def test_unknown_surface_and_unknown_profile_raise():
+    profiles.create_profile("Work", TEAL)
+    with pytest.raises(ValueError):
+        profiles.set_exposure("work", "telegram", False)  # not a surface: dm/group split
+    with pytest.raises(ValueError):
+        profiles.set_exposure("nope", "slack", False)
+    with pytest.raises(ValueError):
+        profiles.exposure("nope")
+
+
 def test_set_active_default():
     profiles.create_profile("Work", TEAL)
     profiles.create_profile("Personal", CORAL)

@@ -216,11 +216,16 @@ class ProfileManager:
 
     # ---- the router's ProfileDirectory (read fresh on every message) ----
 
-    def available_profiles(self) -> tuple[channels.AvailableProfile, ...]:
-        """Every profile a platform conversation could be pointed at right now —
-        the running runtimes, named as their user sees them."""
+    def available_profiles(self, surface: str) -> tuple[channels.AvailableProfile, ...]:
+        """Every profile a conversation on ``surface`` could be pointed at right now —
+        the running runtimes, named as their user sees them, minus the ones withdrawn
+        from that surface. Exposure is read from the registry per message, so a
+        withdrawal takes effect without a restart."""
+        withdrawn = profiles.withdrawn_from(surface)
         return tuple(
-            channels.AvailableProfile(r.meta.id, r.meta.name) for r in self._runtimes.values()
+            channels.AvailableProfile(r.meta.id, r.meta.name)
+            for r in self._runtimes.values()
+            if r.meta.id not in withdrawn
         )
 
     def default_profile(self, platform: str) -> str | None:

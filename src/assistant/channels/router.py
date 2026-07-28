@@ -32,6 +32,16 @@ NO_PROFILE = (
 
 CHOOSE_PROFILE = "Which profile should I use for this conversation?"
 
+# Said when the profile this Peer was talking to has been withdrawn from this surface.
+# The message that met it is not run: it was written for that profile, and dropping it
+# into another one would put it in the wrong transcript.
+PROFILE_WITHDRAWN = "That profile isn't reachable from this conversation anymore."
+CHOOSE_INSTEAD = f"{PROFILE_WITHDRAWN} Which one should I use instead?"
+NO_PROFILE_HERE = (
+    f"{PROFILE_WITHDRAWN} No other profile is either — "
+    "make one reachable here in Settings → Profiles."
+)
+
 # Said to whoever has just paired. Deliberately says nothing about the install yet —
 # the next message is the one that gets a profile and a turn.
 PAIRED = "You're paired. Send me anything to get started."
@@ -156,8 +166,9 @@ class AvailableProfile:
 class ProfileDirectory(Protocol):
     """What the router knows about profiles. Every answer is read fresh per message."""
 
-    def available_profiles(self) -> tuple[AvailableProfile, ...]:
-        """Every profile a conversation could be pointed at right now."""
+    def available_profiles(self, surface: str) -> tuple[AvailableProfile, ...]:
+        """Every profile a conversation on ``surface`` could be pointed at right now —
+        the ones withdrawn from it are not among them."""
 
     def default_profile(self, platform: str) -> str | None:
         """The Channel's default profile id, or None when it has none available."""
@@ -226,12 +237,16 @@ class ChannelRouter:
         """Whether this platform can be asked anything — commands and pickers alike."""
         return inbound.platform in COMMAND_PLATFORMS
 
-    def _by_id(self) -> dict[str, AvailableProfile]:
-        return {p.id: p for p in self._directory.available_profiles()}
+    def _by_id(self, inbound: InboundMessage) -> dict[str, AvailableProfile]:
+        """The profiles reachable from this conversation's surface — the single place
+        every picker and name lookup reads, so a withdrawal is absent from all of them."""
+        return {p.id: p for p in self._directory.available_profiles(inbound.exposure_surface())}
 
-    def _ask_which_profile(self, by_id: dict[str, AvailableProfile]) -> Choose:
+    def _ask_which_profile(
+        self, by_id: dict[str, AvailableProfile], text: str = CHOOSE_PROFILE
+    ) -> Choose:
         return Choose(
-            CHOOSE_PROFILE,
+            text,
             tuple(Option(p.name, f"{PROFILE_TOKEN}{p.id}") for p in by_id.values()),
         )
 
@@ -264,13 +279,30 @@ class ChannelRouter:
     def _switch_to(self, inbound: InboundMessage, profile: AvailableProfile) -> Outcome:
         """Point this Peer at ``profile`` and say what happened. An explicit choice is
         recorded even when it names the profile the Channel default already gives."""
-        moved = self._current_profile(inbound, self._by_id()) != profile.id
+        moved = self._current_profile(inbound, self._by_id(inbound)) != profile.id
         self._select(inbound, profile.id)
         return Reply(switched_to(profile.name) if moved else already_in(profile.name))
 
+    def _withdrawn(self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]) -> bool:
+        """Whether this Peer's own selection is out of reach from this surface."""
+        peer = peers.get_peer(inbound.platform, inbound.chat_id)
+        return peer is not None and peer.profile is not None and peer.profile not in by_id
+
+    def _unreachable(self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]) -> Outcome:
+        """Say the chosen profile is out of reach, offering what remains where it can be
+        offered. Never falls back to another profile — this message was written for the
+        one that has gone."""
+        if not by_id:
+            return Refuse(NO_PROFILE_HERE)
+        if self._has_commands(inbound) and inbound.is_direct:
+            return self._ask_which_profile(by_id, CHOOSE_INSTEAD)
+        return Refuse(PROFILE_WITHDRAWN)
+
     def _resolve(self, inbound: InboundMessage) -> str | Outcome:
         """The profile id this message runs in, or the outcome to return instead."""
-        by_id = self._by_id()
+        by_id = self._by_id(inbound)
+        if self._withdrawn(inbound, by_id):
+            return self._unreachable(inbound, by_id)
         current = self._current_profile(inbound, by_id)
         if current is not None:
             if len(by_id) == 1:
@@ -288,7 +320,7 @@ class ChannelRouter:
         if not self.paired(inbound):
             return NOTHING
         if token.startswith(PROFILE_TOKEN):
-            profile = self._by_id().get(token.removeprefix(PROFILE_TOKEN))
+            profile = self._by_id(inbound).get(token.removeprefix(PROFILE_TOKEN))
             if profile is None:
                 return Refuse(NO_PROFILE)
             return self._switch_to(inbound, profile)
@@ -330,7 +362,7 @@ class ChannelRouter:
         if not inbound.is_direct:
             return Refuse(PROFILE_IN_GROUP)
 
-        by_id = self._by_id()
+        by_id = self._by_id(inbound)
         if not by_id:
             return Refuse(NO_PROFILE)
         if not arg:
@@ -363,7 +395,7 @@ class ChannelRouter:
         resolved = self._resolve(inbound)
         if not isinstance(resolved, str):
             return resolved
-        name = self._by_id()[resolved].name
+        name = self._by_id(inbound)[resolved].name
         chat = self._attached_chat(inbound)
         gateway = self._directory.gateway_for_profile(resolved)
         entry = None

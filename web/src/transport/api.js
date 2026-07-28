@@ -66,6 +66,11 @@ export const api = {
   createProfile: (name, accent) => j('POST', G('/profiles'), { name, accent }),
   // Metadata update (§4.2): {name?, accent?} — both registry-only, display changes.
   updateProfile: (pid, body) => j('POST', G('/profiles/' + encodeURIComponent(pid)), body),
+  // Channel exposure — which surfaces this profile is reachable from. Default-allow,
+  // so {exposed:false} withdraws it and {exposed:true} drops the record. Returns the
+  // updated {profile}; it applies to the next platform message, nothing restarts.
+  setProfileExposure: (pid, surface, exposed) =>
+    j('POST', G('/profiles/' + encodeURIComponent(pid) + '/exposure'), { surface, exposed }),
   // Archive (§4.9). newDefault is required when archiving the active_default —
   // passed in the request body (DELETE with body → ProfileArchiveRequest).
   archiveProfile: (pid, newDefault) =>

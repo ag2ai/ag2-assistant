@@ -26,6 +26,7 @@ Route map:
     GET  /api/profiles                       -> {profiles, archived, active_default, onboarded} (§3.5 contract)
     POST /api/profiles                       -> create {name, accent}; boots live
     POST /api/profiles/{pid}                 -> rename / accent (display-only)
+    POST /api/profiles/{pid}/exposure        -> {surface, exposed}; withdraw a profile from a surface
     POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
     GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
@@ -564,6 +565,11 @@ class ProfileCreateRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     name: str | None = None
     accent: str | None = None
+
+
+class ProfileExposureRequest(BaseModel):
+    surface: str
+    exposed: bool
 
 
 class ProfileArchiveRequest(BaseModel):
@@ -1775,6 +1781,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "accent": meta.accent,
             "workspace": meta.workspace,
             "created": meta.created,
+            # Channel exposure, one flag per surface — true unless withdrawn.
+            "exposure": {s: s not in meta.withdrawn for s in profiles_mod.CHANNEL_SURFACES},
         }
 
     @app.get("/api/profiles")
@@ -1817,6 +1825,19 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 profiles_mod.rename_profile(pid, req.name)
             if req.accent is not None:
                 profiles_mod.set_accent(pid, req.accent)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"profile": _profile_view(profiles_mod.get_profile(pid))}
+
+    @app.post("/api/profiles/{pid}/exposure")
+    async def set_profile_exposure(pid: str, req: ProfileExposureRequest):
+        """Expose or withdraw this profile on one surface. Default-allow, so exposing
+        drops the record rather than storing one. Unknown pid → 404, unknown surface →
+        400. It takes effect on the next platform message; nothing restarts."""
+        if profiles_mod.get_profile(pid) is None:
+            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+        try:
+            profiles_mod.set_exposure(pid, req.surface, req.exposed)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"profile": _profile_view(profiles_mod.get_profile(pid))}

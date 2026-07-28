@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, get_args
 
+from assistant import profiles
+
 if TYPE_CHECKING:
     from assistant.channels.router import ChannelRouter  # type-only (would cycle)
 
@@ -37,6 +39,10 @@ class InboundMessage:
     def surface(self) -> str:
         """Which surface of its platform this conversation is — "dm" or "group"."""
         return "dm" if self.is_direct else "group"
+
+    def exposure_surface(self) -> str:
+        """The surface a Profile's Channel exposure is read for this message."""
+        return profiles.surface_key(self.platform, self.surface())
 
 
 def should_respond(msg: InboundMessage) -> bool:

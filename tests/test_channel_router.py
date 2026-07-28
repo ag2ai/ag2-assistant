@@ -14,8 +14,11 @@ from assistant.channels.router import (
     ALREADY_NEW,
     ATTACHMENT_ONLY_PROMPT,
     ATTACHMENT_UNREADABLE,
+    CHOOSE_INSTEAD,
     COMMANDS,
     NO_PROFILE,
+    NO_PROFILE_HERE,
+    PROFILE_WITHDRAWN,
     Ack,
     AvailableProfile,
     ChannelRouter,
@@ -68,9 +71,18 @@ class FakeDirectory:
     def __init__(self, *names, default=None, reply="the answer", error=None) -> None:
         self.gateways = {name: FakeGateway(reply, error) for name in names}
         self.default = default
+        # profile id → the surfaces it has been withdrawn from (default-allow).
+        self.withdrawn: dict[str, set[str]] = {}
 
-    def available_profiles(self) -> tuple[AvailableProfile, ...]:
-        return tuple(AvailableProfile(name, name.title()) for name in self.gateways)
+    def withdraw(self, pid: str, *surfaces: str) -> None:
+        self.withdrawn.setdefault(pid, set()).update(surfaces)
+
+    def available_profiles(self, surface: str) -> tuple[AvailableProfile, ...]:
+        return tuple(
+            AvailableProfile(name, name.title())
+            for name in self.gateways
+            if surface not in self.withdrawn.get(name, ())
+        )
 
     def default_profile(self, platform: str) -> str | None:
         return self.default
@@ -238,6 +250,89 @@ async def test_a_platform_without_commands_is_refused_rather_than_asked():
     for platform in ("discord", "slack"):
         outcome = await ChannelRouter(directory).handle(_inbound("hi", platform=platform))
         assert outcome == Refuse(NO_PROFILE)
+
+
+# --- channel exposure ---
+
+
+async def test_a_withdrawn_profile_is_absent_from_the_picker():
+    directory = FakeDirectory("work", "home")
+    directory.withdraw("home", "telegram:dm")
+    outcome = await ChannelRouter(directory).handle(_inbound("/profile"))
+    assert isinstance(outcome, Choose)
+    assert [opt.token for opt in outcome.options] == ["profile:work"]
+
+
+async def test_a_withdrawn_profile_cannot_be_selected_by_name():
+    directory = FakeDirectory("work", "home")
+    directory.withdraw("home", "telegram:dm")
+    outcome = await ChannelRouter(directory).handle(_inbound("/profile Home"))
+    assert isinstance(outcome, Refuse)
+    assert "Home" in outcome.text
+    assert peers.get_peer("telegram", "c1") is None
+
+
+async def test_a_tap_on_a_withdrawn_profile_is_not_honoured():
+    """A picker offered before the withdrawal must not still place the Peer there."""
+    directory = FakeDirectory("work", "home")
+    directory.withdraw("home", "telegram:dm")
+    assert await ChannelRouter(directory).choose(_inbound("."), "profile:home") == Refuse(
+        NO_PROFILE
+    )
+    assert peers.get_peer("telegram", "c1") is None
+
+
+async def test_withdrawing_under_a_live_peer_stops_its_next_message():
+    """The same router, no restart: the next message is not run, and never lands in
+    another profile — it was written for the one that has gone."""
+    directory = FakeDirectory("work", "home")
+    router = ChannelRouter(directory)
+    await router.handle(_inbound("/profile Home"))
+
+    directory.withdraw("home", "telegram:dm")
+    outcome = await router.handle(_inbound("something for home"))
+    assert isinstance(outcome, Choose)
+    assert outcome.text == CHOOSE_INSTEAD
+    assert [opt.token for opt in outcome.options] == ["profile:work"]
+    assert directory.gateways["home"].calls == []
+    assert directory.gateways["work"].calls == []
+    assert peers.get_peer("telegram", "c1").profile == "home"
+
+
+async def test_a_peer_left_with_nothing_to_choose_is_told_so():
+    directory = FakeDirectory("home")
+    router = ChannelRouter(directory)
+    await router.handle(_inbound("hi"))
+
+    directory.withdraw("home", "telegram:dm")
+    assert await router.handle(_inbound("hi again")) == Refuse(NO_PROFILE_HERE)
+    assert len(directory.gateways["home"].calls) == 1  # only the message before the withdrawal
+
+
+async def test_telegram_groups_are_withdrawn_independently_of_direct_messages():
+    directory = FakeDirectory("work", "home")
+    directory.withdraw("home", "telegram:group")
+    router = ChannelRouter(directory)
+    peers.select_profile("telegram", "g1", "home", surface="group")
+    peers.select_profile("telegram", "c1", "home")
+
+    group = await router.handle(_inbound("hi", chat_id="g1", is_direct=False, mentioned=True))
+    assert group == Refuse(PROFILE_WITHDRAWN)  # a group has no picker to offer
+    assert isinstance(await router.handle(_inbound("hi")), Reply)  # the DM still lands there
+
+
+async def test_the_sole_profile_fallback_does_not_reach_a_withdrawn_profile():
+    directory = FakeDirectory("work")
+    directory.withdraw("work", "telegram:dm")
+    assert await ChannelRouter(directory).handle(_inbound("hi")) == Refuse(NO_PROFILE)
+
+
+async def test_a_withdrawn_channel_default_is_not_smuggled_back():
+    directory = FakeDirectory("work", default="work")
+    directory.withdraw("work", "discord")
+    outcome = await ChannelRouter(directory).handle(_inbound("hi", platform="discord"))
+    assert outcome == Refuse(NO_PROFILE)
+    assert directory.gateways["work"].calls == []
 
 
 # --- /profile ---

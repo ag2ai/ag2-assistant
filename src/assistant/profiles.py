@@ -49,6 +49,24 @@ assert set(CHANNEL_TOKEN_ENVS) == set(CHANNEL_PLATFORMS)
 # Every channel env var name, flattened — the closed set the secrets store accepts.
 CHANNEL_TOKEN_ENV_NAMES = frozenset(e for envs in CHANNEL_TOKEN_ENVS.values() for e in envs)
 
+# Platforms whose direct messages and groups are separate exposure surfaces.
+_SPLIT_PLATFORMS = ("telegram",)
+
+# The surfaces a Profile's Channel exposure is switchable per — each independently
+# withdrawable. A split platform contributes one surface per conversation kind.
+CHANNEL_SURFACES = ("telegram:dm", "telegram:group", "discord", "slack")
+
+
+def surface_key(platform: str, surface: str) -> str:
+    """The exposure surface a conversation sits on: ``telegram:dm`` / ``telegram:group``
+    for a split platform, the platform's own name for the rest."""
+    return f"{platform}:{surface}" if platform in _SPLIT_PLATFORMS else platform
+
+
+assert set(CHANNEL_SURFACES) == {
+    surface_key(p, s) for p in CHANNEL_PLATFORMS for s in ("dm", "group")
+}
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -61,6 +79,8 @@ class ProfileMeta:
     accent: str
     created: str
     archived: bool = field(default=False)
+    # Channel exposure is default-allow: a surface is listed only to withdraw it.
+    withdrawn: list[str] = field(default_factory=list)
 
     @property
     def workspace(self) -> str:
@@ -124,12 +144,16 @@ def _write(data: dict) -> None:
 
 
 def _meta(entry: dict) -> ProfileMeta:
+    withdrawn = entry.get("withdrawn")
     return ProfileMeta(
         id=entry["id"],
         name=entry["name"],
         accent=entry["accent"],
         created=entry["created"],
         archived=bool(entry.get("archived", False)),
+        withdrawn=[s for s in withdrawn if s in CHANNEL_SURFACES]
+        if isinstance(withdrawn, list)
+        else [],
     )
 
 
@@ -269,6 +293,38 @@ def set_onboarded(value: bool = True) -> None:
     data = load_registry()
     data["onboarded"] = bool(value)
     _write(data)
+
+
+# --- channel exposure (default-allow; a record exists only ever to withdraw) ---
+
+
+def exposure(pid: str) -> dict[str, bool]:
+    """Which surfaces this profile is reachable from — every canonical surface present,
+    ``True`` unless it has been withdrawn. Unknown pid → ValueError."""
+    meta = get_profile(pid)
+    if meta is None:
+        raise ValueError(f"unknown profile: {pid}")
+    return {s: s not in meta.withdrawn for s in CHANNEL_SURFACES}
+
+
+def set_exposure(pid: str, surface: str, exposed: bool) -> ProfileMeta:
+    """Expose or withdraw a profile on one surface. Exposing drops the record rather
+    than storing an allow — absence of a record is what reachable means."""
+    if surface not in CHANNEL_SURFACES:
+        raise ValueError(
+            f"unknown channel surface: {surface} (choose from {', '.join(CHANNEL_SURFACES)})"
+        )
+    data = load_registry()
+    entry = _find(data, pid)
+    listed = [s for s in _meta(entry).withdrawn if s != surface]
+    entry["withdrawn"] = listed if exposed else [*listed, surface]
+    _write(data)
+    return _meta(entry)
+
+
+def withdrawn_from(surface: str) -> set[str]:
+    """The ids of every profile withdrawn from ``surface``."""
+    return {e["id"] for e in load_registry()["profiles"] if surface in _meta(e).withdrawn}
 
 
 # --- channel default profiles (install-level; a Channel is never owned, ADR 0019) ---
