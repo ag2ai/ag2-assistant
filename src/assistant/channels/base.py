@@ -1,9 +1,8 @@
 """Channel abstractions — the common surface every messaging platform implements.
 
 A channel adapter normalises an inbound platform message into an `InboundMessage`,
-decides whether the agent should respond (DMs always; groups only on @mention),
-derives a stable chat id, calls the gateway, and sends the reply back in the
-platform's format.
+hands it to the `ChannelRouter`, and renders the outcome that comes back in the
+platform's format. Adapters keep platform concerns; the router decides.
 """
 
 from abc import ABC, abstractmethod

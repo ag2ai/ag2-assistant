@@ -2,10 +2,18 @@
 
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.discord import DiscordChannel
+from assistant.channels.router import ChannelRouter, Outcome
 from assistant.channels.slack import SlackChannel
 from assistant.channels.telegram import TelegramChannel
 
-__all__ = ["Channel", "InboundMessage", "should_respond", "get_channel"]
+__all__ = [
+    "Channel",
+    "ChannelRouter",
+    "InboundMessage",
+    "Outcome",
+    "should_respond",
+    "get_channel",
+]
 
 
 def get_channel(platform: str, **kwargs) -> Channel:

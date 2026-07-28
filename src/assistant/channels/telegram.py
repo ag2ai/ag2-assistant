@@ -20,8 +20,9 @@ from telegram.ext import (
 )
 
 from assistant.attachments import build_input
-from assistant.channels.base import Channel, InboundMessage, should_respond
+from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import markdown_to_plain
+from assistant.channels.router import ChannelRouter, spoken_text
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
@@ -105,13 +106,13 @@ class TelegramChannel(Channel):
         if not self._token:
             raise ValueError("TELEGRAM_BOT_TOKEN not set (env var or token= argument).")
         self._app: Application | None = None
-        self._gateway = None
+        self._router: ChannelRouter | None = None
         self._bot_username: str | None = None
         self._bot_id: int | None = None
         self._pending = PendingAsks()
 
     async def start(self, gateway) -> None:
-        self._gateway = gateway
+        self._router = ChannelRouter(gateway)
         # concurrent_updates lets a button-tap (callback) be handled WHILE a
         # message handler is blocked awaiting that very answer — otherwise PTB
         # processes updates one-at-a-time and HITL deadlocks.
@@ -216,27 +217,26 @@ class TelegramChannel(Channel):
             return
 
         inbound = self._normalize(update)
-        if inbound is None or not should_respond(inbound):
+        if inbound is None or not self._router.accepts(inbound):
             return
 
         # Immediate, always-visible feedback: a placeholder we edit into the reply.
         placeholder = await update.message.reply_text(WORKING_PLACEHOLDER)
 
         attachments = await _download_attachments(msg, context.bot)
-        # A bare attachment with no caption still needs a prompt for the model.
-        text = inbound.text or ("Here is a file I'm sharing with you." if attachments else "")
+        outcome = await self._router.handle(
+            inbound,
+            asker=self._asker_for(chat_id),
+            attachments=attachments,
+        )
+        spoken = spoken_text(outcome)
+        if spoken is None:
+            # Nothing to say — drop the placeholder rather than leave it "working".
+            with contextlib.suppress(Exception):
+                await placeholder.delete()
+            return
 
-        try:
-            reply = await self._gateway.send_message(
-                text,
-                chat_id=inbound.stable_id(),
-                asker=self._asker_for(chat_id),
-                attachments=attachments,
-            )
-        except Exception as exc:  # surface failures to the user
-            reply = f"Sorry, something went wrong: {exc}"
-
-        text = self.format_outbound(reply)
+        text = self.format_outbound(spoken)
         try:
             await placeholder.edit_text(text)
         except Exception:

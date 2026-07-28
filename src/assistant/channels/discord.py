@@ -17,8 +17,9 @@ import re
 import discord
 
 from assistant.attachments import build_input
-from assistant.channels.base import Channel, InboundMessage, should_respond
+from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import split_for_limit
+from assistant.channels.router import ChannelRouter, spoken_text
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
@@ -105,7 +106,7 @@ class DiscordChannel(Channel):
         intents.message_content = True
         self._client = discord.Client(intents=intents)
         self._client.event(self.on_message)
-        self._gateway = None
+        self._router: ChannelRouter | None = None
         self._task: asyncio.Task | None = None
         self._bot_user_id: int | None = None
         self._pending = PendingAsks()
@@ -114,7 +115,7 @@ class DiscordChannel(Channel):
         return DiscordAsker(self._client, channel_id, self._pending)
 
     async def start(self, gateway) -> None:
-        self._gateway = gateway
+        self._router = ChannelRouter(gateway)
         # login() initialises the client (so wait_until_ready works), then
         # connect() runs the gateway loop as a background task.
         await self._client.login(self._token)
@@ -179,21 +180,19 @@ class DiscordChannel(Channel):
             return
 
         inbound = self._normalize(message)
-        if inbound is None or not should_respond(inbound):
+        if inbound is None or not self._router.accepts(inbound):
             return
 
         async with message.channel.typing():
             attachments = await _download_attachments(message)
-            text = inbound.text or ("Here is a file I'm sharing with you." if attachments else "")
-            try:
-                reply = await self._gateway.send_message(
-                    text,
-                    chat_id=inbound.stable_id(),
-                    asker=self._asker_for(channel_id),
-                    attachments=attachments,
-                )
-            except Exception as exc:  # surface failures to the user
-                reply = f"Sorry, something went wrong: {exc}"
+            outcome = await self._router.handle(
+                inbound,
+                asker=self._asker_for(channel_id),
+                attachments=attachments,
+            )
 
-        for chunk in split_for_limit(self.format_outbound(reply), DISCORD_LIMIT):
+        spoken = spoken_text(outcome)
+        if spoken is None:
+            return
+        for chunk in split_for_limit(self.format_outbound(spoken), DISCORD_LIMIT):
             await message.channel.send(chunk)
