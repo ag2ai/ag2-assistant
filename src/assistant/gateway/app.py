@@ -31,6 +31,8 @@ Route map:
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
     GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
     POST /api/channels/default               -> set {platform, profile:pid|null} default profile; returns updated entry
+    GET  /api/channels/{platform}/groups     -> group Peers + the profiles a group there may be pinned to
+    POST /api/channels/{platform}/groups/{chat_id}/profile -> re-point one group (ADR 0019)
     GET  /api/google/*                       -> account-level OAuth (shared like keys)
     GET  /api/fs/list                        -> generic folder browser (pickers)
     GET  /hitl/{req_id}, POST .../answer     -> styled HITL pages over a cross-profile dispatcher
@@ -112,6 +114,7 @@ from assistant import (
     live_configs,
     llm_configs,
     pairing,
+    peers,
     secrets,
     voice_providers,
 )
@@ -541,6 +544,10 @@ class ChannelTokenRequest(BaseModel):
 
 class PairAccountRequest(BaseModel):
     value: str  # a numeric account id (authoritative) or a handle (an invitation)
+
+
+class GroupProfileRequest(BaseModel):
+    profile: str  # the pid to re-point a group Peer at; never null — a group is pinned
 
 
 class MemoryRequest(BaseModel):
@@ -2011,6 +2018,48 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return bad
         pairing.issue_code(platform)
         return _pairing_view(platform)["code"]
+
+    # ---- Group Peers (a group's profile is pinned, and re-pointed only here) ----
+
+    def _group_view(platform: str) -> dict:
+        """Every group Peer on this platform with the profile it is pinned to, plus the
+        profiles a group here may be pointed at — the ones exposed to the group surface,
+        so a profile withheld from groups is absent from this picker too."""
+        return {
+            "groups": [
+                {"chat_id": p.chat_id, "profile": p.profile}
+                for p in peers.list_peers()
+                if p.platform == platform and p.surface == "group"
+            ],
+            "profiles": [
+                {"id": p.id, "name": p.name}
+                for p in manager.available_profiles(profiles_mod.surface_key(platform, "group"))
+            ],
+        }
+
+    @app.get("/api/channels/{platform}/groups")
+    async def list_groups(platform: str):
+        """A Channel's group Peers and what each is pinned to."""
+        return _reject_unknown_platform(platform) or _group_view(platform)
+
+    @app.post("/api/channels/{platform}/groups/{chat_id}/profile")
+    async def set_group_profile(platform: str, chat_id: str, req: GroupProfileRequest):
+        """Re-point one group at a profile exposed to that platform's group surface —
+        the only way a group's profile moves, since /profile is refused there. Moving it
+        leaves the Chat behind, as any switch does. Unknown platform or a profile not
+        reachable from groups → 400; a group with no Peer → 404."""
+        if (bad := _reject_unknown_platform(platform)) is not None:
+            return bad
+        surface = profiles_mod.surface_key(platform, "group")
+        if req.profile not in {p.id for p in manager.available_profiles(surface)}:
+            return JSONResponse(
+                {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400
+            )
+        peer = peers.get_peer(platform, chat_id)
+        if peer is None or peer.surface != "group":
+            return JSONResponse({"error": f"no group peer: {chat_id}"}, status_code=404)
+        peers.select_profile(platform, chat_id, req.profile, surface="group")
+        return _group_view(platform)
 
     # ---- Google OAuth (global, account-level) ----
 

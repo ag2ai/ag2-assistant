@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from assistant import pairing, peers
+from assistant import pairing, peers, profiles
 from assistant.channels.base import InboundMessage, should_respond
 
 if TYPE_CHECKING:
@@ -462,9 +462,9 @@ class ChannelRouter:
             return self._unreachable(inbound, by_id)
         current = self._current_profile(inbound, by_id)
         if current is not None:
-            if len(by_id) == 1:
-                # Place the Peer in the only profile there is, rather than leave it on
-                # a fallback that adding a second profile would silently change.
+            # Pin rather than leave the Peer on a fallback the install could move
+            # under it. A group is pinned always: it is re-pointed only from the WebUI.
+            if len(by_id) == 1 or not inbound.is_direct:
                 self._select(inbound, current)
             return current
 
@@ -477,6 +477,10 @@ class ChannelRouter:
         if not self.paired(inbound):
             return NOTHING
         if token.startswith(PROFILE_TOKEN):
+            if not inbound.is_direct:
+                # No picker is ever offered in a group, so a token arriving from one is
+                # stale or forwarded; the pin holds either way.
+                return Refuse(PROFILE_IN_GROUP)
             profile = self._by_id(inbound).get(token.removeprefix(PROFILE_TOKEN))
             if profile is None:
                 return Refuse(NO_PROFILE)
@@ -507,6 +511,14 @@ class ChannelRouter:
         if gateway is None:
             return Refuse(NO_PROFILE)
         return resolved, gateway
+
+    def _exposed_to(self, peer: peers.Peer) -> bool:
+        """Whether the profile this Peer chose is still reachable from its surface — the
+        same rule `_withdrawn` applies inbound, on the side no message passes through."""
+        if peer.profile is None:
+            return True
+        surface = profiles.surface_key(peer.platform, peer.surface)
+        return peer.profile in {p.id for p in self._directory.available_profiles(surface)}
 
     def _attached_chat(self, inbound: InboundMessage) -> str | None:
         peer = peers.get_peer(inbound.platform, inbound.chat_id)
@@ -555,6 +567,8 @@ class ChannelRouter:
         peer = peers.attached_to(chat)
         if peer is None or peer_key(peer.platform, peer.chat_id) == origin:
             return
+        if not self._exposed_to(peer):
+            return  # a withdrawal closes the push side too, not just the inbound one
         body = mirrored_turn(text, reply, files)
         if body:
             await self._directory.notify_channel(peer.platform, peer.chat_id, body)
@@ -563,7 +577,7 @@ class ChannelRouter:
         """Show a question raised in ``chat`` to the Peer Attached to it, carrying the
         same options the browser offers so either surface can resolve it (ADR 0020)."""
         peer = peers.attached_to(chat)
-        if peer is None:
+        if peer is None or not self._exposed_to(peer):
             return
         question = Choose(
             text,

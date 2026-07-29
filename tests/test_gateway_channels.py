@@ -509,3 +509,90 @@ def test_a_chat_no_peer_is_attached_to_is_pushed_nowhere(monkeypatch):
         assert r.status_code == 200
 
         assert manager.channels["telegram"].pushed == []
+
+
+# --- group Peers: a group's profile is pinned, and re-pointed only from here ---
+
+
+def _two_profiles(client) -> None:
+    client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+    client.post("/api/profiles", json={"name": "Home", "accent": "#c2410c"})
+
+
+def test_groups_list_what_each_is_pinned_to(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile("telegram", "-100", "work", surface="group")
+        peers.select_profile("telegram", "42", "home")  # a DM, not a group
+
+        view = client.get("/api/channels/telegram/groups").json()
+        assert view["groups"] == [{"chat_id": "-100", "profile": "work"}]
+        assert [p["id"] for p in view["profiles"]] == ["work", "home"]
+
+
+def test_a_profile_withheld_from_groups_is_absent_from_the_group_picker(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        client.post(
+            "/api/profiles/home/exposure", json={"surface": "telegram:group", "exposed": False}
+        )
+
+        view = client.get("/api/channels/telegram/groups").json()
+        assert [p["id"] for p in view["profiles"]] == ["work"]
+
+
+def test_re_pointing_a_group_moves_it_and_leaves_its_chat_behind(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile("telegram", "-100", "work", surface="group")
+        peers.attach("telegram", "-100", "tg-1", surface="group")
+
+        r = client.post("/api/channels/telegram/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 200
+        assert r.json()["groups"] == [{"chat_id": "-100", "profile": "home"}]
+        assert peers.get_peer("telegram", "-100").chat is None
+
+
+def test_a_group_cannot_be_pointed_at_a_profile_withheld_from_groups(monkeypatch):
+    """The fence has one gate; the WebUI is not a way around it."""
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile("telegram", "-100", "work", surface="group")
+        client.post(
+            "/api/profiles/home/exposure", json={"surface": "telegram:group", "exposed": False}
+        )
+
+        r = client.post("/api/channels/telegram/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 400
+        assert peers.get_peer("telegram", "-100").profile == "work"
+
+
+def test_re_pointing_something_that_is_not_a_group_peer_404s(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile("telegram", "42", "work")  # a DM
+
+        assert (
+            client.post(
+                "/api/channels/telegram/groups/42/profile", json={"profile": "home"}
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                "/api/channels/telegram/groups/-999/profile", json={"profile": "home"}
+            ).status_code
+            == 404
+        )
+        assert peers.get_peer("telegram", "42").profile == "work"
+
+
+def test_groups_unknown_platform_400(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        assert client.get("/api/channels/irc/groups").status_code == 400
+        assert (
+            client.post(
+                "/api/channels/irc/groups/-100/profile", json={"profile": "work"}
+            ).status_code
+            == 400
+        )

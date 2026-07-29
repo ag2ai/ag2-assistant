@@ -16,12 +16,14 @@ from assistant.channels.router import (
     ANSWERED_ELSEWHERE,
     ATTACHMENT_ONLY_PROMPT,
     ATTACHMENT_UNREADABLE,
+    CHAT_GONE,
     CHOOSE_INSTEAD,
     COMMANDS,
     NO_CHATS,
     NO_PROFILE,
     NO_PROFILE_HERE,
     NOTHING_RUNNING,
+    PROFILE_IN_GROUP,
     PROFILE_WITHDRAWN,
     STOPPED,
     Ack,
@@ -1396,6 +1398,149 @@ async def test_help_lists_every_command():
         assert f"/{command.name}" in outcome.text
         assert command.description in outcome.text
     assert gateway.calls == []
+
+
+# --- groups are fenced ---
+
+
+def _group(text="hi", *, chat_id="g1", **kw):
+    """A message in a group, @mentioned so it is answered at all."""
+    return _inbound(text, chat_id=chat_id, is_direct=False, mentioned=True, **kw)
+
+
+async def test_a_group_pins_the_profile_it_first_landed_in():
+    """A group's Profile is chosen once and held: moving the Channel default afterwards
+    leaves the group where it was."""
+    directory = FakeDirectory("work", "home", default="work")
+    router = ChannelRouter(directory)
+    await router.handle(_group("hello"))
+    assert peers.get_peer("telegram", "g1").profile == "work"
+
+    directory.default = "home"
+    await router.handle(_group("again"))
+    assert directory.gateways["home"].calls == []
+    assert len(directory.gateways["work"].calls) == 2
+
+
+async def test_a_group_is_pinned_from_the_profiles_exposed_to_groups():
+    directory = FakeDirectory("work", "home", default="home")
+    directory.withdraw("home", "telegram:group")
+    router = ChannelRouter(directory)
+
+    assert isinstance(await router.handle(_group("hello")), Reply)
+    assert peers.get_peer("telegram", "g1").profile == "work"
+    assert directory.gateways["home"].calls == []
+
+
+async def test_profile_in_a_group_is_refused_and_the_pin_holds():
+    directory = FakeDirectory("work", "home", default="work")
+    router = ChannelRouter(directory)
+    await router.handle(_group("hello"))
+
+    assert await router.handle(_group("/profile Home")) == Refuse(PROFILE_IN_GROUP)
+    assert peers.get_peer("telegram", "g1").profile == "work"
+
+
+async def test_a_profile_option_tapped_in_a_group_is_refused_too():
+    """No picker is ever offered in a group, so a token arriving from one is stale or
+    forwarded — either way the pin is not the group's to move."""
+    directory = FakeDirectory("work", "home", default="work")
+    router = ChannelRouter(directory)
+    await router.handle(_group("hello"))
+
+    assert await router.choose(_group(""), "profile:home") == Refuse(PROFILE_IN_GROUP)
+    assert peers.get_peer("telegram", "g1").profile == "work"
+
+
+async def test_a_groups_profile_is_re_pointed_from_the_webui():
+    """The only way it moves — and it leaves the Chat behind, as any switch does."""
+    directory = FakeDirectory("work", "home", default="work")
+    router = ChannelRouter(directory)
+    await router.handle(_group("hello"))
+    first = directory.gateways["work"].calls[0]["chat_id"]
+
+    peers.select_profile("telegram", "g1", "home", surface="group")
+    await router.handle(_group("hello again"))
+
+    assert peers.get_peer("telegram", "g1").profile == "home"
+    assert directory.gateways["home"].calls[0]["chat_id"] != first
+
+
+async def test_a_group_left_without_its_profile_recovers_when_re_pointed():
+    """A withdrawal stops a group dead with no picker to offer; the WebUI is what
+    gets it going again."""
+    directory = FakeDirectory("work", "home")
+    router = ChannelRouter(directory)
+    peers.select_profile("telegram", "g1", "home", surface="group")
+    directory.withdraw("home", "telegram:group")
+
+    assert await router.handle(_group("hi")) == Refuse(PROFILE_WITHDRAWN)
+
+    peers.select_profile("telegram", "g1", "work", surface="group")
+    assert isinstance(await router.handle(_group("hi again")), Reply)
+
+
+async def test_resume_in_a_group_offers_only_the_chats_of_its_pinned_profile():
+    directory = FakeDirectory("work", "home", default="work")
+    directory.gateways["work"].add_chat("web-work", "Work things", _ago(minutes=1))
+    directory.gateways["home"].add_chat("web-home", "Home things", _ago(minutes=1))
+    router = ChannelRouter(directory)
+
+    assert _resume_tokens(await router.handle(_group("/resume"))) == ["web-work"]
+
+
+async def test_a_profile_withheld_from_groups_never_shows_a_chat_in_one():
+    """The read-side leak this ticket closes: a group is read by everyone in it, so a
+    Profile withheld from groups must be absent from the picker AND unreachable by a
+    token naming one of its Chats."""
+    directory = FakeDirectory("work", "home", default="work")
+    directory.withdraw("home", "telegram:group")
+    directory.gateways["home"].add_chat("web-home", "Dinner plans", _ago(minutes=1))
+    directory.gateways["work"].add_chat("web-work", "Work things", _ago(minutes=1))
+    router = ChannelRouter(directory)
+
+    assert _resume_tokens(await router.handle(_group("/resume"))) == ["web-work"]
+    assert await router.choose(_group(""), "resume:web-home") == Refuse(CHAT_GONE)
+    assert peers.get_peer("telegram", "g1").chat != "web-home"
+
+
+async def test_a_group_stops_mirroring_a_profile_withdrawn_from_groups():
+    """Attaching was allowed while it was exposed; the withdrawal has to close the
+    push side too, or the browser keeps publishing into the group."""
+    directory = FakeDirectory("work")
+    router = ChannelRouter(directory)
+    gateway = directory.gateways["work"]
+    gateway.set_mirror(router.mirror)
+    gateway.set_question_mirror(router)
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await router.choose(_group(""), "resume:web-1")
+
+    directory.withdraw("work", "telegram:group")
+    await gateway.send_message("what's the weather?", chat_id="web-1")
+    await gateway.raise_question("web-1", "which one?", ("a", "b"))
+
+    assert directory.pushed == []
+    assert directory.asked == []
+
+
+async def test_a_profile_can_be_exposed_to_groups_and_withheld_from_direct_messages():
+    directory = FakeDirectory("work", "home", default="home")
+    directory.withdraw("home", "telegram:dm")
+    directory.withdraw("work", "telegram:group")
+    router = ChannelRouter(directory)
+
+    assert isinstance(await router.handle(_group("hi")), Reply)
+    assert peers.get_peer("telegram", "g1").profile == "home"
+    await router.handle(_inbound("hi", chat_id="c1"))
+    assert peers.get_peer("telegram", "c1").profile == "work"
+
+
+async def test_an_unpaired_account_is_refused_a_command_in_a_group_like_anything_else():
+    directory = FakeDirectory("work", default="work")
+    router = ChannelRouter(directory)
+    assert isinstance(await router.handle(_group("/status", sender_id="2002")), Nothing)
+    assert isinstance(await router.handle(_group("/resume", sender_id="2002")), Nothing)
+    assert peers.get_peer("telegram", "g1") is None
 
 
 # --- who gets answered ---

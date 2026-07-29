@@ -7,7 +7,9 @@
   // applying the returned entry. It never starts or stops the connection. State comes
   // from the GLOBAL GET /api/channels. The bot token(s) are edited inline here (POST
   // /api/channels/token) — stored in the global secrets store, mirroring the API-key
-  // inputs in Settings; values are never echoed back.
+  // inputs in Settings; values are never echoed back. Each platform's GROUP Peers are
+  // listed too: a group's profile is pinned and re-pointed only here (GET/POST
+  // /api/channels/{platform}/groups*), from the profiles exposed to the group surface.
   import { onMount } from 'svelte'
   import { profiles } from '../store.js'
   import { api } from '../transport/api.js'
@@ -36,6 +38,9 @@
   let pairing = $state({})
   // Draft "numeric id or @handle" input per platform.
   let pairDrafts = $state({})
+  // Group Peers per platform: {platform: {groups:[{chat_id, profile}], profiles:[…]}}. A
+  // group's profile is pinned (/profile is refused there), so this row is where it moves.
+  let groups = $state({})
 
   // Unarchived profiles, for the pickers + name/accent lookup.
   const list = $derived(($profiles.list || []).filter((p) => !p.archived))
@@ -48,6 +53,10 @@
         PLATFORMS.map(async (pf) => [pf.id, await api.channelPairing(pf.id)]),
       )
       pairing = Object.fromEntries(entries)
+      const grouped = await Promise.all(
+        PLATFORMS.map(async (pf) => [pf.id, await api.channelGroups(pf.id)]),
+      )
+      groups = Object.fromEntries(grouped)
     } catch (e) { err = String(e.message || e) }
   }
   onMount(load)
@@ -96,6 +105,19 @@
   function codeExpiry(code) {
     const mins = Math.max(0, Math.round((code.expires_at * 1000 - Date.now()) / 60000))
     return mins ? `expires in ${mins} min` : 'expiring now'
+  }
+
+  // Re-point one group at another profile. The route returns the platform's whole group
+  // view, so this is "run it, keep what came back" like the pairing mutations.
+  async function setGroupProfile(platform, chatId, profile) {
+    if (busy || !profile) return
+    busy = platform; err = ''
+    try {
+      groups = { ...groups, [platform]: await api.channelGroupProfile(platform, chatId, profile) }
+    } catch (e) {
+      err = String(e.message || e)
+    }
+    busy = ''
   }
 
   async function setDefault(platform, profile) {
@@ -183,6 +205,7 @@
       {@const st = statusOf(pf.id, c)}
       {@const defaultAccent = c && c.default_profile != null ? profById[c.default_profile]?.accent : null}
       {@const pr = pairing[pf.id]}
+      {@const gp = groups[pf.id]}
       <div class="chrow">
         <div class="chtop">
           <div class="chmeta">
@@ -276,6 +299,34 @@
             <button class="chsave" disabled={busy === pf.id} onclick={() => addAccount(pf.id)}>Pair</button>
           </div>
         </div>
+
+        {#if gp?.groups.length}
+          <div class="chpair">
+            <span class="chpairlab">Groups</span>
+            <p class="chnone chgroupnote">A group's profile is set here, not from the group — anyone in it can read the answers.</p>
+            <ul class="chaccs">
+              {#each gp.groups as g (g.chat_id)}
+                {@const reachable = gp.profiles.some((p) => p.id === g.profile)}
+                <li class="chacc">
+                  <span class="chaccid">{g.chat_id}</span>
+                  {#if !reachable}<span class="chpending">not reachable from groups — pick another</span>{/if}
+                  <select
+                    class="chpick chgrouppick"
+                    aria-label="Profile for group {g.chat_id}"
+                    value={reachable ? g.profile : ''}
+                    disabled={busy === pf.id}
+                    onchange={(e) => setGroupProfile(pf.id, g.chat_id, e.target.value)}
+                  >
+                    {#if !reachable}<option value="">Pick a profile</option>{/if}
+                    {#each gp.profiles as p (p.id)}
+                      <option value={p.id}>{p.name}</option>
+                    {/each}
+                  </select>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
       </div>
     {/each}
   {/if}
@@ -353,6 +404,10 @@
   .chaccid { font-family: var(--font-mono, monospace); font-size: var(--text-xs); }
   .chpending { flex: 1; min-width: 0; font-size: var(--text-xs); color: var(--text-muted); }
   .chacc .chclear { margin-left: auto; }
+
+  /* Group Peers — a pinned profile, re-pointed only from here. */
+  .chgroupnote { color: var(--text-muted); }
+  .chgrouppick { margin-left: auto; padding: 5px 26px 5px 8px; font-size: var(--text-xs); }
 
   .chmuted { font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
   .cherr { font-size: var(--text-sm); color: var(--danger, var(--danger)); margin: 0 0 6px; }

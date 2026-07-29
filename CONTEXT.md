@@ -310,7 +310,9 @@ speak in a group Peer), conversation
 **Peer profile**:
 The Profile a **Peer** currently speaks to — persistent, platform-side, surviving
 restarts. Chosen per Peer and never inherited from another Peer. Changing it always
-moves the Peer to a fresh **Chat**, because a Chat cannot cross Profiles.
+moves the Peer to a fresh **Chat**, because a Chat cannot cross Profiles. A group Peer's
+is *pinned*: chosen once when the bot first speaks there and re-pointed only from the
+WebUI, since a group is read by everyone in it and by nobody's choice but the install's.
 _Avoid_: active profile (**Active** names the model selection, and the WebUI's
 "active Profile" is whichever Profile the open client is viewing — both are unrelated
 senses), current profile, bound profile

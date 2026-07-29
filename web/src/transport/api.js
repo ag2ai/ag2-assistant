@@ -173,6 +173,13 @@ export const api = {
   channelUnpair: (platform, key) =>
     j('DELETE', G(`/channels/${platform}/pairing/${encodeURIComponent(key)}`)),
   channelPairingCode: (platform) => j('POST', G(`/channels/${platform}/pairing/code`)),
+  // Group Peers — a group's profile is pinned and /profile is refused there, so this is
+  // the only way it moves. channelGroups() → {groups:[{chat_id, profile}], profiles:[{id,
+  // name}]}, the profiles being the ones exposed to that platform's GROUP surface;
+  // channelGroupProfile re-points one group and returns that same shape.
+  channelGroups: (platform) => j('GET', G(`/channels/${platform}/groups`)),
+  channelGroupProfile: (platform, chatId, profile) =>
+    j('POST', G(`/channels/${platform}/groups/${encodeURIComponent(chatId)}/profile`), { profile }),
   // Universal "who the user is" memory — a single install-wide doc shared by every
   // profile (identity facts). GLOBAL routes; the per-profile persona memory is
   // getMemory/setMemory below.
