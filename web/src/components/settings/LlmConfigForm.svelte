@@ -143,7 +143,8 @@
   // (family[effort] = model + reasoning); claude ids do NOT (the bracket there is
   // part of the model preference, e.g. "opus[1m]" = 1M context) — one flat select.
   const acpAgent = $derived(type === 'codex' ? 'codex' : type === 'claude_code' ? 'claude' : '')
-  let catalogs = $state({}) // agent -> 'loading' | {models, current, reason}
+  /** @type {Record<string, 'loading' | import('../../transport/api.js').Catalog>} */
+  let catalogs = $state({})
   function fetchCatalog(agent, refresh = false) {
     catalogs[agent] = 'loading'
     api.codingModels(agent, refresh)
@@ -154,8 +155,11 @@
     if (acpAgent && catalogs[acpAgent] === undefined) fetchCatalog(acpAgent)
   })
   const acpLoading = $derived(!!acpAgent && catalogs[acpAgent] === 'loading')
-  const acpState = $derived(acpLoading ? null : catalogs[acpAgent] || null)
-  const acpCatalog = $derived(acpState?.models || [])
+  // The typeof guard is what separates the 'loading' sentinel from a loaded
+  // catalog — narrowing the union here rather than leaning on acpLoading, which
+  // reads the same slot but can't tell the type checker anything about it.
+  const acpState = $derived(typeof catalogs[acpAgent] === 'object' ? catalogs[acpAgent] : null)
+  const acpCatalog = $derived(acpState?.models ?? [])
   // The adapter's own current selection labels the "CLI default" row, so leaving
   // the model empty is a legible choice rather than a blind one.
   const defaultLabel = $derived(acpState?.current ? `CLI default (${acpState.current})` : 'CLI default')
@@ -372,7 +376,7 @@
       <!-- Requirements only; the model list comes from the adapter itself, so no
            example model names are spelled out here (they rot with every release). -->
       {#if type === 'claude_code'}
-        <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH and a logged-in Claude Code CLI.</span>
+        <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH (<code>npm i -g @agentclientprotocol/claude-agent-acp</code>) and a logged-in Claude Code CLI.</span>
       {:else}
         <span class="llmhint">Requires the <code>codex-acp</code> adapter on PATH (<code>npm i -g @agentclientprotocol/codex-acp</code>) and a logged-in Codex CLI.</span>
       {/if}
