@@ -9,6 +9,16 @@ import { api as P, globalApi as G, pidApi as PID, onProfileGone } from '../lib/p
 import { parseEtag } from '../lib/fileEdit.js'
 import { rawQuery } from '../lib/folderFiles.js'
 
+// One ACP adapter's model catalog (see codingModels below). Mirrors the
+// CatalogModel dataclass + as_view() shape in assistant/coding/model_catalog.py;
+// `reason` is '' on success, else why the catalog is empty. Declared here so the
+// consumers get the shape from the transport layer: import('…/api.js').Catalog.
+/**
+ * @typedef {{id: string, name: string, description: string}} CatalogModel
+ * @typedef {{models: CatalogModel[], current: string,
+ *            reason: '' | 'adapter_missing' | 'bridge' | 'probe_failed'}} Catalog
+ */
+
 // The one response check both helpers share: the profile-gone recovery (410, or 404
 // on a scoped route) and the error extraction off a non-2xx body. Kept in one place so
 // a fix to the 410 recovery or the error shape lands for JSON and multipart alike.
@@ -145,6 +155,14 @@ export const api = {
   // routes (account-level, shared across profiles — like Google).
   codexStatus: () => j('GET', G('/codex/status')),
   codexLoginUrl: () => j('POST', G('/codex/login_url')),
+  // An ACP adapter's model catalog (agent: 'claude' | 'codex') for the Settings
+  // picker. An empty catalog carries a reason, so the form can say why it fell
+  // back to a free-text model field. refresh skips the server's TTL cache.
+  // The response shape is declared as a typedef above — mirror of the
+  // CatalogModel dataclass in assistant/coding/model_catalog.py.
+  /** @returns {Promise<Catalog>} */
+  codingModels: (agent, refresh = false) =>
+    j('GET', G(`/coding/${agent}/models${refresh ? '?refresh=1' : ''}`)),
   codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
   codexLogout: () => j('POST', G('/codex/logout')),
   // Messaging channels are install-level: a platform binds to exactly one profile

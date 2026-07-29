@@ -55,6 +55,12 @@ _DEFAULT_AGGREGATE_MODEL = {
     "openai": "gpt-5-mini",
 }
 
+# Providers that are a coding CLI driven over ACP rather than an HTTP API: the
+# model config comes from acp_provider.BUILDERS and the per-call timeout does not
+# apply (see _build_middleware). Kept as a plain tuple so the branch below can be
+# taken without importing the coding package.
+ACP_PROVIDERS = ("claude_code", "codex")
+
 
 def model_config(config: Config, model: str | None = None):
     """Build the AG2 ModelConfig for the configured provider.
@@ -73,12 +79,12 @@ def model_config(config: Config, model: str | None = None):
     provider = config.llm.provider.lower()
     api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     opts = dict(config.llm.provider_options.get(provider) or {})
-    if provider == "claude_code":
-        # Claude Code over ACP: the CLI's own disk login is the auth (no key),
+    if provider in ACP_PROVIDERS:
+        # Coding CLI over ACP: the CLI's own disk login is the auth (no key),
         # and the entry's Advanced options are ACPConfig constructor overrides.
         from assistant.coding import acp_provider
 
-        return acp_provider.build_model_config(config, model=model, options=opts)
+        return acp_provider.BUILDERS[provider](config, model=model, options=opts)
     if provider == "anthropic":
         return AnthropicConfig(
             **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
@@ -160,10 +166,10 @@ def _build_middleware(config: Config) -> list:
         # transient hang or 429/5xx becomes a hiccup, not a failure.
         LLMRetryMiddleware(config.llm.call_retries),
     ]
-    if config.llm.provider.lower() != "claude_code":
+    if config.llm.provider.lower() not in ACP_PROVIDERS:
         # Wall-clock ceiling per LLM call: a hung/stalled provider call raises
         # instead of awaiting forever (the incident's silent 2-hour hang). NOT
-        # for ACP-backed models: there one "call" is Claude Code's whole inner
+        # for the CLI agent: there one "call" is the CLI agent's whole inner
         # tool loop, so the per-call ceiling is ACPConfig.turn_timeout; the
         # silence watchdog covers wedges.
         middleware.append(LLMTimeoutMiddleware(config.llm.call_timeout_s))

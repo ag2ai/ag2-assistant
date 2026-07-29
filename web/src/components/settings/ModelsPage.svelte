@@ -35,8 +35,13 @@
     { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude' },
     {
       name: 'Claude Code', card: 'Claude Code · CLI login',
-      type: 'claude_code', model: 'sonnet',
+      type: 'claude_code', model: '',
       blurb: 'Run on your Claude Code CLI login (subscription) over ACP — no API key',
+    },
+    {
+      name: 'Codex', card: 'Codex · CLI login',
+      type: 'codex', model: '',
+      blurb: 'Run on your Codex CLI login (ChatGPT subscription) over ACP — no API key',
     },
     { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Local Ollama' },
     {
@@ -114,8 +119,9 @@
   function keyChip(c) {
     if (c.key_source === 'subscription')
       return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
-    if (c.key_source === 'cli_login') return 'Claude Code CLI login'
+    if (c.key_source === 'cli_login') return c.type === 'codex' ? 'Codex CLI login' : 'Claude Code CLI login'
     if (c.type === 'claude_code') return 'Claude Code adapter not found — install claude-agent-acp'
+    if (c.type === 'codex') return 'Codex adapter not found — install @agentclientprotocol/codex-acp'
     if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
     if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
     if (c.key_source === 'not_needed') return 'no key needed'
@@ -156,7 +162,9 @@
         {c.name}
         {#if c.active}<span class="llmbadge">active</span>{/if}
       </div>
-      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
+      <!-- An empty model is legal for the CLI-login types (= the CLI's own default);
+           name it instead of leaving a dangling separator. -->
+      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model || 'CLI default'}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
         <!-- Images follow the ACTIVE config: capable types advertise the chip, and on

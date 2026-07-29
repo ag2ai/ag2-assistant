@@ -100,13 +100,24 @@ npm install -g @agentclientprotocol/claude-agent-acp   # the ACP adapter, must b
 claude --version                                        # Claude Code CLI installed and logged in
 ```
 
-Add a "Claude Code" config in **Settings → Models** (the model field takes `sonnet` / `opus` / `haiku` or a full model id). What you get:
+Add a "Claude Code" config in **Settings → Models**. The model list is read from the adapter itself (no model names are hardcoded here or in the UI), and leaving it on *CLI default* uses whatever your CLI is configured for. What you get:
 
 - **All assistant tools work.** The agent's full tool registry (weather, web search, memory, channels, skills, MCP servers, …) is served to Claude Code over a local in-process MCP gateway (`127.0.0.1`, secret URL path). Tool calls execute through the assistant's own event stream, so permissions, approval prompts, and streaming tool cards behave exactly as with any other provider.
 - **Workspace confinement.** The ACP session's filesystem access is scoped to the profile workspace directory.
 - **Advanced options** on the config are ACP constructor overrides (`turn_timeout`, `allow_terminal`, …), not API sampling params.
 
 Limitations: in Docker the assistant reaches the host CLI through the ACP bridge (`AG2ASSISTANT_ACP_BRIDGE` — container-only plumbing; don't set it for host runs) and tool exposure is disabled there; per-token usage/cost isn't reported for ACP turns. Note Anthropic's terms restrict *distributing* products that ride a claude.ai login — a locally-run personal instance driving your own CLI is the same shape as Zed's adapter.
+
+#### Codex (ChatGPT subscription) as the main model
+
+The **Codex · CLI login** configuration type is the same integration for OpenAI's Codex CLI: the main agent runs over ACP on your Codex CLI login (`~/.codex`), no API key. Requirements:
+
+```bash
+npm install -g @agentclientprotocol/codex-acp   # the ACP adapter, must be on PATH
+codex login status                               # Codex CLI logged in (ChatGPT subscription)
+```
+
+Add a "Codex" config in **Settings → Models**. Model and reasoning effort are two selects, filled from the adapter's own catalog (Codex reports them as one `name[reasoning]` id, which is what gets stored); *CLI default* uses the CLI's own model. Everything from the Claude Code section applies unchanged: the assistant's tools are exposed over the local MCP gateway, filesystem access is confined to the profile workspace, Advanced options are ACP constructor overrides, and the same Docker-bridge and usage-reporting limitations hold.
 
 ### Google
 
