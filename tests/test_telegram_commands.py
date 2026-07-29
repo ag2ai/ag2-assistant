@@ -9,7 +9,17 @@ back to the router.
 from types import SimpleNamespace
 
 import assistant.channels.telegram as telegram_mod
-from assistant.channels.router import COMMANDS, Ack, Choose, Nothing, Option, Refuse, Reply
+from assistant.channels.router import (
+    COMMANDS,
+    Ack,
+    Choose,
+    Nothing,
+    Option,
+    Refuse,
+    Reply,
+    ToolCall,
+    tool_trace,
+)
 from assistant.channels.telegram import TelegramChannel
 
 
@@ -455,3 +465,191 @@ async def test_an_ordinary_message_still_gets_its_placeholder():
 
     assert message.replies == [telegram_mod.WORKING_PLACEHOLDER]
     assert message.reactions == []
+
+
+# --- the Tool trace in the placeholder ---
+
+
+class _Clock:
+    """A hand-wound clock, so the edit cadence is testable without waiting."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _tracer(placeholder, clock=None) -> telegram_mod.TraceEditor:
+    return telegram_mod.TraceEditor(placeholder, clock=clock or _Clock())
+
+
+def _trace_text(*names: str, working: bool = False) -> str:
+    """A trace as the router renders it — the adapter is given nothing else."""
+    return tool_trace(tuple(ToolCall(name, {"path": "a.py"}) for name in names), working=working)
+
+
+async def test_the_first_traced_call_lands_in_the_placeholder():
+    placeholder = _FakeMessage()
+    live = _trace_text("read_file", working=True)
+
+    await _tracer(placeholder)(live)
+
+    assert placeholder.text == live
+    assert placeholder.replies == []  # no second message for a decoration
+
+
+async def test_a_further_call_inside_the_throttle_window_is_not_shown():
+    """Nothing paces an edit for us, and an edit storm would delay the answer itself."""
+    placeholder = _FakeMessage()
+    clock = _Clock()
+    tracer = _tracer(placeholder, clock)
+
+    await tracer("first")
+    clock.now += telegram_mod.TRACE_INTERVAL / 2
+    await tracer("second")
+
+    assert placeholder.text == "first"
+
+
+async def test_a_call_after_the_throttle_window_is_shown():
+    placeholder = _FakeMessage()
+    clock = _Clock()
+    tracer = _tracer(placeholder, clock)
+
+    await tracer("first")
+    clock.now += telegram_mod.TRACE_INTERVAL * 2
+    await tracer("second")
+
+    assert placeholder.text == "second"
+
+
+async def test_the_settled_trace_lands_however_much_was_skipped():
+    """The trace left behind is never a stale one."""
+    placeholder = _FakeMessage()
+    tracer = _tracer(placeholder)
+
+    settled = _trace_text("read_file", "write_file")
+
+    await tracer(_trace_text("read_file", working=True))
+    await tracer(settled, final=True)
+
+    assert placeholder.text == settled
+
+
+async def test_a_refused_trace_edit_is_swallowed():
+    """A rate limit costs the trace, not the turn."""
+
+    class _Unwritable(_FakeMessage):
+        async def edit_text(self, text, reply_markup=None):
+            raise RuntimeError("too many requests")
+
+    tracer = _tracer(_Unwritable())
+    await tracer(_trace_text("read_file", working=True))
+    assert tracer.traced is False  # so the reply still edits into the placeholder
+
+
+async def test_a_reply_arrives_as_its_own_message_beneath_a_trace():
+    ch = _telegram_channel()
+    placeholder = _FakeMessage()
+    message = _FakeMessage()
+    tracer = _tracer(placeholder)
+    await tracer(_trace_text("read_file"), final=True)
+
+    await ch._render(Reply("the answer"), placeholder, message, traced=tracer.traced)
+
+    assert placeholder.text == _trace_text("read_file")  # the record is kept
+    assert message.replies == ["the answer"]
+
+
+async def test_a_reply_still_edits_the_placeholder_when_nothing_was_traced():
+    ch = _telegram_channel()
+    placeholder = _FakeMessage()
+    message = _FakeMessage()
+
+    await ch._render(Reply("the answer"), placeholder, message, traced=False)
+
+    assert placeholder.text == "the answer"
+    assert message.replies == []
+
+
+async def test_a_silent_outcome_keeps_a_traced_placeholder():
+    """A stopped turn's record of work is not litter to be cleared away."""
+    ch = _telegram_channel()
+    placeholder = _FakeMessage()
+    await _tracer(placeholder)(_trace_text("read_file"), final=True)
+
+    await ch._render(Nothing(), placeholder, _FakeMessage(), traced=True)
+
+    assert placeholder.deleted is False
+    assert placeholder.text == _trace_text("read_file")
+
+
+async def test_a_long_reply_beneath_a_trace_is_still_split(monkeypatch):
+    monkeypatch.setattr(telegram_mod, "TELEGRAM_LIMIT", 15)
+    ch = _telegram_channel()
+    placeholder = _FakeMessage()
+    message = _FakeMessage()
+
+    await ch._render(Reply("First part.\n\nSecond part."), placeholder, message, traced=True)
+
+    assert message.replies == ["First part.", "Second part."]
+
+
+async def test_a_turn_is_given_a_tracer_bound_to_its_placeholder():
+    ch, _ = _asking_channel(Reply("the answer"))
+    handed: list = []
+    ch._router.handle = lambda inbound, **kw: handed.append(kw.get("progress")) or _noop()
+
+    message = _incoming("what's in a.py?")
+    await ch._on_message(SimpleNamespace(message=message), _context())
+
+    assert isinstance(handed[0], telegram_mod.TraceEditor)
+
+
+async def test_a_steering_message_is_given_no_tracer():
+    """It has no placeholder of its own to grow — the running turn's trace is elsewhere."""
+    ch, _ = _asking_channel(Ack())
+    ch._router._steering = True
+    handed: list = []
+    ch._router.handle = lambda inbound, **kw: handed.append(kw.get("progress")) or _noop()
+
+    await ch._on_message(SimpleNamespace(message=_incoming("focus on 2026")), _context())
+
+    assert handed == [None]
+
+
+async def test_a_settled_trace_that_will_not_land_gives_way_to_the_answer():
+    """Better to lose the trace than to leave a finished turn reading as running."""
+
+    class _Unwritable(_FakeMessage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.refuse = False
+
+        async def edit_text(self, text, reply_markup=None):
+            if self.refuse:
+                raise RuntimeError("too many requests")
+            await super().edit_text(text)
+
+    ch = _telegram_channel()
+    placeholder = _Unwritable()
+    tracer = _tracer(placeholder)
+    await tracer(_trace_text("read_file", working=True))
+    placeholder.refuse = True
+    await tracer(_trace_text("read_file"), final=True)
+
+    assert tracer.traced is False
+    placeholder.refuse = False
+    await ch._render(Reply("the answer"), placeholder, _FakeMessage(), traced=tracer.traced)
+    assert placeholder.text == "the answer"
+
+
+async def test_a_trace_goes_out_exactly_as_it_was_rendered():
+    """No parse mode and no Markdown pass, so a path with underscores in it survives."""
+    placeholder = _FakeMessage()
+    trace = tool_trace((ToolCall("read_file", {"path": "src/__init__.py"}),), working=True)
+
+    await _tracer(placeholder)(trace)
+
+    assert "src/__init__.py" in placeholder.text

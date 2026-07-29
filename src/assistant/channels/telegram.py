@@ -9,6 +9,7 @@ typing indicator isn't reliably rendered for bots on Desktop/Web).
 import asyncio
 import contextlib
 import os
+import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -28,6 +29,9 @@ from assistant.hitl.channel import PendingAsks
 from assistant.observability import log_suppressed
 
 WORKING_PLACEHOLDER = "⏳ Sorting that out…"
+# The least time between two Tool trace edits — nothing paces an edit for us, and
+# flood control is applied to the whole conversation.
+TRACE_INTERVAL = 2.0
 FED_REACTION = "👀"  # "received, will use" on a message fed into a running turn
 TELEGRAM_LIMIT = 4096  # Telegram's per-message character cap
 _CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
@@ -104,6 +108,38 @@ class TelegramAsker(PendingGuard):
         finally:
             self._questions.pop(message.message_id, None)
             self._pending.discard(self._chat_id)
+
+
+class TraceEditor:
+    """Keeps a turn's Tool trace in the placeholder the turn already has.
+
+    Edits are throttled to `TRACE_INTERVAL`; the turn's final report skips the
+    throttle. Text goes out verbatim, as the plain text it already is.
+    """
+
+    def __init__(self, placeholder, clock=time.monotonic) -> None:
+        self._placeholder = placeholder
+        self._clock = clock
+        self._last: float | None = None
+        # Whether the placeholder holds a settled trace: the reply then arrives beneath
+        # it rather than editing over it, and a silent outcome leaves it standing.
+        self.traced = False
+
+    async def __call__(self, text: str, *, final: bool = False) -> None:
+        now = self._clock()
+        if not final and self._last is not None and now - self._last < TRACE_INTERVAL:
+            return
+        self._last = now
+        try:
+            await self._placeholder.edit_text(text)
+        except Exception as exc:
+            log_suppressed("telegram tool trace edit", exc)
+            # A settled trace that would not land is given up entirely, so the answer
+            # edits over it: no message is left saying "working" after the turn ended.
+            if final:
+                self.traced = False
+        else:
+            self.traced = True
 
 
 class TelegramChannel(Channel):
@@ -333,16 +369,20 @@ class TelegramChannel(Channel):
         steering = self._router.steers(inbound)
         placeholder = None if steering else await update.message.reply_text(WORKING_PLACEHOLDER)
 
+        # The placeholder doubles as the turn's Tool trace while it runs; a steered
+        # message has none, and the turn it feeds is already tracing into its own.
+        tracer = TraceEditor(placeholder) if placeholder is not None else None
         attachments = await _download_attachments(msg, context.bot)
         outcome = await self._router.handle(
             inbound,
             asker=self._asker_for(chat_id),
             attachments=attachments,
+            progress=tracer,
         )
         if placeholder is None:
             await self._acknowledge(outcome, msg)
             return
-        await self._render(outcome, placeholder, update.message)
+        await self._render(outcome, placeholder, update.message, traced=tracer.traced)
 
     async def _acknowledge(self, outcome: Outcome, message) -> None:
         """Render an outcome that has no placeholder to land in: a reaction for a
@@ -372,30 +412,34 @@ class TelegramChannel(Channel):
             await self._send(inbound.chat_id, spoken)
         return True
 
-    async def _render(self, outcome: Outcome, placeholder, message) -> None:
+    async def _render(self, outcome: Outcome, placeholder, message, *, traced=False) -> None:
         """Turn the router's outcome into Telegram: text edited into the placeholder,
-        a choice as option buttons, silence as a deleted placeholder."""
+        a choice as option buttons, silence as a deleted placeholder. A placeholder
+        holding a Tool trace is left alone, and the answer arrives beneath it."""
+        home = None if traced else placeholder
         if isinstance(outcome, Choose):
             markup = self._options_markup(outcome)
-            await self._say(self.format_outbound(outcome.text), placeholder, message, markup)
+            await self._say(self.format_outbound(outcome.text), home, message, markup)
             return
 
         spoken = spoken_text(outcome)
         if spoken is None:
-            # Nothing to say — drop the placeholder rather than leave it "working".
-            with contextlib.suppress(Exception):
-                await placeholder.delete()
+            if not traced:
+                # Nothing to say — drop the placeholder rather than leave it "working".
+                with contextlib.suppress(Exception):
+                    await placeholder.delete()
             return
-        await self._say(self.format_outbound(spoken), placeholder, message, None)
+        await self._say(self.format_outbound(spoken), home, message, None)
 
     async def _say(self, text: str, placeholder, message, markup) -> None:
         """Deliver text within Telegram's size cap: the first chunk edits the
-        placeholder, the rest follow as new messages in order."""
+        placeholder when there is one to edit, the rest follow as new messages in
+        order."""
         chunks = split_for_limit(text, TELEGRAM_LIMIT)
         for index, chunk in enumerate(chunks):
             # Buttons belong under the whole answer, so only the last chunk carries them.
             markup_for_chunk = markup if index == len(chunks) - 1 else None
-            if index == 0:
+            if index == 0 and placeholder is not None:
                 try:
                     await placeholder.edit_text(chunk, reply_markup=markup_for_chunk)
                     continue

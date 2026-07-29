@@ -9,8 +9,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
+from ag2.events import ToolCallsEvent
+
 from assistant import pairing, peers, profiles
 from assistant.channels.base import InboundMessage, should_respond
+from assistant.observability import log_suppressed
 
 if TYPE_CHECKING:
     from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
@@ -224,6 +227,110 @@ def mirrored_turn(text: str, reply: str, files: tuple[str, ...] = ()) -> str:
         for role, body in (("user", said(text, files)), ("agent", reply.strip()))
         if body
     )
+
+
+# --- the Tool trace: the tools a Peer's own turn called, as that Peer reads them ---
+
+# The marker every line carries — one generic one, never a per-tool icon.
+TRACE_MARKER = "•"
+
+# What a trace carries while its turn is still in flight.
+TRACE_WORKING = "⏳ Working…"
+
+# How many of the most recent calls a trace shows. A bound, because the trace lives
+# in one editable message with a per-message cap.
+TRACE_LINES = 12
+
+# The argument a call is previewed by, most telling first — the first one present, or
+# nothing at all.
+PREVIEW_KEYS = ("path", "query", "name", "url", "file", "command")
+PREVIEW_CHARS = 40
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One call in a Tool trace: the tool's name and the arguments it was given."""
+
+    name: str
+    arguments: dict
+
+
+def call_preview(arguments: dict) -> str:
+    """The short text a call is named by: its first preferred argument, clipped. Empty
+    when that argument is structured data, which is omitted rather than serialised."""
+    for key in PREVIEW_KEYS:
+        if key not in arguments:
+            continue
+        value = arguments[key]
+        if not isinstance(value, str) or not value.strip():
+            return ""
+        text = " ".join(value.split())
+        return f"{text[:PREVIEW_CHARS].rstrip()}…" if len(text) > PREVIEW_CHARS else text
+    return ""
+
+
+def tool_line(call: ToolCall) -> str:
+    """One call as a line: what was called, and what it was about when that is short."""
+    preview = call_preview(call.arguments)
+    return f"{TRACE_MARKER} {call.name}" + (f' "{preview}"' if preview else "")
+
+
+def earlier_calls(count: int) -> str:
+    """What a trace says about the calls it had to drop to stay within its bound."""
+    return f"… {count} earlier {'call' if count == 1 else 'calls'} not shown"
+
+
+def tool_trace(calls: tuple[ToolCall, ...], *, working: bool) -> str:
+    """A turn's tool calls as one block of plain text — the Telegram counterpart of the
+    browser's chips. Empty for a turn that called nothing, which then shows no trace."""
+    if not calls:
+        return ""
+    shown = calls[-TRACE_LINES:]
+    lines = [TRACE_WORKING] if working else []
+    if len(calls) > len(shown):
+        lines.append(earlier_calls(len(calls) - len(shown)))
+    lines.extend(tool_line(call) for call in shown)
+    return "\n".join(lines)
+
+
+def call_arguments(call) -> dict:
+    """A tool call's arguments as a mapping — empty when they parse to anything else."""
+    try:
+        arguments = call.serialized_arguments
+    except Exception:
+        return {}
+    return arguments if isinstance(arguments, dict) else {}
+
+
+class ToolTrace:
+    """Accumulates one turn's tool calls and reports the whole trace to the adapter's
+    ``progress`` callback, which owns when and how it is shown. Best-effort: a trace
+    the adapter cannot deliver never fails a turn."""
+
+    def __init__(self, progress) -> None:
+        self._progress = progress
+        self._calls: list[ToolCall] = []
+
+    async def __call__(self, event) -> None:
+        """Take one of the turn's events, tracing only the batch tool-call one — the
+        per-provider singular event duplicates it."""
+        if not isinstance(event, ToolCallsEvent):
+            return
+        self._calls.extend(
+            ToolCall(getattr(call, "name", "") or "", call_arguments(call)) for call in event.calls
+        )
+        await self._report(working=True)
+
+    async def settle(self) -> None:
+        """Report the finished trace once, without the working marker."""
+        if self._calls:
+            await self._report(working=False, final=True)
+
+    async def _report(self, *, working: bool, final: bool = False) -> None:
+        try:
+            await self._progress(tool_trace(tuple(self._calls), working=working), final=final)
+        except Exception as exc:
+            log_suppressed("channel tool trace", exc)
 
 
 def peer_key(platform: str, chat_id: str) -> str:
@@ -723,8 +830,11 @@ class ChannelRouter:
         *,
         asker=None,
         attachments: list | None = None,
+        progress=None,
     ) -> Outcome:
-        """Run ``inbound`` and return what the adapter should render."""
+        """Run ``inbound`` and return what the adapter should render. ``progress`` is an
+        optional async ``(text, *, final) -> None`` given this turn's Tool trace as it
+        grows and once more when it ends; an adapter passing none gets today's turn."""
         if not should_respond(inbound):
             return NOTHING
         if not self.paired(inbound):
@@ -754,6 +864,7 @@ class ChannelRouter:
         if await gateway.feed_message(text, chat_id, attachments or []):
             return Ack()
 
+        trace = ToolTrace(progress)
         try:
             reply = await gateway.send_message(
                 text,
@@ -761,9 +872,16 @@ class ChannelRouter:
                 asker=asker,
                 attachments=attachments or [],
                 origin=peer_key(inbound.platform, inbound.chat_id),
+                # Wired only for an adapter that asked to trace; the rest run the
+                # unforwarded path.
+                on_event=trace if progress is not None else None,
             )
         except Exception as exc:  # surface failures to the user
             return Reply(f"Sorry, something went wrong: {exc}")
+        finally:
+            # A turn that ends any way at all — answered, stopped, failed — leaves its
+            # trace settled behind it (ADR 0018).
+            await trace.settle()
         # A stopped turn comes back with nothing to say; say nothing rather than an
         # empty reply, so the adapter drops the placeholder instead of leaving it.
         return Reply(reply) if reply else NOTHING

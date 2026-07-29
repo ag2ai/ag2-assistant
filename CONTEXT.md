@@ -353,6 +353,15 @@ elsewhere (ADR 0020).
 _Avoid_: sync, broadcast, echo, notification (a task outcome pushed to a Peer is a
 separate, unattached-delivery concept)
 
+**Tool trace**:
+The list of tools a **Peer**'s own turn called, shown in the conversation as that turn
+runs and left behind as its record. Live while the turn is in flight, bounded in
+length, and kept when the turn is stopped or fails. Distinct from the **Mirror**, which
+carries a Chat's *completed* messages to an Attached Peer and never its intermediate
+work.
+_Avoid_: log, chips (the browser's rendering of the same events), progress (that names
+the delivery callback, not the thing shown)
+
 ## Folders
 
 **Folder**:

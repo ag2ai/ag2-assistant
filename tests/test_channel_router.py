@@ -4,10 +4,12 @@ Drives the router with normalised inbound messages and asserts the outcome it
 returns, plus what reached the gateway underneath.
 """
 
+import json
 import re
 from datetime import datetime, timedelta
 
 import pytest
+from ag2.events import ModelMessage, ToolCallEvent, ToolCallsEvent
 
 from assistant import pairing, peers
 from assistant.channels.base import InboundMessage
@@ -26,6 +28,8 @@ from assistant.channels.router import (
     PROFILE_IN_GROUP,
     PROFILE_WITHDRAWN,
     STOPPED,
+    TRACE_LINES,
+    TRACE_WORKING,
     Ack,
     AvailableProfile,
     ChannelRouter,
@@ -34,7 +38,11 @@ from assistant.channels.router import (
     Option,
     Refuse,
     Reply,
+    ToolCall,
+    ToolTrace,
+    earlier_calls,
     spoken_text,
+    tool_trace,
 )
 
 # The account every test below speaks as. Numeric, because a numeric id is what a
@@ -58,8 +66,15 @@ class FakeGateway:
         # Chats with a turn in flight, and what has been fed into those turns.
         self.running: set[str] = set()
         self.fed: list[dict] = []
+        # Tool calls the next turn makes, one ToolCallsEvent per batch.
+        self.tool_batches: list[tuple[tuple[str, dict], ...]] = []
         self._mirror = None
         self._questions = None
+
+    def will_call_tools(self, *batches: tuple[tuple[str, dict], ...]) -> None:
+        """The tool calls the next turn makes — each batch emitted as one event, the
+        way a model response that calls several tools at once arrives."""
+        self.tool_batches = list(batches)
 
     def start_turn(self, chat_id: str) -> None:
         """A turn in flight on this chat — what a steering message is fed into."""
@@ -129,15 +144,32 @@ class FakeGateway:
         attachments=None,
         origin="",
         attachment_names=(),
+        on_event=None,
         **kw,
     ):
         self.calls.append(
-            {"text": text, "chat_id": chat_id, "asker": asker, "attachments": attachments}
+            {
+                "text": text,
+                "chat_id": chat_id,
+                "asker": asker,
+                "attachments": attachments,
+                "on_event": on_event,
+            }
         )
         chat = self.chats.setdefault(
             chat_id, {"chat_id": chat_id, "title": "", "updated": "", "turns": 0}
         )
         chat["turns"] += 1
+        if on_event is not None:
+            for batch in self.tool_batches:
+                await on_event(
+                    ToolCallsEvent(
+                        calls=[
+                            ToolCallEvent(name=name, arguments=json.dumps(arguments))
+                            for name, arguments in batch
+                        ]
+                    )
+                )
         if self.error is not None:
             raise self.error
         self.transcripts.setdefault(chat_id, []).extend(
@@ -1653,3 +1685,241 @@ def test_a_choice_is_not_spoken_as_bare_text():
     """Its options have to be rendered as buttons, so it is never sent as text alone."""
     choose = Choose("which profile?", (Option("Work", "p1"), Option("Home", "p2")))
     assert spoken_text(choose) is None
+
+
+# --- the Tool trace: what it says ---
+
+
+def _trace(*calls: ToolCall, working: bool = False) -> list[str]:
+    """The rendered trace as its lines, which is how a Peer reads it."""
+    return tool_trace(calls, working=working).splitlines()
+
+
+def test_the_calls_are_listed_in_the_order_they_were_made():
+    lines = _trace(ToolCall("read_file", {}), ToolCall("write_file", {}))
+    assert [line.split()[-1] for line in lines] == ["read_file", "write_file"]
+
+
+def test_a_tool_called_twice_is_listed_twice():
+    """Read, patched, read again — three lines, not two."""
+    calls = (ToolCall("read_file", {}), ToolCall("edit_file", {}), ToolCall("read_file", {}))
+    assert len(_trace(*calls)) == 3
+
+
+def test_a_call_names_what_it_was_about():
+    assert "src/app.py" in _trace(ToolCall("read_file", {"path": "src/app.py"}))[0]
+
+
+def test_the_preview_comes_from_the_first_preferred_key_present():
+    """`path` outranks `query`, so a call carrying both names the file it touched."""
+    line = _trace(ToolCall("grep", {"query": "needle", "path": "src/app.py"}))[0]
+    assert "src/app.py" in line and "needle" not in line
+
+
+def test_a_call_with_no_previewable_argument_is_its_name_alone():
+    """A code-execution call must not dump serialised state into the conversation."""
+    line = _trace(ToolCall("execute_code", {"cells": [{"lang": "py", "src": "print(1)"}]}))[0]
+    assert line.endswith("execute_code")
+
+
+def test_a_structured_value_under_a_preferred_key_is_omitted_too():
+    line = _trace(ToolCall("write_file", {"path": {"nested": "src/app.py"}}))[0]
+    assert line.endswith("write_file") and "nested" not in line
+
+
+def test_a_structured_first_preferred_key_is_not_stood_in_for_by_a_later_one():
+    """The preview is the first preferred key present — the ranking is not a search for
+    something printable, so a call whose `path` is a structure names no argument."""
+    line = _trace(ToolCall("grep", {"path": {"nested": "src/app.py"}, "query": "needle"}))[0]
+    assert line.endswith("grep")
+
+
+def test_a_long_preview_is_clipped_rather_than_wrapped():
+    """A ten-call trace has to stay scannable on a phone."""
+    line = _trace(ToolCall("duckduckgo_search", {"query": "w" * 300}))[0]
+    assert len(line) < 100 and line.endswith('…"')
+
+
+def test_a_trace_longer_than_the_bound_shows_the_most_recent_calls():
+    calls = tuple(ToolCall(f"tool_{index}", {}) for index in range(TRACE_LINES + 4))
+    lines = _trace(*calls)
+    assert lines[-1].endswith(f"tool_{TRACE_LINES + 3}")
+    assert "tool_0" not in "\n".join(lines)
+
+
+def test_a_truncated_trace_says_how_many_calls_are_not_shown():
+    calls = tuple(ToolCall(f"tool_{index}", {}) for index in range(TRACE_LINES + 4))
+    assert _trace(*calls)[0] == earlier_calls(4)
+
+
+def test_a_trace_within_the_bound_says_nothing_about_dropped_calls():
+    assert len(_trace(ToolCall("read_file", {}))) == 1
+
+
+def test_a_running_turns_trace_carries_a_working_marker():
+    """A list that has stopped growing must not read as a finished turn."""
+    assert _trace(ToolCall("read_file", {}), working=True)[0] == TRACE_WORKING
+
+
+def test_a_finished_turns_trace_carries_none():
+    assert TRACE_WORKING not in tool_trace((ToolCall("read_file", {}),), working=False)
+
+
+def test_a_turn_that_called_nothing_renders_no_trace_at_all():
+    assert tool_trace((), working=True) == ""
+
+
+# --- the Tool trace: what reaches the adapter ---
+
+
+def _collector() -> tuple[list[tuple[str, bool]], object]:
+    """A `progress` callback and the (text, final) pairs it was given."""
+    reported: list[tuple[str, bool]] = []
+
+    async def progress(text: str, *, final: bool = False) -> None:
+        reported.append((text, final))
+
+    return reported, progress
+
+
+async def test_a_turn_that_calls_tools_reports_them_as_it_goes():
+    router, gateway = _router()
+    gateway.will_call_tools((("read_file", {"path": "a.py"}),), (("write_file", {"path": "b.py"}),))
+    reported, progress = _collector()
+
+    await router.handle(_inbound(), progress=progress)
+
+    live = [text for text, final in reported if not final]
+    assert "a.py" in live[0] and "b.py" not in live[0]
+    assert "a.py" in live[1] and "b.py" in live[1]
+
+
+async def test_parallel_calls_in_one_step_are_reported_as_separate_lines():
+    router, gateway = _router()
+    gateway.will_call_tools((("read_file", {"path": "a.py"}), ("read_file", {"path": "b.py"})))
+    reported, progress = _collector()
+
+    await router.handle(_inbound(), progress=progress)
+
+    assert len(reported[-1][0].splitlines()) == 2
+
+
+async def test_a_turn_that_calls_no_tool_reports_nothing():
+    """The common case stays exactly one message, with nothing for the adapter to show."""
+    router, _ = _router()
+    reported, progress = _collector()
+
+    await router.handle(_inbound(), progress=progress)
+
+    assert reported == []
+
+
+async def test_the_settled_trace_is_reported_once_the_turn_ends():
+    router, gateway = _router()
+    gateway.will_call_tools((("read_file", {"path": "a.py"}),))
+    reported, progress = _collector()
+
+    await router.handle(_inbound(), progress=progress)
+
+    text, final = reported[-1]
+    assert final is True
+    assert TRACE_WORKING not in text and "a.py" in text
+
+
+async def test_the_singular_per_provider_event_is_not_traced():
+    """It duplicates the batch event, so tracing it would list every call twice."""
+    router, gateway = _router()
+    reported, progress = _collector()
+    trace = ToolTrace(progress)
+
+    await trace(ToolCallEvent(name="read_file", arguments='{"path": "a.py"}'))
+
+    assert reported == []
+
+
+async def test_nothing_but_a_tool_call_is_traced():
+    """Task cards, deliverables and surfaces are not the turn's tools."""
+    reported, progress = _collector()
+    trace = ToolTrace(progress)
+
+    await trace(ModelMessage(content="here's what I found"))
+    await trace.settle()
+
+    assert reported == []
+
+
+async def test_an_adapter_that_asks_for_no_trace_gets_todays_turn():
+    router, gateway = _router(reply="4")
+    gateway.will_call_tools((("read_file", {"path": "a.py"}),))
+
+    outcome = await router.handle(_inbound())
+
+    assert outcome == Reply("4")
+    assert gateway.calls[0]["on_event"] is None
+
+
+async def test_a_failed_turn_still_reports_what_it_had_reached():
+    router, gateway = _router(error=RuntimeError("boom"))
+    gateway.will_call_tools((("read_file", {"path": "a.py"}),))
+    reported, progress = _collector()
+
+    outcome = await router.handle(_inbound(), progress=progress)
+
+    assert isinstance(outcome, Reply) and "boom" in outcome.text
+    assert reported[-1] == (
+        tool_trace((ToolCall("read_file", {"path": "a.py"}),), working=False),
+        True,
+    )
+
+
+async def test_a_stopped_turn_still_reports_what_it_had_reached():
+    """`/stop` promises the work is kept; the trace is what makes that visible."""
+    router, gateway = _router(reply="")
+    gateway.will_call_tools((("read_file", {"path": "a.py"}),))
+    reported, progress = _collector()
+
+    outcome = await router.handle(_inbound(), progress=progress)
+
+    assert isinstance(outcome, Nothing)
+    assert reported[-1][1] is True and "a.py" in reported[-1][0]
+
+
+async def test_a_trace_the_adapter_cannot_show_does_not_fail_the_turn():
+    router, gateway = _router(reply="4")
+    gateway.will_call_tools((("read_file", {"path": "a.py"}),))
+
+    async def refuse(text: str, *, final: bool = False) -> None:
+        raise RuntimeError("too many requests")
+
+    assert await router.handle(_inbound(), progress=refuse) == Reply("4")
+
+
+async def test_an_unpaired_peer_never_reaches_the_trace():
+    router, gateway = _router()
+    gateway.will_call_tools((("read_file", {"path": "a.py"}),))
+    reported, progress = _collector()
+
+    await router.handle(_inbound("hello", sender_id="9999"), progress=progress)
+
+    assert reported == [] and gateway.calls == []
+
+
+async def test_a_command_never_reaches_the_trace():
+    """A picker is not a trace: `/resume` renders as it does today."""
+    router, gateway = _router()
+    reported, progress = _collector()
+
+    await router.handle(_inbound("/help"), progress=progress)
+
+    assert reported == []
+
+
+async def test_a_steering_message_reports_nothing_of_its_own():
+    """It is fed into the running turn, whose own trace is already growing."""
+    router, gateway = _router()
+    reported, progress = _collector()
+    gateway.start_turn(peers.start_chat("telegram", "c1", surface="telegram:dm"))
+
+    outcome = await router.handle(_inbound("focus on 2026"), progress=progress)
+
+    assert isinstance(outcome, Ack) and reported == []
