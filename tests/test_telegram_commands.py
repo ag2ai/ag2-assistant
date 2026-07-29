@@ -9,7 +9,7 @@ back to the router.
 from types import SimpleNamespace
 
 import assistant.channels.telegram as telegram_mod
-from assistant.channels.router import COMMANDS, Choose, Nothing, Option, Refuse, Reply
+from assistant.channels.router import COMMANDS, Ack, Choose, Nothing, Option, Refuse, Reply
 from assistant.channels.telegram import TelegramChannel
 
 
@@ -33,6 +33,10 @@ class _FakeMessage:
         self.replies: list[str] = []
         self.reply_markups: list[object] = []
         self.deleted = False
+        self.reactions: list[str] = []
+
+    async def set_reaction(self, reaction):
+        self.reactions.append(reaction)
 
     async def edit_text(self, text, reply_markup=None):
         self.text, self.markup = text, reply_markup
@@ -157,12 +161,16 @@ async def test_a_menu_that_will_not_register_does_not_stop_the_bot():
 class _RecordingRouter:
     """Captures what the adapter asked the router to choose."""
 
-    def __init__(self, outcome, paired=True) -> None:
+    def __init__(self, outcome, paired=True, steering=False) -> None:
         self.outcome = outcome
         self.chosen: list[tuple] = []
         self.handled: list[object] = []
         self.answered: list[tuple] = []
         self._paired = paired
+        self._steering = steering
+
+    def steers(self, inbound) -> bool:
+        return self._steering
 
     async def answer(self, inbound, inquiry, text):
         self.answered.append((inquiry, text))
@@ -383,3 +391,67 @@ async def test_a_reply_to_anything_else_is_an_ordinary_message():
     await ch._on_message(SimpleNamespace(message=message), _context())
 
     assert len(ch._router.handled) == 1
+
+
+# --- steering a running turn ---
+
+
+async def test_a_steered_message_is_acknowledged_with_a_reaction_and_no_placeholder():
+    """The running turn's answer lands in the first message's placeholder, so this
+    one gets no second one — the reaction says it was taken."""
+    ch, _ = _asking_channel(Ack())
+    ch._router._steering = True
+
+    message = _incoming("focus on 2026")
+    await ch._on_message(SimpleNamespace(message=message), _context())
+
+    assert message.reactions == [telegram_mod.FED_REACTION]
+    assert message.replies == []
+
+
+async def test_a_reaction_the_bot_may_not_add_is_not_an_error():
+    """Some group configurations deny reactions; the message is still fed."""
+
+    class _Unreactable(_FakeMessage):
+        async def set_reaction(self, reaction):
+            raise RuntimeError("not allowed to react")
+
+    ch, _ = _asking_channel(Ack())
+    ch._router._steering = True
+
+    message = _Unreactable()
+    message.text = "focus on 2026"
+    message.caption = None
+    message.chat = SimpleNamespace(type="private", PRIVATE="private", id=42)
+    message.from_user = SimpleNamespace(id=7, full_name="Test User", username="tester")
+    message.reply_to_message = None
+    for attr in ("document", "photo", "audio", "voice", "video"):
+        setattr(message, attr, None)
+
+    await ch._on_message(SimpleNamespace(message=message), _context())
+
+    assert len(ch._router.handled) == 1
+    assert message.replies == []
+
+
+async def test_a_turn_that_ended_before_the_feed_still_gets_its_answer_delivered():
+    """The gate can be stale by a moment; when the router runs a turn after all, its
+    reply is sent rather than swallowed for want of a placeholder."""
+    ch, bot = _asking_channel(Reply("done"))
+    ch._router._steering = True
+
+    message = _incoming("focus on 2026")
+    await ch._on_message(SimpleNamespace(message=message), _context())
+
+    assert bot.sent[-1][:2] == (42, "done")
+    assert message.reactions == []
+
+
+async def test_an_ordinary_message_still_gets_its_placeholder():
+    ch, _ = _asking_channel(Reply("the answer"))
+
+    message = _incoming("what's the weather?")
+    await ch._on_message(SimpleNamespace(message=message), _context())
+
+    assert message.replies == [telegram_mod.WORKING_PLACEHOLDER]
+    assert message.reactions == []

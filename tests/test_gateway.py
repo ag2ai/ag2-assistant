@@ -827,6 +827,34 @@ async def test_feed_message_steers_the_running_turn(fake_gateway):
     assert agent.turns == 1  # steered the turn in flight; no second one was started
 
 
+async def test_is_running_tells_a_turn_in_flight_from_an_idle_chat(fake_gateway):
+    """What a channel asks before showing a placeholder a fed message would not fill."""
+    started = asyncio.Event()
+
+    class _SlowAgent(FakeRunMixin):
+        tools = []
+
+        def __init__(self):
+            self.release = asyncio.Event()
+
+        async def ask(self, *msg, stream=None, **k):
+            started.set()
+            await self.release.wait()
+            return FakeReply("done")
+
+    agent = _SlowAgent()
+    fake_gateway._agent = agent
+    assert fake_gateway.is_running("s3") is False
+
+    turn = asyncio.ensure_future(fake_gateway.send_message("go", chat_id="s3"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert fake_gateway.is_running("s3") is True
+
+    agent.release.set()
+    await turn
+    assert fake_gateway.is_running("s3") is False
+
+
 async def test_feed_message_is_false_when_nothing_is_running(fake_gateway):
     """Idle chat → the caller runs the message as a new turn instead."""
     assert await fake_gateway.feed_message("hello", chat_id="idle") is False

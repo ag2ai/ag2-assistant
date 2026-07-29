@@ -21,7 +21,9 @@ from assistant.channels.router import (
     NO_CHATS,
     NO_PROFILE,
     NO_PROFILE_HERE,
+    NOTHING_RUNNING,
     PROFILE_WITHDRAWN,
+    STOPPED,
     Ack,
     AvailableProfile,
     ChannelRouter,
@@ -51,8 +53,30 @@ class FakeGateway:
         self.deleted: list[str] = []
         # inquiry id -> the chat it was raised in, its options, and its answer.
         self.inquiries: dict[str, dict] = {}
+        # Chats with a turn in flight, and what has been fed into those turns.
+        self.running: set[str] = set()
+        self.fed: list[dict] = []
         self._mirror = None
         self._questions = None
+
+    def start_turn(self, chat_id: str) -> None:
+        """A turn in flight on this chat — what a steering message is fed into."""
+        self.running.add(chat_id)
+
+    def is_running(self, chat_id: str = "default") -> bool:
+        return chat_id in self.running
+
+    async def feed_message(self, text: str, chat_id: str = "default", attachments=None) -> bool:
+        if chat_id not in self.running:
+            return False
+        self.fed.append({"text": text, "chat_id": chat_id, "attachments": attachments})
+        return True
+
+    async def cancel_turn(self, chat_id: str = "default", reason: str = "Stopped") -> bool:
+        if chat_id not in self.running:
+            return False
+        self.running.discard(chat_id)
+        return True
 
     def set_mirror(self, mirror) -> None:
         """The callback a completed turn is handed to (the router's mirror)."""
@@ -1224,6 +1248,133 @@ async def test_a_tapped_option_that_no_longer_exists_is_refused():
 
     assert isinstance(await router.choose(_inbound(""), "answer:inq-1:7"), Refuse)
     assert isinstance(await router.choose(_inbound(""), "answer:inq-1:"), Refuse)
+
+
+# --- steering and stopping a running turn ---
+
+
+async def _mid_turn() -> tuple[ChannelRouter, FakeGateway, str]:
+    """A Peer whose Chat has a turn in flight — the state a second message meets."""
+    router, gateway = _router()
+    await router.handle(_inbound("research widgets"))
+    chat = gateway.calls[0]["chat_id"]
+    gateway.start_turn(chat)
+    return router, gateway, chat
+
+
+async def test_a_message_sent_while_a_turn_runs_is_fed_into_it():
+    """It steers the work in progress rather than queueing a second turn behind it."""
+    router, gateway, chat = await _mid_turn()
+
+    outcome = await router.handle(_inbound("focus on 2026"))
+
+    assert isinstance(outcome, Ack)
+    assert gateway.fed[0]["text"] == "focus on 2026"
+    assert gateway.fed[0]["chat_id"] == chat
+    assert len(gateway.calls) == 1  # no second turn was started
+
+
+async def test_a_fed_message_says_nothing_back():
+    """The answer arrives in the first message's placeholder, so this one gets none."""
+    router, _, _ = await _mid_turn()
+    assert spoken_text(await router.handle(_inbound("and cheaper"))) is None
+
+
+async def test_a_file_dropped_onto_a_running_turn_goes_into_it():
+    router, gateway, _ = await _mid_turn()
+
+    await router.handle(_inbound("look at this", has_attachment=True), attachments=["<input>"])
+
+    assert gateway.fed[0]["attachments"] == ["<input>"]
+
+
+async def test_a_wordless_file_dropped_onto_a_running_turn_still_speaks_for_itself():
+    router, gateway, _ = await _mid_turn()
+
+    await router.handle(_inbound("", has_attachment=True), attachments=["<input>"])
+
+    assert gateway.fed[0]["text"] == ATTACHMENT_ONLY_PROMPT
+
+
+async def test_a_message_with_no_turn_running_starts_one():
+    router, gateway = _router(reply="4")
+    outcome = await router.handle(_inbound("what is 2+2?"))
+    assert outcome == Reply("4")
+    assert gateway.fed == []
+
+
+async def test_a_turn_that_finished_first_runs_the_message_as_a_new_one():
+    """The turn can end between the gate and the feed; the message must still land."""
+    router, gateway, chat = await _mid_turn()
+    gateway.running.discard(chat)
+
+    outcome = await router.handle(_inbound("and cheaper"))
+
+    assert isinstance(outcome, Reply)
+    assert len(gateway.calls) == 2
+
+
+async def test_steers_is_true_only_while_a_turn_is_running():
+    """The adapter asks before it shows anything: a fed message gets a reaction, not
+    a placeholder of its own."""
+    router, gateway, chat = await _mid_turn()
+    assert router.steers(_inbound()) is True
+    gateway.running.discard(chat)
+    assert router.steers(_inbound()) is False
+
+
+async def test_steers_ignores_what_accepts_ignores():
+    """Nothing that would not run a turn can steer one either."""
+    router, _, _ = await _mid_turn()
+    assert router.steers(_inbound("   ")) is False
+    assert router.steers(_inbound(is_direct=False, mentioned=False)) is False
+
+
+async def test_a_command_is_never_fed_into_the_running_turn():
+    """The command surface stays reachable mid-turn — that is how `/stop` gets in."""
+    router, gateway, _ = await _mid_turn()
+
+    assert router.steers(_inbound("/status")) is False
+    assert isinstance(await router.handle(_inbound("/status")), Reply)
+    assert gateway.fed == []
+
+
+async def test_an_unpaired_account_steers_nothing():
+    router, gateway, _ = await _mid_turn()
+    stranger = _inbound("focus on 2026", sender_id="9999")
+
+    assert router.steers(stranger) is False
+    await router.handle(stranger)
+    assert gateway.fed == []
+
+
+async def test_stop_interrupts_the_running_turn():
+    router, gateway, chat = await _mid_turn()
+
+    outcome = await router.handle(_inbound("/stop"))
+
+    assert outcome == Reply(STOPPED)
+    assert gateway.is_running(chat) is False
+
+
+async def test_stop_with_nothing_running_says_so():
+    router, gateway = _router()
+    await router.handle(_inbound("hi"))
+    assert await router.handle(_inbound("/stop")) == Reply(NOTHING_RUNNING)
+
+
+async def test_stop_before_there_is_a_chat_says_nothing_is_running():
+    """It must not mint a Chat just to report that there is nothing to stop."""
+    router, gateway = _router()
+    assert await router.handle(_inbound("/stop")) == Reply(NOTHING_RUNNING)
+    assert gateway.calls == []
+
+
+async def test_a_turn_that_was_stopped_says_nothing_where_it_started():
+    """A stopped turn answers with nothing, so the message that began it is left with
+    no placeholder still saying it is working."""
+    router, _ = _router(reply="")
+    assert isinstance(await router.handle(_inbound("research widgets")), Nothing)
 
 
 # --- /help ---

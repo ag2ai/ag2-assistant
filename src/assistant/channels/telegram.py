@@ -28,6 +28,7 @@ from assistant.hitl.channel import PendingAsks
 from assistant.observability import log_suppressed
 
 WORKING_PLACEHOLDER = "⏳ Sorting that out…"
+FED_REACTION = "👀"  # "received, will use" on a message fed into a running turn
 TELEGRAM_LIMIT = 4096  # Telegram's per-message character cap
 _CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
 _CHOICE_PREFIX = "acc:"  # callback_data namespace for router `Choose` option tokens
@@ -326,8 +327,11 @@ class TelegramChannel(Channel):
         if not self._router.accepts(inbound):
             return
 
-        # Immediate, always-visible feedback: a placeholder we edit into the reply.
-        placeholder = await update.message.reply_text(WORKING_PLACEHOLDER)
+        # Immediate, always-visible feedback: a placeholder we edit into the reply. A
+        # message fed into a running turn gets none — its answer lands in the
+        # placeholder of the message that started that turn.
+        steering = self._router.steers(inbound)
+        placeholder = None if steering else await update.message.reply_text(WORKING_PLACEHOLDER)
 
         attachments = await _download_attachments(msg, context.bot)
         outcome = await self._router.handle(
@@ -335,7 +339,21 @@ class TelegramChannel(Channel):
             asker=self._asker_for(chat_id),
             attachments=attachments,
         )
+        if placeholder is None:
+            await self._acknowledge(outcome, msg)
+            return
         await self._render(outcome, placeholder, update.message)
+
+    async def _acknowledge(self, outcome: Outcome, message) -> None:
+        """Render an outcome that has no placeholder to land in: a reaction for a
+        message the running turn took, plain text for anything it says. Where the bot
+        may not react, the message is still fed and nothing is said."""
+        spoken = spoken_text(outcome)
+        if spoken:
+            await self._send(str(message.chat.id), spoken)
+            return
+        with contextlib.suppress(Exception):
+            await message.set_reaction(FED_REACTION)
 
     async def _answer_question(self, inbound: InboundMessage, msg) -> bool:
         """Resolve the question this message replies to, if it replies to one. A

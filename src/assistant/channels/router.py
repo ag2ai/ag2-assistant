@@ -54,6 +54,10 @@ CODE_EXPIRED = "That pairing code has expired. Generate a new one in Settings �
 # A group's profile is not the group's to change — it is set from the WebUI.
 PROFILE_IN_GROUP = "/profile only works in a direct message. Set a group's profile in Settings."
 
+# Said for `/stop`. A stopped turn keeps the work it already did, as in the browser.
+STOPPED = "Stopped. What I'd already done is kept."
+NOTHING_RUNNING = "Nothing is running right now."
+
 NEW_CHAT = "Started a fresh chat. The one you were in is still in your chat list."
 ALREADY_NEW = "You're already in a fresh chat — nothing has been said in it yet."
 CONFIRM_CLEAR = "Delete this chat permanently? Its whole transcript goes with it."
@@ -98,6 +102,7 @@ COMMANDS = (
     Command("new", "Start a fresh chat"),
     Command("resume", "Pick up an earlier chat"),
     Command("clear", "Delete this chat permanently"),
+    Command("stop", "Stop the turn that's running"),
     Command("status", "Show the profile and chat you're in"),
     Command("profile", "Choose which profile to talk to"),
     Command("help", "List these commands"),
@@ -345,6 +350,18 @@ class ChannelRouter:
         placeholder betrays that anything is listening; its message still goes to
         ``handle``, which may pair it."""
         return should_respond(inbound) and self.paired(inbound)
+
+    def steers(self, inbound: InboundMessage) -> bool:
+        """Whether this message will be fed into the turn already running in this
+        Peer's Chat rather than starting one — the adapter's gate for acknowledging it
+        instead of showing a placeholder the running turn's answer will not land in."""
+        if not self.accepts(inbound):
+            return False
+        if self._has_commands(inbound) and parse_command(inbound.text) is not None:
+            return False
+        chat = self._attached_chat(inbound)
+        runtime = self._runtime(inbound)
+        return chat is not None and isinstance(runtime, tuple) and runtime[1].is_running(chat)
 
     # ---- who may be served (ADR 0021) ----
 
@@ -643,6 +660,15 @@ class ChannelRouter:
             ),
         )
 
+    async def _stop_command(self, inbound: InboundMessage, arg: str) -> Outcome:
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        chat = self._attached_chat(inbound)
+        if chat is None or not await runtime[1].cancel_turn(chat):
+            return Reply(NOTHING_RUNNING)
+        return Reply(STOPPED)
+
     async def _status_command(self, inbound: InboundMessage, arg: str) -> Outcome:
         runtime = self._runtime(inbound)
         if not isinstance(runtime, tuple):
@@ -666,6 +692,7 @@ class ChannelRouter:
             "new": self._new_command,
             "resume": self._resume_command,
             "clear": self._clear_command,
+            "stop": self._stop_command,
             "status": self._status_command,
             "help": self._help_command,
         }
@@ -707,6 +734,12 @@ class ChannelRouter:
         if not text.strip() and inbound.has_attachment:
             # A wordless file speaks for itself, or says it arrived unreadable.
             text = ATTACHMENT_ONLY_PROMPT if attachments else ATTACHMENT_UNREADABLE
+
+        # Sent while a turn is in flight? Feed that turn instead of queueing a second
+        # one behind it — the answer comes back in the first message's place.
+        if await gateway.feed_message(text, chat_id, attachments or []):
+            return Ack()
+
         try:
             reply = await gateway.send_message(
                 text,
@@ -717,4 +750,6 @@ class ChannelRouter:
             )
         except Exception as exc:  # surface failures to the user
             return Reply(f"Sorry, something went wrong: {exc}")
-        return Reply(reply)
+        # A stopped turn comes back with nothing to say; say nothing rather than an
+        # empty reply, so the adapter drops the placeholder instead of leaving it.
+        return Reply(reply) if reply else NOTHING

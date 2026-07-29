@@ -374,6 +374,12 @@ class Gateway:
         uses, so events from a turn are caught by the bridge's subscription."""
         return await self._get_stream(chat_id)
 
+    def is_running(self, chat_id: str = "default") -> bool:
+        """Whether a turn is in flight on this chat — what a message sent now would be
+        fed into rather than starting a second one."""
+        active = self._active.get(chat_id)
+        return active is not None and not active.task.done()
+
     async def feed_message(self, text: str, chat_id: str = "default", attachments=None) -> bool:
         """Feed a message into the turn already running on this chat.
 
