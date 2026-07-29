@@ -78,12 +78,12 @@ def model_config(config: Config, model: str | None = None):
         # and the entry's Advanced options are ACPConfig constructor overrides.
         from assistant.coding import acp_provider
 
-        return acp_provider.build_model_config(
-            config,
-            agent="claude" if provider == "claude_code" else "codex",
-            model=model,
-            options=opts,
+        build = (
+            acp_provider.build_claude_config
+            if provider == "claude_code"
+            else acp_provider.build_codex_config
         )
+        return build(config, model=model, options=opts)
     if provider == "anthropic":
         return AnthropicConfig(
             **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}

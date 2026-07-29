@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from assistant.coding import acp_provider
 from assistant.coding.detect import BridgeEndpoint
 from assistant.config import Config
@@ -17,7 +15,7 @@ def _cfg(tmp_path) -> Config:
 
 def test_build_local_config(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(_cfg(tmp_path), model="sonnet")
+    c = acp_provider.build_claude_config(_cfg(tmp_path), model="sonnet")
     assert c.command == ["claude-agent-acp"]
     assert c.cwd == str(tmp_path)
     assert c.fs_root == str(tmp_path)
@@ -32,7 +30,7 @@ def test_build_local_config(tmp_path, monkeypatch):
 
 def test_no_model_means_cli_default(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(_cfg(tmp_path))
+    c = acp_provider.build_claude_config(_cfg(tmp_path))
     # No model in the entry → no ANTHROPIC_MODEL: the CLI's own settings apply.
     assert c.env is None
     assert c.model is None
@@ -40,7 +38,7 @@ def test_no_model_means_cli_default(tmp_path, monkeypatch):
 
 def test_options_override(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(
+    c = acp_provider.build_claude_config(
         _cfg(tmp_path), model="sonnet", options={"turn_timeout": 60.0}
     )
     assert c.turn_timeout == 60.0
@@ -48,7 +46,7 @@ def test_options_override(tmp_path, monkeypatch):
 
 def test_options_env_merges_over_model_env(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(
+    c = acp_provider.build_claude_config(
         _cfg(tmp_path), model="sonnet", options={"env": {"CLAUDE_CONFIG_DIR": "/x"}}
     )
     # An options env must not erase the model selection — merge, options win per key.
@@ -65,7 +63,7 @@ def test_bridge_mode_disables_tool_exposure(tmp_path, monkeypatch):
         return object()
 
     monkeypatch.setattr(acp_provider.bridge_client, "make_connector", fake_connector)
-    c = acp_provider.build_model_config(_cfg(tmp_path), model="sonnet")
+    c = acp_provider.build_claude_config(_cfg(tmp_path), model="sonnet")
     # The MCP tool gateway binds 127.0.0.1 in THIS process; a host-side CLI
     # reached over the bridge can't connect to it, so exposure must be off.
     assert c.expose_tools is False
@@ -74,7 +72,7 @@ def test_bridge_mode_disables_tool_exposure(tmp_path, monkeypatch):
 
 def test_build_codex_local_config(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(_cfg(tmp_path), agent="codex", model="gpt-5.6-sol[medium]")
+    c = acp_provider.build_codex_config(_cfg(tmp_path), model="gpt-5.6-sol[medium]")
     assert c.command == ["codex-acp"]
     assert c.cwd == str(tmp_path)
     assert c.fs_root == str(tmp_path)
@@ -91,13 +89,13 @@ def test_build_codex_local_config(tmp_path, monkeypatch):
 
 def test_codex_model_without_effort_suffix(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(_cfg(tmp_path), agent="codex", model="gpt-5.5")
+    c = acp_provider.build_codex_config(_cfg(tmp_path), model="gpt-5.5")
     assert json.loads(c.env["CODEX_CONFIG"]) == {"model": "gpt-5.5"}
 
 
 def test_codex_no_model_means_cli_default(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(_cfg(tmp_path), agent="codex")
+    c = acp_provider.build_codex_config(_cfg(tmp_path))
     # No model in the entry → no CODEX_CONFIG: the CLI's own default applies.
     assert c.env is None
     assert c.model is None
@@ -105,9 +103,8 @@ def test_codex_no_model_means_cli_default(tmp_path, monkeypatch):
 
 def test_codex_options_env_wins_over_derived_codex_config(tmp_path, monkeypatch):
     monkeypatch.setattr(acp_provider.detect, "bridge_endpoint", lambda: None)
-    c = acp_provider.build_model_config(
+    c = acp_provider.build_codex_config(
         _cfg(tmp_path),
-        agent="codex",
         model="gpt-5.6-sol[medium]",
         options={"env": {"CODEX_CONFIG": '{"model": "x"}'}},
     )
@@ -126,11 +123,6 @@ def test_codex_bridge_mode_disables_tool_exposure(tmp_path, monkeypatch):
         return object()
 
     monkeypatch.setattr(acp_provider.bridge_client, "make_connector", fake_connector)
-    c = acp_provider.build_model_config(_cfg(tmp_path), agent="codex", model="gpt-5.5")
+    c = acp_provider.build_codex_config(_cfg(tmp_path), model="gpt-5.5")
     assert c.expose_tools is False
     assert made["args"] == (ep, "codex", str(tmp_path))
-
-
-def test_unknown_agent_raises(tmp_path):
-    with pytest.raises(KeyError):
-        acp_provider.build_model_config(_cfg(tmp_path), agent="opencode")

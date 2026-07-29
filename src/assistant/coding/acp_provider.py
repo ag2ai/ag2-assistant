@@ -14,7 +14,7 @@ claude-agent-acp, codex-acp 1.1.7), so the HTTP-only gateway is compatible.
 
 import json
 import re
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from ag2.acp import ACPConfig, ClaudeCodeConfig, CodexConfig
 
@@ -34,42 +34,58 @@ DEFAULT_TURN_TIMEOUT = 1800.0
 _EFFORT_SUFFIX = re.compile(r"^(?P<name>.+?)\s*\[(?P<effort>[^\]]+)\]$")
 
 
-def _claude_model_env(model: str) -> dict[str, str]:
-    # claude-agent-acp picks its model from ANTHROPIC_MODEL (alias
-    # "sonnet"/"opus"/"haiku" or a full versioned id; unset → the CLI's own
-    # settings.json/default).
-    return {"ANTHROPIC_MODEL": model}
+def _codex_session_config(model: str) -> str:
+    """The ``CODEX_CONFIG`` JSON selecting the entry's model for codex-acp.
 
-
-def _codex_model_env(model: str) -> dict[str, str]:
-    # codex-acp has no model env var of its own; CODEX_CONFIG is a JSON object
-    # merged into the Codex session config (unset → the CLI's own default).
+    ``CODEX_CONFIG`` is the adapter's documented runtime option: a JSON object
+    merged into the Codex session config. The adapter lists model ids as
+    ``name[effort]``, but the underlying config wants those as two fields.
+    """
     m = _EFFORT_SUFFIX.match(model)
-    cfg = {"model": m["name"].strip(), "model_reasoning_effort": m["effort"].strip()} if m else {"model": model}
-    return {"CODEX_CONFIG": json.dumps(cfg)}
+    if m is None:
+        return json.dumps({"model": model})
+    return json.dumps({"model": m["name"].strip(), "model_reasoning_effort": m["effort"].strip()})
 
 
-# agent name (as in detect._KNOWN) → (ACPConfig preset, model → env derivation).
-# The presets carry the right launch command ("claude-agent-acp" / "codex-acp").
-_AGENTS: dict[str, tuple[type[ACPConfig], Callable[[str], dict[str, str]]]] = {
-    "claude": (ClaudeCodeConfig, _claude_model_env),
-    "codex": (CodexConfig, _codex_model_env),
-}
-
-
-def build_model_config(
-    config: "Config",
-    agent: str = "claude",
-    model: str | None = None,
-    options: dict | None = None,
+def build_claude_config(
+    config: "Config", model: str | None = None, options: dict | None = None
 ) -> ACPConfig:
-    """The ``ModelConfig`` driving a coding CLI as the assistant's main model.
+    """Claude Code as the assistant's main model.
+
+    The model rides the adapter's ``ANTHROPIC_MODEL`` env var (aliases like
+    "sonnet" or full versioned ids); unset → the CLI's own settings/default.
+    """
+    env = {"ANTHROPIC_MODEL": model} if model else None
+    return _build(ClaudeCodeConfig, "claude", config, model, env, options)
+
+
+def build_codex_config(
+    config: "Config", model: str | None = None, options: dict | None = None
+) -> ACPConfig:
+    """Codex as the assistant's main model.
+
+    The model rides the adapter's ``CODEX_CONFIG`` env var (JSON merged into
+    the Codex session config); unset → the CLI's own default.
+    """
+    env = {"CODEX_CONFIG": _codex_session_config(model)} if model else None
+    return _build(CodexConfig, "codex", config, model, env, options)
+
+
+def _build(
+    config_cls: type[ACPConfig],
+    agent: str,
+    config: "Config",
+    model: str | None,
+    model_env: dict[str, str] | None,
+    options: dict | None,
+) -> ACPConfig:
+    """The shared assembly behind both builders.
 
     ``options`` (the llm-config entry's free-form Advanced object) merges last
     into the constructor kwargs, so any ``ACPConfig`` field — ``turn_timeout``,
-    ``allow_terminal``, even ``command`` — can be overridden per entry.
+    ``allow_terminal``, even ``command`` — can be overridden per entry. The
+    presets carry the right launch command ("claude-agent-acp" / "codex-acp").
     """
-    config_cls, model_env = _AGENTS[agent]
     workspace = str(config.workspace_dir)
     endpoint = detect.bridge_endpoint()
     kwargs: dict = {
@@ -80,11 +96,11 @@ def build_model_config(
         **({"model": model} if model else {}),
         **(options or {}),
     }
-    if model:
-        # ACPConfig.model is response metadata only — it is NOT sent to the
-        # adapter. Each adapter takes its model selection via env instead; an
+    if model_env:
+        # ag2 never sends ACPConfig.model to the agent (response metadata only),
+        # so the model rides each adapter's documented env interface instead; an
         # options env merges over it, so a per-entry env still overrides per key.
-        kwargs["env"] = {**model_env(model), **(kwargs.get("env") or {})}
+        kwargs["env"] = {**model_env, **(kwargs.get("env") or {})}
     if endpoint is not None:
         # Docker → host bridge: the CLI runs on the HOST, so ag2's MCP tool
         # gateway (bound to 127.0.0.1 inside this container) is unreachable —
