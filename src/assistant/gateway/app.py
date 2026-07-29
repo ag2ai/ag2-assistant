@@ -2562,8 +2562,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             # This throwaway toolkit's persistent session would otherwise hold the
             # server process alive until idle expiry.
             await toolkit.aclose()
-        # Discovery reports failures rather than raising them, so an unreachable
-        # server arrives here as a live toolkit offering zero tools.
+        # Discovery reports failures rather than raising: an unreachable server
+        # arrives here as a live toolkit offering zero tools.
         if error is not None:
             return {"ok": False, "error": describe_mcp_error(error)[:500]}
         return {

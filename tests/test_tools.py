@@ -283,13 +283,8 @@ async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
 
 
 async def test_mcp_unreachable_server_costs_its_tools_not_the_turn(monkeypatch):
-    """A server that cannot start contributes no tools and reports why.
-
-    Every toolkit's schemas() is collected before the model is called, so a raise
-    here aborts the whole turn — including turns that never touch MCP. Third-party
-    servers break for ordinary reasons (missing binary, bad path, an upstream
-    release that moved an import), so this path has to degrade rather than throw.
-    """
+    """A server that cannot start contributes no tools and reports why, rather
+    than raising out of schemas() and aborting a turn that never touched MCP."""
 
     attempts = []
 
@@ -297,7 +292,7 @@ async def test_mcp_unreachable_server_costs_its_tools_not_the_turn(monkeypatch):
     async def failing_session(config):
         attempts.append(config)
         raise RuntimeError("boom: cannot import name 'McpError'")
-        yield  # pragma: no cover — unreachable, keeps this an async generator
+        yield  # pragma: no cover — keeps this an async generator
 
     monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
     monkeypatch.setattr(mcp_mod, "mcp_session", failing_session)
@@ -309,8 +304,7 @@ async def test_mcp_unreachable_server_costs_its_tools_not_the_turn(monkeypatch):
     assert "McpError" in str(toolkit.last_error)
     assert len(attempts) == 1
 
-    # Inside the retry window the dead server is left alone — it must not pay its
-    # startup cost again on every subsequent turn.
+    # Inside the retry window the dead server is left alone.
     assert list(await toolkit.schemas(context)) == []
     assert len(attempts) == 1
 
@@ -318,8 +312,8 @@ async def test_mcp_unreachable_server_costs_its_tools_not_the_turn(monkeypatch):
 
 
 def test_describe_mcp_error_reaches_past_the_task_group_wrapper():
-    """anyio reports a dead server as an ExceptionGroup whose own text names
-    neither the server nor the cause; the leaf is what a user can act on."""
+    """anyio wraps a dead server's cause in an ExceptionGroup; the leaf is the
+    only part a user can act on."""
     cause = FileNotFoundError(2, "No such file or directory: 'mcp-server-time'")
     wrapped = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [cause])
 

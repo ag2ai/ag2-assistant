@@ -45,8 +45,7 @@ _NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
 # that orphaned toolkits after an agent reload self-clean without a dispose hook.
 _IDLE_CLOSE_S = 300.0
 
-# How long an unreachable server is left alone before discovery retries, so a
-# broken one doesn't pay its startup cost on every turn.
+# How long an unreachable server is left alone before discovery retries.
 _RETRY_AFTER_S = 60.0
 
 
@@ -219,12 +218,7 @@ class NamespacedMCPToolkit(Toolkit):
 
     @property
     def last_error(self) -> Exception | None:
-        """Why the most recent discovery attempt failed, or ``None`` if it worked.
-
-        Discovery never raises, so callers that genuinely need to know whether the
-        server is reachable — the settings health check — read this rather than
-        wrapping ``schemas()`` in a try/except that would never fire.
-        """
+        """Why the last discovery attempt failed; ``None`` if it worked."""
         return self._error
 
     async def _discover_tools(self, context: Context) -> None:
