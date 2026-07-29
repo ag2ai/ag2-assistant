@@ -18,11 +18,11 @@ from ag2.tools import SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
 from pydantic import Field
 
-from assistant import codex_auth
+from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
 from assistant.config import Config, load_config
 from assistant.folders import FolderStore
 from assistant.hitl import Asker, build_hitl_hook
-from assistant.integrations import google_auth
+from assistant.integrations.google_auth import GoogleAuth
 from assistant.memory import (
     build_compaction_config,
     build_knowledge_config,
@@ -66,8 +66,8 @@ def model_config(config: Config, model: str | None = None):
     """Build the AG2 ModelConfig for the configured provider.
 
     `model` overrides `config.llm.model` (used for the cheaper aggregation pass).
-    The API key is read from os.environ by the provider's conventional var (filled
-    from the secrets store at startup / on reload), not the fixed api_key_env field.
+    The API key comes from ``config.secret_env`` by the provider's conventional var
+    (the secrets store contributes it at resolve time), not the fixed api_key_env field.
 
     `config.llm.provider_options[provider]` (Settings → Model & Keys → Advanced, or
     config.json) is merged into the provider config's kwargs LAST, so any of its
@@ -77,7 +77,7 @@ def model_config(config: Config, model: str | None = None):
     """
     model = model or config.llm.model
     provider = config.llm.provider.lower()
-    api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
+    api_key = config.secret_env.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     opts = dict(config.llm.provider_options.get(provider) or {})
     if provider in ACP_PROVIDERS:
         # Coding CLI over ACP: the CLI's own disk login is the auth (no key),
@@ -99,7 +99,7 @@ def model_config(config: Config, model: str | None = None):
             # best-effort (never raises) — building the agent must not 500 a reload
             # when the token can't be refreshed; the turn then fails with the real
             # OpenAI error (e.g. unsupported_country) instead.
-            creds = codex_auth.creds_best_effort()
+            creds = CodexAuth(config.paths).creds_best_effort()
             # Advanced options (temperature, max_output_tokens, ...) merge first;
             # everything the subscription OWNS is forced afterwards, so options can
             # neither point elsewhere nor leak a key: the endpoint/token/headers are
@@ -113,8 +113,8 @@ def model_config(config: Config, model: str | None = None):
                     **sub_opts,
                     "model": model,
                     "api_key": creds.access_token,
-                    "base_url": codex_auth.BACKEND_BASE,
-                    "default_headers": codex_auth.default_headers(creds),
+                    "base_url": BACKEND_BASE,
+                    "default_headers": default_headers(creds),
                     "streaming": True,
                     "store": False,
                 }
@@ -137,7 +137,7 @@ def model_config(config: Config, model: str | None = None):
         return OllamaConfig(
             **{
                 "model": model,
-                "host": os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
+                "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
                 "streaming": config.llm.streaming,
                 **opts,
             }
@@ -521,7 +521,7 @@ def turn_prompt(
     if workspace:
         parts.append(workspace_guidance(config))
     try:
-        if google_auth.google_ready() if google is None else google:
+        if GoogleAuth(config.paths).google_ready() if google is None else google:
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for turn prompt", exc)
@@ -552,7 +552,7 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
     if focuses:
         parts.append(focuses)
     try:
-        if google_auth.google_ready():
+        if GoogleAuth(config.paths).google_ready():
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for universal prompt", exc)

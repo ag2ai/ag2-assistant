@@ -32,7 +32,8 @@ from ag2.tools import (
     WebFetchTool,
 )
 
-from assistant.integrations import google_auth
+from assistant.config import Config
+from assistant.integrations.google_auth import GoogleAuth
 from assistant.settings import profile_settings
 from assistant.tools import docker_sandbox
 from assistant.tools.approval import require_command_approval
@@ -110,10 +111,10 @@ _GOOGLE_GROUPS = {
 }
 
 
-def available_capabilities() -> list[str]:
+def available_capabilities(config: Config) -> list[str]:
     """Capabilities currently usable (Google ones need a token *and* the libs)."""
     caps = ["web", "code", "coding", "files", "images", "skills", "mcp"]
-    if google_auth.google_ready():
+    if GoogleAuth(config.paths).google_ready():
         caps += ["gmail", "calendar", "drive"]
     return caps
 
@@ -255,14 +256,16 @@ def build_agent_tools(
 
     # Google tools (only when signed in AND the [google] extra is installed),
     # per requested group. Registering them without the libs would hand the model
-    # a tool that can only fail — see google_auth.google_ready().
-    if google_auth.google_ready():
+    # a tool that can only fail — see GoogleAuth.google_ready().
+    if config is not None:
+        google = GoogleAuth(config.paths)
         keep: set[str] = set()
-        for cap, names in _GOOGLE_GROUPS.items():
-            if want(cap):
-                keep |= names
+        if google.google_ready():
+            for cap, names in _GOOGLE_GROUPS.items():
+                if want(cap):
+                    keep |= names
         if keep:
-            tools += [t for t in build_google_tools() if t.name in keep]
+            tools += [t for t in build_google_tools(google) if t.name in keep]
 
     if want("mcp") and config is not None:
         # Read THIS profile's MCP server list (config.data_dir is the profile dir),

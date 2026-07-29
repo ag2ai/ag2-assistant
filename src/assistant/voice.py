@@ -21,9 +21,10 @@ from typing import TYPE_CHECKING
 from ag2 import tool
 from ag2.live import LiveAgent
 
-from assistant import live_configs, voice_providers
+from assistant import voice_providers
 from assistant.agent import environment_context
 from assistant.config import Config
+from assistant.live_configs import LiveConfigStore
 from assistant.system_tools import build_system_tools
 from assistant.voice_providers import PREVIEW_TEXT
 
@@ -69,7 +70,7 @@ VOICE_PROMPT = (
 )
 
 
-def profile_live_config(settings: "Settings") -> dict | None:
+def profile_live_config(config: Config, settings: "Settings") -> dict | None:
     """The live (voice) config Active for THIS profile: its per-profile **Active
     override** (ADR 0015) when set and still present, else the install-wide active.
 
@@ -78,12 +79,13 @@ def profile_live_config(settings: "Settings") -> dict | None:
     ``llm_configs.apply_active``. This is the seam where env pin > profile override >
     install-wide active > env fallback is realised for voice: the caller layers the
     ``AG2ASSISTANT_VOICE_MODEL`` pin and the legacy-provider fallback around it."""
+    store = LiveConfigStore(config.paths)
     override = settings.get_live_override()
     if override:
-        entry = live_configs.get_config(override)
+        entry = store.get_config(override)
         if entry is not None:
             return entry
-    return live_configs.active_config()
+    return store.active_config()
 
 
 def voice_realtime_config(
@@ -102,12 +104,12 @@ def voice_realtime_config(
     `AG2ASSISTANT_VOICE_MODEL` still overrides the model. Input transcription is enabled
     per provider so the user's speech arrives as text for the on-screen bubbles.
     """
-    active = None if provider else profile_live_config(settings)
+    active = None if provider else profile_live_config(config, settings)
     if active:
         p = voice_providers.get(active["provider"])
         model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or active["model"] or p.realtime_model
         chosen_voice = voice or active.get("voice") or p.default_voice
-        api_key = live_configs.resolve_key(active)
+        api_key = LiveConfigStore(config.paths).resolve_key(active, config.secret_env)
     else:
         p = voice_providers.get(provider or settings.voice_provider())
         model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or p.realtime_model
@@ -133,10 +135,12 @@ async def synthesize_preview(
     caller falls back (live preview / skip the sample).
     """
     if provider is None:
-        active = profile_live_config(settings)
+        active = profile_live_config(config, settings)
         if active:
             provider = active["provider"]
-            api_key = api_key or live_configs.resolve_key(active)
+            api_key = api_key or LiveConfigStore(config.paths).resolve_key(
+                active, config.secret_env
+            )
         else:
             provider = settings.voice_provider()
     return await voice_providers.get(provider).synthesize(config, voice, text, api_key)

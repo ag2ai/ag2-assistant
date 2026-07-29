@@ -12,7 +12,7 @@ account could be rate-limited or restricted. The OAuth constants and backend
 endpoint change without notice, so every one is overridable via an env var
 (``AG2ASSISTANT_CODEX_*``) to allow fixing a drift without a code change.
 
-Tokens live in ``<data_dir>/codex_auth.json`` (0600), SEPARATE from
+Tokens live in ``paths.codex_tokens`` (0600), SEPARATE from
 ``secrets.json`` (that store models "one provider = one key string"; this is a
 multi-field, auto-refreshed credential). Network calls are synchronous
 (``httpx``); async callers (the gateway) wrap them in ``asyncio.to_thread`` —
@@ -33,12 +33,11 @@ import time as _time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
 
-from assistant.config import data_dir
+from assistant.paths import Paths
 
 # --- Reverse-engineered constants (all env-overridable; VERIFY against a live
 #     Codex CLI if OpenAI changes them) ------------------------------------- #
@@ -84,61 +83,6 @@ class Creds:
 
 
 # --- Token store ------------------------------------------------------------ #
-
-
-def _path():
-    return data_dir() / "codex_auth.json"
-
-
-def _read() -> dict:
-    try:
-        return json.loads(_path().read_text())
-    except Exception:
-        return {}
-
-
-def _write(data: dict) -> None:
-    p = _path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2))
-    try:
-        p.chmod(0o600)
-    except Exception:
-        pass
-
-
-def _codex_cli_path() -> Path:
-    """The official Codex CLI's credential file. Resolved lazily (honors the current
-    HOME / the env override) — NOT a module constant, so tests that isolate HOME
-    don't read the developer's real ~/.codex/auth.json. Env: AG2ASSISTANT_CODEX_CLI_AUTH."""
-    return Path(
-        os.environ.get("AG2ASSISTANT_CODEX_CLI_AUTH") or Path.home() / ".codex" / "auth.json"
-    )
-
-
-def _read_codex_cli() -> dict:
-    """The official Codex CLI's ``auth.json`` tokens sub-map (empty if absent/no
-    subscription session — e.g. the CLI is signed in with an API key instead). Shape:
-    {"tokens": {"id_token","access_token","refresh_token","account_id"}, "auth_mode", …}."""
-    try:
-        data = json.loads(_codex_cli_path().read_text())
-    except Exception:
-        return {}
-    toks = data.get("tokens")
-    return toks if isinstance(toks, dict) and toks.get("access_token") else {}
-
-
-def _codex_cli_creds() -> "Creds | None":
-    """Live credentials from the Codex CLI's own session, or None. Read-only: we do
-    NOT refresh (that would rotate the CLI's refresh token and log it out). The CLI
-    keeps its own token fresh; if it's expired the model call fails cleanly and the
-    user re-runs `codex login`."""
-    toks = _read_codex_cli()
-    access = toks.get("access_token")
-    if not access:
-        return None
-    account = toks.get("account_id") or account_id_from(toks.get("id_token", ""), access)
-    return Creds(access_token=access, account_id=account)
 
 
 # --- PKCE + JWT helpers ----------------------------------------------------- #
@@ -210,28 +154,6 @@ def build_authorize_url(challenge: str, state: str) -> str:
     return f"{AUTH_URL}?{urlencode(params)}"
 
 
-def _store_tokens(tokens: dict) -> Creds:
-    """Persist a token response, computing an absolute expiry + account id."""
-    access = tokens.get("access_token", "")
-    refresh = tokens.get("refresh_token", "")
-    id_token = tokens.get("id_token", "")
-    expires_in = int(tokens.get("expires_in", 3600) or 3600)
-    account_id = account_id_from(id_token, access)
-    data = _read()
-    data.update(
-        {
-            "access_token": access,
-            # OpenAI rotates refresh tokens — keep the previous one if none returned.
-            "refresh_token": refresh or data.get("refresh_token", ""),
-            "id_token": id_token or data.get("id_token", ""),
-            "expires_at": time.time() + expires_in,
-            "account_id": account_id or data.get("account_id"),
-        }
-    )
-    _write(data)
-    return Creds(access_token=access, account_id=data["account_id"])
-
-
 def extract_auth_code(raw: str) -> str:
     """Normalize a pasted value into the bare OAuth ``code``.
 
@@ -251,89 +173,7 @@ def extract_auth_code(raw: str) -> str:
     return raw
 
 
-def exchange_code(code: str, verifier: str) -> Creds:
-    """Exchange an authorization code for tokens and store them."""
-    try:
-        resp = httpx.post(
-            TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": REDIRECT_URI,
-                "client_id": CLIENT_ID,
-                "code_verifier": verifier,
-            },
-            timeout=30.0,
-        )
-    except Exception as exc:
-        raise CodexAuthError(f"Token exchange request failed: {exc}") from exc
-    if resp.status_code != 200:
-        raise CodexAuthError(f"Token exchange failed ({resp.status_code}): {resp.text[:300]}")
-    return _store_tokens(resp.json())
-
-
-def _refresh(refresh_token: str) -> Creds:
-    try:
-        resp = httpx.post(
-            TOKEN_URL,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id": CLIENT_ID,
-                "scope": SCOPES,
-            },
-            timeout=30.0,
-        )
-    except Exception as exc:
-        raise CodexAuthError(f"Token refresh request failed: {exc}") from exc
-    if resp.status_code != 200:
-        raise CodexAuthError(f"Token refresh failed ({resp.status_code}). Please sign in again.")
-    return _store_tokens(resp.json())
-
-
 # --- Public API used by the agent / gateway / CLI --------------------------- #
-
-
-def is_signed_in() -> bool:
-    """Signed in via our own OAuth OR the official Codex CLI's existing session."""
-    return bool(_read().get("refresh_token")) or bool(_read_codex_cli())
-
-
-def ensure_fresh() -> Creds:
-    """Return live credentials, refreshing the access token if it is expired (or
-    within the skew margin). If we have no session of our own, fall back to the
-    Codex CLI's existing session (read-only). Raises ``CodexAuthError`` if neither."""
-    data = _read()
-    refresh_token = data.get("refresh_token")
-    if not refresh_token:
-        # No AG2-owned login — reuse the Codex CLI's session if it's signed in.
-        cli = _codex_cli_creds()
-        if cli:
-            return cli
-        raise CodexAuthError(
-            "Not signed in with ChatGPT. Run `ag2-assistant auth login`, "
-            "or sign in with the Codex CLI (`codex login`)."
-        )
-    expires_at = float(data.get("expires_at", 0) or 0)
-    access = data.get("access_token", "")
-    if access and time.time() < expires_at - _REFRESH_MARGIN_S:
-        return Creds(access_token=access, account_id=data.get("account_id"))
-    return _refresh(refresh_token)
-
-
-def creds_best_effort() -> Creds:
-    """Return whatever credentials we have WITHOUT ever raising — try a fresh token,
-    but on any failure (not signed in, refresh blocked by a geo/network error) fall
-    back to the stored (possibly stale/empty) access token.
-
-    Used at agent-BUILD time so constructing the model client never throws: a bad
-    token then surfaces as a clean failed turn (the real OpenAI error) instead of a
-    500 that takes down reload() and every route that rebuilds the agent."""
-    try:
-        return ensure_fresh()
-    except CodexAuthError:
-        data = _read()
-        return Creds(access_token=data.get("access_token", ""), account_id=data.get("account_id"))
 
 
 def default_headers(creds: Creds, session_id: str | None = None) -> dict[str, str]:
@@ -345,39 +185,6 @@ def default_headers(creds: Creds, session_id: str | None = None) -> dict[str, st
     if session_id:
         headers["session_id"] = session_id
     return headers
-
-
-def status() -> dict:
-    """Presence + a non-sensitive hint for the UI. Never returns raw tokens.
-    ``source`` is "ag2" (our own OAuth) or "codex-cli" (reusing the CLI's session)."""
-    data = _read()
-    if data.get("refresh_token"):
-        return {
-            "signed_in": True,
-            "source": "ag2",
-            "account_id": data.get("account_id"),
-            "expires_at": data.get("expires_at"),
-        }
-    cli = _codex_cli_creds()
-    if cli:
-        return {
-            "signed_in": True,
-            "source": "codex-cli",
-            "account_id": cli.account_id,
-            "expires_at": None,
-        }
-    return {"signed_in": False, "source": None, "account_id": None, "expires_at": None}
-
-
-def logout() -> bool:
-    """Remove stored tokens. Returns True if a session existed."""
-    p = _path()
-    existed = p.exists()
-    try:
-        p.unlink()
-    except FileNotFoundError:
-        pass
-    return existed
 
 
 # --- Interactive login (CLI / local) ---------------------------------------- #
@@ -475,17 +282,200 @@ def _capture_code(state: str, timeout_s: float = 300.0) -> str:
     return captured["code"]
 
 
-def run_local_login(open_browser: bool = True) -> Creds:
-    """Full local login: generate PKCE, open the consent page, capture the code on
-    the loopback port, exchange it, and store tokens. Returns live creds.
+class CodexAuth:
+    """ChatGPT-subscription auth for one install.
 
-    For headless setups where a browser/loopback isn't available, print the URL
-    (``open_browser=False``) and use ``exchange_code`` with a pasted code instead.
+    Owns two files: our own OAuth token store (``paths.codex_tokens``) and, read-only,
+    the official Codex CLI's login (``paths.codex_auth``) which we reuse when we have
+    no session of our own.
     """
-    verifier, challenge = generate_pkce()
-    state = _secrets.token_urlsafe(24)
-    url = build_authorize_url(challenge, state)
-    if open_browser:
-        webbrowser.open(url)
-    code = _capture_code(state)
-    return exchange_code(code, verifier)
+
+    def __init__(self, paths: Paths) -> None:
+        self._store = paths.codex_tokens
+        self._cli_login = paths.codex_auth
+
+    def _read(self) -> dict:
+        try:
+            return json.loads(self._store.read_text())
+        except Exception:
+            return {}
+
+    def _write(self, data: dict) -> None:
+        p = self._store
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, indent=2))
+        try:
+            p.chmod(0o600)
+        except Exception:
+            pass
+
+    def _read_codex_cli(self) -> dict:
+        """The official Codex CLI's ``auth.json`` tokens sub-map (empty if absent/no
+        subscription session — e.g. the CLI is signed in with an API key instead). Shape:
+        {"tokens": {"id_token","access_token","refresh_token","account_id"}, "auth_mode", …}."""
+        try:
+            data = json.loads(self._cli_login.read_text())
+        except Exception:
+            return {}
+        toks = data.get("tokens")
+        return toks if isinstance(toks, dict) and toks.get("access_token") else {}
+
+    def _codex_cli_creds(self) -> "Creds | None":
+        """Live credentials from the Codex CLI's own session, or None. Read-only: we do
+        NOT refresh (that would rotate the CLI's refresh token and log it out). The CLI
+        keeps its own token fresh; if it's expired the model call fails cleanly and the
+        user re-runs `codex login`."""
+        toks = self._read_codex_cli()
+        access = toks.get("access_token")
+        if not access:
+            return None
+        account = toks.get("account_id") or account_id_from(toks.get("id_token", ""), access)
+        return Creds(access_token=access, account_id=account)
+
+    def _store_tokens(self, tokens: dict) -> Creds:
+        """Persist a token response, computing an absolute expiry + account id."""
+        access = tokens.get("access_token", "")
+        refresh = tokens.get("refresh_token", "")
+        id_token = tokens.get("id_token", "")
+        expires_in = int(tokens.get("expires_in", 3600) or 3600)
+        account_id = account_id_from(id_token, access)
+        data = self._read()
+        data.update(
+            {
+                "access_token": access,
+                # OpenAI rotates refresh tokens — keep the previous one if none returned.
+                "refresh_token": refresh or data.get("refresh_token", ""),
+                "id_token": id_token or data.get("id_token", ""),
+                "expires_at": time.time() + expires_in,
+                "account_id": account_id or data.get("account_id"),
+            }
+        )
+        self._write(data)
+        return Creds(access_token=access, account_id=data["account_id"])
+
+    def exchange_code(self, code: str, verifier: str) -> Creds:
+        """Exchange an authorization code for tokens and store them."""
+        try:
+            resp = httpx.post(
+                TOKEN_URL,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": REDIRECT_URI,
+                    "client_id": CLIENT_ID,
+                    "code_verifier": verifier,
+                },
+                timeout=30.0,
+            )
+        except Exception as exc:
+            raise CodexAuthError(f"Token exchange request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise CodexAuthError(f"Token exchange failed ({resp.status_code}): {resp.text[:300]}")
+        return self._store_tokens(resp.json())
+
+    def _refresh(self, refresh_token: str) -> Creds:
+        try:
+            resp = httpx.post(
+                TOKEN_URL,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": CLIENT_ID,
+                    "scope": SCOPES,
+                },
+                timeout=30.0,
+            )
+        except Exception as exc:
+            raise CodexAuthError(f"Token refresh request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise CodexAuthError(
+                f"Token refresh failed ({resp.status_code}). Please sign in again."
+            )
+        return self._store_tokens(resp.json())
+
+    def is_signed_in(self) -> bool:
+        """Signed in via our own OAuth OR the official Codex CLI's existing session."""
+        return bool(self._read().get("refresh_token")) or bool(self._read_codex_cli())
+
+    def ensure_fresh(self) -> Creds:
+        """Return live credentials, refreshing the access token if it is expired (or
+        within the skew margin). If we have no session of our own, fall back to the
+        Codex CLI's existing session (read-only). Raises ``CodexAuthError`` if neither."""
+        data = self._read()
+        refresh_token = data.get("refresh_token")
+        if not refresh_token:
+            # No AG2-owned login — reuse the Codex CLI's session if it's signed in.
+            cli = self._codex_cli_creds()
+            if cli:
+                return cli
+            raise CodexAuthError(
+                "Not signed in with ChatGPT. Run `ag2-assistant auth login`, "
+                "or sign in with the Codex CLI (`codex login`)."
+            )
+        expires_at = float(data.get("expires_at", 0) or 0)
+        access = data.get("access_token", "")
+        if access and time.time() < expires_at - _REFRESH_MARGIN_S:
+            return Creds(access_token=access, account_id=data.get("account_id"))
+        return self._refresh(refresh_token)
+
+    def creds_best_effort(self) -> Creds:
+        """Return whatever credentials we have WITHOUT ever raising — try a fresh token,
+        but on any failure (not signed in, refresh blocked by a geo/network error) fall
+        back to the stored (possibly stale/empty) access token.
+
+        Used at agent-BUILD time so constructing the model client never throws: a bad
+        token then surfaces as a clean failed turn (the real OpenAI error) instead of a
+        500 that takes down reload() and every route that rebuilds the agent."""
+        try:
+            return self.ensure_fresh()
+        except CodexAuthError:
+            data = self._read()
+            return Creds(
+                access_token=data.get("access_token", ""), account_id=data.get("account_id")
+            )
+
+    def status(self) -> dict:
+        """Presence + a non-sensitive hint for the UI. Never returns raw tokens.
+        ``source`` is "ag2" (our own OAuth) or "codex-cli" (reusing the CLI's session)."""
+        data = self._read()
+        if data.get("refresh_token"):
+            return {
+                "signed_in": True,
+                "source": "ag2",
+                "account_id": data.get("account_id"),
+                "expires_at": data.get("expires_at"),
+            }
+        cli = self._codex_cli_creds()
+        if cli:
+            return {
+                "signed_in": True,
+                "source": "codex-cli",
+                "account_id": cli.account_id,
+                "expires_at": None,
+            }
+        return {"signed_in": False, "source": None, "account_id": None, "expires_at": None}
+
+    def logout(self) -> bool:
+        """Remove stored tokens. Returns True if a session existed."""
+        p = self._store
+        existed = p.exists()
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+        return existed
+
+    def run_local_login(self, open_browser: bool = True) -> Creds:
+        """Full local login: generate PKCE, open the consent page, capture the code on
+        the loopback port, exchange it, and store tokens. Returns live creds.
+
+        For headless setups where a browser/loopback isn't available, print the URL
+        (``open_browser=False``) and use ``exchange_code`` with a pasted code instead.
+        """
+        verifier, challenge = generate_pkce()
+        state = _secrets.token_urlsafe(24)
+        url = build_authorize_url(challenge, state)
+        if open_browser:
+            webbrowser.open(url)
+        code = _capture_code(state)
+        return self.exchange_code(code, verifier)

@@ -29,7 +29,7 @@ from math import isfinite
 from pathlib import Path
 
 from assistant import voice_providers
-from assistant.config import read_yaml, write_yaml
+from assistant.yamlio import read_yaml, write_yaml
 
 _MCP_KEY = "mcp_servers"
 _MCP_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")

@@ -37,10 +37,12 @@ entry SHADOWS the ``llm`` block in ``config.json`` (that block is only the flat
 default used when the store is empty or has no active entry).
 """
 
+from collections.abc import Mapping
 from secrets import token_hex
 
-from assistant import secrets
 from assistant.config import read_global_config, update_global_section
+from assistant.paths import Paths
+from assistant.secrets import SecretStore
 
 # The supported configuration types. ``openai`` = Chat Completions API, the surface
 # OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) implement reliably;
@@ -85,14 +87,14 @@ PROVIDER_OF = {
 CLI_LOGIN_TYPES = ("claude_code", "codex")
 
 
-def _subscription_signed_in() -> bool:
+def _subscription_signed_in(paths: Paths) -> bool:
     """Whether ChatGPT-subscription sign-in is currently active. Lazy + guarded: a
     missing or broken ``codex_auth`` module must never raise into the usable()/health
     path, so any import or call failure reads as "not signed in"."""
     try:
-        from assistant import codex_auth  # local: import cycle (codex_auth)
+        from assistant.codex_auth import CodexAuth  # local: import cycle (codex_auth)
 
-        return bool(codex_auth.is_signed_in())
+        return bool(CodexAuth(paths).is_signed_in())
     except Exception:
         return False
 
@@ -116,41 +118,18 @@ def _acp_adapter_present(name: str) -> bool:
         return False
 
 
-def _claude_cli_present() -> bool:
-    return _acp_adapter_present("claude")
+# CLI-login type → the coding agent whose ACP adapter backs it (detect.py's names).
+_CLI_LOGIN_AGENT = {"claude_code": "claude", "codex": "codex"}
 
 
-def _codex_cli_present() -> bool:
-    return _acp_adapter_present("codex")
-
-
-def _cli_login_present(ctype: str) -> bool:
-    """Adapter presence for a CLI-login type. Routed through the per-agent helpers
-    on purpose: they are the seams tests patch."""
-    return {"claude_code": _claude_cli_present, "codex": _codex_cli_present}[ctype]()
+def cli_login_present(ctype: str) -> bool:
+    """Whether this CLI-login type's ACP adapter is reachable (auth itself is the
+    CLI's own on-disk login, which the adapter consults)."""
+    agent = _CLI_LOGIN_AGENT.get(ctype)
+    return _acp_adapter_present(agent) if agent else False
 
 
 _SECTION = "llm_configs"
-
-
-def _read() -> dict:
-    """The store section (``{"active": id|None, "configs": [...]}``) of the global
-    config.yaml. A missing or malformed section reads as an empty store — the flat
-    ``llm:`` defaults then apply, exactly like a malformed config file."""
-    data = read_global_config().get(_SECTION)
-    if not isinstance(data, dict):
-        return {"active": None, "configs": []}
-    configs = data.get("configs")
-    return {
-        "active": data.get("active"),
-        "configs": [c for c in configs if isinstance(c, dict)] if isinstance(configs, list) else [],
-    }
-
-
-def _write(data: dict) -> None:
-    update_global_section(
-        _SECTION, {"active": data.get("active"), "configs": list(data.get("configs") or [])}
-    )
 
 
 def _clean_entry(raw: dict) -> dict:
@@ -197,216 +176,242 @@ def _clean_entry(raw: dict) -> dict:
     return entry
 
 
-def list_configs() -> list[dict]:
-    """Every configuration in the store, in insertion order (empty list when unset)."""
-    return list(_read().get("configs") or [])
+class LlmConfigStore:
+    """One install's named LLM configurations, in the ``llm_configs:`` section of the
+    global ``config.yaml``. The list and the single ``active`` selection are
+    install-wide (the LLM is common across profiles)."""
 
+    def __init__(self, paths: Paths) -> None:
+        self._paths = paths
+        self._secrets = SecretStore(paths)
 
-def get_config(cid: str) -> dict | None:
-    """One configuration by id, or None if absent."""
-    return next((c for c in list_configs() if c.get("id") == cid), None)
+    def _read(self) -> dict:
+        """The store section (``{"active": id|None, "configs": [...]}``) of the global
+        config.yaml. A missing or malformed section reads as an empty store — the flat
+        ``llm:`` defaults then apply, exactly like a malformed config file."""
+        data = read_global_config(self._paths).get(_SECTION)
+        if not isinstance(data, dict):
+            return {"active": None, "configs": []}
+        configs = data.get("configs")
+        return {
+            "active": data.get("active"),
+            "configs": [c for c in configs if isinstance(c, dict)]
+            if isinstance(configs, list)
+            else [],
+        }
 
+    def _write(self, data: dict) -> None:
+        update_global_section(
+            self._paths,
+            _SECTION,
+            {"active": data.get("active"), "configs": list(data.get("configs") or [])},
+        )
 
-def save_config(raw: dict) -> dict:
-    """Create (no ``id``) or update (``id`` present) a configuration and return the
-    stored entry. Validates via :func:`_clean_entry`. A new entry gets an id
-    ``"c_" + token_hex(4)``; updating an unknown id raises ``KeyError``."""
-    entry = _clean_entry(raw)
-    data = _read()
-    configs = list(data.get("configs") or [])
-    if "id" in entry:
-        for i, existing in enumerate(configs):
-            if existing.get("id") == entry["id"]:
-                configs[i] = entry
-                break
+    def list_configs(self) -> list[dict]:
+        """Every configuration in the store, in insertion order (empty when unset)."""
+        return list(self._read().get("configs") or [])
+
+    def get_config(self, cid: str) -> dict | None:
+        """One configuration by id, or None if absent."""
+        return next((c for c in self.list_configs() if c.get("id") == cid), None)
+
+    def save_config(self, raw: dict) -> dict:
+        """Create (no ``id``) or update (``id`` present) a configuration and return the
+        stored entry. Validates via :func:`_clean_entry`. A new entry gets an id
+        ``"c_" + token_hex(4)``; updating an unknown id raises ``KeyError``."""
+        entry = _clean_entry(raw)
+        data = self._read()
+        configs = list(data.get("configs") or [])
+        if "id" in entry:
+            for i, existing in enumerate(configs):
+                if existing.get("id") == entry["id"]:
+                    configs[i] = entry
+                    break
+            else:
+                raise KeyError(entry["id"])
         else:
-            raise KeyError(entry["id"])
-    else:
-        entry["id"] = "c_" + token_hex(4)
-        configs.append(entry)
-    data["configs"] = configs
-    _write(data)
-    return entry
+            entry["id"] = "c_" + token_hex(4)
+            configs.append(entry)
+        data["configs"] = configs
+        self._write(data)
+        return entry
 
+    def delete_config(self, cid: str) -> bool:
+        """Remove a configuration by id (False if unknown). Deleting the active one is
+        allowed: the active pointer moves to the first remaining config, or None when it
+        was the last (an empty store then falls back to the flat ``llm:`` defaults).
+        Referenced Secrets are independent entities and are never deleted with a config."""
+        data = self._read()
+        configs = list(data.get("configs") or [])
+        if not any(c.get("id") == cid for c in configs):
+            return False
+        remaining = [c for c in configs if c.get("id") != cid]
+        data["configs"] = remaining
+        if data.get("active") == cid:
+            data["active"] = remaining[0]["id"] if remaining else None
+        self._write(data)
+        return True
 
-def delete_config(cid: str) -> bool:
-    """Remove a configuration by id (returns False if unknown). Deleting the active one
-    is allowed: the active pointer moves to the first remaining config, or None when it
-    was the last (an empty store then falls back to the flat ``llm:`` defaults, exactly
-    like a fresh install). Referenced Secrets are independent entities and are never
-    deleted with a config."""
-    data = _read()
-    configs = list(data.get("configs") or [])
-    if not any(c.get("id") == cid for c in configs):
+    def set_secret_id(self, cid: str, sid: str) -> bool:
+        """Point one config at a Secret by id (empty ``sid`` clears the reference).
+        Returns False for an unknown config."""
+        data = self._read()
+        configs = list(data.get("configs") or [])
+        for i, entry in enumerate(configs):
+            if entry.get("id") == cid:
+                configs[i] = {**entry, "secret_id": (sid or "").strip()}
+                data["configs"] = configs
+                self._write(data)
+                return True
         return False
-    remaining = [c for c in configs if c.get("id") != cid]
-    data["configs"] = remaining
-    if data.get("active") == cid:
-        data["active"] = remaining[0]["id"] if remaining else None
-    _write(data)
-    return True
 
+    def active_id(self) -> str | None:
+        """The id of the active configuration, or None (empty store / none selected)."""
+        return self._read().get("active")
 
-def set_secret_id(cid: str, sid: str) -> bool:
-    """Point one config at a Secret by id (empty ``sid`` clears the reference).
-    Returns False for an unknown config. Used by the save flow and by the
-    legacy-store migration."""
-    data = _read()
-    configs = list(data.get("configs") or [])
-    for i, entry in enumerate(configs):
-        if entry.get("id") == cid:
-            configs[i] = {**entry, "secret_id": (sid or "").strip()}
-            data["configs"] = configs
-            _write(data)
+    def set_active(self, cid: str) -> bool:
+        """Make ``cid`` the active configuration (False for an unknown id)."""
+        data = self._read()
+        if not any(c.get("id") == cid for c in (data.get("configs") or [])):
+            return False
+        data["active"] = cid
+        self._write(data)
+        return True
+
+    def active_config(self) -> dict | None:
+        """The active configuration entry, or None when the store is empty or its
+        ``active`` id doesn't resolve to a present entry."""
+        aid = self.active_id()
+        return self.get_config(aid) if aid else None
+
+    def entry_options(self, entry: dict) -> dict:
+        """The ``provider_options`` kwargs derived from one entry, ready to drop into
+        ``cfg.llm.provider_options[provider]``.
+
+        Merge order (later wins): the entry's own ``options`` object first; then the
+        type-forced fields — ``api`` for the two OpenAI surfaces plus the lifted
+        ``base_url`` (OpenAI/Anthropic) or ``host`` (Ollama) when set; then the
+        referenced Secret's ``api_key`` last, so a config's own Secret overrides
+        anything in options. No resolving Secret → the env fallback in ``model_config``
+        applies — EXCEPT when the entry targets a custom ``base_url``: the shared
+        provider key must never be transmitted to a third-party/local endpoint, so a
+        placeholder is forced instead. It is non-empty on purpose (the OpenAI SDK
+        refuses a missing key and llama.cpp-style servers expect some bearer value);
+        endpoints that need a real key (e.g. MiniMax) take it via a referenced Secret."""
+        opts = dict(entry.get("options") or {})
+        ctype = entry.get("type")
+        if ctype == "openai_subscription":
+            # model_config routes this type through codex_auth off cfg.llm.auth_mode and
+            # ignores provider_options entirely — so no api/base_url/key derivation here;
+            # return only the entry's own free-form options untouched.
+            return opts
+        if ctype in CLI_LOGIN_TYPES:
+            # ACPConfig constructor overrides ride through untouched; there is no
+            # api/base_url/key derivation for CLI-login providers.
+            return opts
+        if ctype == "openai":
+            opts["api"] = "chat"
+        elif ctype == "openai_responses":
+            opts["api"] = "responses"
+        if ctype in ("openai", "openai_responses", "anthropic") and entry.get("base_url"):
+            opts["base_url"] = entry["base_url"]
+        elif ctype == "ollama" and entry.get("host"):
+            opts["host"] = entry["host"]
+        key = self._secrets.secret_value(entry.get("secret_id") or "")
+        if key:
+            opts["api_key"] = key
+        elif entry.get("base_url"):
+            opts["api_key"] = "unused"  # never leak the shared key to a custom endpoint
+        return opts
+
+    def apply_active(self, cfg, override_id: str | None = None) -> None:
+        """Derive the active configuration onto the flat ``cfg.llm`` fields, in place.
+
+        No-op when the store is empty or its active id doesn't resolve (so a fresh
+        install / CLI-before-store keeps the flat gemini defaults). Called from
+        ``resolve_config()`` BEFORE the env overrides, so ``AG2ASSISTANT_LLM_PROVIDER`` /
+        ``AG2ASSISTANT_MODEL`` still win last.
+
+        ``override_id`` is a profile's per-profile **Active override** (ADR 0015): a
+        selection into this shared list that is Active *for that profile*. It is preferred
+        over the install-wide active when it resolves to a present config; a dangling
+        override (deleted config) silently falls back to the install-wide active, never an
+        error. ``Config.with_profile`` passes it so the effective Active is env pin >
+        profile override > install-wide active > env fallback."""
+        entry = self.get_config(override_id) if override_id else None
+        if entry is None:
+            entry = self.active_config()
+        if entry is None:
+            return
+        provider = PROVIDER_OF[entry["type"]]
+        cfg.llm.provider = provider
+        cfg.llm.model = entry["model"]
+        cfg.llm.provider_options[provider] = self.entry_options(entry)
+        # OpenAI auth mode is a property of the active entry's type. Set it on EVERY
+        # apply (not just the subscription branch) so switching back to a normal OpenAI
+        # config resets it to key auth. The AG2ASSISTANT_OPENAI_AUTH_MODE env override
+        # still wins last (applied after apply_active in resolve_config).
+        cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
+
+    def usable(self, entry: dict, env: Mapping[str, str]) -> bool:
+        """Whether this configuration can actually run right now — the signal behind the
+        health dot. Ollama is local (always). A ``base_url`` (OpenAI/Anthropic-compatible
+        server) needs no real provider key. Otherwise a per-config key OR the provider's
+        key in ``env`` must be present."""
+        ctype = entry.get("type")
+        if ctype == "openai_subscription":
+            # No API key at all — usable exactly when ChatGPT sign-in is live.
+            return _subscription_signed_in(self._paths)
+        if ctype in CLI_LOGIN_TYPES:
+            # No key either — usable exactly when that CLI's ACP adapter (or a bridge)
+            # exists; auth itself is the CLI's on-disk login.
+            return cli_login_present(str(ctype))
+        if ctype == "ollama":
             return True
-    return False
+        if entry.get("base_url"):
+            return True
+        if self._secrets.secret_value(entry.get("secret_id") or ""):
+            return True
+        provider = PROVIDER_OF.get(ctype, "")
+        return bool(self._secrets.status(env).get(provider, {}).get("set"))
 
+    def key_source(self, entry: dict, env: Mapping[str, str]) -> str:
+        """Which key this configuration would actually send, for honest UI labelling:
 
-def active_id() -> str | None:
-    """The id of the active configuration, or None (empty store / none selected)."""
-    return _read().get("active")
+        - ``"secret"`` — its referenced Secret resolves; overrides all.
+        - ``"not_needed"`` — Ollama (no key concept) or a custom ``base_url`` (a
+          placeholder is sent; see :meth:`entry_options` — the shared key never is).
+        - ``"shared"`` — no key of its own; the provider's shared key from ``env``
+          (``KEY_ENV``) is what ``model_config``'s fallback will send.
+        - ``"subscription"`` — ChatGPT sign-in (``openai_subscription``); no API key at
+          all, the bearer token rides from ``codex_auth``.
+        - ``"cli_login"`` — Claude Code (``claude_code``) or Codex (``codex``); the ACP
+          adapter/bridge is present and auth is the CLI's own on-disk login.
+        - ``"none"`` — nothing available; the config can't run (mirrors :meth:`usable`).
+        """
+        if entry.get("type") == "openai_subscription":
+            return "subscription"
+        if entry.get("type") in CLI_LOGIN_TYPES:
+            # "cli_login" when the adapter (or bridge) is present, "none" otherwise —
+            # so the web isUsable() predicate (key_source === 'none' → dead) works
+            # for these types with no client-side special case.
+            return "cli_login" if cli_login_present(str(entry.get("type"))) else "none"
+        if self._secrets.secret_value(entry.get("secret_id") or ""):
+            return "secret"
+        if entry.get("type") == "ollama" or entry.get("base_url"):
+            return "not_needed"
+        provider = PROVIDER_OF.get(entry.get("type"), "")
+        if self._secrets.status(env).get(provider, {}).get("set"):
+            return "shared"
+        return "none"
 
-
-def set_active(cid: str) -> bool:
-    """Make ``cid`` the active configuration (returns False for an unknown id)."""
-    data = _read()
-    if not any(c.get("id") == cid for c in (data.get("configs") or [])):
-        return False
-    data["active"] = cid
-    _write(data)
-    return True
-
-
-def active_config() -> dict | None:
-    """The active configuration entry, or None when the store is empty or its
-    ``active`` id doesn't resolve to a present entry."""
-    aid = active_id()
-    return get_config(aid) if aid else None
-
-
-def entry_options(entry: dict) -> dict:
-    """The ``provider_options`` kwargs derived from one entry, ready to drop into
-    ``cfg.llm.provider_options[provider]``.
-
-    Merge order (later wins): the entry's own ``options`` object first; then the
-    type-forced fields — ``api`` for the two OpenAI surfaces plus the lifted
-    ``base_url`` (OpenAI/Anthropic) or ``host`` (Ollama) when set; then the
-    referenced Secret's ``api_key`` last, so a config's own Secret overrides
-    anything in options. No resolving Secret → the env fallback in ``model_config``
-    applies — EXCEPT when the entry targets a custom ``base_url``: the shared
-    provider key must never be transmitted to a third-party/local endpoint, so a
-    placeholder is forced instead. It is non-empty on purpose (the OpenAI SDK
-    refuses a missing key and llama.cpp-style servers expect some bearer value);
-    endpoints that need a real key (e.g. MiniMax) take it via a referenced Secret."""
-    opts = dict(entry.get("options") or {})
-    ctype = entry.get("type")
-    if ctype == "openai_subscription":
-        # model_config routes this type through codex_auth off cfg.llm.auth_mode and
-        # ignores provider_options entirely — so no api/base_url/key derivation here;
-        # return only the entry's own free-form options untouched.
-        return opts
-    if ctype in CLI_LOGIN_TYPES:
-        # ACPConfig constructor overrides ride through untouched; there is no
-        # api/base_url/key derivation for CLI-login providers.
-        return opts
-    if ctype == "openai":
-        opts["api"] = "chat"
-    elif ctype == "openai_responses":
-        opts["api"] = "responses"
-    if ctype in ("openai", "openai_responses", "anthropic") and entry.get("base_url"):
-        opts["base_url"] = entry["base_url"]
-    elif ctype == "ollama" and entry.get("host"):
-        opts["host"] = entry["host"]
-    key = secrets.secret_value(entry.get("secret_id") or "")
-    if key:
-        opts["api_key"] = key
-    elif entry.get("base_url"):
-        opts["api_key"] = "unused"  # never leak the shared key to a custom endpoint
-    return opts
-
-
-def apply_active(cfg, override_id: str | None = None) -> None:
-    """Derive the active configuration onto the flat ``cfg.llm`` fields, in place.
-
-    No-op when the store is empty or its active id doesn't resolve (so a fresh
-    install / CLI-before-store keeps the flat ``config.json`` gemini defaults). Called
-    from ``load_config()`` BEFORE the env overrides, so ``AG2ASSISTANT_LLM_PROVIDER`` /
-    ``AG2ASSISTANT_MODEL`` still win last.
-
-    ``override_id`` is a profile's per-profile **Active override** (ADR 0015): a
-    selection into this shared list that is Active *for that profile*. It is preferred
-    over the install-wide active when it resolves to a present config; a dangling
-    override (deleted config) silently falls back to the install-wide active, never an
-    error. ``config.with_profile`` passes it so the effective Active is env pin >
-    profile override > install-wide active > env fallback."""
-    entry = get_config(override_id) if override_id else None
-    if entry is None:
-        entry = active_config()
-    if entry is None:
-        return
-    provider = PROVIDER_OF[entry["type"]]
-    cfg.llm.provider = provider
-    cfg.llm.model = entry["model"]
-    cfg.llm.provider_options[provider] = entry_options(entry)
-    # OpenAI auth mode is a property of the active entry's type. Set it on EVERY
-    # apply (not just the subscription branch) so switching back to a normal OpenAI
-    # config resets it to key auth. The AG2ASSISTANT_OPENAI_AUTH_MODE env override
-    # still wins last (applied after apply_active in load_config).
-    cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
-
-
-def usable(entry: dict) -> bool:
-    """Whether this configuration can actually run right now — the signal behind the
-    health dot. Ollama is local (always). A ``base_url`` (OpenAI/Anthropic-compatible
-    server) needs no real provider key. Otherwise a per-config key OR the provider's
-    env key must be present."""
-    ctype = entry.get("type")
-    if ctype == "openai_subscription":
-        # No API key at all — usable exactly when ChatGPT sign-in is live.
-        return _subscription_signed_in()
-    if ctype in CLI_LOGIN_TYPES:
-        # No key either — usable exactly when that CLI's ACP adapter (or a bridge)
-        # exists; auth itself is the CLI's on-disk login.
-        return _cli_login_present(ctype)
-    if ctype == "ollama":
-        return True
-    if entry.get("base_url"):
-        return True
-    if secrets.secret_value(entry.get("secret_id") or ""):
-        return True
-    provider = PROVIDER_OF.get(ctype, "")
-    return bool(secrets.status().get(provider, {}).get("set"))
-
-
-def key_source(entry: dict) -> str:
-    """Which key this configuration would actually send, for honest UI labelling:
-
-    - ``"secret"`` — its referenced Secret resolves; overrides all.
-    - ``"not_needed"`` — Ollama (no key concept) or a custom ``base_url`` (a
-      placeholder is sent; see :func:`entry_options` — the shared key never is).
-    - ``"shared"`` — no key of its own; the provider's shared/env key (``KEY_ENV``)
-      is what ``model_config``'s fallback will send to the provider's own endpoint.
-    - ``"subscription"`` — ChatGPT sign-in (``openai_subscription``); no API key at
-      all, the bearer token rides from ``codex_auth``.
-    - ``"cli_login"`` — Claude Code (``claude_code``) or Codex (``codex``); the ACP
-      adapter/bridge is present and auth is the CLI's own on-disk login.
-    - ``"none"`` — nothing available; the config can't run (mirrors :func:`usable`).
-    """
-    if entry.get("type") == "openai_subscription":
-        return "subscription"
-    if entry.get("type") in CLI_LOGIN_TYPES:
-        # "cli_login" when the adapter (or bridge) is present, "none" otherwise —
-        # so the web isUsable() predicate (key_source === 'none' → dead) works
-        # for these types with no client-side special case.
-        return "cli_login" if _cli_login_present(str(entry.get("type"))) else "none"
-    if secrets.secret_value(entry.get("secret_id") or ""):
-        return "secret"
-    if entry.get("type") == "ollama" or entry.get("base_url"):
-        return "not_needed"
-    provider = PROVIDER_OF.get(entry.get("type"), "")
-    if secrets.status().get(provider, {}).get("set"):
-        return "shared"
-    return "none"
+    def image_entry(self) -> dict | None:
+        """The configuration image generation runs on: the ACTIVE one, iff it is
+        image-capable — otherwise None (the tool reports images unavailable). No
+        fallback hunting through the list: images follow the selected configuration,
+        so switching models never silently routes images somewhere else."""
+        active = self.active_config()
+        return active if active and image_capable(active) else None
 
 
 def image_capable(entry: dict) -> bool:
@@ -420,12 +425,3 @@ def image_capable(entry: dict) -> bool:
     if t in ("gemini", "openai_responses", "openai_subscription"):
         return True
     return t == "openai" and not entry.get("base_url")
-
-
-def image_entry() -> dict | None:
-    """The configuration image generation runs on: the ACTIVE one, iff it is
-    image-capable — otherwise None (the tool reports images unavailable). No
-    fallback hunting through the list: images follow the selected configuration,
-    so switching models never silently routes images somewhere else."""
-    active = active_config()
-    return active if active and image_capable(active) else None

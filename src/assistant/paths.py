@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from assistant.config import read_yaml
+from assistant.yamlio import read_yaml
 
 _DATA_DIR_NAME = ".ag2assistant"
 
@@ -63,6 +63,11 @@ class Paths:
     @property
     def skills_dir(self) -> Path:
         return self.root / "skills"
+
+    @property
+    def codex_tokens(self) -> Path:
+        """Our OWN ChatGPT-subscription token store — not the Codex CLI's ``codex_auth``."""
+        return self.root / "codex_auth.json"
 
     @property
     def google_credentials(self) -> Path:
