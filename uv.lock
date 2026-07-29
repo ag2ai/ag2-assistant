@@ -99,7 +99,7 @@ requires-dist = [
     { name = "google-auth", marker = "extra == 'google'", specifier = ">=2.0" },
     { name = "google-auth-oauthlib", marker = "extra == 'google'", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "mcp", specifier = ">=1.9.0" },
+    { name = "mcp", specifier = ">=1.9.0,<2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pypdf", marker = "extra == 'google'", specifier = ">=5.0" },

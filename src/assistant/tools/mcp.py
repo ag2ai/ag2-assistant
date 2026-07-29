@@ -28,6 +28,7 @@ from ag2.tools.final.function_tool import FunctionDefinition, FunctionToolSchema
 from ag2.tools.final.toolkit import Toolkit
 from ag2.tools.tool import Tool
 
+from assistant.observability import log_suppressed
 from assistant.tools._mcp_compat import (
     AnyMCPConfig,
     MCPTool,
@@ -43,6 +44,9 @@ _NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
 # span the tool calls of one agent turn (and a think between turns), short enough
 # that orphaned toolkits after an agent reload self-clean without a dispose hook.
 _IDLE_CLOSE_S = 300.0
+
+# How long an unreachable server is left alone before discovery retries.
+_RETRY_AFTER_S = 60.0
 
 
 class _PersistentSession:
@@ -139,6 +143,14 @@ class _PersistentSession:
             task.cancel()
 
 
+def describe_mcp_error(exc: BaseException) -> str:
+    """Flatten a server failure to the message a human can act on."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    detail = str(exc).strip()
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+
 def tool_prefix(server_name: str) -> str:
     """Provider-safe function-name prefix for an MCP server label."""
     prefix = _NAME_RE.sub("_", server_name.strip().lower()).strip("_")
@@ -179,7 +191,7 @@ def build_mcp_tools(servers: Iterable[dict]) -> list[Tool]:
 class NamespacedMCPToolkit(Toolkit):
     """Expose one MCP server as namespaced AG2 function tools."""
 
-    __slots__ = ("config", "_discovered", "_discover_lock", "_psession")
+    __slots__ = ("config", "_discovered", "_discover_lock", "_psession", "_error", "_error_at")
 
     def __init__(
         self,
@@ -191,6 +203,8 @@ class NamespacedMCPToolkit(Toolkit):
         self._discovered = False
         self._discover_lock = asyncio.Lock()
         self._psession = _PersistentSession()  # shared by discovery + all proxies
+        self._error: Exception | None = None
+        self._error_at = 0.0
         label = config.server_label if isinstance(config.server_label, str) else ""
         super().__init__(name=label or "mcp_toolkit", middleware=middleware)
 
@@ -202,6 +216,11 @@ class NamespacedMCPToolkit(Toolkit):
         """Close the server session/process now (idle expiry handles it otherwise)."""
         await self._psession.aclose()
 
+    @property
+    def last_error(self) -> Exception | None:
+        """Why the last discovery attempt failed; ``None`` if it worked."""
+        return self._error
+
     async def _discover_tools(self, context: Context) -> None:
         if self._discovered:
             return
@@ -209,9 +228,20 @@ class NamespacedMCPToolkit(Toolkit):
         async with self._discover_lock:
             if self._discovered:
                 return
+            if self._error is not None and time.monotonic() - self._error_at < _RETRY_AFTER_S:
+                return
 
-            resolved = resolve_config(self.config, context)
-            raw_tools = (await self._psession.list_tools(resolved)).tools
+            try:
+                resolved = resolve_config(self.config, context)
+                raw_tools = (await self._psession.list_tools(resolved)).tools
+            except Exception as exc:
+                # Every toolkit's schemas() is collected before the model is called,
+                # so raising here would abort turns that never touch MCP.
+                self._error = exc
+                self._error_at = time.monotonic()
+                label = getattr(self.config, "server_label", None) or "mcp"
+                log_suppressed("MCP tool discovery", exc, server=label)
+                return
 
             allowed = resolved.allowed_tools
             blocked = set(resolved.blocked_tools or [])
@@ -231,6 +261,7 @@ class NamespacedMCPToolkit(Toolkit):
                 self._tools[proxy.name] = proxy
 
             self._discovered = True
+            self._error = None
 
 
 class _NamespacedMCPProxyTool(Tool):
@@ -304,6 +335,7 @@ class _NamespacedMCPProxyTool(Tool):
 __all__ = [
     "NamespacedMCPToolkit",
     "build_mcp_tools",
+    "describe_mcp_error",
     "namespaced_tool_name",
     "tool_prefix",
 ]

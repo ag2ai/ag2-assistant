@@ -163,7 +163,7 @@ from assistant.skills_install import (
 )
 from assistant.structured import aclose_config
 from assistant.tasks import TaskStoreCorruptionError
-from assistant.tools.mcp import build_mcp_tools
+from assistant.tools.mcp import build_mcp_tools, describe_mcp_error
 from assistant.voice import synthesize_preview
 from assistant.workspace import (
     _MAX_WRITE_BYTES,
@@ -2564,10 +2564,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         context = ConversationContext(stream=MemoryStream())
         try:
             schemas = await toolkit.schemas(context)
+            error = toolkit.last_error
         finally:
             # This throwaway toolkit's persistent session would otherwise hold the
             # server process alive until idle expiry.
             await toolkit.aclose()
+        # Discovery reports failures rather than raising: an unreachable server
+        # arrives here as a live toolkit offering zero tools.
+        if error is not None:
+            return {"ok": False, "error": describe_mcp_error(error)[:500]}
         return {
             "ok": True,
             "tools": [

@@ -22,7 +22,11 @@ from assistant.config import Config
 from assistant.permissions import ALLOW_ONCE
 from assistant.settings import Settings
 from assistant.tools import build_agent_tools, web_fetch_tool
-from assistant.tools.mcp import NamespacedMCPToolkit, namespaced_tool_name
+from assistant.tools.mcp import (
+    NamespacedMCPToolkit,
+    describe_mcp_error,
+    namespaced_tool_name,
+)
 from assistant.tools.web_fetch import web_fetch
 
 
@@ -276,6 +280,84 @@ async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
     assert len(opened) == 2
     await toolkit.aclose()
     assert len(closed) == 2
+
+
+async def test_mcp_unreachable_server_costs_its_tools_not_the_turn(monkeypatch):
+    """A server that cannot start contributes no tools and reports why, rather
+    than raising out of schemas() and aborting a turn that never touched MCP."""
+
+    attempts = []
+
+    @asynccontextmanager
+    async def failing_session(config):
+        attempts.append(config)
+        raise RuntimeError("boom: cannot import name 'McpError'")
+        yield  # pragma: no cover — keeps this an async generator
+
+    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
+    monkeypatch.setattr(mcp_mod, "mcp_session", failing_session)
+
+    toolkit = NamespacedMCPToolkit(MCPStdioServerConfig(command="mcp", server_label="time"))
+    context = ConversationContext(stream=MemoryStream())
+
+    assert list(await toolkit.schemas(context)) == []
+    assert "McpError" in str(toolkit.last_error)
+    assert len(attempts) == 1
+
+    # Inside the retry window the dead server is left alone.
+    assert list(await toolkit.schemas(context)) == []
+    assert len(attempts) == 1
+
+    await toolkit.aclose()
+
+
+def test_describe_mcp_error_reaches_past_the_task_group_wrapper():
+    """anyio wraps a dead server's cause in an ExceptionGroup; the leaf is the
+    only part a user can act on."""
+    cause = FileNotFoundError(2, "No such file or directory: 'mcp-server-time'")
+    wrapped = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [cause])
+
+    assert describe_mcp_error(wrapped) == (
+        "FileNotFoundError: [Errno 2] No such file or directory: 'mcp-server-time'"
+    )
+    assert describe_mcp_error(ExceptionGroup("outer", [ExceptionGroup("inner", [cause])])) == (
+        "FileNotFoundError: [Errno 2] No such file or directory: 'mcp-server-time'"
+    )
+    assert describe_mcp_error(RuntimeError()) == "RuntimeError"
+
+
+async def test_mcp_server_recovers_once_the_retry_window_lapses(monkeypatch):
+    """A server fixed after a failure is picked up again without a restart."""
+
+    healthy = False
+
+    class _Session:
+        async def list_tools(self):
+            return SimpleNamespace(
+                tools=[SimpleNamespace(name="now", description="", inputSchema={})]
+            )
+
+    @asynccontextmanager
+    async def flaky_session(config):
+        if not healthy:
+            raise RuntimeError("server is down")
+        yield _Session()
+
+    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
+    monkeypatch.setattr(mcp_mod, "mcp_session", flaky_session)
+    monkeypatch.setattr(mcp_mod, "_RETRY_AFTER_S", 0.0)
+
+    toolkit = NamespacedMCPToolkit(MCPStdioServerConfig(command="mcp", server_label="time"))
+    context = ConversationContext(stream=MemoryStream())
+
+    assert list(await toolkit.schemas(context)) == []
+    assert toolkit.last_error is not None
+
+    healthy = True
+    assert [s.function.name for s in await toolkit.schemas(context)] == ["time_now"]
+    assert toolkit.last_error is None
+
+    await toolkit.aclose()
 
 
 def test_files_capability_wires_workspace_toolkit(tmp_path):
