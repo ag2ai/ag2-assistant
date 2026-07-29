@@ -145,6 +145,12 @@ export const api = {
   // routes (account-level, shared across profiles — like Google).
   codexStatus: () => j('GET', G('/codex/status')),
   codexLoginUrl: () => j('POST', G('/codex/login_url')),
+  // An ACP adapter's model catalog (agent: 'claude' | 'codex') for the Settings
+  // picker: {models, current, reason}. An empty catalog carries a reason
+  // ('adapter_missing' | 'bridge' | 'probe_failed') so the form can say why it
+  // fell back to a free-text model field. refresh skips the server's TTL cache.
+  codingModels: (agent, refresh = false) =>
+    j('GET', G(`/coding/${agent}/models${refresh ? '?refresh=1' : ''}`)),
   codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
   codexLogout: () => j('POST', G('/codex/logout')),
   // Messaging channels are install-level: a platform binds to exactly one profile

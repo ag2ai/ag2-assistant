@@ -71,6 +71,11 @@ def build_codex_config(
     return _build(CodexConfig, "codex", config, model, env, options)
 
 
+# provider name → its builder, so callers dispatch without a name-to-function
+# conditional (see agent.ACP_PROVIDERS).
+BUILDERS = {"claude_code": build_claude_config, "codex": build_codex_config}
+
+
 def _build(
     config_cls: type[ACPConfig],
     agent: str,

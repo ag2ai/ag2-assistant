@@ -2030,6 +2030,28 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def codex_status() -> dict:
         return codex_auth.status()
 
+    @app.get("/api/coding/{agent}/models")
+    async def coding_models(agent: str, refresh: bool = False) -> Response:
+        """An ACP adapter's model catalog (agent: "claude" | "codex"), for the
+        Settings model picker: ``{models, current, reason}``. Lazy + guarded — a
+        missing adapter, bridge mode or a broken probe all read as an empty
+        catalog, but ``reason`` says WHICH, so the form explains itself instead of
+        silently degrading to a free-text field. ``?refresh=1`` skips the TTL cache."""
+        if agent not in ("claude", "codex"):
+            return JSONResponse({"ok": False, "error": f"unknown agent: {agent}"}, status_code=404)
+        from assistant.coding import model_catalog
+
+        reason = model_catalog.unavailable_reason(agent)
+        if reason:  # nothing to spawn — don't pay for a probe that can't work
+            return JSONResponse(model_catalog.as_view([], "", reason))
+        try:
+            models, current = await model_catalog.list_models(agent, refresh=refresh)
+        except Exception:
+            return JSONResponse(model_catalog.as_view([], "", "probe_failed"))
+        return JSONResponse(
+            model_catalog.as_view(models, current, "" if models else "probe_failed")
+        )
+
     @app.post("/api/codex/login_url")
     async def codex_login_url() -> dict:
         """Begin a ChatGPT sign-in: return the consent URL for the UI to open, and

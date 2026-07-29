@@ -100,7 +100,7 @@ npm install -g @agentclientprotocol/claude-agent-acp   # the ACP adapter, must b
 claude --version                                        # Claude Code CLI installed and logged in
 ```
 
-Add a "Claude Code" config in **Settings → Models** (the model field takes `sonnet` / `opus` / `haiku` or a full model id). What you get:
+Add a "Claude Code" config in **Settings → Models**. The model list is read from the adapter itself (no model names are hardcoded here or in the UI), and leaving it on *CLI default* uses whatever your CLI is configured for. What you get:
 
 - **All assistant tools work.** The agent's full tool registry (weather, web search, memory, channels, skills, MCP servers, …) is served to Claude Code over a local in-process MCP gateway (`127.0.0.1`, secret URL path). Tool calls execute through the assistant's own event stream, so permissions, approval prompts, and streaming tool cards behave exactly as with any other provider.
 - **Workspace confinement.** The ACP session's filesystem access is scoped to the profile workspace directory.
@@ -117,7 +117,7 @@ npm install -g @agentclientprotocol/codex-acp   # the ACP adapter, must be on PA
 codex login status                               # Codex CLI logged in (ChatGPT subscription)
 ```
 
-Add a "Codex" config in **Settings → Models**. The model field takes the adapter's `name[reasoning]` form (e.g. `gpt-5.6-sol[medium]`); leave it empty to use the CLI's own default model. Everything from the Claude Code section applies unchanged: the assistant's tools are exposed over the local MCP gateway, filesystem access is confined to the profile workspace, Advanced options are ACP constructor overrides, and the same Docker-bridge and usage-reporting limitations hold.
+Add a "Codex" config in **Settings → Models**. Model and reasoning effort are two selects, filled from the adapter's own catalog (Codex reports them as one `name[reasoning]` id, which is what gets stored); *CLI default* uses the CLI's own model. Everything from the Claude Code section applies unchanged: the assistant's tools are exposed over the local MCP gateway, filesystem access is confined to the profile workspace, Advanced options are ACP constructor overrides, and the same Docker-bridge and usage-reporting limitations hold.
 
 ### Google
 

@@ -35,7 +35,7 @@
     { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude' },
     {
       name: 'Claude Code', card: 'Claude Code · CLI login',
-      type: 'claude_code', model: 'sonnet',
+      type: 'claude_code', model: '',
       blurb: 'Run on your Claude Code CLI login (subscription) over ACP — no API key',
     },
     {
@@ -162,7 +162,9 @@
         {c.name}
         {#if c.active}<span class="llmbadge">active</span>{/if}
       </div>
-      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
+      <!-- An empty model is legal for the CLI-login types (= the CLI's own default);
+           name it instead of leaving a dangling separator. -->
+      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model || 'CLI default'}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
         <!-- Images follow the ACTIVE config: capable types advertise the chip, and on

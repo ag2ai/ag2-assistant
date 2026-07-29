@@ -14,6 +14,7 @@
   import { getSettings } from './context.svelte.js'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'
+  import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.js'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
 
@@ -116,9 +117,85 @@
     return `No key available — pick or paste one above, or set ${env}.`
   })
 
-  // Empty model is valid for codex only (= the CLI's own default) — every other
-  // type requires an explicit model name.
-  const modelOptional = $derived(type === 'codex')
+  // Empty model is valid for the CLI-login types only (= the CLI's own default)
+  // — every other type requires an explicit model name.
+  const modelOptional = $derived(type === 'codex' || type === 'claude_code')
+
+  // Model names belong to their provider ("haiku" means nothing to Codex), so
+  // switching type clears the model instead of carrying a stale name into the
+  // new picker. Exception: the two OpenAI API surfaces are the same catalog, so
+  // switching between them keeps the model. Only a user-driven change resets —
+  // the initial value from an edited/prefilled entry is never touched.
+  const MODEL_FAMILY = { openai: 'openai', openai_responses: 'openai' }
+  const modelFamily = (t) => MODEL_FAMILY[t] || t
+  function changeType(next) {
+    if (next === type) return
+    if (modelFamily(next) !== modelFamily(type)) model = ''
+    type = next
+  }
+
+  // ACP model picker: the adapter's live catalog, fetched once per agent when its
+  // type is first selected. missing key = not asked yet, 'loading' = in flight,
+  // else {models, current, reason} — reason names WHY an empty catalog is empty
+  // (adapter_missing / bridge / probe_failed) so the form says it out loud instead
+  // of quietly offering a text box. The single source of truth stays the `model`
+  // string — the selects just edit it. Codex ids decompose into two selects
+  // (family[effort] = model + reasoning); claude ids do NOT (the bracket there is
+  // part of the model preference, e.g. "opus[1m]" = 1M context) — one flat select.
+  const acpAgent = $derived(type === 'codex' ? 'codex' : type === 'claude_code' ? 'claude' : '')
+  let catalogs = $state({}) // agent -> 'loading' | {models, current, reason}
+  function fetchCatalog(agent, refresh = false) {
+    catalogs[agent] = 'loading'
+    api.codingModels(agent, refresh)
+      .then((r) => { catalogs[agent] = { models: r.models || [], current: r.current || '', reason: r.reason || '' } })
+      .catch(() => { catalogs[agent] = { models: [], current: '', reason: 'probe_failed' } })
+  }
+  $effect(() => {
+    if (acpAgent && catalogs[acpAgent] === undefined) fetchCatalog(acpAgent)
+  })
+  const acpLoading = $derived(!!acpAgent && catalogs[acpAgent] === 'loading')
+  const acpState = $derived(acpLoading ? null : catalogs[acpAgent] || null)
+  const acpCatalog = $derived(acpState?.models || [])
+  // The adapter's own current selection labels the "CLI default" row, so leaving
+  // the model empty is a legible choice rather than a blind one.
+  const defaultLabel = $derived(acpState?.current ? `CLI default (${acpState.current})` : 'CLI default')
+  const ADAPTER_PKG = { claude: '@agentclientprotocol/claude-agent-acp', codex: '@agentclientprotocol/codex-acp' }
+  const acpNote = $derived.by(() => {
+    if (!acpAgent || acpLoading || acpCatalog.length) return ''
+    if (acpState?.reason === 'adapter_missing')
+      return `No model list: the ACP adapter isn't installed (npm i -g ${ADAPTER_PKG[acpAgent]}). Leave the field empty to use the CLI's own model.`
+    if (acpState?.reason === 'bridge')
+      return "No model list in bridge mode — the CLI runs on the host, out of reach of this container. Leave the field empty to use the CLI's own model."
+    if (acpState?.reason)
+      return "Couldn't read the CLI's model list. Leave the field empty to use the CLI's own model, or type a name it accepts."
+    return ''
+  })
+
+  // claude: flat options. A saved model that fell out of the catalog stays
+  // visible as an extra option (the adapter's own "default" row is dropped
+  // server-side — our "CLI default" entry, an empty model, is that case).
+  const claudeOptions = $derived.by(() => {
+    if (model && !acpCatalog.some((m) => m.id === model)) {
+      return [{ id: model, name: model, description: '' }, ...acpCatalog]
+    }
+    return acpCatalog
+  })
+
+  // codex: grouped two-select decomposition (see lib/codexModels.js).
+  const codexGroups = $derived(acpAgent === 'codex' ? groupModels(acpCatalog) : [])
+  const codexPick = $derived(splitModelId(model))
+  const codexFamilies = $derived.by(() => {
+    if (!codexPick.family || codexGroups.some((g) => g.family === codexPick.family)) return codexGroups
+    return [{ family: codexPick.family, label: codexPick.family, efforts: codexPick.effort ? [{ value: codexPick.effort, label: effortLabel(codexPick.effort) }] : [] }, ...codexGroups]
+  })
+  const codexEfforts = $derived(codexFamilies.find((g) => g.family === codexPick.family)?.efforts || [])
+  function pickCodexFamily(family) {
+    // Keep the effort when the new family offers it; otherwise fall back to the
+    // family's own default (no bracket → the adapter's default tier).
+    const efforts = codexFamilies.find((g) => g.family === family)?.efforts || []
+    const keep = efforts.some((e) => e.value === codexPick.effort) ? codexPick.effort : ''
+    model = joinModelId(family, keep)
+  }
 
   // The request body both Save and Test send — one source of truth so the Test
   // button exercises exactly what a save would persist. Parses the Advanced JSON
@@ -194,14 +271,72 @@
   </div>
   <div class="llmfield">
     <label for="lf-type">Type</label>
-    <select id="lf-type" bind:value={type}>
+    <select id="lf-type" value={type} onchange={(e) => changeType(e.currentTarget.value)}>
       {#each TYPES as t}<option value={t.id}>{t.label}</option>{/each}
     </select>
   </div>
-  <div class="llmfield">
-    <label for="lf-model">Model</label>
-    <input id="lf-model" bind:value={model} placeholder={type === 'claude_code' ? 'sonnet' : type === 'codex' ? 'empty = CLI default · e.g. gpt-5.6-sol[medium]' : 'e.g. gemini-3.5-flash'} />
-  </div>
+  {#if acpLoading}
+    <!-- Wait for the adapter's real catalog rather than offering a text box with
+         invented example names: the CLI is the authority on what models exist. -->
+    <div class="llmfield">
+      <label for="lf-model-loading">Model</label>
+      <select id="lf-model-loading" disabled><option>Reading the CLI's model list…</option></select>
+    </div>
+  {:else if type === 'codex' && codexGroups.length}
+    <!-- The adapter's live catalog, shown the way Codex's own picker does: model
+         and reasoning as separate selects. The joined family[effort] id is what
+         gets stored — the free-text fallback below edits the same string. -->
+    <div class="llmfield">
+      <label for="lf-model-family">Model</label>
+      <select id="lf-model-family" value={codexPick.family} onchange={(e) => pickCodexFamily(e.currentTarget.value)}>
+        <option value="">{defaultLabel}</option>
+        {#each codexFamilies as g (g.family)}
+          <option value={g.family}>{g.label}</option>
+        {/each}
+      </select>
+    </div>
+    {#if codexEfforts.length}
+      <div class="llmfield">
+        <label for="lf-model-effort">Reasoning</label>
+        <select id="lf-model-effort" value={codexPick.effort} onchange={(e) => (model = joinModelId(codexPick.family, e.currentTarget.value))}>
+          <option value="">Default</option>
+          {#each codexEfforts as e (e.value)}
+            <option value={e.value}>{e.label}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
+  {:else if type === 'claude_code' && claudeOptions.length}
+    <!-- Claude Code's catalog values ride ANTHROPIC_MODEL verbatim ("opus[1m]",
+         "sonnet", …) — one flat select, no decomposition. -->
+    <div class="llmfield">
+      <label for="lf-model-claude">Model</label>
+      <select id="lf-model-claude" bind:value={model}>
+        <option value="">{defaultLabel}</option>
+        {#each claudeOptions as m (m.id)}
+          <option value={m.id} title={m.description}>{m.name}</option>
+        {/each}
+      </select>
+    </div>
+  {:else}
+    <div class="llmfield">
+      <label for="lf-model">Model</label>
+      <!-- No catalog: for the CLI types the placeholder stays empty on purpose (an
+           invented example is worse than none — acpNote explains what happened). -->
+      <input id="lf-model" bind:value={model} placeholder={acpAgent ? '' : 'e.g. gemini-3.5-flash'} />
+    </div>
+  {/if}
+  {#if acpAgent && !acpLoading}
+    <!-- One row for both states: why there's no list (if so) plus a manual re-probe,
+         for when the CLI or its adapter was installed/upgraded since the last read
+         (the server caches the catalog for a few minutes). -->
+    <div class="llmfield">
+      <span class="llmhint">
+        {#if acpNote}{acpNote} {/if}
+        <button class="linkbtn" onclick={() => fetchCatalog(acpAgent, true)}>Re-read the model list</button>
+      </span>
+    </div>
+  {/if}
 
   {#if usesBaseUrl(type)}
     <div class="llmfield">
@@ -234,10 +369,12 @@
     <div class="llmfield">
       <span class="llmlabel">Authentication</span>
       <span class="llmhint">{keyUsage}</span>
+      <!-- Requirements only; the model list comes from the adapter itself, so no
+           example model names are spelled out here (they rot with every release). -->
       {#if type === 'claude_code'}
-        <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH and a logged-in Claude Code CLI. Model accepts <code>sonnet</code> / <code>opus</code> / <code>haiku</code> or a full model id.</span>
+        <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH and a logged-in Claude Code CLI.</span>
       {:else}
-        <span class="llmhint">Requires the <code>codex-acp</code> adapter on PATH (<code>npm i -g @agentclientprotocol/codex-acp</code>) and a logged-in Codex CLI. Model takes the adapter's <code>name[reasoning]</code> form (e.g. <code>gpt-5.6-sol[medium]</code>); empty uses the CLI's default.</span>
+        <span class="llmhint">Requires the <code>codex-acp</code> adapter on PATH (<code>npm i -g @agentclientprotocol/codex-acp</code>) and a logged-in Codex CLI.</span>
       {/if}
     </div>
   {:else}

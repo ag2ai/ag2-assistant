@@ -466,16 +466,20 @@ def test_codex_clean_entry_strips_endpoint_and_secret():
     assert entry["options"] == {"turn_timeout": 60.0}
 
 
-def test_codex_clean_entry_allows_empty_model():
-    # Codex has no stable model aliases (names rotate) — an empty model means
-    # "the CLI's own default", so it must survive validation for THIS type only.
-    entry = llm_configs._clean_entry({"type": "codex", "name": "CX", "model": ""})
-    assert entry["model"] == ""
+def test_cli_login_clean_entry_allows_empty_model():
+    # For the CLI-login types an empty model means "the CLI's own default"
+    # (no model env is derived), so it must survive validation for them only.
+    for ctype, name in (("codex", "CX"), ("claude_code", "CC")):
+        entry = llm_configs._clean_entry({"type": ctype, "name": name, "model": ""})
+        assert entry["model"] == ""
 
 
-def test_non_codex_still_requires_model():
-    with pytest.raises(ValueError, match="model is required"):
-        llm_configs._clean_entry({"type": "gemini", "name": "G", "model": ""})
+def test_non_cli_login_still_requires_model():
+    for ctype in llm_configs.TYPES:
+        if ctype in llm_configs.CLI_LOGIN_TYPES:
+            continue
+        with pytest.raises(ValueError, match="model is required"):
+            llm_configs._clean_entry({"type": ctype, "name": "X", "model": ""})
 
 
 def test_codex_entry_options_passthrough():
