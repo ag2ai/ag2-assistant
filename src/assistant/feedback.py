@@ -94,8 +94,12 @@ async def learn(
             content=(content or "(not provided)")[:2000],
             reason=(reason or "").strip()[:1000],
         )
-        reply = await agent.ask(prompt, response_schema=FeedbackMemory)
-        out = await reply.content()
+        from assistant.structured import aclose_config, ask_structured
+
+        try:
+            out = await ask_structured(agent, prompt, FeedbackMemory)
+        finally:
+            await aclose_config(cfg)  # one-shot agent: reap the ACP subprocess, if any
         note = (getattr(out, "note", "") or "").strip()
         remove = getattr(out, "remove", None) or []
         # A successful run always returns (even a deliberate skip) — the fallback below

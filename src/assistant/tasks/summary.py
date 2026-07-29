@@ -11,6 +11,7 @@ for a short name + one-sentence description from the task's prompt. Mirrors
 from pydantic import BaseModel, Field
 
 from assistant.config import Config
+from assistant.structured import aclose_config, ask_structured
 
 _MAX = 200
 
@@ -51,11 +52,14 @@ async def summarize_run(config: Config, task_prompt: str, reply: str, agent_fact
     """One-line outcome of a run, or "" on any failure (summary is optional)."""
     try:
         agent = (agent_factory or _default_factory(config))()
-        r = await agent.ask(
-            _PROMPT.format(prompt=(task_prompt or "")[:2000], reply=(reply or "")[:4000]),
-            response_schema=RunSummary,
-        )
-        out = await r.content()
+        try:
+            out = await ask_structured(
+                agent,
+                _PROMPT.format(prompt=(task_prompt or "")[:2000], reply=(reply or "")[:4000]),
+                RunSummary,
+            )
+        finally:
+            await aclose_config(agent.config)  # one-shot agent: reap the ACP subprocess
         return " ".join(str(getattr(out, "summary", "")).split())[:_MAX]
     except Exception:
         return ""
@@ -68,11 +72,14 @@ async def suggest_task_meta(config: Config, prompt: str, agent_factory=None) -> 
     a task must always have SOME name, so this path never raises."""
     try:
         agent = (agent_factory or _default_factory(config))()
-        r = await agent.ask(
-            _META_PROMPT.format(prompt=(prompt or "")[:2000]),
-            response_schema=TaskMeta,
-        )
-        out = await r.content()
+        try:
+            out = await ask_structured(
+                agent,
+                _META_PROMPT.format(prompt=(prompt or "")[:2000]),
+                TaskMeta,
+            )
+        finally:
+            await aclose_config(agent.config)  # one-shot agent: reap the ACP subprocess
         name = " ".join(str(getattr(out, "name", "")).split())
         description = " ".join(str(getattr(out, "description", "")).split())
         if not name:

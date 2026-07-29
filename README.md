@@ -91,6 +91,23 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 
 Set up as many named model configurations as you like (Gemini, OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), test them, and switch the active one at any time in **Settings → Models**. Two OpenAI paths are supported: a normal **API key**, or **Sign in with ChatGPT**, which runs on your ChatGPT/Codex subscription instead of paying per token (unofficial — see `ag2-assistant auth --help`).
 
+#### Claude Code (subscription) as the main model
+
+The **Claude Code · CLI login** configuration type runs the assistant's main agent on your own Claude Code CLI over [ACP](https://agentclientprotocol.com) — no API key, auth is the CLI's on-disk login (your Claude subscription). Requirements:
+
+```bash
+npm install -g @agentclientprotocol/claude-agent-acp   # the ACP adapter, must be on PATH
+claude --version                                        # Claude Code CLI installed and logged in
+```
+
+Add a "Claude Code" config in **Settings → Models** (the model field takes `sonnet` / `opus` / `haiku` or a full model id). What you get:
+
+- **All assistant tools work.** The agent's full tool registry (weather, web search, memory, channels, skills, MCP servers, …) is served to Claude Code over a local in-process MCP gateway (`127.0.0.1`, secret URL path). Tool calls execute through the assistant's own event stream, so permissions, approval prompts, and streaming tool cards behave exactly as with any other provider.
+- **Workspace confinement.** The ACP session's filesystem access is scoped to the profile workspace directory.
+- **Advanced options** on the config are ACP constructor overrides (`turn_timeout`, `allow_terminal`, …), not API sampling params.
+
+Limitations: in Docker the assistant reaches the host CLI through the ACP bridge (`AG2ASSISTANT_ACP_BRIDGE` — container-only plumbing; don't set it for host runs) and tool exposure is disabled there; per-token usage/cost isn't reported for ACP turns. Note Anthropic's terms restrict *distributing* products that ride a claude.ai login — a locally-run personal instance driving your own CLI is the same shape as Zed's adapter.
+
 ### Google
 
 Connect Google in Settings and the assistant can search and read your Gmail, draft and send mail (with your approval), read and create calendar events, and read Drive/Docs/Sheets.

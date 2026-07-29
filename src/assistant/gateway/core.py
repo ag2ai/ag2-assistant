@@ -323,6 +323,10 @@ class Gateway:
         # Re-resolve via the injected factory (a profile runtime's factory re-reads
         # the profile's registry entry + settings; the default is load_config).
         self._config = self._config_factory()
+        # A turn already running captured the old agent and finishes on it, but
+        # its ACP subprocesses must not outlive the swap: close them now (aclose
+        # is safe/idempotent; non-ACP configs have no aclose and are skipped).
+        await self._aclose_agents([a for a in (self._agent, *self._model_agents.values()) if a])
         if self._agent is not None:
             self._agent = self._make_agent()
         # Stale per-model agents were built from the pre-reload config/keys; a task
@@ -1129,8 +1133,26 @@ class Gateway:
             "chats": len(self._streams),
         }
 
+    async def _aclose_agents(self, agents: list) -> None:
+        """Tear down model-config resources (ACP subprocess sessions) held by
+        outgoing agents. Dedup by config identity — the default agent and the
+        aggregation pass share one instance — and never let teardown break a
+        reload: a failed close only logs."""
+        seen: set[int] = set()
+        for agent in agents:
+            cfg = getattr(agent, "config", None)
+            aclose = getattr(cfg, "aclose", None)
+            if aclose is None or id(cfg) in seen:
+                continue
+            seen.add(id(cfg))
+            try:
+                await aclose()
+            except Exception as exc:
+                log_suppressed("closing ACP model sessions", exc)
+
     async def close(self) -> None:
         """Release in-memory chat state (persisted chats stay on disk)."""
+        await self._aclose_agents([a for a in (self._agent, *self._model_agents.values()) if a])
         self._streams.clear()
         self._locks.clear()
         self._loaded.clear()

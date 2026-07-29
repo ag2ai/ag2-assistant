@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from assistant.agent import cheap_model, model_config
 from assistant.config import Config
+from assistant.structured import aclose_config, ask_structured
 
 
 class ChatTitle(BaseModel):
@@ -44,6 +45,8 @@ async def generate_title(config: Config, user_text: str, agent_text: str) -> str
     cfg = model_config(config, cheap_model(config))
     agent = Agent("titler", config=cfg)
     prompt = _PROMPT.format(user=(user_text or "")[:2000], agent=(agent_text or "")[:2000])
-    reply = await agent.ask(prompt, response_schema=ChatTitle)
-    out = await reply.content()
+    try:
+        out = await ask_structured(agent, prompt, ChatTitle)
+    finally:
+        await aclose_config(cfg)  # one-shot agent: reap the ACP subprocess, if any
     return _clean_title(getattr(out, "title", None))

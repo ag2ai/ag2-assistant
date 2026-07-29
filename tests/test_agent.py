@@ -1,9 +1,11 @@
 """Tests for AG2 Assistant agent."""
 
 import pytest
+from ag2.acp import ClaudeCodeConfig
 
-from assistant.agent import ask, create_agent
+from assistant.agent import _build_middleware, ask, create_agent, model_config
 from assistant.config import Config
+from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
 
 
 def test_create_agent_default():
@@ -24,3 +26,28 @@ async def test_ask_returns_response():
     response = await ask("Say hello in exactly 3 words.")
     assert isinstance(response, str)
     assert len(response) > 0
+
+
+def test_model_config_claude_code(tmp_path):
+    cfg = Config()
+    cfg.llm.provider = "claude_code"
+    cfg.llm.model = "sonnet"
+    cfg.workspace_dir = tmp_path
+    cfg.llm.provider_options["claude_code"] = {"turn_timeout": 120.0}
+    mc = model_config(cfg)
+    assert isinstance(mc, ClaudeCodeConfig)
+    assert mc.model == "sonnet"
+    assert mc.cwd == str(tmp_path)
+    assert mc.turn_timeout == 120.0  # Advanced options reach the constructor
+
+
+def test_build_middleware_claude_code_skips_llm_timeout():
+    cfg = Config()
+    # One ACP "LLM call" is a whole inner tool loop; the 180s per-call ceiling
+    # would kill normal turns. ACPConfig.turn_timeout is the ceiling instead.
+    cfg.llm.provider = "claude_code"
+    mw = _build_middleware(cfg)
+    assert not any(isinstance(m, LLMTimeoutMiddleware) for m in mw)
+    assert any(isinstance(m, LLMRetryMiddleware) for m in mw)
+    cfg.llm.provider = "gemini"
+    assert any(isinstance(m, LLMTimeoutMiddleware) for m in _build_middleware(cfg))

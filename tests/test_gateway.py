@@ -1434,3 +1434,36 @@ def test_llm_config_secret_reference_flow(profile_app):
     )
     client.delete(f"/api/llm-configs/{cid}")
     assert client.get("/api/secrets").json()["secrets"][0]["id"] == sid2
+
+
+# ---- ACP model-session teardown on reload/close ---------------------------------
+
+
+class _FakeAcpConfig:
+    def __init__(self):
+        self.closed = 0
+
+    async def aclose(self):
+        self.closed += 1
+
+
+class _FakeAgentWithConfig:
+    def __init__(self, config):
+        self.config = config
+
+
+async def test_reload_closes_acp_sessions(fake_gateway):
+    cfg = _FakeAcpConfig()
+    fake_gateway._agent = _FakeAgentWithConfig(cfg)
+    fake_gateway._model_agents["c_x"] = _FakeAgentWithConfig(cfg)
+    await fake_gateway.reload()
+    # Both cached agents shared one config; aclose is idempotent so >=1 is the
+    # contract (dedup by id() keeps it at exactly 1).
+    assert cfg.closed == 1
+
+
+async def test_close_closes_acp_sessions(fake_gateway):
+    cfg = _FakeAcpConfig()
+    fake_gateway._agent = _FakeAgentWithConfig(cfg)
+    await fake_gateway.close()
+    assert cfg.closed == 1

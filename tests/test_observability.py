@@ -2,12 +2,19 @@
 and the shape of the history that triggered it."""
 
 import json
+import logging
+import sys
 
 from ag2.events import ModelRequest, ModelResponse
 
 import assistant.observability as obs
 from assistant.config import load_config
-from assistant.observability import capture_failure, log_suppressed, setup_logging
+from assistant.observability import (
+    _AcpShutdownNoise,
+    capture_failure,
+    log_suppressed,
+    setup_logging,
+)
 
 
 class _Hist:
@@ -97,3 +104,26 @@ def test_log_suppressed_records_context(caplog):
     assert "suppressed failure during task event emit" in caplog.text
     assert "task-1" in caplog.text
     assert "emit failed" in caplog.text
+
+
+def _error_record(msg, exc=None):
+    """A root-logger ERROR record shaped like acp's ``logging.exception(...)``."""
+    exc_info = None
+    if exc is not None:
+        try:
+            raise exc
+        except Exception:
+            exc_info = sys.exc_info()
+    return logging.LogRecord("root", logging.ERROR, __file__, 1, msg, None, exc_info)
+
+
+def test_acp_shutdown_noise_filter_drops_only_the_known_race():
+    f = _AcpShutdownNoise()
+    # The benign teardown race (acp lib: queue closed before receive loop stops) → dropped.
+    race = _error_record("Receive loop failed", RuntimeError("mssage queue already closed"))
+    assert f.filter(race) is False
+    # Same message with a DIFFERENT error → kept (a real receive failure).
+    assert f.filter(_error_record("Receive loop failed", ValueError("broken pipe"))) is True
+    # Different messages → kept, even with the race's own exception attached.
+    assert f.filter(_error_record("Receive loop failed")) is True
+    assert f.filter(_error_record("other", RuntimeError("mssage queue already closed"))) is True
