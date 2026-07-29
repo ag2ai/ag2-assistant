@@ -1,4 +1,4 @@
-"""Tests for the claude_code main-model ACP provider config."""
+"""Tests for the main-model ACP provider configs (claude_code + codex)."""
 
 import json
 

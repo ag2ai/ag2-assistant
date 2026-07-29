@@ -45,7 +45,7 @@ def _codex_model_env(model: str) -> dict[str, str]:
     # codex-acp has no model env var of its own; CODEX_CONFIG is a JSON object
     # merged into the Codex session config (unset → the CLI's own default).
     m = _EFFORT_SUFFIX.match(model)
-    cfg = {"model": m["name"], "model_reasoning_effort": m["effort"]} if m else {"model": model}
+    cfg = {"model": m["name"].strip(), "model_reasoning_effort": m["effort"].strip()} if m else {"model": model}
     return {"CODEX_CONFIG": json.dumps(cfg)}
 
 
