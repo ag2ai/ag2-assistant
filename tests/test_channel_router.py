@@ -29,6 +29,7 @@ from assistant.channels.router import (
     PROFILE_WITHDRAWN,
     STOPPED,
     TRACE_LINES,
+    TRACE_MARKER,
     TRACE_WORKING,
     Ack,
     AvailableProfile,
@@ -1720,6 +1721,34 @@ def test_a_call_with_no_previewable_argument_is_its_name_alone():
     """A code-execution call must not dump serialised state into the conversation."""
     line = _trace(ToolCall("execute_code", {"cells": [{"lang": "py", "src": "print(1)"}]}))[0]
     assert line.endswith("execute_code")
+
+
+def test_a_call_is_marked_by_what_kind_of_thing_it_reached_for():
+    """The icon comes from the argument's shape, not from a table of tool names, so a
+    tool this repo never sees is marked as sensibly as one it ships."""
+    marks = {
+        name: _trace(ToolCall(name, arguments))[0].split()[0]
+        for name, arguments in (
+            ("read_file", {"path": "src/app.py"}),
+            ("mcp__notes__find", {"query": "quarterly"}),
+            ("fetch_page", {"url": "https://example.com"}),
+            ("run_shell", {"command": "pytest -q"}),
+        )
+    }
+    assert len(set(marks.values())) == 4
+    assert TRACE_MARKER not in marks.values()
+
+
+def test_a_call_with_nothing_to_preview_keeps_the_generic_marker():
+    """A line with no argument to speak of makes no claim about what it did."""
+    assert _trace(ToolCall("get_weather", {}))[0].split()[0] == TRACE_MARKER
+
+
+def test_the_same_kind_of_argument_is_always_marked_the_same_way():
+    """`path` and `file` are one category, so a trace mixing them reads as one list."""
+    by_path = _trace(ToolCall("read_file", {"path": "a.py"}))[0].split()[0]
+    by_file = _trace(ToolCall("upload", {"file": "a.py"}))[0].split()[0]
+    assert by_path == by_file
 
 
 def test_a_structured_value_under_a_preferred_key_is_omitted_too():

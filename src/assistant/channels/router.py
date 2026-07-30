@@ -231,7 +231,7 @@ def mirrored_turn(text: str, reply: str, files: tuple[str, ...] = ()) -> str:
 
 # --- the Tool trace: the tools a Peer's own turn called, as that Peer reads them ---
 
-# The marker every line carries — one generic one, never a per-tool icon.
+# What a line carries when its call has no argument to be marked by.
 TRACE_MARKER = "•"
 
 # What a trace carries while its turn is still in flight.
@@ -241,9 +241,17 @@ TRACE_WORKING = "⏳ Working…"
 # in one editable message with a per-message cap.
 TRACE_LINES = 12
 
-# The argument a call is previewed by, most telling first — the first one present, or
-# nothing at all.
-PREVIEW_KEYS = ("path", "query", "name", "url", "file", "command")
+# The argument a call is previewed by, most telling first, and the mark its *shape*
+# earns — a category, never a per-tool table, so a tool an MCP server or a skill
+# contributed is marked as sensibly as one this repo ships.
+PREVIEW_ICONS = {
+    "path": "📄",
+    "query": "🔍",
+    "name": "🧩",
+    "url": "🌐",
+    "file": "📄",
+    "command": "⚙️",
+}
 PREVIEW_CHARS = 40
 
 
@@ -255,24 +263,25 @@ class ToolCall:
     arguments: dict
 
 
-def call_preview(arguments: dict) -> str:
-    """The short text a call is named by: its first preferred argument, clipped. Empty
-    when that argument is structured data, which is omitted rather than serialised."""
-    for key in PREVIEW_KEYS:
+def call_preview(arguments: dict) -> tuple[str, str]:
+    """What a call is marked and named by: the mark its first preferred argument earns
+    and that argument clipped. The generic marker and no text when there is none, or
+    when it is structured data — which is omitted rather than serialised."""
+    for key, icon in PREVIEW_ICONS.items():
         if key not in arguments:
             continue
         value = arguments[key]
         if not isinstance(value, str) or not value.strip():
-            return ""
+            return TRACE_MARKER, ""
         text = " ".join(value.split())
-        return f"{text[:PREVIEW_CHARS].rstrip()}…" if len(text) > PREVIEW_CHARS else text
-    return ""
+        return icon, (f"{text[:PREVIEW_CHARS].rstrip()}…" if len(text) > PREVIEW_CHARS else text)
+    return TRACE_MARKER, ""
 
 
 def tool_line(call: ToolCall) -> str:
     """One call as a line: what was called, and what it was about when that is short."""
-    preview = call_preview(call.arguments)
-    return f"{TRACE_MARKER} {call.name}" + (f' "{preview}"' if preview else "")
+    icon, preview = call_preview(call.arguments)
+    return f"{icon} {call.name}" + (f' "{preview}"' if preview else "")
 
 
 def earlier_calls(count: int) -> str:
