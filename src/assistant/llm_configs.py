@@ -37,6 +37,7 @@ entry SHADOWS the ``llm`` block in ``config.json`` (that block is only the flat
 default used when the store is empty or has no active entry).
 """
 
+import importlib.util
 from secrets import token_hex
 
 from assistant import secrets
@@ -128,6 +129,37 @@ def _cli_login_present(ctype: str) -> bool:
     """Adapter presence for a CLI-login type. Routed through the per-agent helpers
     on purpose: they are the seams tests patch."""
     return {"claude_code": _claude_cli_present, "codex": _codex_cli_present}[ctype]()
+
+
+# type -> (module to probe, ag2-assistant extra that installs it). Types absent from
+# this map need no optional library.
+PROVIDER_EXTRA = {
+    "anthropic": ("anthropic", "anthropic"),
+    "ollama": ("ollama", "ollama"),
+}
+
+
+def _module_present(module: str) -> bool:
+    """Whether an optional provider library is importable. find_spec avoids the
+    import cost and side effects; a broken parent package must read False, not raise."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:
+        return False
+
+
+def deps_status(ctype: str) -> dict:
+    """Optional-library state for a config type: ``{ok, extra, install}``. ``ok`` is
+    True for types with no optional library, so callers need no special casing."""
+    pair = PROVIDER_EXTRA.get(ctype)
+    if pair is None:
+        return {"ok": True, "extra": "", "install": ""}
+    module, extra = pair
+    return {
+        "ok": _module_present(module),
+        "extra": extra,
+        "install": f'pip install "ag2-assistant[{extra}]"',
+    }
 
 
 _SECTION = "llm_configs"
@@ -357,10 +389,13 @@ def apply_active(cfg, override_id: str | None = None) -> None:
 
 def usable(entry: dict) -> bool:
     """Whether this configuration can actually run right now — the signal behind the
-    health dot. Ollama is local (always). A ``base_url`` (OpenAI/Anthropic-compatible
+    health dot. A missing optional provider library blocks it regardless of keys.
+    Ollama is otherwise local (always). A ``base_url`` (OpenAI/Anthropic-compatible
     server) needs no real provider key. Otherwise a per-config key OR the provider's
     env key must be present."""
     ctype = entry.get("type")
+    if not deps_status(str(ctype))["ok"]:
+        return False
     if ctype == "openai_subscription":
         # No API key at all — usable exactly when ChatGPT sign-in is live.
         return _subscription_signed_in()

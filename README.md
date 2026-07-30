@@ -91,6 +91,26 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 
 Set up as many named model configurations as you like (Gemini, OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), test them, and switch the active one at any time in **Settings → Models**. Two OpenAI paths are supported: a normal **API key**, or **Sign in with ChatGPT**, which runs on your ChatGPT/Codex subscription instead of paying per token (unofficial — see `ag2-assistant auth --help`).
 
+**Anthropic and Ollama need one extra install.** Gemini, all three OpenAI paths, and the Claude Code / Codex CLI logins work out of the box. The other two ship as configuration types but their provider libraries aren't bundled — Settings → Models says so on the row and on the template card, so you find out before configuring, not at **Test** time:
+
+```bash
+pip install "ag2-assistant[anthropic]"   # Anthropic
+pip install "ag2-assistant[ollama]"      # Ollama (local models)
+```
+
+Installed with the one-line script or `uv tool install`? Add the extra to that environment instead:
+
+```bash
+uv tool install --with "ag2-assistant[ollama]" "git+https://github.com/ag2ai/ag2-assistant.git"
+```
+
+Running in Docker? A `pip install` inside a container doesn't survive recreation, so bake it into the image with the `PROVIDER_EXTRAS` build arg (space-separated, and it needs `build:` rather than the prebuilt image):
+
+```bash
+docker build --build-arg PROVIDER_EXTRAS="anthropic ollama" -t ag2-assistant .
+PROVIDER_EXTRAS="ollama" docker compose up -d --build
+```
+
 #### Claude Code (subscription) as the main model
 
 The **Claude Code · CLI login** configuration type runs the assistant's main agent on your own Claude Code CLI over [ACP](https://agentclientprotocol.com) — no API key, auth is the CLI's on-disk login (your Claude subscription). Requirements:
@@ -239,7 +259,7 @@ Install-wide state lives under `~/.ag2assistant/` — the global `config.yaml` (
 
 ## Project Status
 
-- [x] Core agent with multi-provider support (Gemini, OpenAI, Anthropic, Ollama)
+- [x] Core agent with multi-provider support (Gemini, OpenAI, Anthropic, Ollama — the last two need a provider extra, see [Models](#models))
 - [x] Named model configurations + "Sign in with ChatGPT" subscription auth
 - [x] Profiles — isolated, colour-coded workspaces (own chats, tasks, memory, files)
 - [x] CLI (run, gateway, chat, agent, onboard, profiles, permissions, auth, google)

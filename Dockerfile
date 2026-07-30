@@ -29,12 +29,17 @@ ENV VIRTUAL_ENV=/opt/venv \
 WORKDIR /app
 COPY . .
 
+# Optional provider libraries to bake in, space-separated (`anthropic`, `ollama`):
+#   docker build --build-arg PROVIDER_EXTRAS="ollama" .
+ARG PROVIDER_EXTRAS=""
+
 # Reproducible install from the committed uv.lock: exact pinned versions, no
 # re-resolution. --no-editable installs the project as a wheel (nothing depends on
 # the /app source at runtime); --extra google adds Gmail/Calendar/Drive. Channels
 # (Telegram/Discord/Slack) and voice are already in the base deps. `uv sync`
 # creates /opt/venv with no pip/setuptools — minimal from the start.
-RUN uv sync --frozen --no-editable --extra google
+RUN uv sync --frozen --no-editable --extra google \
+    $(for e in $PROVIDER_EXTRAS; do printf -- '--extra %s ' "$e"; done)
 
 # Slim the venv (~280MB saved) — all removals verified safe by booting the image:
 #   1. Vertex AI / Google Cloud SDK: ag2[gemini] declares google-cloud-aiplatform

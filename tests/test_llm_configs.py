@@ -163,8 +163,12 @@ def test_apply_active_base_url_suppresses_cheap_aggregate(monkeypatch):
 
 
 def test_usable_by_type_key_and_base_url(monkeypatch):
+    # Pin libraries present: this covers key/base_url logic, and would otherwise
+    # depend on whether the dev venv has `ollama` installed.
+    monkeypatch.setattr(llm_configs, "_module_present", lambda module: True)
+
     olm = llm_configs.save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
-    assert llm_configs.usable(olm) is True  # local, always
+    assert llm_configs.usable(olm) is True  # local, no key needed
 
     compat = llm_configs.save_config(
         {"name": "B", "type": "openai", "model": "m", "base_url": "http://h/v1"}
@@ -499,3 +503,52 @@ def test_codex_usable_and_key_source(monkeypatch):
 
 def test_codex_not_image_capable():
     assert llm_configs.image_capable({"type": "codex"}) is False
+
+
+# ---- optional provider libraries ----------------------------------------------
+
+
+def test_deps_status_clean_for_types_bundled_in_the_base_install():
+    """Types with no optional library report ok with an empty hint."""
+    for ctype in ("gemini", "openai", "openai_responses", "openai_subscription", "codex"):
+        assert llm_configs.deps_status(ctype) == {"ok": True, "extra": "", "install": ""}
+
+
+def test_deps_status_names_the_extra_when_the_library_is_absent(monkeypatch):
+    monkeypatch.setattr(llm_configs, "_module_present", lambda module: False)
+    assert llm_configs.deps_status("ollama") == {
+        "ok": False,
+        "extra": "ollama",
+        "install": 'pip install "ag2-assistant[ollama]"',
+    }
+    assert llm_configs.deps_status("anthropic")["install"] == (
+        'pip install "ag2-assistant[anthropic]"'
+    )
+
+    monkeypatch.setattr(llm_configs, "_module_present", lambda module: True)
+    assert llm_configs.deps_status("ollama")["ok"] is True
+
+
+def test_missing_provider_library_makes_a_config_unusable(monkeypatch):
+    """A missing library makes a config unusable regardless of its key state."""
+    secrets.set_key("anthropic", "sk-test")
+    ollama = {"type": "ollama", "model": "qwen3.5:4b"}
+    anthropic = {"type": "anthropic", "model": "claude-x"}
+
+    monkeypatch.setattr(llm_configs, "_module_present", lambda module: True)
+    assert llm_configs.usable(ollama) is True
+    assert llm_configs.usable(anthropic) is True
+
+    monkeypatch.setattr(llm_configs, "_module_present", lambda module: False)
+    assert llm_configs.usable(ollama) is False
+    assert llm_configs.usable(anthropic) is False
+    # key_source still reports the key situation, not the library one.
+    assert llm_configs.key_source(ollama) == "not_needed"
+
+
+def test_module_present_never_raises_into_the_health_path(monkeypatch):
+    def boom(name):
+        raise ImportError("broken parent package")
+
+    monkeypatch.setattr(llm_configs.importlib.util, "find_spec", boom)
+    assert llm_configs._module_present("anything") is False
