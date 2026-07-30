@@ -7,16 +7,15 @@ web_fetch fallback that's kept for providers without native web fetch.
 
 import asyncio
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 
 import pytest
-from ag2 import ToolResult
 from ag2.context import ConversationContext
 from ag2.events import ToolCallEvent
 from ag2.stream import MemoryStream
 from ag2.tools import MCPStdioServerConfig
+from mcp.types import CallToolResult, ListToolsResult, TextContent
+from mcp.types import Tool as McpTool
 
-import assistant.tools.mcp as mcp_mod
 from assistant.agent import ask
 from assistant.config import Config
 from assistant.permissions import ALLOW_ONCE
@@ -155,7 +154,7 @@ def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(paths, tmp_pat
     tool names so providers do not receive duplicate function schemas."""
 
     # MCP servers are read from THIS profile's settings (config.data_dir), so write
-    # one there and pass the config — no module-level monkeypatch.
+    # one there and pass the config.
     config = Config.for_paths(paths, data_dir=tmp_path)
     Settings(config.data_dir / "config.yaml").upsert_mcp_server(
         {
@@ -176,37 +175,50 @@ def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(paths, tmp_pat
     assert isinstance(mcp_only[0], NamespacedMCPToolkit)
 
 
-async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes(monkeypatch):
+class FakeMcpSession:
+    """The slice of the MCP client session the toolkit drives, over canned server
+    data. Answers with the real MCP result types, so AG2's content extraction runs."""
+
+    def __init__(self, tools):
+        self._tools = list(tools)
+        self.calls = []
+
+    async def list_tools(self):
+        return ListToolsResult(tools=self._tools)
+
+    async def call_tool(self, name, arguments):
+        self.calls.append((name, arguments))
+        return CallToolResult(content=[TextContent(type="text", text="done")], isError=False)
+
+
+def session_factory(session, *, opened=None, closed=None):
+    """A `session_factory` handing out `session`, recording every open and close —
+    one open == one server process."""
+
+    @asynccontextmanager
+    async def factory(config):
+        if opened is not None:
+            opened.append(config)
+        try:
+            yield session
+        finally:
+            if closed is not None:
+                closed.append(config)
+
+    return factory
+
+
+async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes():
     """The namespaced adapter keeps AG2 MCP execution behavior behind our local
     compatibility surface while presenting provider-safe names."""
 
-    calls = []
-
-    class _Session:
-        async def list_tools(self):
-            return SimpleNamespace(
-                tools=[
-                    SimpleNamespace(
-                        name="read_file",
-                        description="Read a file",
-                        inputSchema={"type": "object"},
-                    ),
-                    SimpleNamespace(name="write_file", description="", inputSchema={}),
-                    SimpleNamespace(name="search", description="", inputSchema={}),
-                ]
-            )
-
-        async def call_tool(self, name, args):
-            calls.append((name, args))
-            return SimpleNamespace(isError=False, content=[])
-
-    @asynccontextmanager
-    async def fake_session(config):
-        yield _Session()
-
-    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
-    monkeypatch.setattr(mcp_mod, "mcp_session", fake_session)
-    monkeypatch.setattr(mcp_mod, "extract_content", lambda result: ToolResult("ok"))
+    session = FakeMcpSession(
+        [
+            McpTool(name="read_file", description="Read a file", inputSchema={"type": "object"}),
+            McpTool(name="write_file", inputSchema={}),
+            McpTool(name="search", inputSchema={}),
+        ]
+    )
 
     toolkit = NamespacedMCPToolkit(
         MCPStdioServerConfig(
@@ -214,7 +226,8 @@ async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes(monkeypatch)
             server_label="repo-files",
             allowed_tools=["read_file", "write_file"],
             blocked_tools=["write_file"],
-        )
+        ),
+        session_factory=session_factory(session),
     )
     context = ConversationContext(stream=MemoryStream())
     schemas = list(await toolkit.schemas(context))
@@ -227,39 +240,24 @@ async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes(monkeypatch)
     )
 
     assert result.name == proxy.name
-    assert calls == [("read_file", {"path": "x"})]
+    assert result.result.parts[0].content == "done"  # the server's content reaches the model
+    assert session.calls == [("read_file", {"path": "x"})]
     await toolkit.aclose()  # stop the persistent-session runner task
 
 
-async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
+async def test_mcp_session_persists_across_calls_and_idle_closes():
     """One server process serves discovery AND every tool call (stateful servers
     like a browser need this), then closes after the idle window so nothing
     leaks when an agent reload drops the toolkit reference."""
 
     opened, closed = [], []
+    session = FakeMcpSession([McpTool(name="navigate", inputSchema={})])
 
-    class _Session:
-        async def list_tools(self):
-            return SimpleNamespace(
-                tools=[SimpleNamespace(name="navigate", description="", inputSchema={})]
-            )
-
-        async def call_tool(self, name, args):
-            return SimpleNamespace(isError=False, content=[])
-
-    @asynccontextmanager
-    async def fake_session(config):
-        opened.append(config)
-        try:
-            yield _Session()
-        finally:
-            closed.append(config)
-
-    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
-    monkeypatch.setattr(mcp_mod, "mcp_session", fake_session)
-    monkeypatch.setattr(mcp_mod, "extract_content", lambda result: ToolResult("ok"))
-
-    toolkit = NamespacedMCPToolkit(MCPStdioServerConfig(command="mcp", server_label="browser"))
+    toolkit = NamespacedMCPToolkit(
+        MCPStdioServerConfig(command="mcp", server_label="browser"),
+        session_factory=session_factory(session, opened=opened, closed=closed),
+        idle_close_s=0.5,
+    )
     context = ConversationContext(stream=MemoryStream())
     await toolkit.schemas(context)
     proxy = next(t for t in toolkit.tools if t.name == "browser_navigate")
@@ -269,10 +267,8 @@ async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
     # discovery + three calls all rode ONE session (== one server process)
     assert len(opened) == 1 and not closed
 
-    # idle expiry closes the process without any explicit dispose (the runner
-    # re-reads the shrunk window within its ≤1s wait cap)
-    monkeypatch.setattr(mcp_mod, "_IDLE_CLOSE_S", 0.05)
-    await asyncio.sleep(1.3)
+    # idle expiry closes the process without any explicit dispose
+    await asyncio.sleep(1.0)
     assert closed == opened
 
     # a later call transparently reopens a fresh session
@@ -282,7 +278,7 @@ async def test_mcp_session_persists_across_calls_and_idle_closes(monkeypatch):
     assert len(closed) == 2
 
 
-async def test_mcp_unreachable_server_costs_its_tools_not_the_turn(monkeypatch):
+async def test_mcp_unreachable_server_costs_its_tools_not_the_turn():
     """A server that cannot start contributes no tools and reports why, rather
     than raising out of schemas() and aborting a turn that never touched MCP."""
 
@@ -294,10 +290,10 @@ async def test_mcp_unreachable_server_costs_its_tools_not_the_turn(monkeypatch):
         raise RuntimeError("boom: cannot import name 'McpError'")
         yield  # pragma: no cover — keeps this an async generator
 
-    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
-    monkeypatch.setattr(mcp_mod, "mcp_session", failing_session)
-
-    toolkit = NamespacedMCPToolkit(MCPStdioServerConfig(command="mcp", server_label="time"))
+    toolkit = NamespacedMCPToolkit(
+        MCPStdioServerConfig(command="mcp", server_label="time"),
+        session_factory=failing_session,
+    )
     context = ConversationContext(stream=MemoryStream())
 
     assert list(await toolkit.schemas(context)) == []
@@ -326,28 +322,23 @@ def test_describe_mcp_error_reaches_past_the_task_group_wrapper():
     assert describe_mcp_error(RuntimeError()) == "RuntimeError"
 
 
-async def test_mcp_server_recovers_once_the_retry_window_lapses(monkeypatch):
+async def test_mcp_server_recovers_once_the_retry_window_lapses():
     """A server fixed after a failure is picked up again without a restart."""
 
     healthy = False
-
-    class _Session:
-        async def list_tools(self):
-            return SimpleNamespace(
-                tools=[SimpleNamespace(name="now", description="", inputSchema={})]
-            )
+    session = FakeMcpSession([McpTool(name="now", inputSchema={})])
 
     @asynccontextmanager
     async def flaky_session(config):
         if not healthy:
             raise RuntimeError("server is down")
-        yield _Session()
+        yield session
 
-    monkeypatch.setattr(mcp_mod, "resolve_config", lambda config, context: config)
-    monkeypatch.setattr(mcp_mod, "mcp_session", flaky_session)
-    monkeypatch.setattr(mcp_mod, "_RETRY_AFTER_S", 0.0)
-
-    toolkit = NamespacedMCPToolkit(MCPStdioServerConfig(command="mcp", server_label="time"))
+    toolkit = NamespacedMCPToolkit(
+        MCPStdioServerConfig(command="mcp", server_label="time"),
+        session_factory=flaky_session,
+        retry_after_s=0.0,
+    )
     context = ConversationContext(stream=MemoryStream())
 
     assert list(await toolkit.schemas(context)) == []

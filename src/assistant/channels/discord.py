@@ -11,7 +11,6 @@ Developer Portal, otherwise message text arrives empty.
 
 import asyncio
 import contextlib
-import os
 import re
 
 import discord
@@ -97,10 +96,11 @@ class DiscordAsker(PendingGuard):
 class DiscordChannel(Channel):
     platform = "discord"
 
-    def __init__(self, token: str | None = None) -> None:
-        self._token = token or os.environ.get("DISCORD_BOT_TOKEN", "")
+    def __init__(self, token: str = "", *, message_limit: int = DISCORD_LIMIT) -> None:
+        self._token = token
+        self._message_limit = message_limit
         if not self._token:
-            raise ValueError("DISCORD_BOT_TOKEN not set (env var or token= argument).")
+            raise ValueError("Discord needs a bot token; pass token= (DISCORD_BOT_TOKEN).")
         intents = discord.Intents.default()
         intents.message_content = True
         self._client = discord.Client(intents=intents)
@@ -125,13 +125,13 @@ class DiscordChannel(Channel):
 
     async def notify(self, chat_id: str, text: str) -> None:
         """Push a task-run outcome into a Discord channel. Mirrors `on_message`'s
-        send path: same `split_for_limit`/`DISCORD_LIMIT` chunking and
+        send path: same `split_for_limit`/`message_limit` chunking and
         `format_outbound`, but resolves the channel object ourselves since there's
         no inbound `message.channel` to reuse here."""
         channel = self._client.get_channel(int(chat_id)) or await self._client.fetch_channel(
             int(chat_id)
         )
-        for chunk in split_for_limit(self.format_outbound(text), DISCORD_LIMIT):
+        for chunk in split_for_limit(self.format_outbound(text), self._message_limit):
             await channel.send(chunk)
 
     async def stop(self) -> None:
@@ -195,5 +195,5 @@ class DiscordChannel(Channel):
             except Exception as exc:  # surface failures to the user
                 reply = f"Sorry, something went wrong: {exc}"
 
-        for chunk in split_for_limit(self.format_outbound(reply), DISCORD_LIMIT):
+        for chunk in split_for_limit(self.format_outbound(reply), self._message_limit):
             await message.channel.send(chunk)

@@ -95,11 +95,11 @@ def _candidate_files(directory: str) -> list[str]:
     return rels
 
 
-def _read(directory: str, rel: str) -> "str | object | None":
+def _read(directory: str, rel: str, max_file_bytes: int) -> "str | object | None":
     """Return text content, ``_BINARY``, or ``None`` if the file is absent."""
     full = os.path.join(directory, rel)
     try:
-        if os.path.getsize(full) > MAX_FILE_BYTES:
+        if os.path.getsize(full) > max_file_bytes:
             return _BINARY
         with open(full, "rb") as f:
             raw = f.read()
@@ -113,11 +113,11 @@ def _read(directory: str, rel: str) -> "str | object | None":
         return _BINARY
 
 
-def capture(directory: str) -> Snapshot:
+def capture(directory: str, *, max_file_bytes: int = MAX_FILE_BYTES) -> Snapshot:
     """Snapshot the working tree so a later ``compute_diff`` can show changes."""
     snap: Snapshot = {}
     for rel in _candidate_files(directory):
-        val = _read(directory, rel)
+        val = _read(directory, rel, max_file_bytes)
         if val is not None:
             snap[rel] = val
     return snap
@@ -136,13 +136,16 @@ def _unified(rel: str, before: str, after: str) -> tuple[str, int, int]:
     return text, added, removed
 
 
-def compute_diff(before: Snapshot, directory: str) -> list[FileDiff]:
+def compute_diff(
+    before: Snapshot, directory: str, *, max_file_bytes: int = MAX_FILE_BYTES
+) -> list[FileDiff]:
     """Diff the current tree against ``before``; one ``FileDiff`` per changed file."""
     after_paths = set(_candidate_files(directory))
     diffs: list[FileDiff] = []
     for rel in sorted(set(before) | after_paths):
         old = before.get(rel, None)
-        new = _read(directory, rel)  # current content (None if now absent)
+        # current content (None if now absent)
+        new = _read(directory, rel, max_file_bytes)
 
         if old is None and new is None:
             continue

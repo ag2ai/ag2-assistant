@@ -15,11 +15,10 @@ import asyncio
 import pytest
 from ag2.knowledge.constants import LOG_PREFIX
 
-import assistant.gateway.core as core_mod
 from assistant.config import Config
 from assistant.events import TurnFailed
 from assistant.gateway.core import Gateway
-from tests.support.fakes import FakeReply, FakeRunMixin
+from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
 
 class BoomAgent(FakeRunMixin):
@@ -47,9 +46,12 @@ class HangingAgent(FakeRunMixin):
         return FakeReply("never reached")
 
 
-async def _gateway(paths, tmp_path, monkeypatch, agent):
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: agent)
-    gw = Gateway(config=Config.for_paths(paths, data_dir=tmp_path), memory=False)
+async def _gateway(paths, tmp_path, agent):
+    gw = Gateway(
+        config=Config.for_paths(paths, data_dir=tmp_path),
+        memory=False,
+        agent_factory=fake_agent_factory(agent),
+    )
     await gw.start()
     return gw
 
@@ -59,8 +61,8 @@ async def _gateway(paths, tmp_path, monkeypatch, agent):
     [asyncio.TimeoutError(), RuntimeError("provider exploded")],
     ids=["timeout", "provider-error"],
 )
-async def test_failed_turn_is_persisted(paths, tmp_path, monkeypatch, exc):
-    gw = await _gateway(paths, tmp_path, monkeypatch, BoomAgent(exc))
+async def test_failed_turn_is_persisted(paths, tmp_path, exc):
+    gw = await _gateway(paths, tmp_path, BoomAgent(exc))
     try:
         with pytest.raises(type(exc)):
             await gw.send_message("create a task", chat_id="c1")
@@ -81,14 +83,14 @@ async def test_failed_turn_is_persisted(paths, tmp_path, monkeypatch, exc):
         await gw.close()
 
 
-async def test_failed_turn_survives_a_reload(paths, tmp_path, monkeypatch):
+async def test_failed_turn_survives_a_reload(paths, tmp_path):
     """The point of persisting: a fresh Gateway over the same data dir still has it."""
-    gw = await _gateway(paths, tmp_path, monkeypatch, BoomAgent(RuntimeError("boom")))
+    gw = await _gateway(paths, tmp_path, BoomAgent(RuntimeError("boom")))
     with pytest.raises(RuntimeError):
         await gw.send_message("do the thing", chat_id="c1")
     await gw.close()
 
-    gw2 = await _gateway(paths, tmp_path, monkeypatch, BoomAgent(RuntimeError("boom")))
+    gw2 = await _gateway(paths, tmp_path, BoomAgent(RuntimeError("boom")))
     try:
         events = await (await gw2.stream_for("c1")).history.get_events()
         assert any(isinstance(e, TurnFailed) for e in events)
@@ -97,8 +99,8 @@ async def test_failed_turn_survives_a_reload(paths, tmp_path, monkeypatch):
         await gw2.close()
 
 
-async def test_timeout_failure_reads_as_a_timeout(paths, tmp_path, monkeypatch):
-    gw = await _gateway(paths, tmp_path, monkeypatch, BoomAgent(asyncio.TimeoutError()))
+async def test_timeout_failure_reads_as_a_timeout(paths, tmp_path):
+    gw = await _gateway(paths, tmp_path, BoomAgent(asyncio.TimeoutError()))
     try:
         with pytest.raises(asyncio.TimeoutError):
             await gw.send_message("long job", chat_id="c1")
@@ -111,11 +113,11 @@ async def test_timeout_failure_reads_as_a_timeout(paths, tmp_path, monkeypatch):
         await gw.close()
 
 
-async def test_shutdown_cancellation_keeps_the_turn(paths, tmp_path, monkeypatch):
+async def test_shutdown_cancellation_keeps_the_turn(paths, tmp_path):
     """Cancelled by something other than the user's stop button (a process shutdown):
     the work is still persisted, and the cancellation still propagates."""
     running = asyncio.Event()
-    gw = await _gateway(paths, tmp_path, monkeypatch, HangingAgent(running))
+    gw = await _gateway(paths, tmp_path, HangingAgent(running))
     try:
         turn = asyncio.ensure_future(gw.send_message("create a task", chat_id="c1"))
         await asyncio.wait_for(running.wait(), timeout=5)
@@ -130,13 +132,13 @@ async def test_shutdown_cancellation_keeps_the_turn(paths, tmp_path, monkeypatch
         await gw.close()
 
 
-async def test_user_stop_still_marks_the_turn_cancelled(paths, tmp_path, monkeypatch):
+async def test_user_stop_still_marks_the_turn_cancelled(paths, tmp_path):
     """The existing stop path keeps working — persisted, and reported as a stop
     rather than a failure."""
     from assistant.events import TurnCancelled
 
     running = asyncio.Event()
-    gw = await _gateway(paths, tmp_path, monkeypatch, HangingAgent(running))
+    gw = await _gateway(paths, tmp_path, HangingAgent(running))
     try:
         turn = asyncio.ensure_future(gw.send_message("create a task", chat_id="c1"))
         await asyncio.wait_for(running.wait(), timeout=5)

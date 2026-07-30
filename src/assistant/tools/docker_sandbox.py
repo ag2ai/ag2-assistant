@@ -9,13 +9,15 @@ directory (nothing else on the host) and is removed immediately — the right
 hygiene for untrusted, potentially-throwaway skill code, where a reused
 long-lived container would accumulate and carry state between runs.
 
-`docker_available()` gates whether the Docker path is used at all (here and for
-the shell/code tools).
+`docker_available(search_path)` gates whether the Docker path is used at all
+(here and for the shell/code tools).
 """
 
 import asyncio
+import os
 import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
 from ag2.tools.sandbox.adapter import ShellAdapter
@@ -41,9 +43,13 @@ def _capture(cmd: list[str], timeout: float, max_output: int) -> ExecResult:
     return ExecResult(output=output, exit_code=result.returncode or 0)
 
 
-def docker_available() -> bool:
-    """True if the Docker CLI exists and the daemon is reachable."""
-    exe = shutil.which("docker")
+def docker_available(search_path: Sequence[Path]) -> bool:
+    """True if a Docker CLI on `search_path` exists and its daemon is reachable.
+
+    An empty `search_path` means "nothing installed" — no fallback to the
+    process environment, which only the boundary may read.
+    """
+    exe = shutil.which("docker", path=os.pathsep.join(str(p) for p in search_path))
     if not exe:
         return False
     try:

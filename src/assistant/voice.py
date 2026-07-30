@@ -15,7 +15,6 @@ model's speech leaves as `SynthesizedAudioEvent` on the same conversation stream
 (16 kHz mono PCM in / 24 kHz mono PCM out).
 """
 
-import os
 from typing import TYPE_CHECKING
 
 from ag2 import tool
@@ -107,12 +106,12 @@ def voice_realtime_config(
     active = None if provider else profile_live_config(config, settings)
     if active:
         p = voice_providers.get(active["provider"])
-        model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or active["model"] or p.realtime_model
+        model = config.voice_model or active["model"] or p.realtime_model
         chosen_voice = voice or active.get("voice") or p.default_voice
         api_key = LiveConfigStore(config.paths).resolve_key(active, config.secret_env)
     else:
         p = voice_providers.get(provider or settings.voice_provider())
-        model = os.environ.get("AG2ASSISTANT_VOICE_MODEL") or p.realtime_model
+        model = config.voice_model or p.realtime_model
         chosen_voice = voice or settings.get_voice(p.name)
         api_key = ""  # builder falls back to the provider's env key
     return p.build_realtime(config, chosen_voice, model, api_key)

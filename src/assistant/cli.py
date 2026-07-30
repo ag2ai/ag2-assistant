@@ -11,7 +11,7 @@ import uvicorn
 
 from assistant import __version__
 from assistant.agent import ask, tz_unset_in_container
-from assistant.channels import get_channel
+from assistant.channels import channel_token_kwargs, get_channel
 from assistant.codex_auth import (
     CodexAuth,
     CodexAuthError,
@@ -35,6 +35,7 @@ from assistant.onboarding import needs_onboarding, run_onboarding
 from assistant.paths import Paths
 from assistant.permissions import PermissionStore, command_rule, parse_command_rule
 from assistant.profiles import ProfileRegistry
+from assistant.secrets import SecretStore
 
 # oauthlib treats a scope superset returned by Google as an error ("Scope has
 # changed"); a broader grant back is not a failure. Set here, at the entry point —
@@ -50,6 +51,12 @@ app = typer.Typer(
 def default_paths() -> Paths:
     """This install's on-disk layout. The one environment read in the package."""
     return Paths.from_env(os.environ, Path.home())
+
+
+def _channel_tokens(platform: str) -> dict[str, str]:
+    """This platform's tokens as channel-constructor kwargs. Saved secrets win over
+    the environment, so a token stored from the web UI also serves the CLI."""
+    return channel_token_kwargs(platform, SecretStore(default_paths()).merged_env(os.environ))
 
 
 @app.callback()
@@ -597,7 +604,7 @@ def telegram(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("telegram")
+        channel = get_channel("telegram", **_channel_tokens("telegram"))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "telegram":
@@ -633,7 +640,7 @@ def discord(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("discord")
+        channel = get_channel("discord", **_channel_tokens("discord"))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "discord":
@@ -668,7 +675,7 @@ def slack(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("slack")
+        channel = get_channel("slack", **_channel_tokens("slack"))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "slack":

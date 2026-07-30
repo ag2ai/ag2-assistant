@@ -197,6 +197,12 @@ class Config(BaseModel):
     # ``host[:port]`` plus its optional shared token (see coding.detect.parse_bridge).
     acp_bridge: str = ""
     acp_bridge_token: str = ""
+    # Install-wide model/provider pins for the non-chat surfaces, from
+    # AG2ASSISTANT_VOICE_PROVIDER / AG2ASSISTANT_VOICE_MODEL / AG2ASSISTANT_IMAGE_MODEL.
+    # Empty means "unpinned"; the surface falls back to its own default.
+    voice_provider: str = ""
+    voice_model: str = ""
+    image_model: str = ""
 
     @classmethod
     def for_paths(cls, paths: Paths, **overrides) -> "Config":
@@ -269,6 +275,12 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         cfg.acp_bridge = v.strip()
     if v := get("AG2ASSISTANT_ACP_BRIDGE_TOKEN"):
         cfg.acp_bridge_token = v.strip()
+    if v := get("AG2ASSISTANT_VOICE_PROVIDER"):
+        cfg.voice_provider = v.strip()
+    if v := get("AG2ASSISTANT_VOICE_MODEL"):
+        cfg.voice_model = v.strip()
+    if v := get("AG2ASSISTANT_IMAGE_MODEL"):
+        cfg.image_model = v.strip()
     if v := get("AG2ASSISTANT_LLM_PROVIDER"):
         cfg.llm.provider = v
     if v := get("AG2ASSISTANT_MODEL"):

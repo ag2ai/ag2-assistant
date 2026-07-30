@@ -215,7 +215,7 @@ def build_skills_runtime(config: Config):
     extra.append(str(bundled_skills_dir()))
 
     if config.tools.sandbox == "docker":
-        if docker_available():
+        if docker_available(config.search_path):
             return build_docker_skill_runtime(
                 install_dir=config.skills_dir,
                 blocked=_SKILL_BLOCKED,
@@ -656,7 +656,8 @@ def create_agent(
         from assistant.self_tools import build_self_tools
         from assistant.settings import profile_settings
 
-        tools.extend(build_self_tools(config, profile_settings(config.data_dir)))
+        settings = profile_settings(config.data_dir, voice_provider=config.voice_provider)
+        tools.extend(build_self_tools(config, settings))
 
     # system tools (retrieval + actions over tasks/chats/questions) — these make
     # the agent "universal": it can know and do everything via tools (create/

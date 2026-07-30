@@ -33,16 +33,10 @@ _BOUNDARY = {
 # Still reading the environment below the boundary, each with the task that ends it.
 # A row that no longer has a hit is a failure: this list may only shrink.
 _DEFERRED = {
-    "voice_providers.py": "Task 24 — provider/key selection takes explicit values",
-    "voice.py": "Task 24 — AG2ASSISTANT_VOICE_MODEL becomes a Config field",
-    "tools/image_gen.py": "Task 26 — AG2ASSISTANT_IMAGE_MODEL becomes a Config field",
     "onboarding.py": "Task 26 — writes AG2ASSISTANT_LOCATION instead of returning it",
     "agent.py": "Task 26 — the /.dockerenv + TZ probe becomes an argument",
     "codex_auth.py": "Task 18 leftover — _const reads env at import time",
     "coding/bridge_server.py": "Task 25 — the spawned adapter's env whitelist",
-    "channels/slack.py": "Task 23 — token kwargs already win; drop the fallback",
-    "channels/discord.py": "Task 23 — token kwargs already win; drop the fallback",
-    "channels/telegram.py": "Task 23 — token kwargs already win; drop the fallback",
     "gateway/app.py": "Task 24 — Path.home() starting points for the fs browser",
 }
 

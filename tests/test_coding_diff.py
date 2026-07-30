@@ -67,13 +67,12 @@ def test_binary_file_skipped(tmp_path):
     assert paths["blob.bin"].hunks == ""
 
 
-def test_oversized_file_reported_without_hunks(tmp_path, monkeypatch):
+def test_oversized_file_reported_without_hunks(tmp_path):
     # Oversized (like binary) is reported as a changed path but carries no hunks,
     # so a giant generated file shows as "changed (no preview)" rather than dumping.
-    monkeypatch.setattr(diffmod, "MAX_FILE_BYTES", 16)
-    before = diffmod.capture(str(tmp_path))
+    before = diffmod.capture(str(tmp_path), max_file_bytes=16)
     _write(tmp_path / "big.txt", "x" * 100 + "\n")
-    diffs = diffmod.compute_diff(before, str(tmp_path))
+    diffs = diffmod.compute_diff(before, str(tmp_path), max_file_bytes=16)
     d = {x.path: x for x in diffs}["big.txt"]
     assert d.status == "added"
     assert d.hunks == ""

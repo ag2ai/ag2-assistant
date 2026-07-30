@@ -128,8 +128,7 @@ def test_normalize_accepts_attachment_only_dm():
     assert inbound.text == ""
 
 
-def test_telegram_requires_token(monkeypatch):
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-
+def test_telegram_requires_token():
+    """The token is handed over by the caller; the adapter never reads the environment."""
     with pytest.raises(ValueError):
         TelegramChannel()

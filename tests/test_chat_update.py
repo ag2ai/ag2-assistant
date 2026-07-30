@@ -2,25 +2,31 @@
 
 import pytest
 
-import assistant.gateway.core as core_mod
-import assistant.title
 from assistant.config import Config
 from assistant.gateway.core import Gateway
 from tests.support.apps import api
-from tests.support.fakes import FakeAgent
+from tests.support.fakes import fake_agent_factory, fake_title_factory
+
+
+def _gateway(paths, tmp_path, **kwargs) -> Gateway:
+    """A gateway on an isolated layout whose agent never reaches an LLM."""
+    return Gateway(
+        config=Config.for_paths(paths, data_dir=tmp_path),
+        memory=False,
+        agent_factory=fake_agent_factory(),
+        **kwargs,
+    )
 
 
 @pytest.fixture
-async def gw(paths, tmp_path, monkeypatch):
-
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-    gw = Gateway(config=Config.for_paths(paths, data_dir=tmp_path), memory=False)
+async def gw(paths, tmp_path):
+    gw = _gateway(paths, tmp_path)
     await gw.start()
     yield gw
     await gw.close()
 
 
-async def test_update_chat_title_persists_across_instances(paths, gw, tmp_path, monkeypatch):
+async def test_update_chat_title_persists_across_instances(paths, gw, tmp_path):
 
     await gw.send_message("hello", chat_id="c1")
     assert await gw.update_chat("c1", title="Renamed by user") is True
@@ -29,8 +35,7 @@ async def test_update_chat_title_persists_across_instances(paths, gw, tmp_path, 
     )
 
     await gw.close()
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-    gw2 = Gateway(config=Config.for_paths(paths, data_dir=tmp_path), memory=False)
+    gw2 = _gateway(paths, tmp_path)
     await gw2.start()
     assert (
         next(c for c in await gw2.list_chats() if c["chat_id"] == "c1")["title"]
@@ -68,21 +73,33 @@ async def test_update_unknown_chat_returns_false(gw):
     assert await gw.update_chat("missing", title="x") is False
 
 
-async def test_user_rename_wins_over_auto_titler(gw, monkeypatch):
+async def test_user_rename_wins_over_auto_titler(paths, tmp_path):
     """The auto-titler skips already-titled chats, so a user rename sticks."""
+    # A titler that really does produce a title — the skip-if-titled guard is what
+    # must keep the user's rename intact.
+    gw = _gateway(paths, tmp_path, title_factory=fake_title_factory("LLM title"))
+    await gw.start()
+    try:
+        await gw.send_message("hello", chat_id="c1")
+        await gw.update_chat("c1", title="User title")
+        await gw._title_chat("c1", "hello", "echo[1]: hello")  # would set "LLM title"
+        chat = next(c for c in await gw.list_chats() if c["chat_id"] == "c1")
+        assert chat["title"] == "User title"
+    finally:
+        await gw.close()
 
-    async def fake_generate_title(*a, **k):
-        return "LLM title"
 
-    # _title_chat imports generate_title function-locally, so patching the source
-    # module makes the titler genuinely produce a title — the skip-if-titled guard
-    # is what must keep the user's rename intact.
-    monkeypatch.setattr(assistant.title, "generate_title", fake_generate_title)
-
-    await gw.send_message("hello", chat_id="c1")
-    await gw.update_chat("c1", title="User title")
-    await gw._title_chat("c1", "hello", "echo[1]: hello")  # would set "LLM title"
-    assert next(c for c in await gw.list_chats() if c["chat_id"] == "c1")["title"] == "User title"
+async def test_the_auto_titler_names_an_untitled_chat(paths, tmp_path):
+    """The other side of the guard: with no user rename, the titler's title lands."""
+    gw = _gateway(paths, tmp_path, title_factory=fake_title_factory("LLM title"))
+    await gw.start()
+    try:
+        await gw.send_message("hello", chat_id="c1")
+        await gw._title_chat("c1", "hello", "echo[1]: hello")
+        chat = next(c for c in await gw.list_chats() if c["chat_id"] == "c1")
+        assert chat["title"] == "LLM title"
+    finally:
+        await gw.close()
 
 
 # --- REST facade ---

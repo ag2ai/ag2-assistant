@@ -89,11 +89,10 @@ async def test_discord_notify_fetches_channel_when_not_cached():
     assert sent == ["hello"]
 
 
-async def test_discord_notify_chunks_long_text(monkeypatch):
-    import assistant.channels.discord as discord_mod
+async def test_discord_notify_chunks_long_text():
+    from assistant.channels.discord import DiscordChannel
 
-    monkeypatch.setattr(discord_mod, "DISCORD_LIMIT", 5)
-    ch = discord_mod.DiscordChannel(token="fake-token")
+    ch = DiscordChannel(token="fake-token", message_limit=5)
     sent = []
 
     class FakeChannel:
@@ -111,7 +110,7 @@ async def test_discord_notify_chunks_long_text(monkeypatch):
 
 
 # --- Slack: mirrors `self._app.client.chat_postMessage`, formatted via
-# `format_outbound` (markdown_to_slack) and chunked by `split_for_limit(..., SLACK_LIMIT)`. ---
+# `format_outbound` (markdown_to_slack) and chunked by `split_for_limit(..., message_limit)`. ---
 
 
 async def test_slack_notify_sends_formatted_text_via_app_client():
@@ -130,11 +129,10 @@ async def test_slack_notify_sends_formatted_text_via_app_client():
     assert posted == [("C123", "*bold*")]  # markdown_to_slack: ** -> *
 
 
-async def test_slack_notify_chunks_long_text(monkeypatch):
-    import assistant.channels.slack as slack_mod
+async def test_slack_notify_chunks_long_text():
+    from assistant.channels.slack import SlackChannel
 
-    monkeypatch.setattr(slack_mod, "SLACK_LIMIT", 5)
-    ch = slack_mod.SlackChannel(bot_token="xoxb-fake", app_token="xapp-fake")
+    ch = SlackChannel(bot_token="xoxb-fake", app_token="xapp-fake", message_limit=5)
     posted = []
 
     class FakeClient:

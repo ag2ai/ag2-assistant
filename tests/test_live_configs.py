@@ -1,9 +1,12 @@
 """live_configs key resolution through the Secret store (this module previously had
 no test coverage — added with the Secret entity)."""
 
+from fastapi.testclient import TestClient
+
 from assistant.config import Config
 from assistant.live_configs import LiveConfigStore
 from assistant.secrets import SecretStore
+from tests.support.apps import make_profile_app
 
 
 def test_resolve_key_prefers_secret_then_env(paths):
@@ -93,3 +96,67 @@ def test_live_dangling_override_degrades_silently(paths, tmp_path):
     s = _settings(tmp_path, "work")
     s.set_live_override("lv_deleted_ghost")
     assert voice.profile_live_config(cfg, s)["id"] == x["id"]  # no error; falls back
+
+
+# ---- POST /api/live-configs/{cid}/test: which key reaches the provider ---------
+
+
+def _probe_recorder():
+    """A `live_probe` recording (provider, key) instead of calling a real provider."""
+    seen = []
+
+    async def probe(provider, key):
+        seen.append((provider, key))
+
+    return probe, seen
+
+
+def test_saved_live_config_test_probes_with_its_own_secret(paths):
+    probe, seen = _probe_recorder()
+    secret = SecretStore(paths).create_secret("K", "sk-own", provider="openai")
+    entry = LiveConfigStore(paths).save_config(
+        {"name": "V", "provider": "openai", "secret_id": secret["id"]}
+    )
+    app, _pid = make_profile_app(paths, live_probe=probe)
+    with TestClient(app) as client:
+        assert client.post(f"/api/live-configs/{entry['id']}/test").json()["ok"] is True
+    assert seen == [("openai", "sk-own")]
+
+
+def test_draft_test_with_a_cleared_key_falls_back_to_the_shared_key(paths):
+    """An empty api_key means "as if this config's own Secret were cleared" — the
+    probe must receive the provider's shared key."""
+    probe, seen = _probe_recorder()
+    secrets = SecretStore(paths)
+    own = secrets.create_secret("K", "sk-own", provider="openai")
+    secrets.create_secret("Shared", "sk-shared", provider="openai", default=True)
+    entry = LiveConfigStore(paths).save_config(
+        {"name": "V", "provider": "openai", "secret_id": own["id"]}
+    )
+    app, _pid = make_profile_app(paths, live_probe=probe)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/live-configs/test",
+            json={
+                "id": entry["id"],
+                "name": "V",
+                "provider": "openai",
+                "model": entry["model"],
+                "secret_id": own["id"],
+                "api_key": "",
+            },
+        )
+        assert resp.json()["ok"] is True
+    assert seen == [("openai", "sk-shared")]
+
+
+def test_draft_test_with_a_typed_key_uses_it_directly(paths):
+    probe, seen = _probe_recorder()
+    app, _pid = make_profile_app(paths, live_probe=probe)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/live-configs/test",
+            json={"name": "draft", "provider": "openai", "api_key": "sk-typed"},
+        )
+        assert resp.json()["ok"] is True
+    assert seen == [("openai", "sk-typed")]

@@ -13,7 +13,6 @@ Other providers (Anthropic/Ollama) have no image model → the tool says so.
 """
 
 import contextlib
-import os
 from typing import Annotated
 from urllib.parse import quote
 
@@ -81,7 +80,7 @@ def _image_agent(config):
         return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
 
     if provider == "gemini":
-        image_model = os.environ.get("AG2ASSISTANT_IMAGE_MODEL") or DEFAULT_GEMINI_IMAGE_MODEL
+        image_model = config.image_model or DEFAULT_GEMINI_IMAGE_MODEL
         cfg = GeminiConfig(
             model=image_model, api_key=_key("gemini"), response_modalities=["TEXT", "IMAGE"]
         )

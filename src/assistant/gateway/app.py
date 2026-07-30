@@ -205,9 +205,15 @@ _WS_ARCHIVED_PROFILE = 4410  # {pid} archived (≈ 410)
 _WS_PROFILE_ARCHIVED = 4001  # runtime archived while this socket was open (§4.9)
 
 # Wall-clock ceiling on the POST /api/llm-configs/{cid}/test PONG round-trip. A
-# module constant so tests can monkeypatch it down (they use a fake Agent, so the
-# real value only bounds a genuinely wedged provider call).
+# Default ceiling on a provider "Test" call; `create_app(llm_probe_timeout_s=…)`
+# overrides it. The real value only bounds a genuinely wedged provider call.
 _LLM_TEST_TIMEOUT_S = 30.0
+
+
+async def _live_key_probe(provider: str, api_key: str) -> None:
+    """Production live-config key probe: the provider's own cheap check. Raises on
+    a bad or absent key."""
+    await voice_providers.get(provider).check(api_key)
 
 
 def _allowed_origins(env: Mapping[str, str]) -> set[str]:
@@ -672,7 +678,8 @@ class _HitlDispatcher:
 
 def _runtime_settings(runtime: ProfileRuntime):
     """This profile's Settings, resolved from the runtime's derived config."""
-    return profile_settings(runtime.config.data_dir)
+    cfg = runtime.config
+    return profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
 
 
 def _chat_asker(runtime: ProfileRuntime, chat_id: str):
@@ -720,6 +727,7 @@ def create_app(
     google: GoogleAuth | None = None,
     llm_probe: Callable = model_config,
     llm_probe_timeout_s: float = _LLM_TEST_TIMEOUT_S,
+    live_probe: Callable = _live_key_probe,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -733,8 +741,9 @@ def create_app(
 
     ``code_reader`` is how the ChatGPT sign-in flow waits for the OAuth redirect: the
     default runs a real loopback listener, so it is injected rather than reached for.
-    ``codex_client`` is the HTTP client that flow's token exchange goes out on, and
-    ``google`` is the Google integration the /api/google/* routes drive.
+    ``codex_client`` is the HTTP client that flow's token exchange goes out on,
+    ``google`` is the Google integration the /api/google/* routes drive, and
+    ``live_probe`` is the voice-provider key probe behind the live-config "Test".
     """
     manager = profiles
     # Install-level stores, all hanging off the manager's layout. Built once here;
@@ -1275,12 +1284,11 @@ def create_app(
         elif draft_key:
             key = draft_key
         else:
-            key = live_configs._shared_key(entry.get("provider", ""))
+            # "" tests as if the config's own Secret were cleared → the shared key.
+            key = live_store.resolve_key({**entry, "secret_id": ""}, secret_env())
         started = time.monotonic()
         try:
-            await asyncio.wait_for(
-                voice_providers.get(entry["provider"]).check(key), timeout=llm_probe_timeout_s
-            )
+            await asyncio.wait_for(live_probe(entry["provider"], key), timeout=llm_probe_timeout_s)
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=502)
         return {"ok": True, "reply": "OK", "latency_ms": int((time.monotonic() - started) * 1000)}

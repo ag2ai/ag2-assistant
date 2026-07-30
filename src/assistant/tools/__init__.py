@@ -119,6 +119,13 @@ def available_capabilities(config: Config, *, google: "GoogleAuth | None" = None
     return caps
 
 
+def docker_environment(**kwargs):
+    """Production factory for AG2's Docker backend (an optional, lazily imported dep)."""
+    from ag2.extensions.docker import DockerEnvironment
+
+    return DockerEnvironment(**kwargs)
+
+
 def build_agent_tools(
     provider: str = "gemini",
     sandbox: str = "local",
@@ -128,6 +135,7 @@ def build_agent_tools(
     workspace_dir=None,
     config=None,
     google: "GoogleAuth | None" = None,
+    environment_factory=None,
 ) -> list:
     """Build the agent's tools.
 
@@ -157,7 +165,10 @@ def build_agent_tools(
     if want("code"):
         use_docker = False
         if sandbox == "docker":
-            use_docker = docker_sandbox.docker_available()
+            # Where docker lives is a host fact carried by the config, never read here.
+            use_docker = docker_sandbox.docker_available(
+                config.search_path if config is not None else ()
+            )
             if not use_docker:
                 warnings.warn(
                     "Docker sandbox requested but Docker is unavailable; "
@@ -170,14 +181,12 @@ def build_agent_tools(
             # Distinct names are required (providers reject duplicate tool names).
             # The agent is steered by the descriptions below, not the prompt — so when
             # only one runner exists (no Docker, below) there's nothing to confuse it.
-            from ag2.extensions.docker import (
-                DockerEnvironment,  # local: lazy optional Docker backend
-            )
-
             # AG2's official Docker backend: a long-lived, cached container with no
             # host mount — code/shell can't touch the user's files, which is why these
             # carry no approval middleware. State persists across calls in a session.
-            env = DockerEnvironment(image=docker_image, network_mode=docker_network)
+            env = (environment_factory or docker_environment)(
+                image=docker_image, network_mode=docker_network
+            )
             approval = require_command_approval()
             tools += [
                 SandboxCodeTool(
@@ -285,6 +294,7 @@ def build_agent_tools(
 
 __all__ = [
     "build_agent_tools",
+    "docker_environment",
     "available_capabilities",
     "capability_catalogue",
     "CAPABILITIES",

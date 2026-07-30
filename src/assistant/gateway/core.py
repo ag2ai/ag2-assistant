@@ -241,7 +241,7 @@ class Gateway:
             # wire duplicate task actions here. `platform` lets those tools note (on
             # channels) that follow-up questions go to the web app.
             # The voice get/set tools read/write THIS profile's settings.
-            settings = profile_settings(cfg.data_dir)
+            settings = profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
             extra_tools = build_system_tools(
                 self._tasks, settings, chats=self, platform=self._platform
             )
@@ -746,7 +746,7 @@ class Gateway:
         assistant_tools = [n for n in assistant_tools if n]
         return build_voice_agent(
             self._config,
-            profile_settings(self._config.data_dir),
+            profile_settings(self._config.data_dir, voice_provider=self._config.voice_provider),
             self._tasks,
             delegate,
             voice=voice,

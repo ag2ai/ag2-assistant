@@ -47,12 +47,10 @@ def test_workspace_file_url_is_profile_scoped_and_path_encoded(paths, tmp_path):
     )
 
 
-def test_image_agent_follows_active_config_only(paths, monkeypatch, tmp_path):
+def test_image_agent_follows_active_config_only(paths):
     """Images follow the SELECTED configuration: an active non-capable config means
     images are unavailable even when a capable one sits in the list; switching the
     active config to it enables images."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-
     active = LlmConfigStore(paths).save_config(
         {"name": "Claude", "type": "anthropic", "model": "cl"}
     )
@@ -63,15 +61,13 @@ def test_image_agent_follows_active_config_only(paths, monkeypatch, tmp_path):
     assert _image_agent(_cfg("anthropic", paths)) is not None  # selected config powers images
 
 
-def test_image_agent_none_when_store_has_no_capable_entry(paths, monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-
+def test_image_agent_none_when_store_has_no_capable_entry(paths):
     LlmConfigStore(paths).save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
     LlmConfigStore(paths).save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
     assert _image_agent(_cfg("gemini", paths)) is None  # store configured, none image-capable
 
 
-def test_image_agent_subscription_routes_to_chatgpt_backend(paths, monkeypatch, tmp_path):
+def test_image_agent_subscription_routes_to_chatgpt_backend(paths):
     """An active ChatGPT-subscription config powers image generation through the
     ChatGPT backend with the OAuth token — streaming forced on, storage off, and
     the native image tool attached (same rules as model_config's branch)."""

@@ -29,13 +29,6 @@ from assistant.secrets import SecretStore
 _CHANNEL_TOKENS = profiles.CHANNEL_TOKEN_ENVS
 
 
-def _channel_tokens(platform: str, env: Mapping[str, str]) -> dict[str, str]:
-    """This platform's tokens as channel-constructor kwargs, read from a resolved env."""
-    return {
-        channels.CHANNEL_TOKEN_KWARGS[name]: env.get(name, "") for name in _CHANNEL_TOKENS[platform]
-    }
-
-
 def _scrub_tokens(msg: str, values: Iterable[str]) -> str:
     """Replace any of the given token values appearing in ``msg`` with a mask —
     platform libraries embed the raw token in some error messages."""
@@ -329,7 +322,9 @@ class ProfileManager:
         Returns ``(active, reason)``: active True iff the channel is now live."""
         # The secrets store is re-read here, not taken from the runtime's boot-time
         # config: a token saved or cleared mid-session must apply to this very start.
-        tokens = _channel_tokens(platform, SecretStore(self.paths).merged_env(self._env or {}))
+        tokens = channels.channel_token_kwargs(
+            platform, SecretStore(self.paths).merged_env(self._env or {})
+        )
         if not all(tokens.values()):
             msg = f"no token configured for {platform}"
             self.channel_errors[platform] = msg
