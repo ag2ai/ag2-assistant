@@ -63,6 +63,7 @@ def make_profile_app(
     *,
     name="Test",
     accent="#109e91",
+    env=None,
     persist=False,
     memory=False,
     agent_factory=None,
@@ -78,7 +79,8 @@ def make_profile_app(
     is created in the registry before start() so lifespan boots it; hit
     ``/api/p/{pid}/…``. Every collaborator that would reach the network (agent,
     channels, the cheap-model helpers) defaults to a fake; ``app_kwargs`` go straight
-    to ``create_app`` (codex_client, google, llm_probe, …).
+    to ``create_app`` (codex_client, google, llm_probe, …). ``env`` is the ambient
+    environment the install resolves from (PATH, AG2ASSISTANT_*), empty by default.
     """
 
     paths = paths if paths is not None else load_config().paths
@@ -86,6 +88,7 @@ def make_profile_app(
     paths.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     manager = make_manager(
         paths,
+        env=env,
         memory=memory,
         persist=persist,
         agent_factory=agent_factory,

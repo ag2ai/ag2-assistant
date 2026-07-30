@@ -37,7 +37,8 @@ entry SHADOWS the ``llm`` block in ``config.json`` (that block is only the flat
 default used when the store is empty or has no active entry).
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 from secrets import token_hex
 
 from assistant.config import read_global_config, update_global_section
@@ -99,21 +100,21 @@ def _subscription_signed_in(paths: Paths) -> bool:
         return False
 
 
-def _acp_adapter_present(name: str) -> bool:
-    """Whether a coding CLI's ACP adapter is reachable — on PATH locally, or via
-    a configured host bridge (Docker). Lazy + guarded: a missing/broken coding
+def _acp_adapter_present(name: str, search_path: Sequence[Path], bridge: object) -> bool:
+    """Whether a coding CLI's ACP adapter is reachable — on ``search_path`` locally, or
+    via a configured host bridge (Docker). Lazy + guarded: a missing/broken coding
     module must read as "not available", never raise into the health path.
 
     Caveat in bridge mode: the bridge's agent inventory is async, so a configured
     bridge counts as present for EVERY agent — this answers "a bridge exists",
     not "that bridge has THIS adapter". A host missing the adapter therefore
     reads as usable here and fails at call time instead."""
+    if bridge is not None:
+        return True
     try:
         from assistant.coding import detect  # local: keep the health path lazy
 
-        if detect.bridge_endpoint() is not None:
-            return True
-        return detect.resolve_agent(name) is not None
+        return detect.adapter_present(name, search_path)
     except Exception:
         return False
 
@@ -122,11 +123,18 @@ def _acp_adapter_present(name: str) -> bool:
 _CLI_LOGIN_AGENT = {"claude_code": "claude", "codex": "codex"}
 
 
-def cli_login_present(ctype: str) -> bool:
+def cli_login_present(
+    ctype: str, *, search_path: Sequence[Path] = (), bridge: object = None
+) -> bool:
     """Whether this CLI-login type's ACP adapter is reachable (auth itself is the
-    CLI's own on-disk login, which the adapter consults)."""
+    CLI's own on-disk login, which the adapter consults).
+
+    ``search_path`` is where to look for the adapter (``Config.search_path``) and
+    ``bridge`` the host ACP bridge, if any (``detect.parse_bridge``). The defaults
+    say "nothing installed, no bridge" — a caller wanting a truthful answer passes
+    both."""
     agent = _CLI_LOGIN_AGENT.get(ctype)
-    return _acp_adapter_present(agent) if agent else False
+    return _acp_adapter_present(agent, search_path, bridge) if agent else False
 
 
 _SECTION = "llm_configs"
@@ -353,11 +361,19 @@ class LlmConfigStore:
         # still wins last (applied after apply_active in resolve_config).
         cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
 
-    def usable(self, entry: dict, env: Mapping[str, str]) -> bool:
+    def usable(
+        self,
+        entry: dict,
+        env: Mapping[str, str],
+        *,
+        search_path: Sequence[Path] = (),
+        bridge: object = None,
+    ) -> bool:
         """Whether this configuration can actually run right now — the signal behind the
         health dot. Ollama is local (always). A ``base_url`` (OpenAI/Anthropic-compatible
         server) needs no real provider key. Otherwise a per-config key OR the provider's
-        key in ``env`` must be present."""
+        key in ``env`` must be present. The CLI-login types instead need their ACP
+        adapter on ``search_path`` (or a host ``bridge``) — see :func:`cli_login_present`."""
         ctype = entry.get("type")
         if ctype == "openai_subscription":
             # No API key at all — usable exactly when ChatGPT sign-in is live.
@@ -365,7 +381,7 @@ class LlmConfigStore:
         if ctype in CLI_LOGIN_TYPES:
             # No key either — usable exactly when that CLI's ACP adapter (or a bridge)
             # exists; auth itself is the CLI's on-disk login.
-            return cli_login_present(str(ctype))
+            return cli_login_present(str(ctype), search_path=search_path, bridge=bridge)
         if ctype == "ollama":
             return True
         if entry.get("base_url"):
@@ -375,7 +391,14 @@ class LlmConfigStore:
         provider = PROVIDER_OF.get(ctype, "")
         return bool(self._secrets.status(env).get(provider, {}).get("set"))
 
-    def key_source(self, entry: dict, env: Mapping[str, str]) -> str:
+    def key_source(
+        self,
+        entry: dict,
+        env: Mapping[str, str],
+        *,
+        search_path: Sequence[Path] = (),
+        bridge: object = None,
+    ) -> str:
         """Which key this configuration would actually send, for honest UI labelling:
 
         - ``"secret"`` — its referenced Secret resolves; overrides all.
@@ -395,7 +418,10 @@ class LlmConfigStore:
             # "cli_login" when the adapter (or bridge) is present, "none" otherwise —
             # so the web isUsable() predicate (key_source === 'none' → dead) works
             # for these types with no client-side special case.
-            return "cli_login" if cli_login_present(str(entry.get("type"))) else "none"
+            present = cli_login_present(
+                str(entry.get("type")), search_path=search_path, bridge=bridge
+            )
+            return "cli_login" if present else "none"
         if self._secrets.secret_value(entry.get("secret_id") or ""):
             return "secret"
         if entry.get("type") == "ollama" or entry.get("base_url"):

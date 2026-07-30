@@ -189,6 +189,14 @@ class Config(BaseModel):
     # never repointed per profile, so anything holding a Config can locate the global
     # stores (secrets, profiles, google, codex) without reading the environment.
     paths: Paths
+    # Directories searched for external CLI binaries (the coding-agent ACP adapters,
+    # docker) — the process PATH, split once at the boundary. Empty means "nothing
+    # installed": no module below the boundary may fall back to os.environ.
+    search_path: list[Path] = Field(default_factory=list)
+    # The host ACP bridge to use instead of spawning coding agents locally, as
+    # ``host[:port]`` plus its optional shared token (see coding.detect.parse_bridge).
+    acp_bridge: str = ""
+    acp_bridge_token: str = ""
 
     @classmethod
     def for_paths(cls, paths: Paths, **overrides) -> "Config":
@@ -251,6 +259,16 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
     ``Paths.from_env`` (which reads the same AG2ASSISTANT_DATA_DIR/WORKSPACE), so
     re-applying it here could only make ``cfg.paths`` and ``cfg.root_dir`` disagree."""
     get = env.get
+    # Ambient host facts every module below the boundary must be handed, never read:
+    # where external CLIs live, and whether a host ACP bridge replaces local spawns.
+    # Same split as coding.detect.default_search_path (the boundary for callers with
+    # no Config, e.g. the acp-bridge daemon).
+    if v := get("PATH"):
+        cfg.search_path = [Path(p) for p in v.split(os.pathsep) if p]
+    if v := get("AG2ASSISTANT_ACP_BRIDGE"):
+        cfg.acp_bridge = v.strip()
+    if v := get("AG2ASSISTANT_ACP_BRIDGE_TOKEN"):
+        cfg.acp_bridge_token = v.strip()
     if v := get("AG2ASSISTANT_LLM_PROVIDER"):
         cfg.llm.provider = v
     if v := get("AG2ASSISTANT_MODEL"):

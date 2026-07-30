@@ -233,10 +233,16 @@ def build_agent_tools(
     if want("coding"):
         # Drive host CLI coding agents (Claude Code / Codex / OpenCode) over ACP.
         # The tools resolve the PermissionManager/Asker from the turn's context at
-        # call time, so nothing extra is wired here.
+        # call time; where the adapters live comes from the config's host facts.
+        from assistant.coding.detect import parse_bridge
         from assistant.tools.coding import build_coding_tools
 
-        tools += build_coding_tools()
+        tools += build_coding_tools(
+            search_path=config.search_path if config is not None else (),
+            bridge=parse_bridge(config.acp_bridge, config.acp_bridge_token)
+            if config is not None
+            else None,
+        )
 
     if want("images") and config is not None:
         # generate_image: provider-aware image generation + editing → saved to the

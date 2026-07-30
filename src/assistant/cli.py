@@ -569,9 +569,17 @@ def acp_bridge(
     Run this on the HOST (not in Docker), then point the container at it with
     AG2ASSISTANT_ACP_BRIDGE=host.docker.internal:PORT (and _TOKEN if set)."""
     from assistant.coding.bridge_server import serve
+    from assistant.coding.detect import default_search_path
 
     try:
-        asyncio.run(serve(host=host, port=port, token=token))
+        asyncio.run(
+            serve(
+                host=host,
+                port=port,
+                token=token,
+                search_path=default_search_path(os.environ),
+            )
+        )
     except KeyboardInterrupt:
         typer.echo("\nacp-bridge stopped")
 

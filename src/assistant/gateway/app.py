@@ -126,6 +126,8 @@ from assistant.codex_auth import (
     extract_auth_code,
     generate_pkce,
 )
+from assistant.coding.detect import parse_bridge
+from assistant.coding.model_catalog import ModelCatalog, as_view
 from assistant.config import Config
 from assistant.events import (
     A2UIActionSubmitted,
@@ -745,6 +747,13 @@ def create_app(
     codex = CodexAuth(paths, client=codex_client)
     google = google if google is not None else GoogleAuth(paths)
     allowed_origins = _allowed_origins(manager.env)
+    # Host facts for the coding-agent routes: where ACP adapters live and whether a
+    # host bridge stands in for local spawns. Both come from the install config, so
+    # no route reads the process environment.
+    search_path = manager.config.search_path
+    acp_bridge = parse_bridge(manager.config.acp_bridge, manager.config.acp_bridge_token)
+    # One catalog per app: it owns its TTL cache, so no state leaks between installs.
+    catalog = ModelCatalog(search_path=search_path, bridge=acp_bridge)
 
     def secret_env() -> dict[str, str]:
         """Provider/channel keys as an actual call would see them: the saved secrets
@@ -846,11 +855,11 @@ def create_app(
         """
         from assistant.coding import detect
 
-        endpoint = detect.bridge_endpoint()
+        endpoint = acp_bridge
         if endpoint is None:
             agents = [
                 {"name": a.name, "label": a.label, "available": a.available}
-                for a in detect.detect_agents()
+                for a in detect.detect_agents(search_path)
             ]
             return {"mode": "local", "bridge": None, "connected": True, "agents": agents}
 
@@ -1032,7 +1041,7 @@ def create_app(
             "secret": sec,
             "secret_missing": bool(entry.get("secret_id")) and sec is None,
             "key_source": llm_store.key_source(
-                entry, secret_env()
+                entry, secret_env(), search_path=search_path, bridge=acp_bridge
             ),  # secret | shared | not_needed | none | subscription
             "images": llm_configs.image_capable(entry),  # drives the row's "images" chip
             "shared_key": {
@@ -2078,18 +2087,14 @@ def create_app(
         silently degrading to a free-text field. ``?refresh=1`` skips the TTL cache."""
         if agent not in ("claude", "codex"):
             return JSONResponse({"ok": False, "error": f"unknown agent: {agent}"}, status_code=404)
-        from assistant.coding import model_catalog
-
-        reason = model_catalog.unavailable_reason(agent)
+        reason = catalog.unavailable_reason(agent)
         if reason:  # nothing to spawn — don't pay for a probe that can't work
-            return JSONResponse(model_catalog.as_view([], "", reason))
+            return JSONResponse(as_view([], "", reason))
         try:
-            models, current = await model_catalog.list_models(agent, refresh=refresh)
+            models, current = await catalog.list_models(agent, refresh=refresh)
         except Exception:
-            return JSONResponse(model_catalog.as_view([], "", "probe_failed"))
-        return JSONResponse(
-            model_catalog.as_view(models, current, "" if models else "probe_failed")
-        )
+            return JSONResponse(as_view([], "", "probe_failed"))
+        return JSONResponse(as_view(models, current, "" if models else "probe_failed"))
 
     @app.post("/api/codex/login_url")
     async def codex_login_url() -> dict:
@@ -2512,7 +2517,9 @@ def create_app(
         # empty we fall back to the flat provider's key check (fresh install / CLI).
         entry = llm_store.active_config()
         if entry is not None:
-            key_set = llm_store.usable(entry, secret_env())
+            key_set = llm_store.usable(
+                entry, secret_env(), search_path=search_path, bridge=acp_bridge
+            )
             detail = f"{entry['name']} · {entry['model']}"
         else:
             provider = runtime.config.llm.provider
