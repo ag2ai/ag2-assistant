@@ -111,10 +111,10 @@ _GOOGLE_GROUPS = {
 }
 
 
-def available_capabilities(config: Config) -> list[str]:
+def available_capabilities(config: Config, *, google: "GoogleAuth | None" = None) -> list[str]:
     """Capabilities currently usable (Google ones need a token *and* the libs)."""
     caps = ["web", "code", "coding", "files", "images", "skills", "mcp"]
-    if GoogleAuth(config.paths).google_ready():
+    if (google or GoogleAuth(config.paths)).google_ready():
         caps += ["gmail", "calendar", "drive"]
     return caps
 
@@ -127,6 +127,7 @@ def build_agent_tools(
     capabilities: list[str] | None = None,
     workspace_dir=None,
     config=None,
+    google: "GoogleAuth | None" = None,
 ) -> list:
     """Build the agent's tools.
 
@@ -258,7 +259,7 @@ def build_agent_tools(
     # per requested group. Registering them without the libs would hand the model
     # a tool that can only fail — see GoogleAuth.google_ready().
     if config is not None:
-        google = GoogleAuth(config.paths)
+        google = google or GoogleAuth(config.paths)
         keep: set[str] = set()
         if google.google_ready():
             for cap, names in _GOOGLE_GROUPS.items():

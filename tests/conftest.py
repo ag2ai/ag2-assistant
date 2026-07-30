@@ -1,6 +1,7 @@
 """Shared test fixtures."""
 
 import asyncio
+from contextlib import ExitStack
 
 import pytest
 from fastapi.testclient import TestClient
@@ -95,7 +96,16 @@ def use_fake_agent(monkeypatch, agent_factory=None):
     monkeypatch.setattr(core_mod, "create_agent", factory)
 
 
-def make_profile_app(paths=None, *, name="Test", accent="#109e91", persist=False, memory=False):
+def make_profile_app(
+    paths=None,
+    *,
+    name="Test",
+    accent="#109e91",
+    persist=False,
+    memory=False,
+    codex_client=None,
+    google=None,
+):
     """Build a create_app FastAPI app around a ProfileManager with ONE profile.
 
     Returns ``(app, pid)``. ``paths`` is the install layout to run on; omitted, it
@@ -108,7 +118,13 @@ def make_profile_app(paths=None, *, name="Test", accent="#109e91", persist=False
     meta = ProfileRegistry(paths).create_profile(name, accent)
     paths.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     manager = ProfileManager(paths, memory=memory, persist=persist)
-    app = create_app(manager, persist=persist, code_reader=no_loopback_code_reader)
+    app = create_app(
+        manager,
+        persist=persist,
+        code_reader=no_loopback_code_reader,
+        codex_client=codex_client,
+        google=google,
+    )
     return app, meta.id
 
 
@@ -154,6 +170,22 @@ def profile_app(monkeypatch):
     app, pid = make_profile_app(persist=True)
     with TestClient(app) as client:
         yield client, pid
+
+
+@pytest.fixture
+def profile_app_factory(monkeypatch):
+    """Like ``profile_app`` but callable, for tests that must configure the app
+    (e.g. hand it an httpx client) before it starts. Yields a builder returning
+    ``(client, pid)`` inside a managed TestClient context."""
+    use_fake_agent(monkeypatch)
+    stack = ExitStack()
+
+    def build(**kwargs):
+        app, pid = make_profile_app(persist=True, **kwargs)
+        return stack.enter_context(TestClient(app)), pid
+
+    with stack:
+        yield build
 
 
 @pytest.fixture(autouse=True)

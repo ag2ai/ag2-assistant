@@ -500,7 +500,11 @@ def chat_turn_timeout_guidance(config: Config) -> str:
 
 
 def turn_prompt(
-    config: Config, memory: bool = True, workspace: bool = True, google: bool | None = None
+    config: Config,
+    memory: bool = True,
+    workspace: bool = True,
+    google: bool | None = None,
+    google_auth: "GoogleAuth | None" = None,
 ) -> list[str]:
     """Per-turn system prompt: persona + live environment context.
 
@@ -521,7 +525,8 @@ def turn_prompt(
     if workspace:
         parts.append(workspace_guidance(config))
     try:
-        if GoogleAuth(config.paths).google_ready() if google is None else google:
+        ready = (google_auth or GoogleAuth(config.paths)).google_ready()
+        if ready if google is None else google:
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for turn prompt", exc)

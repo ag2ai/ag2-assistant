@@ -64,6 +64,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import ag2
+import httpx
 from ag2.a2ui.incoming import A2UIIncomingAction, A2UIIncomingActionResult, parse_incoming_message
 from ag2.a2ui.server_action import build_server_action_context, run_server_action
 from ag2.config import OllamaConfig
@@ -713,6 +714,8 @@ def create_app(
     *,
     persist: bool = True,
     code_reader: Callable[[str], str] = _capture_code,
+    codex_client: httpx.Client | None = None,
+    google: GoogleAuth | None = None,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -726,6 +729,8 @@ def create_app(
 
     ``code_reader`` is how the ChatGPT sign-in flow waits for the OAuth redirect: the
     default runs a real loopback listener, so it is injected rather than reached for.
+    ``codex_client`` is the HTTP client that flow's token exchange goes out on, and
+    ``google`` is the Google integration the /api/google/* routes drive.
     """
     manager = profiles
     # Install-level stores, all hanging off the manager's layout. Built once here;
@@ -735,8 +740,8 @@ def create_app(
     secret_store = SecretStore(paths)
     llm_store = LlmConfigStore(paths)
     live_store = LiveConfigStore(paths)
-    codex = CodexAuth(paths)
-    google = GoogleAuth(paths)
+    codex = CodexAuth(paths, client=codex_client)
+    google = google if google is not None else GoogleAuth(paths)
 
     def secret_env() -> dict[str, str]:
         """Provider/channel keys as an actual call would see them: the saved secrets
@@ -1057,7 +1062,7 @@ def create_app(
     def _llm_probe_config(entry: dict):
         """A throwaway Config carrying just the entry's derived provider/model/options,
         for the dry-construct + test round-trip. Streaming off (a one-shot probe)."""
-        probe = Config()
+        probe = Config.for_paths(paths)
         probe.llm.streaming = False
         probe.llm.provider = llm_configs.PROVIDER_OF[entry["type"]]
         probe.llm.model = entry["model"]

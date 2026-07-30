@@ -4,28 +4,28 @@ subscription named-LLM configuration (/api/llm-configs, type openai_subscription
 import base64
 import json
 
-import httpx
 import pytest
 
-from assistant import codex_auth, llm_configs
-from assistant.config import load_config
+from assistant import codex_auth
+from assistant.codex_auth import CodexAuth
+from assistant.config import load_config, resolve_config
+from assistant.llm_configs import LlmConfigStore
+from tests.support import http
 
 
-@pytest.fixture(autouse=True)
-def _no_real_loopback(monkeypatch):
-    """The /api/codex/login_url route starts a background loopback listener on port
-    1455. In tests we never complete that real OAuth round-trip, so stub the capture
-    to fail fast — no socket bind, no 300s-lingering thread. The manual /submit path
-    (the headless fallback) is what these tests exercise instead."""
+@pytest.fixture
+def install_paths():
+    """The layout the app resolves for itself (the autouse HOME fixture isolates it)."""
+    return load_config().paths
 
-    def _fail(*_a, **_k):
-        raise codex_auth.CodexAuthError("no loopback in tests")
 
-    monkeypatch.setattr(codex_auth, "_capture_code", _fail)
+@pytest.fixture
+def auth(install_paths) -> CodexAuth:
+    """The token store the routes read, over that same layout."""
+    return CodexAuth(install_paths)
 
 
 def _fake_jwt_acc(acc: str) -> str:
-
     h = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
     b = (
         base64.urlsafe_b64encode(json.dumps({"chatgpt_account_id": acc}).encode())
@@ -35,11 +35,11 @@ def _fake_jwt_acc(acc: str) -> str:
     return f"{h}.{b}.sig"
 
 
-def test_codex_status_signed_out_then_in(profile_app):
+def test_codex_status_signed_out_then_in(profile_app, auth):
     client, _pid = profile_app
     assert client.get("/api/codex/status").json()["signed_in"] is False
 
-    codex_auth._store_tokens(
+    auth._store_tokens(
         {
             "access_token": "A",
             "refresh_token": "R",
@@ -60,23 +60,21 @@ def test_codex_login_url_returns_consent_url_and_state(profile_app):
     assert body["state"]  # opaque anti-CSRF token
 
 
-def test_codex_submit_exchanges_pasted_code(profile_app, monkeypatch):
-    client, _pid = profile_app
+def test_codex_submit_exchanges_pasted_code(profile_app_factory, auth):
+    handler, sent = http.recording_responder(
+        {"access_token": "AX", "refresh_token": "RX", "expires_in": 3600}
+    )
+    client, _pid = profile_app_factory(codex_client=http.client(handler))
 
     # Begin a flow to register a pending PKCE verifier for the returned state.
     state = client.post("/api/codex/login_url").json()["state"]
 
-    class FakeResp:
-        status_code = 200
-        text = ""
-
-        def json(self):
-            return {"access_token": "AX", "refresh_token": "RX", "expires_in": 3600}
-
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResp())
     r = client.post("/api/codex/submit", json={"state": state, "code": "the-code"})
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert codex_auth.status()["signed_in"] is True
+    assert auth.status()["signed_in"] is True
+    # the pasted code really went out as an authorization_code grant
+    form = http.form_of(sent[0]["body"])
+    assert form["grant_type"] == "authorization_code" and form["code"] == "the-code"
 
 
 def test_codex_submit_unknown_state_400(profile_app):
@@ -85,17 +83,17 @@ def test_codex_submit_unknown_state_400(profile_app):
     assert r.status_code == 400 and r.json()["ok"] is False
 
 
-def test_codex_logout(profile_app):
+def test_codex_logout(profile_app, auth):
     client, _pid = profile_app
-    codex_auth._store_tokens({"access_token": "A", "refresh_token": "R", "expires_in": 3600})
+    auth._store_tokens({"access_token": "A", "refresh_token": "R", "expires_in": 3600})
     assert client.post("/api/codex/logout").json()["ok"] is True
-    assert codex_auth.status()["signed_in"] is False
+    assert auth.status()["signed_in"] is False
 
 
-def test_subscription_config_not_usable_until_signed_in(profile_app):
+def test_subscription_config_not_usable_until_signed_in(profile_app, auth):
     """A subscription config exists but reads as not-signed-in until a ChatGPT session
     is present — the entry-view signed_in flag drives the UI's warn chip."""
-    client, pid = profile_app
+    client, _pid = profile_app
     entry = client.post(
         "/api/llm-configs",
         json={"name": "ChatGPT", "type": "openai_subscription", "model": "gpt-5.5"},
@@ -103,18 +101,16 @@ def test_subscription_config_not_usable_until_signed_in(profile_app):
     assert entry["key_source"] == "subscription"
     assert entry["signed_in"] is False  # no session yet
 
-    codex_auth._store_tokens({"access_token": "A", "refresh_token": "R", "expires_in": 3600})
+    auth._store_tokens({"access_token": "A", "refresh_token": "R", "expires_in": 3600})
     view = client.get("/api/llm-configs").json()["configs"][0]
     assert view["signed_in"] is True
 
 
-def test_subscription_config_activation_sets_auth_mode(profile_app, monkeypatch):
+def test_subscription_config_activation_sets_auth_mode(profile_app, auth, install_paths):
     """Activating an openai_subscription config makes it active and derives
-    auth_mode=subscription in a fresh load_config; GET /settings surfaces sign-in."""
-
-    monkeypatch.delenv("AG2ASSISTANT_OPENAI_AUTH_MODE", raising=False)
+    auth_mode=subscription in a fresh resolve; GET /settings surfaces sign-in."""
     client, pid = profile_app
-    codex_auth._store_tokens({"access_token": "A", "refresh_token": "R", "expires_in": 3600})
+    auth._store_tokens({"access_token": "A", "refresh_token": "R", "expires_in": 3600})
     r = client.post(
         "/api/llm-configs",
         json={
@@ -126,9 +122,9 @@ def test_subscription_config_activation_sets_auth_mode(profile_app, monkeypatch)
     )
     assert r.status_code == 200 and r.json()["ok"] is True
     cid = r.json()["config"]["id"]
-    assert llm_configs.active_id() == cid
-    # A fresh load derives the subscription auth mode from the active entry's type.
-    cfg = load_config()
+    assert LlmConfigStore(install_paths).active_id() == cid
+    # A fresh resolve derives the subscription auth mode from the active entry's type.
+    cfg = resolve_config({}, install_paths)
     assert cfg.llm.provider == "openai"
     assert cfg.llm.auth_mode == "subscription"
     # GET /settings still surfaces the ChatGPT sign-in state.

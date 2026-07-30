@@ -290,9 +290,12 @@ class CodexAuth:
     no session of our own.
     """
 
-    def __init__(self, paths: Paths) -> None:
+    def __init__(self, paths: Paths, *, client: httpx.Client | None = None) -> None:
         self._store = paths.codex_tokens
         self._cli_login = paths.codex_auth
+        # The token endpoint is reached through this client, so tests can hand in one
+        # built on httpx.MockTransport instead of patching the module.
+        self._client = client if client is not None else httpx.Client()
 
     def _read(self) -> dict:
         try:
@@ -356,7 +359,7 @@ class CodexAuth:
     def exchange_code(self, code: str, verifier: str) -> Creds:
         """Exchange an authorization code for tokens and store them."""
         try:
-            resp = httpx.post(
+            resp = self._client.post(
                 TOKEN_URL,
                 data={
                     "grant_type": "authorization_code",
@@ -375,7 +378,7 @@ class CodexAuth:
 
     def _refresh(self, refresh_token: str) -> Creds:
         try:
-            resp = httpx.post(
+            resp = self._client.post(
                 TOKEN_URL,
                 data={
                     "grant_type": "refresh_token",

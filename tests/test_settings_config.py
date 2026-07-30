@@ -1,75 +1,62 @@
 """API-key secrets store, settings LLM selection, and model_config provider mapping."""
 
 import json
-import os
 import stat
 
 import pytest
 
-from assistant import secrets
 from assistant.agent import cheap_model, model_config
-from assistant.config import Config, data_dir, load_config
+from assistant.config import Config, resolve_config
 from assistant.gateway.core import Gateway
+from assistant.secrets import SecretStore
 
 
-def test_secrets_set_status_clear_and_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))  # data_dir → tmp/.ag2assistant
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # empty = "no key" (load_dotenv won't override)
+def test_secrets_set_status_clear_and_env(paths):
+    store = SecretStore(paths)
+    assert store.status({})["anthropic"]["set"] is False
 
-    assert secrets.status()["anthropic"]["set"] is False
-
-    assert secrets.set_key("anthropic", "sk-ant-secret-9999")
-    st = secrets.status()["anthropic"]
+    assert store.set_key("anthropic", "sk-ant-secret-9999")
+    st = store.status(store.env_overlay())["anthropic"]
     assert st["set"] is True and st["hint"] == "…9999"  # only the last 4, never raw
-    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-secret-9999"  # loaded into env
+    # the key is what a call would send, without the store touching the process env
+    assert store.env_overlay()["ANTHROPIC_API_KEY"] == "sk-ant-secret-9999"
 
-    # file is 0600
-    p = secrets._path()
-    assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert stat.S_IMODE(paths.secrets_json.stat().st_mode) == 0o600  # file is 0600
 
-    assert secrets.clear("anthropic")
-    assert secrets.status()["anthropic"]["set"] is False
+    assert store.clear("anthropic")
+    assert store.status(store.env_overlay())["anthropic"]["set"] is False
 
-    assert secrets.set_key("bogus", "x") is False  # unknown provider
-
-
-def test_ollama_base_url(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    assert secrets.set_key("ollama", "http://host:1234")
-    secrets.load_into_env()
-    assert os.environ["OLLAMA_BASE_URL"] == "http://host:1234"
-    assert secrets.status()["ollama"]["base_url"] == "http://host:1234"
+    assert store.set_key("bogus", "x") is False  # unknown provider
 
 
-def test_load_config_no_longer_overlays_settings(monkeypatch, tmp_path):
-    """A per-profile settings llm block is NOT consulted by load_config() — the
-    assistant model is the install-wide named-config store now. load_config() derives
+def test_ollama_base_url(paths):
+    store = SecretStore(paths)
+    assert store.set_key("ollama", "http://host:1234")
+    assert store.env_overlay()["OLLAMA_BASE_URL"] == "http://host:1234"
+    assert store.status(store.env_overlay())["ollama"]["base_url"] == "http://host:1234"
+
+
+def test_resolve_config_no_longer_overlays_settings(paths):
+    """A per-profile settings llm block is NOT consulted when resolving — the
+    assistant model is the install-wide named-config store now. Resolution derives
     only defaults ← config.yaml ← active llm config ← env; with no store it stays on
     the flat gemini defaults, ignoring any stray profile-settings llm block."""
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
-
     # A stray legacy llm block written straight into a settings.json is ignored.
-    settings_file = data_dir() / "settings.json"
+    settings_file = paths.root / "settings.json"
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings_file.write_text(json.dumps({"llm": {"provider": "anthropic", "model": "claude-x"}}))
-    cfg = load_config()
+
+    cfg = resolve_config({}, paths)
     assert cfg.llm.provider == "gemini"  # default, settings NOT overlaid
     assert cfg.llm.model.startswith("gemini")
 
     # explicit env still applies
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
-    assert load_config().llm.provider == "openai"
+    assert resolve_config({"AG2ASSISTANT_LLM_PROVIDER": "openai"}, paths).llm.provider == "openai"
 
 
 @pytest.mark.asyncio
-async def test_gateway_reload_swaps_agent(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    g = Gateway(memory=False, persist=False)
+async def test_gateway_reload_swaps_agent(paths):
+    g = Gateway(config=Config.for_paths(paths), memory=False, persist=False)
     await g.start()
     first = g._agent
     assert first is not None
@@ -77,25 +64,19 @@ async def test_gateway_reload_swaps_agent(monkeypatch, tmp_path):
     assert g._agent is not None and g._agent is not first
 
 
-def test_model_config_key_env_by_provider(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-    cfg = Config()
+def test_model_config_key_env_by_provider(paths):
+    cfg = Config.for_paths(paths, secret_env={"OPENAI_API_KEY": "sk-openai-test"})
     cfg.llm.provider = "openai"
     cfg.llm.model = "gpt-x"
     mc = model_config(cfg)
     assert getattr(mc, "api_key", None) == "sk-openai-test"  # picked OPENAI_API_KEY by provider
 
 
-def test_model_config_provider_options_openai_compatible(monkeypatch, tmp_path):
+def test_model_config_provider_options_openai_compatible(paths):
     """base_url in the openai advanced options points the client at an
     OpenAI-compatible server AND defaults to the Chat Completions API (those
     servers rarely implement /v1/responses); "api": "responses" pins it back."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("OPENAI_API_KEY", "")
-
-    cfg = Config()
+    cfg = Config.for_paths(paths)
     cfg.llm.provider = "openai"
     cfg.llm.model = "gemma-4-31B-it-qat"
     cfg.llm.provider_options = {"openai": {"base_url": "http://192.168.0.55:8080/v1"}}
@@ -119,12 +100,10 @@ def test_model_config_provider_options_openai_compatible(monkeypatch, tmp_path):
         model_config(cfg)
 
 
-def test_provider_options_suppress_default_aggregate_model(monkeypatch, tmp_path):
+def test_provider_options_suppress_default_aggregate_model(paths):
     """With a custom base_url the cheap-tier default (an OpenAI model name) would
     not exist on the server — fall back to the main model, like Ollama does."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    cfg = Config()
+    cfg = Config.for_paths(paths)
     cfg.llm.provider = "openai"
     assert cheap_model(cfg) == "gpt-5-mini"  # normal OpenAI keeps the cheap default
     cfg.llm.provider_options = {"openai": {"base_url": "http://192.168.0.55:8080/v1"}}
