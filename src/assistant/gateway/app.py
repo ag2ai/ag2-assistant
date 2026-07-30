@@ -29,6 +29,7 @@ Route map:
     POST /api/profiles/{pid}/exposure        -> {surface, exposed}; withdraw a profile from a surface
     POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
+    GET  /api/connections                    -> {connections: [{id, platform, name}]} (install-level)
     GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
     POST /api/channels/default               -> set {platform, profile:pid|null} default profile; returns updated entry
     GET  /api/channels/{platform}/groups     -> group Peers + the profiles a group there may be pinned to
@@ -111,6 +112,7 @@ from assistant import (
     AG2_VERSION,
     __version__,
     codex_auth,
+    connections,
     live_configs,
     llm_configs,
     pairing,
@@ -1895,6 +1897,20 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         except Exception as exc:  # boot failed; manager already rolled back to archived
             return JSONResponse({"error": f"could not restore profile: {exc}"}, status_code=500)
         return {"profile": _profile_view(runtime.meta)}
+
+    # ---- Connections (global, install-level; never owned by a profile — ADR 0019) ----
+
+    @app.get("/api/connections")
+    async def list_connections() -> dict:
+        """Every configured instance of a platform, in creation order. An install that
+        already had bot tokens is migrated to one Connection per platform on this read.
+        Token values are never part of the entry."""
+        return {
+            "connections": [
+                {"id": c.id, "platform": c.platform, "name": c.name}
+                for c in connections.list_connections()
+            ]
+        }
 
     # ---- Channels (global, install-level; never owned by a profile — ADR 0019) ----
 

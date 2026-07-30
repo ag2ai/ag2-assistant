@@ -5,6 +5,9 @@ token is configured — it is never owned by a profile (ADR 0019). What the regi
 holds is a per-Channel *default profile*: where that platform's conversations land
 when nothing else has been chosen. Endpoints: GET /api/channels (state),
 POST /api/channels/default (set/clear the default) and POST /api/channels/token.
+
+GET /api/connections lists the Connections — one configured instance of a platform
+each, migrated from an install's existing bot tokens on first read.
 """
 
 import os
@@ -12,7 +15,8 @@ import os
 from fastapi.testclient import TestClient
 
 import assistant.channels as channels_mod
-from assistant import peers, profiles, secrets
+from assistant import connections, peers, profiles, secrets
+from assistant.config import data_dir
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
 from tests.conftest import api, use_fake_agent
@@ -596,3 +600,78 @@ def test_groups_unknown_platform_400(monkeypatch):
             ).status_code
             == 400
         )
+
+
+# --- Connections: the install's configured platform instances (GET /api/connections) ---
+
+
+def test_connections_empty_on_an_install_with_no_tokens(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        assert client.get("/api/connections").json() == {"connections": []}
+
+
+def test_connections_migrated_from_seeded_tokens(monkeypatch):
+    """An install that already had bot tokens comes up with one Connection per
+    configured platform, named after the platform, without anyone touching Settings."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "bot")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "app")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        got = client.get("/api/connections").json()["connections"]
+        assert [(c["platform"], c["name"]) for c in got] == [
+            ("telegram", "Telegram"),
+            ("slack", "Slack"),
+        ]
+        ids = [c["id"] for c in got]
+        assert all(ids) and len(set(ids)) == 2
+
+
+def test_a_platform_missing_one_of_its_tokens_is_not_migrated(monkeypatch):
+    """Slack needs both tokens; a half-configured platform gets no Connection."""
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "bot")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        assert client.get("/api/connections").json() == {"connections": []}
+
+
+def test_connection_migration_is_idempotent(monkeypatch):
+    """A second load neither duplicates nor renames — including across a restart and
+    after the user has renamed the migrated Connection."""
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        first = client.get("/api/connections").json()["connections"]
+        assert client.get("/api/connections").json()["connections"] == first
+    connections.rename_connection(first[0]["id"], "Side project")
+    with _new_client(monkeypatch) as client:
+        again = client.get("/api/connections").json()["connections"]
+        assert [c["id"] for c in again] == [c["id"] for c in first]
+        assert again[0]["name"] == "Side project"
+
+
+def test_a_malformed_registry_file_lists_no_connections(monkeypatch):
+    data_dir().mkdir(parents=True, exist_ok=True)
+    (data_dir() / "connections.json").write_text("{not json")
+    with _new_client(monkeypatch) as client:
+        r = client.get("/api/connections")
+        assert r.status_code == 200
+        assert r.json() == {"connections": []}
+
+
+def test_default_naming_numbers_the_later_connections_of_a_platform(monkeypatch):
+    connections.create_connection("telegram")
+    connections.create_connection("telegram")
+    connections.create_connection("discord")
+    with _new_client(monkeypatch) as client:
+        got = client.get("/api/connections").json()["connections"]
+        assert [c["name"] for c in got] == ["Telegram", "Telegram 2", "Discord"]
+
+
+def test_the_connection_listing_never_echoes_a_token(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "super-secret-bot-token")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        r = client.get("/api/connections")
+        assert "super-secret-bot-token" not in r.text
+        assert set(r.json()["connections"][0]) == {"id", "platform", "name"}
