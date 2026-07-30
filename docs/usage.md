@@ -322,7 +322,7 @@ or `AG2ASSISTANT_DATA_DIR`.)
 ```yaml
 llm:
   provider: gemini
-  model: gemini-3.5-flash
+  model: gemini-3.6-flash
   api_key_env: GEMINI_API_KEY
   aggregate_model: gemini-2.5-flash
 agent:

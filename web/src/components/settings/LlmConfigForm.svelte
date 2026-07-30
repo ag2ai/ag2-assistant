@@ -327,7 +327,7 @@
       <label for="lf-model">Model</label>
       <!-- No catalog: for the CLI types the placeholder stays empty on purpose (an
            invented example is worse than none — acpNote explains what happened). -->
-      <input id="lf-model" bind:value={model} placeholder={acpAgent ? '' : 'e.g. gemini-3.5-flash'} />
+      <input id="lf-model" bind:value={model} placeholder={acpAgent ? '' : 'e.g. gemini-3.6-flash'} />
     </div>
   {/if}
   {#if acpAgent && !acpLoading}
