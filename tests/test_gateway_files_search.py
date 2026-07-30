@@ -92,8 +92,8 @@ def test_filename_matches_rank_above_path_only_matches(profile_app):
 # ---- Ticket 03: granted-Folder corpus (mirrors test_gateway_folders.py setup) ----
 
 
-def _client():
-    app, pid = make_profile_app(persist=True)
+def _client(paths):
+    app, pid = make_profile_app(paths, persist=True)
     return TestClient(app), pid
 
 
@@ -108,11 +108,11 @@ def _grant(client, fid, pid, mode, *, chat_id=""):
     return client.post(f"/api/folders/{fid}/grants", json=body)
 
 
-def test_search_matches_file_in_granted_folder(tmp_path):
+def test_search_matches_file_in_granted_folder(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "widget.py").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -122,22 +122,22 @@ def test_search_matches_file_in_granted_folder(tmp_path):
         assert hit[0]["path"] == str(repo / "widget.py")
 
 
-def test_file_in_ungranted_folder_is_absent(tmp_path):
+def test_file_in_ungranted_folder_is_absent(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "secret.py").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         _register_folder(client, repo)  # registered but NOT granted
         results = client.get(api(pid, "/files/search"), params={"q": "secret"}).json()["results"]
         assert results == []
 
 
-def test_file_in_chat_blocked_folder_is_absent(tmp_path):
+def test_file_in_chat_blocked_folder_is_absent(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "blocked.py").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")  # readable at profile scope...
@@ -152,14 +152,14 @@ def test_file_in_chat_blocked_folder_is_absent(tmp_path):
         assert in_chat == []
 
 
-def test_folder_walk_skips_noise_dirs(tmp_path):
+def test_folder_walk_skips_noise_dirs(paths, tmp_path):
     repo = tmp_path / "acme"
     (repo / ".git").mkdir(parents=True)
     (repo / ".git" / "config-target.txt").write_text("x")
     (repo / "node_modules").mkdir()
     (repo / "node_modules" / "target-dep.txt").write_text("x")
     (repo / "target-real.txt").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -176,11 +176,11 @@ def test_files_space_directory_matches_with_kind_directory(profile_app):
     assert any(d["name"] == "reports" and os.path.isabs(d["path"]) for d in dirs)
 
 
-def test_granted_folder_directory_matches_with_kind_directory(tmp_path):
+def test_granted_folder_directory_matches_with_kind_directory(paths, tmp_path):
     repo = tmp_path / "acme"
     (repo / "widgets").mkdir(parents=True)
     (repo / "widgets" / "keep.py").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -189,14 +189,14 @@ def test_granted_folder_directory_matches_with_kind_directory(tmp_path):
         assert hit["kind"] == "directory" and hit["path"] == str(repo / "widgets")
 
 
-def test_granted_folder_root_itself_is_referenceable(tmp_path):
+def test_granted_folder_root_itself_is_referenceable(paths, tmp_path):
     # A path-style query for the Folder's own name (``@/media``) must surface the
     # granted Folder ROOT as a directory, not just its contents — ``os.walk`` yields
     # a root's children but never the root, so it needs to be emitted explicitly.
     repo = tmp_path / "media"
     repo.mkdir()
     (repo / "clip.txt").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -206,7 +206,7 @@ def test_granted_folder_root_itself_is_referenceable(tmp_path):
         assert root["name"] == "media" and root["kind"] == "directory"
 
 
-def test_folder_walk_skips_os_junk_files(tmp_path):
+def test_folder_walk_skips_os_junk_files(paths, tmp_path):
     # A folder-name query matches every descendant on its path, so OS junk like
     # .DS_Store would flood the picker — it must be pruned from results.
     repo = tmp_path / "media"
@@ -214,7 +214,7 @@ def test_folder_walk_skips_os_junk_files(tmp_path):
     (repo / ".DS_Store").write_text("x")
     (repo / "habr" / ".DS_Store").write_text("x")
     (repo / "habr" / "post.md").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -223,13 +223,13 @@ def test_folder_walk_skips_os_junk_files(tmp_path):
         assert any(r["name"] == "post.md" for r in results)  # real files still surface
 
 
-def test_folder_walk_surfaces_non_noise_dot_dirs(tmp_path):
+def test_folder_walk_surfaces_non_noise_dot_dirs(paths, tmp_path):
     # Only the known noise dot-dirs (SKIP_DIRS) are pruned; a legitimate dotted
     # directory like .github stays reachable — the corpus is what mode_for allows.
     repo = tmp_path / "acme"
     (repo / ".github").mkdir(parents=True)
     (repo / ".github" / "deploy-target.yml").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -237,7 +237,7 @@ def test_folder_walk_surfaces_non_noise_dot_dirs(tmp_path):
         assert any(r["name"] == "deploy-target.yml" for r in results)
 
 
-def test_search_matches_file_in_task_run_scoped_folder(tmp_path):
+def test_search_matches_file_in_task_run_scoped_folder(paths, tmp_path):
     """``chat_id=task-run:{run_id}`` must resolve the run's task_id (via
     ``runtime.tasks.get_run``) so a Folder granted only at task-scope is visible
     inside that run's thread, but not from an unrelated chat (or no chat_id at
@@ -245,7 +245,7 @@ def test_search_matches_file_in_task_run_scoped_folder(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "taskfile.py").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
 
@@ -277,11 +277,11 @@ def test_search_matches_file_in_task_run_scoped_folder(tmp_path):
         assert no_chat == []
 
 
-def test_combined_corpus_ranks_filename_first(tmp_path):
+def test_combined_corpus_ranks_filename_first(paths, tmp_path):
     repo = tmp_path / "shared"  # only its PATH matches "shared"
     repo.mkdir()
     (repo / "irrelevant.py").write_text("x")
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         # a Files-space file whose NAME matches "shared"
         client.post(

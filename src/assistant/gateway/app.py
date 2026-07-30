@@ -85,6 +85,7 @@ from ag2.events.voice import (
 )
 from ag2.exceptions import SkillDownloadError, SkillError, SkillInstallError
 from ag2.stream import MemoryStream
+from ag2.tools.skills.skill_search.client import SkillsClient
 from fastapi import (
     APIRouter,
     Depends,
@@ -728,6 +729,7 @@ def create_app(
     llm_probe: Callable = model_config,
     llm_probe_timeout_s: float = _LLM_TEST_TIMEOUT_S,
     live_probe: Callable = _live_key_probe,
+    skills_client: SkillsClient | None = None,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -744,6 +746,8 @@ def create_app(
     ``codex_client`` is the HTTP client that flow's token exchange goes out on,
     ``google`` is the Google integration the /api/google/* routes drive, and
     ``live_probe`` is the voice-provider key probe behind the live-config "Test".
+    ``skills_client`` is the skills.sh registry client the search/install routes use
+    (omitted: ag2's own, going to the live registry).
     """
     manager = profiles
     # Install-level stores, all hanging off the manager's layout. Built once here;
@@ -1736,7 +1740,9 @@ def create_app(
         (t05). Raises one of ``_SKILL_INSTALL_ERRORS``. Shared by both surfaces — only
         the target runtime and the reload differ."""
         if req.install_id:
-            return {"installed": [await registry_install(runtime, req.install_id)]}
+            return {
+                "installed": [await registry_install(runtime, req.install_id, client=skills_client)]
+            }
         if req.git_url:
             # git clone + copytree are blocking (up to a 120s clone timeout); off-load
             # them so a slow/hanging remote never freezes the whole gateway.
@@ -1782,7 +1788,7 @@ def create_app(
         description, installs}]}``. Target-agnostic: both surfaces search through here,
         then install via their own (Global vs Profile) install route."""
         try:
-            return {"results": await registry_search(req.query, req.limit)}
+            return {"results": await registry_search(req.query, req.limit, client=skills_client)}
         except Exception as exc:  # a registry/network failure shouldn't 500 the page
             return JSONResponse({"error": f"search failed: {exc}"}, status_code=502)
 

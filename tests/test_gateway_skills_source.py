@@ -13,13 +13,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from assistant.config import load_config
 from assistant.gateway.app import create_app
 from tests.support.apps import api, make_manager, make_profile_app
 
 
-def _client():
-    app, pid = make_profile_app(persist=True)
+def _client(paths):
+    app, pid = make_profile_app(paths, persist=True)
     return TestClient(app), pid
 
 
@@ -62,8 +61,8 @@ def _make_zip(skills: dict[str, str]) -> bytes:
 # --- git discover + install -----------------------------------------------------
 
 
-def test_discover_git_returns_full_checklist(tmp_path):
-    client, _pid = _client()
+def test_discover_git_returns_full_checklist(paths, tmp_path):
+    client, _pid = _client(paths)
     with client:
         url = _make_git_repo(tmp_path / "repo", {"alpha": "the alpha", "beta": "the beta"})
         r = client.post("/api/skills/discover", json={"git_url": url})
@@ -72,8 +71,8 @@ def test_discover_git_returns_full_checklist(tmp_path):
         assert names == {"alpha": "the alpha", "beta": "the beta"}
 
 
-def test_install_git_subset_lands_only_selected(tmp_path):
-    client, _pid = _client()
+def test_install_git_subset_lands_only_selected(paths, tmp_path):
+    client, _pid = _client(paths)
     with client:
         url = _make_git_repo(tmp_path / "repo", {"alpha": "a", "beta": "b", "gamma": "g"})
         r = client.post("/api/skills/install", json={"git_url": url, "names": ["alpha", "gamma"]})
@@ -85,16 +84,16 @@ def test_install_git_subset_lands_only_selected(tmp_path):
         assert "beta" not in catalog  # not selected → not installed
 
 
-def test_discover_unreachable_git_is_400():
-    client, _pid = _client()
+def test_discover_unreachable_git_is_400(paths):
+    client, _pid = _client(paths)
     with client:
         r = client.post("/api/skills/discover", json={"git_url": "/nonexistent/repo/path"})
         assert r.status_code == 400
         assert r.json()["error"]
 
 
-def test_install_git_collision_replaces(tmp_path):
-    client, _pid = _client()
+def test_install_git_collision_replaces(paths, tmp_path):
+    client, _pid = _client(paths)
     with client:
         url1 = _make_git_repo(tmp_path / "r1", {"dup": "first"})
         client.post("/api/skills/install", json={"git_url": url1, "names": ["dup"]})
@@ -108,8 +107,8 @@ def test_install_git_collision_replaces(tmp_path):
         assert sum(1 for s in r.json()["skills"] if s["name"] == "dup") == 1
 
 
-def test_install_git_unknown_name_is_400_nothing_installed(tmp_path):
-    client, _pid = _client()
+def test_install_git_unknown_name_is_400_nothing_installed(paths, tmp_path):
+    client, _pid = _client(paths)
     with client:
         url = _make_git_repo(tmp_path / "repo", {"alpha": "a"})
         r = client.post("/api/skills/install", json={"git_url": url, "names": ["ghost"]})
@@ -120,8 +119,8 @@ def test_install_git_unknown_name_is_400_nothing_installed(tmp_path):
 # --- upload discover + install --------------------------------------------------
 
 
-def test_discover_upload_zip_returns_checklist():
-    client, _pid = _client()
+def test_discover_upload_zip_returns_checklist(paths):
+    client, _pid = _client(paths)
     with client:
         data = _make_zip({"u1": "upload one", "u2": "upload two"})
         r = client.post(
@@ -131,8 +130,8 @@ def test_discover_upload_zip_returns_checklist():
         assert {s["name"] for s in r.json()["skills"]} == {"u1", "u2"}
 
 
-def test_install_upload_zip_subset():
-    client, _pid = _client()
+def test_install_upload_zip_subset(paths):
+    client, _pid = _client(paths)
     with client:
         data = _make_zip({"u1": "one", "u2": "two"})
         r = client.post(
@@ -146,8 +145,8 @@ def test_install_upload_zip_subset():
         assert "u2" in catalog and "u1" not in catalog
 
 
-def test_discover_upload_invalid_is_400():
-    client, _pid = _client()
+def test_discover_upload_invalid_is_400(paths):
+    client, _pid = _client(paths)
     with client:
         r = client.post(
             "/api/skills/discover-upload", files={"file": ("notes.txt", b"hello", "text/plain")}
@@ -155,11 +154,11 @@ def test_discover_upload_invalid_is_400():
         assert r.status_code == 400
 
 
-def test_install_upload_rejects_skill_name_outside_target():
+def test_install_upload_rejects_skill_name_outside_target(paths):
     """A source-controlled frontmatter name cannot escape the skills directory."""
-    client, _pid = _client()
+    client, _pid = _client(paths)
     with client:
-        escaped = load_config().skills_dir.parent / "escaped"
+        escaped = paths.skills_dir.parent / "escaped"
         data = _skill_md("../escaped", "unsafe destination").encode()
         r = client.post(
             "/api/skills/install-upload",
@@ -171,30 +170,30 @@ def test_install_upload_rejects_skill_name_outside_target():
         assert not escaped.exists()
 
 
-def test_discover_git_rejects_ext_transport():
+def test_discover_git_rejects_ext_transport(paths):
     """git's ext:: transport runs a shell command at clone time (RCE on the host); the
     installer must refuse it before ever invoking git (finding 2)."""
-    client, _pid = _client()
+    client, _pid = _client(paths)
     with client:
         r = client.post("/api/skills/discover", json={"git_url": "ext::sh -c 'id'"})
         assert r.status_code == 400
         assert "transport" in r.json()["error"].lower()
 
 
-def test_discover_git_rejects_file_scheme():
+def test_discover_git_rejects_file_scheme(paths):
     """An explicit file:// scheme (local-read/SSRF variant) is off the allowlist; a bare
     local PATH still works (the other git tests rely on it)."""
-    client, _pid = _client()
+    client, _pid = _client(paths)
     with client:
         r = client.post("/api/skills/discover", json={"git_url": "file:///etc/passwd"})
         assert r.status_code == 400
         assert "scheme" in r.json()["error"].lower()
 
 
-def test_install_root_skill_excludes_nested_sibling(tmp_path):
+def test_install_root_skill_excludes_nested_sibling(paths, tmp_path):
     """A source with a ROOT SKILL.md (A) plus sub/SKILL.md (B): installing only A must
     not drag B's files inside A's installed folder (finding 6)."""
-    client, _pid = _client()
+    client, _pid = _client(paths)
     with client:
         repo = tmp_path / "repo"
         (repo).mkdir(parents=True)
@@ -205,19 +204,19 @@ def test_install_root_skill_excludes_nested_sibling(tmp_path):
 
         r = client.post("/api/skills/install", json={"git_url": url, "names": ["alpha"]})
         assert r.status_code == 200, r.text
-        installed_dir = load_config().skills_dir / "alpha"
+        installed_dir = paths.skills_dir / "alpha"
         assert (installed_dir / "SKILL.md").exists()
         # B's subtree was pruned — no nested SKILL.md landed inside A.
         assert not list(installed_dir.rglob("sub/SKILL.md"))
 
 
-def test_install_upload_rejects_zip_bomb():
+def test_install_upload_rejects_zip_bomb(paths):
     """A zip whose header claims an enormous uncompressed size is refused before
     extractall writes a byte (finding 7)."""
     import io
     import zipfile as zf_mod
 
-    client, _pid = _client()
+    client, _pid = _client(paths)
     with client:
         # Build a zip whose central-directory entry advertises a > per-file-cap size but
         # is cheap to store (highly compressible zeros).
@@ -232,9 +231,9 @@ def test_install_upload_rejects_zip_bomb():
         assert "large" in r.json()["error"].lower()
 
 
-def test_install_upload_into_profile():
+def test_install_upload_into_profile(paths):
     """An upload install from the Profiles zone lands in the active profile only."""
-    manager = make_manager(persist=True)
+    manager = make_manager(paths, persist=True)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})

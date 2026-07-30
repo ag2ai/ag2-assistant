@@ -1,6 +1,5 @@
 """AG2 Assistant agent built on AG2."""
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -419,16 +418,6 @@ def build_memory_tool(store_path, user_store_path):
     return remember
 
 
-def tz_unset_in_container() -> bool:
-    """True when containerised with no TZ set — i.e. silently running on UTC.
-
-    Scheduled tasks are wall-clock local, so this is the one configuration where the
-    clock is probably not the one the user means. The startup banner and the agent's
-    environment block both key off this predicate so they cannot disagree.
-    """
-    return Path("/.dockerenv").exists() and not os.environ.get("TZ")
-
-
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
@@ -448,7 +437,7 @@ def environment_context(config: Config) -> str:
     lines = [f"- Current date and time: {when} {tz} ({off})".rstrip()]
     if config.agent.location:
         lines.append(f"- User location: {config.agent.location}")
-    if tz_unset_in_container():
+    if config.tz_unset_in_container:
         lines.append("- Tasks fire in this timezone — say it when confirming a time.")
     return "Environment (live):\n" + "\n".join(lines)
 

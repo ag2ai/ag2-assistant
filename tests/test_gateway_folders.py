@@ -5,15 +5,15 @@ from fastapi.testclient import TestClient
 from tests.support.apps import make_profile_app
 
 
-def _client():
-    app, pid = make_profile_app(persist=True)
+def _client(paths):
+    app, pid = make_profile_app(paths, persist=True)
     return TestClient(app), pid
 
 
-def test_folder_crud_roundtrip(tmp_path):
+def test_folder_crud_roundtrip(paths, tmp_path):
     d = tmp_path / "acme"
     d.mkdir()
-    client, _pid = _client()
+    client, _pid = _client(paths)
     with client:
         r = client.post("/api/folders", json={"path": str(d)})
         assert r.status_code == 200
@@ -35,10 +35,10 @@ def test_folder_crud_roundtrip(tmp_path):
         assert client.get("/api/folders").json()["folders"] == []
 
 
-def test_grant_upsert_and_revoke(tmp_path):
+def test_grant_upsert_and_revoke(paths, tmp_path):
     d = tmp_path / "acme"
     d.mkdir()
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         f = client.post("/api/folders", json={"path": str(d)}).json()["folder"]
         r = client.post(f"/api/folders/{f['id']}/grants", json={"profile": pid, "mode": "read"})
@@ -76,12 +76,12 @@ def test_grant_upsert_and_revoke(tmp_path):
         assert r.status_code == 404
 
 
-def test_revoking_last_grant_garbage_collects_folder(tmp_path):
+def test_revoking_last_grant_garbage_collects_folder(paths, tmp_path):
     """Revoking a Folder's ONLY grant removes the Folder from the registry (it's
     unreachable by anyone); revoking one of several grants keeps it."""
     d = tmp_path / "acme"
     d.mkdir()
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         fid = client.post("/api/folders", json={"path": str(d)}).json()["folder"]["id"]
         # Two grants: profile + a chat scope.
@@ -103,10 +103,10 @@ def test_revoking_last_grant_garbage_collects_folder(tmp_path):
         assert client.get("/api/folders").json()["folders"] == []
 
 
-def test_task_scope_grant_roundtrip(tmp_path):
+def test_task_scope_grant_roundtrip(paths, tmp_path):
     d = tmp_path / "acme"
     d.mkdir()
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         fid = client.post("/api/folders", json={"path": str(d)}).json()["folder"]["id"]
         r = client.post(
@@ -134,8 +134,8 @@ def test_task_scope_grant_roundtrip(tmp_path):
         assert r.status_code == 200
 
 
-def test_folder_permission_routes_are_gone():
-    client, _pid = _client()
+def test_folder_permission_routes_are_gone(paths):
+    client, _pid = _client(paths)
     with client:
         snapshot = client.get("/api/permissions").json()
         assert "folders" not in snapshot and "blocked" not in snapshot
@@ -143,8 +143,8 @@ def test_folder_permission_routes_are_gone():
         assert client.post("/api/permissions/blocked", json={"path": "/tmp/x"}).status_code == 404
 
 
-def test_project_folder_route_is_gone():
-    client, pid = _client()
+def test_project_folder_route_is_gone(paths):
+    client, pid = _client(paths)
     with client:
         r = client.post(f"/api/p/{pid}/settings/project-folder", json={"path": "/tmp"})
         assert r.status_code == 404

@@ -34,7 +34,6 @@ _BOUNDARY = {
 # A row that no longer has a hit is a failure: this list may only shrink.
 _DEFERRED = {
     "onboarding.py": "Task 26 — writes AG2ASSISTANT_LOCATION instead of returning it",
-    "agent.py": "Task 26 — the /.dockerenv + TZ probe becomes an argument",
     "codex_auth.py": "Task 18 leftover — _const reads env at import time",
     "coding/bridge_server.py": "Task 25 — the spawned adapter's env whitelist",
     "gateway/app.py": "Task 24 — Path.home() starting points for the fs browser",

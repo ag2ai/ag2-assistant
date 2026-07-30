@@ -12,8 +12,8 @@ from fastapi.testclient import TestClient
 from tests.support.apps import api, make_profile_app
 
 
-def _client(monkeypatch):
-    app, pid = make_profile_app(persist=True)
+def _client(paths):
+    app, pid = make_profile_app(paths, persist=True)
     return TestClient(app), pid
 
 
@@ -32,11 +32,11 @@ def _raw(client, pid, path, **params):
     return client.get(api(pid, "/files/raw"), params={"path": str(path), **params})
 
 
-def test_read_granted_folder_file_serves_inline_and_download(monkeypatch, tmp_path):
+def test_read_granted_folder_file_serves_inline_and_download(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "widget.py").write_text("print('hi')")
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -51,12 +51,12 @@ def test_read_granted_folder_file_serves_inline_and_download(monkeypatch, tmp_pa
         assert "attachment" in r.headers.get("content-disposition", "")
 
 
-def test_read_write_granted_folder_file_serves(monkeypatch, tmp_path):
+def test_read_write_granted_folder_file_serves(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "sub").mkdir()
     (repo / "sub" / "deep.txt").write_text("deep")
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")
@@ -65,23 +65,23 @@ def test_read_write_granted_folder_file_serves(monkeypatch, tmp_path):
         assert r.status_code == 200 and r.content == b"deep"
 
 
-def test_non_granted_folder_file_is_denied(monkeypatch, tmp_path):
+def test_non_granted_folder_file_is_denied(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "secret.py").write_text("x")
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
         _register_folder(client, repo)  # registered but NOT granted
         assert _raw(client, pid, repo / "secret.py").status_code == 404
 
 
-def test_path_escaping_every_readable_root_is_denied(monkeypatch, tmp_path):
+def test_path_escaping_every_readable_root_is_denied(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "ok.txt").write_text("ok")
     outside = tmp_path / "outside.txt"  # a real file OUTSIDE the granted root
     outside.write_text("nope")
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -91,11 +91,11 @@ def test_path_escaping_every_readable_root_is_denied(monkeypatch, tmp_path):
         assert _raw(client, pid, repo / ".." / "outside.txt").status_code == 404
 
 
-def test_chat_grant_scopes_by_chat_id(monkeypatch, tmp_path):
+def test_chat_grant_scopes_by_chat_id(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "note.txt").write_text("n")
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read", chat_id="c1")  # chat-ONLY grant
@@ -107,11 +107,11 @@ def test_chat_grant_scopes_by_chat_id(monkeypatch, tmp_path):
         assert _raw(client, pid, repo / "note.txt").status_code == 404
 
 
-def test_chat_blocked_folder_file_is_denied_in_that_chat(monkeypatch, tmp_path):
+def test_chat_blocked_folder_file_is_denied_in_that_chat(paths, tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "blocked.txt").write_text("b")
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")  # readable at profile scope...
@@ -120,10 +120,10 @@ def test_chat_blocked_folder_file_is_denied_in_that_chat(monkeypatch, tmp_path):
         assert _raw(client, pid, repo / "blocked.txt", chat_id="c1").status_code == 404
 
 
-def test_relative_path_still_hits_files_space(monkeypatch, tmp_path):
+def test_relative_path_still_hits_files_space(paths, tmp_path):
     # Regression: a relative path is unchanged — the Files-space sandbox serves it,
     # never touching the Folder resolver.
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
         client.post(
             api(pid, "/files/upload"),

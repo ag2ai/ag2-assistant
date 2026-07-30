@@ -10,7 +10,7 @@ import typer
 import uvicorn
 
 from assistant import __version__
-from assistant.agent import ask, tz_unset_in_container
+from assistant.agent import ask
 from assistant.channels import channel_token_kwargs, get_channel
 from assistant.codex_auth import (
     CodexAuth,
@@ -18,7 +18,7 @@ from assistant.codex_auth import (
     build_authorize_url,
     generate_pkce,
 )
-from assistant.config import Config, load_config
+from assistant.config import Config, load_config, tz_unset_in_container
 from assistant.folders import DuplicatePath, FolderStore
 from assistant.gateway.app import create_app
 from assistant.gateway.core import Gateway, build_gateway
@@ -73,8 +73,9 @@ def _global_options(
         os.environ["AG2ASSISTANT_DATA_DIR"] = str(Path(data_dir).expanduser())
 
 
-def _echo_local_time() -> None:
-    """Print the server's local time at startup, and flag an unset container TZ.
+def local_time_banner(now: datetime, *, tz_unset: bool) -> list[str]:
+    """The startup banner's clock lines: the server's local time, plus a hint when the
+    timezone is unset in a container.
 
     Scheduling is wall-clock in the local timezone (see ``tasks.scheduling``), so the
     process timezone decides when "remind me at 6am" actually fires. Container base
@@ -85,15 +86,22 @@ def _echo_local_time() -> None:
     The hint is limited to containers with no TZ set: a UTC host is a deliberate,
     ordinary choice and shouldn't be nagged.
     """
-    now = datetime.now().astimezone()
-    typer.echo(f"  Time    {now:%Y-%m-%d %H:%M %Z} (UTC{now:%z})")
-
-    if tz_unset_in_container():
-        typer.echo(
+    lines = [f"  Time    {now:%Y-%m-%d %H:%M %Z} (UTC{now:%z})"]
+    if tz_unset:
+        lines.append(
             "  Note: no TZ set, so this container is on UTC — scheduled tasks "
             '("remind me at 6am") will use UTC.'
         )
-        typer.echo("        Set it to your zone, e.g. -e TZ=Australia/Sydney")
+        lines.append("        Set it to your zone, e.g. -e TZ=Australia/Sydney")
+    return lines
+
+
+def _echo_local_time() -> None:
+    """Print the clock banner, resolving the container/TZ fact here at the boundary."""
+    for line in local_time_banner(
+        datetime.now().astimezone(), tz_unset=tz_unset_in_container(os.environ)
+    ):
+        typer.echo(line)
 
 
 def _resolve_profile_config(profile: str | None) -> Config:

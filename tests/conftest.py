@@ -45,17 +45,3 @@ def profile_app_factory(paths):
 
     with stack:
         yield build
-
-
-@pytest.fixture(autouse=True)
-def _isolate_ag2assistant_home(monkeypatch, tmp_path):
-    """Isolate tests from the developer's real ~/.ag2assistant state.
-
-    Redirecting HOME is enough: every on-disk location now derives from
-    ``Paths.from_env(env, home)``, so the Google credentials/token, the Codex CLI
-    login, the registry and the permission/task stores all land under the test's
-    own tmp root instead of the developer's real state. A real Google token would
-    otherwise make build_agent_tools append the 8 Google tools and break tool-set
-    assertions.
-    """
-    monkeypatch.setenv("HOME", str(tmp_path))

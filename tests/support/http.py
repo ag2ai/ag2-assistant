@@ -9,6 +9,7 @@ import json
 from collections.abc import Callable, Mapping
 
 import httpx
+from ag2.tools.skills.skill_search.client import SkillsClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -66,6 +67,27 @@ def recording_responder(payload: Mapping, status_code: int = 200) -> tuple[Handl
         return httpx.Response(status_code, json=dict(payload))
 
     return handle, sent
+
+
+class ScriptedSkillsClient(SkillsClient):
+    """ag2's skills.sh registry client with only its socket replaced.
+
+    Search parsing, the tarball stream, the sha256 of the bytes, the archive
+    extraction and ``runtime.install`` all run for real — ``handler`` just answers the
+    two HTTP calls (``skills.sh/api/search`` and GitHub's tarball endpoint) the way the
+    registry would.
+    """
+
+    def __init__(self, handler: Handler) -> None:
+        super().__init__()
+        self._transport = httpx.MockTransport(handler)
+
+    def _make_client(self, **overrides: object) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=self._transport,
+            follow_redirects=True,
+            headers=self._headers.copy(),
+        )
 
 
 def form_of(body: str) -> dict[str, str]:

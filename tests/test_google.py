@@ -159,7 +159,7 @@ def _client(paths, **kwargs):
     return TestClient(app)
 
 
-def test_google_status_endpoint(monkeypatch, paths):
+def test_google_status_endpoint(paths):
     _sign_in(paths)
     google = GoogleAuth(paths, finder=HAS_LIBS)
     with _client(paths, google=google) as client:
@@ -173,7 +173,7 @@ def test_google_status_endpoint(monkeypatch, paths):
         }
 
 
-def test_google_status_reports_missing_libs(monkeypatch, paths):
+def test_google_status_reports_missing_libs(paths):
     """A token without the [google] extra must not read as a healthy connection —
     the UI needs the remedy, not a green tick."""
     _sign_in(paths)
@@ -210,7 +210,7 @@ def test_install_hint_matches_how_this_install_was_made(tmp_path):
     assert checkout  # documents the shape the real module path has
 
 
-def test_google_login_url_and_callback(monkeypatch, paths):
+def test_google_login_url_and_callback(paths):
     """The consent round-trip: the route hands out a URL and, on the redirect back,
     completes the very flow it stored. The OAuth conversation itself is the
     integration's own business, so a GoogleAuth that scripts it is injected."""
@@ -244,7 +244,7 @@ def test_google_login_url_and_callback(monkeypatch, paths):
         )
 
 
-def test_google_credentials_upload_endpoint(monkeypatch, paths):
+def test_google_credentials_upload_endpoint(paths):
     with _client(paths, google=GoogleAuth(paths, finder=HAS_LIBS)) as client:
         ok = client.post(
             "/api/google/credentials", json={"content": '{"installed": {"client_id": "x"}}'}

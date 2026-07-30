@@ -432,7 +432,7 @@ async def test_a_scheduler_fires_while_b_active(registry, paths):
     agent, short interval, poll with timeout; no long sleeps)."""
     from datetime import datetime, timedelta
 
-    from assistant.config import load_config
+    from assistant.config import resolve_config
     from assistant.gateway.core import build_gateway
     from assistant.tasks.model import RunStatus
 
@@ -441,8 +441,9 @@ async def test_a_scheduler_fires_while_b_active(registry, paths):
     registry.profile_dir(a_meta.id).mkdir(parents=True, exist_ok=True)
     registry.profile_dir(b_meta.id).mkdir(parents=True, exist_ok=True)
 
-    a_cfg = load_config().with_profile(a_meta)
-    b_cfg = load_config().with_profile(b_meta)
+    base = resolve_config({}, paths)
+    a_cfg = base.with_profile(a_meta)
+    b_cfg = base.with_profile(b_meta)
     fake = fake_agent_factory()
     a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True, agent_factory=fake)
     b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True, agent_factory=fake)

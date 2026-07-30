@@ -31,6 +31,9 @@ load_dotenv()
 # assistant.paths.Paths.
 _ENV_PREFIX = "AG2ASSISTANT_"
 
+# The file whose presence means "this process runs in a container".
+_CONTAINER_MARKER = Path("/.dockerenv")
+
 
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
@@ -203,6 +206,10 @@ class Config(BaseModel):
     voice_provider: str = ""
     voice_model: str = ""
     image_model: str = ""
+    # Resolved once at the boundary: containerised with no TZ set, i.e. the process is
+    # silently on UTC while scheduled tasks are wall-clock local (see
+    # ``tz_unset_in_container``). Nothing below the boundary re-derives it.
+    tz_unset_in_container: bool = False
 
     @classmethod
     def for_paths(cls, paths: Paths, **overrides) -> "Config":
@@ -349,6 +356,17 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
                 pass
 
 
+def tz_unset_in_container(env: Mapping[str, str], *, marker: Path = _CONTAINER_MARKER) -> bool:
+    """True when containerised with no TZ set — i.e. silently running on UTC.
+
+    Scheduled tasks are wall-clock local, so this is the one configuration where the
+    clock is probably not the one the user means. The startup banner and the agent's
+    environment block both key off this predicate (via ``Config``) so they cannot
+    disagree. ``marker`` is the file that says "containerised".
+    """
+    return marker.exists() and not env.get("TZ")
+
+
 def resolve_config(env: Mapping[str, str], paths: Paths) -> Config:
     """Resolve a Config from defaults ← config.yaml ← ``env`` (env wins).
 
@@ -377,6 +395,7 @@ def resolve_config(env: Mapping[str, str], paths: Paths) -> Config:
     # Saved secrets may carry AG2ASSISTANT_* values too, but an explicit env entry
     # always wins over the store.
     apply_env_overrides(cfg, {**cfg.secret_env, **dict(env)})
+    cfg.tz_unset_in_container = tz_unset_in_container(env)
     return cfg
 
 
