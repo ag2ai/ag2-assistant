@@ -7,6 +7,8 @@ its own stand-in instead of patching a module attribute.
 
 import asyncio
 
+from assistant.agent import build_skills_runtime, resolve_skills
+
 
 class FakeReply:
     """Minimal stand-in for AgentReply."""
@@ -80,6 +82,49 @@ class FakeAgent(FakeRunMixin):
         sid = getattr(stream, "id", "default")
         self._counts[sid] = self._counts.get(sid, 0) + 1
         return FakeReply(f"echo[{self._counts[sid]}]: {msg[0]}")
+
+
+class SkillCatalogAgent(FakeAgent):
+    """A fake agent carrying the skill catalog its prompt would have been built with.
+
+    The catalog comes from the production resolution seam (``resolve_skills`` over
+    ``build_skills_runtime``) and — like a real agent's — it is a construction-time
+    snapshot. That makes it the observable effect of a runtime reload: a skill toggled
+    off is absent from every agent built afterwards, while an agent that was never
+    rebuilt keeps its old catalog.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        resolved = resolve_skills(config, build_skills_runtime(config))
+        self.catalog = frozenset(skill.name for skill in resolved.skills)
+
+
+def skill_catalog_factory(agents):
+    """A ``create_agent``-shaped factory handing out ``SkillCatalogAgent``s and filing
+    each one under its profile id in ``agents``, so a test reads the catalog the
+    profile's newest agent was built with: ``agents["work"][-1].catalog``."""
+
+    def factory(config, **kwargs):
+        agent = SkillCatalogAgent(config)
+        agents.setdefault(config.data_dir.name, []).append(agent)
+        return agent
+
+    return factory
+
+
+def failing_agent_factory(fail_for):
+    """A ``create_agent``-shaped factory that raises for any profile whose id is in the
+    (mutable) ``fail_for`` collection. Building the agent is what boots a runtime, so
+    this is a genuine boot failure — no test has to replace ``ProfileManager._boot``."""
+
+    def factory(config, **kwargs):
+        pid = config.data_dir.name
+        if pid in fail_for:
+            raise RuntimeError(f"agent build exploded for {pid}")
+        return FakeAgent()
+
+    return factory
 
 
 class FakeChannel:

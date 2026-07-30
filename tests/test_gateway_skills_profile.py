@@ -7,13 +7,13 @@ through here too, and that a per-profile change reloads ONLY the active profile.
 
 from fastapi.testclient import TestClient
 
-from assistant.config import load_config
 from assistant.gateway.app import create_app
 from tests.support.apps import api, make_manager, make_profile_app
+from tests.support.fakes import skill_catalog_factory
 
 
-def _client():
-    app, pid = make_profile_app(persist=True)
+def _client(paths):
+    app, pid = make_profile_app(paths, persist=True)
     return TestClient(app), pid
 
 
@@ -25,8 +25,8 @@ def _write_skill(skills_dir, name, description):
     )
 
 
-def test_profile_projection_has_origin_enabled_suppressed_available():
-    client, pid = _client()
+def test_profile_projection_has_origin_enabled_suppressed_available(paths):
+    client, pid = _client(paths)
     with client:
         skills = client.get(api(pid, "/skills")).json()["skills"]
         by_name = {s["name"]: s for s in skills}
@@ -39,10 +39,10 @@ def test_profile_projection_has_origin_enabled_suppressed_available():
         assert wr["description"]
 
 
-def test_suppress_flips_available_for_this_profile_only():
+def test_suppress_flips_available_for_this_profile_only(paths):
     """POST /suppress turns a Bundled skill off for this profile; DELETE restores it.
     The install-wide state is never touched."""
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         r = client.post(api(pid, "/skills/web-research/suppress"))
         assert r.status_code == 200
@@ -60,17 +60,17 @@ def test_suppress_flips_available_for_this_profile_only():
         assert by_name["web-research"]["available"] is True
 
 
-def test_suppress_unknown_skill_404():
-    client, pid = _client()
+def test_suppress_unknown_skill_404(paths):
+    client, pid = _client(paths)
     with client:
         assert client.post(api(pid, "/skills/nope/suppress")).status_code == 404
         assert client.delete(api(pid, "/skills/nope/suppress")).status_code == 404
 
 
-def test_install_wide_disable_reads_unavailable_in_profile_view():
+def test_install_wide_disable_reads_unavailable_in_profile_view(paths):
     """A skill Disabled install-wide shows unavailable in the profile projection too —
     the two surfaces never contradict."""
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         client.post("/api/skills/pdf-tools/state", json={"enabled": False})
         by_name = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
@@ -79,10 +79,10 @@ def test_install_wide_disable_reads_unavailable_in_profile_view():
         assert by_name["pdf-tools"]["suppressed"] is False  # off via install-wide, not suppression
 
 
-def test_profile_owned_skill_state_scoped_to_profile():
+def test_profile_owned_skill_state_scoped_to_profile(paths):
     """A skill in the profile's own skills_dir has origin=profile and Enable/Disable
     via /state — the Disable is a per-profile off-record, so a shared skill can't use it."""
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
         cfg = client.app.state.profiles.get(pid).config
         cfg.skills_dir.mkdir(parents=True, exist_ok=True)
@@ -109,11 +109,11 @@ def test_profile_owned_skill_state_scoped_to_profile():
         )
 
 
-def test_profile_skill_shadow_ignores_same_named_shared_off_state():
+def test_profile_skill_shadow_ignores_same_named_shared_off_state(paths):
     """A Profile skill wins the name clash and uses only its own Enabled state."""
-    client, pid = _client()
+    client, pid = _client(paths)
     with client:
-        global_skills = load_config().skills_dir
+        global_skills = paths.skills_dir
         profile_skills = client.app.state.profiles.get(pid).config.skills_dir
 
         _write_skill(global_skills, "global-off", "global copy")
@@ -132,23 +132,22 @@ def test_profile_skill_shadow_ignores_same_named_shared_off_state():
             assert rows[name]["available"] is True
 
 
-def test_per_profile_change_reloads_only_active_profile(monkeypatch):
-    """Suppressing in one profile reloads ONLY that profile — never fans out."""
-    manager = make_manager()
+def test_per_profile_change_reloads_only_active_profile(paths):
+    """Suppressing in one profile reloads ONLY that profile — never fans out. Observed
+    through the agents each profile was built with: the suppressed skill leaves Work's
+    catalog, and Personal is never rebuilt at all."""
+    agents: dict[str, list] = {}
+    manager = make_manager(paths, agent_factory=skill_catalog_factory(agents))
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(pid):
-            reloaded.append(pid)
-            return await orig(pid)
-
-        monkeypatch.setattr(manager, "reload", spy)
+        assert len(agents["work"]) == len(agents["personal"]) == 1  # just the boot build
 
         r = client.post(api("work", "/skills/web-research/suppress"))
         assert r.json()["ok"]
-        assert reloaded == ["work"]  # only the active profile, no fan-out
+        assert len(agents["work"]) == 2  # reloaded once
+        assert "web-research" not in agents["work"][-1].catalog
+        assert "pdf-tools" in agents["work"][-1].catalog  # only the suppressed one goes
+        assert len(agents["personal"]) == 1  # untouched: no fan-out
+        assert "web-research" in agents["personal"][-1].catalog

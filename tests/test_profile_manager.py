@@ -16,6 +16,7 @@ from assistant.gateway.profile_manager import (
 from assistant.llm_configs import LlmConfigStore
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import make_manager
+from tests.support.fakes import failing_agent_factory
 
 
 @pytest.fixture
@@ -133,7 +134,7 @@ async def test_archive_requires_new_default_when_archiving_active(paths, registr
         await mgr.close()
 
 
-async def test_restart_after_archive_stays_gone(paths, registry, monkeypatch):
+async def test_restart_after_archive_stays_gone(paths, registry):
     """§6.6: archive B → close manager → new ProfileManager.start() → B not booted
     (get raises ArchivedProfile), absent from list_profiles(), folder intact on disk."""
 
@@ -221,21 +222,20 @@ async def test_restore_non_archived_rejected(paths):
         await mgr.close()
 
 
-async def test_restore_rolls_back_on_boot_failure(paths, registry, monkeypatch):
+async def test_restore_rolls_back_on_boot_failure(paths, registry):
     """§4.9 (Q9): if boot fails, the profile stays cleanly archived — never left in the
-    unarchived-but-not-running limbo the manager treats as a server bug."""
+    unarchived-but-not-running limbo the manager treats as a server bug. The failure is
+    a real one: building the profile's agent raises, which is what booting it does."""
 
-    mgr = make_manager(paths)
+    unbootable: set[str] = set()
+    mgr = make_manager(paths, agent_factory=failing_agent_factory(unbootable))
     await mgr.start()
     try:
         a = await mgr.create("Work", "#109e91")
         b = await mgr.create("Personal", "#f95339")
         await mgr.archive(b.pid)
 
-        async def _boom(meta):
-            raise RuntimeError("boot exploded")
-
-        monkeypatch.setattr(mgr, "_boot", _boom)
+        unbootable.add(b.pid)
         with pytest.raises(RuntimeError):
             await mgr.restore(b.pid)
 

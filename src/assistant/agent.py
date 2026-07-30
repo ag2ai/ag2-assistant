@@ -227,6 +227,29 @@ def build_skills_runtime(config: Config):
     return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
 
 
+def resolve_skills(config: Config, runtime):
+    """`runtime` filtered down to the skills resolved available for `config`.
+
+    This is the single resolution seam (ADR 0016): a skill turned off in the
+    install-wide `SkillStateStore`, or suppressed for this profile, is absent from
+    the view and unloadable through it. No other code path decides availability.
+    Resolution is **default-on** (a skill is available unless a record turns it
+    off) — the inverse of a Folders Grant; see `SkillStateStore` for why not to
+    "fix" that. `.skills` on the result is what an agent build would see.
+    """
+    store = SkillStateStore(config.root_dir / "skills.json")
+    profile = config.data_dir.name
+    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
+    return FilteredSkillRuntime(
+        runtime,
+        lambda skill: store.is_available(
+            skill.name,
+            profile,
+            origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
+        ),
+    )
+
+
 def build_skills_plugin(config: Config, runtime):
     """Progressive-disclosure Skills plugin over `runtime`, filtered by skill state.
 
@@ -235,29 +258,15 @@ def build_skills_plugin(config: Config, runtime):
     discovers what's available with no `list_skills` round-trip — and exposes
     `load_skill` / `read_skill_resource` / `run_skill_script` for those skills.
 
-    This is the single resolution seam (ADR 0016): the runtime is wrapped so a
-    skill turned off in the install-wide `SkillStateStore` is absent from the
-    catalog and unloadable. No other code path decides availability. Resolution
-    is **default-on** (a skill is available unless a record turns it off) — the
-    inverse of a Folders Grant; see `SkillStateStore` for why not to "fix" that.
+    What it may show is decided by `resolve_skills`, so a Disabled skill reaches
+    neither the catalog nor the activation tools.
 
     The catalog and the activation tools are a **construction-time snapshot**: a
     skill installed or toggled mid-session isn't reflected until the next agent
     build (a `ProfileManager.reload`) picks it up — which is exactly what the
     /api/skills routes trigger on every change.
     """
-    store = SkillStateStore(config.root_dir / "skills.json")
-    profile = config.data_dir.name
-    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
-    filtered = FilteredSkillRuntime(
-        runtime,
-        lambda skill: store.is_available(
-            skill.name,
-            profile,
-            origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
-        ),
-    )
-    return SkillPlugin(filtered)
+    return SkillPlugin(resolve_skills(config, runtime))
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:
