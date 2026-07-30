@@ -569,7 +569,7 @@ def telegram(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("telegram")
+        channel = get_channel("telegram", token=os.environ.get("TELEGRAM_BOT_TOKEN", ""))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "telegram":
@@ -606,7 +606,7 @@ def discord(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("discord")
+        channel = get_channel("discord", token=os.environ.get("DISCORD_BOT_TOKEN", ""))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "discord":
@@ -642,7 +642,11 @@ def slack(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("slack")
+        channel = get_channel(
+            "slack",
+            bot_token=os.environ.get("SLACK_BOT_TOKEN", ""),
+            app_token=os.environ.get("SLACK_APP_TOKEN", ""),
+        )
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "slack":

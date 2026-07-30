@@ -121,15 +121,16 @@ def default_name(platform: str, entries: list[dict] | None = None) -> str:
     return f"{title} {n}"
 
 
-def create_connection(platform: str, name: str = "") -> Connection:
-    """Register a Connection for ``platform`` and return it; an empty name is
-    defaulted. Unknown platform → ValueError."""
+def create_connection(platform: str, name: str = "", tokens: dict | None = None) -> Connection:
+    """Register a Connection for ``platform`` with the token(s) it will run on and
+    return it; an empty name is defaulted. Unknown platform → ValueError."""
     if platform not in CHANNEL_PLATFORMS:
         raise ValueError(
             f"unknown channel platform: {platform} (choose from {', '.join(CHANNEL_PLATFORMS)})"
         )
     entries = _load()
     connection = _new(platform, (name or "").strip() or default_name(platform, entries))
+    secrets.set_connection_tokens(connection.id, tokens or {})
     entries.append(asdict(connection))
     _write(entries)
     return connection
@@ -150,6 +151,27 @@ def rename_connection(cid: str, name: str) -> Connection:
     raise ValueError(f"unknown connection: {cid}")
 
 
+def set_tokens(cid: str, tokens: dict) -> None:
+    """Store token value(s) on a Connection, keyed by env-var name; an empty value
+    clears one. Unknown id → ValueError."""
+    if get_connection(cid) is None:
+        raise ValueError(f"unknown connection: {cid}")
+    secrets.set_connection_tokens(cid, tokens)
+
+
+def tokens_for(cid: str) -> dict:
+    """A Connection's raw token(s) by env-var name — for adapter construction only,
+    never for an API response."""
+    return secrets.connection_tokens(cid)
+
+
+def token_status(cid: str) -> dict:
+    """Per-token ``{set, hint}`` for every token this Connection's platform needs."""
+    connection = get_connection(cid)
+    envs = CHANNEL_TOKEN_ENVS[connection.platform] if connection else ()
+    return secrets.connection_token_status(cid, envs)
+
+
 def _seeded_platforms() -> list[str]:
     """Platforms this install already has every token for, from the secrets store
     or the process env."""
@@ -159,6 +181,14 @@ def _seeded_platforms() -> list[str]:
 
 def _migrate() -> list[dict]:
     """One Connection per platform that already has its token(s), named after the
-    platform. Built in full and written by the caller in one go, so a half-migrated
-    registry is not a state anyone can observe."""
-    return [asdict(_new(p, PLATFORM_TITLES[p])) for p in _seeded_platforms()]
+    platform and holding the token(s) it was seeded from. The entries are written by
+    the caller in one go — and the tokens land first — so a half-migrated registry is
+    not a state anyone can observe."""
+    entries = []
+    for platform in _seeded_platforms():
+        connection = _new(platform, PLATFORM_TITLES[platform])
+        secrets.set_connection_tokens(
+            connection.id, {e: secrets.channel_token(e) for e in CHANNEL_TOKEN_ENVS[platform]}
+        )
+        entries.append(asdict(connection))
+    return entries

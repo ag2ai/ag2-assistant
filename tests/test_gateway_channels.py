@@ -23,10 +23,12 @@ from tests.conftest import api, use_fake_agent
 
 
 class FakeChannel:
-    """Stub Channel: records start/stop without touching a network."""
+    """Stub Channel: records the token(s) it was constructed with and start/stop,
+    without touching a network."""
 
-    def __init__(self, platform: str) -> None:
+    def __init__(self, platform: str, **tokens: str) -> None:
         self.platform = platform
+        self.tokens = tokens
         self.started = False
         self.stopped = False
         self.router = None
@@ -45,7 +47,9 @@ class FakeChannel:
 
 def _stub_channels(monkeypatch):
     """Make get_channel return FakeChannels (patched where start_channel imports it)."""
-    monkeypatch.setattr(channels_mod, "get_channel", lambda platform, **kw: FakeChannel(platform))
+    monkeypatch.setattr(
+        channels_mod, "get_channel", lambda platform, **kw: FakeChannel(platform, **kw)
+    )
 
 
 def _app(monkeypatch, **kw):
@@ -674,4 +678,134 @@ def test_the_connection_listing_never_echoes_a_token(monkeypatch):
     with _new_client(monkeypatch) as client:
         r = client.get("/api/connections")
         assert "super-secret-bot-token" not in r.text
-        assert set(r.json()["connections"][0]) == {"id", "platform", "name"}
+        entry = r.json()["connections"][0]
+        assert set(entry) == {"id", "platform", "name", "tokens"}
+        assert entry["tokens"] == {"TELEGRAM_BOT_TOKEN": {"set": True, "hint": "…oken"}}
+
+
+# --- a Connection's token(s): its own, handed to its adapter explicitly ---
+
+
+def test_migration_carries_the_platform_token_onto_its_connection(monkeypatch):
+    """An install whose token was only ever an env var comes up with that token held
+    by the Connection, and its adapter constructed from there."""
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        assert manager.channels["telegram"].tokens == {"token": "seed-tok"}
+        entry = client.get("/api/connections").json()["connections"][0]
+        assert entry["tokens"]["TELEGRAM_BOT_TOKEN"]["set"] is True
+
+
+def test_slack_gets_both_of_its_tokens_by_constructor_name(monkeypatch):
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-seed")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-seed")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        assert client.app.state.profiles.channels["slack"].tokens == {
+            "bot_token": "xoxb-seed",
+            "app_token": "xapp-seed",
+        }
+
+
+def test_a_connections_token_beats_a_stray_environment_value(monkeypatch):
+    """The env is a migration seed only: an adapter is constructed from what its
+    Connection holds, never from a value left in the process."""
+    _no_channel_env(monkeypatch)
+    connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "connection-tok"})
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "stray-env-tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        assert client.app.state.profiles.channels["telegram"].tokens == {"token": "connection-tok"}
+
+
+def test_two_connections_of_a_platform_hold_two_different_tokens(monkeypatch):
+    _no_channel_env(monkeypatch)
+    work = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"})
+    play = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"})
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        r = client.get("/api/connections")
+        held = {c["id"]: c["tokens"]["TELEGRAM_BOT_TOKEN"] for c in r.json()["connections"]}
+        assert held[work.id] == {"set": True, "hint": "…work"}
+        assert held[play.id] == {"set": True, "hint": "…play"}
+        assert "1111-work" not in r.text and "2222-play" not in r.text
+
+
+def test_a_connection_missing_one_of_its_tokens_reports_it_unset(monkeypatch):
+    _no_channel_env(monkeypatch)
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post(
+            "/api/channels/token",
+            json={"platform": "slack", "tokens": {"SLACK_BOT_TOKEN": "xoxb-half"}},
+        )
+        entry = client.get("/api/connections").json()["connections"][0]
+        assert entry["platform"] == "slack"
+        assert entry["tokens"] == {
+            "SLACK_BOT_TOKEN": {"set": True, "hint": "…half"},
+            "SLACK_APP_TOKEN": {"set": False, "hint": ""},
+        }
+
+
+def test_saving_a_token_puts_it_on_the_connection_and_starts_that_adapter(monkeypatch):
+    _no_channel_env(monkeypatch)
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        r = client.post(
+            "/api/channels/token",
+            json={"platform": "discord", "tokens": {"DISCORD_BOT_TOKEN": "fresh-tok"}},
+        )
+        assert "fresh-tok" not in r.text
+        assert client.app.state.profiles.channels["discord"].tokens == {"token": "fresh-tok"}
+        listed = client.get("/api/connections").json()["connections"]
+        assert [c["platform"] for c in listed] == ["discord"]
+        assert listed[0]["tokens"]["DISCORD_BOT_TOKEN"]["hint"] == "…-tok"
+
+
+def test_replacing_a_token_restarts_the_adapter_with_the_new_value(monkeypatch):
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "old-aaaa")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        first = manager.channels["telegram"]
+        client.post(
+            "/api/channels/token",
+            json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "new-bbbb"}},
+        )
+        assert first.stopped is True
+        assert manager.channels["telegram"].tokens == {"token": "new-bbbb"}
+        listed = client.get("/api/connections").json()["connections"]
+        assert len(listed) == 1  # replaced in place, not a second Connection
+        assert listed[0]["tokens"]["TELEGRAM_BOT_TOKEN"]["hint"] == "…bbbb"
+
+
+def test_a_start_failure_never_echoes_the_connections_token(monkeypatch):
+    """The scrubbing follows the token to its new home: with nothing in the env, an
+    adapter that quotes the token it was handed is still masked."""
+
+    class EchoBoomChannel:
+        platform = "telegram"
+
+        def __init__(self, token: str) -> None:
+            self._token = token
+
+        async def start(self, router):
+            raise RuntimeError(f"The token `{self._token}` was rejected")
+
+        async def stop(self):
+            pass
+
+    _no_channel_env(monkeypatch)
+    secret = "8123456:connection-only-token"
+    connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": secret})
+    monkeypatch.setattr(channels_mod, "get_channel", lambda platform, **kw: EchoBoomChannel(**kw))
+
+    with _new_client(monkeypatch) as client:
+        got = client.get("/api/channels")
+        assert secret not in got.text
+        assert "•••" in got.json()["telegram"]["error"]

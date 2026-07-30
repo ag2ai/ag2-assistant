@@ -11,7 +11,6 @@ Developer Portal, otherwise message text arrives empty.
 
 import asyncio
 import contextlib
-import os
 import re
 
 import discord
@@ -98,10 +97,10 @@ class DiscordAsker(PendingGuard):
 class DiscordChannel(Channel):
     platform = "discord"
 
-    def __init__(self, token: str | None = None) -> None:
-        self._token = token or os.environ.get("DISCORD_BOT_TOKEN", "")
+    def __init__(self, token: str = "") -> None:
+        self._token = token
         if not self._token:
-            raise ValueError("DISCORD_BOT_TOKEN not set (env var or token= argument).")
+            raise ValueError("a Discord bot token is required.")
         intents = discord.Intents.default()
         intents.message_content = True
         self._client = discord.Client(intents=intents)

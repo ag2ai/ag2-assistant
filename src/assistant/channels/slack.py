@@ -9,7 +9,6 @@ Responds to all direct messages and to @mentions in channels. Uses Slack's
 
 import asyncio
 import contextlib
-import os
 import re
 
 import aiohttp
@@ -106,14 +105,11 @@ class SlackAsker(PendingGuard):
 class SlackChannel(Channel):
     platform = "slack"
 
-    def __init__(self, bot_token: str | None = None, app_token: str | None = None) -> None:
-        self._bot_token = bot_token or os.environ.get("SLACK_BOT_TOKEN", "")
-        self._app_token = app_token or os.environ.get("SLACK_APP_TOKEN", "")
+    def __init__(self, bot_token: str = "", app_token: str = "") -> None:
+        self._bot_token = bot_token
+        self._app_token = app_token
         if not self._bot_token or not self._app_token:
-            raise ValueError(
-                "SLACK_BOT_TOKEN and SLACK_APP_TOKEN must both be set "
-                "(env vars or constructor args)."
-            )
+            raise ValueError("a Slack bot token and app token are both required.")
         self._app = None
         self._handler = None
         self._router: ChannelRouter | None = None

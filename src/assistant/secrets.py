@@ -37,6 +37,11 @@ DEFAULT_OLLAMA_BASE = "http://localhost:11434"
 # so they don't collide with provider fields.
 _CHANNELS_FIELD = "channels"
 
+# A Connection's own token(s), under a Connection-scoped key: {connection id:
+# {ENV_NAME: value}}. Handed to that Connection's adapter explicitly, never exported
+# to os.environ — one process can hold three Telegram tokens this way.
+_CONNECTION_TOKENS_FIELD = "connection_tokens"
+
 
 def _path():
     return data_dir() / "secrets.json"
@@ -358,6 +363,51 @@ def set_channel_token(env_name: str, value: str) -> bool:
         data.pop(_CHANNELS_FIELD, None)
     _write(data)
     return True
+
+
+def channel_token(env_name: str) -> str:
+    """One channel token's raw value — the saved one, else the process env. The env
+    is read as a seed for a first Connection only; nothing else consumes this."""
+    return _saved_channel_tokens(_read()).get(env_name) or os.environ.get(env_name, "")
+
+
+def _stored_connection_tokens(data: dict) -> dict:
+    """The ``connection_tokens`` sub-map (empty dict if absent/malformed)."""
+    held = data.get(_CONNECTION_TOKENS_FIELD)
+    return held if isinstance(held, dict) else {}
+
+
+def set_connection_tokens(cid: str, tokens: dict) -> None:
+    """Merge token value(s) into one Connection's scoped store, keyed by env-var name;
+    an empty value clears that token. Env name outside the channel set → ValueError."""
+    unknown = set(tokens) - CHANNEL_TOKEN_ENV_NAMES
+    if unknown:
+        raise ValueError(f"unknown channel token(s): {', '.join(sorted(unknown))}")
+    data = _read()
+    all_held = _stored_connection_tokens(data)
+    held = dict(all_held.get(cid) or {})
+    for env_name, value in tokens.items():
+        value = (value or "").strip()
+        if value:
+            held[env_name] = value
+        else:
+            held.pop(env_name, None)
+    all_held[cid] = held
+    data[_CONNECTION_TOKENS_FIELD] = all_held
+    _write(data)
+
+
+def connection_tokens(cid: str) -> dict:
+    """The raw token(s) one Connection holds, keyed by env-var name. In-process only —
+    they flow into adapter construction and are never returned by an endpoint."""
+    held = _stored_connection_tokens(_read()).get(cid)
+    return dict(held) if isinstance(held, dict) else {}
+
+
+def connection_token_status(cid: str, env_names) -> dict:
+    """Per-token presence and a last-4 hint for one Connection (never a raw value)."""
+    held = connection_tokens(cid)
+    return {e: {"set": bool(held.get(e)), "hint": _hint(held.get(e) or "")} for e in env_names}
 
 
 def _saved_channel_tokens(data: dict) -> dict:

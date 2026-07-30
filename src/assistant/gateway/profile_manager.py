@@ -16,11 +16,10 @@ so every profile-owned path lands under the profile dir.
 """
 
 import asyncio
-import os
 import shutil
 from collections.abc import Callable, Iterator
 
-from assistant import channels, profiles
+from assistant import channels, connections, profiles
 from assistant.config import Config, load_config
 from assistant.gateway.core import Gateway, build_gateway
 from assistant.hitl import HitlServer
@@ -33,11 +32,10 @@ from assistant.profiles import ProfileMeta
 _CHANNEL_TOKENS = profiles.CHANNEL_TOKEN_ENVS
 
 
-def _scrub_tokens(msg: str, envs: tuple[str, ...]) -> str:
-    """Replace any of the given env vars' current values appearing in ``msg`` with a
-    mask — platform libraries embed the raw token in some error messages."""
-    for env in envs:
-        value = os.environ.get(env)
+def _scrub_tokens(msg: str, values) -> str:
+    """Replace any of the given token values appearing in ``msg`` with a mask —
+    platform libraries embed the raw token in some error messages."""
+    for value in values:
         if value:
             msg = msg.replace(value, "•••")
     return msg
@@ -297,6 +295,12 @@ class ProfileManager:
         """Take back a question shown in a platform chat — it has been resolved."""
         await self._channel(platform).retract(chat_id, inquiry)
 
+    def _connection_tokens(self, platform: str) -> dict[str, str]:
+        """The token(s) held by this platform's Connection, keyed by env-var name. The
+        manager never reads the process env for them — a Connection owns its tokens."""
+        registered = connections.connections_for(platform)
+        return connections.tokens_for(registered[0].id) if registered else {}
+
     async def start_channel(self, platform: str) -> tuple[bool, str | None]:
         """Start ``platform`` at install level if its tokens are present, handing it the
         shared router. Guarded: a bad token / network failure logs + records
@@ -309,7 +313,8 @@ class ProfileManager:
         if platform in self.channels:
             return True, None
         envs = _CHANNEL_TOKENS[platform]
-        if not all(os.environ.get(e) for e in envs):
+        tokens = self._connection_tokens(platform)
+        if not all(tokens.get(e) for e in envs):
             msg = f"no token configured for {platform}"
             self.channel_errors[platform] = msg
             return False, msg
@@ -318,13 +323,15 @@ class ProfileManager:
         # when a token is missing. Never let that propagate: it would 500 the endpoint
         # and crash boot. Record the reason, stay inactive.
         try:
-            channel = channels.get_channel(platform)
+            channel = channels.get_channel(
+                platform, **{channels.TOKEN_ARGS[e]: tokens[e] for e in envs}
+            )
             await channel.start(self.router)
         except Exception as exc:
             # Platform libraries embed the raw token in some error messages
             # (e.g. Telegram's "The token <value> was rejected"); scrub it —
             # this string is logged AND returned via GET /api/channels.
-            msg = _scrub_tokens(f"could not start '{platform}': {exc}", envs)
+            msg = _scrub_tokens(f"could not start '{platform}': {exc}", tokens.values())
             log.error(msg)
             self.channel_errors[platform] = msg
             return False, msg

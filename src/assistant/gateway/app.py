@@ -1904,10 +1904,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def list_connections() -> dict:
         """Every configured instance of a platform, in creation order. An install that
         already had bot tokens is migrated to one Connection per platform on this read.
-        Token values are never part of the entry."""
+        A Connection's token(s) appear only as a set flag and a last-4 hint."""
         return {
             "connections": [
-                {"id": c.id, "platform": c.platform, "name": c.name}
+                {
+                    "id": c.id,
+                    "platform": c.platform,
+                    "name": c.name,
+                    "tokens": connections.token_status(c.id),
+                }
                 for c in connections.list_connections()
             ]
         }
@@ -1970,6 +1975,13 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             )
         for env_name, value in req.tokens.items():
             secrets.set_channel_token(env_name, value)
+        # The token belongs to the platform's Connection, which is what the adapter is
+        # constructed from; a first token creates the Connection migration did not.
+        registered = connections.connections_for(platform)
+        if registered:
+            connections.set_tokens(registered[0].id, req.tokens)
+        elif any((v or "").strip() for v in req.tokens.values()):
+            connections.create_connection(platform, tokens=req.tokens)
         # Reconcile the live channel with the new tokens.
         with contextlib.suppress(Exception):
             await manager.restart_channel(platform)
