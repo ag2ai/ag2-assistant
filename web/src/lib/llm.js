@@ -16,7 +16,9 @@ import ollamaLogo from '../assets/ollama.svg'
 // store.js because it needs `api`, and store.js → api.js → lib/profile.js → store.js
 // would be an import cycle. See docs/adr/0004-shared-llm-config-store.md.
 // Mutate via the API, then call loadLlmConfigs() to refresh every subscriber.
-export const llmConfigs = writable({ configs: [], active: null, envOverride: null, loaded: false })
+export const llmConfigs = writable({
+  configs: [], active: null, envOverride: null, providerDeps: {}, loaded: false,
+})
 
 export async function loadLlmConfigs() {
   const d = await api.llmConfigs()
@@ -24,6 +26,9 @@ export async function loadLlmConfigs() {
     configs: d.configs || [],
     active: d.active ?? null,
     envOverride: d.env_override ?? null,
+    // type -> {ok, extra, install}, for every type (the template grid reads types
+    // no config uses yet).
+    providerDeps: d.provider_deps || {},
     loaded: true,
   })
 }
@@ -47,11 +52,12 @@ export const TYPE_LABEL = {
 
 // Whether a config can actually run right now — the signal behind the health dot.
 // The API view carries no `usable` flag, so we derive it exactly as the server's
-// llm_configs.usable() does: key_source 'none' means no key at all (dead), and a
-// ChatGPT-subscription config is live only while signed in. Everything else
+// llm_configs.usable() does: deps.ok false = provider library not installed,
+// key_source 'none' = no key at all, subscription = needs signed_in. Everything else
 // (ollama / custom base_url / own key / shared env key) resolves to a non-'none'
 // source and is runnable.
 export function isUsable(c) {
+  if (c.deps && !c.deps.ok) return false
   if (c.key_source === 'none') return false
   if (c.type === 'openai_subscription') return !!c.signed_in
   return true

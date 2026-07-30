@@ -58,6 +58,7 @@
 
   const configs = $derived($llmConfigs.configs)
   const envOverride = $derived($llmConfigs.envOverride)
+  const providerDeps = $derived($llmConfigs.providerDeps || {})
   let tests = $state({})       // config id -> {testing} | {ok, reply, latency_ms} | {ok:false, error}
   let busy = $state(false)
   let err = $state('')
@@ -167,6 +168,10 @@
       <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model || 'CLI default'}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
+        <!-- Provider library missing: name the install command, not just a dead dot. -->
+        {#if c.deps && !c.deps.ok}
+          <span class="llmkey warn" title={c.deps.install}>needs {c.deps.install}</span>
+        {/if}
         <!-- Images follow the ACTIVE config: capable types advertise the chip, and on
              the active row it reads as "image generation enabled" (✓). -->
         {#if c.images}<span class="llmkey">images{c.active ? ' ✓' : ''}</span>{/if}
@@ -212,6 +217,9 @@
         <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
           <span class="mcpcathead"><img class="llmlogo sm" src={LOGO[t.type]} alt="" /> {t.card || t.name}</span>
           <span class="mcpcatblurb">{t.blurb}</span>
+          {#if providerDeps[t.type] && !providerDeps[t.type].ok}
+            <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>
+          {/if}
         </button>
       {/each}
     </div>
