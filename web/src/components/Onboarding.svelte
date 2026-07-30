@@ -46,7 +46,7 @@
   // back to provider/model via this list. The first entry per provider is that tab's
   // default (recommended); the rest are common alternatives shown as extra pills.
   const MODELS = [
-    { label: 'Gemini · Gemini 3.5 Flash', provider: 'gemini', model: 'gemini-3.5-flash' },
+    { label: 'Gemini · Gemini 3.5 Flash', provider: 'gemini', model: 'gemini-3.6-flash' },
     { label: 'Gemini · Gemini 3.1 Flash Lite', provider: 'gemini', model: 'gemini-3.1-flash-lite' },
     { label: 'Gemini · Gemini 3.1 Pro Preview', provider: 'gemini', model: 'gemini-3.1-pro-preview' },
     { label: 'OpenAI · GPT-5.6 Luna', provider: 'openai', model: 'gpt-5.6-luna' },

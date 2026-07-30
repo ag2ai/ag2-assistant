@@ -23,7 +23,7 @@
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
   const TEMPLATES = [
-    { name: 'Gemini', type: 'gemini', model: 'gemini-3.5-flash', blurb: 'Google Gemini' },
+    { name: 'Gemini', type: 'gemini', model: 'gemini-3.6-flash', blurb: 'Google Gemini' },
     { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.6-terra', blurb: 'Responses API' },
     { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.6-terra', blurb: 'Chat Completions API' },
     {

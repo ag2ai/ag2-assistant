@@ -280,10 +280,10 @@ def test_yaml_roundtrip_helpers(tmp_path):
 
 def test_model_config_gemini_and_aggregate_override():
 
-    cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.5-flash"))
+    cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.6-flash"))
     mc = model_config(cfg)
     assert type(mc).__name__ == "GeminiConfig"
-    assert mc.model == "gemini-3.5-flash"
+    assert mc.model == "gemini-3.6-flash"
     assert mc.streaming is True
     # aggregate override picks a different (cheaper) model, same provider
     mc2 = model_config(cfg, "gemini-2.5-flash")
@@ -294,7 +294,7 @@ def test_model_config_gemini_and_aggregate_override():
 
 def test_model_config_respects_streaming_disabled():
 
-    cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.5-flash", streaming=False))
+    cfg = Config(llm=LLMConfig(provider="gemini", model="gemini-3.6-flash", streaming=False))
     assert model_config(cfg).streaming is False
 
 

@@ -244,7 +244,7 @@ def test_secret_reference_flows_to_options_not_env(monkeypatch):
 
 def test_set_secret_id():
     s = secrets.create_secret("K2", "sk-k2-1")
-    e = llm_configs.save_config({"name": "Y", "type": "gemini", "model": "gemini-3.5-flash"})
+    e = llm_configs.save_config({"name": "Y", "type": "gemini", "model": "gemini-3.6-flash"})
     assert llm_configs.set_secret_id(e["id"], s["id"]) is True
     assert llm_configs.get_config(e["id"])["secret_id"] == s["id"]
     assert llm_configs.set_secret_id(e["id"], "") is True  # clear

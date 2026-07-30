@@ -18,17 +18,21 @@ from assistant.config import data_dir
 # Approximate published list prices, USD per 1M tokens, as (input, output). Matched
 # by SUBSTRING against the model id (first match wins). These are ESTIMATES for the
 # HUD, not billing truth — override any of them in ~/.ag2assistant/pricing.json, e.g.
-#   {"gemini-3.5-flash": [0.30, 2.50], "gpt-5": {"input": 1.25, "output": 10.0}}
+#   {"gemini-3.6-flash": [0.30, 2.50], "gpt-5": {"input": 1.25, "output": 10.0}}
 _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
-    "gemini-3.5-flash": (0.30, 2.50),
+    "gemini-3.5-flash": (1.5, 9.0),
+    "gemini-3.6-flash": (1.5, 7.50),
     "gemini-3-pro": (2.00, 12.00),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-pro": (1.25, 10.00),
     "gpt-5": (1.25, 10.00),
+    "gpt-5.6-sol": (5, 30.00),
+    "gpt-5.6-terra": (2, 12.00),
+    "gpt-5.6-luna": (0.2, 1.20),
     "gpt-4o": (2.50, 10.00),
-    "claude-opus": (15.00, 75.00),
-    "claude-sonnet": (3.00, 15.00),
-    "claude-haiku": (0.80, 4.00),
+    "claude-opus": (5.00, 25.00),
+    "claude-sonnet": (2, 10.00),
+    "claude-haiku": (1, 5.00),
 }
 
 
