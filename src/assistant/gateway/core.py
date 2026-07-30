@@ -36,7 +36,7 @@ from ag2.knowledge.constants import LOG_PREFIX
 from ag2.knowledge.log import EventLogWriter
 from ag2.stream import MemoryStream
 
-from assistant import codex_auth, onboarding, secrets
+from assistant import onboarding
 from assistant import title as title_mod
 from assistant.a2ui import (
     durable_surfaces_from_messages,
@@ -46,6 +46,7 @@ from assistant.a2ui import (
     runtime as a2ui_runtime_factory,
 )
 from assistant.agent import create_agent, universal_turn_prompt
+from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled, TurnFailed
 from assistant.folders import FolderStore
@@ -59,6 +60,7 @@ from assistant.observability import (
     setup_logging,
 )
 from assistant.permissions import PermissionManager, PermissionStore
+from assistant.secrets import SecretStore
 from assistant.settings import profile_settings
 from assistant.storage import SerialStore
 from assistant.usage import UsageLedger
@@ -192,7 +194,10 @@ class Gateway:
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
         # Per-profile daily token/cost tally for the activity HUD.
-        self._usage = UsageLedger(self._config.data_dir / "usage.json")
+        self._usage = UsageLedger(
+            self._config.data_dir / "usage.json",
+            pricing_path=self._config.paths.root / "pricing.json",
+        )
 
     @property
     def config(self) -> Config:
@@ -251,18 +256,19 @@ class Gateway:
         agent = self._model_agents.get(llm_config_id)
         if agent is not None:
             return agent
-        from assistant import llm_configs
+        from assistant.llm_configs import PROVIDER_OF, LlmConfigStore
 
-        entry = llm_configs.get_config(llm_config_id)
+        store = LlmConfigStore(self._config.paths)
+        entry = store.get_config(llm_config_id)
         if entry is None:
             return self._agent
         import copy
 
         cfg = copy.deepcopy(self._config)
-        provider = llm_configs.PROVIDER_OF[entry["type"]]
+        provider = PROVIDER_OF[entry["type"]]
         cfg.llm.provider = provider
         cfg.llm.model = entry["model"]
-        cfg.llm.provider_options[provider] = llm_configs.entry_options(entry)
+        cfg.llm.provider_options[provider] = store.entry_options(entry)
         cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
         agent = self._make_agent(cfg)
         self._model_agents[llm_config_id] = agent
@@ -280,8 +286,8 @@ class Gateway:
         if cfg.llm.provider.lower() != "openai" or cfg.llm.auth_mode != "subscription":
             return
         try:
-            creds = await asyncio.to_thread(codex_auth.ensure_fresh)
-        except codex_auth.CodexAuthError:
+            creds = await asyncio.to_thread(CodexAuth(cfg.paths).ensure_fresh)
+        except CodexAuthError:
             return  # let the turn fail with model_config's own clear error
         if creds.access_token != self._codex_token:
             self._codex_token = creds.access_token
@@ -290,8 +296,9 @@ class Gateway:
 
     async def start(self) -> None:
         """Create the shared agent and (optionally) the on-disk chat store."""
-        secrets.migrate()  # one-shot legacy -> Secret-entity upgrade (idempotent)
-        secrets.load_into_env()  # provider keys into env before any agent is built
+        # One-shot legacy -> Secret-entity upgrade (idempotent). Provider keys reach
+        # the agent through ``config.secret_env``, resolved with the config.
+        SecretStore(self._config.paths).migrate()
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
         self._agent = self._make_agent()
@@ -319,7 +326,6 @@ class Gateway:
         the agent). The task service rebuilds its planner/executor too, so scheduled
         work doesn't keep using stale keys. Voice needs no reload (built per voice
         session from env)."""
-        secrets.load_into_env()
         # Re-resolve via the injected factory (a profile runtime's factory re-reads
         # the profile's registry entry + settings; the default is load_config).
         self._config = self._config_factory()

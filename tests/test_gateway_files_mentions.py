@@ -19,7 +19,7 @@ from assistant.gateway.core import Gateway
 from assistant.gateway.tasks_service import TaskService
 from assistant.tasks.store import TaskStore
 from assistant.workspace import mention_forms
-from tests.conftest import FakeAgent, api
+from tests.conftest import FakeAgent, api, make_paths
 
 
 async def _gateway(tmp_path, monkeypatch, *, tasks=False) -> Gateway:
@@ -27,7 +27,7 @@ async def _gateway(tmp_path, monkeypatch, *, tasks=False) -> Gateway:
     ``tasks=True`` it also owns a real TaskStore/TaskService so run rows can be
     enriched with their parent Task."""
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-    cfg = Config(data_dir=tmp_path)
+    cfg = Config.for_paths(make_paths(tmp_path), data_dir=tmp_path)
     svc = None
     if tasks:
         svc = TaskService(config=cfg, store=TaskStore(path=tmp_path / "tasks.db"))

@@ -4,9 +4,10 @@ plus HTTP-level coverage of the routes themselves (status codes / bodies)."""
 import pytest
 from fastapi.testclient import TestClient
 
-from assistant.config import Config
+from assistant.config import Config, load_config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
+from assistant.llm_configs import LlmConfigStore
 from assistant.tasks.store import TaskStore
 from tests.conftest import api, make_profile_app, use_fake_agent
 
@@ -15,9 +16,9 @@ def test_app_imports_cleanly():
     import assistant.gateway.app  # noqa: F401  (route wiring is executed at import)
 
 
-async def test_update_task_patch_semantics(tmp_path):
+async def test_update_task_patch_semantics(paths, tmp_path):
     svc = TaskService(
-        config=Config(),
+        config=Config.for_paths(paths),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )
@@ -32,9 +33,9 @@ async def test_update_task_patch_semantics(tmp_path):
     assert await svc.update_task("task-missing", name="X") is None
 
 
-async def test_starred_defaults_false_and_round_trips(tmp_path):
+async def test_starred_defaults_false_and_round_trips(paths, tmp_path):
     svc = TaskService(
-        config=Config(),
+        config=Config.for_paths(paths),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )
@@ -84,10 +85,12 @@ def test_get_task_http_missing_is_404(monkeypatch):
         assert client.get(api(pid, "/tasks/task-missing")).status_code == 404
 
 
-def test_patch_task_http_model_empty_clears_to_default(monkeypatch):
-    from assistant import llm_configs
-
-    cfg = llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
+def test_patch_task_http_model_empty_clears_to_default(paths, monkeypatch):
+    # The app resolves its own layout from the isolated HOME, so the store must be
+    # the one the routes read.
+    cfg = LlmConfigStore(load_config().paths).save_config(
+        {"name": "Claude", "type": "anthropic", "model": "cl"}
+    )
     client, pid = _client(monkeypatch)
     with client:
         created = client.post(api(pid, "/tasks"), json={"name": "M", "prompt": "p"}).json()["task"]

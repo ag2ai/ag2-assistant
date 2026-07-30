@@ -5,7 +5,22 @@ from assistant.channels.discord import DiscordChannel
 from assistant.channels.slack import SlackChannel
 from assistant.channels.telegram import TelegramChannel
 
-__all__ = ["Channel", "InboundMessage", "should_respond", "get_channel"]
+__all__ = [
+    "Channel",
+    "InboundMessage",
+    "should_respond",
+    "get_channel",
+    "CHANNEL_TOKEN_KWARGS",
+]
+
+# Token env var name → the constructor kwarg that carries it, so callers can pass
+# tokens explicitly instead of relying on the adapters' os.environ fallback.
+CHANNEL_TOKEN_KWARGS = {
+    "TELEGRAM_BOT_TOKEN": "token",
+    "DISCORD_BOT_TOKEN": "token",
+    "SLACK_BOT_TOKEN": "bot_token",
+    "SLACK_APP_TOKEN": "app_token",
+}
 
 
 def get_channel(platform: str, **kwargs) -> Channel:

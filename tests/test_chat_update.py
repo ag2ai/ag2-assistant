@@ -10,16 +10,16 @@ from tests.conftest import FakeAgent, api
 
 
 @pytest.fixture
-async def gw(tmp_path, monkeypatch):
+async def gw(paths, tmp_path, monkeypatch):
 
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-    gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    gw = Gateway(config=Config.for_paths(paths, data_dir=tmp_path), memory=False)
     await gw.start()
     yield gw
     await gw.close()
 
 
-async def test_update_chat_title_persists_across_instances(gw, tmp_path, monkeypatch):
+async def test_update_chat_title_persists_across_instances(paths, gw, tmp_path, monkeypatch):
 
     await gw.send_message("hello", chat_id="c1")
     assert await gw.update_chat("c1", title="Renamed by user") is True
@@ -29,7 +29,7 @@ async def test_update_chat_title_persists_across_instances(gw, tmp_path, monkeyp
 
     await gw.close()
     monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-    gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    gw2 = Gateway(config=Config.for_paths(paths, data_dir=tmp_path), memory=False)
     await gw2.start()
     assert (
         next(c for c in await gw2.list_chats() if c["chat_id"] == "c1")["title"]

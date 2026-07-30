@@ -4,6 +4,7 @@ import pytest
 
 from assistant.coding import detect
 from assistant.coding import session as sessmod
+from assistant.config import Config
 from assistant.hitl.base import Asker
 from assistant.permissions import PermissionManager
 from assistant.tools import coding as toolmod
@@ -69,11 +70,11 @@ async def test_list_coding_agents_reports_availability(monkeypatch):
     assert "Codex" in out
 
 
-def test_coding_capability_registered():
+def test_coding_capability_registered(paths):
     from assistant.tools import CAPABILITIES, available_capabilities
 
     assert "coding" in CAPABILITIES
-    assert "coding" in available_capabilities()
+    assert "coding" in available_capabilities(Config.for_paths(paths))
 
 
 def test_build_agent_tools_includes_coding_tool():

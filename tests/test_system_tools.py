@@ -5,6 +5,7 @@ from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.system_tools import _origin, _schedule_arg, build_system_tools
 from assistant.tasks.store import TaskStore
+from tests.conftest import make_paths
 
 
 class _Stream:
@@ -22,7 +23,7 @@ class _Ctx:
 
 def _svc(tmp_path):
     return TaskService(
-        config=Config(),
+        config=Config.for_paths(make_paths(tmp_path)),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )

@@ -63,7 +63,7 @@ def test_build_knowledge_config_cadence(tmp_path):
     assert single.aggregate_trigger.on_end is True
 
 
-def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
+def test_create_agent_single_shot_aggregates_on_end(paths, tmp_path, monkeypatch):
     """The CLI single-shot path enables on_end so one turn still gets learned."""
     captured = {}
 
@@ -75,13 +75,13 @@ def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
 
     monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
 
-    cfg = Config()
+    cfg = Config.for_paths(paths)
     agent_mod.create_agent(cfg, memory=True, skills=False, single_shot=True)
     assert captured["on_end"] is True
     assert captured["every_n_turns"] == cfg.memory.aggregate_every_n_turns
 
 
-def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
+def test_aggregation_uses_cheaper_model_by_default(paths, monkeypatch):
     """On Gemini with no explicit aggregate_model, the pass uses the cheaper one."""
     captured = {}
 
@@ -93,11 +93,11 @@ def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
 
     monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
 
-    agent_mod.create_agent(Config(), memory=True, skills=False)
+    agent_mod.create_agent(Config.for_paths(paths), memory=True, skills=False)
     assert captured["aggregate_config"].model == agent_mod._DEFAULT_AGGREGATE_MODEL["gemini"]
 
 
-def test_explicit_aggregate_model_wins(monkeypatch):
+def test_explicit_aggregate_model_wins(paths, monkeypatch):
     captured = {}
 
     real = agent_mod.build_knowledge_config
@@ -106,7 +106,7 @@ def test_explicit_aggregate_model_wins(monkeypatch):
         "build_knowledge_config",
         lambda *a, **k: (captured.update(k), real(*a, **k))[1],
     )
-    cfg = Config(llm=LLMConfig(aggregate_model="gemini-2.5-flash"))
+    cfg = Config.for_paths(paths, llm=LLMConfig(aggregate_model="gemini-2.5-flash"))
     agent_mod.create_agent(cfg, memory=True, skills=False)
     assert captured["aggregate_config"].model == "gemini-2.5-flash"
 

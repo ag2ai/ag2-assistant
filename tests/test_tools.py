@@ -150,13 +150,13 @@ def test_no_capabilities_filter_is_all_tools():
     assert any("run_" in n for n in names)
 
 
-def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(tmp_path):
+def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(paths, tmp_path):
     """MCP servers may expose generic names like read_file; present namespaced
     tool names so providers do not receive duplicate function schemas."""
 
     # MCP servers are read from THIS profile's settings (config.data_dir), so write
     # one there and pass the config — no module-level monkeypatch.
-    config = Config(data_dir=tmp_path)
+    config = Config.for_paths(paths, data_dir=tmp_path)
     Settings(config.data_dir / "config.yaml").upsert_mcp_server(
         {
             "name": "repo-files",
@@ -374,11 +374,11 @@ def test_files_capability_wires_workspace_toolkit(tmp_path):
     assert ws.exists()
 
 
-def test_images_capability_adds_generate_image(tmp_path):
+def test_images_capability_adds_generate_image(paths, tmp_path):
     """The `images` capability wires generate_image — but only when a config is given
     (it needs the provider/keys)."""
 
-    cfg = Config()
+    cfg = Config.for_paths(paths)
     with_cfg = {
         t.name
         for t in build_agent_tools(

@@ -5,10 +5,11 @@ import json
 from assistant.coding import acp_provider
 from assistant.coding.detect import BridgeEndpoint
 from assistant.config import Config
+from tests.conftest import make_paths
 
 
 def _cfg(tmp_path) -> Config:
-    cfg = Config()
+    cfg = Config.for_paths(make_paths(tmp_path))
     cfg.workspace_dir = tmp_path
     return cfg
 

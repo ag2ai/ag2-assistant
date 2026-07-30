@@ -237,9 +237,9 @@ class TaskService:
     def _validate_model(self, model: str | None) -> None:
         if not model:
             return
-        from assistant import llm_configs
+        from assistant.llm_configs import LlmConfigStore
 
-        if llm_configs.get_config(model) is None:
+        if LlmConfigStore(self._config.paths).get_config(model) is None:
             raise ValueError(
                 f"unknown model configuration id {model!r} — pick one from the "
                 "configured LLM configurations (or omit for the profile default)"

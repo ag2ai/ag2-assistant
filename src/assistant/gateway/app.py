@@ -58,6 +58,7 @@ import secrets as _secrets
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -107,10 +108,8 @@ from pydantic import BaseModel, Field
 from assistant import (
     AG2_VERSION,
     __version__,
-    codex_auth,
     live_configs,
     llm_configs,
-    secrets,
     voice_providers,
 )
 from assistant import feedback as feedback_learner
@@ -118,6 +117,14 @@ from assistant import profiles as profiles_mod
 from assistant.a2ui import A2UI_SERVER_ACTIONS
 from assistant.agent import build_skills_runtime, bundled_skills_dir, model_config
 from assistant.attachments import build_input
+from assistant.codex_auth import (
+    CodexAuth,
+    CodexAuthError,
+    _capture_code,
+    build_authorize_url,
+    extract_auth_code,
+    generate_pkce,
+)
 from assistant.config import Config, load_config
 from assistant.events import (
     A2UIActionSubmitted,
@@ -138,12 +145,15 @@ from assistant.gateway.profile_manager import (
 from assistant.gateway.stream_bridge import StreamBridge
 from assistant.gateway.wire import to_wire
 from assistant.hitl import DurableAsker, GatewayAsker, NullAsker, add_hitl_routes
-from assistant.integrations import google_auth
+from assistant.integrations.google_auth import GoogleAuth
+from assistant.live_configs import LiveConfigStore
+from assistant.llm_configs import LlmConfigStore
 from assistant.memory import read_profile, read_universal, write_profile, write_universal
 from assistant.observability import log_suppressed
 from assistant.onboarding import identity_document
 from assistant.permissions import PermissionStore, command_rule, shell_prefix
-from assistant.secrets import KEY_ENV
+from assistant.profiles import ProfileRegistry
+from assistant.secrets import KEY_ENV, DuplicateValue, SecretStore
 from assistant.settings import profile_settings
 from assistant.skills import (
     DISABLE_OWN,
@@ -698,7 +708,12 @@ async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
         return 0, 0
 
 
-def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
+def create_app(
+    profiles: ProfileManager,
+    *,
+    persist: bool = True,
+    code_reader: Callable[[str], str] = _capture_code,
+) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
     The app owns the manager's lifecycle: ``profiles.start()`` runs on lifespan
@@ -708,8 +723,26 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     ``app.state.profiles`` holds the manager; there is no ``app.state.gateway`` /
     ``app.state.tasks`` — profile-scoped routes resolve a runtime per request.
+
+    ``code_reader`` is how the ChatGPT sign-in flow waits for the OAuth redirect: the
+    default runs a real loopback listener, so it is injected rather than reached for.
     """
     manager = profiles
+    # Install-level stores, all hanging off the manager's layout. Built once here;
+    # each one re-reads its file per call, so a write is visible to the next request.
+    paths = manager.paths
+    registry = ProfileRegistry(paths)
+    secret_store = SecretStore(paths)
+    llm_store = LlmConfigStore(paths)
+    live_store = LiveConfigStore(paths)
+    codex = CodexAuth(paths)
+    google = GoogleAuth(paths)
+
+    def secret_env() -> dict[str, str]:
+        """Provider/channel keys as an actual call would see them: the saved secrets
+        layered over the install config's ambient slice. Recomputed per call — a key
+        can be saved or cleared mid-session."""
+        return secret_store.merged_env(manager.config.secret_env)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -883,7 +916,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def set_secrets_key(req: KeyRequest) -> dict:
         """Save/clear a provider API key (global secrets). Reloads ALL runtimes so
         every profile's agent picks up the change on its next turn."""
-        if not secrets.set_key(req.provider, req.value):
+        if not secret_store.set_key(req.provider, req.value):
             return Response(status_code=400)
         await _reload_all()
         return {"ok": True}
@@ -895,10 +928,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     def _secret_views() -> list[dict]:
         """Safe views + the names of the model configs referencing each Secret
         (drives the "used by N models" delete confirm)."""
-        llm = llm_configs.list_configs()
-        live = live_configs.list_configs()
+        llm = llm_store.list_configs()
+        live = live_store.list_configs()
         out = []
-        for s in secrets.list_secrets():
+        for s in secret_store.list_secrets():
             used = [c.get("name", "") for c in llm if c.get("secret_id") == s["id"]]
             used += [c.get("name", "") for c in live if c.get("secret_id") == s["id"]]
             out.append({**s, "used_by": used})
@@ -916,10 +949,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         already stored (unique by value — the model form snaps to ``existing``).
         Reloads all runtimes (a new Default changes env-derived keys)."""
         try:
-            view = secrets.create_secret(
+            view = secret_store.create_secret(
                 req.name, req.value, provider=req.provider, default=req.default
             )
-        except secrets.DuplicateValue as exc:
+        except DuplicateValue as exc:
             return JSONResponse(
                 {"ok": False, "error": str(exc), "existing": exc.existing}, status_code=409
             )
@@ -933,12 +966,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Partial update (rename / rotate / retag / set-default). 404 unknown, 409
         duplicate value, 400 bad input. Rotating re-keys every referencing model."""
         try:
-            view = secrets.update_secret(
+            view = secret_store.update_secret(
                 sid, name=req.name, value=req.value, provider=req.provider, default=req.default
             )
         except KeyError:
             return JSONResponse({"ok": False, "error": f"unknown secret: {sid}"}, status_code=404)
-        except secrets.DuplicateValue as exc:
+        except DuplicateValue as exc:
             return JSONResponse(
                 {"ok": False, "error": str(exc), "existing": exc.existing}, status_code=409
             )
@@ -951,7 +984,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def delete_secret_api(sid: str):
         """Delete a Secret (404 unknown). Always allowed — referencing configs
         degrade down the resolution order; deleting a Default pops its env var."""
-        if not secrets.delete_secret(sid):
+        if not secret_store.delete_secret(sid):
             return JSONResponse({"ok": False, "error": f"unknown secret: {sid}"}, status_code=404)
         await _reload_all()
         return {"ok": True}
@@ -972,8 +1005,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         actual call would send. That triple is what lets the UI say honestly why a
         keyless-looking config still works (shared fallback / no key needed)."""
         provider = llm_configs.PROVIDER_OF.get(entry["type"], "")
-        shared = secrets.status().get(provider, {})
-        sec_view = secrets.get_secret(entry.get("secret_id", ""))
+        shared = secret_store.status(secret_env()).get(provider, {})
+        sec_view = secret_store.get_secret(entry.get("secret_id", ""))
         sec = (
             {"id": sec_view["id"], "name": sec_view["name"], "hint": sec_view["hint"]}
             if sec_view
@@ -990,8 +1023,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "secret_id": entry.get("secret_id", ""),
             "secret": sec,
             "secret_missing": bool(entry.get("secret_id")) and sec is None,
-            "key_source": llm_configs.key_source(
-                entry
+            "key_source": llm_store.key_source(
+                entry, secret_env()
             ),  # secret | shared | not_needed | none | subscription
             "images": llm_configs.image_capable(entry),  # drives the row's "images" chip
             "shared_key": {
@@ -1005,7 +1038,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             # The chip/form need the live ChatGPT sign-in state without a second
             # fetch. Lazy + guarded so a missing/broken codex_auth reads as signed-out.
             try:
-                view["signed_in"] = bool(codex_auth.status().get("signed_in"))
+                view["signed_in"] = bool(codex.status().get("signed_in"))
             except Exception:
                 view["signed_in"] = False
         return view
@@ -1028,7 +1061,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         probe.llm.streaming = False
         probe.llm.provider = llm_configs.PROVIDER_OF[entry["type"]]
         probe.llm.model = entry["model"]
-        probe.llm.provider_options[probe.llm.provider] = llm_configs.entry_options(entry)
+        probe.llm.provider_options[probe.llm.provider] = llm_store.entry_options(entry)
         # Subscription mode is carried on auth_mode (not provider_options), so mirror
         # apply_active here — otherwise the probe would test the key path with no key.
         if entry["type"] == "openai_subscription":
@@ -1039,9 +1072,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def list_llm_configs() -> dict:
         """The install-wide named LLM configs, the active id, and any env override that
         pins provider/model over them (drives the 'pinned by env' UI banner)."""
-        active = llm_configs.active_id()
+        active = llm_store.active_id()
         return {
-            "configs": [_llm_entry_view(e, active) for e in llm_configs.list_configs()],
+            "configs": [_llm_entry_view(e, active) for e in llm_store.list_configs()],
             "active": active,
             "env_override": _llm_env_override(),
         }
@@ -1061,7 +1094,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "options": req.options,
         }
         if cid is not None:
-            if llm_configs.get_config(cid) is None:
+            if llm_store.get_config(cid) is None:
                 return JSONResponse(
                     {"ok": False, "error": f"unknown config: {cid}"}, status_code=404
                 )
@@ -1073,11 +1106,11 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             model_config(_llm_probe_config(probe_entry))
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
-        saved = llm_configs.save_config(entry)
+        saved = llm_store.save_config(entry)
         if req.activate:
-            llm_configs.set_active(saved["id"])
+            llm_store.set_active(saved["id"])
         await _reload_all()
-        active = llm_configs.active_id()
+        active = llm_store.active_id()
         return {"ok": True, "config": _llm_entry_view(saved, active), "active": active}
 
     async def _ping_entry(entry: dict, draft_key: str | None = None):
@@ -1156,16 +1189,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Delete a config (404 if unknown). Deleting the active one moves active to the
         next remaining config (or none — flat defaults). Reloads every runtime so the
         new active takes effect (referenced Secrets are independent and untouched)."""
-        if llm_configs.get_config(cid) is None:
+        if llm_store.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        llm_configs.delete_config(cid)
+        llm_store.delete_config(cid)
         await _reload_all()
         return {"ok": True}
 
     @app.post("/api/llm-configs/{cid}/use")
     async def use_llm_config(cid: str):
         """Make ``cid`` the active configuration and reload every runtime (404 unknown)."""
-        if not llm_configs.set_active(cid):
+        if not llm_store.set_active(cid):
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         await _reload_all()
         return {"ok": True}
@@ -1174,7 +1207,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def test_llm_config(cid: str):
         """Real PONG round-trip against a SAVED config, exercising the exact runtime
         key-resolution path. 404 if unknown; result shape per ``_ping_entry``."""
-        entry = llm_configs.get_config(cid)
+        entry = llm_store.get_config(cid)
         if entry is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         return await _ping_entry(entry)
@@ -1189,8 +1222,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         key summary (never the raw values) + ``key_source`` naming which one a
         session sends."""
         provider = entry["provider"]
-        shared = secrets.status().get(provider, {})
-        sec_view = secrets.get_secret(entry.get("secret_id", ""))
+        shared = secret_store.status(secret_env()).get(provider, {})
+        sec_view = secret_store.get_secret(entry.get("secret_id", ""))
         sec = (
             {"id": sec_view["id"], "name": sec_view["name"], "hint": sec_view["hint"]}
             if sec_view
@@ -1205,7 +1238,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "secret_id": entry.get("secret_id", ""),
             "secret": sec,
             "secret_missing": bool(entry.get("secret_id")) and sec is None,
-            "key_source": live_configs.key_source(entry),  # secret | shared | none
+            "key_source": live_store.key_source(entry, secret_env()),  # secret | shared | none
             "shared_key": {
                 "env": KEY_ENV.get(provider, ""),
                 "set": bool(shared.get("set")),
@@ -1221,7 +1254,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         value tests that key directly. Ok → ``{ok, reply, latency_ms}``; any failure →
         502 ``{ok:false, error}``."""
         if draft_key is None:
-            key = live_configs.resolve_key(entry)
+            key = live_store.resolve_key(entry, secret_env())
         elif draft_key:
             key = draft_key
         else:
@@ -1239,9 +1272,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def list_live_configs() -> dict:
         """The install-wide named live configs, the active id, and the provider catalog
         (default model/voice per provider) that seeds the add-form and templates."""
-        active = live_configs.active_id()
+        active = live_store.active_id()
         return {
-            "configs": [_live_entry_view(e, active) for e in live_configs.list_configs()],
+            "configs": [_live_entry_view(e, active) for e in live_store.list_configs()],
             "active": active,
             "providers": [
                 {
@@ -1258,7 +1291,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         activate. 404 when updating an unknown id. A blank ``voice`` on update keeps
         the config's existing voice (it's set via the picker, not this form) rather
         than resetting to the provider default."""
-        existing = live_configs.get_config(cid) if cid is not None else None
+        existing = live_store.get_config(cid) if cid is not None else None
         if cid is not None and existing is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         voice = req.voice
@@ -1274,14 +1307,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if cid is not None:
             entry["id"] = cid
         try:
-            saved = live_configs.save_config(entry)
+            saved = live_store.save_config(entry)
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
         except KeyError:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         if req.activate:
-            live_configs.set_active(saved["id"])
-        active = live_configs.active_id()
+            live_store.set_active(saved["id"])
+        active = live_store.active_id()
         return {"ok": True, "config": _live_entry_view(saved, active), "active": active}
 
     @app.post("/api/live-configs")
@@ -1320,22 +1353,22 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Delete a live config (404 if unknown). Deleting the active one moves active to
         the next remaining config (or none — legacy fallback). Referenced Secrets are
         independent and untouched."""
-        if live_configs.get_config(cid) is None:
+        if live_store.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        live_configs.delete_config(cid)
+        live_store.delete_config(cid)
         return {"ok": True}
 
     @app.post("/api/live-configs/{cid}/use")
     async def use_live_config(cid: str):
         """Make ``cid`` the active live configuration (404 if unknown)."""
-        if not live_configs.set_active(cid):
+        if not live_store.set_active(cid):
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         return {"ok": True}
 
     @app.post("/api/live-configs/{cid}/test")
     async def test_live_config(cid: str):
         """Models-list key probe against a SAVED live config. 404 if unknown."""
-        entry = live_configs.get_config(cid)
+        entry = live_store.get_config(cid)
         if entry is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         return await _ping_live(entry)
@@ -1343,7 +1376,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.post("/api/onboarded")
     async def set_onboarded(req: OnboardedRequest) -> dict:
         """Mark first-run onboarding completed/dismissed (install-level, in the registry)."""
-        profiles_mod.set_onboarded(req.value)
+        registry.set_onboarded(req.value)
         return {"ok": True}
 
     # ---- Universal memory: the shared "who the user is" doc (root/user.db) ----
@@ -1775,7 +1808,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "id": meta.id,
             "name": meta.name,
             "accent": meta.accent,
-            "workspace": meta.workspace,
+            "workspace": str(paths.profile_dir(meta.id) / "workspace"),
             "created": meta.created,
         }
 
@@ -1785,8 +1818,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         server-side active default, and the install-level onboarded flag. Empty list +
         null + false on fresh install. Channel bindings are install-level now — see
         GET /api/channels."""
-        reg = profiles_mod.load_registry()
-        allp = profiles_mod.list_profiles(include_archived=True)
+        reg = registry.load_registry()
+        allp = registry.list_profiles(include_archived=True)
         return {
             "profiles": [_profile_view(m) for m in allp if not m.archived],
             # Archived profiles for the Settings "Archived" section (ADR 0003): restore
@@ -1812,16 +1845,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def update_profile(pid: str, req: ProfileUpdateRequest):
         """Rename and/or set accent (both display-only, registry-level). Unknown pid →
         404, invalid value → 400."""
-        if profiles_mod.get_profile(pid) is None:
+        if registry.get_profile(pid) is None:
             return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
         try:
             if req.name is not None:
-                profiles_mod.rename_profile(pid, req.name)
+                registry.rename_profile(pid, req.name)
             if req.accent is not None:
-                profiles_mod.set_accent(pid, req.accent)
+                registry.set_accent(pid, req.accent)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        return {"profile": _profile_view(profiles_mod.get_profile(pid))}
+        return {"profile": _profile_view(registry.get_profile(pid))}
 
     @app.delete("/api/profiles/{pid}")
     async def archive_or_purge_profile(
@@ -1882,7 +1915,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             active = bool(runtime and platform in runtime.channels)
         return {
             "profile": pid,
-            "token_present": all(os.environ.get(e) for e in _CHANNEL_TOKENS[platform]),
+            "token_present": all(secret_env().get(e) for e in _CHANNEL_TOKENS[platform]),
             "active": active,
             "error": manager.channel_errors.get(platform),
         }
@@ -1893,7 +1926,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         error}}``. A fresh (zero-profile) install returns all profiles null."""
         return {
             platform: _channel_entry(platform, pid)
-            for platform, pid in profiles_mod.channel_bindings().items()
+            for platform, pid in registry.channel_bindings().items()
         }
 
     @app.post("/api/channels")
@@ -1913,7 +1946,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Save/clear channel bot token(s) for a platform (global secrets, like provider
         keys) and re-apply the channel live. Body: ``{platform, tokens:{ENV_NAME: value}}``
         — an empty value clears that token. Only env names valid for the platform are
-        accepted; an unknown platform or env name → 400. Saving sets os.environ, so the
+        accepted; an unknown platform or env name → 400. Saving updates the store, so the
         bound channel is restarted (stopped, then started if all tokens are now present).
         Returns the updated GET /api/channels entry. Token values are never echoed."""
         platform = req.platform
@@ -1927,9 +1960,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 status_code=400,
             )
         for env_name, value in req.tokens.items():
-            secrets.set_channel_token(env_name, value)
+            secret_store.set_channel_token(env_name, value)
         # Reconcile the live channel with the new tokens if the platform is bound.
-        bound = profiles_mod.channel_bindings().get(platform)
+        bound = registry.channel_bindings().get(platform)
         if bound is not None:
             with contextlib.suppress(Exception):
                 await manager.restart_channel(platform)
@@ -1939,22 +1972,22 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.get("/api/google/status")
     async def google_status() -> dict:
-        libs = google_auth.libs_available()
+        libs = google.libs_available()
         return {
-            "configured": google_auth.is_configured(),
-            "signed_in": google_auth.has_token(),
-            "email": google_auth.account_email(),
+            "configured": google.is_configured(),
+            "signed_in": google.has_token(),
+            "email": google.account_email(),
             # A token without the optional [google] extra looks connected but can
             # do nothing — the UI shows the remedy instead of a healthy state.
             "libs_available": libs,
-            "install_hint": None if libs else google_auth.install_hint(),
+            "install_hint": None if libs else google.install_hint(),
         }
 
     @app.post("/api/google/credentials")
     async def google_credentials(payload: CredentialsUpload) -> dict:
         """Save an uploaded OAuth client JSON (so users avoid the filesystem)."""
         try:
-            google_auth.save_credentials_json(payload.content)
+            google.save_credentials_json(payload.content)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
@@ -1967,14 +2000,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         overrides the redirect base when the gateway is reachable at a public URL
         (so the round-trip can complete from another device).
         """
-        if not google_auth.is_configured():
+        if not google.is_configured():
             return {"ok": False, "error": "No OAuth client configured."}
         base = os.environ.get("AG2ASSISTANT_PUBLIC_URL") or str(request.base_url)
         redirect_uri = base.rstrip("/") + "/api/google/callback"
         try:
-            auth_url, state, flow = await asyncio.to_thread(
-                google_auth.make_login_flow, redirect_uri
-            )
+            auth_url, state, flow = await asyncio.to_thread(google.make_login_flow, redirect_uri)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         app.state.google_flows[state] = flow
@@ -1997,7 +2028,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if flow is None or not code:
             return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
         try:
-            email = await asyncio.to_thread(google_auth.complete_login, flow, code)
+            email = await asyncio.to_thread(google.complete_login, flow, code)
         except Exception as exc:
             return HTMLResponse(_page("Sign-in failed", str(exc)))
         # Google tools are gated on has_token() at agent build time — reference-swap
@@ -2009,7 +2040,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/google/logout")
     async def google_logout() -> dict:
-        ok = google_auth.logout()
+        ok = google.logout()
         # Drop the Google tools from every runtime immediately (same gate, reversed).
         for runtime in list(manager.runtimes()):
             with contextlib.suppress(Exception):
@@ -2028,7 +2059,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.get("/api/codex/status")
     async def codex_status() -> dict:
-        return codex_auth.status()
+        return codex.status()
 
     @app.get("/api/coding/{agent}/models")
     async def coding_models(agent: str, refresh: bool = False) -> Response:
@@ -2057,20 +2088,20 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Begin a ChatGPT sign-in: return the consent URL for the UI to open, and
         start a background loopback listener (localhost:1455) that completes the flow
         when OpenAI redirects back. The UI polls GET /api/codex/status."""
-        verifier, challenge = codex_auth.generate_pkce()
+        verifier, challenge = generate_pkce()
         state = _secrets.token_urlsafe(24)
         app.state.codex_flows[state] = verifier
-        url = codex_auth.build_authorize_url(challenge, state)
+        url = build_authorize_url(challenge, state)
 
         async def _complete() -> None:
             try:
-                code = await asyncio.to_thread(codex_auth._capture_code, state)
+                code = await asyncio.to_thread(code_reader, state)
             except Exception:
                 return  # loopback failed/timed out — leave the flow for /submit (headless)
             if app.state.codex_flows.pop(state, None) is None:
                 return  # already completed via /submit
             try:
-                await asyncio.to_thread(codex_auth.exchange_code, code, verifier)
+                await asyncio.to_thread(codex.exchange_code, code, verifier)
             except Exception:
                 return
             await _reload_all_runtimes()
@@ -2090,17 +2121,17 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             )
         # Accept either the bare code or the whole redirect URL the user copied out
         # of the browser's address bar (even off the "connection refused" page).
-        code = codex_auth.extract_auth_code(payload.code)
+        code = extract_auth_code(payload.code)
         try:
-            await asyncio.to_thread(codex_auth.exchange_code, code, verifier)
-        except codex_auth.CodexAuthError as exc:
+            await asyncio.to_thread(codex.exchange_code, code, verifier)
+        except CodexAuthError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         await _reload_all_runtimes()
         return {"ok": True}
 
     @app.post("/api/codex/logout")
     async def codex_logout() -> dict:
-        ok = codex_auth.logout()
+        ok = codex.logout()
         await _reload_all_runtimes()
         return {"ok": ok}
 
@@ -2148,7 +2179,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         VOICE endpoints need (the realtime APIs always talk to the provider's own
         endpoint, so a base_url never makes a provider available). Assistant model
         availability is per-config now and lives in the named LLM configs store."""
-        st = secrets.status()
+        st = secret_store.status(secret_env())
         avail = {prov: st[prov]["set"] for prov in ("openai", "gemini", "anthropic")}
         avail["ollama"] = _ollama_installed()
         return avail
@@ -2357,7 +2388,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         ``config_id`` is given (its provider + persisted voice); otherwise the profile's
         legacy voice-provider setting."""
         settings = _runtime_settings(runtime)
-        entry = live_configs.get_config(config_id) if config_id else None
+        entry = live_store.get_config(config_id) if config_id else None
         provider = entry["provider"] if entry else settings.voice_provider()
         p_v = voice_providers.get(provider)
         current = entry.get("voice") if entry else settings.get_voice(provider)
@@ -2375,7 +2406,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Persist the chosen voice — onto the named live config when ``config_id`` is
         given, else the profile's legacy per-provider voice setting."""
         if req.config_id:
-            if not live_configs.set_voice(req.config_id, req.voice):
+            if not live_store.set_voice(req.config_id, req.voice):
                 return Response(status_code=400)
         elif not _runtime_settings(runtime).set_voice(req.voice):
             return Response(status_code=400)
@@ -2384,9 +2415,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @p.post("/voice/preview")
     async def voice_preview(req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)):
         settings = _runtime_settings(runtime)
-        entry = live_configs.get_config(req.config_id) if req.config_id else None
+        entry = live_store.get_config(req.config_id) if req.config_id else None
         provider = entry["provider"] if entry else None
-        api_key = live_configs.resolve_key(entry) if entry else ""
+        api_key = live_store.resolve_key(entry, secret_env()) if entry else ""
         # Validate the voice against the target provider's catalogue.
         catalog = voice_providers.get(provider or settings.voice_provider()).voices
         if req.voice not in catalog:
@@ -2405,16 +2436,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def get_settings(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
         cfg = runtime.config
         settings = _runtime_settings(runtime)
-        keys = secrets.status()
+        keys = secret_store.status(secret_env())
         # Per-profile model Active override (ADR 0015): report BOTH this profile's
         # override id (None when inherited or dangling) and the EFFECTIVE Active id, so
         # each header switcher can render the current choice + mark it
         # inherited-vs-overridden without a second fetch. A dangling override reads as
         # no override → the install-wide Active (matching the resolution layer).
         llm_ovr = settings.get_llm_override()
-        llm_ovr = llm_ovr if (llm_ovr and llm_configs.get_config(llm_ovr)) else None
+        llm_ovr = llm_ovr if (llm_ovr and llm_store.get_config(llm_ovr)) else None
         live_ovr = settings.get_live_override()
-        live_ovr = live_ovr if (live_ovr and live_configs.get_config(live_ovr)) else None
+        live_ovr = live_ovr if (live_ovr and live_store.get_config(live_ovr)) else None
         return {
             "keys": keys,  # per-provider {set, hint} — never raw
             # Voice runs on the provider's own realtime endpoint, so a base_url
@@ -2426,10 +2457,10 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             # Per-profile Text/Live Active override + effective Active (drives the
             # Profiles-header switchers). override=None → inherits the install-wide.
             "llm_override": llm_ovr,
-            "llm_active": llm_ovr or llm_configs.active_id(),
+            "llm_active": llm_ovr or llm_store.active_id(),
             "live_override": live_ovr,
-            "live_active": live_ovr or live_configs.active_id(),
-            "codex": codex_auth.status(),  # ChatGPT-subscription sign-in state
+            "live_active": live_ovr or live_store.active_id(),
+            "codex": codex.status(),  # ChatGPT-subscription sign-in state
             "voice_provider": settings.voice_provider(),
             "mcp_servers": settings.list_mcp_servers(),
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
@@ -2471,9 +2502,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         # LLM provider — the active named config must be usable (per-config key, a
         # base_url compat server, Ollama, or the provider's env key). When the store is
         # empty we fall back to the flat provider's key check (fresh install / CLI).
-        entry = llm_configs.active_config()
+        entry = llm_store.active_config()
         if entry is not None:
-            key_set = llm_configs.usable(entry)
+            key_set = llm_store.usable(entry, secret_env())
             detail = f"{entry['name']} · {entry['model']}"
         else:
             provider = runtime.config.llm.provider
@@ -2509,7 +2540,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
         # Messaging channels bound to THIS profile (start-time active/error).
         items = []
-        for platform, bound_pid in profiles_mod.channel_bindings().items():
+        for platform, bound_pid in registry.channel_bindings().items():
             if bound_pid != runtime.pid:
                 continue
             entry = _channel_entry(platform, bound_pid)
@@ -2543,8 +2574,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         )
 
         # Google — informational (file-presence: configured / signed in).
-        signed_in = google_auth.has_token()
-        email = google_auth.account_email()
+        signed_in = google.has_token()
+        email = google.account_email()
         checks.append(
             {
                 "id": "google",
@@ -2554,9 +2585,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                     (f"signed in as {email}" if email else "signed in")
                     if signed_in
                     else (
-                        "configured — not signed in"
-                        if google_auth.is_configured()
-                        else "not connected"
+                        "configured — not signed in" if google.is_configured() else "not connected"
                     )
                 ),
             }
@@ -2663,7 +2692,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         profile's runtime so its next message uses the new model. Unknown id → 404."""
         settings = _runtime_settings(runtime)
         cid = (req.config_id or "").strip()
-        if cid and llm_configs.get_config(cid) is None:
+        if cid and llm_store.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         settings.set_llm_override(cid)
         await manager.reload(runtime.pid)  # next turn's agent is built from the new model
@@ -2679,7 +2708,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         runtime reload needed). Unknown id → 404."""
         settings = _runtime_settings(runtime)
         cid = (req.config_id or "").strip()
-        if cid and live_configs.get_config(cid) is None:
+        if cid and live_store.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         settings.set_live_override(cid)
         return {"ok": True, "live_override": cid or None}

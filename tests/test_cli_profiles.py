@@ -10,10 +10,17 @@ import asyncio
 import pytest
 from typer.testing import CliRunner
 
-from assistant import profiles
 from assistant.cli import _DEFAULT_ACCENT, app
 from assistant.config import load_config
 from assistant.memory import write_profile
+from assistant.profiles import ProfileRegistry
+
+
+@pytest.fixture
+def registry() -> ProfileRegistry:
+    """The registry over the same HOME-isolated layout the CLI resolves."""
+    return ProfileRegistry(load_config().paths)
+
 
 runner = CliRunner()
 
@@ -21,38 +28,38 @@ runner = CliRunner()
 # --- profiles create ---
 
 
-def test_create_default_accent():
+def test_create_default_accent(registry):
     result = runner.invoke(app, ["profiles", "create", "Work"])
     assert result.exit_code == 0, result.output
     # no --accent → the single fallback hex (backend keeps no palette catalogue)
     assert f"accent    {_DEFAULT_ACCENT}" in result.output
     assert "Created profile 'work'" in result.output
 
-    meta = profiles.get_profile("work")
+    meta = registry.get_profile("work")
     assert meta is not None
     assert meta.accent == _DEFAULT_ACCENT
     # first profile becomes the active default
-    assert profiles.load_registry()["active_default"] == "work"
+    assert registry.load_registry()["active_default"] == "work"
     # the dir was created
-    assert profiles.profile_dir("work").exists()
+    assert registry.profile_dir("work").exists()
 
 
-def test_create_explicit_accent():
+def test_create_explicit_accent(registry):
     result = runner.invoke(app, ["profiles", "create", "Work", "--accent", "#7A52EC"])
     assert result.exit_code == 0, result.output
     # normalised to lowercase on store + echo
     assert "accent    #7a52ec" in result.output
 
-    assert profiles.get_profile("work").accent == "#7a52ec"
+    assert registry.get_profile("work").accent == "#7a52ec"
 
 
-def test_create_duplicate_accent_allowed():
+def test_create_duplicate_accent_allowed(registry):
     # No uniqueness rule (ADR 0002): two profiles may share a colour.
     runner.invoke(app, ["profiles", "create", "Work", "--accent", "#109e91"])
     result = runner.invoke(app, ["profiles", "create", "Personal", "--accent", "#109e91"])
     assert result.exit_code == 0, result.output
 
-    assert profiles.get_profile("personal").accent == "#109e91"
+    assert registry.get_profile("personal").accent == "#109e91"
 
 
 def test_create_invalid_accent_errors():
@@ -61,14 +68,14 @@ def test_create_invalid_accent_errors():
     assert "invalid accent" in result.output
 
 
-def test_create_workspace_derived():
+def test_create_workspace_derived(registry):
     result = runner.invoke(app, ["profiles", "create", "Work"])
     assert result.exit_code == 0, result.output
 
-    meta = profiles.get_profile("work")
     # workspace is derived from the profile dir (not user-chosen) and echoed on create.
-    assert meta.workspace == str(profiles.profile_dir("work") / "workspace")
-    assert f"workspace {meta.workspace}" in result.output
+    workspace = registry.profile_dir("work") / "workspace"
+    assert workspace == load_config().paths.root / "profiles" / "work" / "workspace"
+    assert f"workspace {workspace}" in result.output
 
 
 def test_create_rejects_workspace_flag():
@@ -98,11 +105,11 @@ def test_list_marks_active_default():
     assert not personal_line.startswith("*")
 
 
-def test_list_hides_archived_unless_all():
+def test_list_hides_archived_unless_all(registry):
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
 
-    profiles.archive_profile("personal")
+    registry.archive_profile("personal")
 
     default = runner.invoke(app, ["profiles", "list"])
     assert "personal" not in default.output
@@ -142,11 +149,11 @@ def test_unknown_profile_exits_with_guidance():
     assert "create one first" in result.output
 
 
-def test_archived_profile_targeting_reports_archived():
+def test_archived_profile_targeting_reports_archived(registry):
     runner.invoke(app, ["profiles", "create", "Work"])
     runner.invoke(app, ["profiles", "create", "Personal"])
 
-    profiles.archive_profile("personal")
+    registry.archive_profile("personal")
     result = runner.invoke(app, ["profile", "show", "-p", "personal"])
     assert result.exit_code == 1
     assert "archived" in result.output
@@ -157,7 +164,7 @@ def test_archived_profile_targeting_reports_archived():
 
 async def _seed(pid: str, text: str) -> None:
 
-    d = profiles.profile_dir(pid)
+    d = ProfileRegistry(load_config().paths).profile_dir(pid)
     d.mkdir(parents=True, exist_ok=True)
     await write_profile(text, d / "profile.db")
 

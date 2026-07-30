@@ -6,9 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 import assistant.gateway.core as core_mod
-from assistant import profiles
+from assistant.codex_auth import CodexAuthError
+from assistant.config import Config, load_config
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
+from assistant.paths import Paths
+from assistant.profiles import ProfileRegistry
 
 
 class FakeReply:
@@ -92,24 +95,54 @@ def use_fake_agent(monkeypatch, agent_factory=None):
     monkeypatch.setattr(core_mod, "create_agent", factory)
 
 
-def make_profile_app(*, name="Test", accent="#109e91", persist=False, memory=False):
+def make_profile_app(paths=None, *, name="Test", accent="#109e91", persist=False, memory=False):
     """Build a create_app FastAPI app around a ProfileManager with ONE profile.
 
-    Returns ``(app, pid)``. Relies on the autouse HOME-isolation fixture so the
-    registry + profile dir land under the test's tmp root. The profile is created
-    in the registry before start() so lifespan boots it; hit ``/api/p/{pid}/…``.
+    Returns ``(app, pid)``. ``paths`` is the install layout to run on; omitted, it
+    comes from the isolated environment the autouse HOME fixture sets up. The profile
+    is created in the registry before start() so lifespan boots it; hit
+    ``/api/p/{pid}/…``.
     """
 
-    meta = profiles.create_profile(name, accent)
-    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    manager = ProfileManager(memory=memory, persist=persist)
-    app = create_app(manager, persist=persist)
+    paths = paths if paths is not None else load_config().paths
+    meta = ProfileRegistry(paths).create_profile(name, accent)
+    paths.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    manager = ProfileManager(paths, memory=memory, persist=persist)
+    app = create_app(manager, persist=persist, code_reader=no_loopback_code_reader)
     return app, meta.id
+
+
+def no_loopback_code_reader(state: str) -> str:
+    """A ChatGPT sign-in code reader that gives up at once. The real one binds the
+    loopback callback port and blocks for five minutes, which would outlive the test."""
+    raise CodexAuthError("no loopback listener in tests")
 
 
 def api(pid: str, path: str = "") -> str:
     """Profile-scoped route prefix helper for tests: api('work', '/chats')."""
     return f"/api/p/{pid}{path}"
+
+
+def make_paths(root) -> Paths:
+    """An isolated layout under ``root`` — the plain-function form of the ``paths``
+    fixture, for helpers that already receive a tmp dir."""
+    return Paths(
+        root=root / "state",
+        workspace=root / "workspace",
+        codex_auth=root / "codex-cli-auth.json",
+    )
+
+
+@pytest.fixture
+def paths(tmp_path) -> Paths:
+    """An isolated on-disk layout. Neither the environment nor $HOME take part."""
+    return make_paths(tmp_path)
+
+
+@pytest.fixture
+def config(paths) -> Config:
+    """A Config over an isolated layout; every other field keeps its default."""
+    return Config.for_paths(paths)
 
 
 @pytest.fixture
@@ -127,22 +160,11 @@ def profile_app(monkeypatch):
 def _isolate_ag2assistant_home(monkeypatch, tmp_path):
     """Isolate tests from the developer's real ~/.ag2assistant state.
 
-    A real Google token/credentials would make build_agent_tools append the 8
-    Google tools and break tool-set assertions. We point the Google paths at an
-    empty tmp dir so `is_configured()`/`has_token()` are naturally False; tests
-    that need a token write to their own (separately-monkeypatched) paths, which
-    run after this fixture and therefore override it.
-
-    We also redirect HOME to a tmp dir so anything resolving `~/.ag2assistant`
-    (PermissionStore, the gateway's task/inquiry stores) writes to disposable
-    space instead of the developer's real state.
+    Redirecting HOME is enough: every on-disk location now derives from
+    ``Paths.from_env(env, home)``, so the Google credentials/token, the Codex CLI
+    login, the registry and the permission/task stores all land under the test's
+    own tmp root instead of the developer's real state. A real Google token would
+    otherwise make build_agent_tools append the 8 Google tools and break tool-set
+    assertions.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
-    try:
-        import assistant.integrations.google_auth as ga  # local: guarded (google_auth may be absent)
-
-        monkeypatch.setattr(ga, "token_path", lambda: tmp_path / "no_token.json")
-        monkeypatch.setattr(ga, "credentials_path", lambda: tmp_path / "no_creds.json")
-        monkeypatch.setattr(ga, "account_path", lambda: tmp_path / "no_account.txt")
-    except Exception:
-        pass

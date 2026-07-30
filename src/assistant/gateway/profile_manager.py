@@ -11,16 +11,16 @@ so every profile-owned path lands under the profile dir.
 """
 
 import asyncio
-import os
 import shutil
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 
 from assistant import channels, profiles
 from assistant.config import Config, load_config
 from assistant.gateway.core import Gateway, build_gateway
 from assistant.hitl import HitlServer
 from assistant.observability import log_suppressed, profile_logger, setup_logging
-from assistant.profiles import ProfileMeta
+from assistant.paths import Paths
+from assistant.profiles import ProfileMeta, ProfileRegistry
 
 # Platform → env vars that must ALL be present for its channel to run. Canonical
 # home is ``profiles`` (dependency-light, so both this module and the secrets store
@@ -28,11 +28,17 @@ from assistant.profiles import ProfileMeta
 _CHANNEL_TOKENS = profiles.CHANNEL_TOKEN_ENVS
 
 
-def _scrub_tokens(msg: str, envs: tuple[str, ...]) -> str:
-    """Replace any of the given env vars' current values appearing in ``msg`` with a
-    mask — platform libraries embed the raw token in some error messages."""
-    for env in envs:
-        value = os.environ.get(env)
+def _channel_tokens(platform: str, env: Mapping[str, str]) -> dict[str, str]:
+    """This platform's tokens as channel-constructor kwargs, read from a resolved env."""
+    return {
+        channels.CHANNEL_TOKEN_KWARGS[name]: env.get(name, "") for name in _CHANNEL_TOKENS[platform]
+    }
+
+
+def _scrub_tokens(msg: str, values: Iterable[str]) -> str:
+    """Replace any of the given token values appearing in ``msg`` with a mask —
+    platform libraries embed the raw token in some error messages."""
+    for value in values:
         if value:
             msg = msg.replace(value, "•••")
     return msg
@@ -59,7 +65,7 @@ def config_factory(pid: str) -> Callable[[], Config]:
 
     def resolve() -> Config:
         cfg = load_config()
-        meta = profiles.get_profile(pid)
+        meta = ProfileRegistry(cfg.paths).get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
         return cfg.with_profile(meta)
@@ -75,9 +81,10 @@ def resolve_active_profile(pid: str | None = None) -> tuple[str, Config, Callabl
     §3.5 guidance when there is no target (zero profiles / bad id) so callers can print a
     clear message pointing at ``serve`` / browser onboarding / ``profiles create``.
     """
+    registry = ProfileRegistry(load_config().paths)
     if pid is None:
-        pid = profiles.load_registry().get("active_default")
-    meta = profiles.get_profile(pid) if pid else None
+        pid = registry.load_registry().get("active_default")
+    meta = registry.get_profile(pid) if pid else None
     if meta is None:
         raise UnknownProfile(
             "no profile to use — create one first with 'ag2-assistant profiles create "
@@ -92,8 +99,12 @@ def resolve_active_profile(pid: str | None = None) -> tuple[str, Config, Callabl
 class ProfileRuntime:
     """One profile's live runtime: gateway + task service + channels + logger."""
 
-    def __init__(self, meta: ProfileMeta, *, memory: bool = True, persist: bool = True) -> None:
+    def __init__(
+        self, meta: ProfileMeta, paths: Paths, *, memory: bool = True, persist: bool = True
+    ) -> None:
         self.meta = meta
+        self.paths = paths
+        self._registry = ProfileRegistry(paths)
         self._memory = memory
         self._persist = persist
         self._config: Config | None = None
@@ -125,7 +136,7 @@ class ProfileRuntime:
 
     def refresh_meta(self) -> None:
         """Re-read this profile's registry entry (after a rename/accent edit)."""
-        meta = profiles.get_profile(self.pid)
+        meta = self._registry.get_profile(self.pid)
         if meta is not None:
             self.meta = meta
 
@@ -190,7 +201,19 @@ class ProfileRuntime:
 class ProfileManager:
     """Boots and owns every profile runtime (§4.1)."""
 
-    def __init__(self, *, memory: bool = True, persist: bool = True) -> None:
+    def __init__(
+        self,
+        paths: Paths | None = None,
+        config: Config | None = None,
+        *,
+        memory: bool = True,
+        persist: bool = True,
+    ) -> None:
+        # Install-level layout + config. Both default to the entry-point boundary so
+        # ``serve`` needs no wiring; profile-scoped configs are derived per runtime.
+        self.config = config if config is not None else load_config()
+        self.paths = paths if paths is not None else self.config.paths
+        self._registry = ProfileRegistry(self.paths)
         self._memory = memory
         self._persist = persist
         self._runtimes: dict[str, ProfileRuntime] = {}
@@ -206,13 +229,13 @@ class ProfileManager:
         Zero profiles is a legal no-op (fresh install, §3.5). Logging is set up once
         against the root config here so per-profile loggers write to the shared file.
         """
-        setup_logging(load_config())
-        for meta in profiles.list_profiles(include_archived=False):
+        setup_logging(self.config)
+        for meta in self._registry.list_profiles(include_archived=False):
             await self._boot(meta)
         await self._start_bound_channels()
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
-        runtime = ProfileRuntime(meta, memory=self._memory, persist=self._persist)
+        runtime = ProfileRuntime(meta, self.paths, memory=self._memory, persist=self._persist)
         await runtime.start()
         self._runtimes[meta.id] = runtime
         return runtime
@@ -222,7 +245,7 @@ class ProfileManager:
         it on that runtime. A binding to an archived/unknown profile is treated as
         unbound (logged, skipped) — the registry should already clear those, but boot
         is defensive."""
-        for platform, pid in profiles.channel_bindings().items():
+        for platform, pid in self._registry.channel_bindings().items():
             if pid is None:
                 continue
             runtime = self._runtimes.get(pid)
@@ -241,8 +264,11 @@ class ProfileManager:
         (False, reason) instead of crashing. Success clears any prior error.
 
         Returns ``(active, reason)``: active True iff the channel is now live."""
-        envs = _CHANNEL_TOKENS[platform]
-        if not all(os.environ.get(e) for e in envs):
+        # Tokens ride on the runtime's resolved config (the secrets store contributes
+        # them at resolve time), so nothing here reads the process environment.
+        env = runtime.config.secret_env if runtime.config is not None else {}
+        tokens = _channel_tokens(platform, env)
+        if not all(tokens.values()):
             msg = f"no token configured for {platform}"
             self.channel_errors[platform] = msg
             return False, msg
@@ -251,13 +277,13 @@ class ProfileManager:
         # when a token is missing. Never let that propagate: it would 500 the endpoint
         # and crash boot. Record the reason, stay inactive.
         try:
-            channel = channels.get_channel(platform)
+            channel = channels.get_channel(platform, **tokens)
             await channel.start(runtime.gateway)
         except Exception as exc:
             # Platform libraries embed the raw token in some error messages
             # (e.g. Telegram's "The token <value> was rejected"); scrub it —
             # this string is logged AND returned via GET /api/channels.
-            msg = _scrub_tokens(f"could not start '{platform}': {exc}", envs)
+            msg = _scrub_tokens(f"could not start '{platform}': {exc}", tokens.values())
             runtime.log.error(msg)
             self.channel_errors[platform] = msg
             return False, msg
@@ -299,7 +325,7 @@ class ProfileManager:
         self.channel_errors.pop(platform, None)
 
         # Persist the binding (validates platform + pid; raises ValueError otherwise).
-        profiles.bind_channel(platform, pid)
+        self._registry.bind_channel(platform, pid)
 
         if pid is None:
             return {"bound": None, "active": False, "reason": None}
@@ -328,7 +354,7 @@ class ProfileManager:
                 await self._stop_channel_on(runtime, platform)
         self.channel_errors.pop(platform, None)
 
-        pid = profiles.channel_bindings().get(platform)
+        pid = self._registry.channel_bindings().get(platform)
         if pid is None:
             return {"bound": None, "active": False, "reason": None}
         runtime = self._runtimes.get(pid)
@@ -350,7 +376,7 @@ class ProfileManager:
         """Registry-first lookup (§4.1): unknown → UnknownProfile; archived →
         ArchivedProfile; registered+unarchived but not running → RuntimeError (a server
         bug, never lazy-boot)."""
-        meta = profiles.get_profile(pid)
+        meta = self._registry.get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
         if meta.archived:
@@ -371,13 +397,13 @@ class ProfileManager:
 
     @property
     def active_default(self) -> str | None:
-        return profiles.load_registry().get("active_default")
+        return self._registry.load_registry().get("active_default")
 
     async def create(self, name: str, accent: str) -> ProfileRuntime:
         """Create a profile (registry + dir) and boot its runtime live (§3.5).
         ``accent`` is a ``#rrggbb`` hex (ADR 0002)."""
-        meta = profiles.create_profile(name, accent)
-        profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+        meta = self._registry.create_profile(name, accent)
+        self._registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
         return await self._boot(meta)
 
     async def reload(self, pid: str) -> None:
@@ -397,33 +423,33 @@ class ProfileManager:
           fire the runtime's close callbacks (WP4 closes WS with 4001), mark archived in
           the registry, and drop + close the runtime.
         """
-        meta = profiles.get_profile(pid)
+        meta = self._registry.get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
         if meta.archived:
             raise ArchivedProfile(pid)
 
-        unarchived = profiles.list_profiles(include_archived=False)
+        unarchived = self._registry.list_profiles(include_archived=False)
         if len(unarchived) <= 1:
             raise ValueError("cannot archive the last unarchived profile")
 
-        if profiles.load_registry().get("active_default") == pid:
+        if self._registry.load_registry().get("active_default") == pid:
             if not new_default:
                 raise ValueError(
                     "archiving the active default requires a replacement (new_default)"
                 )
-            replacement = profiles.get_profile(new_default)
+            replacement = self._registry.get_profile(new_default)
             if replacement is None or replacement.archived:
                 raise ValueError(
                     f"new_default '{new_default}' is not an existing unarchived profile"
                 )
-            profiles.set_active_default(new_default)
+            self._registry.set_active_default(new_default)
 
         # Any channels bound to this profile must have their errors + registry bindings
         # cleared. The registry clearing happens in profiles.archive_profile below; the
         # runtime's live channels are stopped by runtime.close(). Drop stale errors for
         # the platforms this profile owned.
-        for platform, owner in profiles.channel_bindings().items():
+        for platform, owner in self._registry.channel_bindings().items():
             if owner == pid:
                 self.channel_errors.pop(platform, None)
 
@@ -439,7 +465,7 @@ class ProfileManager:
             await runtime.close()
             self._runtimes.pop(pid, None)
 
-        profiles.archive_profile(pid)
+        self._registry.archive_profile(pid)
 
     async def restore(self, pid: str) -> ProfileRuntime:
         """Un-archive a profile and boot its runtime live (§4.9, ADR 0003).
@@ -449,18 +475,18 @@ class ProfileManager:
         never left in the unarchived-but-not-running state ``get`` treats as a server
         bug. Unknown → UnknownProfile; a live (non-archived) profile → ValueError.
         """
-        meta = profiles.get_profile(pid)
+        meta = self._registry.get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
         if not meta.archived:
             raise ValueError(f"profile is not archived: {pid}")
 
-        restored = profiles.restore_profile(pid)
+        restored = self._registry.restore_profile(pid)
         try:
             return await self._boot(restored)
         except Exception:
             # Roll back the flag so the invariant "unarchived ⟺ running" holds.
-            profiles.archive_profile(pid)
+            self._registry.archive_profile(pid)
             self._runtimes.pop(pid, None)
             raise
 
@@ -472,7 +498,7 @@ class ProfileManager:
         tear down a running runtime, reassign the active default, or hit the last-profile
         guardrail — an archived profile is already none of those. Unknown → UnknownProfile.
         """
-        meta = profiles.get_profile(pid)
+        meta = self._registry.get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
         if not meta.archived:
@@ -485,5 +511,5 @@ class ProfileManager:
 
         # Erase the folder first; only drop the registry entry once the disk is clear,
         # so a failed rmtree leaves the profile cleanly archived rather than half-gone.
-        shutil.rmtree(profiles.profile_dir(pid), ignore_errors=True)
-        profiles.delete_profile(pid)
+        shutil.rmtree(self._registry.profile_dir(pid), ignore_errors=True)
+        self._registry.delete_profile(pid)

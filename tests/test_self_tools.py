@@ -8,6 +8,7 @@ from assistant.folders import READ, READ_WRITE, FolderStore
 from assistant.permissions import PermissionManager
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
+from tests.conftest import make_paths
 
 
 class _Ctx:
@@ -18,7 +19,7 @@ class _Ctx:
 
 
 def _tools(tmp_path):
-    config = Config()
+    config = Config.for_paths(make_paths(tmp_path))
     config.data_dir = tmp_path / "profiles" / "default"
     config.data_dir.mkdir(parents=True)
     return {t.name: t for t in build_self_tools(config, profile_settings(config.data_dir))}
@@ -156,7 +157,7 @@ def test_self_tools_are_wired_into_the_chat_agent(tmp_path):
     Everything else here passes even if create_agent never attaches them."""
     from assistant.agent import create_agent
 
-    config = Config()
+    config = Config.for_paths(make_paths(tmp_path))
     config.skills_dir = tmp_path / "skills"
     agent = create_agent(config, memory=False, skills=True)
     assert _SELF_TOOLS <= {t.name for t in agent.tools}
@@ -166,7 +167,7 @@ def test_scoped_task_subagent_does_not_get_self_tools(tmp_path):
     """Chat only, like ask_user — a scoped subagent answers to its task."""
     from assistant.agent import create_agent
 
-    config = Config()
+    config = Config.for_paths(make_paths(tmp_path))
     config.skills_dir = tmp_path / "skills"
     agent = create_agent(config, memory=False, skills=True, capabilities=["web"])
     assert not (_SELF_TOOLS & {t.name for t in agent.tools})
@@ -176,7 +177,7 @@ def test_skill_reaches_the_available_skills_catalog(tmp_path):
     """The skill is only useful if SkillPlugin discloses it in the system prompt."""
     from assistant.agent import build_skills_plugin, build_skills_runtime
 
-    config = Config()
+    config = Config.for_paths(make_paths(tmp_path))
     config.skills_dir = tmp_path / "skills"
     plugin = build_skills_plugin(config, build_skills_runtime(config))
     assert "self-knowledge" in "\n".join(plugin._system_prompt)
