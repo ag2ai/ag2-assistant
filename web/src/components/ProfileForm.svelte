@@ -30,6 +30,11 @@
     busyLabel = 'Creating…',
     // onSubmit({name, accent}) -> Promise. Throw to show inline error.
     onSubmit,
+    // Optional dismiss. When given, Cancel renders in the SAME action row as the
+    // submit button — consumers that bolt their own Cancel underneath the form
+    // end up with the two buttons stacked on separate lines.
+    onCancel = null,
+    cancelLabel = 'Cancel',
     autofocus = true,
   } = $props()
 
@@ -120,6 +125,10 @@
   {#if error}<div class="pf-error"><Icon name="x" size={13} /> {error}</div>{/if}
 
   <div class="pf-actions">
+    {#if onCancel}
+      <!-- Stays enabled while busy: if the submit hangs, this is the way out. -->
+      <button class="pf-btn ghost" type="button" onclick={onCancel}>{cancelLabel}</button>
+    {/if}
     <button class="pf-btn primary" type="button" disabled={!name.trim() || busy} onclick={submit}>
       {busy ? busyLabel : submitLabel} <Icon name="chevron-right" size={16} />
     </button>
@@ -146,7 +155,9 @@
     color: var(--text); font: inherit; font-size: var(--text-sm); padding: 11px 0;
   }
 
-  .pf-dots { display: flex; flex-wrap: wrap; gap: 10px; }
+  /* The selected swatch's ring is drawn OUTSIDE its box (box-shadow), so the row
+     needs its own inset — without it the first dot's ring crosses the panel edge. */
+  .pf-dots { display: flex; flex-wrap: wrap; gap: 10px; padding: 4px; }
   .pf-dot {
     width: 30px; height: 30px; flex: none; cursor: pointer;
     border-radius: var(--radius-pill); border: 2px solid transparent;
@@ -179,7 +190,7 @@
     font-size: var(--text-sm); color: var(--danger, #e53c20);
   }
 
-  .pf-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+  .pf-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 4px; }
   .pf-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer;
     border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 10px 18px;
@@ -192,4 +203,9 @@
   .pf-btn.primary:hover { background: var(--surface-hover); border-color: var(--accent-border); }
   .pf-btn.primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .pf-btn.primary:disabled { opacity: .5; cursor: default; }
+
+  /* Secondary: recedes next to the primary so the row still reads as one choice. */
+  .pf-btn.ghost { background: none; border-color: transparent; color: var(--text-muted); }
+  .pf-btn.ghost:hover { background: var(--surface-hover); color: var(--text); }
+  .pf-btn.ghost:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 </style>

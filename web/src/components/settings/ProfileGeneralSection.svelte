@@ -171,7 +171,9 @@
   }
   .pfield input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 
-  .pdots { display: flex; flex-wrap: wrap; gap: 8px; }
+  /* The selected swatch's ring is drawn OUTSIDE its box (box-shadow), so the row
+     needs its own inset — without it the first dot's ring crosses the panel edge. */
+  .pdots { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px; }
   .pswatch {
     width: 26px; height: 26px; flex: none; cursor: pointer; color: #fff;
     border-radius: var(--radius-pill); border: 2px solid transparent; background: var(--dot);
