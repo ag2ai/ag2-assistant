@@ -15,8 +15,7 @@ from ag2.tools.skills.skill_types import SkillMetadata
 from fastapi.testclient import TestClient
 
 from assistant.gateway.app import create_app
-from assistant.gateway.profile_manager import ProfileManager
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_manager, make_profile_app
 
 
 def _fake_registry(monkeypatch, *, desc="installed via registry"):
@@ -58,7 +57,6 @@ def _fake_registry(monkeypatch, *, desc="installed via registry"):
 
 
 def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 
@@ -83,8 +81,7 @@ def test_search_projects_results(monkeypatch):
 
 def test_install_global_lands_and_fans_out(monkeypatch):
     _fake_registry(monkeypatch)
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=False)
+    manager = make_manager()
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -114,8 +111,7 @@ def test_install_global_lands_and_fans_out(monkeypatch):
 
 def test_install_profile_lands_only_for_that_profile(monkeypatch):
     _fake_registry(monkeypatch)
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    manager = make_manager(persist=True)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})

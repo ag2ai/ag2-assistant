@@ -19,7 +19,8 @@ from assistant.gateway.core import Gateway
 from assistant.gateway.tasks_service import TaskService
 from assistant.tasks.store import TaskStore
 from assistant.workspace import mention_forms
-from tests.conftest import FakeAgent, api, make_paths
+from tests.support.apps import api, make_paths
+from tests.support.fakes import FakeAgent
 
 
 async def _gateway(tmp_path, monkeypatch, *, tasks=False) -> Gateway:

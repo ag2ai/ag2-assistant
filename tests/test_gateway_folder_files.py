@@ -9,11 +9,10 @@ non-granted / chat-blocked Folder or a path escaping every readable root, honor
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_profile_app
 
 
 def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 

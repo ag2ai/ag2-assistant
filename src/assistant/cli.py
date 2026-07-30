@@ -97,7 +97,7 @@ def _resolve_profile_config(profile: str | None) -> Config:
     derived config so callers read profile-owned paths off ``config.data_dir``.
     """
     try:
-        _, config, _ = resolve_active_profile(profile)
+        _, config, _ = resolve_active_profile(profile, paths=default_paths(), env=os.environ)
     except ArchivedProfile as exc:
         typer.echo(f"profile '{exc}' is archived")
         raise typer.Exit(1)
@@ -196,7 +196,9 @@ def chat(
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
     try:
-        _, chat_config, factory = resolve_active_profile(profile)
+        _, chat_config, factory = resolve_active_profile(
+            profile, paths=default_paths(), env=os.environ
+        )
     except ArchivedProfile as exc:
         typer.echo(f"profile '{exc}' is archived")
         raise typer.Exit(1)
@@ -546,7 +548,7 @@ def gateway(
     typer.echo(f"  Web UI  http://{host}:{port}/")
     typer.echo(f"  API     http://{host}:{port}/api/p/{{pid}}/…")
     _echo_local_time()
-    uvicorn.run(create_app(ProfileManager(memory=memory)), host=host, port=port)
+    uvicorn.run(create_app(ProfileManager(memory=memory, env=os.environ)), host=host, port=port)
 
 
 @app.command("acp-bridge")
@@ -704,7 +706,7 @@ def run(
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
-    manager = ProfileManager(memory=memory)
+    manager = ProfileManager(memory=memory, env=os.environ)
 
     if not rest:
         # Headless: run the manager directly (boot profiles + channels + schedulers),

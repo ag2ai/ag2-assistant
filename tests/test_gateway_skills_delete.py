@@ -10,13 +10,11 @@ from fastapi.testclient import TestClient
 
 from assistant.config import load_config
 from assistant.gateway.app import create_app
-from assistant.gateway.profile_manager import ProfileManager
 from assistant.skills import SkillStateStore
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_manager, make_profile_app
 
 
 def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 
@@ -81,8 +79,7 @@ def test_delete_global_cascade_purges_suppressions(monkeypatch):
 
 
 def test_delete_global_fans_out(monkeypatch):
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=False)
+    manager = make_manager()
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -106,8 +103,7 @@ def test_delete_global_fans_out(monkeypatch):
 def test_delete_profile_skill_affects_only_active_profile(monkeypatch):
     """A Profile skill is deleted for the active profile only; the change reloads just
     that profile. A shared skill can't be deleted from the profile tab (409)."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    manager = make_manager(persist=True)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -164,8 +160,7 @@ def test_global_delete_preserves_same_named_profile_own_disable(monkeypatch):
     """A Global 'foo' and a profile's OWN 'foo' can coexist. Disabling the own copy and
     then deleting the unrelated Global 'foo' must leave the own copy's off-state intact
     (finding 4) — it must not silently flip back to available."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    manager = make_manager(persist=True)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -188,8 +183,7 @@ def test_profile_copy_delete_keeps_shadowed_global_suppression(monkeypatch):
     """Work suppressed a Global 'foo', then installed its OWN 'foo' shadowing it.
     Deleting the own copy reveals the Global 'foo' — which must stay Suppressed for
     Work, not flip to available (finding 5)."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    manager = make_manager(persist=True)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})

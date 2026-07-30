@@ -31,14 +31,14 @@ class _Out:
 
 async def test_summarize_normalises_whitespace_and_caps(paths):
     s = await summarize_run(
-        Config.for_paths(paths), "do", "long reply", agent_factory=lambda: _FakeAgent(_Out())
+        Config.for_paths(paths), "do", "long reply", agent_factory=lambda cfg: _FakeAgent(_Out())
     )
     assert s == "Sent digest: 5 stories, leading with X"
 
 
 async def test_summarize_swallows_failures(paths):
     s = await summarize_run(
-        Config.for_paths(paths), "do", "r", agent_factory=lambda: _FakeAgent(boom=True)
+        Config.for_paths(paths), "do", "r", agent_factory=lambda cfg: _FakeAgent(boom=True)
     )
     assert s == ""
 
@@ -52,7 +52,7 @@ async def test_suggest_task_meta_returns_name_and_description(paths):
     name, desc = await suggest_task_meta(
         Config.for_paths(paths),
         "collect news each morning",
-        agent_factory=lambda: _FakeAgent(_MetaOut()),
+        agent_factory=lambda cfg: _FakeAgent(_MetaOut()),
     )
     assert name == "Daily news digest"
     assert desc == "Collects headlines every morning."
@@ -61,7 +61,7 @@ async def test_suggest_task_meta_returns_name_and_description(paths):
 async def test_suggest_task_meta_falls_back_on_llm_failure(paths):
     prompt = "x" * 100
     name, desc = await suggest_task_meta(
-        Config.for_paths(paths), prompt, agent_factory=lambda: _FakeAgent(boom=True)
+        Config.for_paths(paths), prompt, agent_factory=lambda cfg: _FakeAgent(boom=True)
     )
     assert name == "x" * 40
     assert desc == ""
@@ -81,10 +81,10 @@ async def test_one_shot_agents_close_their_model_config(paths):
     cfg = _ClosingConfig()
     agent = _FakeAgent(_Out())
     agent.config = cfg
-    await summarize_run(Config.for_paths(paths), "do", "r", agent_factory=lambda: agent)
+    await summarize_run(Config.for_paths(paths), "do", "r", agent_factory=lambda cfg: agent)
     assert cfg.closed == 1
     cfg2 = _ClosingConfig()
     agent2 = _FakeAgent(_MetaOut())
     agent2.config = cfg2
-    await suggest_task_meta(Config.for_paths(paths), "p", agent_factory=lambda: agent2)
+    await suggest_task_meta(Config.for_paths(paths), "p", agent_factory=lambda cfg: agent2)
     assert cfg2.closed == 1

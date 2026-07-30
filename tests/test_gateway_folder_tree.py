@@ -13,11 +13,10 @@ Mirrors ``test_gateway_folder_files.py`` for the granted-Folder setup."""
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_profile_app
 
 
-def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
+def _client():
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 
@@ -49,10 +48,10 @@ def _list(client, pid, path, **params):
 # ---- Folder roots surface ---------------------------------------------------
 
 
-def test_profile_granted_folder_shows_as_root(monkeypatch, tmp_path):
+def test_profile_granted_folder_shows_as_root(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo, name="Acme")
         _grant(client, f["id"], pid, "read")
@@ -65,19 +64,19 @@ def test_profile_granted_folder_shows_as_root(monkeypatch, tmp_path):
         assert root["exists"] is True
 
 
-def test_non_granted_folder_is_absent_from_roots(monkeypatch, tmp_path):
+def test_non_granted_folder_is_absent_from_roots(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         _register_folder(client, repo)  # registered but NOT granted
         assert _roots(client, pid).json()["roots"] == []
 
 
-def test_read_write_grant_surfaces_its_mode(monkeypatch, tmp_path):
+def test_read_write_grant_surfaces_its_mode(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")
@@ -85,10 +84,10 @@ def test_read_write_grant_surfaces_its_mode(monkeypatch, tmp_path):
         assert root["mode"] == "read_write"
 
 
-def test_chat_only_grant_scopes_roots_by_chat_id(monkeypatch, tmp_path):
+def test_chat_only_grant_scopes_roots_by_chat_id(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read", chat_id="c1")  # chat-ONLY grant
@@ -100,10 +99,10 @@ def test_chat_only_grant_scopes_roots_by_chat_id(monkeypatch, tmp_path):
         assert _roots(client, pid).json()["roots"] == []
 
 
-def test_chat_widened_grant_reports_widened_mode(monkeypatch, tmp_path):
+def test_chat_widened_grant_reports_widened_mode(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")  # profile: read
@@ -112,10 +111,10 @@ def test_chat_widened_grant_reports_widened_mode(monkeypatch, tmp_path):
         assert _roots(client, pid, chat_id="c1").json()["roots"][0]["mode"] == "read_write"
 
 
-def test_chat_blocked_folder_is_absent_in_that_chat(monkeypatch, tmp_path):
+def test_chat_blocked_folder_is_absent_in_that_chat(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")  # readable at profile scope...
@@ -124,10 +123,10 @@ def test_chat_blocked_folder_is_absent_in_that_chat(monkeypatch, tmp_path):
         assert _roots(client, pid, chat_id="c1").json()["roots"] == []
 
 
-def test_missing_path_folder_shows_as_repointable_root(monkeypatch, tmp_path):
+def test_missing_path_folder_shows_as_repointable_root(tmp_path):
     repo = tmp_path / "gone"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -137,10 +136,10 @@ def test_missing_path_folder_shows_as_repointable_root(monkeypatch, tmp_path):
         assert root["mode"] == "read"
 
 
-def test_nested_folder_appears_once_under_outermost(monkeypatch, tmp_path):
+def test_nested_folder_appears_once_under_outermost(tmp_path):
     outer = tmp_path / "repo"
     (outer / "pkg").mkdir(parents=True)
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         outer_folder = _register_folder(client, outer)
         inner_folder = _register_folder(client, outer / "pkg")
@@ -153,12 +152,12 @@ def test_nested_folder_appears_once_under_outermost(monkeypatch, tmp_path):
 # ---- Folder-contents listing ------------------------------------------------
 
 
-def test_list_folder_level_returns_files_and_subdirs(monkeypatch, tmp_path):
+def test_list_folder_level_returns_files_and_subdirs(tmp_path):
     repo = tmp_path / "acme"
     (repo / "src").mkdir(parents=True)
     (repo / "README.md").write_text("hi")
     (repo / "src" / "deep.py").write_text("x")  # NOT in this level
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -171,14 +170,14 @@ def test_list_folder_level_returns_files_and_subdirs(monkeypatch, tmp_path):
         assert [x["name"] for x in sub["files"]] == ["deep.py"]
 
 
-def test_list_folder_level_prunes_noise_dirs(monkeypatch, tmp_path):
+def test_list_folder_level_prunes_noise_dirs(tmp_path):
     repo = tmp_path / "acme"
     (repo / ".git").mkdir(parents=True)
     (repo / "node_modules").mkdir()
     (repo / "app").mkdir()
     (repo / "keep.txt").write_text("k")
     (repo / ".DS_Store").write_text("junk")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -187,22 +186,22 @@ def test_list_folder_level_prunes_noise_dirs(monkeypatch, tmp_path):
         assert [x["name"] for x in body["files"]] == ["keep.txt"]  # .DS_Store pruned
 
 
-def test_list_non_granted_folder_is_denied(monkeypatch, tmp_path):
+def test_list_non_granted_folder_is_denied(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "a.txt").write_text("a")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         _register_folder(client, repo)  # registered but NOT granted
         assert _list(client, pid, repo).status_code == 404
 
 
-def test_list_escaping_readable_root_is_denied(monkeypatch, tmp_path):
+def test_list_escaping_readable_root_is_denied(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "a.txt").write_text("a")
     (tmp_path / "outside").mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -210,11 +209,11 @@ def test_list_escaping_readable_root_is_denied(monkeypatch, tmp_path):
         assert _list(client, pid, repo / "..").status_code == 404  # traversal guard
 
 
-def test_list_folder_honors_chat_id(monkeypatch, tmp_path):
+def test_list_folder_honors_chat_id(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "a.txt").write_text("a")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read", chat_id="c1")  # chat-ONLY grant
@@ -230,10 +229,10 @@ def test_list_folder_honors_chat_id(monkeypatch, tmp_path):
 # that a plain chat scope can't see (the "FileTree ignores the task's folders" bug).
 
 
-def test_task_scoped_folder_shows_as_root_via_task_token(monkeypatch, tmp_path):
+def test_task_scoped_folder_shows_as_root_via_task_token(tmp_path):
     media = tmp_path / "media"
     media.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, media, name="Media")
         _grant(client, f["id"], pid, "read", task_id="task-1")  # task-ONLY grant
@@ -246,10 +245,10 @@ def test_task_scoped_folder_shows_as_root_via_task_token(monkeypatch, tmp_path):
         assert _roots(client, pid, chat_id="task:task-2").json()["roots"] == []
 
 
-def test_task_none_override_hides_profile_folder_on_task_page(monkeypatch, tmp_path):
+def test_task_none_override_hides_profile_folder_on_task_page(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")  # profile-wide read
@@ -258,11 +257,11 @@ def test_task_none_override_hides_profile_folder_on_task_page(monkeypatch, tmp_p
         assert _roots(client, pid, chat_id="task:task-1").json()["roots"] == []
 
 
-def test_list_task_folder_authorizes_via_task_token(monkeypatch, tmp_path):
+def test_list_task_folder_authorizes_via_task_token(tmp_path):
     media = tmp_path / "media"
     media.mkdir()
     (media / "clip.txt").write_text("x")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, media)
         _grant(client, f["id"], pid, "read", task_id="task-1")
@@ -271,14 +270,14 @@ def test_list_task_folder_authorizes_via_task_token(monkeypatch, tmp_path):
         assert _list(client, pid, media, chat_id="task:task-2").status_code == 404
 
 
-def test_run_thread_token_resolves_chat_task_and_profile_together(monkeypatch, tmp_path):
+def test_run_thread_token_resolves_chat_task_and_profile_together(tmp_path):
     # A run thread carries ``task-run:{run_id}``: the endpoint derives the run's task
     # (via get_run) AND keeps the token as the chat scope, so a run resolves all three
     # layers at once — its own chat-scoped grant, the task's grants, and profile grants.
     media, workdir, scripts = tmp_path / "media", tmp_path / "assistant", tmp_path / "scripts"
     for d in (media, workdir, scripts):
         d.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         task = client.post(api(pid, "/tasks"), json={"name": "T", "prompt": "p"}).json()["task"]
         run = client.post(api(pid, f"/tasks/{task['id']}/run")).json()["run"]
@@ -297,9 +296,9 @@ def test_run_thread_token_resolves_chat_task_and_profile_together(monkeypatch, t
         }
 
 
-def test_relative_path_still_lists_files_space(monkeypatch, tmp_path):
+def test_relative_path_still_lists_files_space(tmp_path):
     # Regression: no/relative path is unchanged — today's whole-Files-space listing.
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         client.post(
             api(pid, "/files/upload"),

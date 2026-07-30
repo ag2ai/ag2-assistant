@@ -17,7 +17,7 @@ from assistant.config import Config
 from assistant.integrations import google_auth
 from assistant.integrations.google_auth import GoogleAuth, install_hint, libs_available
 from assistant.tools.google import _decode_drive_content, _extract_drive_id, build_google_tools
-from tests.conftest import FakeRunMixin, make_profile_app, use_fake_agent
+from tests.support.apps import make_profile_app
 
 # Finders stand in for "are the optional [google] libs importable?" — the real one is
 # importlib.find_spec, so a callable answering by name is the whole dependency.
@@ -153,25 +153,16 @@ def test_save_credentials_validates(google, paths):
 # --- gateway endpoints (mocked auth) ---
 
 
-def _client(monkeypatch, **kwargs):
-    class _FakeAgent(FakeRunMixin):
-        tools = []
-
-        async def ask(self, *a, stream=None, **k):
-            class R:
-                body = "ok"
-
-            return R()
-
-    use_fake_agent(monkeypatch, lambda *a, **k: _FakeAgent())
-    app, _pid = make_profile_app(**kwargs)
+def _client(paths, **kwargs):
+    """A started app on the isolated layout; only the Google integration is injected."""
+    app, _pid = make_profile_app(paths, **kwargs)
     return TestClient(app)
 
 
 def test_google_status_endpoint(monkeypatch, paths):
     _sign_in(paths)
     google = GoogleAuth(paths, finder=HAS_LIBS)
-    with _client(monkeypatch, google=google) as client:
+    with _client(paths, google=google) as client:
         st = client.get("/api/google/status").json()
         assert st == {
             "configured": True,
@@ -187,7 +178,7 @@ def test_google_status_reports_missing_libs(monkeypatch, paths):
     the UI needs the remedy, not a green tick."""
     _sign_in(paths)
     google = GoogleAuth(paths, finder=NO_LIBS)
-    with _client(monkeypatch, google=google) as client:
+    with _client(paths, google=google) as client:
         st = client.get("/api/google/status").json()
         assert st["signed_in"] is True
         assert st["libs_available"] is False
@@ -237,7 +228,7 @@ def test_google_login_url_and_callback(monkeypatch, paths):
             completed.update(flow=flow, code=code)
             return "me@example.com"
 
-    with _client(monkeypatch, google=ScriptedAuth(paths, finder=HAS_LIBS)) as client:
+    with _client(paths, google=ScriptedAuth(paths, finder=HAS_LIBS)) as client:
         r = client.post("/api/google/login_url").json()
         assert r["ok"] is True
         assert "accounts.google.com" in r["auth_url"]
@@ -254,7 +245,7 @@ def test_google_login_url_and_callback(monkeypatch, paths):
 
 
 def test_google_credentials_upload_endpoint(monkeypatch, paths):
-    with _client(monkeypatch, google=GoogleAuth(paths, finder=HAS_LIBS)) as client:
+    with _client(paths, google=GoogleAuth(paths, finder=HAS_LIBS)) as client:
         ok = client.post(
             "/api/google/credentials", json={"content": '{"installed": {"client_id": "x"}}'}
         ).json()

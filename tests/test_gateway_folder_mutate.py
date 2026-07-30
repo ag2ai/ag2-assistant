@@ -9,11 +9,10 @@ scoping, and the untouched relative Files-space path (regression). Mirrors
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_profile_app
 
 
-def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
+def _client():
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 
@@ -68,10 +67,10 @@ def _upload(client, pid, target_dir, name=b"", data=b"hi", **form):
 # ---- task-scoped mutation (the open Task page carries ``chat_id=task:{id}``) ----
 
 
-def test_read_write_task_folder_is_mutable_via_task_token(monkeypatch, tmp_path):
+def test_read_write_task_folder_is_mutable_via_task_token(tmp_path):
     media = tmp_path / "media"
     media.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, media)
         _grant(client, f["id"], pid, "read_write", task_id="task-1")  # task-only read+write
@@ -82,10 +81,10 @@ def test_read_write_task_folder_is_mutable_via_task_token(monkeypatch, tmp_path)
         assert _mkdir(client, pid, media / "nope").status_code in (400, 404)
 
 
-def test_read_only_task_folder_rejects_mutation(monkeypatch, tmp_path):
+def test_read_only_task_folder_rejects_mutation(tmp_path):
     media = tmp_path / "media"
     media.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, media)
         _grant(client, f["id"], pid, "read", task_id="task-1")  # read-only for the task
@@ -97,12 +96,12 @@ def test_read_only_task_folder_rejects_mutation(monkeypatch, tmp_path):
 # ---- edit in place (ADR 0011 optimistic concurrency) ----
 
 
-def test_read_write_folder_file_edits_in_place_with_etag(monkeypatch, tmp_path):
+def test_read_write_folder_file_edits_in_place_with_etag(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     doc = repo / "notes.md"
     doc.write_text("v1")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")
@@ -116,14 +115,14 @@ def test_read_write_folder_file_edits_in_place_with_etag(monkeypatch, tmp_path):
         assert doc.read_text() == "v2"
 
 
-def test_folder_listing_advertises_level_mode(monkeypatch, tmp_path):
+def test_folder_listing_advertises_level_mode(tmp_path):
     # The Directory listing carries THIS level's resolved mode so the tree derives its
     # rows' write affordances from the Grant that covers it — a read_write Folder nested
     # under a read root reads as writable when descended into (ticket 04).
     root = tmp_path / "root"
     (root / "inner").mkdir(parents=True)
     (root / "inner" / "f.txt").write_text("x")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         fr = _register_folder(client, root)
         fi = _register_folder(client, root / "inner")
@@ -135,11 +134,11 @@ def test_folder_listing_advertises_level_mode(monkeypatch, tmp_path):
         assert outer["mode"] == "read"
 
 
-def test_get_advertises_folder_file_mode(monkeypatch, tmp_path):
+def test_get_advertises_folder_file_mode(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     (repo / "a.md").write_text("x")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -148,12 +147,12 @@ def test_get_advertises_folder_file_mode(monkeypatch, tmp_path):
         assert _get(client, pid, repo / "a.md").headers.get("X-File-Mode") == "read_write"
 
 
-def test_read_only_folder_file_denies_write(monkeypatch, tmp_path):
+def test_read_only_folder_file_denies_write(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     doc = repo / "readme.md"
     doc.write_text("keep")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")  # read-only Grant
@@ -162,12 +161,12 @@ def test_read_only_folder_file_denies_write(monkeypatch, tmp_path):
         assert doc.read_text() == "keep"
 
 
-def test_non_granted_folder_write_is_404(monkeypatch, tmp_path):
+def test_non_granted_folder_write_is_404(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     doc = repo / "x.md"
     doc.write_text("y")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         _register_folder(client, repo)  # registered but NOT granted
         assert _put(client, pid, doc, "z").status_code == 404
@@ -177,12 +176,12 @@ def test_non_granted_folder_write_is_404(monkeypatch, tmp_path):
 # ---- delete ----
 
 
-def test_read_write_folder_file_and_dir_delete(monkeypatch, tmp_path):
+def test_read_write_folder_file_and_dir_delete(tmp_path):
     repo = tmp_path / "acme"
     (repo / "sub").mkdir(parents=True)
     (repo / "sub" / "a.txt").write_text("a")
     (repo / "top.txt").write_text("t")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")
@@ -194,12 +193,12 @@ def test_read_write_folder_file_and_dir_delete(monkeypatch, tmp_path):
         assert repo.is_dir()  # the Folder root itself is never removed
 
 
-def test_read_only_folder_file_denies_delete(monkeypatch, tmp_path):
+def test_read_only_folder_file_denies_delete(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     doc = repo / "keep.txt"
     doc.write_text("k")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -210,12 +209,12 @@ def test_read_only_folder_file_denies_delete(monkeypatch, tmp_path):
 # ---- move / rename within the subtree ----
 
 
-def test_read_write_folder_file_renames_and_moves_within_subtree(monkeypatch, tmp_path):
+def test_read_write_folder_file_renames_and_moves_within_subtree(tmp_path):
     repo = tmp_path / "acme"
     (repo / "sub").mkdir(parents=True)
     doc = repo / "old.md"
     doc.write_text("body")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")
@@ -227,7 +226,7 @@ def test_read_write_folder_file_renames_and_moves_within_subtree(monkeypatch, tm
         assert (repo / "sub" / "new.md").read_text() == "body"
 
 
-def test_move_out_of_readable_root_is_rejected(monkeypatch, tmp_path):
+def test_move_out_of_readable_root_is_rejected(tmp_path):
     # Two separate granted Folders: a move from one to the other is cross-Root → rejected.
     repo = tmp_path / "acme"
     other = tmp_path / "beta"
@@ -235,7 +234,7 @@ def test_move_out_of_readable_root_is_rejected(monkeypatch, tmp_path):
     other.mkdir()
     doc = repo / "f.md"
     doc.write_text("data")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         fa = _register_folder(client, repo)
         fb = _register_folder(client, other)
@@ -250,12 +249,12 @@ def test_move_out_of_readable_root_is_rejected(monkeypatch, tmp_path):
         assert _move(client, pid, doc, "stolen.md").status_code == 400
 
 
-def test_read_only_folder_denies_move(monkeypatch, tmp_path):
+def test_read_only_folder_denies_move(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     doc = repo / "f.md"
     doc.write_text("d")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -266,12 +265,12 @@ def test_read_only_folder_denies_move(monkeypatch, tmp_path):
 # ---- chat_id scoping (a chat-only read_write Grant) ----
 
 
-def test_write_is_chat_scoped(monkeypatch, tmp_path):
+def test_write_is_chat_scoped(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
     doc = repo / "c.md"
     doc.write_text("orig")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write", chat_id="c1")  # chat-ONLY read_write
@@ -284,13 +283,13 @@ def test_write_is_chat_scoped(monkeypatch, tmp_path):
         assert doc.read_text() == "edited"
 
 
-def test_chat_narrows_profile_write_to_read(monkeypatch, tmp_path):
+def test_chat_narrows_profile_write_to_read(tmp_path):
     # Profile-level read_write, narrowed to read for one chat → that chat can't write.
     repo = tmp_path / "acme"
     repo.mkdir()
     doc = repo / "n.md"
     doc.write_text("base")
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")  # profile scope: writable
@@ -303,10 +302,10 @@ def test_chat_narrows_profile_write_to_read(monkeypatch, tmp_path):
 # ---- mkdir & upload into a read_write Folder (ticket 05) ----
 
 
-def test_read_write_folder_mkdir_and_upload(monkeypatch, tmp_path):
+def test_read_write_folder_mkdir_and_upload(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")
@@ -319,10 +318,10 @@ def test_read_write_folder_mkdir_and_upload(monkeypatch, tmp_path):
         assert (repo / "docs" / "note.txt").read_text() == "body"
 
 
-def test_read_only_folder_denies_mkdir_and_upload(monkeypatch, tmp_path):
+def test_read_only_folder_denies_mkdir_and_upload(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read")
@@ -331,10 +330,10 @@ def test_read_only_folder_denies_mkdir_and_upload(monkeypatch, tmp_path):
         assert _upload(client, pid, repo / "sub").status_code == 403
 
 
-def test_non_granted_folder_denies_mkdir_and_upload(monkeypatch, tmp_path):
+def test_non_granted_folder_denies_mkdir_and_upload(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         _register_folder(client, repo)  # registered but NOT granted
         assert _mkdir(client, pid, repo / "docs").status_code == 400
@@ -342,10 +341,10 @@ def test_non_granted_folder_denies_mkdir_and_upload(monkeypatch, tmp_path):
         assert not (repo / "docs").exists()
 
 
-def test_folder_mkdir_and_upload_confined_to_subtree(monkeypatch, tmp_path):
+def test_folder_mkdir_and_upload_confined_to_subtree(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write")
@@ -356,10 +355,10 @@ def test_folder_mkdir_and_upload_confined_to_subtree(monkeypatch, tmp_path):
         assert not (tmp_path / "up.txt").exists()
 
 
-def test_folder_mkdir_upload_is_chat_scoped(monkeypatch, tmp_path):
+def test_folder_mkdir_upload_is_chat_scoped(tmp_path):
     repo = tmp_path / "acme"
     repo.mkdir()
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         f = _register_folder(client, repo)
         _grant(client, f["id"], pid, "read_write", chat_id="c1")  # chat-ONLY read_write
@@ -373,8 +372,8 @@ def test_folder_mkdir_upload_is_chat_scoped(monkeypatch, tmp_path):
 # ---- regression: relative (Files-space) mutations unchanged ----
 
 
-def test_relative_mutations_still_hit_files_space(monkeypatch, tmp_path):
-    client, pid = _client(monkeypatch)
+def test_relative_mutations_still_hit_files_space(tmp_path):
+    client, pid = _client()
     with client:
         client.post(
             api(pid, "/files/upload"),

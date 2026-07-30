@@ -162,6 +162,8 @@ class Gateway:
         persist: bool = True,
         task_service=None,
         config_factory: Callable[[], Config] | None = None,
+        agent_factory: Callable | None = None,
+        title_factory: Callable | None = None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -169,6 +171,10 @@ class Gateway:
         self._onboard = onboard
         self._persist = persist
         self._tasks = task_service  # gives the universal agent its system tools
+        # How the turn agent and the one-shot chat titler are built. Injected so a
+        # caller (or a test) decides what an agent is; both default to production.
+        self._agent_factory = agent_factory or create_agent
+        self._title_factory = title_factory or title_mod.default_titler
         # How reload() re-resolves config. For a profile runtime this re-reads that
         # profile's registry entry + settings on every call (§4.1), so workspace/model
         # edits are picked up; for bare construction it defaults to load_config (the
@@ -239,7 +245,7 @@ class Gateway:
             extra_tools = build_system_tools(
                 self._tasks, settings, chats=self, platform=self._platform
             )
-        return create_agent(
+        return self._agent_factory(
             cfg,
             memory=self._memory,
             platform=self._platform,
@@ -836,7 +842,9 @@ class Gateway:
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
         try:
-            title = await title_mod.generate_title(self._config, user_text, reply_text)
+            title = await title_mod.generate_title(
+                self._config, user_text, reply_text, agent_factory=self._title_factory
+            )
         except Exception as exc:
             log_suppressed("chat title generation", exc, chat_id=chat_id)
             return
@@ -1172,6 +1180,9 @@ def build_gateway(
     platform: str = "gateway",
     persist: bool = True,
     config_factory: Callable[[], Config] | None = None,
+    agent_factory: Callable | None = None,
+    title_factory: Callable | None = None,
+    summary_factory: Callable | None = None,
 ) -> "tuple[Gateway, object]":
     """Canonical construction: a Gateway wired to its TaskService, so the universal
     agent gets the task system tools (create/schedule/query). Used by the web app and
@@ -1183,7 +1194,9 @@ def build_gateway(
     that re-reads that profile's registry + settings (§4.1); when omitted both fall
     back to ``load_config`` (the profile-agnostic root config)."""
     config = config or load_config()
-    tasks = TaskService(config=config, config_factory=config_factory)
+    tasks = TaskService(
+        config=config, config_factory=config_factory, summary_factory=summary_factory
+    )
     gateway = Gateway(
         config=config,
         memory=memory,
@@ -1191,5 +1204,7 @@ def build_gateway(
         persist=persist,
         task_service=tasks,
         config_factory=config_factory,
+        agent_factory=agent_factory,
+        title_factory=title_factory,
     )
     return gateway, tasks

@@ -3,12 +3,10 @@
 from fastapi.testclient import TestClient
 
 from assistant.gateway.app import create_app
-from assistant.gateway.profile_manager import ProfileManager
-from tests.conftest import make_profile_app, use_fake_agent
+from tests.support.apps import make_manager, make_profile_app
 
 
 def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 
@@ -69,8 +67,7 @@ def test_state_toggle_reflected_in_resolved_catalog(monkeypatch):
 def test_state_toggle_fans_out_to_all_runtimes(monkeypatch):
     """An install-wide toggle reloads EVERY live runtime (observed via a spy) so the
     catalog changes everywhere at once — including background profiles."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=False)
+    manager = make_manager()
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})

@@ -6,7 +6,8 @@ import assistant.gateway.core as core_mod
 import assistant.title
 from assistant.config import Config
 from assistant.gateway.core import Gateway
-from tests.conftest import FakeAgent, api
+from tests.support.apps import api
+from tests.support.fakes import FakeAgent
 
 
 @pytest.fixture

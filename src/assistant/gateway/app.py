@@ -58,7 +58,7 @@ import secrets as _secrets
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -126,7 +126,7 @@ from assistant.codex_auth import (
     extract_auth_code,
     generate_pkce,
 )
-from assistant.config import Config, load_config
+from assistant.config import Config
 from assistant.events import (
     A2UIActionSubmitted,
     A2UISurfaceDataUpdated,
@@ -208,14 +208,14 @@ _WS_PROFILE_ARCHIVED = 4001  # runtime archived while this socket was open (§4.
 _LLM_TEST_TIMEOUT_S = 30.0
 
 
-def _allowed_origins() -> set[str]:
+def _allowed_origins(env: Mapping[str, str]) -> set[str]:
     """Extra browser origins to accept besides same-origin. Comma-separated in
     AG2ASSISTANT_ALLOWED_ORIGINS — an escape hatch for proxied/remote demos."""
-    raw = os.environ.get("AG2ASSISTANT_ALLOWED_ORIGINS", "")
+    raw = env.get("AG2ASSISTANT_ALLOWED_ORIGINS", "")
     return {o.strip().rstrip("/") for o in raw.split(",") if o.strip()}
 
 
-def _origin_ok(origin: str | None, host: str | None) -> bool:
+def _origin_ok(origin: str | None, host: str | None, allowed: set[str] = frozenset()) -> bool:
     """Whether a request may proceed, guarding against cross-origin browser
     access to a locally-bound gateway.
 
@@ -228,7 +228,7 @@ def _origin_ok(origin: str | None, host: str | None) -> bool:
     if not origin:
         return True
     origin = origin.rstrip("/")
-    if origin in _allowed_origins():
+    if origin in allowed:
         return True
     return bool(host) and urlsplit(origin).netloc == host
 
@@ -716,6 +716,8 @@ def create_app(
     code_reader: Callable[[str], str] = _capture_code,
     codex_client: httpx.Client | None = None,
     google: GoogleAuth | None = None,
+    llm_probe: Callable = model_config,
+    llm_probe_timeout_s: float = _LLM_TEST_TIMEOUT_S,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -742,6 +744,7 @@ def create_app(
     live_store = LiveConfigStore(paths)
     codex = CodexAuth(paths, client=codex_client)
     google = google if google is not None else GoogleAuth(paths)
+    allowed_origins = _allowed_origins(manager.env)
 
     def secret_env() -> dict[str, str]:
         """Provider/channel keys as an actual call would see them: the saved secrets
@@ -768,7 +771,7 @@ def create_app(
         non-browser (no Origin) requests pass; WebSocket routes guard separately
         (Starlette doesn't run HTTP middleware for them)."""
         if request.url.path.startswith("/api/") and not _origin_ok(
-            request.headers.get("origin"), request.headers.get("host")
+            request.headers.get("origin"), request.headers.get("host"), allowed_origins
         ):
             return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
         return await call_next(request)
@@ -1053,9 +1056,9 @@ def create_app(
         AG2ASSISTANT_MODEL is set (they override any active config in load_config), or
         None when neither is set."""
         out = {}
-        if v := os.environ.get("AG2ASSISTANT_LLM_PROVIDER"):
+        if v := manager.env.get("AG2ASSISTANT_LLM_PROVIDER"):
             out["provider"] = v
-        if v := os.environ.get("AG2ASSISTANT_MODEL"):
+        if v := manager.env.get("AG2ASSISTANT_MODEL"):
             out["model"] = v
         return out or None
 
@@ -1108,7 +1111,7 @@ def create_app(
         try:
             probe_entry = llm_configs._clean_entry(entry)
             probe_entry.setdefault("id", cid or "")
-            model_config(_llm_probe_config(probe_entry))
+            llm_probe(_llm_probe_config(probe_entry))
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
         saved = llm_store.save_config(entry)
@@ -1136,11 +1139,11 @@ def create_app(
                     opts["api_key"] = draft_key
                 elif entry.get("base_url"):
                     opts["api_key"] = "unused"  # mirror entry_options' placeholder
-            probe_cfg = model_config(probe)
+            probe_cfg = llm_probe(probe)
             agent = ag2.Agent("ping", config=probe_cfg)
             try:
                 reply = await asyncio.wait_for(
-                    agent.ask("Reply with exactly: PONG"), timeout=_LLM_TEST_TIMEOUT_S
+                    agent.ask("Reply with exactly: PONG"), timeout=llm_probe_timeout_s
                 )
             finally:
                 # One-shot probe: an ACP config spawned an adapter subprocess for
@@ -1267,7 +1270,7 @@ def create_app(
         started = time.monotonic()
         try:
             await asyncio.wait_for(
-                voice_providers.get(entry["provider"]).check(key), timeout=_LLM_TEST_TIMEOUT_S
+                voice_providers.get(entry["provider"]).check(key), timeout=llm_probe_timeout_s
             )
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=502)
@@ -1389,7 +1392,7 @@ def create_app(
     def _user_store_path() -> Path:
         """The install-wide universal memory DB — the SAME file every profile's agent
         reads (``root_dir/user.db``). Profile-agnostic, so resolved from the root config."""
-        return load_config().root_dir / "user.db"
+        return paths.root / "user.db"
 
     @app.get("/api/memory")
     async def get_universal_memory() -> dict:
@@ -1428,7 +1431,7 @@ def create_app(
     def _permissions_store():
         """A fresh PermissionStore over the install-wide file. mtime self-refresh
         means live turns pick up any change on their next query — no manager.reload()."""
-        return PermissionStore(load_config().root_dir / "permissions.json")
+        return PermissionStore(paths.root / "permissions.json")
 
     def _permissions_snapshot(store) -> dict:
         return {"commands": store.granted_commands()}
@@ -1475,7 +1478,7 @@ def create_app(
     def _folder_store():
         """A fresh FolderStore over the install-wide file. mtime self-refresh means
         live turns pick up any change on their next check — no manager.reload()."""
-        return FolderStore(load_config().root_dir / "folders.json")
+        return FolderStore(paths.root / "folders.json")
 
     def _folders_snapshot(store) -> dict:
         return {"folders": store.list_folders()}
@@ -1553,7 +1556,7 @@ def create_app(
     def _skill_store() -> SkillStateStore:
         """A fresh SkillStateStore over the install-wide file. mtime self-refresh
         means a live turn's next build sees any change — same shape as _folder_store."""
-        return SkillStateStore(load_config().root_dir / "skills.json")
+        return SkillStateStore(paths.root / "skills.json")
 
     def _installwide_skills() -> list[dict]:
         """The install-wide projection: every Bundled + Global skill with its name,
@@ -1567,7 +1570,7 @@ def create_app(
         """
         store = _skill_store()
         bundled_root = bundled_skills_dir()
-        runtime = build_skills_runtime(load_config())
+        runtime = build_skills_runtime(manager.config)
         rows = [
             {
                 "name": s.name,
@@ -1599,7 +1602,7 @@ def create_app(
         profile = runtime.pid
         rows: dict[str, dict] = {}
         # Inherited shared layers (Global + Bundled), discovered from the Root config.
-        for s in build_skills_runtime(load_config()).skills:
+        for s in build_skills_runtime(manager.config).skills:
             rows[s.name] = {
                 "name": s.name,
                 "description": s.metadata.description,
@@ -1663,7 +1666,7 @@ def create_app(
         re-install resolves default-on everywhere — no ghost. Fans out a reload to all
         live runtimes. A **Bundled** skill is first-party/read-only → 409 (not deletable);
         an unknown name → 404. Mirrors DELETE /api/folders/{id}'s grant cascade."""
-        config = load_config()
+        config = manager.config
         store = _skill_store()
         runtime = build_skills_runtime(config)
         bundled_root = bundled_skills_dir()
@@ -1789,7 +1792,7 @@ def create_app(
         then fan out a reload so every profile sees it next turn. A name collision in the
         target replaces the prior skill. 400 on a bad source (nothing half-installed)."""
         try:
-            result = await _install_from_req(build_skills_runtime(load_config()), req)
+            result = await _install_from_req(build_skills_runtime(manager.config), req)
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         await _reload_all()
@@ -1800,7 +1803,7 @@ def create_app(
         """Install selected skills from an uploaded source into the **Global** layer.
         ``names`` is a comma-separated list (multipart can't carry a JSON array)."""
         try:
-            result = await _install_upload_into(build_skills_runtime(load_config()), file, names)
+            result = await _install_upload_into(build_skills_runtime(manager.config), file, names)
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         await _reload_all()
@@ -2007,7 +2010,7 @@ def create_app(
         """
         if not google.is_configured():
             return {"ok": False, "error": "No OAuth client configured."}
-        base = os.environ.get("AG2ASSISTANT_PUBLIC_URL") or str(request.base_url)
+        base = manager.env.get("AG2ASSISTANT_PUBLIC_URL") or str(request.base_url)
         redirect_uri = base.rstrip("/") + "/api/google/callback"
         try:
             auth_url, state, flow = await asyncio.to_thread(google.make_login_flow, redirect_uri)
@@ -3226,7 +3229,9 @@ def create_app(
         """Event-stream transport: the client receives the chat's events as
         `{event:{type,data}}` — replayed on connect, then live — and sends `{text}`
         turns. Closes with 4001 if the profile is archived mid-session (§4.9)."""
-        if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
+        if not _origin_ok(
+            websocket.headers.get("origin"), websocket.headers.get("host"), allowed_origins
+        ):
             await websocket.close(code=1008)  # policy violation
             return
         runtime = await _ws_runtime(websocket, pid)
@@ -3436,7 +3441,9 @@ def create_app(
         """Full-duplex voice. The browser streams 16 kHz mono PCM mic frames as
         binary; we feed them to a Gemini Live session and stream back 24 kHz PCM
         speech (binary) plus user/agent transcripts (JSON) for on-screen bubbles."""
-        if not _origin_ok(websocket.headers.get("origin"), websocket.headers.get("host")):
+        if not _origin_ok(
+            websocket.headers.get("origin"), websocket.headers.get("host"), allowed_origins
+        ):
             await websocket.close(code=1008)  # policy violation
             return
         runtime = await _ws_runtime(websocket, pid)

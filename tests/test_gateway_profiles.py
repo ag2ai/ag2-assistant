@@ -1,7 +1,8 @@
 """WP4 acceptance: the profile-scoped API + profile-management routes.
 
-The autouse conftest fixture points HOME at a tmp dir, so the registry, profile
-dirs, and stores resolve under disposable space. Agents are faked (no LLM).
+Every app runs on the isolated ``paths`` layout with faked collaborators, so the
+registry, profile dirs, and stores live under disposable space and no runtime
+touches an LLM.
 """
 
 import json
@@ -10,28 +11,27 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-import assistant.secrets as secrets_mod
-from assistant import AG2_VERSION, __version__, profiles
-from assistant import profiles as profiles_mod
+from assistant import AG2_VERSION, __version__
 from assistant.gateway.app import create_app
-from assistant.gateway.profile_manager import ProfileManager
+from assistant.profiles import ProfileRegistry
+from assistant.secrets import SecretStore
 from assistant.usage import _today as t
-from tests.conftest import api, use_fake_agent
+from tests.support.apps import api, make_manager
+from tests.support.fakes import fake_agent_factory
 
 
-def _app(monkeypatch, **kw):
+def _app(paths, **kw):
     """A create_app around a fresh (zero-profile) ProfileManager."""
 
-    use_fake_agent(monkeypatch)
-    return create_app(ProfileManager(memory=False, persist=False), **kw)
+    return create_app(make_manager(paths), **kw)
 
 
 # --- zero-state contract (§3.5) ---
 
 
-def test_profiles_zero_state_contract(monkeypatch):
+def test_profiles_zero_state_contract(paths):
     """GET /api/profiles on a fresh install: {[], null, false}; /api/p/* 404s."""
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         body = client.get("/api/profiles").json()
         assert body == {
             "profiles": [],
@@ -50,8 +50,8 @@ def test_profiles_zero_state_contract(monkeypatch):
 # --- create + serve immediately (§3.5) ---
 
 
-def test_create_profile_serves_immediately(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_create_profile_serves_immediately(paths):
+    with TestClient(_app(paths)) as client:
         r = client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         assert r.status_code == 200
         pid = r.json()["profile"]["id"]
@@ -67,8 +67,8 @@ def test_create_profile_serves_immediately(monkeypatch):
         assert client.get(api(pid, "/settings")).json()["mcp_servers"] == []
 
 
-def test_create_profile_invalid_accent_400(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_create_profile_invalid_accent_400(paths):
+    with TestClient(_app(paths)) as client:
         r = client.post("/api/profiles", json={"name": "X", "accent": "not-a-hex"})
         assert r.status_code == 400
         assert "accent" in r.json()["error"]
@@ -77,8 +77,8 @@ def test_create_profile_invalid_accent_400(monkeypatch):
 # --- unknown / archived status codes on a prefixed route ---
 
 
-def test_unknown_pid_404_archived_410(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_unknown_pid_404_archived_410(paths):
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
@@ -94,12 +94,12 @@ def test_unknown_pid_404_archived_410(monkeypatch):
 # --- onboarded flag ---
 
 
-def test_onboarded_endpoint_flips_registry_flag(monkeypatch):
+def test_onboarded_endpoint_flips_registry_flag(paths):
 
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         assert client.get("/api/profiles").json()["onboarded"] is False
         assert client.post("/api/onboarded", json={"value": True}).json()["ok"] is True
-        assert profiles.is_onboarded() is True
+        assert ProfileRegistry(paths).is_onboarded() is True
         assert client.get("/api/profiles").json()["onboarded"] is True
 
         # creating a profile after onboarding doesn't reset the flag
@@ -110,41 +110,34 @@ def test_onboarded_endpoint_flips_registry_flag(monkeypatch):
 # --- secrets/key reloads all runtimes ---
 
 
-def test_secrets_key_reloads_all_runtimes(monkeypatch):
-    """POST /api/secrets/key calls manager.reload on every runtime (observed via a spy)."""
+def test_secrets_key_reloads_all_runtimes(paths):
+    """POST /api/secrets/key reloads every runtime — observed through the rebuilt
+    agents (a reload re-asks the agent factory for that profile's config)."""
 
-    use_fake_agent(monkeypatch)
-    monkeypatch.setattr(secrets_mod, "set_key", lambda provider, value: True)
-
-    manager = ProfileManager(memory=False, persist=False)
-    app = create_app(manager)
-    with TestClient(app) as client:
+    built: list = []
+    manager = make_manager(paths, agent_factory=fake_agent_factory(built=built))
+    with TestClient(create_app(manager)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(pid):
-            reloaded.append(pid)
-            return await orig(pid)
-
-        monkeypatch.setattr(manager, "reload", spy)
-
+        built.clear()
         assert client.post("/api/secrets/key", json={"provider": "openai", "value": "sk"}).json()[
             "ok"
         ]
-        assert set(reloaded) == {"work", "personal"}  # every runtime reloaded
+        assert {cfg.data_dir.name for cfg in built} == {"work", "personal"}
+        # the key really landed in the store, and every runtime now resolves it
+        assert SecretStore(paths).status({})["openai"]["set"] is True
+        assert {cfg.secret_env.get("OPENAI_API_KEY") for cfg in built} == {"sk"}
 
 
 # --- workspace is derived under the profile dir (not a user choice) ---
 
 
-def test_workspace_is_derived_under_profile_dir(monkeypatch):
+def test_workspace_is_derived_under_profile_dir(paths):
 
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         r = client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        expected = str(profiles_mod.profile_dir("work") / "workspace")
+        expected = str(ProfileRegistry(paths).profile_dir("work") / "workspace")
         assert r.json()["profile"]["workspace"] == expected
 
         runtime = client.app.state.profiles.get("work")
@@ -156,39 +149,36 @@ def test_workspace_is_derived_under_profile_dir(monkeypatch):
         assert r.json()["profile"]["workspace"] == expected
 
 
-def test_name_accent_edit_no_reload(monkeypatch):
-    """Renames / accent changes are display-only: no runtime reload is triggered."""
-    with TestClient(_app(monkeypatch)) as client:
+def test_name_accent_edit_no_reload(paths):
+    """Renames / accent changes are display-only: no runtime reload is triggered
+    (a reload would rebuild the profile's agent)."""
+    built: list = []
+    manager = make_manager(paths, agent_factory=fake_agent_factory(built=built))
+    with TestClient(create_app(manager)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         runtime = client.app.state.profiles.get("work")
 
-        reloaded: list[str] = []
-        monkeypatch.setattr(
-            client.app.state.profiles,
-            "reload",
-            lambda pid: reloaded.append(pid),
-        )
-
+        built.clear()
         r = client.post("/api/profiles/work", json={"name": "Job", "accent": "#2f6fe0"})
         assert r.status_code == 200
         assert r.json()["profile"]["name"] == "Job"
         assert r.json()["profile"]["accent"] == "#2f6fe0"
-        assert reloaded == []  # display-only → no reload
+        assert built == []  # display-only → no rebuild, so no reload
 
     # runtime.meta unaffected here (we only assert reload was skipped)
     assert runtime.pid == "work"
 
 
-def test_update_unknown_profile_404(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_update_unknown_profile_404(paths):
+    with TestClient(_app(paths)) as client:
         assert client.post("/api/profiles/ghost", json={"name": "x"}).status_code == 404
 
 
 # --- archive over HTTP: guardrails, success, then 410 ---
 
 
-def test_archive_http_guardrails_and_success(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_archive_http_guardrails_and_success(paths):
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
 
         # cannot archive the last unarchived profile → 400
@@ -217,9 +207,9 @@ def test_archive_http_guardrails_and_success(monkeypatch):
 # --- archived list + restore + purge (ADR 0003) ---
 
 
-def test_archived_list_in_payload(monkeypatch):
+def test_archived_list_in_payload(paths):
     """GET /api/profiles carries an `archived` array beside `profiles`."""
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         # archive the non-default → no replacement needed
@@ -230,8 +220,8 @@ def test_archived_list_in_payload(monkeypatch):
         assert [p["id"] for p in body["archived"]] == ["personal"]  # archived only
 
 
-def test_restore_over_http(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_restore_over_http(paths):
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         client.request("DELETE", "/api/profiles/personal")
@@ -247,51 +237,51 @@ def test_restore_over_http(monkeypatch):
         assert client.get(api("personal", "/tasks")).status_code == 200  # booted live
 
 
-def test_restore_non_archived_409(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_restore_non_archived_409(paths):
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         # work is live, not archived → restore is a conflict
         assert client.post("/api/profiles/work/restore").status_code == 409
 
 
-def test_restore_unknown_404(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_restore_unknown_404(paths):
+    with TestClient(_app(paths)) as client:
         assert client.post("/api/profiles/ghost/restore").status_code == 404
 
 
-def test_purge_requires_archive_first_409(monkeypatch):
+def test_purge_requires_archive_first_409(paths):
     """Archive-first: a live profile cannot be hard-deleted (409), and it is untouched."""
 
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
         r = client.request("DELETE", "/api/profiles/personal", params={"purge": "true"})
         assert r.status_code == 409
-        assert profiles.get_profile("personal") is not None  # still there
-        assert profiles.profile_dir("personal").exists()  # dir intact
+        assert ProfileRegistry(paths).get_profile("personal") is not None  # still there
+        assert ProfileRegistry(paths).profile_dir("personal").exists()  # dir intact
 
 
-def test_purge_archived_profile(monkeypatch):
+def test_purge_archived_profile(paths):
 
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         client.request("DELETE", "/api/profiles/personal")  # archive first
-        assert profiles.profile_dir("personal").exists()
+        assert ProfileRegistry(paths).profile_dir("personal").exists()
 
         r = client.request("DELETE", "/api/profiles/personal", params={"purge": "true"})
         assert r.status_code == 200
-        assert profiles.get_profile("personal") is None  # gone from registry
-        assert not profiles.profile_dir("personal").exists()  # folder erased
+        assert ProfileRegistry(paths).get_profile("personal") is None  # gone from registry
+        assert not ProfileRegistry(paths).profile_dir("personal").exists()  # folder erased
         # gone from both lists
         body = client.get("/api/profiles").json()
         assert "personal" not in [p["id"] for p in body["profiles"] + body["archived"]]
 
 
-def test_purge_unknown_404(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_purge_unknown_404(paths):
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         r = client.request("DELETE", "/api/profiles/ghost", params={"purge": "true"})
         assert r.status_code == 404
@@ -300,10 +290,10 @@ def test_purge_unknown_404(monkeypatch):
 # --- WS close on archive (§4.9) ---
 
 
-def test_stream_ws_closed_4001_on_archive(monkeypatch):
+def test_stream_ws_closed_4001_on_archive(paths):
     """An open /stream socket is closed with code 4001 when its profile is archived."""
 
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
@@ -321,8 +311,8 @@ def test_stream_ws_closed_4001_on_archive(monkeypatch):
 # --- /api/status aggregate ---
 
 
-def test_status_aggregate_shape(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
+def test_status_aggregate_shape(paths):
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         rows = client.get("/api/status").json()
@@ -337,12 +327,12 @@ def test_status_aggregate_shape(monkeypatch):
 # --- /api/usage install-wide roll-up ---
 
 
-def _seed_usage(client, pid: str, day: str, entry: dict) -> None:
+def _seed_usage(client, paths, pid: str, day: str, entry: dict) -> None:
     """Write a profile's usage.json directly on disk (UsageLedger's file schema:
     {day: {prompt, completion, total, cost, priced, by_model}}) and reload the live
     ledger from it, so GET /api/usage sees the seeded totals."""
 
-    path = profiles.profile_dir(pid) / "usage.json"
+    path = paths.profile_dir(pid) / "usage.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({day: entry}))
     client.app.state.profiles.get(pid).gateway._usage._load()
@@ -353,15 +343,16 @@ def _today() -> str:
     return t()
 
 
-def test_usage_rollup_sums_two_profiles(monkeypatch):
+def test_usage_rollup_sums_two_profiles(paths):
     """Two profiles with seeded usage.json → GET /api/usage sums the numeric fields,
     carries per-profile pid/name, and priced is true when all contributors are priced."""
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         day = _today()
         _seed_usage(
             client,
+            paths,
             "work",
             day,
             {
@@ -375,6 +366,7 @@ def test_usage_rollup_sums_two_profiles(monkeypatch):
         )
         _seed_usage(
             client,
+            paths,
             "personal",
             day,
             {
@@ -402,15 +394,16 @@ def test_usage_rollup_sums_two_profiles(monkeypatch):
         assert total["priced"] is True  # every contributor priced
 
 
-def test_usage_rollup_unpriced_makes_total_unpriced(monkeypatch):
+def test_usage_rollup_unpriced_makes_total_unpriced(paths):
     """An unpriced profile makes the summed cost an underestimate → total.priced False,
     while the cost still sums the priced contributions."""
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         day = _today()
         _seed_usage(
             client,
+            paths,
             "work",
             day,
             {
@@ -424,6 +417,7 @@ def test_usage_rollup_unpriced_makes_total_unpriced(monkeypatch):
         )
         _seed_usage(
             client,
+            paths,
             "personal",
             day,
             {
@@ -442,9 +436,9 @@ def test_usage_rollup_unpriced_makes_total_unpriced(monkeypatch):
         assert total["priced"] is False  # one unpriced → underestimate flagged
 
 
-def test_usage_rollup_zero_profiles(monkeypatch):
+def test_usage_rollup_zero_profiles(paths):
     """Fresh install: empty list + zeroed, unpriced total."""
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         body = client.get("/api/usage").json()
         assert body["profiles"] == []
         assert body["total"] == {
@@ -456,13 +450,14 @@ def test_usage_rollup_zero_profiles(monkeypatch):
         }
 
 
-def test_usage_rollup_single_profile(monkeypatch):
+def test_usage_rollup_single_profile(paths):
     """One profile: its numbers are present; total mirrors it and is priced iff it is."""
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         day = _today()
         _seed_usage(
             client,
+            paths,
             "work",
             day,
             {
@@ -480,11 +475,11 @@ def test_usage_rollup_single_profile(monkeypatch):
         assert body["total"]["priced"] is True
 
 
-def test_boot_payload_reports_the_running_ag2_version(monkeypatch):
+def test_boot_payload_reports_the_running_ag2_version(paths):
     """The "Powered by" dialog shows which AG2 the app is actually running on, so the
     boot payload must carry a real version read from installed metadata — not a
     hardcoded string that can drift from the dependency."""
     from importlib.metadata import version
 
-    with TestClient(_app(monkeypatch)) as client:
+    with TestClient(_app(paths)) as client:
         assert client.get("/api/profiles").json()["ag2_version"] == version("ag2")

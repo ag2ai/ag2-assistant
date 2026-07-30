@@ -9,7 +9,7 @@ from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.llm_configs import LlmConfigStore
 from assistant.tasks.store import TaskStore
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_profile_app
 
 
 def test_app_imports_cleanly():
@@ -53,7 +53,6 @@ async def test_starred_defaults_false_and_round_trips(paths, tmp_path):
 
 
 def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 

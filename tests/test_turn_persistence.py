@@ -19,7 +19,7 @@ import assistant.gateway.core as core_mod
 from assistant.config import Config
 from assistant.events import TurnFailed
 from assistant.gateway.core import Gateway
-from tests.conftest import FakeReply, FakeRunMixin
+from tests.support.fakes import FakeReply, FakeRunMixin
 
 
 class BoomAgent(FakeRunMixin):

@@ -1,95 +1,65 @@
 """ProfileManager and config_factory (WP3).
 
-The autouse conftest fixture points HOME at a tmp dir, so the registry, profile
-dirs, and stores resolve under disposable space. The agent factory is faked
-(``create_agent``) so no runtime touches a real LLM.
+Everything runs on the isolated ``paths`` layout, so the registry, profile dirs and
+stores live under disposable space, and every manager gets a faked agent factory
+(``make_manager``) so no runtime touches a real LLM.
 """
-
-from pathlib import Path
 
 import pytest
 
-import assistant.gateway.core as core_mod
-from assistant.config import load_config
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
-    ProfileManager,
     UnknownProfile,
     config_factory,
     resolve_active_profile,
 )
 from assistant.llm_configs import LlmConfigStore
 from assistant.profiles import ProfileRegistry
-from tests.conftest import FakeRunMixin
-
-
-class _FakeAgent(FakeRunMixin):
-    """Minimal deterministic agent (no LLM)."""
-
-    def __init__(self):
-        self.tools = []
-
-    async def ask(self, *msg, stream=None, **kwargs):
-        class _R:
-            body = "ok"
-
-        return _R()
+from tests.support.apps import make_manager
 
 
 @pytest.fixture
-def registry() -> ProfileRegistry:
-    """The registry over the same HOME-isolated layout the manager resolves."""
-    return ProfileRegistry(load_config().paths)
+def registry(paths) -> ProfileRegistry:
+    """The registry over the same isolated layout the manager resolves."""
+    return ProfileRegistry(paths)
 
 
 @pytest.fixture
-def llm_store() -> LlmConfigStore:
+def llm_store(paths) -> LlmConfigStore:
     """The named-LLM-configuration store over that same layout."""
-    return LlmConfigStore(load_config().paths)
-
-
-@pytest.fixture(autouse=True)
-def _fake_agent(monkeypatch):
-    """Every runtime's gateway builds a fake agent instead of a real one."""
-
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: _FakeAgent())
-
-
-def _root() -> Path:
-
-    return load_config().root_dir
+    return LlmConfigStore(paths)
 
 
 # --- ProfileManager start / boot ---
 
 
-async def test_zero_profile_start_is_noop():
+async def test_zero_profile_start_is_noop(paths):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     assert list(mgr.runtimes()) == []
     await mgr.close()
 
 
-async def test_boot_skips_archived(registry):
+async def test_boot_skips_archived(paths, registry):
 
     a = registry.create_profile("Work", "#109e91")
     b = registry.create_profile("Personal", "#f95339")
     registry.archive_profile(b.id)
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     running = {r.pid for r in mgr.runtimes()}
     assert running == {a.id}
     await mgr.close()
 
 
-async def test_get_raises_unknown_archived_and_not_running(registry):
+async def test_get_raises_unknown_archived_and_not_running(paths, registry):
 
     a = registry.create_profile("Work", "#109e91")
     b = registry.create_profile("Personal", "#f95339")
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         # unknown id → UnknownProfile
@@ -109,9 +79,9 @@ async def test_get_raises_unknown_archived_and_not_running(registry):
         await mgr.close()
 
 
-async def test_create_boots_live(registry):
+async def test_create_boots_live(paths, registry):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         runtime = await mgr.create("Work", "#109e91")
@@ -127,9 +97,9 @@ async def test_create_boots_live(registry):
 # --- archive guardrails ---
 
 
-async def test_archive_refuses_last_profile():
+async def test_archive_refuses_last_profile(paths):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         await mgr.create("Only", "#109e91")
@@ -139,9 +109,9 @@ async def test_archive_refuses_last_profile():
         await mgr.close()
 
 
-async def test_archive_requires_new_default_when_archiving_active(registry):
+async def test_archive_requires_new_default_when_archiving_active(paths, registry):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         a = await mgr.create("Work", "#109e91")  # first → active_default
@@ -163,11 +133,11 @@ async def test_archive_requires_new_default_when_archiving_active(registry):
         await mgr.close()
 
 
-async def test_restart_after_archive_stays_gone(registry, monkeypatch):
+async def test_restart_after_archive_stays_gone(paths, registry, monkeypatch):
     """§6.6: archive B → close manager → new ProfileManager.start() → B not booted
     (get raises ArchivedProfile), absent from list_profiles(), folder intact on disk."""
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     a = await mgr.create("Work", "#109e91")  # first → active_default
     b = await mgr.create("Personal", "#f95339")
@@ -177,7 +147,7 @@ async def test_restart_after_archive_stays_gone(registry, monkeypatch):
     await mgr.close()
 
     # a fresh manager reads the same on-disk registry
-    mgr2 = ProfileManager(memory=False, persist=False)
+    mgr2 = make_manager(paths)
     await mgr2.start()
     try:
         assert {r.pid for r in mgr2.runtimes()} == {a.pid}  # B not booted
@@ -191,9 +161,9 @@ async def test_restart_after_archive_stays_gone(registry, monkeypatch):
         await mgr2.close()
 
 
-async def test_archive_bad_new_default_rejected():
+async def test_archive_bad_new_default_rejected(paths):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         a = await mgr.create("Work", "#109e91")
@@ -207,9 +177,9 @@ async def test_archive_bad_new_default_rejected():
 # --- restore (unarchive + boot) ---
 
 
-async def test_restore_boots_live(registry):
+async def test_restore_boots_live(paths, registry):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         a = await mgr.create("Work", "#109e91")
@@ -226,9 +196,9 @@ async def test_restore_boots_live(registry):
         await mgr.close()
 
 
-async def test_restore_unknown_raises():
+async def test_restore_unknown_raises(paths):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         with pytest.raises(UnknownProfile):
@@ -237,9 +207,9 @@ async def test_restore_unknown_raises():
         await mgr.close()
 
 
-async def test_restore_non_archived_rejected():
+async def test_restore_non_archived_rejected(paths):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         a = await mgr.create("Work", "#109e91")
@@ -251,11 +221,11 @@ async def test_restore_non_archived_rejected():
         await mgr.close()
 
 
-async def test_restore_rolls_back_on_boot_failure(registry, monkeypatch):
+async def test_restore_rolls_back_on_boot_failure(paths, registry, monkeypatch):
     """§4.9 (Q9): if boot fails, the profile stays cleanly archived — never left in the
     unarchived-but-not-running limbo the manager treats as a server bug."""
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         a = await mgr.create("Work", "#109e91")
@@ -281,9 +251,9 @@ async def test_restore_rolls_back_on_boot_failure(registry, monkeypatch):
 # --- purge (hard delete, archive-first) ---
 
 
-async def test_purge_deletes_dir_and_registry_entry(registry):
+async def test_purge_deletes_dir_and_registry_entry(paths, registry):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         await mgr.create("Work", "#109e91")
@@ -301,9 +271,9 @@ async def test_purge_deletes_dir_and_registry_entry(registry):
         await mgr.close()
 
 
-async def test_purge_unknown_raises():
+async def test_purge_unknown_raises(paths):
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         with pytest.raises(UnknownProfile):
@@ -312,10 +282,10 @@ async def test_purge_unknown_raises():
         await mgr.close()
 
 
-async def test_purge_refuses_unarchived_profile(registry):
+async def test_purge_refuses_unarchived_profile(paths, registry):
     """Archive-first (Q4/ADR 0003): a live profile cannot be hard-deleted directly."""
 
-    mgr = ProfileManager(memory=False, persist=False)
+    mgr = make_manager(paths)
     await mgr.start()
     try:
         a = await mgr.create("Work", "#109e91")
@@ -332,68 +302,65 @@ async def test_purge_refuses_unarchived_profile(registry):
 # --- config_factory ---
 
 
-def test_config_factory_derives_workspace_under_profile_dir(registry):
+def test_config_factory_derives_workspace_under_profile_dir(paths, registry):
 
     meta = registry.create_profile("Work", "#109e91")
-    factory = config_factory(meta.id)
+    factory = config_factory(meta.id, paths)
     # workspace is always <profile dir>/workspace — derived, not user-chosen.
     assert factory().workspace_dir == registry.profile_dir(meta.id) / "workspace"
 
 
-def test_config_factory_derives_active_llm_config(llm_store, registry, monkeypatch):
+def test_config_factory_derives_active_llm_config(paths, llm_store, registry):
     """The LLM is install-wide now: config_factory doesn't overlay per-profile
-    settings — it just carries whatever load_config() derived from the active named
-    LLM config (common across every profile)."""
+    settings — it just carries whatever the install resolve derived from the active
+    named LLM config (common across every profile)."""
 
-    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
     meta = registry.create_profile("Work", "#109e91")
     registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
 
     # No store yet → flat gemini defaults.
-    assert config_factory(meta.id)().llm.provider == "gemini"
+    assert config_factory(meta.id, paths)().llm.provider == "gemini"
 
     # Activate an install-wide anthropic config → every profile's factory sees it.
     entry = llm_store.save_config({"name": "Claude", "type": "anthropic", "model": "claude-x"})
     llm_store.set_active(entry["id"])
-    cfg = config_factory(meta.id)()
+    cfg = config_factory(meta.id, paths)()
     assert cfg.llm.provider == "anthropic"
     assert cfg.llm.model == "claude-x"
 
 
-def test_config_factory_env_wins_over_active_config(llm_store, registry, monkeypatch):
+def test_config_factory_env_wins_over_active_config(paths, llm_store, registry):
 
     meta = registry.create_profile("Work", "#109e91")
     registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     entry = llm_store.save_config({"name": "Claude", "type": "anthropic", "model": "claude-x"})
     llm_store.set_active(entry["id"])
 
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "gemini")
     # model has no env override → still taken from the active config
-    cfg = config_factory(meta.id)()
+    cfg = config_factory(meta.id, paths, {"AG2ASSISTANT_LLM_PROVIDER": "gemini"})()
     assert cfg.llm.provider == "gemini"  # env wins
     assert cfg.llm.model == "claude-x"  # active config still applied
 
 
-def test_config_factory_unknown_profile_raises():
+def test_config_factory_unknown_profile_raises(paths):
 
     with pytest.raises(UnknownProfile):
-        config_factory("ghost")()
+        config_factory("ghost", paths)()
 
 
 # --- resolve_active_profile (CLI chat path) ---
 
 
-def test_resolve_active_profile_zero_profiles_raises():
+def test_resolve_active_profile_zero_profiles_raises(paths):
 
     with pytest.raises(UnknownProfile):
-        resolve_active_profile()
+        resolve_active_profile(paths=paths)
 
 
-def test_resolve_active_profile_defaults_to_active(registry):
+def test_resolve_active_profile_defaults_to_active(paths, registry):
 
     meta = registry.create_profile("Work", "#109e91")
-    pid, cfg, factory = resolve_active_profile()
+    pid, cfg, factory = resolve_active_profile(paths=paths)
     assert pid == meta.id
     assert cfg.workspace_dir == registry.profile_dir(meta.id) / "workspace"
     assert callable(factory)

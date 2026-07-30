@@ -9,24 +9,23 @@ covered by test_gateway_folders.py.)
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import make_profile_app, use_fake_agent
+from tests.support.apps import make_profile_app
 
 
-def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
+def _client():
     app, _pid = make_profile_app(persist=True)
     return TestClient(app)
 
 
-def test_permissions_get_empty(monkeypatch):
-    with _client(monkeypatch) as client:
+def test_permissions_get_empty():
+    with _client() as client:
         r = client.get("/api/permissions")
         assert r.status_code == 200, r.text
         assert r.json() == {"commands": []}
 
 
-def test_grant_command_with_prefix_yields_rule_string(monkeypatch):
-    with _client(monkeypatch) as client:
+def test_grant_command_with_prefix_yields_rule_string():
+    with _client() as client:
         r = client.post(
             "/api/permissions/commands", json={"tool": "run_shell_command", "prefix": "git"}
         )
@@ -38,8 +37,8 @@ def test_grant_command_with_prefix_yields_rule_string(monkeypatch):
         assert "gmail_send" in r2.json()["commands"]
 
 
-def test_grant_command_bad_prefix_is_400(monkeypatch):
-    with _client(monkeypatch) as client:
+def test_grant_command_bad_prefix_is_400():
+    with _client() as client:
         r = client.post(
             "/api/permissions/commands",
             json={"tool": "run_shell_command", "prefix": "git status"},  # not a single token
@@ -47,17 +46,17 @@ def test_grant_command_bad_prefix_is_400(monkeypatch):
         assert r.status_code == 400, r.text
 
 
-def test_grant_command_bad_tool_is_400(monkeypatch):
+def test_grant_command_bad_tool_is_400():
     # A tool name that can't form a valid rule (spaces/parens) must be a 400, not a 500.
-    with _client(monkeypatch) as client:
+    with _client() as client:
         r = client.post("/api/permissions/commands", json={"tool": "run shell", "prefix": None})
         assert r.status_code == 400, r.text
 
 
-def test_grant_command_bare_exec_tool_is_400(monkeypatch):
+def test_grant_command_bare_exec_tool_is_400():
     # A blanket grant (no prefix) on an arbitrary-execution tool — shell OR host
     # code — would authorise everything forever; the API must refuse all four names.
-    with _client(monkeypatch) as client:
+    with _client() as client:
         for tool in ("run_shell_command", "run_shell_local", "run_code", "run_code_local"):
             r = client.post("/api/permissions/commands", json={"tool": tool, "prefix": None})
             assert r.status_code == 400, r.text
@@ -70,8 +69,8 @@ def test_grant_command_bare_exec_tool_is_400(monkeypatch):
         assert r.status_code == 200, r.text
 
 
-def test_delete_command_miss_is_404(monkeypatch):
-    with _client(monkeypatch) as client:
+def test_delete_command_miss_is_404():
+    with _client() as client:
         r = client.request(
             "DELETE", "/api/permissions/commands", json={"rule": "run_shell_command(git *)"}
         )

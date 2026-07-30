@@ -15,12 +15,13 @@ import shutil
 from collections.abc import Callable, Iterable, Iterator, Mapping
 
 from assistant import channels, profiles
-from assistant.config import Config, load_config
+from assistant.config import Config, load_config, resolve_config
 from assistant.gateway.core import Gateway, build_gateway
 from assistant.hitl import HitlServer
 from assistant.observability import log_suppressed, profile_logger, setup_logging
 from assistant.paths import Paths
 from assistant.profiles import ProfileMeta, ProfileRegistry
+from assistant.secrets import SecretStore
 
 # Platform → env vars that must ALL be present for its channel to run. Canonical
 # home is ``profiles`` (dependency-light, so both this module and the secrets store
@@ -52,28 +53,32 @@ class ArchivedProfile(Exception):
     """The profile is registered but archived (WP4 maps to 410)."""
 
 
-def config_factory(pid: str) -> Callable[[], Config]:
+def config_factory(
+    pid: str, paths: Paths, env: Mapping[str, str] | None = None
+) -> Callable[[], Config]:
     """Return a callable that resolves the derived config for profile ``pid`` fresh on
     every call (§4.1).
 
-    On EACH call it: ``load_config()`` (which already derives the install-wide active
-    ``llm_configs`` entry onto ``cfg.llm``) → re-reads the profile's ``ProfileMeta``
+    On EACH call it: ``resolve_config(env, paths)`` (which already derives the install-wide
+    active ``llm_configs`` entry onto ``cfg.llm``) → re-reads the profile's ``ProfileMeta``
     from the registry (never a captured snapshot, so rename/accent edits are picked up) →
     ``with_profile(meta)``. The LLM is common across profiles now, so there is no
     per-profile settings overlay — a config change reloads every runtime.
     """
 
     def resolve() -> Config:
-        cfg = load_config()
-        meta = ProfileRegistry(cfg.paths).get_profile(pid)
+        cfg = resolve_config(env or {}, paths)
+        meta = ProfileRegistry(paths).get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
-        return cfg.with_profile(meta)
+        return cfg.with_profile(meta, env=env)
 
     return resolve
 
 
-def resolve_active_profile(pid: str | None = None) -> tuple[str, Config, Callable[[], Config]]:
+def resolve_active_profile(
+    pid: str | None = None, *, paths: Paths, env: Mapping[str, str] | None = None
+) -> tuple[str, Config, Callable[[], Config]]:
     """Resolve a profile for the CLI ``chat`` path (item 6): its id, derived config, and
     config factory (shared with runtimes).
 
@@ -81,7 +86,7 @@ def resolve_active_profile(pid: str | None = None) -> tuple[str, Config, Callabl
     §3.5 guidance when there is no target (zero profiles / bad id) so callers can print a
     clear message pointing at ``serve`` / browser onboarding / ``profiles create``.
     """
-    registry = ProfileRegistry(load_config().paths)
+    registry = ProfileRegistry(paths)
     if pid is None:
         pid = registry.load_registry().get("active_default")
     meta = registry.get_profile(pid) if pid else None
@@ -92,7 +97,7 @@ def resolve_active_profile(pid: str | None = None) -> tuple[str, Config, Callabl
         )
     if meta.archived:
         raise ArchivedProfile(pid)
-    factory = config_factory(pid)
+    factory = config_factory(pid, paths, env)
     return pid, factory(), factory
 
 
@@ -100,13 +105,28 @@ class ProfileRuntime:
     """One profile's live runtime: gateway + task service + channels + logger."""
 
     def __init__(
-        self, meta: ProfileMeta, paths: Paths, *, memory: bool = True, persist: bool = True
+        self,
+        meta: ProfileMeta,
+        paths: Paths,
+        *,
+        env: Mapping[str, str] | None = None,
+        memory: bool = True,
+        persist: bool = True,
+        agent_factory: Callable | None = None,
+        title_factory: Callable | None = None,
+        summary_factory: Callable | None = None,
     ) -> None:
         self.meta = meta
         self.paths = paths
         self._registry = ProfileRegistry(paths)
+        self._env = env
         self._memory = memory
         self._persist = persist
+        # Collaborators the gateway builds rather than imports: the turn agent and the
+        # two cheap-model helpers (chat titles, run summaries). None means production.
+        self._agent_factory = agent_factory
+        self._title_factory = title_factory
+        self._summary_factory = summary_factory
         self._config: Config | None = None
         self.gateway: Gateway | None = None
         self.tasks = None
@@ -158,7 +178,7 @@ class ProfileRuntime:
         way the base wiring does. Channel startup is driven by the ProfileManager after
         all runtimes are booted, per the install-level registry bindings.
         """
-        factory = config_factory(self.pid)
+        factory = config_factory(self.pid, self.paths, self._env)
         self._config = factory()
 
         # Same composition as build_gateway, but with a prepared config + shared factory
@@ -169,6 +189,9 @@ class ProfileRuntime:
             platform="gateway",
             persist=self._persist,
             config_factory=factory,
+            agent_factory=self._agent_factory,
+            title_factory=self._title_factory,
+            summary_factory=self._summary_factory,
         )
         await self.gateway.start()
         self.tasks.set_emitter(self.gateway.emit_event)  # lifecycle → AG2 stream
@@ -206,21 +229,45 @@ class ProfileManager:
         paths: Paths | None = None,
         config: Config | None = None,
         *,
+        env: Mapping[str, str] | None = None,
         memory: bool = True,
         persist: bool = True,
+        agent_factory: Callable | None = None,
+        channel_factory: Callable | None = None,
+        title_factory: Callable | None = None,
+        summary_factory: Callable | None = None,
     ) -> None:
-        # Install-level layout + config. Both default to the entry-point boundary so
-        # ``serve`` needs no wiring; profile-scoped configs are derived per runtime.
-        self.config = config if config is not None else load_config()
-        self.paths = paths if paths is not None else self.config.paths
+        # Install-level layout + config; the pair always agrees. Given neither, both come
+        # from the entry-point boundary so ``serve`` needs no wiring; given ``paths``, the
+        # config is resolved over that layout. Profile configs are derived per runtime.
+        if config is None:
+            config = resolve_config(env or {}, paths) if paths is not None else load_config()
+        self.config = config
+        self.paths = paths if paths is not None else config.paths
+        # The environment a runtime's config is re-resolved against on reload. The entry
+        # point passes os.environ; anything else stays with the config.yaml layer only.
+        self._env = env
         self._registry = ProfileRegistry(self.paths)
         self._memory = memory
         self._persist = persist
+        self._agent_factory = agent_factory
+        self._channel_factory = channel_factory or channels.get_channel
+        self._title_factory = title_factory
+        self._summary_factory = summary_factory
         self._runtimes: dict[str, ProfileRuntime] = {}
         # platform → last start-failure message (bad/missing token, network). Install-
         # level, surfaced in GET /api/channels; cleared on a successful start, rebind,
         # or disable of that platform.
         self.channel_errors: dict[str, str] = {}
+        # pid → why that profile's runtime failed to boot at start(). A broken profile
+        # must not take the whole server down; the rest boot and this records the reason.
+        self.boot_errors: dict[str, str] = {}
+
+    @property
+    def env(self) -> Mapping[str, str]:
+        """The ambient environment this install was wired with (``os.environ`` from the
+        entry point, empty otherwise) — the only environment the HTTP layer reads."""
+        return self._env if self._env is not None else {}
 
     async def start(self) -> None:
         """Boot every UNARCHIVED registered profile, then start each channel the
@@ -228,15 +275,31 @@ class ProfileManager:
 
         Zero profiles is a legal no-op (fresh install, §3.5). Logging is set up once
         against the root config here so per-profile loggers write to the shared file.
+        A profile whose boot raises is recorded in ``boot_errors`` and skipped — one
+        broken profile must not keep the others (or the server) down.
         """
         setup_logging(self.config)
         for meta in self._registry.list_profiles(include_archived=False):
-            await self._boot(meta)
+            try:
+                await self._boot(meta)
+            except Exception as exc:
+                self.boot_errors[meta.id] = str(exc)
+                profile_logger(meta.id).error("profile failed to boot: %s", exc)
         await self._start_bound_channels()
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
-        runtime = ProfileRuntime(meta, self.paths, memory=self._memory, persist=self._persist)
+        runtime = ProfileRuntime(
+            meta,
+            self.paths,
+            env=self._env,
+            memory=self._memory,
+            persist=self._persist,
+            agent_factory=self._agent_factory,
+            title_factory=self._title_factory,
+            summary_factory=self._summary_factory,
+        )
         await runtime.start()
+        self.boot_errors.pop(meta.id, None)
         self._runtimes[meta.id] = runtime
         return runtime
 
@@ -264,10 +327,9 @@ class ProfileManager:
         (False, reason) instead of crashing. Success clears any prior error.
 
         Returns ``(active, reason)``: active True iff the channel is now live."""
-        # Tokens ride on the runtime's resolved config (the secrets store contributes
-        # them at resolve time), so nothing here reads the process environment.
-        env = runtime.config.secret_env if runtime.config is not None else {}
-        tokens = _channel_tokens(platform, env)
+        # The secrets store is re-read here, not taken from the runtime's boot-time
+        # config: a token saved or cleared mid-session must apply to this very start.
+        tokens = _channel_tokens(platform, SecretStore(self.paths).merged_env(self._env or {}))
         if not all(tokens.values()):
             msg = f"no token configured for {platform}"
             self.channel_errors[platform] = msg
@@ -277,7 +339,7 @@ class ProfileManager:
         # when a token is missing. Never let that propagate: it would 500 the endpoint
         # and crash boot. Record the reason, stay inactive.
         try:
-            channel = channels.get_channel(platform, **tokens)
+            channel = self._channel_factory(platform, **tokens)
             await channel.start(runtime.gateway)
         except Exception as exc:
             # Platform libraries embed the raw token in some error messages

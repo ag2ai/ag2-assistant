@@ -5,7 +5,7 @@ from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.system_tools import _origin, _schedule_arg, build_system_tools
 from assistant.tasks.store import TaskStore
-from tests.conftest import make_paths
+from tests.support.apps import make_paths
 
 
 class _Stream:

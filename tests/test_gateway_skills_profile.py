@@ -9,12 +9,10 @@ from fastapi.testclient import TestClient
 
 from assistant.config import load_config
 from assistant.gateway.app import create_app
-from assistant.gateway.profile_manager import ProfileManager
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_manager, make_profile_app
 
 
-def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
+def _client():
     app, pid = make_profile_app(persist=True)
     return TestClient(app), pid
 
@@ -27,8 +25,8 @@ def _write_skill(skills_dir, name, description):
     )
 
 
-def test_profile_projection_has_origin_enabled_suppressed_available(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_profile_projection_has_origin_enabled_suppressed_available():
+    client, pid = _client()
     with client:
         skills = client.get(api(pid, "/skills")).json()["skills"]
         by_name = {s["name"]: s for s in skills}
@@ -41,10 +39,10 @@ def test_profile_projection_has_origin_enabled_suppressed_available(monkeypatch)
         assert wr["description"]
 
 
-def test_suppress_flips_available_for_this_profile_only(monkeypatch):
+def test_suppress_flips_available_for_this_profile_only():
     """POST /suppress turns a Bundled skill off for this profile; DELETE restores it.
     The install-wide state is never touched."""
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         r = client.post(api(pid, "/skills/web-research/suppress"))
         assert r.status_code == 200
@@ -62,17 +60,17 @@ def test_suppress_flips_available_for_this_profile_only(monkeypatch):
         assert by_name["web-research"]["available"] is True
 
 
-def test_suppress_unknown_skill_404(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_suppress_unknown_skill_404():
+    client, pid = _client()
     with client:
         assert client.post(api(pid, "/skills/nope/suppress")).status_code == 404
         assert client.delete(api(pid, "/skills/nope/suppress")).status_code == 404
 
 
-def test_install_wide_disable_reads_unavailable_in_profile_view(monkeypatch):
+def test_install_wide_disable_reads_unavailable_in_profile_view():
     """A skill Disabled install-wide shows unavailable in the profile projection too —
     the two surfaces never contradict."""
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         client.post("/api/skills/pdf-tools/state", json={"enabled": False})
         by_name = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
@@ -81,10 +79,10 @@ def test_install_wide_disable_reads_unavailable_in_profile_view(monkeypatch):
         assert by_name["pdf-tools"]["suppressed"] is False  # off via install-wide, not suppression
 
 
-def test_profile_owned_skill_state_scoped_to_profile(monkeypatch):
+def test_profile_owned_skill_state_scoped_to_profile():
     """A skill in the profile's own skills_dir has origin=profile and Enable/Disable
     via /state — the Disable is a per-profile off-record, so a shared skill can't use it."""
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         cfg = client.app.state.profiles.get(pid).config
         cfg.skills_dir.mkdir(parents=True, exist_ok=True)
@@ -111,9 +109,9 @@ def test_profile_owned_skill_state_scoped_to_profile(monkeypatch):
         )
 
 
-def test_profile_skill_shadow_ignores_same_named_shared_off_state(monkeypatch):
+def test_profile_skill_shadow_ignores_same_named_shared_off_state():
     """A Profile skill wins the name clash and uses only its own Enabled state."""
-    client, pid = _client(monkeypatch)
+    client, pid = _client()
     with client:
         global_skills = load_config().skills_dir
         profile_skills = client.app.state.profiles.get(pid).config.skills_dir
@@ -136,8 +134,7 @@ def test_profile_skill_shadow_ignores_same_named_shared_off_state(monkeypatch):
 
 def test_per_profile_change_reloads_only_active_profile(monkeypatch):
     """Suppressing in one profile reloads ONLY that profile — never fans out."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=False)
+    manager = make_manager()
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})

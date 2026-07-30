@@ -8,21 +8,15 @@ import pytest
 
 from assistant import codex_auth
 from assistant.codex_auth import CodexAuth
-from assistant.config import load_config, resolve_config
+from assistant.config import resolve_config
 from assistant.llm_configs import LlmConfigStore
 from tests.support import http
 
 
 @pytest.fixture
-def install_paths():
-    """The layout the app resolves for itself (the autouse HOME fixture isolates it)."""
-    return load_config().paths
-
-
-@pytest.fixture
-def auth(install_paths) -> CodexAuth:
-    """The token store the routes read, over that same layout."""
-    return CodexAuth(install_paths)
+def auth(paths) -> CodexAuth:
+    """The token store the routes read, over the same layout the app runs on."""
+    return CodexAuth(paths)
 
 
 def _fake_jwt_acc(acc: str) -> str:
@@ -106,7 +100,7 @@ def test_subscription_config_not_usable_until_signed_in(profile_app, auth):
     assert view["signed_in"] is True
 
 
-def test_subscription_config_activation_sets_auth_mode(profile_app, auth, install_paths):
+def test_subscription_config_activation_sets_auth_mode(profile_app, auth, paths):
     """Activating an openai_subscription config makes it active and derives
     auth_mode=subscription in a fresh resolve; GET /settings surfaces sign-in."""
     client, pid = profile_app
@@ -122,9 +116,9 @@ def test_subscription_config_activation_sets_auth_mode(profile_app, auth, instal
     )
     assert r.status_code == 200 and r.json()["ok"] is True
     cid = r.json()["config"]["id"]
-    assert LlmConfigStore(install_paths).active_id() == cid
+    assert LlmConfigStore(paths).active_id() == cid
     # A fresh resolve derives the subscription auth mode from the active entry's type.
-    cfg = resolve_config({}, install_paths)
+    cfg = resolve_config({}, paths)
     assert cfg.llm.provider == "openai"
     assert cfg.llm.auth_mode == "subscription"
     # GET /settings still surfaces the ChatGPT sign-in state.

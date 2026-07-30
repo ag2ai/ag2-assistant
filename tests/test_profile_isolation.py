@@ -19,7 +19,8 @@ from fastapi.testclient import TestClient
 from assistant.config import load_config
 from assistant.llm_configs import LlmConfigStore
 from assistant.profiles import ProfileRegistry
-from tests.conftest import api, use_fake_agent
+from tests.support.apps import api, make_manager
+from tests.support.fakes import fake_agent_factory
 
 
 async def _run_tool(tool, **kwargs):
@@ -52,10 +53,8 @@ def _two_profile_client(monkeypatch):
     """A started app with two live profiles A (work) and B (personal); returns
     ``(client_ctx, )`` — use as ``with _two_profile_client(mp) as client:``."""
     from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
 
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    manager = make_manager(persist=True)
     app = create_app(manager)
     return TestClient(app)
 
@@ -439,8 +438,6 @@ async def test_a_scheduler_fires_while_b_active(registry, monkeypatch):
     from assistant.gateway.core import build_gateway
     from assistant.tasks.model import RunStatus
 
-    use_fake_agent(monkeypatch)
-
     a_meta = registry.create_profile("Work", "#109e91")
     b_meta = registry.create_profile("Personal", "#f95339")
     registry.profile_dir(a_meta.id).mkdir(parents=True, exist_ok=True)
@@ -448,8 +445,9 @@ async def test_a_scheduler_fires_while_b_active(registry, monkeypatch):
 
     a_cfg = load_config().with_profile(a_meta)
     b_cfg = load_config().with_profile(b_meta)
-    a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True)
-    b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True)
+    fake = fake_agent_factory()
+    a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True, agent_factory=fake)
+    b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True, agent_factory=fake)
     # build_gateway wires the TaskService into the Gateway's agent tools, but the
     # reverse wiring (turns/stops for runs) is the caller's job — normally done by
     # ProfileManager; do it here since this test drives build_gateway directly.

@@ -8,7 +8,7 @@ from assistant.folders import READ, READ_WRITE, FolderStore
 from assistant.permissions import PermissionManager
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
-from tests.conftest import make_paths
+from tests.support.apps import make_paths
 
 
 class _Ctx:

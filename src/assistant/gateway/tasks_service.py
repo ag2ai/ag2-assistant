@@ -30,7 +30,7 @@ from assistant.tasks.model import (
     normalize_schedule,
 )
 from assistant.tasks.scheduling import compute_next_run, parse_dt, schedule_text
-from assistant.tasks.summary import suggest_task_meta, summarize_run
+from assistant.tasks.summary import default_summarizer, suggest_task_meta, summarize_run
 
 
 def _run_surface(task: Task, prior: list[str], folder_lines: list[str]) -> str:
@@ -121,9 +121,12 @@ class TaskService:
         max_concurrent: int = 3,
         scheduler_interval: float = 30.0,
         config_factory: Callable[[], Config] | None = None,
+        summary_factory: Callable[[Config], object] | None = None,
     ) -> None:
         self._config = config or load_config()
         self._config_factory = config_factory or load_config
+        # How the cheap-model distiller (run summaries, task auto-naming) is built.
+        self._summary_factory = summary_factory or default_summarizer
         self._store = store
         self._inquiries = inquiry_store
         self._scheduler = None
@@ -264,7 +267,9 @@ class TaskService:
         name = (name or "").strip()
         description = (description or "").strip()
         if not name:
-            gen_name, gen_desc = await suggest_task_meta(self._config, prompt)
+            gen_name, gen_desc = await suggest_task_meta(
+                self._config, prompt, agent_factory=self._summary_factory
+            )
             name = gen_name
             description = description or gen_desc
         task = await self._store.create_task(
@@ -449,7 +454,9 @@ class TaskService:
         if run_id in self._stopping:  # user Stop → the turn returned "" via TurnCancelled
             await self._finish(run_id, RunStatus.CANCELLED)
             return
-        summary = await summarize_run(self._config, task.prompt, reply)
+        summary = await summarize_run(
+            self._config, task.prompt, reply, agent_factory=self._summary_factory
+        )
         await self._finish(run_id, RunStatus.COMPLETED, summary=summary)
         await self._deliver(task, summary or (reply or "").strip()[:400])
 

@@ -33,7 +33,7 @@ from assistant.hitl.base import Question
 from assistant.hitl.desktop import HitlServer
 from assistant.hitl.gateway import GatewayAsker
 from assistant.hitl.inquiry import DurableAsker, InquiryStore, NullAsker
-from tests.conftest import FakeAgent
+from tests.support.fakes import FakeAgent
 
 
 def _response_with_calls(*call_ids: str):
