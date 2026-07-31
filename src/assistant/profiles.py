@@ -49,10 +49,6 @@ assert set(CHANNEL_TOKEN_ENVS) == set(CHANNEL_PLATFORMS)
 # Every channel env var name, flattened — the closed set the secrets store accepts.
 CHANNEL_TOKEN_ENV_NAMES = frozenset(e for envs in CHANNEL_TOKEN_ENVS.values() for e in envs)
 
-# The platform-keyed surfaces the Profile exposure route still speaks. Live exposure
-# is per Connection — see ``connections.surfaces``.
-CHANNEL_SURFACES = ("telegram:dm", "telegram:group", "discord", "slack")
-
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -280,15 +276,6 @@ def set_onboarded(value: bool = True) -> None:
 
 
 # --- channel exposure (default-allow; a record exists only ever to withdraw) ---
-
-
-def exposure(pid: str) -> dict[str, bool]:
-    """Which surfaces this profile is reachable from — every canonical surface present,
-    ``True`` unless it has been withdrawn. Unknown pid → ValueError."""
-    meta = get_profile(pid)
-    if meta is None:
-        raise ValueError(f"unknown profile: {pid}")
-    return {s: s not in meta.withdrawn for s in CHANNEL_SURFACES}
 
 
 def set_exposure(pid: str, surface: str, exposed: bool) -> ProfileMeta:

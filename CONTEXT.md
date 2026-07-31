@@ -278,27 +278,36 @@ outranks the needs-input float — a starred task that needs input stays in the
 Starred section, its row's status icon still signalling the request.
 _Avoid_: pinned, favorite
 
-## Channels
+## Connections
 
-**Channel**:
-A messaging platform the assistant is reachable through — Telegram, Discord, or
-Slack. Install-wide: one connection per platform, shared by every Profile and
-configured once. A Channel is never owned by a Profile (ADR 0019).
-_Avoid_: integration, bot (that is the platform-side account, not the concept),
+**Connection**:
+One configured instance of a messaging platform — Telegram, Discord or Slack — with
+its own name, token(s), **Connection default profile**, **Paired accounts**, group
+pins and **Channel exposure**. The unit of configuration, and the key everything
+platform-side is stored under. A platform can be connected as many times as the user
+wants: two Telegram bots are two independent Connections. Install-wide and never
+owned by a Profile (ADR 0019). The **platform** survives as a field on it, saying
+which adapter to construct and which surfaces exist.
+_Avoid_: channel (the retired one-per-platform sense), integration (that is the
+Settings section listing Connections), bot (that is the platform-side account),
 binding (the retired one-platform-one-Profile link)
 
-**Channel default profile**:
-The Profile a **Channel**'s conversations land in when nothing else has been chosen —
-one per Channel, set install-wide. A fallback, not an owner: it never decides whether
-the Channel connects (its token does), changing it needs no restart, and a **Peer**
-that has chosen its own **Peer profile** ignores it entirely. A Channel with no
-default answers that it has nowhere to go rather than guessing.
+**Connection default profile**:
+The Profile a **Connection**'s conversations land in when nothing else has been
+chosen — one per Connection, set install-wide. A fallback, not an owner: it never
+decides whether the Connection connects (its token does), changing it needs no
+restart, and a **Peer** that has chosen its own **Peer profile** ignores it entirely.
+A Connection with no default answers that it has nowhere to go rather than guessing,
+and a Profile withdrawn from every one of its surfaces cannot be it.
 _Avoid_: binding, assignment, owning profile, active default (that is the WebUI's
 fallback Profile, an unrelated install-level setting)
 
 **Peer**:
 One conversation on the platform side — a direct message or a group — identified by
-its platform and that platform's own chat id. This is what a Channel actually talks
+its **Connection** and that platform's own chat id. Keyed by the Connection, not the
+platform: on Telegram a direct message's chat id is the user's own id, identical
+across two bots, so two Connections would otherwise share one conversation. This is
+what a Connection actually talks
 to, and what holds everything persisting between messages: its **Peer profile** and
 the **Chat** it is currently attached to. A Peer starts many Chats over time and keeps
 owning the ones it leaves — that is how a **Task** started in a conversation delivers
@@ -325,10 +334,13 @@ throughout.
 _Avoid_: open (that is the browser's **Thread**), selected, bound, current
 
 **Channel exposure**:
-The set of surfaces a Profile is reachable from — Telegram direct messages, Telegram
-groups, Discord, Slack — each independently withdrawable. Default-allow: absence of a
-record means reachable, so a record exists only ever to withdraw. A Profile withdrawn
-from a surface cannot be chosen there and none of its **Chats** are offered there.
+The set of surfaces a Profile is reachable from. Surfaces belong to a **Connection**,
+not to a platform — one per Connection, except on Telegram where direct messages and
+groups are withdrawable independently — so with two Telegram bots a Profile can
+answer on one and not the other. Default-allow: absence of a record means reachable,
+so a record exists only ever to withdraw. A Profile withdrawn from a surface cannot
+be chosen there and none of its **Chats** are offered there. Set from inside the
+Connection, read Connection-major: one row per Profile, a switch per surface.
 _Avoid_: grant (Folders are default-deny + opt-in; exposure is the exact opposite),
 permission (that is the commands policy), suppression (the per-profile skill override
 — same shape, different subject)

@@ -332,7 +332,7 @@ class ProfileManager:
         except Exception as exc:
             # Platform libraries embed the raw token in some error messages
             # (e.g. Telegram's "The token <value> was rejected"); scrub it —
-            # this string is logged AND returned via GET /api/channels.
+            # this string is logged AND returned via GET /api/connections.
             msg = _scrub_tokens(f"could not start '{platform}': {exc}", tokens.values())
             log.error(msg)
             self.channel_errors[cid] = msg

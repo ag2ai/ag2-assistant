@@ -609,26 +609,31 @@ named, colour-coded runtime. A profile is a **directory** on disk and, at runtim
   `get_runtime` FastAPI dependency; global routes stay unprefixed (`/api/profiles`,
   `/api/secrets/key`, `/api/onboarded`, `/api/google/*`, `/api/status`,
   `/hitl/{id}`). No unprefixed aliases — a clean cutover.
-- **Channels — install-global, never owned by a profile (ADR 0019).** A bot token
-  serves one live connection, so each platform (Telegram / Discord / Slack) starts
-  **once for the whole install**, on the `ProfileManager` rather than inside any
-  runtime, as soon as its tokens are present. Every adapter is handed the one shared
-  `ChannelRouter`, which resolves the runtime **per inbound message** — so nothing
-  about a live adapter depends on a profile. What the registry holds is a per-Channel
-  **default profile** (`profiles.json` `channel_defaults: {platform: pid|null}`):
-  where that platform's conversations land when nothing else has been chosen. The
-  global `GET /api/channels` returns `{platform: {default_profile, token_present,
-  active, error}}`; `POST /api/channels/default` `{platform, profile}` sets or clears
-  it, taking effect on the next message with no restart. A Channel with no default (or
+- **Connections — install-global, never owned by a profile (ADR 0019).** A
+  **Connection** is one configured instance of a platform (Telegram / Discord /
+  Slack), with its own id, name, token(s), default profile, paired accounts, group
+  pins and profile exposure; a platform can have as many as the user wants. The
+  registry is `connections.json`, and every Connection starts **once for the whole
+  install**, on the `ProfileManager` rather than inside any runtime, as soon as it
+  holds all its tokens. Every adapter is handed the one shared `ChannelRouter`, which
+  resolves the runtime **per inbound message** — so nothing about a live adapter
+  depends on a profile. The default profile is `profiles.json`
+  `connection_defaults: {cid: pid}` — where that Connection's conversations land when
+  nothing else has been chosen. `GET /api/connections` lists them; the rest of the
+  family creates, renames, replaces token(s) on and deletes one, and governs its
+  default profile, exposure, pairing and group pins. A Connection with no default (or
   one whose profile has been archived) stays connected and refuses messages with
   `NO_PROFILE` rather than routing them somewhere unintended. A start failure is
-  recorded per Channel (`active:false` with `error`, a missing token included) and
-  never crashes boot. Bot tokens are stored in the global
-  secrets store (like provider keys) and are editable inline in Settings → Channels via
-  `POST /api/channels/token` `{platform, tokens:{ENV: val}}` (empty value clears;
-  saving re-applies the live channel; values are never echoed). The Settings → Channels
-  section is one default-profile picker per platform, plus its token field(s)
-  underneath.
+  recorded per Connection (`active:false` with `error`, a missing token included) and
+  never crashes boot. Token(s) live in the global secrets store under the
+  Connection's own key and are passed to the adapter explicitly — never exported into
+  `os.environ`, since one process cannot hold three `TELEGRAM_BOT_TOKEN` values; the
+  env vars are read only as a one-shot migration **seed**, which is how an install
+  configured before Connections comes up on one Connection per platform with its
+  default profile, paired accounts, Peers, group pins and exposure inherited and no
+  reconnect. Settings → Integrations is the list of Connections you have plus a card
+  grid of what you can add; a Connection's detail owns its exposure table, paired
+  accounts and groups.
 - **Archive.** Refuses the last profile; archiving the `active_default` requires a
   replacement. It cancels in-flight tasks (→ CANCELLED), closes WS with code `4001`,
   drops the runtime, and marks `archived: true` — durable across restarts (not

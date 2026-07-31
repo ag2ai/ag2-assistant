@@ -169,46 +169,50 @@ def test_delete_unknown_raises():
 
 
 # --- channel exposure (default-allow; a record only ever withdraws) ---
+# Surfaces are a Connection's — ``<cid>`` or ``<cid>:dm`` / ``<cid>:group`` — and the
+# registry stores whatever string it is handed. See connections.surfaces().
 
 
-def test_a_new_profile_is_reachable_from_every_surface():
+def test_a_new_profile_is_withdrawn_from_nothing():
     meta = profiles.create_profile("Work", TEAL)
     assert meta.withdrawn == []
-    assert profiles.exposure("work") == dict.fromkeys(profiles.CHANNEL_SURFACES, True)
+    assert profiles.withdrawn_from("cn_1:dm") == set()
 
 
 def test_withdrawing_records_only_that_surface():
     profiles.create_profile("Work", TEAL)
-    profiles.set_exposure("work", "telegram:group", False)
+    profiles.set_exposure("work", "cn_1:group", False)
 
-    assert profiles.get_profile("work").withdrawn == ["telegram:group"]
-    assert profiles.exposure("work")["telegram:group"] is False
-    # telegram's direct messages are a surface of their own and stay reachable
-    assert profiles.exposure("work")["telegram:dm"] is True
-    assert profiles.withdrawn_from("telegram:group") == {"work"}
-    assert profiles.withdrawn_from("telegram:dm") == set()
+    assert profiles.get_profile("work").withdrawn == ["cn_1:group"]
+    # a Connection's direct messages are a surface of their own and stay reachable
+    assert profiles.withdrawn_from("cn_1:group") == {"work"}
+    assert profiles.withdrawn_from("cn_1:dm") == set()
+
+
+def test_a_withdrawal_on_one_connection_leaves_another_untouched():
+    profiles.create_profile("Work", TEAL)
+    profiles.set_exposure("work", "cn_1:dm", False)
+    assert profiles.withdrawn_from("cn_2:dm") == set()
 
 
 def test_exposing_drops_the_record_rather_than_storing_an_allow():
     profiles.create_profile("Work", TEAL)
-    profiles.set_exposure("work", "discord", False)
-    profiles.set_exposure("work", "discord", True)
+    profiles.set_exposure("work", "cn_1", False)
+    profiles.set_exposure("work", "cn_1", True)
     assert profiles.get_profile("work").withdrawn == []
 
 
 def test_withdrawing_twice_is_recorded_once():
     profiles.create_profile("Work", TEAL)
-    profiles.set_exposure("work", "slack", False)
-    profiles.set_exposure("work", "slack", False)
-    assert profiles.get_profile("work").withdrawn == ["slack"]
+    profiles.set_exposure("work", "cn_1", False)
+    profiles.set_exposure("work", "cn_1", False)
+    assert profiles.get_profile("work").withdrawn == ["cn_1"]
 
 
 def test_an_unknown_profile_raises():
     profiles.create_profile("Work", TEAL)
     with pytest.raises(ValueError):
-        profiles.set_exposure("nope", "slack", False)
-    with pytest.raises(ValueError):
-        profiles.exposure("nope")
+        profiles.set_exposure("nope", "cn_1", False)
 
 
 def test_set_active_default():

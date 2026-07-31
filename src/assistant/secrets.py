@@ -339,32 +339,6 @@ def clear(provider: str) -> bool:
     return set_key(provider, "")
 
 
-def set_channel_token(env_name: str, value: str) -> bool:
-    """Set or clear (empty value) a channel bot token, keyed by its env var name
-    (e.g. ``TELEGRAM_BOT_TOKEN``). Returns False for an env name outside the closed
-    channel-token set. Mirrors ``set_key``: non-empty → save + os.environ set;
-    empty/None → remove from file + os.environ pop. Applied live and persisted."""
-    if env_name not in CHANNEL_TOKEN_ENV_NAMES:
-        return False
-    value = (value or "").strip()
-    data = _read()
-    chans = data.get(_CHANNELS_FIELD)
-    if not isinstance(chans, dict):
-        chans = {}
-    if value:
-        chans[env_name] = value
-        os.environ[env_name] = value
-    else:
-        chans.pop(env_name, None)
-        os.environ.pop(env_name, None)
-    if chans:
-        data[_CHANNELS_FIELD] = chans
-    else:
-        data.pop(_CHANNELS_FIELD, None)
-    _write(data)
-    return True
-
-
 def channel_token(env_name: str) -> str:
     """One channel token's raw value — the saved one, else the process env. The env
     is read as a seed for a first Connection only; nothing else consumes this."""
@@ -428,10 +402,11 @@ def _saved_channel_tokens(data: dict) -> dict:
 
 def load_into_env() -> None:
     """Populate os.environ from saved secrets (overriding) so the provider plumbing
-    and channels see UI-entered keys/tokens: each provider's DEFAULT SECRET, the
-    GitHub token, the Ollama base URL, and channel tokens. A provider with no
-    Default leaves any existing env value untouched (an .env-only key still
-    applies as the last-resort fallback)."""
+    sees UI-entered keys: each provider's DEFAULT SECRET, the GitHub token and the
+    Ollama base URL. A provider with no Default leaves any existing env value
+    untouched (an .env-only key still applies as the last-resort fallback). Channel
+    tokens are a Connection's own and are never exported — one process cannot hold
+    three ``TELEGRAM_BOT_TOKEN`` values."""
     data = _read()
     for s in _stored_secrets(data):
         prov = s.get("provider", "")
@@ -441,9 +416,6 @@ def load_into_env() -> None:
         os.environ[KEY_ENV["github"]] = data["github"]
     if data.get("ollama_base_url"):
         os.environ[OLLAMA_BASE_ENV] = data["ollama_base_url"]
-    for env_name, value in _saved_channel_tokens(data).items():
-        if env_name in CHANNEL_TOKEN_ENV_NAMES and value:
-            os.environ[env_name] = value
 
 
 def status() -> dict:

@@ -207,34 +207,6 @@ export const api = {
     j('POST',
       G('/connections/' + encodeURIComponent(cid) + '/groups/' + encodeURIComponent(chatId) + '/profile'),
       { profile }),
-  // Messaging channels are install-level and never owned by a profile: one connection
-  // per platform, live as soon as its token is set. Both routes are GLOBAL. channels()
-  // → {telegram|discord|slack: {default_profile:pid|null, token_present, active,
-  // error}}. channelDefault sets where that platform's conversations land when nothing
-  // else is chosen (null clears it) and returns the one updated entry {platform: {…}};
-  // it takes effect on the next message and never restarts the channel.
-  channels: () => j('GET', G('/channels')),
-  channelDefault: (platform, profile) => j('POST', G('/channels/default'), { platform, profile }),
-  // Save/clear channel bot token(s), like setKey — tokens is {ENV_NAME: value|''}
-  // (empty clears). Returns the one updated entry {platform: {…}}. Values never echoed.
-  channelTokens: (platform, tokens) => j('POST', G('/channels/token'), { platform, tokens }),
-  // Paired accounts — a channel serves nobody else (ADR 0021). channelPairing() →
-  // {accounts:[{key, account_id, handle, pending}], code:{code, expires_at}|null}; the
-  // add/revoke routes return that same shape. A numeric id is authoritative at once; a
-  // handle is an invitation that stays `pending` until an account bearing it speaks.
-  // channelPairingCode mints the one live code, replacing any earlier one.
-  channelPairing: (platform) => j('GET', G(`/channels/${platform}/pairing`)),
-  channelPair: (platform, value) => j('POST', G(`/channels/${platform}/pairing`), { value }),
-  channelUnpair: (platform, key) =>
-    j('DELETE', G(`/channels/${platform}/pairing/${encodeURIComponent(key)}`)),
-  channelPairingCode: (platform) => j('POST', G(`/channels/${platform}/pairing/code`)),
-  // Group Peers — a group's profile is pinned and /profile is refused there, so this is
-  // the only way it moves. channelGroups() → {groups:[{chat_id, profile}], profiles:[{id,
-  // name}]}, the profiles being the ones exposed to that platform's GROUP surface;
-  // channelGroupProfile re-points one group and returns that same shape.
-  channelGroups: (platform) => j('GET', G(`/channels/${platform}/groups`)),
-  channelGroupProfile: (platform, chatId, profile) =>
-    j('POST', G(`/channels/${platform}/groups/${encodeURIComponent(chatId)}/profile`), { profile }),
   // Universal "who the user is" memory — a single install-wide doc shared by every
   // profile (identity facts). GLOBAL routes; the per-profile persona memory is
   // getMemory/setMemory below.

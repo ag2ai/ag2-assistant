@@ -43,10 +43,6 @@ Route map:
     POST /api/connections/{cid}/pairing/code -> mint this Connection's one live code
     GET  /api/connections/{cid}/groups       -> this Connection's group Peers + the profiles they may be pinned to
     POST /api/connections/{cid}/groups/{chat_id}/profile -> re-point one group (ADR 0019)
-    GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
-    POST /api/channels/default               -> set {platform, profile:pid|null} default profile; returns updated entry
-    GET  /api/channels/{platform}/groups     -> group Peers + the profiles a group there may be pinned to
-    POST /api/channels/{platform}/groups/{chat_id}/profile -> re-point one group (ADR 0019)
     GET  /api/google/*                       -> account-level OAuth (shared like keys)
     GET  /api/fs/list                        -> generic folder browser (pickers)
     GET  /hitl/{req_id}, POST .../answer     -> styled HITL pages over a cross-profile dispatcher
@@ -149,7 +145,6 @@ from assistant.events import (
 from assistant.filesearch import list_folder_dir, search_corpus
 from assistant.folders import READ_WRITE, DuplicatePath, FolderStore
 from assistant.gateway.profile_manager import (
-    _CHANNEL_TOKENS,
     ArchivedProfile,
     ProfileManager,
     ProfileRuntime,
@@ -547,11 +542,6 @@ class VoiceProviderRequest(BaseModel):
     provider: str
 
 
-class ChannelDefaultRequest(BaseModel):
-    platform: str
-    profile: str | None = None  # pid conversations land in by default, or null for none
-
-
 class ConnectionCreateRequest(BaseModel):
     platform: str
     name: str = ""  # blank takes the platform's next free default name
@@ -574,11 +564,6 @@ class ConnectionExposureRequest(BaseModel):
     profile: str
     surface: str  # one of the Connection's own surface ids
     exposed: bool
-
-
-class ChannelTokenRequest(BaseModel):
-    platform: str
-    tokens: dict[str, str] = Field(default_factory=dict)  # {ENV_NAME: value_or_empty}
 
 
 class PairAccountRequest(BaseModel):
@@ -611,11 +596,6 @@ class ProfileCreateRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     name: str | None = None
     accent: str | None = None
-
-
-class ProfileExposureRequest(BaseModel):
-    surface: str
-    exposed: bool
 
 
 class ProfileArchiveRequest(BaseModel):
@@ -1827,8 +1807,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "accent": meta.accent,
             "workspace": meta.workspace,
             "created": meta.created,
-            # Channel exposure, one flag per surface — true unless withdrawn.
-            "exposure": {s: s not in meta.withdrawn for s in profiles_mod.CHANNEL_SURFACES},
         }
 
     @app.get("/api/profiles")
@@ -1836,7 +1814,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """The §3.5 contract, present in every state: unarchived profiles, the
         server-side active default, and the install-level onboarded flag. Empty list +
         null + false on fresh install. Channel bindings are install-level now — see
-        GET /api/channels."""
+        GET /api/connections."""
         reg = profiles_mod.load_registry()
         allp = profiles_mod.list_profiles(include_archived=True)
         return {
@@ -1871,23 +1849,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 profiles_mod.rename_profile(pid, req.name)
             if req.accent is not None:
                 profiles_mod.set_accent(pid, req.accent)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return {"profile": _profile_view(profiles_mod.get_profile(pid))}
-
-    @app.post("/api/profiles/{pid}/exposure")
-    async def set_profile_exposure(pid: str, req: ProfileExposureRequest):
-        """Expose or withdraw this profile on one platform-keyed surface. Exposure lives
-        on the Connection now — see POST /api/connections/{cid}/exposure. Unknown pid →
-        404, unknown surface → 400."""
-        if profiles_mod.get_profile(pid) is None:
-            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
-        if req.surface not in profiles_mod.CHANNEL_SURFACES:
-            return JSONResponse(
-                {"error": f"unknown channel surface: {req.surface}"}, status_code=400
-            )
-        try:
-            profiles_mod.set_exposure(pid, req.surface, req.exposed)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"profile": _profile_view(profiles_mod.get_profile(pid))}
@@ -2095,105 +2056,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return _exposure_view(connection)
 
-    # ---- Channels (global, install-level; never owned by a profile — ADR 0019) ----
-
-    def _platform_connection(platform: str) -> connections.Connection | None:
-        """The Connection this platform's own routes act on — its first, which on a
-        single-Connection install is its only one."""
-        registered = connections.connections_for(platform)
-        return registered[0] if registered else None
-
-    def _channel_entry(platform: str, default_pid: str | None) -> dict:
-        """The install-level state of one platform: the profile its conversations land
-        in by default (or null), whether its token env is present, whether the adapter
-        is live, and the last start error (or null). Lifecycle is per Connection now, so
-        a platform reads as live when any of its Connections is."""
-        registered = [c.id for c in connections.connections_for(platform)]
-        errors = [manager.channel_errors[c] for c in registered if c in manager.channel_errors]
-        error = errors[0] if errors else None
-        if not registered:
-            error = f"no token configured for {platform}"
-        return {
-            "default_profile": default_pid,
-            "token_present": all(os.environ.get(e) for e in _CHANNEL_TOKENS[platform]),
-            "active": any(c in manager.channels for c in registered),
-            "error": error,
-            # A live Channel with nobody paired answers nobody (ADR 0021) — the count
-            # is what lets Settings say so rather than leave it looking healthy.
-            "paired_accounts": sum(len(pairing.list_accounts(c)) for c in registered),
-        }
-
-    def _platform_default(platform: str) -> str | None:
-        """The default profile a platform's own routes report — its Connection's."""
-        connection = _platform_connection(platform)
-        return profiles_mod.connection_defaults().get(connection.id) if connection else None
-
-    def _channel_entries() -> dict:
-        """Every platform's entry, off one read of the registry."""
-        return {p: _channel_entry(p, _platform_default(p)) for p in profiles_mod.CHANNEL_PLATFORMS}
-
-    @app.get("/api/channels")
-    async def list_channels() -> dict:
-        """Install-level channel state: ``{platform: {default_profile, token_present,
-        active, error}}``. A fresh (zero-profile) install returns all defaults null."""
-        return _channel_entries()
-
-    @app.post("/api/channels/default")
-    async def set_channel_default(req: ChannelDefaultRequest):
-        """Set the profile a platform's Connection lands conversations in by default (or
-        clear it with profile:null). Takes effect on the next message — the Channel itself
-        keeps running either way. Returns the updated platform entry. Unknown platform, a
-        platform with no Connection, or an unknown/archived pid → 400."""
-        if (bad := _reject_unknown_platform(req.platform)) is not None:
-            return bad
-        connection = _platform_connection(req.platform)
-        if connection is None:
-            return JSONResponse(
-                {"error": f"no connection configured for {req.platform}"}, status_code=400
-            )
-        try:
-            connections.set_default_profile(connection.id, req.profile)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return {req.platform: _channel_entry(req.platform, req.profile)}
-
-    @app.post("/api/channels/token")
-    async def set_channel_token(req: ChannelTokenRequest):
-        """Save/clear channel bot token(s) for a platform (global secrets, like provider
-        keys) and re-apply the channel live. Body: ``{platform, tokens:{ENV_NAME: value}}``
-        — an empty value clears that token. Only env names valid for the platform are
-        accepted; an unknown platform or env name → 400. Saving sets os.environ, so the
-        channel is restarted (stopped, then started if all tokens are now present).
-        Returns the updated GET /api/channels entry. Token values are never echoed."""
-        platform = req.platform
-        if platform not in profiles_mod.CHANNEL_PLATFORMS:
-            return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
-        valid = set(profiles_mod.CHANNEL_TOKEN_ENVS[platform])
-        unknown = set(req.tokens) - valid
-        if unknown:
-            return JSONResponse(
-                {"error": f"invalid token env(s) for {platform}: {', '.join(sorted(unknown))}"},
-                status_code=400,
-            )
-        for env_name, value in req.tokens.items():
-            secrets.set_channel_token(env_name, value)
-        # The token belongs to the platform's Connection, which is what the adapter is
-        # constructed from; a first token creates the Connection migration did not.
-        registered = connections.connections_for(platform)
-        if registered:
-            connection = registered[0]
-            connections.set_tokens(connection.id, req.tokens)
-        elif any((v or "").strip() for v in req.tokens.values()):
-            connection = connections.create_connection(platform, tokens=req.tokens)
-        else:
-            connection = None
-        # Reconcile that Connection's live adapter with the new tokens.
-        if connection is not None:
-            with contextlib.suppress(Exception):
-                await manager.restart_channel(connection.id)
-        return {platform: _channel_entry(platform, _platform_default(platform))}
-
-    # ---- Paired accounts (per Channel; who may speak to it at all — ADR 0021) ----
+    # ---- Paired accounts (per Connection; who may speak to it at all — ADR 0021) ----
 
     def _account_view(account: pairing.PairedAccount) -> dict:
         """One paired account. ``pending`` is what the UI shows differently: an
@@ -2213,65 +2076,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "accounts": [_account_view(a) for a in pairing.list_accounts(cid)] if cid else [],
             "code": None if code is None else {"code": code.code, "expires_at": code.expires_at},
         }
-
-    def _reject_unknown_platform(platform: str):
-        if platform in profiles_mod.CHANNEL_PLATFORMS:
-            return None
-        return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
-
-    def _pairing_target(platform: str):
-        """The Connection a platform's own pairing writes land on, or a 400 — pairing
-        is a grant to a Connection, so there must be one to grant."""
-        if (bad := _reject_unknown_platform(platform)) is not None:
-            return None, bad
-        connection = _platform_connection(platform)
-        if connection is None:
-            return None, JSONResponse(
-                {"error": f"no connection configured for {platform}"}, status_code=400
-            )
-        return connection, None
-
-    @app.get("/api/channels/{platform}/pairing")
-    async def list_pairing(platform: str):
-        """A Channel's paired accounts and its live one-time code (or null)."""
-        if (bad := _reject_unknown_platform(platform)) is not None:
-            return bad
-        connection = _platform_connection(platform)
-        return _pairing_view(connection.id if connection else None)
-
-    @app.post("/api/channels/{platform}/pairing")
-    async def add_pairing(platform: str, req: PairAccountRequest):
-        """Allow an account by numeric id (authoritative at once) or by handle (an
-        invitation that pins to the first account presenting it). Effective
-        immediately — the Channel keeps running either way."""
-        connection, bad = _pairing_target(platform)
-        if bad is not None:
-            return bad
-        try:
-            pairing.add_account(connection.id, req.value, platform)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return _pairing_view(connection.id)
-
-    @app.delete("/api/channels/{platform}/pairing/{key:path}")
-    async def revoke_pairing(platform: str, key: str):
-        """Withdraw one entry, by numeric id or by ``@handle``. Takes effect on that
-        account's next message. Nothing to withdraw → 404."""
-        connection, bad = _pairing_target(platform)
-        if bad is not None:
-            return bad
-        if not pairing.revoke(connection.id, key):
-            return JSONResponse({"error": f"not paired: {key}"}, status_code=404)
-        return _pairing_view(connection.id)
-
-    @app.post("/api/channels/{platform}/pairing/code")
-    async def issue_pairing_code(platform: str):
-        """Mint the Channel's one live pairing code, replacing any earlier one."""
-        connection, bad = _pairing_target(platform)
-        if bad is not None:
-            return bad
-        pairing.issue_code(connection.id)
-        return _pairing_view(connection.id)["code"]
 
     @app.get("/api/connections/{cid}/pairing")
     async def list_connection_pairing(cid: str):
@@ -2312,58 +2116,6 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         return _pairing_view(cid)["code"]
 
     # ---- Group Peers (a group's profile is pinned, and re-pointed only here) ----
-
-    def _group_peers(platform: str) -> list[peers.Peer]:
-        """Every group Peer on this platform, across its Connections."""
-        return [p for p in peers.list_peers() if p.platform == platform and p.surface == "group"]
-
-    def _group_surface(platform: str) -> str:
-        """The group exposure surface a platform's own routes read — its Connection's,
-        since a withdrawal is recorded per Connection. No Connection, no withdrawal."""
-        connection = _platform_connection(platform)
-        if connection is None:
-            return platform
-        return connections.surface_key(connection.id, platform, "group")
-
-    def _group_view(platform: str) -> dict:
-        """Every group Peer on this platform with the profile it is pinned to, plus the
-        profiles a group here may be pointed at — the ones exposed to the group surface,
-        so a profile withheld from groups is absent from this picker too."""
-        return {
-            "groups": [
-                {"chat_id": p.chat_id, "profile": p.profile} for p in _group_peers(platform)
-            ],
-            "profiles": [
-                {"id": p.id, "name": p.name}
-                for p in manager.available_profiles(_group_surface(platform))
-            ],
-        }
-
-    @app.get("/api/channels/{platform}/groups")
-    async def list_groups(platform: str):
-        """A Channel's group Peers and what each is pinned to."""
-        return _reject_unknown_platform(platform) or _group_view(platform)
-
-    @app.post("/api/channels/{platform}/groups/{chat_id}/profile")
-    async def set_group_profile(platform: str, chat_id: str, req: GroupProfileRequest):
-        """Re-point one group at a profile exposed to that platform's group surface —
-        the only way a group's profile moves, since /profile is refused there. Moving it
-        leaves the Chat behind, as any switch does. Unknown platform or a profile not
-        reachable from groups → 400; a group with no Peer → 404."""
-        if (bad := _reject_unknown_platform(platform)) is not None:
-            return bad
-        surface = _group_surface(platform)
-        if req.profile not in {p.id for p in manager.available_profiles(surface)}:
-            return JSONResponse(
-                {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400
-            )
-        peer = next((p for p in _group_peers(platform) if p.chat_id == chat_id), None)
-        if peer is None:
-            return JSONResponse({"error": f"no group peer: {chat_id}"}, status_code=404)
-        peers.select_profile(
-            peer.connection, chat_id, req.profile, platform=platform, surface="group"
-        )
-        return _group_view(platform)
 
     def _connection_groups(cid: str) -> list[peers.Peer]:
         """Every group Peer that arrived on this one Connection."""
@@ -2961,20 +2713,20 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             }
         )
 
-        # Messaging channels DEFAULTING to this profile — the ones whose conversations
-        # land here (start-time active/error). Channels themselves are install-level.
-        items = []
-        for platform, entry in _channel_entries().items():
-            if entry["default_profile"] != runtime.pid:
-                continue
-            items.append(
-                {
-                    "platform": platform,
-                    "active": entry["active"],
-                    "error": entry["error"],
-                    "token_present": entry["token_present"],
-                }
-            )
+        # Connections DEFAULTING to this profile — the ones whose conversations land
+        # here (start-time active/error). Connections themselves are install-level.
+        defaults = profiles_mod.connection_defaults()
+        items = [
+            {
+                "connection": c.id,
+                "name": c.name,
+                "platform": c.platform,
+                "active": c.id in manager.channels,
+                "error": manager.channel_errors.get(c.id),
+            }
+            for c in connections.list_connections()
+            if defaults.get(c.id) == runtime.pid
+        ]
         ch_error = any(it["error"] for it in items)
         checks.append(
             {
@@ -2985,9 +2737,9 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 # generic "error" — the panel shows this, so it must say what to fix.
                 "detail": (
                     ", ".join(
-                        (it["error"] or f"{it['platform']} active")
+                        (it["error"] or f"{it['name']} active")
                         if (it["error"] or it["active"])
-                        else f"{it['platform']} idle"
+                        else f"{it['name']} idle"
                         for it in items
                     )
                     or "none default here"

@@ -184,46 +184,22 @@ def test_update_unknown_profile_404(monkeypatch):
         assert client.post("/api/profiles/ghost", json={"name": "x"}).status_code == 404
 
 
-# --- channel exposure over HTTP (05) ---
+# --- a profile carries no channel state: exposure is the Connection's (ADR 0019) ---
 
 
-def test_exposure_is_default_allow_and_withdrawn_per_surface(monkeypatch):
-    """A new profile is reachable everywhere; withdrawing one surface leaves the rest,
-    and the router's directory stops offering it there with nothing restarted."""
+def test_a_profile_view_says_nothing_about_channels(monkeypatch):
+    """Exposure lives on the Connection — see GET /api/connections/{cid}/exposure —
+    so there is nowhere on a profile to read or set it."""
     with TestClient(_app(monkeypatch)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        created = client.get("/api/profiles").json()["profiles"][0]
-        assert created["exposure"] == dict.fromkeys(profiles_mod.CHANNEL_SURFACES, True)
 
+        created = client.get("/api/profiles").json()["profiles"][0]
+
+        assert set(created) == {"id", "name", "accent", "workspace", "created"}
         r = client.post(
             "/api/profiles/work/exposure", json={"surface": "telegram:group", "exposed": False}
         )
-        assert r.status_code == 200
-        assert r.json()["profile"]["exposure"]["telegram:group"] is False
-        assert r.json()["profile"]["exposure"]["telegram:dm"] is True
-
-        manager = client.app.state.profiles
-        assert [p.id for p in manager.available_profiles("telegram:group")] == []
-        assert [p.id for p in manager.available_profiles("telegram:dm")] == ["work"]
-
-        # exposing again drops the record entirely
-        client.post(
-            "/api/profiles/work/exposure", json={"surface": "telegram:group", "exposed": True}
-        )
-        assert [p.id for p in manager.available_profiles("telegram:group")] == ["work"]
-
-
-def test_exposure_rejects_an_unknown_profile_and_surface(monkeypatch):
-    with TestClient(_app(monkeypatch)) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        ghost = client.post(
-            "/api/profiles/ghost/exposure", json={"surface": "slack", "exposed": False}
-        )
-        assert ghost.status_code == 404
-        bad = client.post(
-            "/api/profiles/work/exposure", json={"surface": "telegram", "exposed": False}
-        )
-        assert bad.status_code == 400
+        assert r.status_code == 404
 
 
 # --- archive over HTTP: guardrails, success, then 410 ---
