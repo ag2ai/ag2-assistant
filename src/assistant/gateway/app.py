@@ -1903,10 +1903,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     # ---- Connections (global, install-level; never owned by a profile — ADR 0019) ----
 
     def _connection_entry(connection: connections.Connection) -> dict:
-        """One Connection as the API shows it — everything a Settings row renders from:
-        its identity, its token(s) as a set flag and hint, the profile its conversations
-        land in by default, whether the adapter is live, why it is not, and how many
-        accounts are paired to it."""
+        """One Connection as the API shows it: its identity, token(s) as a set flag and
+        hint, default profile, whether the adapter is live, why not, and its roster size."""
         cid = connection.id
         return {
             "id": cid,
@@ -1949,10 +1947,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/connections")
     async def create_connection(req: ConnectionCreateRequest):
-        """Register a Connection on ``platform`` with its token(s) and start it at once.
-        A Connection that will not start is still recorded and reports its reason in the
-        returned entry — a failed boot, not a failed request. Incomplete token(s) or an
-        unknown platform → 400, and nothing is created."""
+        """Register a Connection on ``platform`` with its token(s) and start it at once;
+        one that will not start still records its reason. Bad tokens or platform → 400."""
         if (bad := _reject_incomplete_tokens(req.platform, req.tokens)) is not None:
             return bad
         connection = connections.create_connection(req.platform, req.name, tokens=req.tokens)
@@ -1973,11 +1969,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/connections/{cid}/token")
     async def replace_connection_token(cid: str, req: ConnectionTokenRequest):
-        """Replace a Connection's token(s) and restart it on them. Its identity survives,
-        so its paired accounts, group pins, exposure and default Profile stay attached.
-        A replacement that will not start is rolled back to the previous token(s) and the
-        Connection comes back up as it was → 400 with the reason. Unknown Connection →
-        404, incomplete token(s) → 400."""
+        """Replace a Connection's token(s) and restart it on them, keeping its identity.
+        A replacement that will not start rolls back → 400; unknown → 404."""
         connection = connections.get_connection(cid)
         if connection is None:
             return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
@@ -1995,10 +1988,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.delete("/api/connections/{cid}")
     async def delete_connection(cid: str):
-        """Stop a Connection and forget it, together with everything hung off it: its
-        token(s), Peers, paired accounts, live pairing code, default-Profile entry and
-        exposure records. Every other Connection, including one on the same platform, is
-        left running and intact. Unknown Connection → 404."""
+        """Stop a Connection and forget it with its token(s), Peers, paired accounts,
+        pairing code, default-Profile entry and exposure records. Unknown → 404."""
         if connections.get_connection(cid) is None:
             return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
         await manager.stop_channel(cid)
@@ -2043,10 +2034,8 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/connections/{cid}/exposure")
     async def set_connection_exposure(cid: str, req: ConnectionExposureRequest):
-        """Expose or withdraw one profile on one surface of this Connection. Withdrawing
-        the current default from its last surface clears the default. Takes effect on the
-        next message; nothing restarts. Unknown Connection → 404, unknown profile or
-        surface → 400."""
+        """Expose or withdraw one profile on one surface of this Connection; withdrawing
+        the default's last surface clears it. Unknown → 404, bad profile/surface → 400."""
         connection = connections.get_connection(cid)
         if connection is None:
             return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
@@ -2123,8 +2112,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     def _connection_group_view(connection: connections.Connection) -> dict:
         """This Connection's group Peers with the profile each is pinned to, plus the
-        profiles a group here may be pointed at — the ones exposed to *this* Connection's
-        group surface, so a group pinned outside that set reads as unreachable."""
+        profiles exposed to this Connection's group surface."""
         surface = connections.surface_key(connection.id, connection.platform, "group")
         return {
             "groups": [
@@ -2145,9 +2133,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     @app.post("/api/connections/{cid}/groups/{chat_id}/profile")
     async def set_connection_group_profile(cid: str, chat_id: str, req: GroupProfileRequest):
         """Re-point one of this Connection's groups at a profile exposed to its group
-        surface — the only way a group's profile moves, since /profile is refused there.
-        Unknown Connection or a group with no Peer here → 404; a profile not reachable
-        through this Connection's groups → 400."""
+        surface. Unknown Connection or group → 404; an unreachable profile → 400."""
         connection = connections.get_connection(cid)
         if connection is None:
             return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)

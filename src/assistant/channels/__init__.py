@@ -7,8 +7,7 @@ from assistant.channels.slack import SlackChannel
 from assistant.channels.telegram import TelegramChannel
 
 # Token env-var name → the constructor argument the platform's adapter takes it as.
-# A Connection stores its tokens under these names and is handed them explicitly;
-# no adapter reads the environment.
+# A Connection stores its tokens under these names and is handed them explicitly.
 TOKEN_ARGS = {
     "TELEGRAM_BOT_TOKEN": "token",
     "DISCORD_BOT_TOKEN": "token",

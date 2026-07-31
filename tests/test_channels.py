@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from assistant import cli, connections, pairing
 from assistant.channels.base import InboundMessage, should_respond
 from assistant.channels.telegram import TelegramChannel
 
@@ -151,3 +152,48 @@ def test_telegram_requires_token(monkeypatch):
 
     with pytest.raises(ValueError):
         TelegramChannel()
+
+
+# --- the single-channel CLI commands run as a Connection, not as a platform string ---
+
+
+def test_the_cli_runs_as_the_platforms_own_connection(monkeypatch):
+    """`ag2-assistant telegram` must key by the real Connection id: pairing, Peers and
+    the default Profile are all keyed by it, so a literal "telegram" reaches nobody."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    cid, kwargs = cli._cli_connection("telegram")
+
+    assert cid == connections.connections_for("telegram")[0].id
+    assert kwargs == {"token": "seed-tok"}
+
+
+def test_the_cli_connection_serves_the_accounts_paired_to_it(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    real = connections.connections_for("telegram")[0].id
+    pairing.add_account(real, "42", "telegram")
+
+    assert pairing.is_paired(cli._cli_connection("telegram")[0], "42") is True
+
+
+def test_the_cli_runs_on_the_connections_stored_token_not_a_stray_env_one(monkeypatch):
+    connection = connections.create_connection("telegram", "Work", {"TELEGRAM_BOT_TOKEN": "stored"})
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "stale-env")
+
+    assert cli._cli_connection("telegram") == (connection.id, {"token": "stored"})
+
+
+def test_the_cli_seeds_from_the_env_when_the_platform_has_no_connection(monkeypatch):
+    """A token exported into a container that has no Connection for it yet still runs."""
+    connections.create_connection("discord", "", {"DISCORD_BOT_TOKEN": "d"})
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "env-tok")
+
+    assert cli._cli_connection("telegram") == ("telegram", {"token": "env-tok"})
+
+
+def test_the_cli_hands_slack_both_of_its_tokens(monkeypatch):
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "bot")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "app")
+    cid, kwargs = cli._cli_connection("slack")
+
+    assert cid == connections.connections_for("slack")[0].id
+    assert kwargs == {"bot_token": "bot", "app_token": "app"}

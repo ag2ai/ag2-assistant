@@ -11,7 +11,7 @@ import uvicorn
 
 from assistant import __version__, codex_auth, connections, profiles
 from assistant.agent import ask, tz_unset_in_container
-from assistant.channels import ChannelRouter, get_channel
+from assistant.channels import TOKEN_ARGS, ChannelRouter, get_channel
 from assistant.config import Config, load_config
 from assistant.folders import DuplicatePath, FolderStore
 from assistant.gateway.app import create_app
@@ -556,6 +556,18 @@ def acp_bridge(
         typer.echo("\nacp-bridge stopped")
 
 
+def _cli_connection(platform: str) -> tuple[str, dict]:
+    """The Connection a single-channel command runs as, with the adapter kwargs holding
+    its token(s) — the platform's first Connection, else the env as a seed for none."""
+    envs = profiles.CHANNEL_TOKEN_ENVS[platform]
+    existing = connections.connections_for(platform)
+    if existing:
+        cid, tokens = existing[0].id, connections.tokens_for(existing[0].id)
+    else:
+        cid, tokens = platform, {e: os.environ.get(e, "") for e in envs}
+    return cid, {TOKEN_ARGS[e]: tokens.get(e, "") for e in envs}
+
+
 @app.command()
 def telegram(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
@@ -569,12 +581,11 @@ def telegram(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel(
-            "telegram", token=os.environ.get("TELEGRAM_BOT_TOKEN", ""), connection="telegram"
-        )
+        cid, tokens = _cli_connection("telegram")
+        channel = get_channel("telegram", connection=cid, **tokens)
 
         async def notify(connection: str, chat_id: str, text: str) -> None:
-            if connection == "telegram":
+            if connection == cid:
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
@@ -608,12 +619,11 @@ def discord(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel(
-            "discord", token=os.environ.get("DISCORD_BOT_TOKEN", ""), connection="discord"
-        )
+        cid, tokens = _cli_connection("discord")
+        channel = get_channel("discord", connection=cid, **tokens)
 
         async def notify(connection: str, chat_id: str, text: str) -> None:
-            if connection == "discord":
+            if connection == cid:
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
@@ -646,15 +656,11 @@ def slack(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel(
-            "slack",
-            bot_token=os.environ.get("SLACK_BOT_TOKEN", ""),
-            app_token=os.environ.get("SLACK_APP_TOKEN", ""),
-            connection="slack",
-        )
+        cid, tokens = _cli_connection("slack")
+        channel = get_channel("slack", connection=cid, **tokens)
 
         async def notify(connection: str, chat_id: str, text: str) -> None:
-            if connection == "slack":
+            if connection == cid:
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel

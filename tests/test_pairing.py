@@ -242,6 +242,32 @@ def test_migration_leaves_an_unmigrated_platform_paired_to_nobody(tmp_path, monk
     assert pairing.is_paired(WORK, "42") is False
 
 
+def test_an_unadopted_entry_keeps_its_platform_for_a_later_migration(tmp_path, monkeypatch):
+    """An adoption that skips a platform must not take its only key with it, or that
+    roster can never be attributed to the Connection made for it later."""
+    monkeypatch.setattr(pairing, "_path", lambda: tmp_path / "pairing.json")
+    (tmp_path / "pairing.json").write_text(
+        '{"accounts": [{"platform": "discord", "account_id": "42"}],'
+        ' "codes": [{"platform": "discord", "code": "AAAA-1111", "expires_at": 1e12}]}'
+    )
+    pairing.adopt_connections({"telegram": WORK})
+    pairing.adopt_connections({"discord": HOME})
+    assert pairing.is_paired(HOME, "42") is True
+    assert pairing.live_code(HOME).code == "AAAA-1111"
+
+
+def test_an_adopted_entry_is_not_re_adopted(tmp_path, monkeypatch):
+    """Adoption re-runs after an interrupted migration; a roster already moved stays put."""
+    monkeypatch.setattr(pairing, "_path", lambda: tmp_path / "pairing.json")
+    (tmp_path / "pairing.json").write_text(
+        '{"accounts": [{"platform": "telegram", "account_id": "42"}], "codes": []}'
+    )
+    pairing.adopt_connections({"telegram": WORK})
+    pairing.adopt_connections({"telegram": HOME})
+    assert pairing.is_paired(WORK, "42") is True
+    assert pairing.is_paired(HOME, "42") is False
+
+
 # --- persistence ---
 
 

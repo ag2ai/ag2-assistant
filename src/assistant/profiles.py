@@ -346,16 +346,18 @@ def adopt_channel_defaults(by_platform: dict[str, str]) -> None:
 
 
 def adopt_exposure(by_platform: dict[str, str]) -> None:
-    """Carry every profile's platform-keyed withdrawals onto the matching surfaces of
-    the Connections migrated for those platforms, so a profile withheld from Telegram
-    groups stays withheld from the migrated bot's group surface."""
+    """Carry every profile's platform-keyed withdrawals onto the matching surfaces of the
+    Connections migrated for those platforms, dropping the platform-keyed vocabulary."""
     data = load_registry()
     for entry in data["profiles"]:
-        carried = []
+        kept = []
         for surface in _meta(entry).withdrawn:
             platform, _, kind = surface.partition(":")
+            if platform not in CHANNEL_PLATFORMS:
+                kept.append(surface)
+                continue
             cid = by_platform.get(platform)
             if cid is not None:
-                carried.append(f"{cid}:{kind}" if kind else cid)
-        entry["withdrawn"] = [*_meta(entry).withdrawn, *carried]
+                kept.append(f"{cid}:{kind}" if kind else cid)
+        entry["withdrawn"] = kept
     _write(data)

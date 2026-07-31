@@ -215,6 +215,34 @@ def test_an_unknown_profile_raises():
         profiles.set_exposure("nope", "cn_1", False)
 
 
+# --- migration: withdrawals recorded against a platform, before Connections ---
+
+
+def test_adopting_exposure_moves_a_platform_withdrawal_onto_the_connections_surface():
+    profiles.create_profile("Work", TEAL)
+    profiles.set_exposure("work", "telegram:group", False)
+    profiles.adopt_exposure({"telegram": "cn_1"})
+    assert profiles.get_profile("work").withdrawn == ["cn_1:group"]
+
+
+def test_adopting_exposure_drops_the_platform_keyed_surface():
+    """The fixed platform vocabulary is gone from stored data, not merely shadowed."""
+    profiles.create_profile("Work", TEAL)
+    profiles.set_exposure("work", "discord", False)
+    profiles.adopt_exposure({"discord": "cn_1"})
+    assert profiles.withdrawn_from("discord") == set()
+    assert profiles.withdrawn_from("cn_1") == {"work"}
+
+
+def test_adopting_exposure_leaves_a_connections_own_surfaces_alone():
+    """Re-running adoption is a no-op — it must not eat live Connection withdrawals."""
+    profiles.create_profile("Work", TEAL)
+    profiles.set_exposure("work", "cn_2:dm", False)
+    profiles.adopt_exposure({"telegram": "cn_1"})
+    profiles.adopt_exposure({"telegram": "cn_1"})
+    assert profiles.get_profile("work").withdrawn == ["cn_2:dm"]
+
+
 def test_set_active_default():
     profiles.create_profile("Work", TEAL)
     profiles.create_profile("Personal", CORAL)

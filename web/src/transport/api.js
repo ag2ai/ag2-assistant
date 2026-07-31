@@ -147,49 +147,34 @@ export const api = {
   codexLoginUrl: () => j('POST', G('/codex/login_url')),
   codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
   codexLogout: () => j('POST', G('/codex/logout')),
-  // ---- Connections: one configured instance of a messaging platform, keyed by an
-  // opaque connection id (a platform can be connected many times). All GLOBAL —
-  // install-level, never profile-scoped (ADR 0019). An entry is {id, platform, name,
-  // tokens:{ENV:{set,hint}}, default_profile, active, error, paired_accounts}; token
-  // values are never echoed back. ----
+  // ---- Connections (GLOBAL, install-level): each {id, platform, name,
+  // tokens:{ENV:{set,hint}}, default_profile, active, error, paired_accounts}. ----
   connections: () => j('GET', G('/connections')),
-  // Create and start one; `tokens` is {ENV_NAME: value} and must carry every env the
-  // platform needs, a blank name takes the platform's next default ("Telegram 2").
-  // One that fails to START still returns 200, with active:false and the reason.
+  // Create and start one; `tokens` is {ENV_NAME: value}, a blank name takes the
+  // platform's next default. One that fails to start returns 200 with active:false.
   createConnection: (platform, name, tokens) =>
     j('POST', G('/connections'), { platform, name, tokens }),
   renameConnection: (cid, name) => j('POST', G('/connections/' + encodeURIComponent(cid)), { name }),
-  // Replace every token and restart on them, keeping the connection's id and so its
-  // paired accounts, group pins and exposure. One that will not start is rolled back
-  // and 400s with the reason, leaving the old bot live.
+  // Replace every token and restart on them, keeping the connection's id. One that will
+  // not start is rolled back and 400s with the reason.
   replaceConnectionTokens: (cid, tokens) =>
     j('POST', G('/connections/' + encodeURIComponent(cid) + '/token'), { tokens }),
   // Stop it and forget it, with its tokens, Peers, paired accounts, pairing code,
   // default-profile entry and exposure records → {ok:true}.
   deleteConnection: (cid) => j('DELETE', G('/connections/' + encodeURIComponent(cid))),
-  // Where this connection's conversations land when nothing else has been chosen
-  // (profile:null clears it) → the updated connection entry. A profile withdrawn from
-  // every surface is refused with 400; it takes effect on the next message.
+  // Where this connection's conversations land by default (profile:null clears it) → the
+  // updated entry. A profile withdrawn from every surface is refused with 400.
   connectionDefault: (cid, profile) =>
     j('POST', G('/connections/' + encodeURIComponent(cid) + '/default'), { profile }),
-  // Which profiles this connection can reach, per surface, plus its default — one view,
-  // since the two are one decision. → {surfaces:[{kind, id}], exposure:{pid:{surface_id:
-  // bool}}, default_profile}, unarchived profiles in registry order. Default-allow, so a
-  // profile nobody withdrew reads true everywhere.
+  // → {surfaces:[{kind, id}], exposure:{pid:{surface_id: bool}}, default_profile}, in
+  // registry order. Default-allow: a profile nobody withdrew reads true everywhere.
   connectionExposure: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/exposure')),
-  // Expose or withdraw one profile on one surface → that same view. Withdrawing the
-  // current default from its last surface clears the default, so re-render from the
-  // response rather than assuming only the one switch moved.
+  // Expose or withdraw one profile on one surface → that same view; withdrawing the
+  // default's last surface clears the default, so re-render from the response.
   setConnectionExposure: (cid, profile, surface, exposed) =>
     j('POST', G('/connections/' + encodeURIComponent(cid) + '/exposure'), { profile, surface, exposed }),
-  // Paired accounts — a connection serves nobody else, and the grant is to that one
-  // connection: an account paired to one Telegram bot reaches no other (ADR 0021).
-  // Every route below returns the same whole view, {accounts:[{key, account_id, handle,
-  // pending}], code:{code, expires_at}|null}, so a mutation is "run it, keep what came
-  // back". A numeric id is authoritative at once; a handle is an invitation that stays
-  // `pending` until an account bearing it speaks, and is refused where the platform's
-  // messages carry no handle (Slack). connectionPairingCode mints this connection's one
-  // live code, replacing its earlier one and no other connection's.
+  // Paired accounts, a grant to this one connection (ADR 0021). Every route below returns
+  // {accounts:[{key, account_id, handle, pending}], code:{code, expires_at}|null}.
   connectionPairing: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/pairing')),
   connectionPair: (cid, value) =>
     j('POST', G('/connections/' + encodeURIComponent(cid) + '/pairing'), { value }),
@@ -197,11 +182,8 @@ export const api = {
     j('DELETE', G('/connections/' + encodeURIComponent(cid) + '/pairing/' + encodeURIComponent(key))),
   connectionPairingCode: (cid) =>
     j('POST', G('/connections/' + encodeURIComponent(cid) + '/pairing/code')),
-  // Group chats that arrived on this connection → {groups:[{chat_id, profile}],
-  // profiles:[{id, name}]}, the profiles being the ones reachable on THIS connection's
-  // group surface — so a group pinned to anything outside that list is unreachable here.
-  // Re-pointing returns that same view; a group's profile moves only from here, since
-  // /profile is refused inside a group.
+  // Group chats on this connection → {groups:[{chat_id, profile}], profiles:[{id, name}]},
+  // the profiles being those reachable on THIS connection's group surface.
   connectionGroups: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/groups')),
   connectionGroupProfile: (cid, chatId, profile) =>
     j('POST',

@@ -10,8 +10,8 @@ Install-level state, a sibling of the profile and Peer registries (ADR 0019): a
 Connection is never owned by a Profile.
 
 Read/write style mirrors ``peers.py`` / ``profiles.py``: a small read-modify-write
-over a JSON file, tolerant of a missing/malformed file. Reading also performs the
-one-shot migration of an install that already has bot tokens — see :func:`_migrate`.
+over a JSON file, tolerant of a missing/malformed file. Reading migrates an install
+that already has bot tokens — see :func:`_migrate`.
 """
 
 import json
@@ -49,35 +49,41 @@ def _path() -> Path:
     return data_dir() / "connections.json"
 
 
-def _read_file() -> list[dict] | None:
-    """The stored entries, or None when there is no readable registry file — which
-    is what triggers the one-shot migration."""
+def _read_file() -> tuple[list[dict], bool] | None:
+    """The stored entries and whether their adoption finished, or None when the file
+    does not exist. A malformed file reads as no Connections, already adopted."""
+    path = _path()
+    if not path.exists():
+        return None
     try:
-        data = json.loads(_path().read_text())
+        data = json.loads(path.read_text())
     except Exception:
-        return None
+        return [], True
     if not isinstance(data, dict):
-        return None
+        return [], True
     entries = data.get("connections")
     if not isinstance(entries, list):
-        return []
-    return [e for e in entries if isinstance(e, dict) and e.get("id") and e.get("platform")]
+        entries = []
+    kept = [e for e in entries if isinstance(e, dict) and e.get("id") and e.get("platform")]
+    return kept, bool(data.get("adopted"))
 
 
-def _write(entries: list[dict]) -> None:
+def _write(entries: list[dict], adopted: bool = True) -> None:
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"connections": entries}, indent=2))
+    p.write_text(json.dumps({"connections": entries, "adopted": adopted}, indent=2))
 
 
 def _load() -> list[dict]:
-    """Every stored entry, migrating a token-seeded install on first read. The
-    registry file is the done-marker, so migration happens exactly once."""
-    entries = _read_file()
-    if entries is not None:
-        return entries
-    entries = _migrate()
-    _write(entries)
+    """Every stored entry, migrating a token-seeded install when no file exists and
+    finishing an adoption that a crash interrupted."""
+    read = _read_file()
+    if read is None:
+        return _migrate()
+    entries, adopted = read
+    if not adopted:
+        _adopt(entries)
+        _write(entries)
     return entries
 
 
@@ -156,9 +162,7 @@ def rename_connection(cid: str, name: str) -> Connection:
 
 def delete_connection(cid: str) -> None:
     """Forget a Connection and everything hung off it — its token(s), exposure records,
-    default Profile, paired accounts, live pairing code and Peers. Every other
-    Connection, including a sibling on the same platform, is untouched. Unknown id →
-    ValueError."""
+    default Profile, paired accounts, live pairing code and Peers. Unknown id → ValueError."""
     entries = _load()
     kept = [e for e in entries if e.get("id") != cid]
     if len(kept) == len(entries):
@@ -228,10 +232,8 @@ def reachable(cid: str, pid: str) -> bool:
 
 
 def set_exposure(cid: str, pid: str, surface: str, exposed: bool) -> None:
-    """Expose or withdraw one profile on one surface of this Connection. A withdrawal
-    that takes the profile's last surface clears it as this Connection's default rather
-    than leaving the Connection pointing where it cannot reach. Unknown Connection,
-    profile or surface → ValueError."""
+    """Expose or withdraw one profile on one surface of this Connection; a withdrawal that
+    takes its last surface clears it as the default. Unknown id or surface → ValueError."""
     connection = get_connection(cid)
     if connection is None:
         raise ValueError(f"unknown connection: {cid}")
@@ -272,26 +274,30 @@ def _seeded_platforms() -> list[str]:
     return [p for p in CHANNEL_PLATFORMS if all(present.get(e) for e in CHANNEL_TOKEN_ENVS[p])]
 
 
+def _adopt(entries: list[dict]) -> None:
+    """Seed each entry's token(s) from the env and move that platform's default Profile,
+    exposure, Peers and paired accounts onto it. Re-runnable."""
+    by_platform: dict[str, str] = {}
+    for entry in entries:
+        cid, platform = entry["id"], entry["platform"]
+        by_platform.setdefault(platform, cid)
+        if not secrets.connection_tokens(cid):
+            secrets.set_connection_tokens(
+                cid, {e: secrets.channel_token(e) for e in CHANNEL_TOKEN_ENVS[platform]}
+            )
+    if not by_platform:
+        return
+    profiles.adopt_channel_defaults(by_platform)
+    profiles.adopt_exposure(by_platform)
+    peers.adopt_connections(by_platform)
+    pairing.adopt_connections(by_platform)
+
+
 def _migrate() -> list[dict]:
-    """One Connection per platform that already has its token(s), named after the
-    platform and holding the token(s) it was seeded from. Each inherits that platform's
-    default Profile, paired accounts, live pairing code, per-surface Profile exposure and
-    every Peer recorded against it, so an existing install's conversations continue in
-    place and nobody who could reach it loses access. The entries are written by the caller in one go —
-    and the tokens land first — so a half-migrated registry is not a state anyone can
-    observe."""
-    entries = []
-    adopted = {}
-    for platform in _seeded_platforms():
-        connection = _new(platform, PLATFORM_TITLES[platform])
-        secrets.set_connection_tokens(
-            connection.id, {e: secrets.channel_token(e) for e in CHANNEL_TOKEN_ENVS[platform]}
-        )
-        adopted[platform] = connection.id
-        entries.append(asdict(connection))
-    if adopted:
-        profiles.adopt_channel_defaults(adopted)
-        profiles.adopt_exposure(adopted)
-        peers.adopt_connections(adopted)
-        pairing.adopt_connections(adopted)
+    """One Connection per platform that already has its token(s). The ids are persisted
+    before anything is stamped with them; adoption re-runs until it is marked done."""
+    entries = [asdict(_new(p, PLATFORM_TITLES[p])) for p in _seeded_platforms()]
+    _write(entries, adopted=False)
+    _adopt(entries)
+    _write(entries)
     return entries

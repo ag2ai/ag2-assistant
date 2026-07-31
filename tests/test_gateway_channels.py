@@ -319,6 +319,64 @@ def test_a_malformed_registry_file_lists_no_connections(monkeypatch):
         assert r.json() == {"connections": []}
 
 
+def test_a_malformed_registry_does_not_re_migrate_a_seeded_install(monkeypatch):
+    """Re-running the migration would mint fresh ids while the Peers, roster and defaults
+    still carry the old ones — a permanently orphaned install. A corrupt file is empty."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        first = client.get("/api/connections").json()["connections"][0]["id"]
+    pairing.add_account(first, "42", "telegram")
+    (data_dir() / "connections.json").write_text("{not json")
+    with _new_client(monkeypatch) as client:
+        assert client.get("/api/connections").json() == {"connections": []}
+    assert pairing.is_paired(first, "42") is True
+
+
+def test_an_interrupted_migration_finishes_on_the_next_boot(monkeypatch):
+    """A crash after the ids were written but before the state was stamped: the next load
+    adopts onto those same ids rather than minting new ones."""
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    profiles.create_profile("Work", "#109e91")
+    profiles.set_exposure("work", "telegram:group", False)
+    _pre_connection_install("work")
+    data_dir().mkdir(parents=True, exist_ok=True)
+    (data_dir() / "connections.json").write_text(
+        json.dumps(
+            {
+                "connections": [{"id": "cn_half", "platform": "telegram", "name": "Telegram"}],
+                "adopted": False,
+            }
+        )
+    )
+    with _new_client(monkeypatch) as client:
+        got = client.get("/api/connections").json()["connections"]
+        assert [c["id"] for c in got] == ["cn_half"]
+        assert got[0]["default_profile"] == "work"
+        assert client.get("/api/connections/cn_half/exposure").json()["exposure"]["work"] == {
+            "cn_half:dm": True,
+            "cn_half:group": False,
+        }
+    assert peers.get_peer("cn_half", "42").profile == "work"
+    assert pairing.is_paired("cn_half", "42") is True
+    assert connections.tokens_for("cn_half") == {"TELEGRAM_BOT_TOKEN": "seed-tok"}
+
+
+def test_a_finished_migration_is_not_re_adopted(monkeypatch):
+    """The done-marker survives a restart: a second boot changes nothing."""
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        cid = client.get("/api/connections").json()["connections"][0]["id"]
+    connections.set_tokens(cid, {"TELEGRAM_BOT_TOKEN": "rotated"})
+    with _new_client(monkeypatch) as client:
+        assert [c["id"] for c in client.get("/api/connections").json()["connections"]] == [cid]
+    assert connections.tokens_for(cid) == {"TELEGRAM_BOT_TOKEN": "rotated"}
+
+
 def test_default_naming_numbers_the_later_connections_of_a_platform(monkeypatch):
     connections.create_connection("telegram")
     connections.create_connection("telegram")

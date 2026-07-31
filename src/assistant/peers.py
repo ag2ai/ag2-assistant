@@ -5,9 +5,6 @@ identified by the **Connection** it arrived on plus that platform's chat id. It 
 the **Profile** that conversation talks to, so a selection survives a restart.
 Install-level state, a sibling of the profile registry (ADR 0019).
 
-The Connection is the key, not the platform: on Telegram a direct message's chat id is
-the *user's* id, identical across two bots, so two Connections must not share a Peer.
-
 Read/write style mirrors ``profiles.py``: a small read-modify-write over a JSON
 file, tolerant of a missing/malformed file (treated as no peers).
 """

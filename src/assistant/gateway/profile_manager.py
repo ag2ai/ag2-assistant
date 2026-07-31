@@ -212,8 +212,7 @@ class ProfileManager:
         self._persist = persist
         self._runtimes: dict[str, ProfileRuntime] = {}
         # Connection id → the live install-level adapter (ADR 0019). One per registered
-        # Connection, so two bots of one platform run side by side; never owned by a
-        # runtime.
+        # Connection, so two bots of one platform run side by side.
         self.channels: dict[str, channels.Channel] = {}
         # Connection id → last start-failure message (bad/missing token, network).
         # Install-level; cleared on that Connection's successful start or stop.
@@ -297,14 +296,8 @@ class ProfileManager:
         await self._channel(connection).retract(chat_id, inquiry)
 
     async def start_channel(self, cid: str) -> tuple[bool, str | None]:
-        """Start the Connection ``cid`` if it holds all the tokens its platform needs,
-        handing the adapter the shared router and its own Connection id. Guarded: a bad
-        token / network failure logs + records ``channel_errors[cid]`` and returns
-        (False, reason) instead of crashing — a Channel that cannot connect must never
-        take the server down with it, nor any sibling Connection. Success clears any
-        prior error. Already running is a no-op.
-
-        Returns ``(active, reason)``: active True iff the Connection is now live."""
+        """Start the Connection ``cid`` on the tokens it holds, handing the adapter the
+        shared router. Returns ``(active, reason)``; a failure records it and stays down."""
         log = profile_logger("default")
         if cid in self.channels:
             return True, None
@@ -318,10 +311,8 @@ class ProfileManager:
             msg = f"no token configured for {platform}"
             self.channel_errors[cid] = msg
             return False, msg
-        # A channel's start() talks to the platform (Telegram get_me, Discord/Slack
-        # connect) and RAISES on a bad token / network failure — as does get_channel
-        # when a token is missing. Never let that propagate: it would 500 the endpoint
-        # and crash boot. Record the reason, stay inactive.
+        # start() and get_channel both raise on a bad token / network failure; that must
+        # not propagate — it would 500 the endpoint and crash boot.
         try:
             channel = channels.get_channel(
                 platform,
@@ -330,8 +321,7 @@ class ProfileManager:
             )
             await channel.start(self.router)
         except Exception as exc:
-            # Platform libraries embed the raw token in some error messages
-            # (e.g. Telegram's "The token <value> was rejected"); scrub it —
+            # Platform libraries embed the raw token in some error messages; scrub it,
             # this string is logged AND returned via GET /api/connections.
             msg = _scrub_tokens(f"could not start '{platform}': {exc}", tokens.values())
             log.error(msg)

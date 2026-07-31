@@ -285,8 +285,10 @@ def adopt_connections(by_platform: dict[str, str]) -> None:
     for it, so nobody who could reach the assistant before loses access."""
     data = _load()
     for entry in data["accounts"] + data["codes"]:
-        connection = by_platform.get(entry.pop("platform", None))
+        connection = by_platform.get(entry.get("platform"))
         if connection and not entry.get("connection"):
             entry["connection"] = connection
+        if entry.get("connection"):
+            entry.pop("platform", None)
     if data["accounts"] or data["codes"]:
         _write(data)
