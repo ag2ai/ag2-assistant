@@ -2,8 +2,9 @@
   // Profile editor (ADR 0015, redesign §2 + §9): the second level of Settings → Profiles.
   // Reached by clicking a card in the catalogue. A profile is now a first-class entity with
   // its own header (accent, name, Active badge, back to the catalogue) and a horizontal tab
-  // bar — General, Focus areas, Model, Folders, Skills, Memory, Channels — each a surface scoped to the ACTIVE
-  // profile (the catalogue switches to the clicked profile before opening this).
+  // bar — General, Focus areas, Model, Folders, Skills, Memory — each a surface scoped to
+  // the ACTIVE profile (the catalogue switches to the clicked profile before opening this).
+  // Channel exposure is not here: it is set per connection, in Settings → Integrations.
   import { profiles } from '../../store.js'
   import { getActiveProfileId } from '../../lib/profile.js'
   import Icon from '../Icon.svelte'
@@ -13,7 +14,6 @@
   import FoldersSection from './FoldersSection.svelte'
   import ProfileSkillsSection from './ProfileSkillsSection.svelte'
   import ProfileMemorySection from './ProfileMemorySection.svelte'
-  import ProfileChannelsSection from './ProfileChannelsSection.svelte'
 
   let { onBack } = $props()
 
@@ -28,7 +28,6 @@
     { id: 'folders', label: 'Folders', comp: FoldersSection },
     { id: 'skills', label: 'Skills', comp: ProfileSkillsSection },
     { id: 'memory', label: 'Memory', comp: ProfileMemorySection },
-    { id: 'channels', label: 'Channels', comp: ProfileChannelsSection },
   ]
   let tab = $state('general')
   const Panel = $derived((TABS.find((t) => t.id === tab) || TABS[0]).comp)

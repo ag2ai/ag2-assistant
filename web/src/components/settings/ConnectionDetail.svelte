@@ -2,12 +2,12 @@
   // One connection's settings: the header (mark, name renamed in place, status) and,
   // at the bottom, the Connection section — replace token and disconnect, each folded
   // behind its own button and each confirming or cancelling in place, no modals.
-  // The Profiles table and the Paired accounts / Groups sections slot in between,
-  // at the two markers below.
+  // The Profiles table and the Paired accounts / Groups sections slot in between.
   import { profiles } from '../../store.js'
   import { api } from '../../transport/api.js'
   import { MARK_TINT, byId, connectionStatus } from '../../lib/integrations.js'
   import IntegrationHeader from './IntegrationHeader.svelte'
+  import ConnectionProfiles from './ConnectionProfiles.svelte'
 
   // connection: one entry from GET /api/connections. tag: the platform label, shown
   // only when the platform has more than one connection. reload: re-fetch the list
@@ -83,8 +83,7 @@
   onRename={rename} {busy}
 />
 
-<!-- The Profiles table (per-profile exposure + the default-profile radio) renders here,
-     reading `connection.id` and `connection.default_profile`. -->
+<ConnectionProfiles {connection} {profById} {reload} />
 <!-- Paired accounts and Groups render here, both keyed by `connection.id`. -->
 
 <div class="setgroup">Connection</div>

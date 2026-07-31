@@ -66,11 +66,6 @@ export const api = {
   createProfile: (name, accent) => j('POST', G('/profiles'), { name, accent }),
   // Metadata update (§4.2): {name?, accent?} — both registry-only, display changes.
   updateProfile: (pid, body) => j('POST', G('/profiles/' + encodeURIComponent(pid)), body),
-  // Channel exposure — which surfaces this profile is reachable from. Default-allow,
-  // so {exposed:false} withdraws it and {exposed:true} drops the record. Returns the
-  // updated {profile}; it applies to the next platform message, nothing restarts.
-  setProfileExposure: (pid, surface, exposed) =>
-    j('POST', G('/profiles/' + encodeURIComponent(pid) + '/exposure'), { surface, exposed }),
   // Archive (§4.9). newDefault is required when archiving the active_default —
   // passed in the request body (DELETE with body → ProfileArchiveRequest).
   archiveProfile: (pid, newDefault) =>
@@ -172,6 +167,21 @@ export const api = {
   // Stop it and forget it, with its tokens, Peers, paired accounts, pairing code,
   // default-profile entry and exposure records → {ok:true}.
   deleteConnection: (cid) => j('DELETE', G('/connections/' + encodeURIComponent(cid))),
+  // Where this connection's conversations land when nothing else has been chosen
+  // (profile:null clears it) → the updated connection entry. A profile withdrawn from
+  // every surface is refused with 400; it takes effect on the next message.
+  connectionDefault: (cid, profile) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/default'), { profile }),
+  // Which profiles this connection can reach, per surface, plus its default — one view,
+  // since the two are one decision. → {surfaces:[{kind, id}], exposure:{pid:{surface_id:
+  // bool}}, default_profile}, unarchived profiles in registry order. Default-allow, so a
+  // profile nobody withdrew reads true everywhere.
+  connectionExposure: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/exposure')),
+  // Expose or withdraw one profile on one surface → that same view. Withdrawing the
+  // current default from its last surface clears the default, so re-render from the
+  // response rather than assuming only the one switch moved.
+  setConnectionExposure: (cid, profile, surface, exposed) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/exposure'), { profile, surface, exposed }),
   // Messaging channels are install-level and never owned by a profile: one connection
   // per platform, live as soon as its token is set. Both routes are GLOBAL. channels()
   // → {telegram|discord|slack: {default_profile:pid|null, token_present, active,

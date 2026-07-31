@@ -52,6 +52,27 @@ export const MARK_TINT = {
   google: '#ea4335', github: '#8b949e',
 }
 
+// A surface's column heading in the Profiles table. The kinds come from
+// GET /api/connections/{cid}/exposure (assistant/connections.py surfaces()): `dm` and
+// `group` where the two switch independently, one `all` where they do not.
+const SURFACE_LABEL = {
+  dm: 'Direct messages',
+  group: 'Groups',
+  all: { discord: 'Servers and direct messages', slack: 'Channels and direct messages' },
+}
+
+export function surfaceLabel(platform, kind) {
+  const label = SURFACE_LABEL[kind]
+  return (typeof label === 'string' ? label : label?.[platform]) || 'Reachable'
+}
+
+// Can this connection reach the profile at all? A profile withdrawn from every surface
+// cannot be the one conversations land in, so its default radio is refused — the same
+// invariant the server enforces. `exposure` is the response's {pid: {surface: bool}}.
+export function reachableAnywhere(exposure, pid) {
+  return Object.values(exposure?.[pid] || {}).some(Boolean)
+}
+
 // One connection's status, resolved in this order: failed to start → not started →
 // nobody paired → no default profile → healthy, naming where its messages land.
 // `profileName` is the default profile's display name (only read in the last case).

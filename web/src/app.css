@@ -324,6 +324,24 @@
 .settings .cnnote { margin: 0 0 6px; font-size: 12px; color: var(--success); }
 /* Small icon button (the rename pencil beside a heading). */
 .settings .iconbtn.sm { width: 22px; height: 22px; }
+/* Profiles table — one row per profile, the default radio and a .setswitch per surface.
+   Exposure and the default are one decision, so they are one table. */
+.settings .cnexp { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+.settings .cnexp th { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); text-align: left; padding: 0 0 5px; }
+.settings .cnexp td { padding: 4px 0; font-size: 13px; color: var(--ink); }
+.settings .cnexpdef { width: 62px; }
+.settings .cnexpcol { width: 132px; }
+.settings .cnexpname { display: flex; align-items: center; gap: 8px; }
+.settings .cnexpname .dim { color: var(--muted); }
+.settings .cnexpdot { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--dot); }
+/* A button rather than <input type=radio>: a native group cannot be emptied by
+   clicking the checked one, and clearing the default has to stay reachable. */
+.settings .cnradio { flex: none; position: relative; width: 15px; height: 15px; padding: 0; border: 1.5px solid var(--line); border-radius: 999px; background: var(--bg); cursor: pointer; }
+.settings .cnradio:hover:not(:disabled) { border-color: var(--accent); }
+.settings .cnradio.on { border-color: var(--accent); }
+.settings .cnradio.on::after { content: ''; position: absolute; inset: 2.5px; border-radius: 999px; background: var(--accent); }
+.settings .cnradio:disabled { opacity: .4; cursor: default; }
+.settings .cnradio:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 /* Rows break out of the .dlist 6px padding (negative margin, padding bumped to
    keep content in place) so the active fill is a full-width green row, edge to
