@@ -196,11 +196,13 @@ class FakeGateway:
 
 class FakeDirectory:
     """Stands in for the ProfileManager: which profiles are running, which one a
-    platform falls back to, and the gateway behind each."""
+    Connection falls back to, and the gateway behind each."""
 
     def __init__(self, *names, default=None, reply="the answer", error=None) -> None:
         self.gateways = {name: FakeGateway(reply, error) for name in names}
         self.default = default
+        # Connection id → its own default profile; ``default`` is what the rest fall to.
+        self.defaults: dict[str, str] = {}
         # profile id → the surfaces it has been withdrawn from (default-allow).
         self.withdrawn: dict[str, set[str]] = {}
         # (connection, chat_id, text) pushed into a conversation.
@@ -219,8 +221,8 @@ class FakeDirectory:
             if surface not in self.withdrawn.get(name, ())
         )
 
-    def default_profile(self, platform: str) -> str | None:
-        return self.default
+    def default_profile(self, connection: str) -> str | None:
+        return self.defaults.get(connection, self.default)
 
     def gateway_for_profile(self, pid):
         return self.gateways.get(pid)
@@ -1295,7 +1297,58 @@ async def test_a_tapped_option_that_no_longer_exists_is_refused():
 async def test_a_peer_records_the_connection_its_message_arrived_on():
     router, _ = _router()
     await router.handle(_inbound("hi", connection="cn-work"))
-    assert peers.get_peer("telegram", "c1").connection == "cn-work"
+    peer = peers.get_peer("cn-work", "c1")
+    assert (peer.connection, peer.platform) == ("cn-work", "telegram")
+
+
+async def test_two_bots_of_one_platform_on_one_chat_id_are_two_conversations():
+    """On Telegram a direct message's chat id is the *user's* id, identical across two
+    bots. The Peer is the Connection's, so neither conversation can reach the other's
+    Profile or its Chat."""
+    directory = FakeDirectory("work", "home")
+    directory.gateways["work"].reply = "from work"
+    directory.gateways["home"].reply = "from home"
+    router = ChannelRouter(directory)
+    peers.select_profile("cn-work", "42", "work", platform="telegram")
+    peers.select_profile("cn-play", "42", "home", platform="telegram")
+
+    first = await router.handle(_inbound("hi", chat_id="42", connection="cn-work"))
+    second = await router.handle(_inbound("hi", chat_id="42", connection="cn-play"))
+
+    assert (first, second) == (Reply("from work"), Reply("from home"))
+    work, play = peers.get_peer("cn-work", "42"), peers.get_peer("cn-play", "42")
+    assert (work.profile, play.profile) == ("work", "home")
+    assert work.chat is not None and work.chat != play.chat
+
+
+async def test_each_connection_falls_back_to_its_own_default_profile():
+    """A Peer that has chosen nothing lands in the default of the Connection its
+    message arrived on, not in whichever default its platform happens to have."""
+    directory = FakeDirectory("work", "home")
+    directory.gateways["work"].reply = "from work"
+    directory.gateways["home"].reply = "from home"
+    directory.defaults = {"cn-work": "work", "cn-play": "home"}
+    router = ChannelRouter(directory)
+
+    first = await router.handle(_inbound("hi", chat_id="42", connection="cn-work"))
+    second = await router.handle(_inbound("hi", chat_id="42", connection="cn-play"))
+
+    assert (first, second) == (Reply("from work"), Reply("from home"))
+
+
+async def test_a_connection_with_no_default_refuses_what_its_sibling_answers():
+    """The default is the Connection's own: setting one bot's does not place the other's
+    conversations, and with two profiles running there is nothing to guess."""
+    directory = FakeDirectory("work", "home")
+    directory.defaults = {"cn-work": "work"}
+    router = ChannelRouter(directory)
+
+    answered = await router.handle(_inbound("hi", chat_id="42", connection="cn-work"))
+    asked = await router.handle(_inbound("hi", chat_id="42", connection="cn-play"))
+
+    assert answered == Reply("the answer")
+    assert isinstance(asked, Choose)
+    assert peers.get_peer("cn-play", "42") is None
 
 
 async def test_the_mirror_pushes_back_through_the_connection_the_peer_arrived_on():

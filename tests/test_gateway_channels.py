@@ -2,14 +2,16 @@
 
 A channel (telegram/discord/slack) starts ONCE for the whole install as soon as its
 token is configured — it is never owned by a profile (ADR 0019). What the registry
-holds is a per-Channel *default profile*: where that platform's conversations land
-when nothing else has been chosen. Endpoints: GET /api/channels (state),
+holds is a per-Connection *default profile*: where that Connection's conversations
+land when nothing else has been chosen. Endpoints: GET /api/channels (state),
 POST /api/channels/default (set/clear the default) and POST /api/channels/token.
 
 GET /api/connections lists the Connections — one configured instance of a platform
-each, migrated from an install's existing bot tokens on first read.
+each, migrated from an install's existing bot tokens on first read — and
+POST /api/connections/{id}/default sets where one Connection's conversations land.
 """
 
+import json
 import os
 
 from fastapi.testclient import TestClient
@@ -80,9 +82,9 @@ def _live(manager, platform: str = "telegram"):
 
 
 def _default_gateway(manager, platform: str = "telegram"):
-    """Where a conversation on ``platform`` lands when the Peer has chosen nothing —
-    i.e. what the Channel's default profile resolves to right now."""
-    pid = manager.default_profile(platform)
+    """Where a conversation on the platform's Connection lands when the Peer has chosen
+    nothing — i.e. what that Connection's default profile resolves to right now."""
+    pid = manager.default_profile(_only_connection(platform))
     return manager.gateway_for_profile(pid) if pid else None
 
 
@@ -231,7 +233,7 @@ def test_setting_the_default_profile_routes_messages_there(monkeypatch):
                 "paired_accounts": 0,
             }
         }
-        assert profiles.channel_defaults()["telegram"] == "work"
+        assert profiles.connection_defaults()[_only_connection()] == "work"
         assert _default_gateway(manager) is manager.get("work").gateway
         assert client.get("/api/channels").json()["telegram"]["default_profile"] == "work"
 
@@ -280,7 +282,7 @@ def test_clearing_the_default_leaves_the_channel_running(monkeypatch):
         }
         assert _live(manager).stopped is False
         assert _default_gateway(manager) is None
-        assert profiles.channel_defaults()["telegram"] is None
+        assert profiles.connection_defaults() == {}
 
 
 def test_default_unknown_platform_400(monkeypatch):
@@ -338,7 +340,7 @@ def test_archiving_the_default_profile_leaves_the_channel_live_and_unrouted(monk
 
         r = client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})
         assert r.status_code == 200
-        assert profiles.channel_defaults()["telegram"] is None
+        assert profiles.connection_defaults() == {}
         assert adapter.stopped is False
         assert client.get("/api/channels").json()["telegram"] == {
             "default_profile": None,
@@ -362,11 +364,12 @@ def test_deleting_a_profile_clears_it_as_a_default(monkeypatch):
     delete must never leave a Channel defaulting to an id that no longer exists."""
 
     profiles.create_profile("Work", "#109e91")
-    profiles.set_channel_default("telegram", "work")
+    connection = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "tok"})
+    profiles.set_connection_default(connection.id, "work")
     profiles.delete_profile("work")
 
     assert profiles.get_profile("work") is None
-    assert profiles.channel_defaults()["telegram"] is None
+    assert profiles.connection_defaults() == {}
 
 
 # --- POST /api/channels/token: secrets-backed tokens, live apply ---
@@ -402,11 +405,11 @@ def test_post_token_clear_stops_channel(monkeypatch):
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
         client.post(
             "/api/channels/token",
             json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "tok"}},
         )
+        client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
         manager = client.app.state.profiles
         chan = _live(manager)
 
@@ -509,7 +512,7 @@ def test_a_browser_turn_is_pushed_to_the_peer_attached_to_that_chat(monkeypatch)
     with _new_client(monkeypatch) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         manager = client.app.state.profiles
-        peers.attach("telegram", "42", "web-1", connection=_only_connection())
+        peers.attach(_only_connection(), "42", "web-1", platform="telegram")
 
         r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
         assert r.status_code == 200
@@ -541,8 +544,8 @@ def _two_profiles(client) -> None:
 def test_groups_list_what_each_is_pinned_to(monkeypatch):
     with _new_client(monkeypatch) as client:
         _two_profiles(client)
-        peers.select_profile("telegram", "-100", "work", surface="group")
-        peers.select_profile("telegram", "42", "home")  # a DM, not a group
+        peers.select_profile("cn-tg", "-100", "work", platform="telegram", surface="group")
+        peers.select_profile("cn-tg", "42", "home", platform="telegram")  # a DM, not a group
 
         view = client.get("/api/channels/telegram/groups").json()
         assert view["groups"] == [{"chat_id": "-100", "profile": "work"}]
@@ -563,33 +566,33 @@ def test_a_profile_withheld_from_groups_is_absent_from_the_group_picker(monkeypa
 def test_re_pointing_a_group_moves_it_and_leaves_its_chat_behind(monkeypatch):
     with _new_client(monkeypatch) as client:
         _two_profiles(client)
-        peers.select_profile("telegram", "-100", "work", surface="group")
-        peers.attach("telegram", "-100", "tg-1", surface="group")
+        peers.select_profile("cn-tg", "-100", "work", platform="telegram", surface="group")
+        peers.attach("cn-tg", "-100", "tg-1", platform="telegram", surface="group")
 
         r = client.post("/api/channels/telegram/groups/-100/profile", json={"profile": "home"})
         assert r.status_code == 200
         assert r.json()["groups"] == [{"chat_id": "-100", "profile": "home"}]
-        assert peers.get_peer("telegram", "-100").chat is None
+        assert peers.get_peer("cn-tg", "-100").chat is None
 
 
 def test_a_group_cannot_be_pointed_at_a_profile_withheld_from_groups(monkeypatch):
     """The fence has one gate; the WebUI is not a way around it."""
     with _new_client(monkeypatch) as client:
         _two_profiles(client)
-        peers.select_profile("telegram", "-100", "work", surface="group")
+        peers.select_profile("cn-tg", "-100", "work", platform="telegram", surface="group")
         client.post(
             "/api/profiles/home/exposure", json={"surface": "telegram:group", "exposed": False}
         )
 
         r = client.post("/api/channels/telegram/groups/-100/profile", json={"profile": "home"})
         assert r.status_code == 400
-        assert peers.get_peer("telegram", "-100").profile == "work"
+        assert peers.get_peer("cn-tg", "-100").profile == "work"
 
 
 def test_re_pointing_something_that_is_not_a_group_peer_404s(monkeypatch):
     with _new_client(monkeypatch) as client:
         _two_profiles(client)
-        peers.select_profile("telegram", "42", "work")  # a DM
+        peers.select_profile("cn-tg", "42", "work", platform="telegram")  # a DM
 
         assert (
             client.post(
@@ -603,7 +606,7 @@ def test_re_pointing_something_that_is_not_a_group_peer_404s(monkeypatch):
             ).status_code
             == 404
         )
-        assert peers.get_peer("telegram", "42").profile == "work"
+        assert peers.get_peer("cn-tg", "42").profile == "work"
 
 
 def test_groups_unknown_platform_400(monkeypatch):
@@ -690,7 +693,7 @@ def test_the_connection_listing_never_echoes_a_token(monkeypatch):
         r = client.get("/api/connections")
         assert "super-secret-bot-token" not in r.text
         entry = r.json()["connections"][0]
-        assert set(entry) == {"id", "platform", "name", "tokens"}
+        assert set(entry) == {"id", "platform", "name", "tokens", "default_profile"}
         assert entry["tokens"] == {"TELEGRAM_BOT_TOKEN": {"set": True, "hint": "…oken"}}
 
 
@@ -933,10 +936,155 @@ def test_a_browser_turn_reaches_the_peer_on_its_own_connection(monkeypatch):
     with _new_client(monkeypatch) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         manager = client.app.state.profiles
-        peers.attach("telegram", "42", "web-1", connection=play.id)
+        peers.attach(play.id, "42", "web-1", platform="telegram")
 
         r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
         assert r.status_code == 200
 
         assert manager.channels[work.id].pushed == []
         assert manager.channels[play.id].pushed == [("42", "You: hello\n\nMe: echo[1]: hello")]
+
+
+# --- the default Profile is the Connection's own ---
+
+
+def _two_telegram_bots(monkeypatch):
+    """Two Telegram Connections, the shape every per-Connection assertion needs."""
+    _no_channel_env(monkeypatch)
+    work = connections.create_connection(
+        "telegram", "Work bot", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    play = connections.create_connection(
+        "telegram", "Play bot", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"}
+    )
+    _stub_channels(monkeypatch)
+    return work, play
+
+
+def test_each_connection_carries_its_own_default_profile(monkeypatch):
+    """Two bots of one platform land their conversations in two different Profiles."""
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+
+        assert (
+            client.post(f"/api/connections/{work.id}/default", json={"profile": "work"}).json()[
+                "default_profile"
+            ]
+            == "work"
+        )
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+
+        listed = {
+            c["id"]: c["default_profile"]
+            for c in client.get("/api/connections").json()["connections"]
+        }
+        assert listed == {work.id: "work", play.id: "home"}
+        assert manager.default_profile(work.id) == "work"
+        assert manager.default_profile(play.id) == "home"
+
+
+def test_clearing_one_connections_default_leaves_its_siblings_alone(monkeypatch):
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "work"})
+
+        r = client.post(f"/api/connections/{work.id}/default", json={"profile": None})
+
+        assert r.json()["default_profile"] is None
+        assert profiles.connection_defaults() == {play.id: "work"}
+
+
+def test_archiving_a_profile_clears_it_as_every_connections_default(monkeypatch):
+    """A Profile that has gone stops being anyone's default — on both bots at once."""
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+
+        assert client.request("DELETE", "/api/profiles/home").status_code == 200
+
+        assert profiles.connection_defaults() == {}
+        listed = client.get("/api/connections").json()["connections"]
+        assert [c["default_profile"] for c in listed] == [None, None]
+
+
+def test_a_default_on_an_unknown_connection_404s(monkeypatch):
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        r = client.post("/api/connections/cn-ghost/default", json={"profile": "work"})
+        assert r.status_code == 404
+        assert "cn-ghost" in r.json()["error"]
+
+
+def test_a_connections_default_refuses_an_unknown_or_archived_profile(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        assert client.request("DELETE", "/api/profiles/home").status_code == 200
+
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/default", json={"profile": "ghost"}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(f"/api/connections/{work.id}/default", json={"profile": "home"}).status_code
+            == 400
+        )
+        assert profiles.connection_defaults() == {}
+
+
+def test_a_platform_with_no_connection_has_nowhere_to_put_a_default(monkeypatch):
+    """The default belongs to a Connection, so there must be one to hold it."""
+    _no_channel_env(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        r = client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
+        assert r.status_code == 400
+        assert "telegram" in r.json()["error"]
+
+
+# --- migration: an install that had a default Profile and Peers before Connections ---
+
+
+def _pre_connection_install(default_pid: str) -> None:
+    """Rewrite the registries the way an install from before Connections existed holds
+    them: a platform-keyed default profile, and a Peer named by platform alone."""
+    registry = json.loads((data_dir() / "profiles.json").read_text())
+    registry.pop("connection_defaults", None)
+    registry["channel_defaults"] = {"telegram": default_pid}
+    (data_dir() / "profiles.json").write_text(json.dumps(registry))
+    (data_dir() / "peers.json").write_text(
+        json.dumps({"peers": [{"platform": "telegram", "chat_id": "42", "profile": default_pid}]})
+    )
+
+
+def test_migration_carries_the_platform_default_onto_its_connection(monkeypatch):
+    """An upgraded install keeps routing where it did, with nobody visiting Settings."""
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    profiles.create_profile("Work", "#109e91")
+    _pre_connection_install("work")
+    with _new_client(monkeypatch) as client:
+        entry = client.get("/api/connections").json()["connections"][0]
+        assert entry["default_profile"] == "work"
+        assert client.get("/api/channels").json()["telegram"]["default_profile"] == "work"
+
+
+def test_migration_carries_existing_peers_onto_the_migrated_connection(monkeypatch):
+    """The conversation continues in place: its Peer is now the Connection's."""
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    profiles.create_profile("Work", "#109e91")
+    _pre_connection_install("work")
+    with _new_client(monkeypatch) as client:
+        cid = client.get("/api/connections").json()["connections"][0]["id"]
+        assert peers.get_peer(cid, "42").profile == "work"

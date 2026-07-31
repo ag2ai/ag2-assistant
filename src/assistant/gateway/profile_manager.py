@@ -237,10 +237,10 @@ class ProfileManager:
             if r.meta.id not in withdrawn
         )
 
-    def default_profile(self, platform: str) -> str | None:
-        """The Channel's default profile, or None when it has none or the profile it
+    def default_profile(self, connection: str) -> str | None:
+        """The Connection's default profile, or None when it has none or the profile it
         names is not running."""
-        pid = profiles.channel_defaults().get(platform)
+        pid = profiles.connection_defaults().get(connection)
         return pid if pid in self._runtimes else None
 
     def gateway_for_profile(self, pid: str) -> Gateway | None:

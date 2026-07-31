@@ -40,7 +40,7 @@ def _tools(*args, **kwargs):
 def test_origin_is_the_peer_a_chat_was_started_from():
     """The origin is the Connection the conversation arrived on, so the outcome goes
     back out through that bot rather than through whichever one of its platform."""
-    chat = peers.start_chat("telegram", "42", connection="cn-work")
+    chat = peers.start_chat("cn-work", "42", platform="telegram")
     assert _origin(_Ctx(chat)) == ("cn-work", "42")
     assert _origin(_Ctx("web-abc")) == (None, None)
     assert _origin(_Ctx("task-run:run_1")) == (None, None)
@@ -48,8 +48,8 @@ def test_origin_is_the_peer_a_chat_was_started_from():
 
 def test_origin_survives_the_peer_moving_to_another_chat():
     """A task delivers back to the conversation, not to the Chat it was created in."""
-    chat = peers.start_chat("telegram", "42", connection="cn-work")
-    peers.start_chat("telegram", "42", connection="cn-work")
+    chat = peers.start_chat("cn-work", "42", platform="telegram")
+    peers.start_chat("cn-work", "42", platform="telegram")
     assert _origin(_Ctx(chat)) == ("cn-work", "42")
 
 
@@ -79,7 +79,7 @@ async def test_create_update_run_delete_via_tools(tmp_path):
         "delete_task",
     ):
         assert name in tools, f"missing tool {name}"
-    ctx = _Ctx(peers.start_chat("telegram", "42", connection="cn-work"))
+    ctx = _Ctx(peers.start_chat("cn-work", "42", platform="telegram"))
     msg = await tools["create_task"](
         name="Digest", prompt="collect news", schedule_kind="cron", cron="0 9 * * *", context=ctx
     )

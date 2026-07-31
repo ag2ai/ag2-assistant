@@ -234,7 +234,7 @@ def test_load_registry_missing_file_is_empty():
         "active_default": None,
         "onboarded": False,
         "profiles": [],
-        "channel_defaults": {"telegram": None, "discord": None, "slack": None},
+        "connection_defaults": {},
     }
 
 

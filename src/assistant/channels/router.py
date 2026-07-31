@@ -342,9 +342,9 @@ class ToolTrace:
             log_suppressed("channel tool trace", exc)
 
 
-def peer_key(platform: str, chat_id: str) -> str:
+def peer_key(connection: str, chat_id: str) -> str:
     """How a Peer is named when a turn records which conversation wrote it."""
-    return f"{platform}:{chat_id}"
+    return f"{connection}:{chat_id}"
 
 
 def switched_to(name: str) -> str:
@@ -415,8 +415,8 @@ class ProfileDirectory(Protocol):
         """Every profile a conversation on ``surface`` could be pointed at right now —
         the ones withdrawn from it are not among them."""
 
-    def default_profile(self, platform: str) -> str | None:
-        """The Channel's default profile id, or None when it has none available."""
+    def default_profile(self, connection: str) -> str | None:
+        """The Connection's default profile id, or None when it has none available."""
 
     def gateway_for_profile(self, pid: str) -> "Gateway | None":
         """The running gateway for a profile id, or None when it is not running."""
@@ -520,15 +520,15 @@ class ChannelRouter:
 
     def _select(self, inbound: InboundMessage, pid: str) -> None:
         """Record this Peer's profile, leaving an unchanged selection alone."""
-        peer = peers.get_peer(inbound.platform, inbound.chat_id)
+        peer = peers.get_peer(inbound.connection, inbound.chat_id)
         if peer is not None and peer.profile == pid:
             return  # nothing moved; don't rewrite the registry on every message
         peers.select_profile(
-            inbound.platform,
+            inbound.connection,
             inbound.chat_id,
             pid,
+            platform=inbound.platform,
             surface=inbound.surface(),
-            connection=inbound.connection,
         )
 
     def _current_profile(
@@ -536,12 +536,12 @@ class ChannelRouter:
     ) -> str | None:
         """The profile this Peer is talking to right now, without choosing one for it.
         Its own selection, else the Channel's default, else the sole running profile."""
-        peer = peers.get_peer(inbound.platform, inbound.chat_id)
+        peer = peers.get_peer(inbound.connection, inbound.chat_id)
         if peer is not None and peer.profile in by_id:
             return peer.profile
-        # The Channel default is a live fallback, never a stored selection: changing it
-        # moves every Peer that has not chosen for itself.
-        default = self._directory.default_profile(inbound.platform)
+        # The Connection default is a live fallback, never a stored selection: changing
+        # it moves every Peer that has not chosen for itself.
+        default = self._directory.default_profile(inbound.connection)
         if default in by_id:
             return default
         # Only a platform that can be asked may be placed without asking — the others
@@ -558,13 +558,13 @@ class ChannelRouter:
             # A Chat cannot cross Profiles, so leaving one always leaves its Chat —
             # including for a Peer that was riding the Channel default rather than a
             # selection of its own.
-            peers.detach(inbound.platform, inbound.chat_id)
+            peers.detach(inbound.connection, inbound.chat_id)
         self._select(inbound, profile.id)
         return Reply(switched_to(profile.name) if moved else already_in(profile.name))
 
     def _withdrawn(self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]) -> bool:
         """Whether this Peer's own selection is out of reach from this surface."""
-        peer = peers.get_peer(inbound.platform, inbound.chat_id)
+        peer = peers.get_peer(inbound.connection, inbound.chat_id)
         return peer is not None and peer.profile is not None and peer.profile not in by_id
 
     def _unreachable(self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]) -> Outcome:
@@ -643,16 +643,16 @@ class ChannelRouter:
         return peer.profile in {p.id for p in self._directory.available_profiles(surface)}
 
     def _attached_chat(self, inbound: InboundMessage) -> str | None:
-        peer = peers.get_peer(inbound.platform, inbound.chat_id)
+        peer = peers.get_peer(inbound.connection, inbound.chat_id)
         return peer.chat if peer is not None else None
 
     def _chat_for(self, inbound: InboundMessage) -> str:
         """The Chat this Peer speaks in, started on first use."""
         return self._attached_chat(inbound) or peers.start_chat(
-            inbound.platform,
+            inbound.connection,
             inbound.chat_id,
+            platform=inbound.platform,
             surface=inbound.surface(),
-            connection=inbound.connection,
         )
 
     async def _chats_in_profile(self, inbound: InboundMessage) -> "list[dict] | Outcome":
@@ -675,11 +675,11 @@ class ChannelRouter:
         if entry is None:
             return Refuse(CHAT_GONE)
         peers.attach(
-            inbound.platform,
+            inbound.connection,
             inbound.chat_id,
             chat,
+            platform=inbound.platform,
             surface=inbound.surface(),
-            connection=inbound.connection,
         )
         header = attached_header(self._by_id(inbound)[resolved].name, entry)
         tail = transcript_tail(await gateway.transcript(chat))
@@ -696,7 +696,7 @@ class ChannelRouter:
         never carried.
         """
         peer = peers.attached_to(chat)
-        if peer is None or peer_key(peer.platform, peer.chat_id) == origin:
+        if peer is None or peer_key(peer.connection, peer.chat_id) == origin:
             return
         if not self._exposed_to(peer):
             return  # a withdrawal closes the push side too, not just the inbound one
@@ -779,7 +779,7 @@ class ChannelRouter:
     async def _new_command(self, inbound: InboundMessage, arg: str) -> Outcome:
         if self._attached_chat(inbound) is None:
             return Reply(ALREADY_NEW)
-        peers.detach(inbound.platform, inbound.chat_id)
+        peers.detach(inbound.connection, inbound.chat_id)
         return Reply(NEW_CHAT)
 
     async def _clear_command(self, inbound: InboundMessage, arg: str) -> Outcome:
@@ -895,7 +895,7 @@ class ChannelRouter:
                 chat_id=chat_id,
                 asker=asker,
                 attachments=attachments or [],
-                origin=peer_key(inbound.platform, inbound.chat_id),
+                origin=peer_key(inbound.connection, inbound.chat_id),
                 # Wired only for an adapter that asked to trace; the rest run the
                 # unforwarded path.
                 on_event=trace if progress is not None else None,

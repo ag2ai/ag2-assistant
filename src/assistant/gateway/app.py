@@ -29,7 +29,8 @@ Route map:
     POST /api/profiles/{pid}/exposure        -> {surface, exposed}; withdraw a profile from a surface
     POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
-    GET  /api/connections                    -> {connections: [{id, platform, name}]} (install-level)
+    GET  /api/connections                    -> {connections: [{id, platform, name, tokens, default_profile}]} (install-level)
+    POST /api/connections/{cid}/default      -> set {profile:pid|null} for one Connection; returns updated entry
     GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
     POST /api/channels/default               -> set {platform, profile:pid|null} default profile; returns updated entry
     GET  /api/channels/{platform}/groups     -> group Peers + the profiles a group there may be pinned to
@@ -536,6 +537,10 @@ class VoiceProviderRequest(BaseModel):
 
 class ChannelDefaultRequest(BaseModel):
     platform: str
+    profile: str | None = None  # pid conversations land in by default, or null for none
+
+
+class ConnectionDefaultRequest(BaseModel):
     profile: str | None = None  # pid conversations land in by default, or null for none
 
 
@@ -1900,24 +1905,45 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     # ---- Connections (global, install-level; never owned by a profile — ADR 0019) ----
 
+    def _connection_entry(connection: connections.Connection) -> dict:
+        """One Connection as the API shows it: its identity, its token(s) as a set flag
+        and hint, and the profile its conversations land in by default."""
+        return {
+            "id": connection.id,
+            "platform": connection.platform,
+            "name": connection.name,
+            "tokens": connections.token_status(connection.id),
+            "default_profile": profiles_mod.connection_defaults().get(connection.id),
+        }
+
     @app.get("/api/connections")
     async def list_connections() -> dict:
         """Every configured instance of a platform, in creation order. An install that
         already had bot tokens is migrated to one Connection per platform on this read.
         A Connection's token(s) appear only as a set flag and a last-4 hint."""
-        return {
-            "connections": [
-                {
-                    "id": c.id,
-                    "platform": c.platform,
-                    "name": c.name,
-                    "tokens": connections.token_status(c.id),
-                }
-                for c in connections.list_connections()
-            ]
-        }
+        return {"connections": [_connection_entry(c) for c in connections.list_connections()]}
+
+    @app.post("/api/connections/{cid}/default")
+    async def set_connection_default(cid: str, req: ConnectionDefaultRequest):
+        """Set the profile this Connection's conversations land in by default (or clear
+        it with profile:null). Takes effect on the next message — the adapter itself keeps
+        running either way. Unknown Connection → 404; unknown/archived pid → 400."""
+        connection = connections.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            profiles_mod.set_connection_default(cid, req.profile)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _connection_entry(connection)
 
     # ---- Channels (global, install-level; never owned by a profile — ADR 0019) ----
+
+    def _platform_connection(platform: str) -> connections.Connection | None:
+        """The Connection this platform's own routes act on — its first, which on a
+        single-Connection install is its only one."""
+        registered = connections.connections_for(platform)
+        return registered[0] if registered else None
 
     def _channel_entry(platform: str, default_pid: str | None) -> dict:
         """The install-level state of one platform: the profile its conversations land
@@ -1939,9 +1965,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "paired_accounts": len(pairing.list_accounts(platform)),
         }
 
+    def _platform_default(platform: str) -> str | None:
+        """The default profile a platform's own routes report — its Connection's."""
+        connection = _platform_connection(platform)
+        return profiles_mod.connection_defaults().get(connection.id) if connection else None
+
     def _channel_entries() -> dict:
         """Every platform's entry, off one read of the registry."""
-        return {p: _channel_entry(p, pid) for p, pid in profiles_mod.channel_defaults().items()}
+        return {p: _channel_entry(p, _platform_default(p)) for p in profiles_mod.CHANNEL_PLATFORMS}
 
     @app.get("/api/channels")
     async def list_channels() -> dict:
@@ -1951,12 +1982,19 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/channels/default")
     async def set_channel_default(req: ChannelDefaultRequest):
-        """Set the profile a platform's conversations land in by default (or clear it
-        with profile:null). Takes effect on the next message — the Channel itself keeps
-        running either way. Returns the updated platform entry. Unknown platform → 400;
-        unknown/archived pid → 400."""
+        """Set the profile a platform's Connection lands conversations in by default (or
+        clear it with profile:null). Takes effect on the next message — the Channel itself
+        keeps running either way. Returns the updated platform entry. Unknown platform, a
+        platform with no Connection, or an unknown/archived pid → 400."""
+        if (bad := _reject_unknown_platform(req.platform)) is not None:
+            return bad
+        connection = _platform_connection(req.platform)
+        if connection is None:
+            return JSONResponse(
+                {"error": f"no connection configured for {req.platform}"}, status_code=400
+            )
         try:
-            profiles_mod.set_channel_default(req.platform, req.profile)
+            profiles_mod.set_connection_default(connection.id, req.profile)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {req.platform: _channel_entry(req.platform, req.profile)}
@@ -1995,7 +2033,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if connection is not None:
             with contextlib.suppress(Exception):
                 await manager.restart_channel(connection.id)
-        return {platform: _channel_entry(platform, profiles_mod.channel_defaults().get(platform))}
+        return {platform: _channel_entry(platform, _platform_default(platform))}
 
     # ---- Paired accounts (per Channel; who may speak to it at all — ADR 0021) ----
 
@@ -2059,15 +2097,17 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     # ---- Group Peers (a group's profile is pinned, and re-pointed only here) ----
 
+    def _group_peers(platform: str) -> list[peers.Peer]:
+        """Every group Peer on this platform, across its Connections."""
+        return [p for p in peers.list_peers() if p.platform == platform and p.surface == "group"]
+
     def _group_view(platform: str) -> dict:
         """Every group Peer on this platform with the profile it is pinned to, plus the
         profiles a group here may be pointed at — the ones exposed to the group surface,
         so a profile withheld from groups is absent from this picker too."""
         return {
             "groups": [
-                {"chat_id": p.chat_id, "profile": p.profile}
-                for p in peers.list_peers()
-                if p.platform == platform and p.surface == "group"
+                {"chat_id": p.chat_id, "profile": p.profile} for p in _group_peers(platform)
             ],
             "profiles": [
                 {"id": p.id, "name": p.name}
@@ -2093,10 +2133,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return JSONResponse(
                 {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400
             )
-        peer = peers.get_peer(platform, chat_id)
-        if peer is None or peer.surface != "group":
+        peer = next((p for p in _group_peers(platform) if p.chat_id == chat_id), None)
+        if peer is None:
             return JSONResponse({"error": f"no group peer: {chat_id}"}, status_code=404)
-        peers.select_profile(platform, chat_id, req.profile, surface="group")
+        peers.select_profile(
+            peer.connection, chat_id, req.profile, platform=platform, surface="group"
+        )
         return _group_view(platform)
 
     # ---- Google OAuth (global, account-level) ----

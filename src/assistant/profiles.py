@@ -112,7 +112,7 @@ def _empty_registry() -> dict:
         "active_default": None,
         "onboarded": False,
         "profiles": [],
-        "channel_defaults": {p: None for p in CHANNEL_PLATFORMS},
+        "connection_defaults": {},
     }
 
 
@@ -128,12 +128,10 @@ def load_registry() -> dict:
     data.setdefault("onboarded", False)
     if not isinstance(data.get("profiles"), list):
         data["profiles"] = []
-    # channel_defaults is a top-level {platform: default-pid|null} map; absent
-    # platforms read as null (no default). Malformed → treated as all-unset.
-    defaults = data.get("channel_defaults")
-    if not isinstance(defaults, dict):
-        defaults = {}
-    data["channel_defaults"] = {p: defaults.get(p) for p in CHANNEL_PLATFORMS}
+    # connection_defaults is a top-level {connection-id: default-pid} map; a Connection
+    # with no default is simply absent. Malformed → treated as all-unset.
+    defaults = data.get("connection_defaults")
+    data["connection_defaults"] = defaults if isinstance(defaults, dict) else {}
     return data
 
 
@@ -239,13 +237,13 @@ def set_accent(pid: str, accent: str) -> ProfileMeta:
 
 
 def archive_profile(pid: str) -> ProfileMeta:
-    """Mark a profile archived and clear it as any Channel's default profile
+    """Mark a profile archived and clear it as any Connection's default profile
     (registry-level only; runtime guardrails live in ProfileManager). The Channels
     themselves keep running — they are install-level and never owned by a profile."""
     data = load_registry()
     entry = _find(data, pid)
     entry["archived"] = True
-    _clear_channel_defaults(data, pid)
+    _clear_connection_defaults(data, pid)
     _write(data)
     return _meta(entry)
 
@@ -268,9 +266,9 @@ def delete_profile(pid: str) -> ProfileMeta:
     data = load_registry()
     entry = _find(data, pid)
     data["profiles"] = [e for e in data["profiles"] if e["id"] != pid]
-    # Archiving already cleared these, but deletion must never leave a Channel
+    # Archiving already cleared these, but deletion must never leave a Connection
     # defaulting to a profile that no longer exists.
-    _clear_channel_defaults(data, pid)
+    _clear_connection_defaults(data, pid)
     _write(data)
     return _meta(entry)
 
@@ -327,33 +325,29 @@ def withdrawn_from(surface: str) -> set[str]:
     return {e["id"] for e in load_registry()["profiles"] if surface in _meta(e).withdrawn}
 
 
-# --- channel default profiles (install-level; a Channel is never owned, ADR 0019) ---
+# --- Connection default profiles (install-level; never owned by a profile, ADR 0019) ---
 
 
-def _clear_channel_defaults(data: dict, pid: str) -> None:
-    """Drop ``pid`` as any Channel's default (in-memory; the caller writes)."""
-    for platform, default in data["channel_defaults"].items():
-        if default == pid:
-            data["channel_defaults"][platform] = None
+def _clear_connection_defaults(data: dict, pid: str) -> None:
+    """Drop ``pid`` as any Connection's default (in-memory; the caller writes)."""
+    data["connection_defaults"] = {
+        cid: default for cid, default in data["connection_defaults"].items() if default != pid
+    }
 
 
-def channel_defaults() -> dict[str, str | None]:
-    """The install-level Channel→default-profile map — where a conversation on that
-    platform lands when nothing else has been chosen. Every canonical platform is
-    present; a platform with no default reads as ``None``."""
-    return dict(load_registry()["channel_defaults"])
+def connection_defaults() -> dict[str, str]:
+    """The install-level Connection→default-profile map — where a conversation on that
+    Connection lands when nothing else has been chosen. A Connection with no default is
+    absent from it."""
+    return dict(load_registry()["connection_defaults"])
 
 
-def set_channel_default(platform: str, pid: str | None) -> None:
-    """Set (or clear, with ``None``) the default profile for ``platform``.
+def set_connection_default(cid: str, pid: str | None) -> None:
+    """Set (or clear, with ``None``) the default profile for one Connection.
 
-    Validates the platform against the canonical list and, when ``pid`` is given,
-    that the profile exists and is not archived. This says nothing about whether the
-    Channel runs — it runs whenever its tokens are present."""
-    if platform not in CHANNEL_PLATFORMS:
-        raise ValueError(
-            f"unknown channel platform: {platform} (choose from {', '.join(CHANNEL_PLATFORMS)})"
-        )
+    Validates, when ``pid`` is given, that the profile exists and is not archived. This
+    says nothing about whether the Connection runs — it runs whenever its tokens are
+    present."""
     data = load_registry()
     if pid is not None:
         entry = next((e for e in data["profiles"] if e["id"] == pid), None)
@@ -361,5 +355,21 @@ def set_channel_default(platform: str, pid: str | None) -> None:
             raise ValueError(f"unknown profile: {pid}")
         if entry.get("archived"):
             raise ValueError(f"profile archived: {pid}")
-    data["channel_defaults"][platform] = pid
+        data["connection_defaults"][cid] = pid
+    else:
+        data["connection_defaults"].pop(cid, None)
+    _write(data)
+
+
+def adopt_channel_defaults(by_platform: dict[str, str]) -> None:
+    """Carry a pre-Connection ``{platform: pid}`` default map onto the Connections
+    migrated for those platforms, dropping the platform-keyed map."""
+    data = load_registry()
+    legacy = data.pop("channel_defaults", None)
+    if not isinstance(legacy, dict):
+        return
+    for platform, cid in by_platform.items():
+        pid = legacy.get(platform)
+        if pid is not None:
+            data["connection_defaults"][cid] = pid
     _write(data)
