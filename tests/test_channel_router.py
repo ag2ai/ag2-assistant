@@ -485,6 +485,58 @@ async def test_a_withdrawn_channel_default_is_not_smuggled_back():
     assert directory.gateways["work"].calls == []
 
 
+async def test_exposure_is_the_connections_own_not_the_platforms():
+    """Two Telegram bots: a Profile withdrawn from one is still offered by the other."""
+    directory = FakeDirectory("work", "home")
+    directory.withdraw("home", "cn-work:dm")
+    router = ChannelRouter(directory)
+
+    withdrawn = await router.handle(_inbound("/profile", connection="cn-work"))
+    still_there = await router.handle(_inbound("/profile", connection="cn-play"))
+    assert [opt.token for opt in withdrawn.options] == ["profile:work"]
+    assert [opt.token for opt in still_there.options] == ["profile:work", "profile:home"]
+
+
+async def test_a_live_peer_is_withdrawn_only_on_the_connection_it_speaks_to():
+    """The same chat id on both bots: the withdrawal stops one conversation and leaves
+    the other running, which a platform-keyed surface could not do."""
+    directory = FakeDirectory("work", "home")
+    router = ChannelRouter(directory)
+    await router.handle(_inbound("/profile Home", connection="cn-work"))
+    await router.handle(_inbound("/profile Home", connection="cn-play"))
+
+    directory.withdraw("home", "cn-work:dm")
+    assert isinstance(await router.handle(_inbound("hi", connection="cn-work")), Choose)
+    assert isinstance(await router.handle(_inbound("hi", connection="cn-play")), Reply)
+    assert directory.gateways["home"].calls[-1]["text"] == "hi"
+
+
+async def test_a_connections_groups_are_withdrawn_independently_of_its_direct_messages():
+    directory = FakeDirectory("home", default="home")
+    directory.withdraw("home", "cn-work:group")
+    router = ChannelRouter(directory)
+
+    def group(connection):
+        return _inbound("hi", connection=connection, chat_id="g1", is_direct=False, mentioned=True)
+
+    assert await router.handle(group("cn-work")) == Refuse(NO_PROFILE)
+    assert isinstance(await router.handle(_inbound("hi", connection="cn-work")), Reply)
+    assert isinstance(await router.handle(group("cn-play")), Reply)
+
+
+async def test_a_single_surface_platform_is_withdrawn_by_its_connection_alone():
+    """Discord has one surface per Connection, so the Connection id is the surface."""
+    directory = FakeDirectory("home", default="home")
+    directory.withdraw("home", "cn-work")
+    router = ChannelRouter(directory)
+
+    def dm(connection):
+        return _inbound("hi", platform="discord", connection=connection)
+
+    assert await router.handle(dm("cn-work")) == Refuse(NO_PROFILE)
+    assert isinstance(await router.handle(dm("cn-play")), Reply)
+
+
 # --- /profile ---
 
 

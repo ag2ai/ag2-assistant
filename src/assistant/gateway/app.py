@@ -31,6 +31,8 @@ Route map:
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
     GET  /api/connections                    -> {connections: [{id, platform, name, tokens, default_profile}]} (install-level)
     POST /api/connections/{cid}/default      -> set {profile:pid|null} for one Connection; returns updated entry
+    GET  /api/connections/{cid}/exposure     -> {surfaces, exposure: {pid: {surface: bool}}, default_profile}
+    POST /api/connections/{cid}/exposure     -> {profile, surface, exposed}; withdraw a profile from one surface
     GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
     POST /api/channels/default               -> set {platform, profile:pid|null} default profile; returns updated entry
     GET  /api/channels/{platform}/groups     -> group Peers + the profiles a group there may be pinned to
@@ -542,6 +544,12 @@ class ChannelDefaultRequest(BaseModel):
 
 class ConnectionDefaultRequest(BaseModel):
     profile: str | None = None  # pid conversations land in by default, or null for none
+
+
+class ConnectionExposureRequest(BaseModel):
+    profile: str
+    surface: str  # one of the Connection's own surface ids
+    exposed: bool
 
 
 class ChannelTokenRequest(BaseModel):
@@ -1845,11 +1853,15 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
 
     @app.post("/api/profiles/{pid}/exposure")
     async def set_profile_exposure(pid: str, req: ProfileExposureRequest):
-        """Expose or withdraw this profile on one surface. Default-allow, so exposing
-        drops the record rather than storing one. Unknown pid → 404, unknown surface →
-        400. It takes effect on the next platform message; nothing restarts."""
+        """Expose or withdraw this profile on one platform-keyed surface. Exposure lives
+        on the Connection now — see POST /api/connections/{cid}/exposure. Unknown pid →
+        404, unknown surface → 400."""
         if profiles_mod.get_profile(pid) is None:
             return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
+        if req.surface not in profiles_mod.CHANNEL_SURFACES:
+            return JSONResponse(
+                {"error": f"unknown channel surface: {req.surface}"}, status_code=400
+            )
         try:
             profiles_mod.set_exposure(pid, req.surface, req.exposed)
         except ValueError as exc:
@@ -1932,10 +1944,46 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if connection is None:
             return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
         try:
-            profiles_mod.set_connection_default(cid, req.profile)
+            connections.set_default_profile(cid, req.profile)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return _connection_entry(connection)
+
+    def _exposure_view(connection: connections.Connection) -> dict:
+        """Which profiles this Connection can reach, per surface, plus the one its
+        conversations land in by default — one table, since the two are one decision."""
+        return {
+            "surfaces": [
+                {"kind": kind, "id": surface}
+                for kind, surface in connections.surfaces(connection).items()
+            ],
+            "exposure": connections.exposure(connection.id),
+            "default_profile": profiles_mod.connection_defaults().get(connection.id),
+        }
+
+    @app.get("/api/connections/{cid}/exposure")
+    async def list_connection_exposure(cid: str):
+        """This Connection's surfaces and every profile's reachability on each.
+        Default-allow, so a profile nobody has withdrawn reads true everywhere."""
+        connection = connections.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        return _exposure_view(connection)
+
+    @app.post("/api/connections/{cid}/exposure")
+    async def set_connection_exposure(cid: str, req: ConnectionExposureRequest):
+        """Expose or withdraw one profile on one surface of this Connection. Withdrawing
+        the current default from its last surface clears the default. Takes effect on the
+        next message; nothing restarts. Unknown Connection → 404, unknown profile or
+        surface → 400."""
+        connection = connections.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            connections.set_exposure(cid, req.profile, req.surface, req.exposed)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _exposure_view(connection)
 
     # ---- Channels (global, install-level; never owned by a profile — ADR 0019) ----
 
@@ -1994,7 +2042,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
                 {"error": f"no connection configured for {req.platform}"}, status_code=400
             )
         try:
-            profiles_mod.set_connection_default(connection.id, req.profile)
+            connections.set_default_profile(connection.id, req.profile)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {req.platform: _channel_entry(req.platform, req.profile)}
@@ -2159,6 +2207,14 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Every group Peer on this platform, across its Connections."""
         return [p for p in peers.list_peers() if p.platform == platform and p.surface == "group"]
 
+    def _group_surface(platform: str) -> str:
+        """The group exposure surface a platform's own routes read — its Connection's,
+        since a withdrawal is recorded per Connection. No Connection, no withdrawal."""
+        connection = _platform_connection(platform)
+        if connection is None:
+            return platform
+        return connections.surface_key(connection.id, platform, "group")
+
     def _group_view(platform: str) -> dict:
         """Every group Peer on this platform with the profile it is pinned to, plus the
         profiles a group here may be pointed at — the ones exposed to the group surface,
@@ -2169,7 +2225,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             ],
             "profiles": [
                 {"id": p.id, "name": p.name}
-                for p in manager.available_profiles(profiles_mod.surface_key(platform, "group"))
+                for p in manager.available_profiles(_group_surface(platform))
             ],
         }
 
@@ -2186,7 +2242,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         reachable from groups → 400; a group with no Peer → 404."""
         if (bad := _reject_unknown_platform(platform)) is not None:
             return bad
-        surface = profiles_mod.surface_key(platform, "group")
+        surface = _group_surface(platform)
         if req.profile not in {p.id for p in manager.available_profiles(surface)}:
             return JSONResponse(
                 {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400

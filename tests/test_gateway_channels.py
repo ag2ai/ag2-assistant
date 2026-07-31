@@ -554,10 +554,12 @@ def test_groups_list_what_each_is_pinned_to(monkeypatch):
 
 
 def test_a_profile_withheld_from_groups_is_absent_from_the_group_picker(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
     with _new_client(monkeypatch) as client:
         _two_profiles(client)
         client.post(
-            "/api/profiles/home/exposure", json={"surface": "telegram:group", "exposed": False}
+            f"/api/connections/{work.id}/exposure",
+            json={"profile": "home", "surface": f"{work.id}:group", "exposed": False},
         )
 
         view = client.get("/api/channels/telegram/groups").json()
@@ -578,16 +580,18 @@ def test_re_pointing_a_group_moves_it_and_leaves_its_chat_behind(monkeypatch):
 
 def test_a_group_cannot_be_pointed_at_a_profile_withheld_from_groups(monkeypatch):
     """The fence has one gate; the WebUI is not a way around it."""
+    work, _ = _two_telegram_bots(monkeypatch)
     with _new_client(monkeypatch) as client:
         _two_profiles(client)
-        peers.select_profile("cn-tg", "-100", "work", platform="telegram", surface="group")
+        peers.select_profile(work.id, "-100", "work", platform="telegram", surface="group")
         client.post(
-            "/api/profiles/home/exposure", json={"surface": "telegram:group", "exposed": False}
+            f"/api/connections/{work.id}/exposure",
+            json={"profile": "home", "surface": f"{work.id}:group", "exposed": False},
         )
 
         r = client.post("/api/channels/telegram/groups/-100/profile", json={"profile": "home"})
         assert r.status_code == 400
-        assert peers.get_peer("cn-tg", "-100").profile == "work"
+        assert peers.get_peer(work.id, "-100").profile == "work"
 
 
 def test_re_pointing_something_that_is_not_a_group_peer_404s(monkeypatch):
@@ -1051,6 +1055,178 @@ def test_a_platform_with_no_connection_has_nowhere_to_put_a_default(monkeypatch)
         assert "telegram" in r.json()["error"]
 
 
+# --- Profile exposure is the Connection's own, and cannot contradict its default ---
+
+
+def _surface(cid: str, kind: str = "dm") -> str:
+    """One surface id of a Telegram Connection — its two are switched independently."""
+    return f"{cid}:{kind}"
+
+
+def _withdraw(client, cid: str, pid: str, kind: str = "dm", exposed: bool = False):
+    return client.post(
+        f"/api/connections/{cid}/exposure",
+        json={"profile": pid, "surface": _surface(cid, kind), "exposed": exposed},
+    )
+
+
+def test_exposure_is_default_allow_on_every_surface_of_a_connection(monkeypatch):
+    """A Profile nobody has withdrawn is reachable through every Connection, without
+    anyone visiting Settings."""
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+
+        view = client.get(f"/api/connections/{work.id}/exposure").json()
+
+        assert view["surfaces"] == [
+            {"kind": "dm", "id": _surface(work.id, "dm")},
+            {"kind": "group", "id": _surface(work.id, "group")},
+        ]
+        assert view["exposure"] == {
+            pid: {_surface(work.id, "dm"): True, _surface(work.id, "group"): True}
+            for pid in ("work", "home")
+        }
+        assert view["default_profile"] is None
+
+
+def test_a_single_surface_platform_exposes_one_surface_named_after_its_connection(monkeypatch):
+    _no_channel_env(monkeypatch)
+    discord = connections.create_connection("discord", tokens={"DISCORD_BOT_TOKEN": "tok"})
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+
+        view = client.get(f"/api/connections/{discord.id}/exposure").json()
+
+        assert view["surfaces"] == [{"kind": "all", "id": discord.id}]
+        assert view["exposure"] == {"work": {discord.id: True}, "home": {discord.id: True}}
+
+
+def test_withdrawing_a_profile_from_one_connection_leaves_the_other_reachable(monkeypatch):
+    """The point of the whole change: with two Telegram bots, a Profile answers on the
+    one it is exposed to and on no other."""
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+
+        for kind in ("dm", "group"):
+            assert _withdraw(client, work.id, "home", kind).status_code == 200
+
+        assert client.get(f"/api/connections/{play.id}/exposure").json()["exposure"]["home"] == {
+            _surface(play.id, "dm"): True,
+            _surface(play.id, "group"): True,
+        }
+        reachable = [p.id for p in manager.available_profiles(_surface(work.id, "dm"))]
+        assert reachable == ["work"]
+        assert [p.id for p in manager.available_profiles(_surface(play.id, "dm"))] == [
+            "work",
+            "home",
+        ]
+
+
+def test_a_connections_direct_messages_and_groups_are_withdrawn_independently(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+
+        view = _withdraw(client, work.id, "home", "group").json()
+
+        assert view["exposure"]["home"] == {
+            _surface(work.id, "dm"): True,
+            _surface(work.id, "group"): False,
+        }
+
+
+def test_exposing_again_drops_the_withdrawal(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        _withdraw(client, work.id, "home", "dm")
+
+        view = _withdraw(client, work.id, "home", "dm", exposed=True).json()
+
+        assert view["exposure"]["home"][_surface(work.id, "dm")] is True
+
+
+def test_a_profile_withdrawn_from_every_surface_cannot_be_made_the_default(monkeypatch):
+    """Enforced here and not only in the browser: the API is reachable directly."""
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        for kind in ("dm", "group"):
+            _withdraw(client, work.id, "home", kind)
+
+        r = client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+
+        assert r.status_code == 400
+        assert "home" in r.json()["error"]
+        assert profiles.connection_defaults() == {}
+
+
+def test_a_profile_withdrawn_from_one_surface_is_still_eligible_as_the_default(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        _withdraw(client, work.id, "home", "group")
+
+        r = client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+
+        assert r.status_code == 200
+        assert r.json()["default_profile"] == "home"
+
+
+def test_withdrawing_the_default_from_its_last_surface_clears_the_default(monkeypatch):
+    """The table can never show a Connection pointing where it cannot reach."""
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+        _withdraw(client, work.id, "home", "dm")
+
+        view = _withdraw(client, work.id, "home", "group").json()
+
+        assert view["default_profile"] is None
+        assert profiles.connection_defaults() == {play.id: "home"}
+
+
+def test_withdrawing_a_profile_that_is_not_the_default_leaves_the_default_alone(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+
+        for kind in ("dm", "group"):
+            view = _withdraw(client, work.id, "home", kind).json()
+
+        assert view["default_profile"] == "work"
+
+
+def test_exposure_refuses_an_unknown_connection_profile_or_surface(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+
+        assert client.get("/api/connections/cn-ghost/exposure").status_code == 404
+        assert (
+            client.post(
+                "/api/connections/cn-ghost/exposure",
+                json={"profile": "work", "surface": "cn-ghost:dm", "exposed": False},
+            ).status_code
+            == 404
+        )
+        assert _withdraw(client, work.id, "ghost").status_code == 400
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/exposure",
+                json={"profile": "work", "surface": "telegram:dm", "exposed": False},
+            ).status_code
+            == 400
+        )
+
+
 # --- migration: an install that had a default Profile and Peers before Connections ---
 
 
@@ -1113,3 +1289,20 @@ def test_migration_carries_the_paired_accounts_and_live_code_onto_the_connection
         assert [a["account_id"] for a in roster["accounts"]] == ["42"]
         assert roster["code"]["code"] == "AAAA-1111"
         assert pairing.is_paired(_only_connection(), "42") is True
+
+
+def test_migration_carries_platform_withdrawals_onto_the_connections_surfaces(monkeypatch):
+    """A Profile withheld from Telegram groups before the upgrade stays withheld from
+    the migrated bot's group surface, and keeps its direct messages."""
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    profiles.create_profile("Work", "#109e91")
+    profiles.set_exposure("work", "telegram:group", False)
+    _pre_connection_install("work")
+    with _new_client(monkeypatch) as client:
+        cid = client.get("/api/connections").json()["connections"][0]["id"]
+
+        exposure = client.get(f"/api/connections/{cid}/exposure").json()["exposure"]
+
+        assert exposure["work"] == {f"{cid}:dm": True, f"{cid}:group": False}

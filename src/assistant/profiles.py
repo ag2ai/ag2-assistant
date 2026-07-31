@@ -49,23 +49,9 @@ assert set(CHANNEL_TOKEN_ENVS) == set(CHANNEL_PLATFORMS)
 # Every channel env var name, flattened — the closed set the secrets store accepts.
 CHANNEL_TOKEN_ENV_NAMES = frozenset(e for envs in CHANNEL_TOKEN_ENVS.values() for e in envs)
 
-# Platforms whose direct messages and groups are separate exposure surfaces.
-_SPLIT_PLATFORMS = ("telegram",)
-
-# The surfaces a Profile's Channel exposure is switchable per — each independently
-# withdrawable. A split platform contributes one surface per conversation kind.
+# The platform-keyed surfaces the Profile exposure route still speaks. Live exposure
+# is per Connection — see ``connections.surfaces``.
 CHANNEL_SURFACES = ("telegram:dm", "telegram:group", "discord", "slack")
-
-
-def surface_key(platform: str, surface: str) -> str:
-    """The exposure surface a conversation sits on: ``telegram:dm`` / ``telegram:group``
-    for a split platform, the platform's own name for the rest."""
-    return f"{platform}:{surface}" if platform in _SPLIT_PLATFORMS else platform
-
-
-assert set(CHANNEL_SURFACES) == {
-    surface_key(p, s) for p in CHANNEL_PLATFORMS for s in ("dm", "group")
-}
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -149,7 +135,7 @@ def _meta(entry: dict) -> ProfileMeta:
         accent=entry["accent"],
         created=entry["created"],
         archived=bool(entry.get("archived", False)),
-        withdrawn=[s for s in withdrawn if s in CHANNEL_SURFACES]
+        withdrawn=[s for s in withdrawn if isinstance(s, str)]
         if isinstance(withdrawn, list)
         else [],
     )
@@ -307,11 +293,8 @@ def exposure(pid: str) -> dict[str, bool]:
 
 def set_exposure(pid: str, surface: str, exposed: bool) -> ProfileMeta:
     """Expose or withdraw a profile on one surface. Exposing drops the record rather
-    than storing an allow — absence of a record is what reachable means."""
-    if surface not in CHANNEL_SURFACES:
-        raise ValueError(
-            f"unknown channel surface: {surface} (choose from {', '.join(CHANNEL_SURFACES)})"
-        )
+    than storing an allow — absence of a record is what reachable means. Surfaces are a
+    Connection's, so which ones exist is the caller's to check."""
     data = load_registry()
     entry = _find(data, pid)
     listed = [s for s in _meta(entry).withdrawn if s != surface]
@@ -372,4 +355,20 @@ def adopt_channel_defaults(by_platform: dict[str, str]) -> None:
         pid = legacy.get(platform)
         if pid is not None:
             data["connection_defaults"][cid] = pid
+    _write(data)
+
+
+def adopt_exposure(by_platform: dict[str, str]) -> None:
+    """Carry every profile's platform-keyed withdrawals onto the matching surfaces of
+    the Connections migrated for those platforms, so a profile withheld from Telegram
+    groups stays withheld from the migrated bot's group surface."""
+    data = load_registry()
+    for entry in data["profiles"]:
+        carried = []
+        for surface in _meta(entry).withdrawn:
+            platform, _, kind = surface.partition(":")
+            cid = by_platform.get(platform)
+            if cid is not None:
+                carried.append(f"{cid}:{kind}" if kind else cid)
+        entry["withdrawn"] = [*_meta(entry).withdrawn, *carried]
     _write(data)

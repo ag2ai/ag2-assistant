@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from ag2.events import ToolCallsEvent
 
-from assistant import pairing, peers, profiles
+from assistant import connections, pairing, peers
 from assistant.channels.base import InboundMessage, should_respond
 from assistant.observability import log_suppressed
 
@@ -642,7 +642,7 @@ class ChannelRouter:
         same rule `_withdrawn` applies inbound, on the side no message passes through."""
         if peer.profile is None:
             return True
-        surface = profiles.surface_key(peer.platform, peer.surface)
+        surface = connections.surface_key(peer.connection, peer.platform, peer.surface)
         return peer.profile in {p.id for p in self._directory.available_profiles(surface)}
 
     def _attached_chat(self, inbound: InboundMessage) -> str | None:

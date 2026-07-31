@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, get_args
 
-from assistant import profiles
+from assistant import connections
 
 if TYPE_CHECKING:
     from assistant.channels.router import ChannelRouter, Choose  # type-only (would cycle)
@@ -42,8 +42,9 @@ class InboundMessage:
         return "dm" if self.is_direct else "group"
 
     def exposure_surface(self) -> str:
-        """The surface a Profile's Channel exposure is read for this message."""
-        return profiles.surface_key(self.platform, self.surface())
+        """The surface a Profile's Channel exposure is read for this message — the
+        Connection's own, so two bots of one platform are exposed independently."""
+        return connections.surface_key(self.connection, self.platform, self.surface())
 
 
 def should_respond(msg: InboundMessage) -> bool:

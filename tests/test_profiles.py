@@ -203,10 +203,8 @@ def test_withdrawing_twice_is_recorded_once():
     assert profiles.get_profile("work").withdrawn == ["slack"]
 
 
-def test_unknown_surface_and_unknown_profile_raise():
+def test_an_unknown_profile_raises():
     profiles.create_profile("Work", TEAL)
-    with pytest.raises(ValueError):
-        profiles.set_exposure("work", "telegram", False)  # not a surface: dm/group split
     with pytest.raises(ValueError):
         profiles.set_exposure("nope", "slack", False)
     with pytest.raises(ValueError):

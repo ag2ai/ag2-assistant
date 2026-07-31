@@ -27,6 +27,9 @@ from assistant.profiles import CHANNEL_PLATFORMS, CHANNEL_TOKEN_ENVS
 # What a Connection of each platform is called when the user does not name it.
 PLATFORM_TITLES = {"telegram": "Telegram", "discord": "Discord", "slack": "Slack"}
 
+# Platforms whose direct messages and groups are exposed independently.
+SPLIT_PLATFORMS = ("telegram",)
+
 
 @dataclass(frozen=True)
 class Connection:
@@ -172,6 +175,70 @@ def token_status(cid: str) -> dict:
     return secrets.connection_token_status(cid, envs)
 
 
+# --- Profile exposure (per Connection, default-allow; ADR 0019) ---
+
+
+def surface_key(cid: str, platform: str, surface: str) -> str:
+    """The exposure surface a conversation sits on: ``<cid>:dm`` / ``<cid>:group`` on a
+    platform whose two are independent, the Connection's own id on the rest."""
+    return f"{cid}:{surface}" if platform in SPLIT_PLATFORMS else cid
+
+
+def surfaces(connection: Connection) -> dict[str, str]:
+    """This Connection's exposure surfaces by kind — ``dm`` and ``group`` where the two
+    are switched independently, a single ``all`` where they are not."""
+    if connection.platform in SPLIT_PLATFORMS:
+        return {kind: f"{connection.id}:{kind}" for kind in ("dm", "group")}
+    return {"all": connection.id}
+
+
+def exposure(cid: str) -> dict[str, dict[str, bool]]:
+    """Every unarchived profile's reachability on each of this Connection's surfaces.
+    Default-allow: a profile with no withdrawal recorded reads True everywhere.
+    Unknown id → ValueError."""
+    connection = get_connection(cid)
+    if connection is None:
+        raise ValueError(f"unknown connection: {cid}")
+    keys = surfaces(connection).values()
+    return {
+        meta.id: {s: s not in meta.withdrawn for s in keys} for meta in profiles.list_profiles()
+    }
+
+
+def reachable(cid: str, pid: str) -> bool:
+    """Whether this profile is still reachable on any surface of this Connection."""
+    return any(exposure(cid).get(pid, {}).values())
+
+
+def set_exposure(cid: str, pid: str, surface: str, exposed: bool) -> None:
+    """Expose or withdraw one profile on one surface of this Connection. A withdrawal
+    that takes the profile's last surface clears it as this Connection's default rather
+    than leaving the Connection pointing where it cannot reach. Unknown Connection,
+    profile or surface → ValueError."""
+    connection = get_connection(cid)
+    if connection is None:
+        raise ValueError(f"unknown connection: {cid}")
+    keys = surfaces(connection)
+    if surface not in keys.values():
+        raise ValueError(
+            f"unknown surface for {connection.name}: {surface} "
+            f"(choose from {', '.join(keys.values())})"
+        )
+    profiles.set_exposure(pid, surface, exposed)
+    if profiles.connection_defaults().get(cid) == pid and not reachable(cid, pid):
+        profiles.set_connection_default(cid, None)
+
+
+def set_default_profile(cid: str, pid: str | None) -> None:
+    """Set (or clear, with ``None``) the profile this Connection's conversations land in
+    by default. A profile withdrawn from every surface of the Connection is refused —
+    the Connection cannot default to somewhere it cannot reach."""
+    meta = profiles.get_profile(pid) if pid is not None else None
+    if meta is not None and not meta.archived and not reachable(cid, pid):
+        raise ValueError(f"profile not reachable from this connection: {pid}")
+    profiles.set_connection_default(cid, pid)
+
+
 def _seeded_platforms() -> list[str]:
     """Platforms this install already has every token for, from the secrets store
     or the process env."""
@@ -182,9 +249,9 @@ def _seeded_platforms() -> list[str]:
 def _migrate() -> list[dict]:
     """One Connection per platform that already has its token(s), named after the
     platform and holding the token(s) it was seeded from. Each inherits that platform's
-    default Profile, paired accounts, live pairing code and every Peer recorded against
-    it, so an existing install's conversations continue in place and nobody who could
-    reach it loses access. The entries are written by the caller in one go —
+    default Profile, paired accounts, live pairing code, per-surface Profile exposure and
+    every Peer recorded against it, so an existing install's conversations continue in
+    place and nobody who could reach it loses access. The entries are written by the caller in one go —
     and the tokens land first — so a half-migrated registry is not a state anyone can
     observe."""
     entries = []
@@ -198,6 +265,7 @@ def _migrate() -> list[dict]:
         entries.append(asdict(connection))
     if adopted:
         profiles.adopt_channel_defaults(adopted)
+        profiles.adopt_exposure(adopted)
         peers.adopt_connections(adopted)
         pairing.adopt_connections(adopted)
     return entries
