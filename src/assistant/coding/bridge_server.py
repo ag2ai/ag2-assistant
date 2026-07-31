@@ -16,7 +16,7 @@ Security posture:
 
 import asyncio
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from assistant.coding import detect
@@ -29,8 +29,9 @@ _ENV_WHITELIST = ("HOME", "PATH", "SHELL", "TERM", "USER", "LOGNAME", "LANG", "L
 _CHUNK = 65536
 
 
-def _child_env() -> dict:
-    return {k: os.environ[k] for k in _ENV_WHITELIST if k in os.environ}
+def child_env(env: Mapping[str, str]) -> dict:
+    """The whitelisted slice of ``env`` an adapter subprocess may see."""
+    return {k: env[k] for k in _ENV_WHITELIST if k in env}
 
 
 def _agents_payload(search_path: Sequence[Path]) -> list[dict]:
@@ -91,9 +92,18 @@ async def _relay(reader, writer, proc) -> None:
 class BridgeServer:
     """Handles one connection at a time: authorize → dispatch (list / run)."""
 
-    def __init__(self, token: str = "", *, search_path: Sequence[Path] = ()) -> None:
+    def __init__(
+        self,
+        token: str = "",
+        *,
+        search_path: Sequence[Path] = (),
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         self._token = token
         self._search_path = search_path
+        # Empty means "nothing to inherit": the adapter then sees only what the OS
+        # gives a bare exec. The daemon's entry point passes the host environment.
+        self._child_env = child_env(env or {})
 
     def _authorized(self, frame: dict) -> bool:
         return not self._token or frame.get("token") == self._token
@@ -145,7 +155,7 @@ class BridgeServer:
             proc = await asyncio.create_subprocess_exec(
                 *info.command,
                 cwd=cwd,
-                env=_child_env(),
+                env=self._child_env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
             )
@@ -163,9 +173,10 @@ async def serve(
     token: str = "",
     *,
     search_path: Sequence[Path] = (),
+    env: Mapping[str, str] | None = None,
 ) -> None:
     """Run the bridge server until cancelled (Ctrl-C)."""
-    server = BridgeServer(token, search_path=search_path)
+    server = BridgeServer(token, search_path=search_path, env=env)
     srv = await asyncio.start_server(server.handle, host, port)
     addrs = ", ".join(str(s.getsockname()) for s in srv.sockets)
     note = " (token required)" if token else " (NO token — bind to loopback only!)"

@@ -100,10 +100,10 @@ async def run_coding_session(
     """
     endpoint = bridge
     if endpoint is not None:
-        from assistant.coding import bridge_client
+        from assistant.coding.bridge_client import BridgeClient
 
         try:
-            inventory = await bridge_client.list_agents(endpoint)
+            inventory = await BridgeClient(endpoint).list_agents()
         except Exception as exc:  # noqa: BLE001 — unreachable/refused bridge, don't crash the turn
             return (
                 f"Couldn't reach the host coding bridge at {endpoint.host}:{endpoint.port} "

@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING
 
 from ag2.acp import ACPConfig, ClaudeCodeConfig, CodexConfig
 
-from assistant.coding import bridge_client, detect
+from assistant.coding import detect
+from assistant.coding.bridge_client import BridgeClient
 
 if TYPE_CHECKING:
     from assistant.config import Config
@@ -122,6 +123,8 @@ def _build(
         kwargs.setdefault("expose_tools", False)
     cfg = config_cls(**kwargs)
     if endpoint is not None:
-        make_connector = connector_factory or bridge_client.make_connector
-        cfg._connect = make_connector(endpoint, agent, workspace)
+        if connector_factory is None:
+            cfg._connect = BridgeClient(endpoint).make_connector(agent, workspace)
+        else:
+            cfg._connect = connector_factory(endpoint, agent, workspace)
     return cfg

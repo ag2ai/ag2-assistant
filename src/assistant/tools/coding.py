@@ -83,10 +83,10 @@ def build_coding_functions(
         Reflects the host bridge when configured (e.g. in Docker), else the local host.
         """
         if bridge is not None:
-            from assistant.coding import bridge_client
+            from assistant.coding.bridge_client import BridgeClient
 
             try:
-                inventory = await bridge_client.list_agents(bridge)
+                inventory = await BridgeClient(bridge).list_agents()
             except Exception as exc:  # noqa: BLE001
                 return (
                     f"Can't reach the host coding bridge at {bridge.host}:{bridge.port} "

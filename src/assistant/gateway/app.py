@@ -876,11 +876,11 @@ def create_app(
             ]
             return {"mode": "local", "bridge": None, "connected": True, "agents": agents}
 
-        from assistant.coding import bridge_client
+        from assistant.coding.bridge_client import BridgeClient
 
         target = f"{endpoint.host}:{endpoint.port}"
         try:
-            inventory = await bridge_client.list_agents(endpoint)
+            inventory = await BridgeClient(endpoint).list_agents()
         except Exception as exc:  # noqa: BLE001 — surface as a disconnected status
             return {
                 "mode": "bridge",
@@ -2167,7 +2167,7 @@ def create_app(
         """List immediate subdirectories of a host path — drives the folder picker. The
         gateway is local + single-user and `_origin_guard` blocks cross-origin, so this is
         safe; dotfolders are hidden. Empty path starts at home."""
-        result = list_dirs(path or str(Path.home()))
+        result = list_dirs(path or str(paths.home))
         if result is None:
             return {"ok": False, "error": "not a readable directory"}
         return {"ok": True, **result}
@@ -2493,7 +2493,7 @@ def create_app(
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
             "reply_timeout_s": cfg.gateway.reply_timeout_s,
             "fs": {  # start roots for the folder picker
-                "home": str(Path.home()),
+                "home": str(paths.home),
                 "cwd": str(Path.cwd()),
                 "workspace": str(Path(cfg.workspace_dir).expanduser()),
             },

@@ -23,13 +23,18 @@ _INIT_REPLY = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
 
 
 def _answering_adapter(bin_dir, name="codex-acp", marker=None):
-    """An adapter stub that answers both probe requests, optionally recording each
-    spawn in ``marker`` so a test can count how often it was launched."""
+    """An adapter stub that reads each probe request and answers it, then waits like a
+    real adapter (answering blindly and exiting would close the pipe under the
+    prober's next write). Optionally records each spawn in ``marker`` so a test can
+    count how often it was launched."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / name
     count = f"echo x >> {marker}\n" if marker is not None else ""
-    body = "".join(f"printf '%s\\n' {json.dumps(line)}\n" for line in (_INIT_REPLY, _CATALOG_REPLY))
-    script.write_text(f"#!/bin/sh\n{count}{body}")
+    body = "".join(
+        f"read _request || exit 0\nprintf '%s\\n' {json.dumps(line)}\n"
+        for line in (_INIT_REPLY, _CATALOG_REPLY)
+    )
+    script.write_text(f"#!/bin/sh\n{count}{body}exec cat >/dev/null\n")
     script.chmod(0o755)
     return script
 

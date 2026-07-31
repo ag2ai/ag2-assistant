@@ -98,6 +98,28 @@ run the build and commit `src/assistant/gateway/static/app/`.
 
 - Unit tests run without any API key: `pytest -m "not integration"`.
 - Mark tests that call a real LLM, network, or Docker with `@pytest.mark.integration`.
+- **`monkeypatch` is not used in tests.** Dependencies arrive as parameters: `Paths`
+  for the on-disk layout, an explicit `env: Mapping` for the environment,
+  `search_path` for external binaries, `agent_factory`/`channel_factory`/
+  `title_factory`/`summary_factory` for collaborators, an injected `httpx.Client`
+  for the network. `os.environ` and `Path.home()` are read only in `cli.py`,
+  `paths.Paths.from_env` and `config.load_config` — `tests/test_no_global_defaults.py`
+  is the gate for that, and its deferred list may only shrink.
+- **Stubs of external programs are real files.** `tests/support/stubs.py::write_stub`
+  writes an executable script; the test hands its directory over as `search_path`. A
+  stub standing in for a protocol peer must read each request before answering and
+  stay alive afterwards — one that answers blindly and exits closes the pipe under
+  the prober's next write, which shows up as a load-dependent flake.
+- **The network is real httpx.** `tests/support/http.py::client` / `async_client`
+  build an `httpx.Client` over `httpx.MockTransport`, so all of httpx really runs;
+  archives, tarballs and token files are real too.
+- **Don't assert that a method was called.** Instead of spying on an internal, check
+  the observable effect through the public API or the stream event — a spy passes
+  even when the call does nothing.
+- Test helpers live in `tests/support/{fakes,apps,http,stubs}.py`. `tests/conftest.py`
+  holds fixtures only (`paths`, `config`, `profile_app`, `profile_app_factory`) and is
+  never imported from; `HOME` is not patched, so every test takes `paths` or passes
+  `env` explicitly.
 - **Front-end changes need a live browser pass**, not just `web/diag.mjs`: load
   the app in Chrome and check the DevTools console and network tab for errors.
   The headless `diag.mjs` smoke test alone is not sufficient to catch UI

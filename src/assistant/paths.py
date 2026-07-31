@@ -21,6 +21,9 @@ class Paths:
     workspace: Path
     # ~/.codex/auth.json — the Codex CLI's own login file, outside root, hence a field.
     codex_auth: Path
+    # The user's home directory, resolved at the boundary: the folder picker starts
+    # here, so nothing below the boundary has to call Path.home() itself.
+    home: Path
 
     @classmethod
     def from_env(cls, env: Mapping[str, str], home: Path) -> "Paths":
@@ -36,7 +39,7 @@ class Paths:
             if env.get("AG2ASSISTANT_CODEX_CLI_AUTH")
             else home / ".codex" / "auth.json"
         )
-        return cls(root=cls._root(env, home), workspace=workspace, codex_auth=codex)
+        return cls(root=cls._root(env, home), workspace=workspace, codex_auth=codex, home=home)
 
     @staticmethod
     def _root(env: Mapping[str, str], home: Path) -> Path:

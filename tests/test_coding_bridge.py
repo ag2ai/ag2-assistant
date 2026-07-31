@@ -12,9 +12,10 @@ import pytest
 from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
 
-from assistant.coding import bridge_client, bridge_server, detect
+from assistant.coding import bridge_server, detect
 from assistant.coding import config as cfgmod
 from assistant.coding import session as sessmod
+from assistant.coding.bridge_client import BridgeClient
 from assistant.coding.bridge_protocol import DEFAULT_PORT, encode_frame, read_frame
 from assistant.events import A2UISurface
 from tests.support.stubs import write_stub
@@ -125,7 +126,7 @@ async def test_list_returns_inventory(tmp_path):
     bin_dir = _bin(tmp_path, "claude-agent-acp")
     srv, port = await _start(bridge_server.BridgeServer("", search_path=[bin_dir]))
     async with srv:
-        agents = await bridge_client.list_agents(detect.BridgeEndpoint("127.0.0.1", port, ""))
+        agents = await BridgeClient(detect.BridgeEndpoint("127.0.0.1", port, "")).list_agents()
     by_name = {a.name: a.available for a in agents}
     assert by_name == {"claude": True, "codex": False, "opencode": False}
 
@@ -135,9 +136,67 @@ async def test_list_token_enforced(tmp_path):
     srv, port = await _start(bridge_server.BridgeServer("secret", search_path=[bin_dir]))
     async with srv:
         with pytest.raises(ConnectionError):
-            await bridge_client.list_agents(detect.BridgeEndpoint("127.0.0.1", port, "wrong"))
-        agents = await bridge_client.list_agents(detect.BridgeEndpoint("127.0.0.1", port, "secret"))
+            await BridgeClient(detect.BridgeEndpoint("127.0.0.1", port, "wrong")).list_agents()
+        agents = await BridgeClient(
+            detect.BridgeEndpoint("127.0.0.1", port, "secret")
+        ).list_agents()
     assert [a.name for a in agents if a.available] == ["claude"]
+
+
+async def test_list_dials_through_the_injected_opener(tmp_path):
+    """The transport seam: every connection goes through ``open_connection``."""
+    dialled = []
+
+    async def opener(host, port):
+        dialled.append((host, port))
+        return await asyncio.open_connection(host, port)
+
+    bin_dir = _bin(tmp_path, "claude-agent-acp")
+    srv, port = await _start(bridge_server.BridgeServer("", search_path=[bin_dir]))
+    async with srv:
+        client = BridgeClient(detect.BridgeEndpoint("127.0.0.1", port, ""), open_connection=opener)
+        agents = await client.list_agents()
+    assert dialled == [("127.0.0.1", port)]
+    assert [a.name for a in agents if a.available] == ["claude"]
+
+
+# --- server: child environment ---------------------------------------------
+
+
+async def test_child_env_keeps_the_whitelist_and_drops_everything_else():
+    kept = bridge_server.child_env(
+        {"HOME": "/home/me", "PATH": "/bin", "OPENAI_API_KEY": "sk-leak", "FOO": "bar"}
+    )
+    assert kept == {"HOME": "/home/me", "PATH": "/bin"}
+
+
+async def test_the_adapter_subprocess_sees_only_the_whitelisted_env(tmp_path):
+    """The spawned adapter really runs without provider keys — read off its own env."""
+    dumped = tmp_path / "env.txt"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "claude-agent-acp"
+    script.write_text(f"#!/bin/sh\nenv > {dumped}\nexec cat\n")
+    script.chmod(0o755)
+    srv, port = await _start(
+        bridge_server.BridgeServer(
+            "",
+            search_path=[bin_dir],
+            env={"HOME": str(tmp_path), "OPENAI_API_KEY": "sk-leak", "FOO": "bar"},
+        )
+    )
+    async with srv:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(encode_frame({"op": "run", "agent": "claude", "cwd": str(tmp_path)}))
+        await writer.drain()
+        assert (await read_frame(reader))["ok"] is True
+        writer.write(b"go\n")
+        await writer.drain()
+        await asyncio.wait_for(reader.readline(), timeout=5)
+        writer.close()
+    seen = dict(line.split("=", 1) for line in dumped.read_text().splitlines() if "=" in line)
+    assert seen.get("HOME") == str(tmp_path)
+    assert "OPENAI_API_KEY" not in seen and "FOO" not in seen
 
 
 # --- server: run relay -----------------------------------------------------
@@ -195,8 +254,8 @@ async def test_connector_raises_on_refusal():
 
     srv = await asyncio.start_server(handle, "127.0.0.1", 0)
     port = srv.sockets[0].getsockname()[1]
-    connector = bridge_client.make_connector(
-        detect.BridgeEndpoint("127.0.0.1", port, ""), "claude", "/tmp"
+    connector = BridgeClient(detect.BridgeEndpoint("127.0.0.1", port, "")).make_connector(
+        "claude", "/tmp"
     )
     async with srv:
         with pytest.raises(ConnectionError):

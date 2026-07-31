@@ -33,10 +33,11 @@ _BOUNDARY = {
 # Still reading the environment below the boundary, each with the task that ends it.
 # A row that no longer has a hit is a failure: this list may only shrink.
 _DEFERRED = {
-    "onboarding.py": "Task 26 — writes AG2ASSISTANT_LOCATION instead of returning it",
-    "codex_auth.py": "Task 18 leftover — _const reads env at import time",
-    "coding/bridge_server.py": "Task 25 — the spawned adapter's env whitelist",
-    "gateway/app.py": "Task 24 — Path.home() starting points for the fs browser",
+    # Accepted deviation (session 7): reverse-engineered OpenAI endpoint constants,
+    # env-overridable at import time and imported by name (agent.py, image_gen.py).
+    # No test patches them; threading them through as values would touch every
+    # model-config builder for a debug-only escape hatch documented in .env.example.
+    "codex_auth.py": "accepted — _const reads env once at import for the Codex endpoints",
 }
 
 # load_config() re-reads the process environment, so calling it below the boundary is

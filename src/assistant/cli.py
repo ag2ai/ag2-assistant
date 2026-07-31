@@ -153,7 +153,9 @@ def agent(
                 user_store_path = config.root_dir / "user.db"  # shared universal memory
                 if await needs_onboarding(user_store_path):
                     typer.echo("First time here — a few quick questions (all skippable):")
-                    await run_onboarding(asker, user_store_path)
+                    answers = await run_onboarding(asker, user_store_path, paths=config.paths)
+                    if loc := answers.get("location"):
+                        config.agent.location = loc  # apply to the config this run uses
             return await ask(message, config, memory=memory, platform=platform, asker=asker)
         finally:
             if asker is not None:
@@ -173,7 +175,8 @@ def onboard(
 
     Seeds the UNIVERSAL "who the user is" memory (``root_dir/user.db``), shared by
     every profile — so this is install-wide, not per-profile."""
-    user_store_path = _resolve_profile_config(profile).root_dir / "user.db"
+    config = _resolve_profile_config(profile)
+    user_store_path = config.root_dir / "user.db"
 
     async def run() -> None:
         if not force and not await needs_onboarding(user_store_path):
@@ -181,7 +184,7 @@ def onboard(
             return
         asker = DesktopAsker()
         try:
-            answers = await run_onboarding(asker, user_store_path)
+            answers = await run_onboarding(asker, user_store_path, paths=config.paths)
         finally:
             await asker.aclose()
         if answers:
@@ -593,6 +596,7 @@ def acp_bridge(
                 port=port,
                 token=token,
                 search_path=default_search_path(os.environ),
+                env=os.environ,
             )
         )
     except KeyboardInterrupt:

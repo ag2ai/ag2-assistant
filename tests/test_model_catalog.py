@@ -50,14 +50,42 @@ def _hanging_adapter(bin_dir, name="codex-acp"):
     return bin_dir
 
 
+def _reply_groups(lines):
+    """Group the stub's output lines per request: everything up to and including the
+    next line carrying an ``id`` answers one request (a notification in between is
+    unsolicited, so it rides with the reply that follows it)."""
+    groups, pending = [], []
+    for line in lines:
+        pending.append(line)
+        try:
+            answers_a_request = json.loads(line).get("id") is not None
+        except ValueError:
+            answers_a_request = False
+        if answers_a_request:
+            groups.append(pending)
+            pending = []
+    if pending:
+        groups.append(pending)
+    return groups
+
+
 def _adapter(bin_dir, name="codex-acp", *, lines=(_INIT, _CATALOG), marker=None, noise=()):
-    """A real executable adapter stub: optional launcher noise, then these replies.
+    """A real executable adapter stub: optional launcher noise, then one reply per
+    request — it READS each request before answering and stays alive afterwards, the
+    way a real adapter does. A stub that answers blindly and exits closes the pipe
+    under the prober's next write, which surfaces as a load-dependent
+    ConnectionResetError (reproduced 12/250 times under CPU load).
     Each spawn appends to ``marker``, so tests can count adapter launches."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / name
     count = f"echo x >> {marker}\n" if marker is not None else ""
-    body = "".join(f"printf '%s\\n' {json.dumps(line)}\n" for line in (*noise, *lines))
-    script.write_text(f"#!/bin/sh\n{count}{body}")
+    banner = "".join(f"printf '%s\\n' {json.dumps(line)}\n" for line in noise)
+    body = "".join(
+        "read _request || exit 0\n"
+        + "".join(f"printf '%s\\n' {json.dumps(line)}\n" for line in group)
+        for group in _reply_groups(lines)
+    )
+    script.write_text(f"#!/bin/sh\n{count}{banner}{body}exec cat >/dev/null\n")
     script.chmod(0o755)
     return bin_dir
 

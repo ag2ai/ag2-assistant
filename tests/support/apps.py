@@ -28,6 +28,7 @@ def make_paths(root) -> Paths:
         root=root / "state",
         workspace=root / "workspace",
         codex_auth=root / "codex-cli-auth.json",
+        home=root / "home",
     )
 
 

@@ -37,7 +37,12 @@ def test_workspace_env_override(tmp_path):
 
 
 def test_derived_paths_hang_off_the_root(tmp_path):
-    paths = Paths(root=tmp_path / "r", workspace=tmp_path / "w", codex_auth=tmp_path / "codex.json")
+    paths = Paths(
+        root=tmp_path / "r",
+        workspace=tmp_path / "w",
+        codex_auth=tmp_path / "codex.json",
+        home=tmp_path,
+    )
     assert paths.config_yaml == tmp_path / "r" / "config.yaml"
     assert paths.secrets_json == tmp_path / "r" / "secrets.json"
     assert paths.profiles_json == tmp_path / "r" / "profiles.json"
@@ -66,7 +71,7 @@ def test_codex_auth_defaults_under_home_but_env_overrides(tmp_path):
 
 
 def test_paths_is_frozen(tmp_path):
-    paths = Paths(root=tmp_path, workspace=tmp_path, codex_auth=tmp_path / "c.json")
+    paths = Paths(root=tmp_path, workspace=tmp_path, codex_auth=tmp_path / "c.json", home=tmp_path)
     try:
         paths.root = tmp_path / "x"
     except Exception as exc:

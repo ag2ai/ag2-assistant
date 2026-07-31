@@ -1095,7 +1095,11 @@ class Gateway:
         user_store_path = self._config.root_dir / "user.db"  # shared universal memory
         try:
             if await onboarding.needs_onboarding(user_store_path):
-                await onboarding.run_onboarding(asker, user_store_path)
+                answers = await onboarding.run_onboarding(
+                    asker, user_store_path, paths=self._config.paths
+                )
+                if loc := answers.get("location"):
+                    self._config.agent.location = loc  # live, not just on the next start
         except Exception as exc:
             log_suppressed("onboarding", exc)
             # Onboarding is best-effort; never block the actual message.
