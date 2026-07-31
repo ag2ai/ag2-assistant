@@ -361,7 +361,7 @@ def test_usage_rollup_sums_two_profiles(paths):
                 "total": 150.0,
                 "cost": 0.01,
                 "priced": True,
-                "by_model": {"gemini-3.5-flash": {}},
+                "by_model": {"gemini-3.6-flash": {}},
             },
         )
         _seed_usage(

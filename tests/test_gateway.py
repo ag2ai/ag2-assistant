@@ -34,7 +34,7 @@ from assistant.gateway.app import _allowed_origins, _decode_attachments, _origin
 from assistant.gateway.core import Gateway
 from assistant.hitl import GatewayAsker, HitlServer
 from assistant.hitl.base import Question
-from assistant.llm_configs import LlmConfigStore
+from assistant.llm_configs import TYPES, LlmConfigStore
 from assistant.memory import PROFILE_PATH, build_profile_store
 from assistant.onboarding import STEPS, needs_onboarding
 from assistant.permissions import DENY
@@ -1063,7 +1063,11 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, paths):
 
     # empty install
     r = client.get("/api/llm-configs").json()
-    assert r == {"configs": [], "active": None, "env_override": None}
+    assert r["configs"] == [] and r["active"] is None and r["env_override"] is None
+    # Every config type, including ones no config uses yet (the template grid).
+    assert set(r["provider_deps"]) == set(TYPES)
+    assert r["provider_deps"]["gemini"]["ok"] is True
+    assert r["provider_deps"]["ollama"]["extra"] == "ollama"
 
     # create a Secret, then a local-server config referencing it + activate
     sid = client.post("/api/secrets", json={"name": "Local key", "value": "sk-secret-1234"}).json()[

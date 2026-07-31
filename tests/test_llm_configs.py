@@ -3,9 +3,13 @@
 Every test runs on an isolated layout (the ``paths`` fixture), so the store starts
 empty and no developer state can reach it. The ambient environment is always an
 explicit dict, and the CLI-login types are probed against real executable adapter
-stubs on a real search path.
+stubs on a real search path. The optional provider libraries are the same: a test
+states the situation it means to exercise by passing an ``extras`` map that points at
+a really-importable or a really-absent module, so the real ``find_spec`` runs and the
+dev venv's installed set never decides the outcome.
 """
 
+import importlib.util
 import json
 
 import pytest
@@ -15,15 +19,25 @@ from assistant.agent import cheap_model
 from assistant.config import Config, resolve_config
 from assistant.llm_configs import (
     CLI_LOGIN_TYPES,
+    PROVIDER_EXTRA,
     PROVIDER_OF,
     TYPES,
     LlmConfigStore,
     _clean_entry,
+    _module_present,
+    deps_status,
     image_capable,
 )
 from assistant.secrets import SecretStore
 from tests.support.apps import write_codex_session
 from tests.support.stubs import write_stub
+
+# ``extras`` maps (type → (module, extra)) standing in for "the provider library is
+# installed" / "it isn't": ``json`` is always importable, the other name never is.
+PRESENT_EXTRAS = {ctype: ("json", extra) for ctype, (_, extra) in PROVIDER_EXTRA.items()}
+ABSENT_EXTRAS = {
+    ctype: ("assistant_absent_provider_lib", extra) for ctype, (_, extra) in PROVIDER_EXTRA.items()
+}
 
 
 @pytest.fixture
@@ -184,8 +198,10 @@ def test_apply_active_base_url_suppresses_cheap_aggregate(store, paths):
 
 
 def test_usable_by_type_key_and_base_url(store, secret_store):
+    # This covers the key/base_url logic, so the optional provider libraries are stated
+    # present (PRESENT_EXTRAS) instead of depending on what the dev venv has installed.
     olm = store.save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
-    assert store.usable(olm, {}) is True  # local, always
+    assert store.usable(olm, {}, extras=PRESENT_EXTRAS) is True  # local, no key needed
 
     compat = store.save_config(
         {"name": "B", "type": "openai", "model": "m", "base_url": "http://h/v1"}
@@ -252,7 +268,7 @@ def test_secret_reference_flows_to_options_not_env(store, secret_store):
 
 def test_set_secret_id(store, secret_store):
     s = secret_store.create_secret("K2", "sk-k2-1")
-    e = store.save_config({"name": "Y", "type": "gemini", "model": "gemini-3.5-flash"})
+    e = store.save_config({"name": "Y", "type": "gemini", "model": "gemini-3.6-flash"})
     assert store.set_secret_id(e["id"], s["id"]) is True
     assert store.get_config(e["id"])["secret_id"] == s["id"]
     assert store.set_secret_id(e["id"], "") is True  # clear
@@ -511,3 +527,53 @@ def test_codex_usable_and_key_source(store, tmp_path):
 
 def test_codex_not_image_capable():
     assert image_capable({"type": "codex"}) is False
+
+
+# ---- optional provider libraries ----------------------------------------------
+
+
+def test_deps_status_clean_for_types_bundled_in_the_base_install():
+    """Types with no optional library report ok with an empty hint."""
+    for ctype in ("gemini", "openai", "openai_responses", "openai_subscription", "codex"):
+        assert deps_status(ctype) == {"ok": True, "extra": "", "install": ""}
+
+
+def test_deps_status_names_the_extra_when_the_library_is_absent():
+    assert deps_status("ollama", extras=ABSENT_EXTRAS) == {
+        "ok": False,
+        "extra": "ollama",
+        "install": 'pip install "ag2-assistant[ollama]"',
+    }
+    assert deps_status("anthropic", extras=ABSENT_EXTRAS)["install"] == (
+        'pip install "ag2-assistant[anthropic]"'
+    )
+    assert deps_status("ollama", extras=PRESENT_EXTRAS)["ok"] is True
+
+
+def test_deps_status_probes_the_real_provider_libraries_by_default():
+    """The default map names the actual libraries, so ``ok`` mirrors this install."""
+    for ctype, (module, extra) in PROVIDER_EXTRA.items():
+        status = deps_status(ctype)
+        assert status["extra"] == extra
+        assert status["ok"] is (importlib.util.find_spec(module) is not None)
+
+
+def test_missing_provider_library_makes_a_config_unusable(store):
+    """A missing library makes a config unusable regardless of its key state."""
+    env = {"ANTHROPIC_API_KEY": "sk-test"}
+    ollama = {"type": "ollama", "model": "qwen3.5:4b"}
+    anthropic = {"type": "anthropic", "model": "claude-x"}
+
+    assert store.usable(ollama, env, extras=PRESENT_EXTRAS) is True
+    assert store.usable(anthropic, env, extras=PRESENT_EXTRAS) is True
+
+    assert store.usable(ollama, env, extras=ABSENT_EXTRAS) is False
+    assert store.usable(anthropic, env, extras=ABSENT_EXTRAS) is False
+    # key_source still reports the key situation, not the library one.
+    assert store.key_source(ollama, env) == "not_needed"
+
+
+def test_module_present_never_raises_into_the_health_path():
+    # A dotted name under a non-package parent makes the real find_spec raise
+    # ModuleNotFoundError — the health path must read that as "absent", not blow up.
+    assert _module_present("json.decoder.definitely_not_a_submodule") is False

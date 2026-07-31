@@ -37,6 +37,7 @@ entry SHADOWS the ``llm`` block in ``config.json`` (that block is only the flat
 default used when the store is empty or has no active entry).
 """
 
+import importlib.util
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from secrets import token_hex
@@ -135,6 +136,43 @@ def cli_login_present(
     both."""
     agent = _CLI_LOGIN_AGENT.get(ctype)
     return _acp_adapter_present(agent, search_path, bridge) if agent else False
+
+
+# type -> (module to probe, ag2-assistant extra that installs it). Types absent from
+# this map need no optional library. It is the DEFAULT of the ``extras`` parameter
+# below, not a global to be rewritten: a caller (a test, or a future install with its
+# own extras) passes its own map instead of patching this one.
+PROVIDER_EXTRA = {
+    "anthropic": ("anthropic", "anthropic"),
+    "ollama": ("ollama", "ollama"),
+}
+
+
+def _module_present(module: str) -> bool:
+    """Whether an optional provider library is importable. find_spec avoids the
+    import cost and side effects; a broken parent package must read False, not raise."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:
+        return False
+
+
+def deps_status(ctype: str, *, extras: Mapping[str, tuple[str, str]] = PROVIDER_EXTRA) -> dict:
+    """Optional-library state for a config type: ``{ok, extra, install}``. ``ok`` is
+    True for types with no optional library, so callers need no special casing.
+
+    ``extras`` is the type → (module, extra) map to probe against; it defaults to
+    :data:`PROVIDER_EXTRA` so ordinary callers pass nothing, and a test states the
+    library situation it means to exercise instead of depending on the dev venv."""
+    pair = extras.get(ctype)
+    if pair is None:
+        return {"ok": True, "extra": "", "install": ""}
+    module, extra = pair
+    return {
+        "ok": _module_present(module),
+        "extra": extra,
+        "install": f'pip install "ag2-assistant[{extra}]"',
+    }
 
 
 _SECTION = "llm_configs"
@@ -368,13 +406,18 @@ class LlmConfigStore:
         *,
         search_path: Sequence[Path] = (),
         bridge: object = None,
+        extras: Mapping[str, tuple[str, str]] = PROVIDER_EXTRA,
     ) -> bool:
         """Whether this configuration can actually run right now — the signal behind the
-        health dot. Ollama is local (always). A ``base_url`` (OpenAI/Anthropic-compatible
-        server) needs no real provider key. Otherwise a per-config key OR the provider's
-        key in ``env`` must be present. The CLI-login types instead need their ACP
-        adapter on ``search_path`` (or a host ``bridge``) — see :func:`cli_login_present`."""
+        health dot. A missing optional provider library (``extras``, see
+        :func:`deps_status`) blocks it regardless of keys. Ollama is otherwise local
+        (always). A ``base_url`` (OpenAI/Anthropic-compatible server) needs no real
+        provider key. Otherwise a per-config key OR the provider's key in ``env`` must be
+        present. The CLI-login types instead need their ACP adapter on ``search_path``
+        (or a host ``bridge``) — see :func:`cli_login_present`."""
         ctype = entry.get("type")
+        if not deps_status(str(ctype), extras=extras)["ok"]:
+            return False
         if ctype == "openai_subscription":
             # No API key at all — usable exactly when ChatGPT sign-in is live.
             return _subscription_signed_in(self._paths)

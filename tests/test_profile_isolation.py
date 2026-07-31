@@ -264,7 +264,7 @@ def test_usage_ledger_isolated(root, registry, paths):
         a_gw = client.app.state.profiles.get(a).gateway
 
         # tally the way a turn does: the gateway's per-profile ledger
-        a_gw._usage.record("gemini-3.5-flash", prompt_tokens=100, completion_tokens=50)
+        a_gw._usage.record("gemini-3.6-flash", prompt_tokens=100, completion_tokens=50)
 
         assert (registry.profile_dir(a) / "usage.json").exists()
         assert not (registry.profile_dir(b) / "usage.json").exists()

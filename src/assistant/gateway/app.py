@@ -1057,6 +1057,8 @@ def create_app(
                 entry, secret_env(), search_path=search_path, bridge=acp_bridge
             ),  # secret | shared | not_needed | none | subscription
             "images": llm_configs.image_capable(entry),  # drives the row's "images" chip
+            # {ok, extra, install} — optional provider library state for this type.
+            "deps": llm_configs.deps_status(entry["type"]),
             "shared_key": {
                 "env": KEY_ENV.get(provider, ""),
                 "set": bool(shared.get("set")),
@@ -1107,6 +1109,9 @@ def create_app(
             "configs": [_llm_entry_view(e, active) for e in llm_store.list_configs()],
             "active": active,
             "env_override": _llm_env_override(),
+            # Every type, not just the configured ones — the "Add model" template grid
+            # reads this for types no config uses yet.
+            "provider_deps": {t: llm_configs.deps_status(t) for t in llm_configs.TYPES},
         }
 
     async def _save_llm_config(req: LlmConfigRequest, cid: str | None):

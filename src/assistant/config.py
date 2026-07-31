@@ -39,7 +39,7 @@ class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
     provider: str = "gemini"  # gemini | anthropic | openai | ollama
-    model: str = "gemini-3.5-flash"
+    model: str = "gemini-3.6-flash"
     api_key_env: str = "GEMINI_API_KEY"
     # How the OpenAI provider authenticates:
     #   "api_key"      — pay-per-token via OPENAI_API_KEY (default, unchanged path)

@@ -41,6 +41,10 @@ dev = [
     "ruff>=0.15.18,<0.16",  # pinned line; matches .pre-commit-config.yaml + the CI lint gate
     "pre-commit>=4.0.0",
 ]
+# Provider client libraries not in the base install.
+# Opt-in: `pip install "ag2-assistant[ollama]"`.
+anthropic = ["ag2[anthropic]>=1.0.0"]
+ollama = ["ag2[ollama]>=1.0.0"]
 # Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",
