@@ -6,22 +6,24 @@
 // name POST /api/connections keys its `tokens` map by (assistant/profiles.py
 // CHANNEL_TOKEN_ENVS). Google has no field: its own connect flow owns sign-in.
 // GitHub has one, written to the shared registry key (POST /api/secrets/key).
+// `handles` mirrors the backend HANDLE_PLATFORMS: Slack messages carry no handle, so
+// an invitation by handle could never be presented there and is refused.
 
 export const CATALOG = [
   {
-    id: 'telegram', kind: 'channel', label: 'Telegram', multiple: true,
+    id: 'telegram', kind: 'channel', label: 'Telegram', multiple: true, handles: true,
     blurb: 'DM the assistant from Telegram. Groups get their own pinned profile.',
     setup: 'Create a bot with @BotFather and paste the token it gives you.',
     fields: [{ env: 'TELEGRAM_BOT_TOKEN', label: 'Bot token', placeholder: '123456:AA…' }],
   },
   {
-    id: 'discord', kind: 'channel', label: 'Discord', multiple: true,
+    id: 'discord', kind: 'channel', label: 'Discord', multiple: true, handles: true,
     blurb: 'DM the assistant from Discord, or point a server channel at a profile.',
     setup: 'Discord Developer Portal → New Application → Bot → Reset Token.',
     fields: [{ env: 'DISCORD_BOT_TOKEN', label: 'Bot token', placeholder: 'MTIz…' }],
   },
   {
-    id: 'slack', kind: 'channel', label: 'Slack', multiple: true,
+    id: 'slack', kind: 'channel', label: 'Slack', multiple: true, handles: false,
     blurb: 'Slack DMs and channels. Needs both a bot token and an app token.',
     setup: 'Slack app → OAuth (xoxb-…) and Socket Mode (xapp-…).',
     fields: [

@@ -182,6 +182,31 @@ export const api = {
   // response rather than assuming only the one switch moved.
   setConnectionExposure: (cid, profile, surface, exposed) =>
     j('POST', G('/connections/' + encodeURIComponent(cid) + '/exposure'), { profile, surface, exposed }),
+  // Paired accounts — a connection serves nobody else, and the grant is to that one
+  // connection: an account paired to one Telegram bot reaches no other (ADR 0021).
+  // Every route below returns the same whole view, {accounts:[{key, account_id, handle,
+  // pending}], code:{code, expires_at}|null}, so a mutation is "run it, keep what came
+  // back". A numeric id is authoritative at once; a handle is an invitation that stays
+  // `pending` until an account bearing it speaks, and is refused where the platform's
+  // messages carry no handle (Slack). connectionPairingCode mints this connection's one
+  // live code, replacing its earlier one and no other connection's.
+  connectionPairing: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/pairing')),
+  connectionPair: (cid, value) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/pairing'), { value }),
+  connectionUnpair: (cid, key) =>
+    j('DELETE', G('/connections/' + encodeURIComponent(cid) + '/pairing/' + encodeURIComponent(key))),
+  connectionPairingCode: (cid) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/pairing/code')),
+  // Group chats that arrived on this connection → {groups:[{chat_id, profile}],
+  // profiles:[{id, name}]}, the profiles being the ones reachable on THIS connection's
+  // group surface — so a group pinned to anything outside that list is unreachable here.
+  // Re-pointing returns that same view; a group's profile moves only from here, since
+  // /profile is refused inside a group.
+  connectionGroups: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/groups')),
+  connectionGroupProfile: (cid, chatId, profile) =>
+    j('POST',
+      G('/connections/' + encodeURIComponent(cid) + '/groups/' + encodeURIComponent(chatId) + '/profile'),
+      { profile }),
   // Messaging channels are install-level and never owned by a profile: one connection
   // per platform, live as soon as its token is set. Both routes are GLOBAL. channels()
   // → {telegram|discord|slack: {default_profile:pid|null, token_present, active,

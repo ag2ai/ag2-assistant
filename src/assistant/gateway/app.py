@@ -37,6 +37,12 @@ Route map:
     POST /api/connections/{cid}/default      -> set {profile:pid|null} for one Connection; returns updated entry
     GET  /api/connections/{cid}/exposure     -> {surfaces, exposure: {pid: {surface: bool}}, default_profile}
     POST /api/connections/{cid}/exposure     -> {profile, surface, exposed}; withdraw a profile from one surface
+    GET  /api/connections/{cid}/pairing      -> {accounts, code} — who may reach this one Connection
+    POST /api/connections/{cid}/pairing      -> {value}; pair by numeric id or @handle
+    DELETE /api/connections/{cid}/pairing/{key} -> withdraw one entry from this Connection
+    POST /api/connections/{cid}/pairing/code -> mint this Connection's one live code
+    GET  /api/connections/{cid}/groups       -> this Connection's group Peers + the profiles they may be pinned to
+    POST /api/connections/{cid}/groups/{chat_id}/profile -> re-point one group (ADR 0019)
     GET  /api/channels                       -> {platform: {default_profile, token_present, active, error}} (install-level)
     POST /api/channels/default               -> set {platform, profile:pid|null} default profile; returns updated entry
     GET  /api/channels/{platform}/groups     -> group Peers + the profiles a group there may be pinned to
@@ -2358,6 +2364,52 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             peer.connection, chat_id, req.profile, platform=platform, surface="group"
         )
         return _group_view(platform)
+
+    def _connection_groups(cid: str) -> list[peers.Peer]:
+        """Every group Peer that arrived on this one Connection."""
+        return [p for p in peers.list_peers() if p.connection == cid and p.surface == "group"]
+
+    def _connection_group_view(connection: connections.Connection) -> dict:
+        """This Connection's group Peers with the profile each is pinned to, plus the
+        profiles a group here may be pointed at — the ones exposed to *this* Connection's
+        group surface, so a group pinned outside that set reads as unreachable."""
+        surface = connections.surface_key(connection.id, connection.platform, "group")
+        return {
+            "groups": [
+                {"chat_id": p.chat_id, "profile": p.profile}
+                for p in _connection_groups(connection.id)
+            ],
+            "profiles": [{"id": p.id, "name": p.name} for p in manager.available_profiles(surface)],
+        }
+
+    @app.get("/api/connections/{cid}/groups")
+    async def list_connection_groups(cid: str):
+        """This Connection's group Peers and what each is pinned to. Unknown → 404."""
+        connection = connections.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        return _connection_group_view(connection)
+
+    @app.post("/api/connections/{cid}/groups/{chat_id}/profile")
+    async def set_connection_group_profile(cid: str, chat_id: str, req: GroupProfileRequest):
+        """Re-point one of this Connection's groups at a profile exposed to its group
+        surface — the only way a group's profile moves, since /profile is refused there.
+        Unknown Connection or a group with no Peer here → 404; a profile not reachable
+        through this Connection's groups → 400."""
+        connection = connections.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        surface = connections.surface_key(cid, connection.platform, "group")
+        if req.profile not in {p.id for p in manager.available_profiles(surface)}:
+            return JSONResponse(
+                {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400
+            )
+        if not any(p.chat_id == chat_id for p in _connection_groups(cid)):
+            return JSONResponse({"error": f"no group peer: {chat_id}"}, status_code=404)
+        peers.select_profile(
+            cid, chat_id, req.profile, platform=connection.platform, surface="group"
+        )
+        return _connection_group_view(connection)
 
     # ---- Google OAuth (global, account-level) ----
 

@@ -1579,3 +1579,103 @@ def test_the_list_entry_carries_what_a_settings_row_needs(monkeypatch):
             "paired_accounts": 1,
         }
         assert "1111-work" not in json.dumps(entry)
+
+
+# --- Group Peers per Connection (GET/POST /api/connections/{cid}/groups*) ---
+
+
+def test_a_connection_lists_only_its_own_groups(monkeypatch):
+    """A group belongs to the bot it is talking to, not to the platform."""
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile(work.id, "-100", "work", platform="telegram", surface="group")
+        peers.select_profile(play.id, "-200", "home", platform="telegram", surface="group")
+        peers.select_profile(work.id, "42", "work", platform="telegram")  # a DM, not a group
+
+        assert client.get(f"/api/connections/{work.id}/groups").json()["groups"] == [
+            {"chat_id": "-100", "profile": "work"}
+        ]
+        assert client.get(f"/api/connections/{play.id}/groups").json()["groups"] == [
+            {"chat_id": "-200", "profile": "home"}
+        ]
+
+
+def test_a_profile_withdrawn_from_this_connections_groups_is_not_offered(monkeypatch):
+    """What the picker offers is what this Connection can reach — so a group pinned
+    outside that set reads as unreachable rather than looking fine."""
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        client.post(
+            f"/api/connections/{work.id}/exposure",
+            json={"profile": "home", "surface": f"{work.id}:group", "exposed": False},
+        )
+
+        assert [
+            p["id"] for p in client.get(f"/api/connections/{work.id}/groups").json()["profiles"]
+        ] == ["work"]
+        # The other bot is untouched.
+        assert [
+            p["id"] for p in client.get(f"/api/connections/{play.id}/groups").json()["profiles"]
+        ] == [
+            "work",
+            "home",
+        ]
+
+
+def test_re_pointing_a_group_on_its_connection_moves_it(monkeypatch):
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile(work.id, "-100", "work", platform="telegram", surface="group")
+        peers.attach(work.id, "-100", "tg-1", platform="telegram", surface="group")
+
+        r = client.post(f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 200
+        assert r.json()["groups"] == [{"chat_id": "-100", "profile": "home"}]
+        assert peers.get_peer(work.id, "-100").profile == "home"
+        # Moving a group leaves its Chat behind, as any profile switch does.
+        assert peers.get_peer(work.id, "-100").chat is None
+        # Nothing was created on the other bot.
+        assert client.get(f"/api/connections/{play.id}/groups").json()["groups"] == []
+
+
+def test_a_group_cannot_be_pointed_at_a_profile_this_connection_cannot_reach(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile(work.id, "-100", "work", platform="telegram", surface="group")
+        client.post(
+            f"/api/connections/{work.id}/exposure",
+            json={"profile": "home", "surface": f"{work.id}:group", "exposed": False},
+        )
+
+        r = client.post(f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 400
+        assert peers.get_peer(work.id, "-100").profile == "work"
+
+
+def test_re_pointing_a_group_of_another_connection_404s(monkeypatch):
+    """A chat id is not unique across bots; the group has to be one of this one's."""
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        peers.select_profile(play.id, "-100", "work", platform="telegram", surface="group")
+
+        r = client.post(f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 404
+        assert peers.get_peer(play.id, "-100").profile == "work"
+
+
+def test_connection_group_routes_404_on_an_unknown_connection(monkeypatch):
+    _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        assert client.get("/api/connections/nope/groups").status_code == 404
+        assert (
+            client.post(
+                "/api/connections/nope/groups/-100/profile", json={"profile": "work"}
+            ).status_code
+            == 404
+        )

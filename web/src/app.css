@@ -342,6 +342,17 @@
 .settings .cnradio.on::after { content: ''; position: absolute; inset: 2.5px; border-radius: 999px; background: var(--accent); }
 .settings .cnradio:disabled { opacity: .4; cursor: default; }
 .settings .cnradio:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* A .setgroup carrying one action on its right (the pairing code). */
+.settings .cnsechead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Roster / group rows — an identity, then whatever that row can be asked to do. */
+.settings .cnlist { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.settings .cnitem { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.settings .cnid { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.settings .cnpush { margin-left: auto; }
+.settings .cncode { font-family: var(--mono); font-size: 13px; color: var(--ink); letter-spacing: .04em; }
+.settings .cngrouppick { margin-left: auto; flex: none; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 26px 5px 9px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; }
+.settings .cngrouppick:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.settings .cngrouppick:disabled { opacity: .6; cursor: default; }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 /* Rows break out of the .dlist 6px padding (negative margin, padding bumped to
    keep content in place) so the active fill is a full-width green row, edge to

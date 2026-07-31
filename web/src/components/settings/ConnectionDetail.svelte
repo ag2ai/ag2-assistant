@@ -8,6 +8,8 @@
   import { MARK_TINT, byId, connectionStatus } from '../../lib/integrations.js'
   import IntegrationHeader from './IntegrationHeader.svelte'
   import ConnectionProfiles from './ConnectionProfiles.svelte'
+  import ConnectionPairing from './ConnectionPairing.svelte'
+  import ConnectionGroups from './ConnectionGroups.svelte'
 
   // connection: one entry from GET /api/connections. tag: the platform label, shown
   // only when the platform has more than one connection. reload: re-fetch the list
@@ -84,7 +86,8 @@
 />
 
 <ConnectionProfiles {connection} {profById} {reload} />
-<!-- Paired accounts and Groups render here, both keyed by `connection.id`. -->
+<ConnectionPairing {connection} {reload} />
+<ConnectionGroups {connection} />
 
 <div class="setgroup">Connection</div>
 <p class="setsub">{entry.label} · {tokenHints || 'token set when this connection was made'}</p>
