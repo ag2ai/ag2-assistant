@@ -144,8 +144,9 @@ class TraceEditor:
 class TelegramChannel(Channel):
     platform = "telegram"
 
-    def __init__(self, token: str = "") -> None:
+    def __init__(self, token: str = "", connection: str = "") -> None:
         self._token = token
+        self.connection = connection
         if not self._token:
             raise ValueError("a Telegram bot token is required.")
         self._app: Application | None = None
@@ -231,6 +232,7 @@ class TelegramChannel(Channel):
             sender_id=str(query.from_user.id) if query.from_user else "unknown",
             chat_id=str(chat.id),
             platform=self.platform,
+            connection=self.connection,
             is_direct=chat.type == chat.PRIVATE,
             mentioned=True,
             sender_name=query.from_user.full_name if query.from_user else None,
@@ -328,6 +330,7 @@ class TelegramChannel(Channel):
             sender_id=str(msg.from_user.id) if msg.from_user else "unknown",
             chat_id=str(chat.id),
             platform=self.platform,
+            connection=self.connection,
             is_direct=is_direct,
             mentioned=mentioned,
             has_attachment=has_attachment,

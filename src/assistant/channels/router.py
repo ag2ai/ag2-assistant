@@ -421,15 +421,15 @@ class ProfileDirectory(Protocol):
     def gateway_for_profile(self, pid: str) -> "Gateway | None":
         """The running gateway for a profile id, or None when it is not running."""
 
-    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
-        """Push a message into a platform conversation through its live Channel."""
+    async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
+        """Push a message into a conversation through the Connection it arrived on."""
 
     async def ask_channel(
-        self, platform: str, chat_id: str, inquiry: str, question: Choose
+        self, connection: str, chat_id: str, inquiry: str, question: Choose
     ) -> None:
-        """Show a question, with its options, in a platform conversation."""
+        """Show a question, with its options, in a conversation on that Connection."""
 
-    async def retract_channel(self, platform: str, chat_id: str, inquiry: str) -> None:
+    async def retract_channel(self, connection: str, chat_id: str, inquiry: str) -> None:
         """Take back a question shown there — it has been resolved."""
 
 
@@ -523,7 +523,13 @@ class ChannelRouter:
         peer = peers.get_peer(inbound.platform, inbound.chat_id)
         if peer is not None and peer.profile == pid:
             return  # nothing moved; don't rewrite the registry on every message
-        peers.select_profile(inbound.platform, inbound.chat_id, pid, surface=inbound.surface())
+        peers.select_profile(
+            inbound.platform,
+            inbound.chat_id,
+            pid,
+            surface=inbound.surface(),
+            connection=inbound.connection,
+        )
 
     def _current_profile(
         self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]
@@ -643,7 +649,10 @@ class ChannelRouter:
     def _chat_for(self, inbound: InboundMessage) -> str:
         """The Chat this Peer speaks in, started on first use."""
         return self._attached_chat(inbound) or peers.start_chat(
-            inbound.platform, inbound.chat_id, surface=inbound.surface()
+            inbound.platform,
+            inbound.chat_id,
+            surface=inbound.surface(),
+            connection=inbound.connection,
         )
 
     async def _chats_in_profile(self, inbound: InboundMessage) -> "list[dict] | Outcome":
@@ -665,7 +674,13 @@ class ChannelRouter:
         entry = next((e for e in await gateway.list_chats() if e.get("chat_id") == chat), None)
         if entry is None:
             return Refuse(CHAT_GONE)
-        peers.attach(inbound.platform, inbound.chat_id, chat, surface=inbound.surface())
+        peers.attach(
+            inbound.platform,
+            inbound.chat_id,
+            chat,
+            surface=inbound.surface(),
+            connection=inbound.connection,
+        )
         header = attached_header(self._by_id(inbound)[resolved].name, entry)
         tail = transcript_tail(await gateway.transcript(chat))
         return Reply(f"{header}\n\n{tail}" if tail else header)
@@ -687,7 +702,7 @@ class ChannelRouter:
             return  # a withdrawal closes the push side too, not just the inbound one
         body = mirrored_turn(text, reply, files)
         if body:
-            await self._directory.notify_channel(peer.platform, peer.chat_id, body)
+            await self._directory.notify_channel(peer.connection, peer.chat_id, body)
 
     async def ask(self, chat: str, inquiry: str, text: str, options: tuple[str, ...]) -> None:
         """Show a question raised in ``chat`` to the Peer Attached to it, carrying the
@@ -702,7 +717,7 @@ class ChannelRouter:
                 for index, label in enumerate(options)
             ),
         )
-        await self._directory.ask_channel(peer.platform, peer.chat_id, inquiry, question)
+        await self._directory.ask_channel(peer.connection, peer.chat_id, inquiry, question)
 
     async def retract(self, chat: str, inquiry: str) -> None:
         """Take back a question the Attached Peer was shown, once it has been resolved
@@ -710,7 +725,7 @@ class ChannelRouter:
         peer = peers.attached_to(chat)
         if peer is None:
             return
-        await self._directory.retract_channel(peer.platform, peer.chat_id, inquiry)
+        await self._directory.retract_channel(peer.connection, peer.chat_id, inquiry)
 
     async def answer(self, inbound: InboundMessage, inquiry: str, text: str) -> Outcome:
         """Resolve a mirrored question with what this conversation replied."""

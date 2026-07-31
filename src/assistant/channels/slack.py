@@ -105,7 +105,8 @@ class SlackAsker(PendingGuard):
 class SlackChannel(Channel):
     platform = "slack"
 
-    def __init__(self, bot_token: str = "", app_token: str = "") -> None:
+    def __init__(self, bot_token: str = "", app_token: str = "", connection: str = "") -> None:
+        self.connection = connection
         self._bot_token = bot_token
         self._app_token = app_token
         if not self._bot_token or not self._app_token:
@@ -157,6 +158,7 @@ class SlackChannel(Channel):
             sender_id=event.get("user", "unknown"),
             chat_id=event.get("channel", ""),
             platform=self.platform,
+            connection=self.connection,
             is_direct=False,
             mentioned=True,
             has_attachment=has_attachment,
@@ -179,6 +181,7 @@ class SlackChannel(Channel):
             sender_id=event.get("user", "unknown"),
             chat_id=event.get("channel", ""),
             platform=self.platform,
+            connection=self.connection,
             is_direct=True,
             mentioned=False,
             has_attachment=_has_files(event),

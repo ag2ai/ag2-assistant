@@ -29,7 +29,7 @@ import assistant.onboarding as onboarding
 import assistant.profiles as profiles_mod
 import assistant.secrets as secrets
 import assistant.title as title_mod
-from assistant import codex_auth, llm_configs, profiles
+from assistant import codex_auth, connections, llm_configs, profiles
 from assistant.agent import model_config
 from assistant.config import Config, load_config
 from assistant.events import Attachment, TurnCancelled
@@ -1142,9 +1142,10 @@ def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
     client, pid = profile_app
 
     monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
-    # Point discord's default at this profile and record a start error on the manager.
+    # Point discord's default at this profile and record a start error on its Connection.
     monkeypatch.setattr(profiles_mod, "channel_defaults", lambda: {"discord": pid})
-    client.app.state.profiles.channel_errors["discord"] = "invalid bot token"
+    connection = connections.create_connection("discord", tokens={"DISCORD_BOT_TOKEN": "bad"})
+    client.app.state.profiles.channel_errors[connection.id] = "invalid bot token"
 
     body = client.get(api(pid, "/health")).json()
     assert body["overall"] == "warn"

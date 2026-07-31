@@ -97,7 +97,8 @@ class DiscordAsker(PendingGuard):
 class DiscordChannel(Channel):
     platform = "discord"
 
-    def __init__(self, token: str = "") -> None:
+    def __init__(self, token: str = "", connection: str = "") -> None:
+        self.connection = connection
         self._token = token
         if not self._token:
             raise ValueError("a Discord bot token is required.")
@@ -162,6 +163,7 @@ class DiscordChannel(Channel):
             sender_id=str(message.author.id),
             chat_id=str(message.channel.id),
             platform=self.platform,
+            connection=self.connection,
             is_direct=is_direct,
             mentioned=mentioned,
             has_attachment=bool(message.attachments),

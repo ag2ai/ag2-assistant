@@ -17,7 +17,6 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from assistant.channels.base import PUSH_CHANNELS
 from assistant.config import Config, load_config
 from assistant.hitl import NullAsker
 from assistant.tasks.model import (
@@ -502,13 +501,9 @@ class TaskService:
         return n
 
     async def _deliver(self, task: Task, text: str) -> None:
-        """Push a completed run's outcome to the task's origin channel."""
-        if (
-            self._notify is None
-            or task.origin_channel not in PUSH_CHANNELS
-            or not task.origin_chat
-            or not text
-        ):
+        """Push a completed run's outcome back through the Connection the task came
+        from — ``origin_channel`` is that Connection's id."""
+        if self._notify is None or not task.origin_channel or not task.origin_chat or not text:
             return
         try:
             await self._notify(task.origin_channel, task.origin_chat, f"✅ {task.name}: {text}")

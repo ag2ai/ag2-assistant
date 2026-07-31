@@ -38,17 +38,19 @@ def _tools(*args, **kwargs):
 
 
 def test_origin_is_the_peer_a_chat_was_started_from():
-    chat = peers.start_chat("telegram", "42")
-    assert _origin(_Ctx(chat)) == ("telegram", "42")
+    """The origin is the Connection the conversation arrived on, so the outcome goes
+    back out through that bot rather than through whichever one of its platform."""
+    chat = peers.start_chat("telegram", "42", connection="cn-work")
+    assert _origin(_Ctx(chat)) == ("cn-work", "42")
     assert _origin(_Ctx("web-abc")) == (None, None)
     assert _origin(_Ctx("task-run:run_1")) == (None, None)
 
 
 def test_origin_survives_the_peer_moving_to_another_chat():
     """A task delivers back to the conversation, not to the Chat it was created in."""
-    chat = peers.start_chat("telegram", "42")
-    peers.start_chat("telegram", "42")
-    assert _origin(_Ctx(chat)) == ("telegram", "42")
+    chat = peers.start_chat("telegram", "42", connection="cn-work")
+    peers.start_chat("telegram", "42", connection="cn-work")
+    assert _origin(_Ctx(chat)) == ("cn-work", "42")
 
 
 def test_schedule_arg_shapes():
@@ -77,7 +79,7 @@ async def test_create_update_run_delete_via_tools(tmp_path):
         "delete_task",
     ):
         assert name in tools, f"missing tool {name}"
-    ctx = _Ctx(peers.start_chat("telegram", "42"))
+    ctx = _Ctx(peers.start_chat("telegram", "42", connection="cn-work"))
     msg = await tools["create_task"](
         name="Digest", prompt="collect news", schedule_kind="cron", cron="0 9 * * *", context=ctx
     )
@@ -87,7 +89,7 @@ async def test_create_update_run_delete_via_tools(tmp_path):
     assert detail["schedule"]["cron"] == "0 9 * * *"
     # origin captured from the channel stream for later delivery
     raw = await svc.store.get_task(tid)
-    assert raw.origin_channel == "telegram" and raw.origin_chat == "42"
+    assert raw.origin_channel == "cn-work" and raw.origin_chat == "42"
     # bad cron comes back as a correctable message, not an exception
     bad = await tools["create_task"](
         name="X", prompt="p", schedule_kind="cron", cron="junk", context=ctx

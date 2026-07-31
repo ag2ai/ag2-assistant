@@ -203,9 +203,9 @@ class FakeDirectory:
         self.default = default
         # profile id → the surfaces it has been withdrawn from (default-allow).
         self.withdrawn: dict[str, set[str]] = {}
-        # (platform, chat_id, text) pushed into a platform conversation.
+        # (connection, chat_id, text) pushed into a conversation.
         self.pushed: list[tuple[str, str, str]] = []
-        # Questions shown in a platform conversation, and the ones taken back.
+        # Questions shown in a conversation, and the ones taken back.
         self.asked: list[tuple[str, str, str, Choose]] = []
         self.retracted: list[tuple[str, str, str]] = []
 
@@ -225,14 +225,14 @@ class FakeDirectory:
     def gateway_for_profile(self, pid):
         return self.gateways.get(pid)
 
-    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
-        self.pushed.append((platform, chat_id, text))
+    async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
+        self.pushed.append((connection, chat_id, text))
 
-    async def ask_channel(self, platform: str, chat_id: str, inquiry: str, question) -> None:
-        self.asked.append((platform, chat_id, inquiry, question))
+    async def ask_channel(self, connection: str, chat_id: str, inquiry: str, question) -> None:
+        self.asked.append((connection, chat_id, inquiry, question))
 
-    async def retract_channel(self, platform: str, chat_id: str, inquiry: str) -> None:
-        self.retracted.append((platform, chat_id, inquiry))
+    async def retract_channel(self, connection: str, chat_id: str, inquiry: str) -> None:
+        self.retracted.append((connection, chat_id, inquiry))
 
 
 @pytest.fixture(autouse=True)
@@ -250,16 +250,20 @@ def _inbound(
     is_direct=True,
     mentioned=False,
     platform="telegram",
+    connection=None,
     chat_id="c1",
     has_attachment=False,
     sender_id=PAIRED_SENDER,
     sender_handle=None,
 ):
+    # One Connection per platform unless a test says otherwise, named after it — the
+    # single-Connection install, where a Connection id and a platform coincide.
     return InboundMessage(
         text=text,
         sender_id=sender_id,
         chat_id=chat_id,
         platform=platform,
+        connection=platform if connection is None else connection,
         is_direct=is_direct,
         mentioned=mentioned,
         has_attachment=has_attachment,
@@ -1283,6 +1287,59 @@ async def test_a_tapped_option_that_no_longer_exists_is_refused():
 
     assert isinstance(await router.choose(_inbound(""), "answer:inq-1:7"), Refuse)
     assert isinstance(await router.choose(_inbound(""), "answer:inq-1:"), Refuse)
+
+
+# --- the Connection a message arrived on ---
+
+
+async def test_a_peer_records_the_connection_its_message_arrived_on():
+    router, _ = _router()
+    await router.handle(_inbound("hi", connection="cn-work"))
+    assert peers.get_peer("telegram", "c1").connection == "cn-work"
+
+
+async def test_the_mirror_pushes_back_through_the_connection_the_peer_arrived_on():
+    """A turn mirrored to a Peer of the second Telegram bot goes out on that bot, not
+    on whichever Connection of the platform happened to come first."""
+    router, directory = _mirroring()
+    directory.gateways["work"].add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await router.choose(_inbound("", connection="cn-play"), "resume:web-1")
+
+    await _browser_turn(directory, "web-1", "what's the weather?")
+
+    assert [(cn, chat) for cn, chat, _ in directory.pushed] == [("cn-play", "c1")]
+
+
+async def test_a_question_and_its_retraction_address_the_peers_connection():
+    router, directory = _mirroring()
+    gateway = directory.gateways["work"]
+    gateway.add_chat("web-1", "Dinner plans", _ago(minutes=1))
+    await router.choose(_inbound("", connection="cn-play"), "resume:web-1")
+
+    await gateway.raise_question("web-1", "Which table?", ("By the window",))
+    assert directory.asked[0][:3] == ("cn-play", "c1", "inq-1")
+
+    await gateway.answer_inquiry("inq-1", "By the window")
+    assert directory.retracted == [("cn-play", "c1", "inq-1")]
+
+
+async def test_two_connections_of_one_platform_each_push_on_their_own():
+    """Two Telegram bots live at once: each Peer's mirror leaves by the Connection it
+    arrived on, so the two conversations never cross."""
+    router, directory = _mirroring()
+    gateway = directory.gateways["work"]
+    gateway.add_chat("web-1", "One", _ago(minutes=2))
+    gateway.add_chat("web-2", "Two", _ago(minutes=1))
+    await router.choose(_inbound("", connection="cn-work", chat_id="c1"), "resume:web-1")
+    await router.choose(_inbound("", connection="cn-play", chat_id="c2"), "resume:web-2")
+
+    await _browser_turn(directory, "web-1", "one")
+    await _browser_turn(directory, "web-2", "two")
+
+    assert [(cn, chat) for cn, chat, _ in directory.pushed] == [
+        ("cn-work", "c1"),
+        ("cn-play", "c2"),
+    ]
 
 
 # --- steering and stopping a running turn ---

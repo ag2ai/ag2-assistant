@@ -30,6 +30,7 @@ class InboundMessage:
     chat_id: str  # platform chat/conversation id
     platform: str  # "telegram", "discord", ...
     is_direct: bool  # True for DMs, False for group/channel
+    connection: str = ""  # the Connection this message arrived on
     mentioned: bool = False  # was the bot @mentioned (groups)
     has_attachment: bool = False  # did the message carry a file (caption may be empty)
     sender_name: str | None = None
@@ -56,11 +57,13 @@ def should_respond(msg: InboundMessage) -> bool:
 class Channel(ABC):
     """A messaging-platform adapter driven by the channel router.
 
-    One adapter per platform per install (ADR 0019) — it is never owned by a
-    profile, and the router it is handed decides which runtime each message runs on.
+    One adapter per Connection (ADR 0019) — it is never owned by a profile, and the
+    router it is handed decides which runtime each message runs on. The adapter knows
+    its own Connection id and stamps it on every message it normalises.
     """
 
     platform: str
+    connection: str
 
     @abstractmethod
     async def start(self, router: "ChannelRouter") -> None:

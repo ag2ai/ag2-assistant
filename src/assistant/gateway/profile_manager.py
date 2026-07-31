@@ -5,8 +5,8 @@ all alive simultaneously so background tasks in a non-viewed profile keep runnin
 This module boots them all at server start and owns the create / archive / reload
 lifecycle.
 
-Channels are NOT part of a runtime (ADR 0019): each adapter starts once for the
-whole install, here on the manager, and routes each inbound message to a runtime
+Channels are NOT part of a runtime (ADR 0019): one adapter per registered Connection
+starts here on the manager, at install level, and routes each inbound message to a runtime
 through the shared ``ChannelRouter``. Which runtime that is comes from the
 Channel's **default profile** in the registry, resolved per message.
 
@@ -154,13 +154,13 @@ class ProfileRuntime:
         its WS handlers here to close sockets with code 4001)."""
         self._close_callbacks.append(callback)
 
-    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
-        """Push a message to a platform chat — the task service delivers run outcomes
-        through here. The Channel is install-level, so the push is handed to the
-        notifier this runtime was built with."""
+    async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
+        """Push a message to a chat on a Connection — the task service delivers run
+        outcomes through here. The Channel is install-level, so the push is handed to
+        the notifier this runtime was built with."""
         if self._notifier is None:
-            raise RuntimeError(f"channel {platform!r} is not reachable from this runtime")
-        await self._notifier(platform, chat_id, text)
+            raise RuntimeError(f"connection {connection!r} is not reachable from this runtime")
+        await self._notifier(connection, chat_id, text)
 
     async def start(self) -> None:
         """Build the derived config, construct + start gateway and task service the same
@@ -211,11 +211,12 @@ class ProfileManager:
         self._memory = memory
         self._persist = persist
         self._runtimes: dict[str, ProfileRuntime] = {}
-        # platform → the live install-level adapter (ADR 0019). One per platform for
-        # the whole install; never owned by a runtime.
+        # Connection id → the live install-level adapter (ADR 0019). One per registered
+        # Connection, so two bots of one platform run side by side; never owned by a
+        # runtime.
         self.channels: dict[str, channels.Channel] = {}
-        # platform → last start-failure message (bad/missing token, network). Install-
-        # level, surfaced in GET /api/channels; cleared on a successful start or stop.
+        # Connection id → last start-failure message (bad/missing token, network).
+        # Install-level; cleared on that Connection's successful start or stop.
         self.channel_errors: dict[str, str] = {}
         # The one router every adapter is handed. It resolves the profile per inbound
         # message through the directory methods below, so changing a Channel's default
@@ -248,8 +249,8 @@ class ProfileManager:
         return runtime.gateway if runtime is not None else None
 
     async def start(self) -> None:
-        """Boot every UNARCHIVED registered profile, then start every Channel whose
-        tokens are configured.
+        """Boot every UNARCHIVED registered profile, then start every registered
+        Connection.
 
         Zero profiles is a legal no-op (fresh install, §3.5). Logging is set up once
         against the root config here so per-profile loggers write to the shared file.
@@ -257,8 +258,8 @@ class ProfileManager:
         setup_logging(load_config())
         for meta in profiles.list_profiles(include_archived=False):
             await self._boot(meta)
-        for platform in profiles.CHANNEL_PLATFORMS:
-            await self.start_channel(platform)
+        for connection in connections.list_connections():
+            await self.start_channel(connection.id)
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
         runtime = ProfileRuntime(
@@ -273,50 +274,49 @@ class ProfileManager:
         self._runtimes[meta.id] = runtime
         return runtime
 
-    def _channel(self, platform: str) -> channels.Channel:
-        """The install's live adapter for ``platform``, or a refusal to reach it."""
-        channel = self.channels.get(platform)
+    def _channel(self, connection: str) -> channels.Channel:
+        """The live adapter for a Connection, or a refusal to reach it."""
+        channel = self.channels.get(connection)
         if channel is None:
-            raise RuntimeError(f"channel {platform!r} is not running")
+            raise RuntimeError(f"connection {connection!r} is not running")
         return channel
 
-    async def notify_channel(self, platform: str, chat_id: str, text: str) -> None:
-        """Push a message into a platform chat through the install's live Channel —
-        task-run outcomes are delivered this way."""
-        await self._channel(platform).notify(chat_id, text)
+    async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
+        """Push a message into a chat through the Connection it belongs to — task-run
+        outcomes are delivered this way."""
+        await self._channel(connection).notify(chat_id, text)
 
     async def ask_channel(
-        self, platform: str, chat_id: str, inquiry: str, question: channels.Choose
+        self, connection: str, chat_id: str, inquiry: str, question: channels.Choose
     ) -> None:
-        """Show a question with its options in a platform chat (ADR 0020)."""
-        await self._channel(platform).ask(chat_id, inquiry, question)
+        """Show a question with its options in a chat on that Connection (ADR 0020)."""
+        await self._channel(connection).ask(chat_id, inquiry, question)
 
-    async def retract_channel(self, platform: str, chat_id: str, inquiry: str) -> None:
-        """Take back a question shown in a platform chat — it has been resolved."""
-        await self._channel(platform).retract(chat_id, inquiry)
+    async def retract_channel(self, connection: str, chat_id: str, inquiry: str) -> None:
+        """Take back a question shown on that Connection — it has been resolved."""
+        await self._channel(connection).retract(chat_id, inquiry)
 
-    def _connection_tokens(self, platform: str) -> dict[str, str]:
-        """The token(s) held by this platform's Connection, keyed by env-var name. The
-        manager never reads the process env for them — a Connection owns its tokens."""
-        registered = connections.connections_for(platform)
-        return connections.tokens_for(registered[0].id) if registered else {}
+    async def start_channel(self, cid: str) -> tuple[bool, str | None]:
+        """Start the Connection ``cid`` if it holds all the tokens its platform needs,
+        handing the adapter the shared router and its own Connection id. Guarded: a bad
+        token / network failure logs + records ``channel_errors[cid]`` and returns
+        (False, reason) instead of crashing — a Channel that cannot connect must never
+        take the server down with it, nor any sibling Connection. Success clears any
+        prior error. Already running is a no-op.
 
-    async def start_channel(self, platform: str) -> tuple[bool, str | None]:
-        """Start ``platform`` at install level if its tokens are present, handing it the
-        shared router. Guarded: a bad token / network failure logs + records
-        ``channel_errors[platform]`` and returns (False, reason) instead of crashing —
-        a Channel that cannot connect must never take the server down with it. Success
-        clears any prior error. Already running is a no-op.
-
-        Returns ``(active, reason)``: active True iff the Channel is now live."""
+        Returns ``(active, reason)``: active True iff the Connection is now live."""
         log = profile_logger("default")
-        if platform in self.channels:
+        if cid in self.channels:
             return True, None
+        connection = connections.get_connection(cid)
+        if connection is None:
+            raise ValueError(f"unknown connection: {cid}")
+        platform = connection.platform
         envs = _CHANNEL_TOKENS[platform]
-        tokens = self._connection_tokens(platform)
+        tokens = connections.tokens_for(cid)
         if not all(tokens.get(e) for e in envs):
             msg = f"no token configured for {platform}"
-            self.channel_errors[platform] = msg
+            self.channel_errors[cid] = msg
             return False, msg
         # A channel's start() talks to the platform (Telegram get_me, Discord/Slack
         # connect) and RAISES on a bad token / network failure — as does get_channel
@@ -324,7 +324,9 @@ class ProfileManager:
         # and crash boot. Record the reason, stay inactive.
         try:
             channel = channels.get_channel(
-                platform, **{channels.TOKEN_ARGS[e]: tokens[e] for e in envs}
+                platform,
+                connection=cid,
+                **{channels.TOKEN_ARGS[e]: tokens[e] for e in envs},
             )
             await channel.start(self.router)
         except Exception as exc:
@@ -333,43 +335,39 @@ class ProfileManager:
             # this string is logged AND returned via GET /api/channels.
             msg = _scrub_tokens(f"could not start '{platform}': {exc}", tokens.values())
             log.error(msg)
-            self.channel_errors[platform] = msg
+            self.channel_errors[cid] = msg
             return False, msg
-        self.channels[platform] = channel
-        self.channel_errors.pop(platform, None)
-        log.info("channel '%s' started", platform)
+        self.channels[cid] = channel
+        self.channel_errors.pop(cid, None)
+        log.info("connection '%s' (%s) started", cid, platform)
         return True, None
 
-    async def stop_channel(self, platform: str) -> bool:
-        """Stop ``platform`` if it is live. Returns True if a live Channel was stopped."""
-        channel = self.channels.pop(platform, None)
+    async def stop_channel(self, cid: str) -> bool:
+        """Stop the Connection ``cid`` if it is live. Returns True if one was stopped."""
+        channel = self.channels.pop(cid, None)
         if channel is None:
             return False
         try:
             await channel.stop()
         except Exception as exc:
             log_suppressed("channel stop", exc)
-        self.channel_errors.pop(platform, None)
-        profile_logger("default").info("channel '%s' stopped", platform)
+        self.channel_errors.pop(cid, None)
+        profile_logger("default").info("connection '%s' stopped", cid)
         return True
 
-    async def restart_channel(self, platform: str) -> tuple[bool, str | None]:
-        """Re-apply the live state of ``platform`` after its tokens changed (e.g. a
-        token was saved/cleared via the secrets store): stop it, then start it again if
-        all its tokens are now present (guarded). Returns ``(active, reason)`` like
-        ``start_channel``. Raises ``ValueError`` for an unknown platform."""
-        if platform not in profiles.CHANNEL_PLATFORMS:
-            raise ValueError(
-                f"unknown channel platform: {platform} "
-                f"(choose from {', '.join(profiles.CHANNEL_PLATFORMS)})"
-            )
-        await self.stop_channel(platform)
-        return await self.start_channel(platform)
+    async def restart_channel(self, cid: str) -> tuple[bool, str | None]:
+        """Re-apply the live state of a Connection after its tokens changed: stop it,
+        then start it again if all its tokens are now present (guarded). Returns
+        ``(active, reason)`` like ``start_channel``. Unknown id → ``ValueError``."""
+        if connections.get_connection(cid) is None:
+            raise ValueError(f"unknown connection: {cid}")
+        await self.stop_channel(cid)
+        return await self.start_channel(cid)
 
     async def close(self) -> None:
         """Stop every Channel, then close all running runtimes."""
-        for platform in list(self.channels):
-            await self.stop_channel(platform)
+        for cid in list(self.channels):
+            await self.stop_channel(cid)
         for runtime in list(self._runtimes.values()):
             await runtime.close()
         self._runtimes.clear()

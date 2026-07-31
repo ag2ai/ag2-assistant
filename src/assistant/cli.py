@@ -9,7 +9,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from assistant import __version__, codex_auth, profiles
+from assistant import __version__, codex_auth, connections, profiles
 from assistant.agent import ask, tz_unset_in_container
 from assistant.channels import ChannelRouter, get_channel
 from assistant.config import Config, load_config
@@ -569,10 +569,12 @@ def telegram(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("telegram", token=os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+        channel = get_channel(
+            "telegram", token=os.environ.get("TELEGRAM_BOT_TOKEN", ""), connection="telegram"
+        )
 
-        async def notify(platform: str, chat_id: str, text: str) -> None:
-            if platform == "telegram":
+        async def notify(connection: str, chat_id: str, text: str) -> None:
+            if connection == "telegram":
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
@@ -606,10 +608,12 @@ def discord(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("discord", token=os.environ.get("DISCORD_BOT_TOKEN", ""))
+        channel = get_channel(
+            "discord", token=os.environ.get("DISCORD_BOT_TOKEN", ""), connection="discord"
+        )
 
-        async def notify(platform: str, chat_id: str, text: str) -> None:
-            if platform == "discord":
+        async def notify(connection: str, chat_id: str, text: str) -> None:
+            if connection == "discord":
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
@@ -646,10 +650,11 @@ def slack(
             "slack",
             bot_token=os.environ.get("SLACK_BOT_TOKEN", ""),
             app_token=os.environ.get("SLACK_APP_TOKEN", ""),
+            connection="slack",
         )
 
-        async def notify(platform: str, chat_id: str, text: str) -> None:
-            if platform == "slack":
+        async def notify(connection: str, chat_id: str, text: str) -> None:
+            if connection == "slack":
                 await channel.notify(chat_id, text)
 
         tasks.set_notifier(notify)  # run outcomes -> this channel
@@ -700,8 +705,9 @@ def run(
         # no HTTP surface. Same lifecycle create_app would drive, minus the server.
         async def headless() -> None:
             await manager.start()
-            for platform in manager.channels:
-                typer.echo(f"  channel: {platform}")
+            for connection in connections.list_connections():
+                if connection.id in manager.channels:
+                    typer.echo(f"  channel: {connection.name} ({connection.platform})")
             _echo_local_time()
             typer.echo("AG2 Assistant is running (no REST). Press Ctrl+C to stop.")
             try:

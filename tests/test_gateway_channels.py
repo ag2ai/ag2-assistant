@@ -23,11 +23,12 @@ from tests.conftest import api, use_fake_agent
 
 
 class FakeChannel:
-    """Stub Channel: records the token(s) it was constructed with and start/stop,
-    without touching a network."""
+    """Stub Channel: records the Connection and token(s) it was constructed with and
+    start/stop, without touching a network."""
 
-    def __init__(self, platform: str, **tokens: str) -> None:
+    def __init__(self, platform: str, connection: str = "", **tokens: str) -> None:
         self.platform = platform
+        self.connection = connection
         self.tokens = tokens
         self.started = False
         self.stopped = False
@@ -66,6 +67,16 @@ def _new_client(monkeypatch, **kw):
 def _no_channel_env(monkeypatch):
     for env in ("TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
         monkeypatch.delenv(env, raising=False)
+
+
+def _only_connection(platform: str = "telegram") -> str:
+    """The id of the platform's single Connection — what the manager keys by now."""
+    return connections.connections_for(platform)[0].id
+
+
+def _live(manager, platform: str = "telegram"):
+    """The live adapter of the platform's single Connection."""
+    return manager.channels[_only_connection(platform)]
 
 
 def _default_gateway(manager, platform: str = "telegram"):
@@ -118,8 +129,8 @@ def test_a_configured_channel_starts_at_install_level(monkeypatch):
 
     with _new_client(monkeypatch) as client:
         manager = client.app.state.profiles
-        assert manager.channels["discord"].started is True
-        assert manager.channels["discord"].router is manager.router
+        assert _live(manager, "discord").started is True
+        assert _live(manager, "discord").router is manager.router
         assert client.get("/api/channels").json()["discord"]["active"] is True
         # the runtime knows nothing about it
         assert not hasattr(manager.get(meta.id), "channels")
@@ -133,7 +144,7 @@ def test_a_channel_starts_with_no_profiles_at_all(monkeypatch):
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
         manager = client.app.state.profiles
-        assert manager.channels["telegram"].started is True
+        assert _live(manager).started is True
         assert _default_gateway(manager) is None
 
 
@@ -159,8 +170,8 @@ def test_channel_start_failure_does_not_crash_boot(monkeypatch):
     with _new_client(monkeypatch) as client:
         manager = client.app.state.profiles
         assert manager.get(meta.id) is not None  # booted despite the failure
-        assert "discord" not in manager.channels
-        assert "could not start 'discord'" in manager.channel_errors["discord"]
+        assert manager.channels == {}
+        assert "could not start 'discord'" in manager.channel_errors[_only_connection("discord")]
         got = client.get("/api/channels").json()["discord"]
         assert got["active"] is False
         assert "could not start 'discord'" in got["error"]
@@ -237,13 +248,13 @@ def test_changing_the_default_needs_no_restart(monkeypatch):
         manager = client.app.state.profiles
 
         client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
-        adapter = manager.channels["telegram"]
+        adapter = _live(manager)
 
         r = client.post(
             "/api/channels/default", json={"platform": "telegram", "profile": "personal"}
         )
         assert r.json()["telegram"]["default_profile"] == "personal"
-        assert manager.channels["telegram"] is adapter  # same live adapter
+        assert _live(manager) is adapter  # same live adapter
         assert adapter.stopped is False
         assert _default_gateway(manager) is manager.get("personal").gateway
 
@@ -267,7 +278,7 @@ def test_clearing_the_default_leaves_the_channel_running(monkeypatch):
                 "paired_accounts": 0,
             }
         }
-        assert manager.channels["telegram"].stopped is False
+        assert _live(manager).stopped is False
         assert _default_gateway(manager) is None
         assert profiles.channel_defaults()["telegram"] is None
 
@@ -323,7 +334,7 @@ def test_archiving_the_default_profile_leaves_the_channel_live_and_unrouted(monk
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         client.post("/api/channels/default", json={"platform": "telegram", "profile": "work"})
         manager = client.app.state.profiles
-        adapter = manager.channels["telegram"]
+        adapter = _live(manager)
 
         r = client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})
         assert r.status_code == 200
@@ -381,7 +392,7 @@ def test_post_token_saves_flips_present_and_starts(monkeypatch):
         assert entry["active"] is True
         assert entry["error"] is None
         assert "live-secret-tok" not in r.text
-        assert client.app.state.profiles.channels["telegram"].started is True
+        assert _live(client.app.state.profiles).started is True
         assert secrets.channel_token_status()["TELEGRAM_BOT_TOKEN"] is True
 
 
@@ -397,7 +408,7 @@ def test_post_token_clear_stops_channel(monkeypatch):
             json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "tok"}},
         )
         manager = client.app.state.profiles
-        chan = manager.channels["telegram"]
+        chan = _live(manager)
 
         r = client.post(
             "/api/channels/token",
@@ -407,7 +418,7 @@ def test_post_token_clear_stops_channel(monkeypatch):
         assert entry["token_present"] is False
         assert entry["active"] is False
         assert entry["default_profile"] == "work"  # the default survives the token going
-        assert "telegram" not in manager.channels
+        assert manager.channels == {}
         assert chan.stopped is True
 
 
@@ -427,7 +438,7 @@ def test_post_token_slack_requires_both(monkeypatch):
         entry = r.json()["slack"]
         assert entry["token_present"] is False
         assert entry["active"] is False
-        assert "slack" not in manager.channels
+        assert manager.channels == {}
 
         # add the app token → now both present → starts
         r = client.post(
@@ -437,7 +448,7 @@ def test_post_token_slack_requires_both(monkeypatch):
         entry = r.json()["slack"]
         assert entry["token_present"] is True
         assert entry["active"] is True
-        assert "slack" in manager.channels
+        assert _only_connection("slack") in manager.channels
 
 
 def test_post_token_unknown_platform_400(monkeypatch):
@@ -498,12 +509,12 @@ def test_a_browser_turn_is_pushed_to_the_peer_attached_to_that_chat(monkeypatch)
     with _new_client(monkeypatch) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         manager = client.app.state.profiles
-        peers.attach("telegram", "42", "web-1")
+        peers.attach("telegram", "42", "web-1", connection=_only_connection())
 
         r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
         assert r.status_code == 200
 
-        assert manager.channels["telegram"].pushed == [("42", "You: hello\n\nMe: echo[1]: hello")]
+        assert _live(manager).pushed == [("42", "You: hello\n\nMe: echo[1]: hello")]
 
 
 def test_a_chat_no_peer_is_attached_to_is_pushed_nowhere(monkeypatch):
@@ -516,7 +527,7 @@ def test_a_chat_no_peer_is_attached_to_is_pushed_nowhere(monkeypatch):
         r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
         assert r.status_code == 200
 
-        assert manager.channels["telegram"].pushed == []
+        assert _live(manager).pushed == []
 
 
 # --- group Peers: a group's profile is pinned, and re-pointed only from here ---
@@ -694,7 +705,7 @@ def test_migration_carries_the_platform_token_onto_its_connection(monkeypatch):
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
         manager = client.app.state.profiles
-        assert manager.channels["telegram"].tokens == {"token": "seed-tok"}
+        assert _live(manager).tokens == {"token": "seed-tok"}
         entry = client.get("/api/connections").json()["connections"][0]
         assert entry["tokens"]["TELEGRAM_BOT_TOKEN"]["set"] is True
 
@@ -705,7 +716,7 @@ def test_slack_gets_both_of_its_tokens_by_constructor_name(monkeypatch):
     monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-seed")
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
-        assert client.app.state.profiles.channels["slack"].tokens == {
+        assert _live(client.app.state.profiles, "slack").tokens == {
             "bot_token": "xoxb-seed",
             "app_token": "xapp-seed",
         }
@@ -719,7 +730,7 @@ def test_a_connections_token_beats_a_stray_environment_value(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "stray-env-tok")
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
-        assert client.app.state.profiles.channels["telegram"].tokens == {"token": "connection-tok"}
+        assert _live(client.app.state.profiles).tokens == {"token": "connection-tok"}
 
 
 def test_two_connections_of_a_platform_hold_two_different_tokens(monkeypatch):
@@ -760,7 +771,7 @@ def test_saving_a_token_puts_it_on_the_connection_and_starts_that_adapter(monkey
             json={"platform": "discord", "tokens": {"DISCORD_BOT_TOKEN": "fresh-tok"}},
         )
         assert "fresh-tok" not in r.text
-        assert client.app.state.profiles.channels["discord"].tokens == {"token": "fresh-tok"}
+        assert _live(client.app.state.profiles, "discord").tokens == {"token": "fresh-tok"}
         listed = client.get("/api/connections").json()["connections"]
         assert [c["platform"] for c in listed] == ["discord"]
         assert listed[0]["tokens"]["DISCORD_BOT_TOKEN"]["hint"] == "…-tok"
@@ -772,13 +783,13 @@ def test_replacing_a_token_restarts_the_adapter_with_the_new_value(monkeypatch):
     _stub_channels(monkeypatch)
     with _new_client(monkeypatch) as client:
         manager = client.app.state.profiles
-        first = manager.channels["telegram"]
+        first = _live(manager)
         client.post(
             "/api/channels/token",
             json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "new-bbbb"}},
         )
         assert first.stopped is True
-        assert manager.channels["telegram"].tokens == {"token": "new-bbbb"}
+        assert _live(manager).tokens == {"token": "new-bbbb"}
         listed = client.get("/api/connections").json()["connections"]
         assert len(listed) == 1  # replaced in place, not a second Connection
         assert listed[0]["tokens"]["TELEGRAM_BOT_TOKEN"]["hint"] == "…bbbb"
@@ -791,7 +802,7 @@ def test_a_start_failure_never_echoes_the_connections_token(monkeypatch):
     class EchoBoomChannel:
         platform = "telegram"
 
-        def __init__(self, token: str) -> None:
+        def __init__(self, token: str, connection: str = "") -> None:
             self._token = token
 
         async def start(self, router):
@@ -809,3 +820,123 @@ def test_a_start_failure_never_echoes_the_connections_token(monkeypatch):
         got = client.get("/api/channels")
         assert secret not in got.text
         assert "•••" in got.json()["telegram"]["error"]
+
+
+# --- lifecycle per Connection: two bots of one platform, live side by side ---
+
+
+def test_two_connections_of_one_platform_are_both_live(monkeypatch):
+    """The manager holds one adapter per Connection, each built from its own token and
+    told which Connection it is."""
+    _no_channel_env(monkeypatch)
+    work = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"})
+    play = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"})
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        assert set(manager.channels) == {work.id, play.id}
+        assert manager.channels[work.id].tokens == {"token": "1111-work"}
+        assert manager.channels[play.id].tokens == {"token": "2222-play"}
+        assert manager.channels[play.id].connection == play.id
+        assert client.get("/api/channels").json()["telegram"]["active"] is True
+
+
+def test_one_connection_failing_to_start_leaves_the_others_running(monkeypatch):
+    """A bad token takes down its own Connection and records its own reason; the
+    sibling bot of the same platform keeps answering."""
+
+    class Fussy(FakeChannel):
+        async def start(self, router):
+            if self.tokens["token"] == "bad-token":
+                raise RuntimeError("connect failed")
+            await FakeChannel.start(self, router)
+
+    _no_channel_env(monkeypatch)
+    good = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "good-token"})
+    bad = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "bad-token"})
+    monkeypatch.setattr(channels_mod, "get_channel", lambda platform, **kw: Fussy(platform, **kw))
+
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        assert list(manager.channels) == [good.id]
+        assert "could not start 'telegram'" in manager.channel_errors[bad.id]
+        assert good.id not in manager.channel_errors
+
+
+def test_stopping_one_connection_leaves_its_sibling_live(monkeypatch):
+    _no_channel_env(monkeypatch)
+    work = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"})
+    play = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"})
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        stopped = manager.channels[work.id]
+
+        assert client.portal.call(manager.stop_channel, work.id) is True
+
+        assert stopped.stopped is True
+        assert list(manager.channels) == [play.id]
+        assert client.get("/api/channels").json()["telegram"]["active"] is True
+
+
+def test_restarting_a_connection_rebuilds_only_that_adapter(monkeypatch):
+    _no_channel_env(monkeypatch)
+    work = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"})
+    play = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"})
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        before = manager.channels[work.id]
+        untouched = manager.channels[play.id]
+
+        assert client.portal.call(manager.restart_channel, work.id) == (True, None)
+
+        assert before.stopped is True
+        assert manager.channels[work.id] is not before
+        assert manager.channels[play.id] is untouched
+
+
+def test_an_unknown_connection_cannot_be_started_or_restarted(monkeypatch):
+    _no_channel_env(monkeypatch)
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        for call in (manager.start_channel, manager.restart_channel):
+            try:
+                client.portal.call(call, "cn-ghost")
+            except ValueError as exc:
+                assert "cn-ghost" in str(exc)
+            else:
+                raise AssertionError("an unknown connection must be refused")
+
+
+def test_a_connection_with_no_token_stays_down_with_its_own_reason(monkeypatch):
+    """A Connection created before its token was filled in records why it is inactive
+    without disturbing the one that is live."""
+    _no_channel_env(monkeypatch)
+    live = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"})
+    empty = connections.create_connection("telegram")
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        assert list(manager.channels) == [live.id]
+        assert manager.channel_errors[empty.id] == "no token configured for telegram"
+
+
+def test_a_browser_turn_reaches_the_peer_on_its_own_connection(monkeypatch):
+    """The push side is keyed the same way: a turn mirrored to a Peer of the second
+    Telegram bot goes out through that bot's adapter alone."""
+    _no_channel_env(monkeypatch)
+    work = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"})
+    play = connections.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"})
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        manager = client.app.state.profiles
+        peers.attach("telegram", "42", "web-1", connection=play.id)
+
+        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
+        assert r.status_code == 200
+
+        assert manager.channels[work.id].pushed == []
+        assert manager.channels[play.id].pushed == [("42", "You: hello\n\nMe: echo[1]: hello")]

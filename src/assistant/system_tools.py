@@ -45,15 +45,15 @@ async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
 
 
 def _origin(context) -> tuple[str | None, str | None]:
-    """The Peer the current turn is running for, as (platform, platform_chat_id) —
-    run outcomes get pushed back there, whichever Chat the Peer has moved to since.
-    (None, None) for a Chat no Peer started (web/CLI/task-run streams)."""
+    """The Peer the current turn is running for, as (connection_id, platform_chat_id) —
+    run outcomes get pushed back through that Connection, whichever Chat the Peer has
+    moved to since. (None, None) for a Chat no Peer started (web/CLI/task-run streams)."""
     from assistant.channels.base import PUSH_CHANNELS
 
     sid = str(getattr(getattr(context, "stream", None), "id", "") or "")
     peer = peer_for_chat(sid) if sid else None
-    if peer is not None and peer.platform in PUSH_CHANNELS:
-        return peer.platform, peer.chat_id
+    if peer is not None and peer.connection and peer.platform in PUSH_CHANNELS:
+        return peer.connection, peer.chat_id
     return None, None
 
 
@@ -136,14 +136,14 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         """Create a task. Ask the user anything unclear BEFORE calling this —
         the prompt is what runs unattended, so it must be self-contained. A task's
         working folders are managed in the task's Folders UI, not through this tool."""
-        platform, chat = _origin(context)
+        connection, chat = _origin(context)
         try:
             task = await tasks.create_task(
                 name=name,
                 prompt=prompt,
                 model=model_config_id or None,
                 schedule=_schedule_arg(schedule_kind, at, cron),
-                origin_channel=platform,
+                origin_channel=connection,
                 origin_chat=chat,
                 description=description or None,
             )

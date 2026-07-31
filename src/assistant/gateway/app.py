@@ -1922,12 +1922,18 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     def _channel_entry(platform: str, default_pid: str | None) -> dict:
         """The install-level state of one platform: the profile its conversations land
         in by default (or null), whether its token env is present, whether the adapter
-        is live, and the last start error (or null)."""
+        is live, and the last start error (or null). Lifecycle is per Connection now, so
+        a platform reads as live when any of its Connections is."""
+        registered = [c.id for c in connections.connections_for(platform)]
+        errors = [manager.channel_errors[c] for c in registered if c in manager.channel_errors]
+        error = errors[0] if errors else None
+        if not registered:
+            error = f"no token configured for {platform}"
         return {
             "default_profile": default_pid,
             "token_present": all(os.environ.get(e) for e in _CHANNEL_TOKENS[platform]),
-            "active": platform in manager.channels,
-            "error": manager.channel_errors.get(platform),
+            "active": any(c in manager.channels for c in registered),
+            "error": error,
             # A live Channel with nobody paired answers nobody (ADR 0021) — the count
             # is what lets Settings say so rather than leave it looking healthy.
             "paired_accounts": len(pairing.list_accounts(platform)),
@@ -1979,12 +1985,16 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         # constructed from; a first token creates the Connection migration did not.
         registered = connections.connections_for(platform)
         if registered:
-            connections.set_tokens(registered[0].id, req.tokens)
+            connection = registered[0]
+            connections.set_tokens(connection.id, req.tokens)
         elif any((v or "").strip() for v in req.tokens.values()):
-            connections.create_connection(platform, tokens=req.tokens)
-        # Reconcile the live channel with the new tokens.
-        with contextlib.suppress(Exception):
-            await manager.restart_channel(platform)
+            connection = connections.create_connection(platform, tokens=req.tokens)
+        else:
+            connection = None
+        # Reconcile that Connection's live adapter with the new tokens.
+        if connection is not None:
+            with contextlib.suppress(Exception):
+                await manager.restart_channel(connection.id)
         return {platform: _channel_entry(platform, profiles_mod.channel_defaults().get(platform))}
 
     # ---- Paired accounts (per Channel; who may speak to it at all — ADR 0021) ----

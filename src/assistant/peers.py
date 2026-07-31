@@ -23,6 +23,7 @@ class Peer:
 
     platform: str
     chat_id: str  # the platform's own chat/conversation id
+    connection: str = ""  # the Connection this conversation arrived on
     surface: str = "dm"  # "dm" | "group"
     profile: str | None = None  # the selected profile's id
     chat: str | None = None  # the Chat it is Attached to, if any
@@ -54,6 +55,7 @@ def _peer(entry: dict) -> Peer:
     return Peer(
         platform=entry["platform"],
         chat_id=entry["chat_id"],
+        connection=entry.get("connection") or "",
         surface=entry.get("surface", "dm"),
         profile=entry.get("profile"),
         chat=entry.get("chat"),
@@ -108,7 +110,9 @@ def peer_for_chat(chat: str) -> Peer | None:
     return None
 
 
-def select_profile(platform: str, chat_id: str, pid: str, *, surface: str = "dm") -> Peer:
+def select_profile(
+    platform: str, chat_id: str, pid: str, *, surface: str = "dm", connection: str = ""
+) -> Peer:
     """Point this conversation at profile ``pid`` and return the resulting Peer.
     Replacing a different profile detaches it; the Chat is started lazily."""
     entries = _load()
@@ -122,26 +126,35 @@ def select_profile(platform: str, chat_id: str, pid: str, *, surface: str = "dm"
             current,
             surface=surface,
             profile=pid,
+            connection=connection or current.connection,
             chat=None if switched else current.chat,
         ),
     )
 
 
-def attach(platform: str, chat_id: str, chat: str, *, surface: str = "dm") -> Peer:
+def attach(
+    platform: str, chat_id: str, chat: str, *, surface: str = "dm", connection: str = ""
+) -> Peer:
     """Attach this conversation to ``chat``, creating nothing. The Chat joins the
     Peer's own, so a Task started in it still delivers back to this conversation."""
     entries = _load()
     index = _index(entries, platform, chat_id)
-    current = _peer(entries[index]) if index is not None else Peer(platform, chat_id, surface)
+    current = (
+        _peer(entries[index]) if index is not None else Peer(platform, chat_id, surface=surface)
+    )
     chats = current.chats if chat in current.chats else [*current.chats, chat]
-    return _save(entries, index, replace(current, chat=chat, chats=chats))
+    return _save(
+        entries,
+        index,
+        replace(current, chat=chat, chats=chats, connection=connection or current.connection),
+    )
 
 
-def start_chat(platform: str, chat_id: str, *, surface: str = "dm") -> str:
+def start_chat(platform: str, chat_id: str, *, surface: str = "dm", connection: str = "") -> str:
     """Start a fresh Chat for this conversation, attach the Peer to it, and return
     its id — opaque and origin-prefixed, never a platform address."""
     chat = f"{platform}-{secrets.token_hex(4)}"
-    attach(platform, chat_id, chat, surface=surface)
+    attach(platform, chat_id, chat, surface=surface, connection=connection)
     return chat
 
 
