@@ -78,7 +78,9 @@
     { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: 'recommended', models: modelsFor('gemini') },
     { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: 'optional', models: modelsFor('openai') },
     { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
-    { id: 'oauth', label: 'OpenAI OAuth', oauth: true, hint: 'no API key · unofficial' },
+    // Labelled by what the user recognises (their ChatGPT login), not the mechanism —
+    // and short enough that six tabs still fit the column on one line.
+    { id: 'oauth', label: 'ChatGPT', oauth: true, hint: 'no API key · unofficial' },
     // `cli` is the coding agent's name in coding/detect.py — what /api/coding/* keys on.
     { id: 'claude_code', label: 'Claude Code', cli: 'claude', hint: 'no API key · CLI login' },
     { id: 'codex', label: 'Codex', cli: 'codex', hint: 'no API key · CLI login' },
@@ -791,15 +793,19 @@
   .onb-pill:hover { border-color: var(--accent); }
   .onb-pill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
-  /* Connect provider tabs */
+  /* Connect provider tabs. Six of them share a 52ch column, so the row must never
+     wrap: each tab is sized by its own label (flex-basis auto) and grows into the
+     leftover space, with min-width 0 + ellipsis as the safety net on a narrow
+     window — a wrapped segmented control reads as two broken bars. */
   .onb-tabs {
     display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-sm);
-    background: var(--surface-sunk); border: 1px solid var(--line); flex-wrap: wrap;
+    background: var(--surface-sunk); border: 1px solid var(--line);
   }
   .onb-tab {
-    flex: 1; min-width: max-content; cursor: pointer; padding: 8px 14px;
+    flex: 1 1 auto; min-width: 0; cursor: pointer; padding: 8px 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     border: none; border-radius: calc(var(--radius-sm) - 2px); background: none;
-    color: var(--text-muted); font: inherit; font-size: var(--text-sm);
+    color: var(--text-muted); font: inherit; font-size: var(--text-xs);
     font-weight: var(--fw-semibold); transition: all var(--dur-fast) var(--ease-out);
   }
   .onb-tab:hover { color: var(--accent); }
