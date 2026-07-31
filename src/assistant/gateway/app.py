@@ -1962,7 +1962,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "error": error,
             # A live Channel with nobody paired answers nobody (ADR 0021) — the count
             # is what lets Settings say so rather than leave it looking healthy.
-            "paired_accounts": len(pairing.list_accounts(platform)),
+            "paired_accounts": sum(len(pairing.list_accounts(c)) for c in registered),
         }
 
     def _platform_default(platform: str) -> str | None:
@@ -2047,10 +2047,12 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "pending": account.pending,
         }
 
-    def _pairing_view(platform: str) -> dict:
-        code = pairing.live_code(platform)
+    def _pairing_view(cid: str | None) -> dict:
+        """One Connection's roster and live code. No Connection yet reads as an empty
+        roster — nobody is paired, which is what there is to say."""
+        code = pairing.live_code(cid) if cid else None
         return {
-            "accounts": [_account_view(a) for a in pairing.list_accounts(platform)],
+            "accounts": [_account_view(a) for a in pairing.list_accounts(cid)] if cid else [],
             "code": None if code is None else {"code": code.code, "expires_at": code.expires_at},
         }
 
@@ -2059,41 +2061,97 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             return None
         return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
 
+    def _pairing_target(platform: str):
+        """The Connection a platform's own pairing writes land on, or a 400 — pairing
+        is a grant to a Connection, so there must be one to grant."""
+        if (bad := _reject_unknown_platform(platform)) is not None:
+            return None, bad
+        connection = _platform_connection(platform)
+        if connection is None:
+            return None, JSONResponse(
+                {"error": f"no connection configured for {platform}"}, status_code=400
+            )
+        return connection, None
+
     @app.get("/api/channels/{platform}/pairing")
     async def list_pairing(platform: str):
         """A Channel's paired accounts and its live one-time code (or null)."""
-        return _reject_unknown_platform(platform) or _pairing_view(platform)
+        if (bad := _reject_unknown_platform(platform)) is not None:
+            return bad
+        connection = _platform_connection(platform)
+        return _pairing_view(connection.id if connection else None)
 
     @app.post("/api/channels/{platform}/pairing")
     async def add_pairing(platform: str, req: PairAccountRequest):
         """Allow an account by numeric id (authoritative at once) or by handle (an
         invitation that pins to the first account presenting it). Effective
         immediately — the Channel keeps running either way."""
-        if (bad := _reject_unknown_platform(platform)) is not None:
+        connection, bad = _pairing_target(platform)
+        if bad is not None:
             return bad
         try:
-            pairing.add_account(platform, req.value)
+            pairing.add_account(connection.id, req.value, platform)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        return _pairing_view(platform)
+        return _pairing_view(connection.id)
 
     @app.delete("/api/channels/{platform}/pairing/{key:path}")
     async def revoke_pairing(platform: str, key: str):
         """Withdraw one entry, by numeric id or by ``@handle``. Takes effect on that
         account's next message. Nothing to withdraw → 404."""
-        if (bad := _reject_unknown_platform(platform)) is not None:
+        connection, bad = _pairing_target(platform)
+        if bad is not None:
             return bad
-        if not pairing.revoke(platform, key):
+        if not pairing.revoke(connection.id, key):
             return JSONResponse({"error": f"not paired: {key}"}, status_code=404)
-        return _pairing_view(platform)
+        return _pairing_view(connection.id)
 
     @app.post("/api/channels/{platform}/pairing/code")
     async def issue_pairing_code(platform: str):
         """Mint the Channel's one live pairing code, replacing any earlier one."""
-        if (bad := _reject_unknown_platform(platform)) is not None:
+        connection, bad = _pairing_target(platform)
+        if bad is not None:
             return bad
-        pairing.issue_code(platform)
-        return _pairing_view(platform)["code"]
+        pairing.issue_code(connection.id)
+        return _pairing_view(connection.id)["code"]
+
+    @app.get("/api/connections/{cid}/pairing")
+    async def list_connection_pairing(cid: str):
+        """Who may reach this one Connection, and its live one-time code (or null).
+        A grant here is no grant on another Connection of the same platform."""
+        if connections.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        return _pairing_view(cid)
+
+    @app.post("/api/connections/{cid}/pairing")
+    async def add_connection_pairing(cid: str, req: PairAccountRequest):
+        """Allow an account on this Connection by numeric id or by handle."""
+        connection = connections.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            pairing.add_account(cid, req.value, connection.platform)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _pairing_view(cid)
+
+    @app.delete("/api/connections/{cid}/pairing/{key:path}")
+    async def revoke_connection_pairing(cid: str, key: str):
+        """Withdraw one entry from this Connection alone. Nothing to withdraw → 404."""
+        if connections.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        if not pairing.revoke(cid, key):
+            return JSONResponse({"error": f"not paired: {key}"}, status_code=404)
+        return _pairing_view(cid)
+
+    @app.post("/api/connections/{cid}/pairing/code")
+    async def issue_connection_pairing_code(cid: str):
+        """Mint this Connection's one live code, replacing its earlier one and no
+        other's. The code works only on the Connection it was minted for."""
+        if connections.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        pairing.issue_code(cid)
+        return _pairing_view(cid)["code"]
 
     # ---- Group Peers (a group's profile is pinned, and re-pointed only here) ----
 

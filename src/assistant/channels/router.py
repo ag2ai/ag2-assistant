@@ -482,16 +482,19 @@ class ChannelRouter:
     # ---- who may be served (ADR 0021) ----
 
     def paired(self, inbound: InboundMessage) -> bool:
-        """Whether this account may be served — pinning a pending handle it presents,
-        so an invitation becomes an identity on first contact. Adapters call this
-        before acting on anything a message implies, taps and answers included."""
-        return pairing.is_paired(inbound.platform, inbound.sender_id, inbound.sender_handle)
+        """Whether this account may be served by the Connection it wrote to — pinning a
+        pending handle it presents, so an invitation becomes an identity on first
+        contact. Pairing is a grant to one Connection, so an account paired to another
+        bot of the same platform is refused here. Adapters call this before acting on
+        anything a message implies, taps and answers included."""
+        return pairing.is_paired(inbound.connection, inbound.sender_id, inbound.sender_handle)
 
     def _pair(self, inbound: InboundMessage) -> Outcome:
-        """Redeem the code an unpaired account has sent. A code it was never given is
-        met with the same silence as anything else it might say."""
+        """Redeem the code an unpaired account has sent, against the Connection it sent
+        it to. A code it was never given — or one minted for another Connection — is met
+        with the same silence as anything else it might say."""
         outcome = pairing.redeem(
-            inbound.platform, inbound.text, inbound.sender_id, inbound.sender_handle
+            inbound.connection, inbound.text, inbound.sender_id, inbound.sender_handle
         )
         if outcome == pairing.PAIRED:
             return Reply(PAIRED)

@@ -334,7 +334,8 @@ permission (that is the commands policy), suppression (the per-profile skill ove
 — same shape, different subject)
 
 **Paired account**:
-A platform account allowed to speak to a **Channel**. Identity is the platform's
+A platform account allowed to speak to one **Connection** — being paired to the work
+Telegram bot grants nothing on the personal one. Identity is the platform's
 numeric user id. A handle (`@username`) is only an *invitation*: it pins to a numeric
 id the first time that handle speaks, and is matched by id ever after — so releasing
 or changing a handle neither breaks the pairing nor opens it to whoever takes the

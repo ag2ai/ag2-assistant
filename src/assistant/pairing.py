@@ -1,10 +1,11 @@
-"""Paired accounts persisted to ``<root>/pairing.json`` — who may reach a Channel.
+"""Paired accounts persisted to ``<root>/pairing.json`` — who may reach a Connection.
 
-An account not paired to a Channel is served nothing at all by it (ADR 0021).
-Identity is the platform's numeric id; a handle is only an invitation, so a handle
-entered in Settings sits *pending*, pins to the numeric id of the first account
-presenting it, and is matched by id ever after. The other way to pair is a one-time
-**code** issued from Settings and sent to the bot.
+An account not paired to a Connection is served nothing at all by it (ADR 0021), and
+the grant is to that one Connection: being paired to the work Telegram bot gives no
+access to the personal one. Identity is the platform's numeric id; a handle is only an
+invitation, so a handle entered in Settings sits *pending*, pins to the numeric id of
+the first account presenting it, and is matched by id ever after. The other way to pair
+is a one-time **code**, minted per Connection and sent to that bot.
 
 Read/write style mirrors ``peers.py``: a small read-modify-write over a JSON file,
 tolerant of a missing/malformed file (treated as nobody paired — the safe direction).
@@ -41,11 +42,11 @@ HANDLE_PLATFORMS = ("telegram", "discord")
 
 @dataclass(frozen=True)
 class PairedAccount:
-    """One account allowed to reach a Channel.
+    """One account allowed to reach a Connection.
 
     Pinned once ``account_id`` is known; *pending* while it is only a handle."""
 
-    platform: str
+    connection: str
     account_id: str | None = None
     handle: str | None = None
 
@@ -64,7 +65,7 @@ class PairedAccount:
 class PairingCode:
     """A one-time code and the moment it stops working."""
 
-    platform: str
+    connection: str
     code: str
     expires_at: float
 
@@ -112,7 +113,7 @@ def _write(data: dict) -> None:
 
 def _account(entry: dict) -> PairedAccount:
     return PairedAccount(
-        platform=entry["platform"],
+        connection=entry.get("connection", ""),
         account_id=entry.get("account_id"),
         handle=entry.get("handle"),
     )
@@ -120,7 +121,7 @@ def _account(entry: dict) -> PairedAccount:
 
 def _entry(account: PairedAccount) -> dict:
     return {
-        "platform": account.platform,
+        "connection": account.connection,
         "account_id": account.account_id,
         "handle": account.handle,
     }
@@ -128,53 +129,54 @@ def _entry(account: PairedAccount) -> dict:
 
 def _code(entry: dict) -> PairingCode:
     return PairingCode(
-        platform=entry["platform"],
+        connection=entry.get("connection", ""),
         code=entry["code"],
         expires_at=float(entry.get("expires_at", 0.0)),
     )
 
 
-def list_accounts(platform: str) -> list[PairedAccount]:
-    """Every account allowed to reach ``platform``, in the order they were added."""
-    return [_account(e) for e in _load()["accounts"] if e.get("platform") == platform]
+def list_accounts(connection: str) -> list[PairedAccount]:
+    """Every account allowed to reach ``connection``, in the order they were added."""
+    return [_account(e) for e in _load()["accounts"] if e.get("connection") == connection]
 
 
-def add_account(platform: str, value: str) -> PairedAccount:
-    """Allow an account, entered as a numeric id or as a handle.
+def add_account(connection: str, value: str, platform: str) -> PairedAccount:
+    """Allow an account on one Connection, entered as a numeric id or as a handle.
 
-    A numeric id is authoritative at once; a handle is stored pending. Re-entering
-    something already on the list returns the existing entry rather than doubling it."""
+    A numeric id is authoritative at once; a handle is stored pending. ``platform``
+    says whether a handle can ever be presented. Re-entering something already on the
+    list returns the existing entry rather than doubling it."""
     value = value.strip()
     if not value:
         raise ValueError("enter a numeric account id or a handle")
 
     if value.isdigit():
-        account = PairedAccount(platform=platform, account_id=value)
+        account = PairedAccount(connection=connection, account_id=value)
     else:
         handle = normalise_handle(value)
         if not handle:
             raise ValueError("enter a numeric account id or a handle")
         if platform not in HANDLE_PLATFORMS:
             raise ValueError(f"{platform} messages carry no handle — enter a numeric account id")
-        account = PairedAccount(platform=platform, handle=handle)
+        account = PairedAccount(connection=connection, handle=handle)
 
     data = _load()
     for entry in data["accounts"]:
         existing = _account(entry)
-        if existing.platform == platform and existing.key == account.key:
+        if existing.connection == connection and existing.key == account.key:
             return existing
     data["accounts"].append(_entry(account))
     _write(data)
     return account
 
 
-def revoke(platform: str, key: str) -> bool:
+def revoke(connection: str, key: str) -> bool:
     """Withdraw one entry by its ``key``. True when something was removed."""
     data = _load()
     kept = [
         e
         for e in data["accounts"]
-        if not (e.get("platform") == platform and _account(e).key == key)
+        if not (e.get("connection") == connection and _account(e).key == key)
     ]
     if len(kept) == len(data["accounts"]):
         return False
@@ -183,8 +185,9 @@ def revoke(platform: str, key: str) -> bool:
     return True
 
 
-def is_paired(platform: str, account_id: str, handle: str | None = None) -> bool:
-    """Whether this account may be served — pinning a pending handle it presents.
+def is_paired(connection: str, account_id: str, handle: str | None = None) -> bool:
+    """Whether this account may be served by this Connection — pinning a pending
+    handle it presents.
 
     Matching is by id for every entry that has one, so a handle changing hands after
     it pinned admits nobody new and locks nobody out."""
@@ -194,7 +197,7 @@ def is_paired(platform: str, account_id: str, handle: str | None = None) -> bool
 
     for index, entry in enumerate(data["accounts"]):
         account = _account(entry)
-        if account.platform != platform:
+        if account.connection != connection:
             continue
         if account.account_id == account_id:
             return True
@@ -205,42 +208,42 @@ def is_paired(platform: str, account_id: str, handle: str | None = None) -> bool
         return False
     # First arrival on an invitation: the handle stops being how we recognise them.
     data["accounts"][pending] = _entry(
-        PairedAccount(platform=platform, account_id=account_id, handle=wanted)
+        PairedAccount(connection=connection, account_id=account_id, handle=wanted)
     )
     _write(data)
     return True
 
 
-def issue_code(platform: str, *, ttl: float = CODE_TTL) -> str:
-    """Mint the one live pairing code for ``platform``, replacing any earlier one so
-    the code on screen in Settings is always the code that works."""
+def issue_code(connection: str, *, ttl: float = CODE_TTL) -> str:
+    """Mint the one live pairing code for ``connection``, replacing any earlier one of
+    its own so the code on screen in Settings is always the code that works."""
     code = "-".join("".join(secrets.choice(_CODE_ALPHABET) for _ in range(4)) for _ in range(2))
     data = _load()
-    data["codes"] = [e for e in data["codes"] if e.get("platform") != platform]
-    data["codes"].append({"platform": platform, "code": code, "expires_at": time.time() + ttl})
+    data["codes"] = [e for e in data["codes"] if e.get("connection") != connection]
+    data["codes"].append({"connection": connection, "code": code, "expires_at": time.time() + ttl})
     _write(data)
     return code
 
 
-def live_code(platform: str) -> PairingCode | None:
+def live_code(connection: str) -> PairingCode | None:
     """The code Settings should show — unused and not yet expired, else None."""
     for entry in _load()["codes"]:
-        if entry.get("platform") != platform:
+        if entry.get("connection") != connection:
             continue
         code = _code(entry)
         return None if code.expired else code
     return None
 
 
-def redeem(platform: str, code: str, account_id: str, handle: str | None = None) -> str:
-    """Present ``code`` from an account: ``PAIRED``, ``EXPIRED`` or ``UNKNOWN``.
+def redeem(connection: str, code: str, account_id: str, handle: str | None = None) -> str:
+    """Present ``code`` to a Connection: ``PAIRED``, ``EXPIRED`` or ``UNKNOWN``.
 
     A spent code is removed, so it cannot pair a second account. An expired one is
     removed too — it is reported once, to the person who was clearly sent it."""
     wanted = code.strip().upper()
     data = _load()
     match = next(
-        (e for e in data["codes"] if e.get("platform") == platform and e.get("code") == wanted),
+        (e for e in data["codes"] if e.get("connection") == connection and e.get("code") == wanted),
         None,
     )
     if match is None:
@@ -252,14 +255,26 @@ def redeem(platform: str, code: str, account_id: str, handle: str | None = None)
         return EXPIRED
 
     account = PairedAccount(
-        platform=platform,
+        connection=connection,
         account_id=account_id,
         handle=normalise_handle(handle) if handle else None,
     )
     if not any(
-        e.get("platform") == platform and _account(e).account_id == account_id
+        e.get("connection") == connection and _account(e).account_id == account_id
         for e in data["accounts"]
     ):
         data["accounts"].append(_entry(account))
     _write(data)
     return PAIRED
+
+
+def adopt_connections(by_platform: dict[str, str]) -> None:
+    """Move each platform's paired accounts and live code onto the Connection migrated
+    for it, so nobody who could reach the assistant before loses access."""
+    data = _load()
+    for entry in data["accounts"] + data["codes"]:
+        connection = by_platform.get(entry.pop("platform", None))
+        if connection and not entry.get("connection"):
+            entry["connection"] = connection
+    if data["accounts"] or data["codes"]:
+        _write(data)

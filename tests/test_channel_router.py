@@ -239,11 +239,11 @@ class FakeDirectory:
 
 @pytest.fixture(autouse=True)
 def _pair_the_sender():
-    """A Channel serves nobody but a Paired account (ADR 0021), so the sender every
-    test below speaks as is paired up front. The gate itself is exercised in its own
-    section, by senders this fixture has not paired."""
-    for platform in ("telegram", "discord", "slack"):
-        pairing.add_account(platform, PAIRED_SENDER)
+    """A Connection serves nobody but a Paired account (ADR 0021), so the sender every
+    test below speaks as is paired on each Connection the suite drives. The gate itself
+    is exercised in its own section, by senders and Connections this has not paired."""
+    for connection in ("telegram", "discord", "slack", "cn-work", "cn-play"):
+        pairing.add_account(connection, PAIRED_SENDER, platform="telegram")
 
 
 def _inbound(
@@ -667,7 +667,7 @@ async def test_a_code_that_was_never_issued_is_met_with_silence():
 
 
 async def test_an_invited_handle_is_admitted_and_pinned_when_it_first_speaks():
-    pairing.add_account("telegram", "@nikita")
+    pairing.add_account("telegram", "@nikita", "telegram")
     router, gateway = _router(default="work")
     outcome = await router.handle(_inbound("hi", sender_id=UNPAIRED, sender_handle="nikita"))
     assert isinstance(outcome, Reply)
@@ -676,7 +676,7 @@ async def test_an_invited_handle_is_admitted_and_pinned_when_it_first_speaks():
 
 
 async def test_a_later_holder_of_a_pinned_handle_is_not_admitted():
-    pairing.add_account("telegram", "@nikita")
+    pairing.add_account("telegram", "@nikita", "telegram")
     router, gateway = _router(default="work")
     await router.handle(_inbound("hi", sender_id=UNPAIRED, sender_handle="nikita"))
     outcome = await router.handle(_inbound("hi", sender_id="3003", sender_handle="nikita"))
@@ -699,6 +699,57 @@ async def test_revoking_an_account_takes_effect_on_its_next_message():
     pairing.revoke("telegram", PAIRED_SENDER)
     assert isinstance(await router.handle(_inbound("hi again")), Nothing)
     assert len(gateway.calls) == 1
+
+
+# --- pairing is a grant to one Connection, not to a platform ---
+
+OTHER = "cn-personal"
+
+
+async def test_an_account_paired_to_one_bot_is_refused_by_another_of_the_same_platform():
+    """The reading of ADR 0021 that survives two Telegram bots: the work bot's roster
+    grants nothing on the personal one."""
+    router, gateway = _router(default="work")
+    assert isinstance(await router.handle(_inbound("hi")), Reply)
+
+    outcome = await router.handle(_inbound("hi", connection=OTHER))
+    assert isinstance(outcome, Nothing)
+    assert len(gateway.calls) == 1
+    assert router.paired(_inbound("hi", connection=OTHER)) is False
+
+
+async def test_pairing_on_one_connection_leaves_the_other_untouched():
+    pairing.add_account(OTHER, "2002", "telegram")
+    router, _ = _router(default="work")
+    assert router.paired(_inbound("hi", sender_id="2002", connection=OTHER)) is True
+    assert router.paired(_inbound("hi", sender_id="2002")) is False
+
+
+async def test_a_code_minted_for_one_connection_does_nothing_on_another():
+    code = pairing.issue_code("telegram")
+    router, _ = _router(default="work")
+    assert isinstance(
+        await router.handle(_inbound(code, sender_id=UNPAIRED, connection=OTHER)), Nothing
+    )
+    assert isinstance(await router.handle(_inbound(code, sender_id=UNPAIRED)), Reply)
+
+
+async def test_an_invitation_pins_on_the_connection_it_was_presented_to():
+    pairing.add_account("telegram", "@nikita", "telegram")
+    pairing.add_account(OTHER, "@nikita", "telegram")
+    router, _ = _router(default="work")
+
+    await router.handle(_inbound("hi", sender_id=UNPAIRED, sender_handle="nikita"))
+    assert pairing.list_accounts("telegram")[-1].account_id == UNPAIRED
+    assert pairing.list_accounts(OTHER)[0].pending is True
+
+
+async def test_revoking_on_one_connection_leaves_the_other_answering():
+    pairing.add_account(OTHER, PAIRED_SENDER, "telegram")
+    router, _ = _router(default="work")
+    pairing.revoke("telegram", PAIRED_SENDER)
+    assert isinstance(await router.handle(_inbound("hi")), Nothing)
+    assert isinstance(await router.handle(_inbound("hi", connection=OTHER)), Reply)
 
 
 async def test_an_option_from_no_known_picker_is_refused():

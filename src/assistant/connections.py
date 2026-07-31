@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from secrets import token_hex
 
-from assistant import peers, profiles, secrets
+from assistant import pairing, peers, profiles, secrets
 from assistant.config import data_dir
 from assistant.profiles import CHANNEL_PLATFORMS, CHANNEL_TOKEN_ENVS
 
@@ -182,8 +182,9 @@ def _seeded_platforms() -> list[str]:
 def _migrate() -> list[dict]:
     """One Connection per platform that already has its token(s), named after the
     platform and holding the token(s) it was seeded from. Each inherits that platform's
-    default Profile and every Peer recorded against it, so an existing install's
-    conversations continue in place. The entries are written by the caller in one go —
+    default Profile, paired accounts, live pairing code and every Peer recorded against
+    it, so an existing install's conversations continue in place and nobody who could
+    reach it loses access. The entries are written by the caller in one go —
     and the tokens land first — so a half-migrated registry is not a state anyone can
     observe."""
     entries = []
@@ -198,4 +199,5 @@ def _migrate() -> list[dict]:
     if adopted:
         profiles.adopt_channel_defaults(adopted)
         peers.adopt_connections(adopted)
+        pairing.adopt_connections(adopted)
     return entries

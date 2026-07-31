@@ -13,11 +13,12 @@ POST /api/connections/{id}/default sets where one Connection's conversations lan
 
 import json
 import os
+import time
 
 from fastapi.testclient import TestClient
 
 import assistant.channels as channels_mod
-from assistant import connections, peers, profiles, secrets
+from assistant import connections, pairing, peers, profiles, secrets
 from assistant.config import data_dir
 from assistant.gateway.app import create_app
 from assistant.gateway.profile_manager import ProfileManager
@@ -1063,6 +1064,16 @@ def _pre_connection_install(default_pid: str) -> None:
     (data_dir() / "peers.json").write_text(
         json.dumps({"peers": [{"platform": "telegram", "chat_id": "42", "profile": default_pid}]})
     )
+    (data_dir() / "pairing.json").write_text(
+        json.dumps(
+            {
+                "accounts": [{"platform": "telegram", "account_id": "42", "handle": None}],
+                "codes": [
+                    {"platform": "telegram", "code": "AAAA-1111", "expires_at": time.time() + 600}
+                ],
+            }
+        )
+    )
 
 
 def test_migration_carries_the_platform_default_onto_its_connection(monkeypatch):
@@ -1088,3 +1099,17 @@ def test_migration_carries_existing_peers_onto_the_migrated_connection(monkeypat
     with _new_client(monkeypatch) as client:
         cid = client.get("/api/connections").json()["connections"][0]["id"]
         assert peers.get_peer(cid, "42").profile == "work"
+
+
+def test_migration_carries_the_paired_accounts_and_live_code_onto_the_connection(monkeypatch):
+    """Nobody who could reach the assistant before the upgrade loses access to it."""
+    _no_channel_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "seed-tok")
+    _stub_channels(monkeypatch)
+    profiles.create_profile("Work", "#109e91")
+    _pre_connection_install("work")
+    with _new_client(monkeypatch) as client:
+        roster = client.get("/api/channels/telegram/pairing").json()
+        assert [a["account_id"] for a in roster["accounts"]] == ["42"]
+        assert roster["code"]["code"] == "AAAA-1111"
+        assert pairing.is_paired(_only_connection(), "42") is True
