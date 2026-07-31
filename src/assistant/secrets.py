@@ -397,6 +397,16 @@ def set_connection_tokens(cid: str, tokens: dict) -> None:
     _write(data)
 
 
+def clear_connection_tokens(cid: str) -> None:
+    """Forget every token one Connection holds — it no longer exists."""
+    data = _read()
+    all_held = _stored_connection_tokens(data)
+    if all_held.pop(cid, None) is None:
+        return
+    data[_CONNECTION_TOKENS_FIELD] = all_held
+    _write(data)
+
+
 def connection_tokens(cid: str) -> dict:
     """The raw token(s) one Connection holds, keyed by env-var name. In-process only —
     they flow into adapter construction and are never returned by an endpoint."""

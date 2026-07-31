@@ -154,6 +154,23 @@ def rename_connection(cid: str, name: str) -> Connection:
     raise ValueError(f"unknown connection: {cid}")
 
 
+def delete_connection(cid: str) -> None:
+    """Forget a Connection and everything hung off it — its token(s), exposure records,
+    default Profile, paired accounts, live pairing code and Peers. Every other
+    Connection, including a sibling on the same platform, is untouched. Unknown id →
+    ValueError."""
+    entries = _load()
+    kept = [e for e in entries if e.get("id") != cid]
+    if len(kept) == len(entries):
+        raise ValueError(f"unknown connection: {cid}")
+    _write(kept)
+    clear_exposure(cid)
+    profiles.set_connection_default(cid, None)
+    secrets.clear_connection_tokens(cid)
+    pairing.forget_connection(cid)
+    peers.forget_connection(cid)
+
+
 def set_tokens(cid: str, tokens: dict) -> None:
     """Store token value(s) on a Connection, keyed by env-var name; an empty value
     clears one. Unknown id → ValueError."""
@@ -227,6 +244,15 @@ def set_exposure(cid: str, pid: str, surface: str, exposed: bool) -> None:
     profiles.set_exposure(pid, surface, exposed)
     if profiles.connection_defaults().get(cid) == pid and not reachable(cid, pid):
         profiles.set_connection_default(cid, None)
+
+
+def clear_exposure(cid: str) -> None:
+    """Drop every withdrawal recorded against this Connection's surfaces, on every
+    profile — archived ones included, so nothing outlives the Connection."""
+    for meta in profiles.list_profiles(include_archived=True):
+        for surface in meta.withdrawn:
+            if surface == cid or surface.startswith(f"{cid}:"):
+                profiles.set_exposure(meta.id, surface, True)
 
 
 def set_default_profile(cid: str, pid: str | None) -> None:

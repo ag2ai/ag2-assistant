@@ -192,6 +192,14 @@ def forget_chat(chat: str) -> None:
         return
 
 
+def forget_connection(connection: str) -> None:
+    """Drop every Peer recorded against one Connection — its conversations end with it."""
+    entries = _load()
+    kept = [e for e in entries if e.get("connection") != connection]
+    if len(kept) != len(entries):
+        _write(kept)
+
+
 def adopt_connections(by_platform: dict[str, str]) -> None:
     """Stamp the Connection migrated for each platform onto every Peer recorded against
     that platform, so an existing install's conversations continue in place."""

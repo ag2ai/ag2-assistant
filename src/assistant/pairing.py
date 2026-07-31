@@ -268,6 +268,18 @@ def redeem(connection: str, code: str, account_id: str, handle: str | None = Non
     return PAIRED
 
 
+def forget_connection(connection: str) -> None:
+    """Drop one Connection's paired accounts and its live code — nothing may be reached
+    through a Connection that is gone."""
+    data = _load()
+    kept = {
+        key: [e for e in data[key] if e.get("connection") != connection]
+        for key in ("accounts", "codes")
+    }
+    if any(len(kept[key]) != len(data[key]) for key in kept):
+        _write(kept)
+
+
 def adopt_connections(by_platform: dict[str, str]) -> None:
     """Move each platform's paired accounts and live code onto the Connection migrated
     for it, so nobody who could reach the assistant before loses access."""

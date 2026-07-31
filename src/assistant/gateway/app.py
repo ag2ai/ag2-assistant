@@ -29,7 +29,11 @@ Route map:
     POST /api/profiles/{pid}/exposure        -> {surface, exposed}; withdraw a profile from a surface
     POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
-    GET  /api/connections                    -> {connections: [{id, platform, name, tokens, default_profile}]} (install-level)
+    GET  /api/connections                    -> {connections: [{id, platform, name, tokens, default_profile, active, error, paired_accounts}]}
+    POST /api/connections                    -> {platform, name, tokens} create + start; returns the new entry
+    POST /api/connections/{cid}              -> {name}; rename a Connection
+    POST /api/connections/{cid}/token        -> {tokens}; replace token(s) + restart, rolled back on failure
+    DELETE /api/connections/{cid}            -> stop + forget it and its Peers, pairing, default and exposure
     POST /api/connections/{cid}/default      -> set {profile:pid|null} for one Connection; returns updated entry
     GET  /api/connections/{cid}/exposure     -> {surfaces, exposure: {pid: {surface: bool}}, default_profile}
     POST /api/connections/{cid}/exposure     -> {profile, surface, exposed}; withdraw a profile from one surface
@@ -540,6 +544,20 @@ class VoiceProviderRequest(BaseModel):
 class ChannelDefaultRequest(BaseModel):
     platform: str
     profile: str | None = None  # pid conversations land in by default, or null for none
+
+
+class ConnectionCreateRequest(BaseModel):
+    platform: str
+    name: str = ""  # blank takes the platform's next free default name
+    tokens: dict[str, str] = Field(default_factory=dict)  # {ENV_NAME: value}
+
+
+class ConnectionRenameRequest(BaseModel):
+    name: str
+
+
+class ConnectionTokenRequest(BaseModel):
+    tokens: dict[str, str] = Field(default_factory=dict)  # every env the platform needs
 
 
 class ConnectionDefaultRequest(BaseModel):
@@ -1918,15 +1936,42 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     # ---- Connections (global, install-level; never owned by a profile — ADR 0019) ----
 
     def _connection_entry(connection: connections.Connection) -> dict:
-        """One Connection as the API shows it: its identity, its token(s) as a set flag
-        and hint, and the profile its conversations land in by default."""
+        """One Connection as the API shows it — everything a Settings row renders from:
+        its identity, its token(s) as a set flag and hint, the profile its conversations
+        land in by default, whether the adapter is live, why it is not, and how many
+        accounts are paired to it."""
+        cid = connection.id
         return {
-            "id": connection.id,
+            "id": cid,
             "platform": connection.platform,
             "name": connection.name,
-            "tokens": connections.token_status(connection.id),
-            "default_profile": profiles_mod.connection_defaults().get(connection.id),
+            "tokens": connections.token_status(cid),
+            "default_profile": profiles_mod.connection_defaults().get(cid),
+            "active": cid in manager.channels,
+            "error": manager.channel_errors.get(cid),
+            # A live Connection with nobody paired answers nobody (ADR 0021) — the count
+            # is what lets Settings say so rather than leave it looking healthy.
+            "paired_accounts": len(pairing.list_accounts(cid)),
         }
+
+    def _reject_incomplete_tokens(platform: str, tokens: dict[str, str]):
+        """Refuse a Connection that could never start: an unknown platform, a token env
+        that is not that platform's, or one of its tokens missing."""
+        if platform not in profiles_mod.CHANNEL_PLATFORMS:
+            return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
+        envs = profiles_mod.CHANNEL_TOKEN_ENVS[platform]
+        unknown = set(tokens) - set(envs)
+        if unknown:
+            return JSONResponse(
+                {"error": f"invalid token env(s) for {platform}: {', '.join(sorted(unknown))}"},
+                status_code=400,
+            )
+        missing = [e for e in envs if not (tokens.get(e) or "").strip()]
+        if missing:
+            return JSONResponse(
+                {"error": f"missing token(s) for {platform}: {', '.join(missing)}"}, status_code=400
+            )
+        return None
 
     @app.get("/api/connections")
     async def list_connections() -> dict:
@@ -1934,6 +1979,65 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         already had bot tokens is migrated to one Connection per platform on this read.
         A Connection's token(s) appear only as a set flag and a last-4 hint."""
         return {"connections": [_connection_entry(c) for c in connections.list_connections()]}
+
+    @app.post("/api/connections")
+    async def create_connection(req: ConnectionCreateRequest):
+        """Register a Connection on ``platform`` with its token(s) and start it at once.
+        A Connection that will not start is still recorded and reports its reason in the
+        returned entry — a failed boot, not a failed request. Incomplete token(s) or an
+        unknown platform → 400, and nothing is created."""
+        if (bad := _reject_incomplete_tokens(req.platform, req.tokens)) is not None:
+            return bad
+        connection = connections.create_connection(req.platform, req.name, tokens=req.tokens)
+        await manager.start_channel(connection.id)
+        return _connection_entry(connection)
+
+    @app.post("/api/connections/{cid}")
+    async def rename_connection(cid: str, req: ConnectionRenameRequest):
+        """Change a Connection's display name; its id, tokens and everything keyed by it
+        are untouched. Unknown Connection → 404, a blank name → 400."""
+        if connections.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            connection = connections.rename_connection(cid, req.name)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _connection_entry(connection)
+
+    @app.post("/api/connections/{cid}/token")
+    async def replace_connection_token(cid: str, req: ConnectionTokenRequest):
+        """Replace a Connection's token(s) and restart it on them. Its identity survives,
+        so its paired accounts, group pins, exposure and default Profile stay attached.
+        A replacement that will not start is rolled back to the previous token(s) and the
+        Connection comes back up as it was → 400 with the reason. Unknown Connection →
+        404, incomplete token(s) → 400."""
+        connection = connections.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        if (bad := _reject_incomplete_tokens(connection.platform, req.tokens)) is not None:
+            return bad
+        envs = profiles_mod.CHANNEL_TOKEN_ENVS[connection.platform]
+        prior = connections.tokens_for(cid)
+        connections.set_tokens(cid, req.tokens)
+        active, reason = await manager.restart_channel(cid)
+        if not active:
+            connections.set_tokens(cid, {e: prior.get(e, "") for e in envs})
+            await manager.restart_channel(cid)
+            return JSONResponse({"error": reason}, status_code=400)
+        return _connection_entry(connection)
+
+    @app.delete("/api/connections/{cid}")
+    async def delete_connection(cid: str):
+        """Stop a Connection and forget it, together with everything hung off it: its
+        token(s), Peers, paired accounts, live pairing code, default-Profile entry and
+        exposure records. Every other Connection, including one on the same platform, is
+        left running and intact. Unknown Connection → 404."""
+        if connections.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        await manager.stop_channel(cid)
+        manager.channel_errors.pop(cid, None)
+        connections.delete_connection(cid)
+        return {"ok": True}
 
     @app.post("/api/connections/{cid}/default")
     async def set_connection_default(cid: str, req: ConnectionDefaultRequest):

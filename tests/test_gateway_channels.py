@@ -698,7 +698,16 @@ def test_the_connection_listing_never_echoes_a_token(monkeypatch):
         r = client.get("/api/connections")
         assert "super-secret-bot-token" not in r.text
         entry = r.json()["connections"][0]
-        assert set(entry) == {"id", "platform", "name", "tokens", "default_profile"}
+        assert set(entry) == {
+            "id",
+            "platform",
+            "name",
+            "tokens",
+            "default_profile",
+            "active",
+            "error",
+            "paired_accounts",
+        }
         assert entry["tokens"] == {"TELEGRAM_BOT_TOKEN": {"set": True, "hint": "…oken"}}
 
 
@@ -1306,3 +1315,267 @@ def test_migration_carries_platform_withdrawals_onto_the_connections_surfaces(mo
         exposure = client.get(f"/api/connections/{cid}/exposure").json()["exposure"]
 
         assert exposure["work"] == {f"{cid}:dm": True, f"{cid}:group": False}
+
+
+# --- the Connection lifecycle over HTTP: create, rename, replace token, delete ---
+
+
+def _boom_channels(monkeypatch, bad: str):
+    """get_channel builds a FakeChannel, except on ``bad`` — whose start() raises, the
+    way a rejected token does."""
+
+    class BoomChannel:
+        def __init__(self, platform: str) -> None:
+            self.platform = platform
+
+        async def start(self, router):
+            raise RuntimeError("Unauthorized")
+
+        async def stop(self):
+            pass
+
+    def build(platform: str, connection: str = "", **tokens: str):
+        if bad in tokens.values():
+            return BoomChannel(platform)
+        return FakeChannel(platform, connection, **tokens)
+
+    monkeypatch.setattr(channels_mod, "get_channel", build)
+
+
+def _create(client, platform: str = "telegram", name: str = "Work bot", **tokens: str):
+    return client.post(
+        "/api/connections", json={"platform": platform, "name": name, "tokens": tokens}
+    )
+
+
+def test_creating_a_connection_starts_it_immediately(monkeypatch):
+    """A platform, a name and a token are all it takes: the adapter is live and the
+    entry comes back from the same call."""
+    _no_channel_env(monkeypatch)
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        r = _create(client, TELEGRAM_BOT_TOKEN="1111-work")
+
+        assert r.status_code == 200
+        entry = r.json()
+        assert entry["platform"] == "telegram"
+        assert entry["name"] == "Work bot"
+        assert entry["active"] is True
+        assert entry["error"] is None
+        manager = client.app.state.profiles
+        assert manager.channels[entry["id"]].tokens == {"token": "1111-work"}
+        assert [c["id"] for c in client.get("/api/connections").json()["connections"]] == [
+            entry["id"]
+        ]
+
+
+def test_creating_a_second_connection_of_a_platform_leaves_the_first_running(monkeypatch):
+    _no_channel_env(monkeypatch)
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+        first = _create(client, name="Work bot", TELEGRAM_BOT_TOKEN="1111-work").json()
+
+        second = _create(client, name="Play bot", TELEGRAM_BOT_TOKEN="2222-play").json()
+
+        assert second["id"] != first["id"]
+        assert manager.channels[first["id"]].started is True
+        assert manager.channels[first["id"]].stopped is False
+        assert manager.channels[second["id"]].tokens == {"token": "2222-play"}
+
+
+def test_creating_without_every_token_the_platform_needs_is_refused(monkeypatch):
+    """Slack takes two tokens; one of them is not a Connection, it is a typo."""
+    _no_channel_env(monkeypatch)
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        r = _create(client, "slack", "Team", SLACK_BOT_TOKEN="xoxb")
+
+        assert r.status_code == 400
+        assert "SLACK_APP_TOKEN" in r.json()["error"]
+        assert client.get("/api/connections").json()["connections"] == []
+
+
+def test_creating_with_a_blank_token_or_an_unknown_platform_is_refused(monkeypatch):
+    _no_channel_env(monkeypatch)
+    _stub_channels(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        assert _create(client, TELEGRAM_BOT_TOKEN="   ").status_code == 400
+        assert _create(client, "matrix", "Bot", TELEGRAM_BOT_TOKEN="tok").status_code == 400
+        assert client.get("/api/connections").json()["connections"] == []
+
+
+def test_a_connection_that_fails_to_start_is_recorded_and_reports_why(monkeypatch):
+    """A bad token is not a failed request: the Connection exists, inactive, with the
+    reason attached — exactly as a failed boot behaves."""
+    _no_channel_env(monkeypatch)
+    _boom_channels(monkeypatch, bad="rejected")
+    with _new_client(monkeypatch) as client:
+        r = _create(client, TELEGRAM_BOT_TOKEN="rejected")
+
+        assert r.status_code == 200
+        entry = r.json()
+        assert entry["active"] is False
+        assert "could not start 'telegram'" in entry["error"]
+        listed = client.get("/api/connections").json()["connections"]
+        assert [c["id"] for c in listed] == [entry["id"]]
+
+
+def test_a_connection_can_be_renamed(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        r = client.post(f"/api/connections/{work.id}", json={"name": "Support bot"})
+
+        assert r.status_code == 200
+        assert r.json()["name"] == "Support bot"
+        assert connections.get_connection(work.id).name == "Support bot"
+        assert client.post(f"/api/connections/{work.id}", json={"name": " "}).status_code == 400
+        assert client.post("/api/connections/cn-ghost", json={"name": "x"}).status_code == 404
+
+
+def test_replacing_a_token_restarts_the_connection_and_keeps_its_identity(monkeypatch):
+    """A rotated token is the same bot: its paired accounts, group pins, exposure and
+    default Profile all stay attached."""
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        client.post(f"/api/connections/{work.id}/pairing", json={"value": "42"})
+        peers.select_profile(work.id, "-100", "work", platform="telegram", surface="group")
+        _withdraw(client, work.id, "home", "group")
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+        was = manager.channels[work.id]
+
+        r = client.post(
+            f"/api/connections/{work.id}/token", json={"tokens": {"TELEGRAM_BOT_TOKEN": "3333-new"}}
+        )
+
+        assert r.status_code == 200
+        assert r.json()["active"] is True
+        assert was.stopped is True
+        assert manager.channels[work.id] is not was
+        assert manager.channels[work.id].tokens == {"token": "3333-new"}
+        assert connections.tokens_for(work.id) == {"TELEGRAM_BOT_TOKEN": "3333-new"}
+        assert [a.account_id for a in pairing.list_accounts(work.id)] == ["42"]
+        assert peers.get_peer(work.id, "-100").profile == "work"
+        assert profiles.connection_defaults()[work.id] == "work"
+        exposure = client.get(f"/api/connections/{work.id}/exposure").json()["exposure"]
+        assert exposure["home"] == {_surface(work.id): True, _surface(work.id, "group"): False}
+
+
+def test_a_failed_token_replacement_leaves_the_previous_token_live(monkeypatch):
+    """A typo must not strand a working bot: the old token is restored and the adapter
+    comes back up on it."""
+    _no_channel_env(monkeypatch)
+    work = connections.create_connection(
+        "telegram", "Work bot", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    _boom_channels(monkeypatch, bad="typo")
+    with _new_client(monkeypatch) as client:
+        manager = client.app.state.profiles
+
+        r = client.post(
+            f"/api/connections/{work.id}/token", json={"tokens": {"TELEGRAM_BOT_TOKEN": "typo"}}
+        )
+
+        assert r.status_code == 400
+        assert "could not start 'telegram'" in r.json()["error"]
+        assert connections.tokens_for(work.id) == {"TELEGRAM_BOT_TOKEN": "1111-work"}
+        assert manager.channels[work.id].tokens == {"token": "1111-work"}
+        listed = client.get("/api/connections").json()["connections"][0]
+        assert listed["active"] is True
+        assert listed["error"] is None
+
+
+def test_replacing_a_token_refuses_an_incomplete_or_unknown_body(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        assert (
+            client.post(f"/api/connections/{work.id}/token", json={"tokens": {}}).status_code == 400
+        )
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/token", json={"tokens": {"DISCORD_BOT_TOKEN": "x"}}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                "/api/connections/cn-ghost/token",
+                json={"tokens": {"TELEGRAM_BOT_TOKEN": "x"}},
+            ).status_code
+            == 404
+        )
+        assert connections.tokens_for(work.id) == {"TELEGRAM_BOT_TOKEN": "1111-work"}
+
+
+def test_deleting_a_connection_stops_it_and_takes_its_dependent_state_with_it(monkeypatch):
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        client.post(f"/api/connections/{work.id}/pairing", json={"value": "42"})
+        client.post(f"/api/connections/{work.id}/pairing/code")
+        peers.select_profile(work.id, "-100", "work", platform="telegram", surface="group")
+        _withdraw(client, work.id, "home", "group")
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+        live = manager.channels[work.id]
+
+        r = client.delete(f"/api/connections/{work.id}")
+
+        assert r.status_code == 200
+        assert live.stopped is True
+        assert work.id not in manager.channels
+        assert connections.get_connection(work.id) is None
+        assert pairing.list_accounts(work.id) == []
+        assert pairing.live_code(work.id) is None
+        assert peers.get_peer(work.id, "-100") is None
+        assert work.id not in profiles.connection_defaults()
+        assert profiles.get_profile("home").withdrawn == []
+        assert connections.tokens_for(work.id) == {}
+        assert client.delete(f"/api/connections/{work.id}").status_code == 404
+
+
+def test_deleting_one_connection_leaves_the_other_of_its_platform_untouched(monkeypatch):
+    work, play = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        client.post(f"/api/connections/{play.id}/pairing", json={"value": "77"})
+        peers.select_profile(play.id, "-200", "home", platform="telegram", surface="group")
+        _withdraw(client, play.id, "home", "group")
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+
+        client.delete(f"/api/connections/{work.id}")
+
+        assert manager.channels[play.id].stopped is False
+        assert connections.tokens_for(play.id) == {"TELEGRAM_BOT_TOKEN": "2222-play"}
+        assert [a.account_id for a in pairing.list_accounts(play.id)] == ["77"]
+        assert peers.get_peer(play.id, "-200").profile == "home"
+        assert profiles.connection_defaults() == {play.id: "home"}
+        exposure = client.get(f"/api/connections/{play.id}/exposure").json()["exposure"]
+        assert exposure["home"][_surface(play.id, "group")] is False
+
+
+def test_the_list_entry_carries_what_a_settings_row_needs(monkeypatch):
+    """One call renders the row: identity, token-set flag, liveness, reason and reach —
+    and never a token value."""
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/pairing", json={"value": "42"})
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+
+        entry = client.get("/api/connections").json()["connections"][0]
+
+        assert entry == {
+            "id": work.id,
+            "platform": "telegram",
+            "name": "Work bot",
+            "tokens": {"TELEGRAM_BOT_TOKEN": {"set": True, "hint": "…work"}},
+            "default_profile": "work",
+            "active": True,
+            "error": None,
+            "paired_accounts": 1,
+        }
+        assert "1111-work" not in json.dumps(entry)
