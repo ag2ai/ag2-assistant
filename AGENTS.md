@@ -100,9 +100,10 @@ run the build and commit `src/assistant/gateway/static/app/`.
 - Mark tests that call a real LLM, network, or Docker with `@pytest.mark.integration`.
 - **`monkeypatch` is not used in tests.** Dependencies arrive as parameters: `Paths`
   for the on-disk layout, an explicit `env: Mapping` for the environment,
-  `search_path` for external binaries, `agent_factory`/`channel_factory`/
-  `title_factory`/`summary_factory` for collaborators, an injected `httpx.Client`
-  for the network. `os.environ` and `Path.home()` are read only in `cli.py`,
+  `search_path` for external binaries, `extras` for the optional provider libraries
+  (`llm_configs.deps_status` / `LlmConfigStore.usable`), `agent_factory`/
+  `channel_factory`/`title_factory`/`summary_factory` for collaborators, an injected
+  `httpx.Client` for the network. `os.environ` and `Path.home()` are read only in `cli.py`,
   `paths.Paths.from_env` and `config.load_config` — `tests/test_no_global_defaults.py`
   is the gate for that, and its deferred list may only shrink.
 - **Stubs of external programs are real files.** `tests/support/stubs.py::write_stub`
