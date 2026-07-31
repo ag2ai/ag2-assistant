@@ -152,6 +152,26 @@ export const api = {
   codexLoginUrl: () => j('POST', G('/codex/login_url')),
   codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
   codexLogout: () => j('POST', G('/codex/logout')),
+  // ---- Connections: one configured instance of a messaging platform, keyed by an
+  // opaque connection id (a platform can be connected many times). All GLOBAL —
+  // install-level, never profile-scoped (ADR 0019). An entry is {id, platform, name,
+  // tokens:{ENV:{set,hint}}, default_profile, active, error, paired_accounts}; token
+  // values are never echoed back. ----
+  connections: () => j('GET', G('/connections')),
+  // Create and start one; `tokens` is {ENV_NAME: value} and must carry every env the
+  // platform needs, a blank name takes the platform's next default ("Telegram 2").
+  // One that fails to START still returns 200, with active:false and the reason.
+  createConnection: (platform, name, tokens) =>
+    j('POST', G('/connections'), { platform, name, tokens }),
+  renameConnection: (cid, name) => j('POST', G('/connections/' + encodeURIComponent(cid)), { name }),
+  // Replace every token and restart on them, keeping the connection's id and so its
+  // paired accounts, group pins and exposure. One that will not start is rolled back
+  // and 400s with the reason, leaving the old bot live.
+  replaceConnectionTokens: (cid, tokens) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/token'), { tokens }),
+  // Stop it and forget it, with its tokens, Peers, paired accounts, pairing code,
+  // default-profile entry and exposure records → {ok:true}.
+  deleteConnection: (cid) => j('DELETE', G('/connections/' + encodeURIComponent(cid))),
   // Messaging channels are install-level and never owned by a profile: one connection
   // per platform, live as soon as its token is set. Both routes are GLOBAL. channels()
   // → {telegram|discord|slack: {default_profile:pid|null, token_present, active,

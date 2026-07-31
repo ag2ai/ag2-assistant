@@ -289,6 +289,41 @@
 .settings .advtoggle { align-self: flex-start; color: var(--accent); }
 .settings .advtoggle:hover { color: var(--accent); }
 .settings .llmadv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; min-height: 82px; resize: vertical; background: var(--bg); color: var(--ink); }
+
+/* ── Integrations page (Connections) ─────────────────────────────────────────
+   A connection row is the .llmrow card shape as a whole-row button, with a tinted
+   letter mark where a provider logo would go (the repo ships no Telegram / Discord
+   / Slack SVGs). The Add grid reuses .mcpcat / .mcpcatcard from MCP and Models. */
+.settings .cnrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; margin-bottom: 6px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.settings .cnrow:hover { background: var(--code); }
+.settings .cnrow:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.settings .cnmark { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: color-mix(in srgb, var(--tint) 22%, transparent); color: var(--tint); font-size: 13px; font-weight: 700; }
+.settings .cnmark.sm { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; }
+.settings .cnmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings .cnname { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.settings .cntag { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+/* Status line — one vocabulary: healthy (green), a warning that needs attention
+   (amber), and everything in between muted. */
+.settings .cnstat { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
+.settings .cnstat.ok { color: var(--success); }
+.settings .cnstat.err { color: var(--warning); }
+/* Back out of one integration's settings to the list — the ProfileEditor .pback idiom. */
+.settings .cnback { display: inline-flex; align-items: center; gap: 3px; align-self: flex-start; margin: 0 0 8px -4px; padding: 4px; background: none; border: none; cursor: pointer; font: inherit; font-size: var(--text-xs); font-weight: var(--fw-semibold); color: var(--text-muted); }
+.settings .cnback:hover { color: var(--accent); }
+.settings .cnback:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+.settings .cnhead { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.settings .cnheadmeta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.settings .cnheadname { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: var(--ink); }
+.settings .cnrename { border: 1px solid var(--accent); border-radius: 8px; padding: 5px 9px; background: var(--bg); color: var(--ink); font: inherit; font-size: 15px; font-weight: 600; }
+.settings .cnrename:focus { outline: none; box-shadow: var(--focus-ring); }
+.settings .cnheadact { display: flex; align-items: center; gap: 8px; }
+.settings .cnform { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
+.settings .cnhint { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.settings .cnwarn { font-size: 12px; color: var(--warning); line-height: 1.45; }
+.settings .cnerr { margin: 0 0 6px; font-size: 12px; color: var(--danger); }
+.settings .cnnote { margin: 0 0 6px; font-size: 12px; color: var(--success); }
+/* Small icon button (the rename pencil beside a heading). */
+.settings .iconbtn.sm { width: 22px; height: 22px; }
 .dlist { overflow-y: auto; flex: 1; padding: 6px; }
 /* Rows break out of the .dlist 6px padding (negative margin, padding bumped to
    keep content in place) so the active fill is a full-width green row, edge to
