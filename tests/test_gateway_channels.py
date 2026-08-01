@@ -1279,6 +1279,26 @@ def test_a_profile_withdrawn_from_this_connections_groups_is_not_offered(monkeyp
         ]
 
 
+def test_a_profile_whose_runtime_is_down_is_still_reachable_through_groups(monkeypatch):
+    """Reachability is exposure, not liveness — a group pinned to a profile that simply
+    has no runtime up must not read as unreachable, or it would be flagged forever."""
+    work, _ = _two_telegram_bots(monkeypatch)
+    with _new_client(monkeypatch) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        manager._runtimes.pop("home", None)
+        peers.select_profile(work.id, "-100", "home", platform="telegram", surface="group")
+
+        view = client.get(f"/api/connections/{work.id}/groups").json()
+        assert [p["id"] for p in view["profiles"]] == ["work", "home"]
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"}
+            ).status_code
+            == 200
+        )
+
+
 def test_re_pointing_a_group_on_its_connection_moves_it(monkeypatch):
     work, play = _two_telegram_bots(monkeypatch)
     with _new_client(monkeypatch) as client:

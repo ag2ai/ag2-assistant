@@ -1,13 +1,5 @@
-"""Peer registry persisted to ``<root>/peers.json``.
-
-A **Peer** is one conversation on the platform side — a direct message or a group —
-identified by the **Connection** it arrived on plus that platform's chat id. It holds
-the **Profile** that conversation talks to, so a selection survives a restart.
-Install-level state, a sibling of the profile registry (ADR 0019).
-
-Read/write style mirrors ``profiles.py``: a small read-modify-write over a JSON
-file, tolerant of a missing/malformed file (treated as no peers).
-"""
+"""Peer registry persisted to ``<root>/peers.json``: one conversation, keyed by the
+Connection it arrived on plus the chat id, holding the Profile it talks to."""
 
 import json
 import secrets

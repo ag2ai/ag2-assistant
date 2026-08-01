@@ -1919,7 +1919,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
             "paired_accounts": len(pairing.list_accounts(cid)),
         }
 
-    def _reject_incomplete_tokens(platform: str, tokens: dict[str, str]):
+    def _token_error(platform: str, tokens: dict[str, str]):
         """Refuse a Connection that could never start: an unknown platform, a token env
         that is not that platform's, or one of its tokens missing."""
         if platform not in profiles_mod.CHANNEL_PLATFORMS:
@@ -1949,7 +1949,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
     async def create_connection(req: ConnectionCreateRequest):
         """Register a Connection on ``platform`` with its token(s) and start it at once;
         one that will not start still records its reason. Bad tokens or platform → 400."""
-        if (bad := _reject_incomplete_tokens(req.platform, req.tokens)) is not None:
+        if (bad := _token_error(req.platform, req.tokens)) is not None:
             return bad
         connection = connections.create_connection(req.platform, req.name, tokens=req.tokens)
         await manager.start_channel(connection.id)
@@ -1974,7 +1974,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         connection = connections.get_connection(cid)
         if connection is None:
             return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        if (bad := _reject_incomplete_tokens(connection.platform, req.tokens)) is not None:
+        if (bad := _token_error(connection.platform, req.tokens)) is not None:
             return bad
         envs = profiles_mod.CHANNEL_TOKEN_ENVS[connection.platform]
         prior = connections.tokens_for(cid)
@@ -2110,16 +2110,25 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         """Every group Peer that arrived on this one Connection."""
         return [p for p in peers.list_peers() if p.connection == cid and p.surface == "group"]
 
+    def _group_surface_profiles(cid: str, platform: str) -> list[profiles_mod.ProfileMeta]:
+        """The unarchived profiles exposed to this Connection's group surface — what a
+        group can be pinned to, whether or not its runtime is up right now."""
+        surface = connections.surface_key(cid, platform, "group")
+        withdrawn = profiles_mod.withdrawn_from(surface)
+        return [m for m in profiles_mod.list_profiles() if m.id not in withdrawn]
+
     def _connection_group_view(connection: connections.Connection) -> dict:
         """This Connection's group Peers with the profile each is pinned to, plus the
         profiles exposed to this Connection's group surface."""
-        surface = connections.surface_key(connection.id, connection.platform, "group")
         return {
             "groups": [
                 {"chat_id": p.chat_id, "profile": p.profile}
                 for p in _connection_groups(connection.id)
             ],
-            "profiles": [{"id": p.id, "name": p.name} for p in manager.available_profiles(surface)],
+            "profiles": [
+                {"id": m.id, "name": m.name}
+                for m in _group_surface_profiles(connection.id, connection.platform)
+            ],
         }
 
     @app.get("/api/connections/{cid}/groups")
@@ -2138,7 +2147,7 @@ def create_app(profiles: ProfileManager, *, persist: bool = True) -> FastAPI:
         if connection is None:
             return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
         surface = connections.surface_key(cid, connection.platform, "group")
-        if req.profile not in {p.id for p in manager.available_profiles(surface)}:
+        if req.profile not in {m.id for m in _group_surface_profiles(cid, connection.platform)}:
             return JSONResponse(
                 {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400
             )

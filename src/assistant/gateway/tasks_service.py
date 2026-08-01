@@ -17,6 +17,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from assistant import connections
 from assistant.config import Config, load_config
 from assistant.hitl import NullAsker
 from assistant.tasks.model import (
@@ -182,6 +183,7 @@ class TaskService:
         if self._inquiries is None:
             self._inquiries = InquiryStore(path=d / "inquiries.db", on_change=self._on_inquiry)
         await self._migrate_workdirs()
+        await self._migrate_origin_connections()
         if scheduler and self._scheduler is None:
             from assistant.scheduler_lock import SchedulerLock
             from assistant.tasks import Scheduler
@@ -193,6 +195,16 @@ class TaskService:
                     self._store, self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+
+    async def _migrate_origin_connections(self) -> None:
+        """A task queued before Connections existed points at a platform name; move it
+        onto that platform's Connection so its outcome still reaches the chat."""
+        try:
+            await self._store.rekey_origin_channels(connections.first_by_platform())
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("task origin connection migration", exc)
 
     async def _migrate_workdirs(self) -> None:
         """Legacy single-workdir tasks → task-scope Folder Grants (spec 2026-07-20).

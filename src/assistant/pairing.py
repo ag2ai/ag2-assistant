@@ -1,15 +1,5 @@
-"""Paired accounts persisted to ``<root>/pairing.json`` — who may reach a Connection.
-
-An account not paired to a Connection is served nothing at all by it (ADR 0021), and
-the grant is to that one Connection: being paired to the work Telegram bot gives no
-access to the personal one. Identity is the platform's numeric id; a handle is only an
-invitation, so a handle entered in Settings sits *pending*, pins to the numeric id of
-the first account presenting it, and is matched by id ever after. The other way to pair
-is a one-time **code**, minted per Connection and sent to that bot.
-
-Read/write style mirrors ``peers.py``: a small read-modify-write over a JSON file,
-tolerant of a missing/malformed file (treated as nobody paired — the safe direction).
-"""
+"""Paired accounts persisted to ``<root>/pairing.json``: who may reach a Connection,
+identified by numeric id, granted by a pending handle or a one-time code."""
 
 import json
 import re
@@ -25,18 +15,16 @@ PAIRED = "paired"
 EXPIRED = "expired"
 UNKNOWN = "unknown"
 
-# A code is two groups of four, from an alphabet with no look-alike characters, so it
-# survives being read off one screen and typed into another. The dash is what keeps
-# ordinary prose from ever being mistaken for a code (see ``looks_like_code``).
+# Two groups of four from a look-alike-free alphabet, dash-separated so that ordinary
+# prose never matches (see ``looks_like_code``).
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _CODE_RE = re.compile(r"[A-Z0-9]{4}-[A-Z0-9]{4}")
 
-# Long enough to walk from the browser to the phone, short enough that a code left on
-# a screen goes stale.
+# How long a minted code stays presentable.
 CODE_TTL = 15 * 60.0
 
-# Platforms whose inbound messages carry the sender's handle. Elsewhere an invitation
-# by handle could never be presented, so it is refused rather than left pending forever.
+# Platforms whose inbound messages carry the sender's handle; elsewhere a handle
+# invitation is refused rather than left pending.
 HANDLE_PLATFORMS = ("telegram", "discord")
 
 

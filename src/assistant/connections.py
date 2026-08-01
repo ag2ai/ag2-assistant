@@ -1,18 +1,5 @@
-"""Connection registry persisted to ``<root>/connections.json``.
-
-A **Connection** is one configured instance of a messaging platform, with its own
-identity. A platform can be connected as many times as the user wants — two
-Telegram bots are two Connections — so the Connection id, not the platform string,
-is what the rest of the install keys by. The platform survives as a *field*,
-telling the system which adapter to construct and which surfaces exist.
-
-Install-level state, a sibling of the profile and Peer registries (ADR 0019): a
-Connection is never owned by a Profile.
-
-Read/write style mirrors ``peers.py`` / ``profiles.py``: a small read-modify-write
-over a JSON file, tolerant of a missing/malformed file. Reading migrates an install
-that already has bot tokens — see :func:`_migrate`.
-"""
+"""Connection registry persisted to ``<root>/connections.json``: one Connection is one
+configured instance of a platform, keyed by id, with ``platform`` naming its adapter."""
 
 import json
 from dataclasses import asdict, dataclass
@@ -114,6 +101,14 @@ def get_connection(cid: str) -> Connection | None:
 def connections_for(platform: str) -> list[Connection]:
     """Every Connection of one platform, in creation order."""
     return [c for c in list_connections() if c.platform == platform]
+
+
+def first_by_platform() -> dict[str, str]:
+    """Each platform's first Connection id — the id a leftover platform key moves onto."""
+    by: dict[str, str] = {}
+    for connection in list_connections():
+        by.setdefault(connection.platform, connection.id)
+    return by
 
 
 def default_name(platform: str, entries: list[dict] | None = None) -> str:

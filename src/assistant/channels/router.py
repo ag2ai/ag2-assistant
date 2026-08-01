@@ -36,9 +36,8 @@ NO_PROFILE = (
 
 CHOOSE_PROFILE = "Which profile should I use for this conversation?"
 
-# Said when the profile this Peer was talking to has been withdrawn from this surface.
-# The message that met it is not run: it was written for that profile, and dropping it
-# into another one would put it in the wrong transcript.
+# Said, without running the message, when the profile this Peer talked to has been
+# withdrawn from this surface.
 PROFILE_WITHDRAWN = "That profile isn't reachable from this conversation anymore."
 CHOOSE_INSTEAD = f"{PROFILE_WITHDRAWN} Which one should I use instead?"
 NO_PROFILE_HERE = (
@@ -482,17 +481,13 @@ class ChannelRouter:
     # ---- who may be served (ADR 0021) ----
 
     def paired(self, inbound: InboundMessage) -> bool:
-        """Whether this account may be served by the Connection it wrote to — pinning a
-        pending handle it presents, so an invitation becomes an identity on first
-        contact. Pairing is a grant to one Connection, so an account paired to another
-        bot of the same platform is refused here. Adapters call this before acting on
-        anything a message implies, taps and answers included."""
+        """Whether this account may be served by the Connection it wrote to, pinning any
+        pending handle it presents. Adapters call this before acting on a message."""
         return pairing.is_paired(inbound.connection, inbound.sender_id, inbound.sender_handle)
 
     def _pair(self, inbound: InboundMessage) -> Outcome:
         """Redeem the code an unpaired account has sent, against the Connection it sent
-        it to. A code it was never given — or one minted for another Connection — is met
-        with the same silence as anything else it might say."""
+        it to; an unknown code is met with silence."""
         outcome = pairing.redeem(
             inbound.connection, inbound.text, inbound.sender_id, inbound.sender_handle
         )
@@ -627,8 +622,7 @@ class ChannelRouter:
 
     def _runtime(self, inbound: InboundMessage) -> "tuple[str, Gateway] | Outcome":
         """The profile id this Peer talks to and the gateway behind it, or the outcome
-        to return instead. Every Chat operation goes through here, so a profile out of
-        reach from this surface takes its Chats with it."""
+        to return instead. Every Chat operation goes through here."""
         resolved = self._resolve(inbound)
         if not isinstance(resolved, str):
             return resolved

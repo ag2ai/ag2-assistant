@@ -210,6 +210,7 @@
             {#if count(e.id)}<span class="cntag">{count(e.id)} connected</span>{/if}
           </span>
           <span class="mcpcatblurb">{e.blurb}</span>
+          {#if e.setup}<span class="cncatsetup">{e.setup}</span>{/if}
         </button>
       {/each}
     </div>

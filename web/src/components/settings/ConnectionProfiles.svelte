@@ -1,9 +1,7 @@
 <script>
   // One connection's Profiles table: which profiles it can reach, per surface, and
-  // which of them its conversations land in by default. The two used to be separate
-  // controls in separate places (Profile editor → Channels, and the channel default),
-  // and separating them let the table lie — a default nothing could reach. One row per
-  // profile, and the server refuses the same state the radio does.
+  // which of them its conversations land in by default. One row per profile; the
+  // server refuses the same unreachable-default state the radio does.
   import { api } from '../../transport/api.js'
   import { reachableAnywhere, surfaceLabel } from '../../lib/integrations.js'
 

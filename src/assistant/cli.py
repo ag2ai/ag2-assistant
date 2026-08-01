@@ -558,14 +558,17 @@ def acp_bridge(
 
 def _cli_connection(platform: str) -> tuple[str, dict]:
     """The Connection a single-channel command runs as, with the adapter kwargs holding
-    its token(s) — the platform's first Connection, else the env as a seed for none."""
+    its token(s) — the platform's first Connection, created from the env if it has none."""
     envs = profiles.CHANNEL_TOKEN_ENVS[platform]
     existing = connections.connections_for(platform)
     if existing:
-        cid, tokens = existing[0].id, connections.tokens_for(existing[0].id)
+        connection = existing[0]
     else:
-        cid, tokens = platform, {e: os.environ.get(e, "") for e in envs}
-    return cid, {TOKEN_ARGS[e]: tokens.get(e, "") for e in envs}
+        connection = connections.create_connection(
+            platform, "", {e: os.environ.get(e, "") for e in envs}
+        )
+    tokens = connections.tokens_for(connection.id)
+    return connection.id, {TOKEN_ARGS[e]: tokens.get(e, "") for e in envs}
 
 
 @app.command()

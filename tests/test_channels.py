@@ -182,12 +182,18 @@ def test_the_cli_runs_on_the_connections_stored_token_not_a_stray_env_one(monkey
     assert cli._cli_connection("telegram") == (connection.id, {"token": "stored"})
 
 
-def test_the_cli_seeds_from_the_env_when_the_platform_has_no_connection(monkeypatch):
-    """A token exported into a container that has no Connection for it yet still runs."""
+def test_the_cli_creates_a_connection_when_the_platform_has_none(monkeypatch):
+    """A token exported into a container that has no Connection for it yet gets a real
+    Connection, so pairing and Peers are never keyed by the platform string."""
     connections.create_connection("discord", "", {"DISCORD_BOT_TOKEN": "d"})
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "env-tok")
 
-    assert cli._cli_connection("telegram") == ("telegram", {"token": "env-tok"})
+    cid, kwargs = cli._cli_connection("telegram")
+
+    assert kwargs == {"token": "env-tok"}
+    assert cid != "telegram"
+    assert [c.id for c in connections.connections_for("telegram")] == [cid]
+    assert cli._cli_connection("telegram")[0] == cid
 
 
 def test_the_cli_hands_slack_both_of_its_tokens(monkeypatch):

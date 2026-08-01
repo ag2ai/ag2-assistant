@@ -26,11 +26,6 @@ from assistant.hitl import HitlServer
 from assistant.observability import log_suppressed, profile_logger, setup_logging
 from assistant.profiles import ProfileMeta
 
-# Platform → env vars that must ALL be present for its channel to run. Canonical
-# home is ``profiles`` (dependency-light, so both this module and the secrets store
-# import it without a cycle); re-exported here under the name existing code uses.
-_CHANNEL_TOKENS = profiles.CHANNEL_TOKEN_ENVS
-
 
 def _scrub_tokens(msg: str, values) -> str:
     """Replace any of the given token values appearing in ``msg`` with a mask —
@@ -305,7 +300,7 @@ class ProfileManager:
         if connection is None:
             raise ValueError(f"unknown connection: {cid}")
         platform = connection.platform
-        envs = _CHANNEL_TOKENS[platform]
+        envs = profiles.CHANNEL_TOKEN_ENVS[platform]
         tokens = connections.tokens_for(cid)
         if not all(tokens.get(e) for e in envs):
             msg = f"no token configured for {platform}"
