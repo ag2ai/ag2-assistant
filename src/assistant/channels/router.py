@@ -467,9 +467,7 @@ class ChannelRouter:
 
     def accepts(self, inbound: InboundMessage) -> bool:
         """Whether this message runs a turn — an adapter's gate for showing platform
-        feedback before the slow path. An unpaired account never opens it, so no
-        placeholder betrays that anything is listening; its message still goes to
-        ``handle``, which may pair it."""
+        feedback before the slow path. An unpaired account never opens it."""
         return should_respond(inbound) and self.paired(inbound)
 
     def steers(self, inbound: InboundMessage) -> bool:
@@ -523,9 +521,10 @@ class ChannelRouter:
         )
 
     def _select(self, inbound: InboundMessage, pid: str) -> None:
-        """Record this Peer's profile, leaving an unchanged selection alone."""
+        """Record this Peer's profile and the account speaking, leaving an unchanged
+        selection alone."""
         peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
-        if peer is not None and peer.profile == pid:
+        if peer is not None and peer.profile == pid and peer.sender == inbound.sender_id:
             return  # nothing moved; don't rewrite the registry on every message
         self._peers.select_profile(
             inbound.connection,
@@ -533,6 +532,7 @@ class ChannelRouter:
             pid,
             platform=inbound.platform,
             surface=inbound.surface(),
+            sender=inbound.sender_id,
         )
 
     def _current_profile(
@@ -645,6 +645,18 @@ class ChannelRouter:
         surface = connections.surface_key(peer.connection, peer.platform, peer.surface)
         return peer.profile in {p.id for p in self._directory.available_profiles(surface)}
 
+    def _reachable(self, peer: Peer) -> bool:
+        """Whether anything may still be pushed into this Peer unasked: its account is
+        Paired to the Connection (ADR 0021) and its profile exposed there (ADR 0022).
+        Revocation closes this side too, not only the inbound one.
+
+        A Peer recorded before senders were stamped has none; its chat id is offered to
+        the pairing list instead, which admits a direct conversation the account id
+        names and closes everything else until the next inbound message stamps it.
+        """
+        account = peer.sender or peer.chat_id
+        return self._pairing.is_paired(peer.connection, account) and self._exposed_to(peer)
+
     def _attached_chat(self, inbound: InboundMessage) -> str | None:
         peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
         return peer.chat if peer is not None else None
@@ -656,6 +668,7 @@ class ChannelRouter:
             inbound.chat_id,
             platform=inbound.platform,
             surface=inbound.surface(),
+            sender=inbound.sender_id,
         )
 
     async def _chats_in_profile(self, inbound: InboundMessage) -> "list[dict] | Outcome":
@@ -683,6 +696,7 @@ class ChannelRouter:
             chat,
             platform=inbound.platform,
             surface=inbound.surface(),
+            sender=inbound.sender_id,
         )
         header = attached_header(self._by_id(inbound)[resolved].name, entry)
         tail = transcript_tail(await gateway.transcript(chat))
@@ -692,26 +706,34 @@ class ChannelRouter:
         self, chat: str, text: str, reply: str, *, origin: str = "", files: tuple[str, ...] = ()
     ) -> None:
         """Send a completed turn in ``chat`` to the Peer Attached to it (ADR 0020).
-
-        Nothing goes anywhere when no Peer is attached, and a Peer never gets back
-        the turn it wrote itself — ``origin`` names the conversation that ran it.
-        ``files`` are the names of the files attached to the message; they are named,
-        never carried.
-        """
+        ``origin`` names the conversation that ran it, which is not sent it back;
+        ``files`` are the names of the files attached, which are named, never carried."""
         peer = self._peers.attached_to(chat)
         if peer is None or peer_key(peer.connection, peer.chat_id) == origin:
             return
-        if not self._exposed_to(peer):
-            return  # a withdrawal closes the push side too, not just the inbound one
+        if not self._reachable(peer):
+            return
         body = mirrored_turn(text, reply, files)
         if body:
             await self._directory.notify_channel(peer.connection, peer.chat_id, body)
+
+    async def push(self, connection: str, chat_id: str, text: str) -> None:
+        """Push a task-run outcome into the conversation the task was started from.
+
+        The task service delivers through here rather than reaching a Channel directly,
+        so an outcome passes the same gates a mirrored turn does — a revoked account or
+        a withdrawn profile is told nothing.
+        """
+        peer = self._peers.get_peer(connection, chat_id)
+        if peer is None or not self._reachable(peer):
+            return
+        await self._directory.notify_channel(connection, chat_id, text)
 
     async def ask(self, chat: str, inquiry: str, text: str, options: tuple[str, ...]) -> None:
         """Show a question raised in ``chat`` to the Peer Attached to it, carrying the
         same options the browser offers so either surface can resolve it (ADR 0020)."""
         peer = self._peers.attached_to(chat)
-        if peer is None or not self._exposed_to(peer):
+        if peer is None or not self._reachable(peer):
             return
         question = Choose(
             text,

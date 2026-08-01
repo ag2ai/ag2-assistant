@@ -328,7 +328,7 @@ class ProfileManager:
             env=self._env,
             memory=self._memory,
             persist=self._persist,
-            notifier=self.notify_channel,
+            notifier=self.router.push,
             mirror=self.router.mirror,
             questions=self.router,
             agent_factory=self._agent_factory,

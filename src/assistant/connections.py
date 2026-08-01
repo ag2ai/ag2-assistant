@@ -303,13 +303,9 @@ class ConnectionStore:
         self._pairing.adopt_connections(by_platform)
 
     def _migrate(self) -> list[dict]:
-        """One Connection per platform that already has its token(s). The ids are
-        persisted before anything is stamped with them; adoption re-runs until it is
-        marked done.
-
-        A migration that seeds nothing writes no file: the first reader is not always
-        the one wired with the install's environment, and an empty file would lock a
-        token-seeded install out of ever migrating."""
+        """One Connection per platform that already has its token(s), its ids persisted
+        before anything is stamped with them. Seeding nothing writes no file, so a
+        reader without the install's environment cannot lock migration out."""
         entries = [asdict(_new(p, PLATFORM_TITLES[p])) for p in self._seeded_platforms()]
         if not entries:
             return []

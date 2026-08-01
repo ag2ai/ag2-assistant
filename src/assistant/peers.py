@@ -16,6 +16,7 @@ class Peer:
     chat_id: str  # the platform's own chat/conversation id
     platform: str = ""  # which platform that Connection runs on
     surface: str = "dm"  # "dm" | "group"
+    sender: str = ""  # the account that last spoke here; "" when none was recorded
     profile: str | None = None  # the selected profile's id
     chat: str | None = None  # the Chat it is Attached to, if any
     chats: list[str] = field(default_factory=list)  # every Chat it has spoken in
@@ -28,6 +29,7 @@ def _peer(entry: dict) -> Peer:
         chat_id=entry["chat_id"],
         platform=entry.get("platform") or "",
         surface=entry.get("surface", "dm"),
+        sender=entry.get("sender") or "",
         profile=entry.get("profile"),
         chat=entry.get("chat"),
         chats=list(chats) if isinstance(chats, list) else [],
@@ -96,7 +98,14 @@ class PeerStore:
         return None
 
     def select_profile(
-        self, connection: str, chat_id: str, pid: str, *, platform: str = "", surface: str = "dm"
+        self,
+        connection: str,
+        chat_id: str,
+        pid: str,
+        *,
+        platform: str = "",
+        surface: str = "dm",
+        sender: str = "",
     ) -> Peer:
         """Point this conversation at profile ``pid`` and return the resulting Peer.
         Replacing a different profile detaches it; the Chat is started lazily."""
@@ -110,6 +119,7 @@ class PeerStore:
             replace(
                 current,
                 surface=surface,
+                sender=sender or current.sender,
                 profile=pid,
                 platform=platform or current.platform,
                 chat=None if switched else current.chat,
@@ -117,7 +127,14 @@ class PeerStore:
         )
 
     def attach(
-        self, connection: str, chat_id: str, chat: str, *, platform: str = "", surface: str = "dm"
+        self,
+        connection: str,
+        chat_id: str,
+        chat: str,
+        *,
+        platform: str = "",
+        surface: str = "dm",
+        sender: str = "",
     ) -> Peer:
         """Attach this conversation to ``chat``, creating nothing. The Chat joins the
         Peer's own, so a Task started in it still delivers back to this conversation."""
@@ -132,18 +149,30 @@ class PeerStore:
         return self._save(
             entries,
             index,
-            replace(current, chat=chat, chats=chats, platform=platform or current.platform),
+            replace(
+                current,
+                chat=chat,
+                chats=chats,
+                sender=sender or current.sender,
+                platform=platform or current.platform,
+            ),
         )
 
     def start_chat(
-        self, connection: str, chat_id: str, *, platform: str = "", surface: str = "dm"
+        self,
+        connection: str,
+        chat_id: str,
+        *,
+        platform: str = "",
+        surface: str = "dm",
+        sender: str = "",
     ) -> str:
         """Start a fresh Chat for this conversation, attach the Peer to it, and return
         its id — opaque and origin-prefixed, never a platform address."""
         stored = self.get_peer(connection, chat_id)
         origin = platform or (stored.platform if stored is not None else "")
         chat = f"{origin}-{secrets.token_hex(4)}"
-        self.attach(connection, chat_id, chat, platform=platform, surface=surface)
+        self.attach(connection, chat_id, chat, platform=platform, surface=surface, sender=sender)
         return chat
 
     def detach(self, connection: str, chat_id: str) -> None:

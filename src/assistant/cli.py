@@ -665,14 +665,10 @@ class _CliDirectory:
             await self._channel.retract(chat_id, inquiry)
 
 
-def _cli_router(
-    gateway: Gateway, connection: str, channel, paths: Paths
-) -> tuple[ChannelRouter, _CliDirectory]:
+def _cli_router(gateway: Gateway, connection: str, channel, paths: Paths) -> ChannelRouter:
     """The router a single-channel command hands its adapter — the same one the server
-    builds, over a directory holding just this command's gateway and channel. The
-    directory comes back too: task-run outcomes are pushed out through it."""
-    directory = _CliDirectory(gateway, connection, channel)
-    return ChannelRouter(directory, paths), directory
+    builds, over a directory holding just this command's gateway and channel."""
+    return ChannelRouter(_CliDirectory(gateway, connection, channel), paths)
 
 
 async def _serve_channel(platform: str, label: str, *, memory: bool) -> None:
@@ -687,8 +683,8 @@ async def _serve_channel(platform: str, label: str, *, memory: bool) -> None:
     await tasks.start(scheduler=False)
     cid, tokens = _cli_connection(platform, paths)
     channel = get_channel(platform, connection=cid, **tokens)
-    router, directory = _cli_router(gateway, cid, channel, paths)
-    tasks.set_notifier(directory.notify_channel)  # run outcomes -> this channel
+    router = _cli_router(gateway, cid, channel, paths)
+    tasks.set_notifier(router.push)  # run outcomes -> this channel, past the same gates
     # Single-profile CLI: every message runs on the one gateway built here.
     await channel.start(router)
     typer.echo(f"AG2 Assistant is live on {label}. Press Ctrl+C to stop.")

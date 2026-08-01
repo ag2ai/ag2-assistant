@@ -59,6 +59,7 @@ from assistant.observability import (
     log_suppressed,
     setup_logging,
 )
+from assistant.peers import PeerStore
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.secrets import SecretStore
 from assistant.settings import profile_settings
@@ -264,14 +265,10 @@ class Gateway:
         cfg = cfg or self._config
         extra_tools = None
         if self._tasks is not None:
-            from assistant.peers import PeerStore
-            from assistant.settings import profile_settings
             from assistant.system_tools import build_system_tools
 
-            # create/update/run/delete come from the system tools, so we don't also
-            # wire duplicate task actions here. `platform` lets those tools note (on
-            # channels) that follow-up questions go to the web app.
-            # The voice get/set tools read/write THIS profile's settings.
+            # The system tools carry create/update/run/delete; `platform` lets them note
+            # that follow-up questions go to the web app, and `settings` is this profile's.
             settings = profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
             extra_tools = build_system_tools(
                 self._tasks,
@@ -1210,10 +1207,8 @@ class Gateway:
         }
 
     async def _aclose_agents(self, agents: list) -> None:
-        """Tear down model-config resources (ACP subprocess sessions) held by
-        outgoing agents. Dedup by config identity — the default agent and the
-        aggregation pass share one instance — and never let teardown break a
-        reload: a failed close only logs."""
+        """Tear down model-config resources (ACP subprocess sessions) held by outgoing
+        agents, deduped by config identity. A failed close only logs."""
         seen: set[int] = set()
         for agent in agents:
             cfg = getattr(agent, "config", None)

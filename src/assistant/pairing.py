@@ -20,7 +20,7 @@ _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _CODE_RE = re.compile(r"[A-Z0-9]{4}-[A-Z0-9]{4}")
 
 # How long a minted code stays presentable.
-CODE_TTL = 15 * 60.0
+CODE_TTL = 10 * 60.0
 
 # Platforms whose inbound messages carry the sender's handle; elsewhere a handle
 # invitation is refused rather than left pending.

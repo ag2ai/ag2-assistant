@@ -55,5 +55,13 @@ Telegram would be a confusing dead state, not a safe one.
 - **Withdrawing exposure from under a live Peer stops it.** The Peer is told its
   Profile is no longer reachable and must choose another; it is never migrated silently,
   which would drop a message written for one Profile into another Profile's transcript.
-- **No migration.** The old binding, the old Chat id scheme and the old Settings section
-  are replaced outright.
+- **The old binding is migrated, not dropped.** An install configured entirely by
+  platform comes up on Connections with its default Profiles, paired accounts, live
+  code, Peers, group pins and withdrawals intact, and answers without a reconnect. The
+  adoption runs once on boot, records itself in `connections.json`, and is a no-op on
+  every boot after. The old Settings section and the old Chat id scheme are gone from
+  the code; only the reading of what an old install wrote survives.
+- **Pushing into a conversation passes the same gates as answering in it.** A run
+  outcome, a mirrored turn and a mirrored question all go through the router, which
+  re-reads the pairing list and the exposure record first — revocation and withdrawal
+  close the push side in the same breath as the inbound one, not one restart later.

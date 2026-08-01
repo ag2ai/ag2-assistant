@@ -273,7 +273,7 @@ async def test_the_cli_router_runs_a_message_on_the_one_gateway(paths, platform)
     PairingStore(paths).add_account(cid, "42", platform)
     gateway, channel = _OneGateway("4"), _OneChannel()
 
-    router, _ = cli._cli_router(gateway, cid, channel, paths)
+    router = cli._cli_router(gateway, cid, channel, paths)
     outcome = await router.handle(_cli_inbound(cid, "what is 2+2?", platform))
 
     assert outcome == Reply("4")

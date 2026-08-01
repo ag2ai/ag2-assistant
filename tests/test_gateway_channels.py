@@ -187,7 +187,9 @@ def test_a_browser_turn_is_pushed_to_the_peer_attached_to_that_chat(paths):
     with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         manager = client.app.state.profiles
-        PeerStore(paths).attach(_only_connection(paths), "42", "web-1", platform="telegram")
+        cid = _only_connection(paths)
+        PairingStore(paths).add_account(cid, "42", "telegram")
+        PeerStore(paths).attach(cid, "42", "web-1", platform="telegram", sender="42")
 
         r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
         assert r.status_code == 200
@@ -545,7 +547,8 @@ def test_a_browser_turn_reaches_the_peer_on_its_own_connection(paths):
     with _client(paths) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         manager = client.app.state.profiles
-        PeerStore(paths).attach(play.id, "42", "web-1", platform="telegram")
+        PairingStore(paths).add_account(play.id, "42", "telegram")
+        PeerStore(paths).attach(play.id, "42", "web-1", platform="telegram", sender="42")
 
         r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
         assert r.status_code == 200

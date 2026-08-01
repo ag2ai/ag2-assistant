@@ -1352,6 +1352,74 @@ async def test_answering_in_the_browser_retracts_the_prompt_on_the_platform(path
     assert directory.retracted == [("telegram", "c1", "inq-1")]
 
 
+# --- pushing a task outcome ---
+
+# A run outcome takes the same two gates a mirrored turn takes: the account must
+# still be Paired to the Connection (ADR 0021) and the profile still exposed to
+# the surface (ADR 0022). Nothing else reaches a conversation unasked.
+
+
+async def test_a_task_outcome_reaches_the_peer_it_was_started_from(paths):
+    router, directory = _mirroring(paths)
+    await router.handle(_inbound("remind me at five"))
+
+    await router.push("telegram", "c1", "✅ Reminder: it is five")
+
+    assert directory.pushed == [("telegram", "c1", "✅ Reminder: it is five")]
+
+
+async def test_a_revoked_account_gets_no_task_outcome(paths):
+    """Revocation is not inbound-only — it closes the push side in the same breath."""
+    router, directory = _mirroring(paths)
+    await router.handle(_inbound("remind me at five"))
+    PairingStore(paths).revoke("telegram", PAIRED_SENDER)
+
+    await router.push("telegram", "c1", "✅ Reminder: it is five")
+
+    assert directory.pushed == []
+
+
+async def test_a_profile_withdrawn_from_groups_pushes_no_outcome_into_one(paths):
+    """A withdrawal closes the group to a task outcome too, not only to messages."""
+    router, directory = _mirroring(paths)
+    group = _inbound("@bot remind me at five", is_direct=False, mentioned=True, chat_id="g1")
+    await router.handle(group)
+    directory.withdraw("work", group.exposure_surface())
+
+    await router.push("telegram", "g1", "✅ Reminder: it is five")
+
+    assert directory.pushed == []
+
+
+async def test_a_peer_recorded_without_its_sender_is_reached_by_its_chat_id(paths):
+    """A registry written before senders were stamped holds none, so the chat id is
+    offered to the pairing list — a direct conversation the account id names goes on
+    being delivered to across the upgrade."""
+    router, directory = _mirroring(paths)
+    PeerStore(paths).select_profile("telegram", PAIRED_SENDER, "work", platform="telegram")
+
+    await router.push("telegram", PAIRED_SENDER, "✅ done")
+
+    assert directory.pushed == [("telegram", PAIRED_SENDER, "✅ done")]
+
+
+async def test_a_peer_recorded_without_its_sender_and_named_by_nothing_is_pushed_nothing(paths):
+    """Where the chat id names no paired account — a group, or a platform whose chat
+    ids are not account ids — it closes until the next message stamps the sender."""
+    router, directory = _mirroring(paths)
+    PeerStore(paths).select_profile("telegram", "c1", "work", platform="telegram")
+
+    await router.push("telegram", "c1", "✅ done")
+
+    assert directory.pushed == []
+
+
+async def test_a_conversation_no_peer_was_recorded_for_is_pushed_nothing(paths):
+    router, directory = _mirroring(paths)
+    await router.push("telegram", "c1", "✅ done")
+    assert directory.pushed == []
+
+
 async def test_a_question_is_resolved_exactly_once(paths):
     """Both surfaces are showing it; the second one to answer is told it arrived late
     and cannot overwrite what the first one said."""
