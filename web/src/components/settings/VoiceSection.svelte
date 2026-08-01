@@ -24,6 +24,8 @@
 
   let editing = $state(null)   // config/template being edited in the inline form (null = closed)
   let adding = $state(false)   // provider-template grid showing
+  // Two-step delete, same as the Text list above: arm the row, then Confirm.
+  let confirming = $state('')
 
   onMount(reload)
 
@@ -52,14 +54,15 @@
       await api.deleteLiveConfig(c.id)
       const { [c.id]: _gone, ...rest } = tests
       tests = rest
+      confirming = ''
       await reload()
     } catch (e) { err = String(e.message || e) }
     busy = false
   }
 
   // Open the editor: a provider template (no id → create) or an existing row (edit).
-  function pickTemplate(p) { adding = false; editing = { provider: p.name, name: PROVIDER_LABEL[p.name] + ' Live', model: '' } }
-  function edit(c) { adding = false; editing = { ...c } }
+  function pickTemplate(p) { adding = false; confirming = ''; editing = { provider: p.name, name: PROVIDER_LABEL[p.name] + ' Live', model: '' } }
+  function edit(c) { adding = false; confirming = ''; editing = { ...c } }
 
   const activateOnSave = $derived(editing?.id ? !!editing.active : configs.length === 0)
 
@@ -79,14 +82,17 @@
 {/if}
 
 {#each configs as c (c.id)}
+  <!-- An armed row isn't click-to-use: a stray click shouldn't activate a model
+       you're about to delete. -->
+  {@const idle = !editing && confirming !== c.id}
   <div
-    class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
-    role={!c.active && !editing ? 'button' : undefined}
-    tabindex={!c.active && !editing ? 0 : undefined}
+    class="llmrow" class:active={c.active} class:clickable={!c.active && idle && !busy}
+    role={!c.active && idle ? 'button' : undefined}
+    tabindex={!c.active && idle ? 0 : undefined}
     aria-label={!c.active ? `Use ${c.name}` : undefined}
-    title={!c.active && !editing ? 'Click to use this live model' : ''}
-    onclick={() => { if (!c.active && !busy && !editing) use(c) }}
-    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
+    title={!c.active && idle ? 'Click to use this live model' : ''}
+    onclick={() => { if (!c.active && !busy && idle) use(c) }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && idle) { e.preventDefault(); use(c) } }}
   >
     <BrandMark brand={c.provider} />
     <div class="llmmeta">
@@ -109,17 +115,26 @@
         {/if}
       </div>
     </div>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
-    <button
-      class="open" disabled={busy || tests[c.id]?.testing || !!editing}
-      onclick={(e) => { e.stopPropagation(); test(c) }}
-    >Test</button>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
-    <button
-      class="linkbtn danger" disabled={busy || !!editing}
-      title={c.active ? 'Deleting the active live model falls back to the next one (or legacy)' : ''}
-      onclick={(e) => { e.stopPropagation(); remove(c) }}
-    >Delete</button>
+    {#if confirming === c.id}
+      <span class="llmconfirm">Delete?</span>
+      <button
+        class="linkbtn danger" disabled={busy}
+        title={c.active ? 'Deleting the active live model falls back to the next one (or legacy)' : ''}
+        onclick={(e) => { e.stopPropagation(); remove(c) }}
+      >Confirm</button>
+      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
+    {:else}
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
+      <button
+        class="open" disabled={busy || tests[c.id]?.testing || !!editing}
+        onclick={(e) => { e.stopPropagation(); test(c) }}
+      >Test</button>
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
+      <button
+        class="linkbtn danger" disabled={busy || !!editing}
+        onclick={(e) => { e.stopPropagation(); confirming = c.id }}
+      >Delete</button>
+    {/if}
   </div>
 {/each}
 
@@ -145,3 +160,8 @@
     </div>
   {/if}
 {/if}
+
+<style>
+  /* The armed-row question, sat where the row's action buttons were. */
+  .llmconfirm { font-size: 12px; color: var(--danger); white-space: nowrap; }
+</style>

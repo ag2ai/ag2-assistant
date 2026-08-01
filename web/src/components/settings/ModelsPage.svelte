@@ -177,10 +177,12 @@
          the list mid-edit invites confusion (the editor has its own Test button).
          Each button stops propagation so it never triggers the row's click-to-use. -->
     {#if confirming === c.id}
-      <span class="llmconfirm">
-        Delete {c.name}?{#if c.active} The next model (or the defaults) takes over.{/if}
-      </span>
-      <button class="linkbtn danger" disabled={busy} onclick={(e) => { e.stopPropagation(); remove(c) }}>Confirm</button>
+      <span class="llmconfirm">Delete?</span>
+      <button
+        class="linkbtn danger" disabled={busy}
+        title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
+        onclick={(e) => { e.stopPropagation(); remove(c) }}
+      >Confirm</button>
       <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
     {:else}
       <button
@@ -238,5 +240,5 @@
 
 <style>
   /* The armed-row question, sat where the Test/Edit/Delete buttons were. */
-  .llmconfirm { font-size: 12px; color: var(--danger); margin-left: auto; text-align: right; }
+  .llmconfirm { font-size: 12px; color: var(--danger); white-space: nowrap; }
 </style>
