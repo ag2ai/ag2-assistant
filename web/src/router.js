@@ -25,6 +25,12 @@ export const route = writable(read())
 // re-exports the binding; it never touches `route` at init).
 export const settingsOpen = derived(route, ($r) => $r.overlay === 'settings')
 
+// The "Powered by AG2" architecture map — the Modal slot's other occupant, so it
+// gets the same deal as Settings: deep-linkable (`#poweredby`), and Back dismisses
+// it. Opened from Settings it PUSHES over `#settings=…`, so Back lands you back in
+// Settings, where you came from. Re-exported from store.js for consumers.
+export const poweredByOpen = derived(route, ($r) => $r.overlay === 'poweredby')
+
 // The pid segment for URLs: the one in the current path if any, else the active id.
 function currentPid() {
   return read().pid || getActiveProfileId()

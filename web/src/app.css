@@ -942,6 +942,13 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .poweredby .mfoot .open { text-decoration: none; }
 /* Version sits left; docs link + Close stay right (margin-right:auto pushes them). */
 .poweredby .mfoot .pbver { margin-right: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* "‹ Settings" in the modal head, leading the title — shown only when the map was
+   opened FROM Settings. The ProfileEditor .pback idiom (quiet, chevron, no chrome);
+   the negative left margin optically aligns its chevron with the title below. It
+   shares the head's corner band with the absolutely-placed .modal-x. */
+.poweredby .pbback { display: inline-flex; align-items: center; gap: 3px; align-self: flex-start; margin: 0 0 -4px -4px; padding: 4px; background: none; border: none; cursor: pointer; font: inherit; font-size: var(--text-xs); font-weight: var(--fw-semibold); color: var(--text-muted); }
+.poweredby .pbback:hover { color: var(--accent); }
+.poweredby .pbback:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
 
 /* ---- Files browser (the agent's working file space) ---- */
 .dfoot { display: flex; gap: 6px; }

@@ -4,9 +4,10 @@ import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.js'
 // (lib/route.js validates the `#settings=<section>` hash against it). Re-export it
 // here so callers keep importing it from the store (SETTINGS_PAGE.MODELS, …).
 export { SETTINGS_PAGE } from './lib/route.js'
-// settingsOpen and ag2View (whether the AG2 Inspector occupies the rail) are derived
-// from the route; they live in router.js to avoid a module-init cycle, re-exported here.
-export { settingsOpen, ag2View } from './router.js'
+// settingsOpen, poweredByOpen and ag2View (whether the AG2 Inspector occupies the
+// rail) are derived from the route; they live in router.js to avoid a module-init
+// cycle, re-exported here.
+export { settingsOpen, poweredByOpen, ag2View } from './router.js'
 import { go } from './router.js'
 
 // Multi-profile registry (§5.2). `list` mirrors GET /api/profiles; `activeId`
@@ -109,8 +110,10 @@ export function revealFolder(path) {
 // impossible to mistype (no more 'model' vs 'models' drift). Settings binds each id
 // to a label + component. (SETTINGS_PAGE is re-exported from lib/route.js above.)
 
-// "Powered by AG2" architecture-map modal open/closed.
-export const poweredByOpen = writable(false)
+// (poweredByOpen is re-exported from router.js at the top of this file — like
+// settingsOpen it's derived from the route, so the "Powered by AG2" map lives at
+// `#poweredby` and Back dismisses it. Open it with router.openOverlay('poweredby');
+// close it with router.closeOverlay().)
 
 // App version, seeded from the GET /api/profiles boot payload. Shown in the
 // "Powered by AG2" modal footer. Empty until boot completes.
