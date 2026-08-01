@@ -119,6 +119,85 @@ def test_attaching_back_to_a_chat_records_it_once(paths):
     assert PeerStore(paths).get_peer("cn-work", "42").chats == [started, "web-abc123"]
 
 
+# --- the model a Peer's next Chat is born on (ADR 0025) ---
+
+
+def test_a_peer_holds_no_model_for_its_next_chat_by_default(paths):
+    assert PeerStore(paths).select_profile("cn-work", "42", "work").pending_model is None
+
+
+def test_the_held_model_survives_a_restart(paths):
+    """It lives in peers.json with everything else the conversation remembers, so it
+    is still there when the process that took it is gone."""
+    PeerStore(paths).select_profile("cn-work", "42", "work")
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    assert PeerStore(paths).get_peer("cn-work", "42").pending_model == "c_deep"
+
+
+def test_a_peer_recorded_before_held_models_existed_simply_holds_none(paths):
+    """An install upgrading into this reads its old entries unchanged — the field is
+    absent, which is the same as holding nothing."""
+    paths.root.mkdir(parents=True, exist_ok=True)
+    (paths.root / "peers.json").write_text(
+        '{"peers": [{"connection": "cn-work", "chat_id": "42", "profile": "work"}]}'
+    )
+    peer = PeerStore(paths).get_peer("cn-work", "42")
+    assert (peer.profile, peer.pending_model) == ("work", None)
+
+
+def test_taking_the_held_model_hands_it_over_once(paths):
+    """It belongs to the Chat that message starts; a later Chat must not inherit it."""
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    assert PeerStore(paths).take_pending_model("cn-work", "42") == "c_deep"
+    assert PeerStore(paths).take_pending_model("cn-work", "42") == ""
+    assert PeerStore(paths).get_peer("cn-work", "42").pending_model is None
+
+
+def test_taking_from_a_conversation_that_holds_nothing_is_quiet(paths):
+    assert PeerStore(paths).take_pending_model("cn-work", "nobody") == ""
+
+
+def test_an_empty_choice_drops_the_held_model(paths):
+    """'Use default' arrives as no model at all."""
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    assert PeerStore(paths).set_pending_model("cn-work", "42", "").pending_model is None
+
+
+def test_detaching_drops_the_held_model(paths):
+    """`/new` starts over, and that includes the model chosen for a Chat that never was."""
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    PeerStore(paths).detach("cn-work", "42")
+    assert PeerStore(paths).get_peer("cn-work", "42").pending_model is None
+
+
+def test_attaching_drops_the_held_model(paths):
+    """A held model belongs to a Peer Attached to nothing; holding one alongside a Chat
+    is a state that cannot be spent, since only detaching gets back out of it."""
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    PeerStore(paths).attach("cn-work", "42", "web-abc123")
+    assert PeerStore(paths).get_peer("cn-work", "42").pending_model is None
+
+
+def test_starting_a_chat_spends_no_held_model_behind_the_routers_back(paths):
+    """`start_chat` attaches too, so the router must take what it holds *before* asking
+    for the Chat — this pins the half of that contract the store owns."""
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    PeerStore(paths).start_chat("cn-work", "42")
+    assert PeerStore(paths).get_peer("cn-work", "42").pending_model is None
+
+
+def test_switching_profile_drops_the_held_model(paths):
+    PeerStore(paths).select_profile("cn-work", "42", "work")
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    assert PeerStore(paths).select_profile("cn-work", "42", "home").pending_model is None
+
+
+def test_reselecting_the_same_profile_keeps_the_held_model(paths):
+    PeerStore(paths).select_profile("cn-work", "42", "work")
+    PeerStore(paths).set_pending_model("cn-work", "42", "c_deep")
+    assert PeerStore(paths).select_profile("cn-work", "42", "work").pending_model == "c_deep"
+
+
 # --- which Peer a Chat came from ---
 
 

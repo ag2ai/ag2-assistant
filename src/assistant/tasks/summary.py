@@ -40,7 +40,11 @@ class TaskMeta(BaseModel):
 
 
 def default_summarizer(config: Config):
-    """The production distiller: a one-shot agent on the cheap model."""
+    """The production distiller: a one-shot agent on the cheap model.
+
+    ``config`` is the Profile's, and the cheap model is read from it — deliberately not
+    from the Task's own model or from a Chat override on the run's thread (ADR 0025).
+    """
     from ag2 import Agent
 
     from assistant.agent import cheap_model, model_config

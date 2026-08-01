@@ -1,6 +1,7 @@
 <script>
   // Per-profile Text model switcher (ADR 0015): sets this profile's Active Text override
-  // via api.setLlmOverride (not the install-wide useLlmConfig the composer calls). Reuses
+  // via api.setLlmOverride (not the install-wide useLlmConfig, which only Settings →
+  // Models calls, and not the per-Chat override the composer sets — ADR 0025). Reuses
   // ModelSwitcherView over the shared `llmConfigs` store for the list + env-pin/empty
   // states; the current selection + inherited-vs-overridden come from the settings
   // payload (ctx.s.llm_active / .llm_override), reloaded by ctx.run after every change.

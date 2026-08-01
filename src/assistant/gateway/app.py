@@ -282,6 +282,9 @@ class MessageRequest(BaseModel):
     text: str
     chat_id: str = "default"
     platform: str | None = None
+    # No per-message model here, deliberately (ADR 0025 "Out of Scope"): a model chosen
+    # in a client before its Chat existed rides the WebSocket frame the WebUI sends
+    # turns on, and a Channel resolves its own Pending override in the router.
 
 
 class MessageResponse(BaseModel):
@@ -3758,6 +3761,9 @@ def create_app(
                             attachments=attachments,
                             surface=surface,
                             attachment_names=tuple(name for _, name in saved),
+                            # The composer's switcher is live before the chat exists;
+                            # its choice rides the first frame (ADR 0025).
+                            chat_model=str(data.get("model") or ""),
                         )
                     )
         except WebSocketDisconnect:

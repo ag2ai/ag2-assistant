@@ -46,8 +46,12 @@ class StreamBridge:
         attachments=None,
         surface: str = "",
         attachment_names: tuple[str, ...] = (),
+        chat_model: str = "",
     ) -> None:
-        """Run a user turn; its events flow back out through the subscription."""
+        """Run a user turn; its events flow back out through the subscription.
+
+        ``chat_model`` carries a model the client picked before this Chat existed, for
+        the message that creates it to adopt as the Chat's override (ADR 0025)."""
         try:
             await self._gw.send_message(
                 text,
@@ -56,6 +60,7 @@ class StreamBridge:
                 attachments=attachments,
                 surface=surface,
                 attachment_names=attachment_names,
+                chat_model=chat_model,
             )
             with contextlib.suppress(Exception):
                 await self._ws.send_json({"type": "turn_end", "chat": self._sid})

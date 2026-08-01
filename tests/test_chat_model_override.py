@@ -9,11 +9,15 @@ import asyncio
 import pytest
 
 from assistant.agent import cheap_model
+from assistant.channels.base import InboundMessage
+from assistant.channels.router import AvailableProfile, ChannelRouter, Reply
 from assistant.config import Config, apply_env_overrides, resolve_config
 from assistant.gateway.core import Gateway
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.llm_configs import LlmConfigStore
+from assistant.pairing import PairingStore
+from assistant.peers import PeerStore
 from assistant.profiles import ProfileRegistry
 from assistant.settings import profile_settings
 from assistant.tasks.store import TaskStore
@@ -148,6 +152,8 @@ async def test_an_override_naming_a_deleted_model_falls_back_silently(paths, gw)
 
     assert await gw.send_message("hi", chat_id="c1") == "model-a"
     assert await gw.chat_model("c1") == "c_deleted"
+    # …and what /status and the WebUI render agrees with what the turn ran on.
+    assert await gw.effective_model("c1") == _ids(paths)[0]
 
 
 async def test_an_override_on_a_model_that_cannot_run_fails_the_turn(paths):
@@ -352,34 +358,269 @@ async def test_a_model_layered_in_outside_the_process_environment_does_not_pin(p
         await gw.close()
 
 
-async def test_a_run_thread_resolves_chat_then_task_then_active(paths, tmp_path):
-    """Inside a Run's thread the Task's model sits between the Chat override and the
-    Active model — a manual reply follows the Task, an override outranks it."""
-    _models(paths, "model-a", "model-b", "model-c")
-    _a, b, c = (cfg["id"] for cfg in LlmConfigStore(paths).list_configs())
+async def _run_thread(paths, tmp_path, *, task_model="", agent_factory=None, **kwargs):
+    """A started gateway wired to a real TaskService, plus the stream_id of one Run of
+    one Task — the thread a manual reply would be typed into."""
     store = TaskStore(path=tmp_path / "tasks.db")
-    task = await store.create_task(name="T", prompt="p", model=b)
+    task = await store.create_task(name="T", prompt="p", model=task_model)
     run = await store.create_run(task.id)
     tasks = TaskService(
         config=resolve_config({}, paths),
         store=store,
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
-        summary_factory=fake_summary_factory(),
+        **kwargs,
     )
-    gw = _gateway(paths, task_service=tasks)
+    gw = _gateway(paths, task_service=tasks, agent_factory=agent_factory)
+    tasks.set_gateway(gw)
     await gw.start()
+    return gw, tasks, store, task, run.stream_id
+
+
+async def test_a_manual_reply_in_a_run_thread_runs_on_the_task_model(paths, tmp_path):
+    """The bug this ticket fixes: a reply typed into a Run's thread ran on the profile
+    default. It now follows the Task, which sits under the Chat override."""
+    _models(paths, "model-a", "model-b", "model-c")
+    _a, b, _c = (cfg["id"] for cfg in LlmConfigStore(paths).list_configs())
+    gw, _tasks, store, task, stream = await _run_thread(
+        paths, tmp_path, task_model=b, summary_factory=fake_summary_factory()
+    )
     try:
-        # A manual reply typed into the run's thread runs on the Task's model.
-        assert await gw.send_message("hi", chat_id=run.stream_id) == "model-b"
-        # A Chat override on that thread outranks the Task's model — for a manual
-        # reply and for the run's own turn, which passes the Task's model explicitly.
-        await gw.update_chat(run.stream_id, model=c)
-        assert await gw.send_message("hi", chat_id=run.stream_id) == "model-c"
-        assert await gw.send_message("hi", chat_id=run.stream_id, llm_config_id=b) == "model-c"
-        # A plain chat never consults the Task layer.
-        assert await gw.send_message("hi", chat_id="c1") == "model-a"
+        assert await gw.send_message("hi", chat_id=stream) == "model-b"
+        # The Task's own record is untouched by any of this — no migration (ADR 0025).
+        assert (await store.get_task(task.id)).model == b
     finally:
         await gw.close()
+
+
+async def test_a_chat_override_on_a_run_thread_beats_the_task_model(paths, tmp_path):
+    """Ask one cheap follow-up about an expensive Run without editing the Task."""
+    _models(paths, "model-a", "model-b", "model-c")
+    _a, b, c = (cfg["id"] for cfg in LlmConfigStore(paths).list_configs())
+    gw, _tasks, _store, _task, stream = await _run_thread(
+        paths, tmp_path, task_model=b, summary_factory=fake_summary_factory()
+    )
+    try:
+        await gw.send_message("hi", chat_id=stream)
+        await gw.update_chat(stream, model=c)
+        assert await gw.send_message("and?", chat_id=stream) == "model-c"
+    finally:
+        await gw.close()
+
+
+async def test_a_dangling_override_in_a_run_thread_falls_to_the_task_model(paths, tmp_path):
+    """Degradation walks to the NEXT layer, never straight to the bottom: deleting the
+    model a Run thread was overridden to leaves the thread on the TASK's model, so
+    story 31 survives a housekeeping delete (ADR 0025). ``effective_model`` — what
+    /status and the WebUI render — must say the same thing the turn ran on."""
+    _models(paths, "model-a", "model-b")
+    _a, b = _ids(paths)
+    gw, _tasks, _store, _task, stream = await _run_thread(
+        paths, tmp_path, task_model=b, summary_factory=fake_summary_factory()
+    )
+    try:
+        await gw.send_message("hi", chat_id=stream)
+        await gw.update_chat(stream, model="c_deleted")
+        assert await gw.send_message("and?", chat_id=stream) == "model-b"
+        assert await gw.effective_model(stream) == b
+        assert await gw.chat_model(stream) == "c_deleted"  # left in the doc, unswept
+    finally:
+        await gw.close()
+
+
+async def test_an_unusable_override_is_not_rescued_by_the_task_layer(paths, tmp_path):
+    """Dangling is not the same as unusable: a model that still EXISTS but cannot run
+    fails the turn exactly as an unusable install-wide Active does — the Task layer
+    under it is not a rescue path, and ``effective_model`` still names the override."""
+    _models(paths, "model-a", "model-b", "model-c")
+    _a, b, c = (cfg["id"] for cfg in LlmConfigStore(paths).list_configs())
+    gw, _tasks, _store, _task, stream = await _run_thread(
+        paths,
+        tmp_path,
+        task_model=b,
+        agent_factory=model_naming_agent_factory(unusable={"model-c"}),
+        summary_factory=fake_summary_factory(),
+    )
+    try:
+        await gw.send_message("hi", chat_id=stream)
+        await gw.update_chat(stream, model=c)
+        with pytest.raises(RuntimeError, match="cannot run"):
+            await gw.send_message("and?", chat_id=stream)
+        assert await gw.effective_model(stream) == c
+    finally:
+        await gw.close()
+
+
+async def test_a_run_thread_whose_task_names_no_model_falls_through(paths, tmp_path):
+    """The Task layer is optional, exactly as ``Task.model`` is: name no model and the
+    thread inherits the profile's Active like any other Chat."""
+    _models(paths, "model-a", "model-b")
+    gw, _tasks, _store, _task, stream = await _run_thread(
+        paths, tmp_path, task_model="", summary_factory=fake_summary_factory()
+    )
+    try:
+        assert await gw.send_message("hi", chat_id=stream) == "model-a"
+    finally:
+        await gw.close()
+
+
+async def test_the_runs_own_turn_still_runs_on_the_task_model(paths, tmp_path):
+    """A caller that names a model outright — today only the Task service, for a Run's
+    own turn — outranks the Chat override (ADR 0025). Overriding the thread retargets
+    your follow-ups, never the automated work the Task was configured to do."""
+    _models(paths, "model-a", "model-b", "model-c")
+    _a, b, c = (cfg["id"] for cfg in LlmConfigStore(paths).list_configs())
+    gw, _tasks, _store, _task, stream = await _run_thread(
+        paths, tmp_path, task_model=b, summary_factory=fake_summary_factory()
+    )
+    try:
+        await gw.send_message("hi", chat_id=stream)
+        await gw.update_chat(stream, model=c)
+        assert await gw.send_message("p", chat_id=stream, llm_config_id=b) == "model-b"
+    finally:
+        await gw.close()
+
+
+async def test_an_ordinary_chat_never_consults_the_task_layer(paths, tmp_path):
+    """The Task layer applies to ``task-run:`` streams only — every other Chat resolves
+    the four layers it always did."""
+    _models(paths, "model-a", "model-b", "model-c")
+    _a, _b, c = (cfg["id"] for cfg in LlmConfigStore(paths).list_configs())
+    gw, _tasks, _store, _task, _stream = await _run_thread(
+        paths, tmp_path, task_model=_b, summary_factory=fake_summary_factory()
+    )
+    try:
+        assert await gw.send_message("hi", chat_id="c1") == "model-a"
+        await gw.update_chat("c1", model=c)
+        assert await gw.send_message("hi", chat_id="c1") == "model-c"
+    finally:
+        await gw.close()
+
+
+async def test_a_run_summary_ignores_the_task_model_and_the_override(paths, tmp_path):
+    """The cheap-model carve-out (ADR 0025), the Run half: a Run on an expensive Task
+    model, in a thread overridden to a third model, is still distilled by the PROFILE's
+    cheap model."""
+    _models(paths, "model-a", "model-b", "model-c")
+    _a, b, c = (cfg["id"] for cfg in LlmConfigStore(paths).list_configs())
+    built: list[Config] = []
+    started, gate = asyncio.Event(), asyncio.Event()
+    store = TaskStore(path=tmp_path / "tasks.db")
+    task = await store.create_task(name="T", prompt="p", model=b)
+    env = {"AG2ASSISTANT_AGGREGATE_MODEL": "cheap-one"}
+    tasks = TaskService(
+        config=resolve_config(env, paths),
+        store=store,
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        summary_factory=fake_summary_factory(summary="one-liner", built=built),
+    )
+    gw = _gateway(
+        paths,
+        env=env,
+        task_service=tasks,
+        agent_factory=lambda config, **kw: _GatedAgent(config, started, gate),
+    )
+    tasks.set_gateway(gw)
+    setter = _gateway(paths)  # a second gateway over the same layout — its own chat locks
+    await gw.start()
+    await setter.start()
+    try:
+        # The Run's own turn writes the thread's transcript doc, so an override can only
+        # land while that turn is in flight — which is exactly the case to pin down.
+        run = await tasks.start_run(task.id)
+        await started.wait()
+        assert await setter.update_chat(run.stream_id, model=c) is True
+        gate.set()
+        await asyncio.wait_for(tasks._jobs_done(), 5)
+
+        assert (await tasks.get_run(run.id))["summary"] == "one-liner"
+        assert await gw.chat_model(run.stream_id) == c  # the override was in place
+        assert built and all(cfg.llm.model == "model-a" for cfg in built)
+        assert all(cheap_model(cfg) == "cheap-one" for cfg in built)
+    finally:
+        await gw.close()
+        await setter.close()
+
+
+# --- A model chosen before the Chat exists ---
+
+
+async def test_a_model_chosen_before_the_chat_exists_runs_the_first_message(paths, gw):
+    """A client's switcher is live on a Chat with no messages yet: the choice rides
+    the message that creates the Chat, which runs on it and keeps it from then on."""
+    a, b = _ids(paths)
+    assert await gw.send_message("hi", chat_id="c1", chat_model=b) == "model-b"
+    assert await gw.chat_model("c1") == b
+    assert await gw.send_message("again", chat_id="c1") == "model-b"
+    assert LlmConfigStore(paths).active_id() == a
+
+
+async def test_a_pre_send_choice_is_ignored_once_the_chat_exists(paths, gw):
+    """Only the message that CREATES the Chat adopts one — it is not a per-message
+    model, so a Chat that already chose (to inherit, or otherwise) is left alone."""
+    _a, b = _ids(paths)
+    await gw.send_message("hi", chat_id="c1")  # the chat now exists, inheriting
+    assert await gw.send_message("again", chat_id="c1", chat_model=b) == "model-a"
+    assert await gw.chat_model("c1") == ""
+
+
+# --- Cross-client: an override set from a Channel is the one the WebUI reads ---
+
+
+class _OneProfile:
+    """A ProfileDirectory over a single running gateway — what the router resolves
+    every message through."""
+
+    def __init__(self, gateway) -> None:
+        self.gateway = gateway
+
+    def available_profiles(self, surface: str):
+        return (AvailableProfile("p", "P"),)
+
+    def default_profile(self, connection: str) -> str:
+        return "p"
+
+    def gateway_for_profile(self, pid: str):
+        return self.gateway if pid == "p" else None
+
+    async def notify_channel(self, connection, chat_id, text) -> None: ...
+
+    async def ask_channel(self, connection, chat_id, inquiry, question) -> None: ...
+
+    async def retract_channel(self, connection, chat_id, inquiry) -> None: ...
+
+
+def _telegram(text: str) -> InboundMessage:
+    return InboundMessage(
+        text=text,
+        sender_id="1001",
+        chat_id="tg-1",
+        platform="telegram",
+        connection="telegram",
+        is_direct=True,
+    )
+
+
+async def test_a_model_set_from_a_channel_is_the_one_the_webui_reports(paths):
+    """The two clients never disagree about one conversation: `/model` writes the same
+    Chat override the single-chat GET renders (its ``model`` / ``effective_model``)."""
+    a, b = _models(paths, "model-a", "model-b")
+    gateway = _gateway(paths, env={"GEMINI_API_KEY": "shared-key"})
+    await gateway.start()
+    PairingStore(paths).add_account("telegram", "1001", platform="telegram")
+    router = ChannelRouter(_OneProfile(gateway), paths)
+    try:
+        assert await router.handle(_telegram("hi")) == Reply("model-a")
+        chat = PeerStore(paths).get_peer("telegram", "tg-1").chat
+
+        assert isinstance(await router.handle(_telegram("/model MODEL-B")), Reply)
+        assert await gateway.chat_model(chat) == b
+        assert await gateway.effective_model(chat) == b
+
+        assert isinstance(await router.choose(_telegram(""), "model:"), Reply)
+        assert await gateway.chat_model(chat) == ""
+        assert await gateway.effective_model(chat) == a
+    finally:
+        await gateway.close()
 
 
 # --- REST facade ---
@@ -436,6 +677,25 @@ def test_the_single_chat_read_names_the_pinned_model(profile_app_factory):
 
     body = client.get(api(pid, "/chats/c1")).json()
     assert body["model"] == b and body["effective_model"] == "deployment-model"
+
+
+def test_a_first_stream_frame_carrying_a_model_records_the_override(profile_app):
+    """The WebUI composer's pre-send choice rides the WebSocket frame the WebUI
+    actually sends turns on — there is no Chat to patch yet — and the install-wide
+    Active is untouched. ``POST /message`` deliberately carries no model: a
+    per-message model is out of scope (ADR 0025)."""
+    client, pid = profile_app
+    a, b = _api_models(client)
+    with client.websocket_connect(api(pid, "/stream?chat=w1")) as ws:
+        while ws.receive_json().get("type") != "ready":
+            pass
+        ws.send_json({"text": "hi", "model": b})
+        while ws.receive_json().get("type") != "turn_end":
+            pass
+
+    body = client.get(api(pid, "/chats/w1")).json()
+    assert body["model"] == b and body["effective_model"] == b
+    assert client.get("/api/llm-configs").json()["active"] == a
 
 
 def test_the_chat_list_does_not_report_the_override(profile_app):

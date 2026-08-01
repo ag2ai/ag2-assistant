@@ -18,18 +18,29 @@ from assistant.channels.router import (
     ATTACHMENT_ONLY_PROMPT,
     ATTACHMENT_UNREADABLE,
     CHAT_GONE,
+    CHATS_OFFERED,
     CHOOSE_INSTEAD,
     COMMANDS,
+    INHERITED_MODEL,
+    MODEL_IN_GROUP,
+    MODEL_NOT_READY,
+    MODELS_OFFERED,
+    NO_CHAT_YET,
     NO_CHATS,
+    NO_MODELS,
     NO_PROFILE,
     NO_PROFILE_HERE,
+    NOT_READY_SUFFIX,
     NOTHING_RUNNING,
+    PENDING_CLEARED,
+    PENDING_MODEL,
     PROFILE_IN_GROUP,
     PROFILE_WITHDRAWN,
     STOPPED,
     TRACE_LINES,
     TRACE_MARKER,
     TRACE_WORKING,
+    USE_DEFAULT,
     Ack,
     AvailableProfile,
     ChannelRouter,
@@ -41,7 +52,9 @@ from assistant.channels.router import (
     ToolCall,
     ToolTrace,
     earlier_calls,
+    model_pending,
     spoken_text,
+    status_text,
     tool_trace,
 )
 from assistant.pairing import PairingStore
@@ -63,6 +76,14 @@ class FakeGateway:
         self.chats: dict[str, dict] = {}
         self.transcripts: dict[str, list[dict]] = {}
         self.deleted: list[str] = []
+        # The install's Text models, the install-wide Active among them, and the Chat
+        # overrides set on top — the model layer as this gateway resolves it.
+        self.models: list[dict] = []
+        self.active_model = ""
+        self.overrides: dict[str, str] = {}
+        # What a Chat with no override of its own resolves to anyway — a Run thread
+        # inheriting its Task's model, which is not the install-wide Active.
+        self.inherited: dict[str, str] = {}
         # inquiry id -> the chat it was raised in, its options, and its answer.
         self.inquiries: dict[str, dict] = {}
         # Chats with a turn in flight, and what has been fed into those turns.
@@ -126,6 +147,32 @@ class FakeGateway:
             await self._questions.retract(entry["chat"], inquiry)
         return True
 
+    def add_model(self, cid: str, name: str, *, ready: bool = True, active: bool = False) -> str:
+        """A shared Text model this install has, and whether it can run right now."""
+        self.models.append({"id": cid, "name": name, "model": f"{cid}-model", "ready": ready})
+        if active or not self.active_model:
+            self.active_model = cid
+        return cid
+
+    def text_models(self) -> list[dict]:
+        return list(self.models)
+
+    async def chat_model(self, chat_id: str) -> str:
+        return self.overrides.get(chat_id, "")
+
+    async def effective_model(self, chat_id: str) -> str:
+        return self.overrides.get(chat_id) or self.inherited.get(chat_id) or self.active_model
+
+    async def update_chat(self, chat_id: str, *, title=None, starred=None, model=None) -> bool:
+        if chat_id not in self.chats:
+            return False
+        if model is not None:
+            if model.strip():
+                self.overrides[chat_id] = model.strip()
+            else:
+                self.overrides.pop(chat_id, None)
+        return True
+
     def add_chat(self, chat_id: str, title: str, updated: str, messages=()) -> str:
         """A Chat this gateway already holds — a browser one, or one made earlier."""
         self.chats[chat_id] = {
@@ -147,8 +194,13 @@ class FakeGateway:
         origin="",
         attachment_names=(),
         on_event=None,
+        chat_model="",
         **kw,
     ):
+        # A choice made before this Chat existed is what the Chat is born overridden to,
+        # and only while it has nothing of its own — the real gateway's stub rule.
+        if chat_model.strip() and chat_id not in self.chats:
+            self.overrides[chat_id] = chat_model.strip()
         self.calls.append(
             {
                 "text": text,
@@ -156,6 +208,12 @@ class FakeGateway:
                 "asker": asker,
                 "attachments": attachments,
                 "on_event": on_event,
+                "chat_model": chat_model,
+                # The turn's model, resolved the way the real gateway resolves it: the
+                # Chat's own override, else what it inherits, else the Active one.
+                "model": self.overrides.get(chat_id)
+                or self.inherited.get(chat_id)
+                or self.active_model,
             }
         )
         chat = self.chats.setdefault(
@@ -925,6 +983,409 @@ async def test_status_before_the_first_message_says_there_is_no_chat_yet(paths):
     outcome = await router.handle(_inbound("/status"))
     assert isinstance(outcome, Reply)
     assert "Work" in outcome.text
+
+
+# --- /model ---
+
+
+async def _attached_to_a_chat(paths, **kw) -> tuple[ChannelRouter, FakeGateway]:
+    """A Peer talking in a Chat of its own, with two models to choose between."""
+    router, gateway = _router(paths, **kw)
+    gateway.add_model("c_fast", "Fast", active=True)
+    gateway.add_model("c_deep", "Deep")
+    await router.handle(_inbound("hi"))
+    return router, gateway
+
+
+def _model_labels(outcome) -> list[str]:
+    return [opt.label for opt in outcome.options]
+
+
+async def test_model_is_listed_in_help_like_every_other_command(paths):
+    router, _ = _router(paths)
+    outcome = await router.handle(_inbound("/help"))
+    assert "/model" in outcome.text
+    assert next(c.description for c in COMMANDS if c.name == "model") in outcome.text
+
+
+async def test_model_with_no_argument_offers_the_configured_models(paths):
+    router, _gateway = await _attached_to_a_chat(paths)
+    outcome = await router.handle(_inbound("/model"))
+    assert isinstance(outcome, Choose)
+    assert _model_labels(outcome) == [USE_DEFAULT, "Fast", "Deep"]
+
+
+async def test_use_default_is_first_and_clears_the_override(paths):
+    """It clears the Chat's own choice — what that lands on is the gateway's to say."""
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    await router.handle(_inbound("/model Deep"))
+    assert gateway.overrides[chat] == "c_deep"
+
+    outcome = await router.handle(_inbound("/model"))
+    assert outcome.options[0].label == USE_DEFAULT
+    assert isinstance(await router.choose(_inbound(""), outcome.options[0].token), Reply)
+    assert chat not in gateway.overrides
+
+
+async def test_clearing_names_what_the_chat_now_runs_on_from_the_gateway(paths):
+    """Not the profile's Active recomputed here — a Run thread would fall back to its
+    Task's model, and only the gateway resolves the whole chain."""
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    await router.handle(_inbound("/model Deep"))
+    gateway.active_model = "c_fast"
+
+    outcome = await router.choose(_inbound(""), "model:")
+    assert isinstance(outcome, Reply)
+    assert "Fast" in outcome.text
+    assert chat not in gateway.overrides
+
+
+async def test_the_model_picker_is_capped_like_the_chat_picker(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    for i in range(MODELS_OFFERED + 5):
+        gateway.add_model(f"c_{i}", f"Model {i}")
+
+    outcome = await router.handle(_inbound("/model"))
+    assert MODELS_OFFERED == CHATS_OFFERED
+    assert len(outcome.options) == MODELS_OFFERED + 1  # "Use default" rides above the cap
+
+
+async def test_tapping_a_model_sets_the_override_and_the_next_message_runs_on_it(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    outcome = await router.handle(_inbound("/model"))
+    token = next(opt.token for opt in outcome.options if opt.label == "Deep")
+
+    assert isinstance(await router.choose(_inbound(""), token), Reply)
+    assert gateway.overrides[chat] == "c_deep"
+
+    await router.handle(_inbound("and now?"))
+    assert gateway.calls[-1]["model"] == "c_deep"
+
+
+async def test_a_tap_can_only_act_on_a_model_that_was_offered(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    assert isinstance(await router.choose(_inbound(""), "model:c_never_offered"), Refuse)
+    assert chat not in gateway.overrides
+
+
+async def test_model_matches_by_name_or_id_case_insensitively(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+
+    assert isinstance(await router.handle(_inbound("/model dEEp")), Reply)
+    assert gateway.overrides[chat] == "c_deep"
+
+    assert isinstance(await router.handle(_inbound("/model C_FAST")), Reply)
+    assert gateway.overrides[chat] == "c_fast"
+
+
+async def test_an_unknown_model_name_is_reported_and_changes_nothing(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    outcome = await router.handle(_inbound("/model Depe"))
+    assert isinstance(outcome, Refuse)
+    assert "Depe" in outcome.text and "/model" in outcome.text
+    assert chat not in gateway.overrides
+
+
+async def test_a_model_that_cannot_run_is_refused_rather_than_set(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    gateway.add_model("c_keyless", "Keyless", ready=False)
+
+    outcome = await router.handle(_inbound("/model"))
+    token = next(opt.token for opt in outcome.options if opt.label.startswith("Keyless"))
+    assert await router.choose(_inbound(""), token) == Refuse(MODEL_NOT_READY)
+    assert await router.handle(_inbound("/model Keyless")) == Refuse(MODEL_NOT_READY)
+    assert chat not in gateway.overrides
+
+
+async def test_a_model_that_cannot_run_is_marked_in_the_picker(paths):
+    """A button cannot be greyed out the way the browser's row is, so the label says it
+    — the refusal on tap is a confirmation rather than a surprise."""
+    router, gateway = await _attached_to_a_chat(paths)
+    gateway.add_model("c_keyless", "Keyless", ready=False)
+
+    labels = _model_labels(await router.handle(_inbound("/model")))
+    assert labels == [USE_DEFAULT, "Fast", "Deep", f"Keyless {NOT_READY_SUFFIX}"]
+    assert MODEL_NOT_READY.startswith(NOT_READY_SUFFIX.strip("()").capitalize())
+
+
+async def test_model_is_refused_in_a_group(paths):
+    """The picker would publish the install's model names into a room nobody here owns."""
+    router, gateway = _router(paths)
+    gateway.add_model("c_fast", "Fast", active=True)
+    await router.handle(_group("hello"))
+
+    assert await router.handle(_group("/model")) == Refuse(MODEL_IN_GROUP)
+    assert await router.handle(_group("/model Fast")) == Refuse(MODEL_IN_GROUP)
+    assert await router.choose(_group(""), "model:c_fast") == Refuse(MODEL_IN_GROUP)
+    assert gateway.overrides == {}
+
+
+async def test_model_with_nothing_configured_says_so_rather_than_offering_nothing(paths):
+    router, gateway = _router(paths)
+    await router.handle(_inbound("hi"))
+    assert await router.handle(_inbound("/model")) == Reply(NO_MODELS)
+
+
+# --- a model chosen before there is a Chat (the Pending override) ---
+
+
+async def _before_any_chat(paths, **kw) -> tuple[ChannelRouter, FakeGateway]:
+    """A Peer with two models to choose between and no Chat yet — where a Peer stands
+    after `/new`, and where the opening question is still unasked."""
+    router, gateway = _router(paths, **kw)
+    gateway.add_model("c_fast", "Fast", active=True)
+    gateway.add_model("c_deep", "Deep")
+    return router, gateway
+
+
+def _pending(paths, chat_id="c1") -> str | None:
+    """The Pending override the registry holds for this conversation, read fresh."""
+    peer = PeerStore(paths).get_peer("telegram", chat_id)
+    return peer.pending_model if peer is not None else None
+
+
+async def test_model_with_no_chat_yet_is_held_on_the_peer_rather_than_refused(paths):
+    router, gateway = await _before_any_chat(paths)
+
+    picker = await router.handle(_inbound("/model"))
+    assert isinstance(picker, Choose)
+    assert _model_labels(picker) == [USE_DEFAULT, "Fast", "Deep"]
+
+    assert isinstance(await router.handle(_inbound("/model Deep")), Reply)
+    assert _pending(paths) == "c_deep"
+    assert gateway.overrides == {}  # nothing to write it to yet
+
+
+async def test_a_tapped_model_is_held_on_the_peer_too(paths):
+    router, _gateway = await _before_any_chat(paths)
+    picker = await router.handle(_inbound("/model"))
+    token = next(opt.token for opt in picker.options if opt.label == "Deep")
+
+    outcome = await router.choose(_inbound(""), token)
+    assert outcome == Reply(model_pending("Deep"))
+    assert _pending(paths) == "c_deep"
+
+
+async def test_the_next_message_starts_a_chat_born_on_the_held_model(paths):
+    router, gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+
+    await router.handle(_inbound("what is 2+2?"))
+    chat = gateway.calls[-1]["chat_id"]
+    assert gateway.calls[-1]["model"] == "c_deep"  # the first turn runs on it
+    assert gateway.overrides[chat] == "c_deep"  # and the Chat owns it from now on
+
+
+async def test_a_held_model_is_spent_by_the_chat_it_starts(paths):
+    """A later Chat does not inherit it — the choice belonged to that opening question."""
+    router, gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+    await router.handle(_inbound("hi"))
+    assert _pending(paths) is None
+
+    await router.handle(_inbound("/new"))
+    await router.handle(_inbound("starting over"))
+    assert gateway.calls[-1]["model"] == "c_fast"
+    assert gateway.calls[-1]["chat_id"] != gateway.calls[0]["chat_id"]
+
+
+async def test_new_drops_a_model_chosen_for_the_chat_that_never_happened(paths):
+    router, gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+
+    assert await router.handle(_inbound("/new")) == Reply(ALREADY_NEW)
+    assert _pending(paths) is None
+    await router.handle(_inbound("hi"))
+    assert gateway.calls[-1]["model"] == "c_fast"
+
+
+async def test_switching_profile_drops_a_held_model(paths):
+    """Starting over really starts over — a Chat cannot cross Profiles, nor can the
+    model chosen for one that was never started."""
+    directory = FakeDirectory("work", "home")
+    for gateway in directory.gateways.values():
+        gateway.add_model("c_fast", "Fast", active=True)
+        gateway.add_model("c_deep", "Deep")
+    router = ChannelRouter(directory, paths)
+    await router.handle(_inbound("/profile work"))
+    await router.handle(_inbound("/model Deep"))
+    assert _pending(paths) == "c_deep"
+
+    await router.handle(_inbound("/profile home"))
+    assert _pending(paths) is None
+
+
+async def test_a_held_model_outlives_the_process(paths):
+    """It lives with the rest of the peer registry, so a restart does not lose it."""
+    router, _gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+
+    # A fresh router over the same layout: nothing is carried in memory.
+    restarted, gateway = await _before_any_chat(paths)
+    assert PeerStore(paths).get_peer("telegram", "c1").pending_model == "c_deep"
+
+    await restarted.handle(_inbound("hi"))
+    assert gateway.calls[-1]["model"] == "c_deep"
+
+
+async def test_use_default_with_no_chat_yet_drops_the_held_model(paths):
+    router, gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+
+    assert await router.choose(_inbound(""), "model:") == Reply(PENDING_CLEARED)
+    assert _pending(paths) is None
+
+    await router.handle(_inbound("hi"))
+    assert gateway.calls[-1]["model"] == "c_fast"
+    assert gateway.calls[-1]["chat_id"] not in gateway.overrides
+
+
+async def test_a_model_that_cannot_run_is_refused_before_there_is_a_chat_too(paths):
+    """Refused while the Peer is looking at the picker, not on the message after it."""
+    router, gateway = await _before_any_chat(paths)
+    gateway.add_model("c_keyless", "Keyless", ready=False)
+
+    picker = await router.handle(_inbound("/model"))
+    token = next(opt.token for opt in picker.options if opt.label.startswith("Keyless"))
+    assert await router.choose(_inbound(""), token) == Refuse(MODEL_NOT_READY)
+    assert await router.handle(_inbound("/model Keyless")) == Refuse(MODEL_NOT_READY)
+    assert _pending(paths) is None
+
+
+async def test_with_a_chat_attached_the_choice_goes_to_the_chat_and_not_the_peer(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+
+    await router.handle(_inbound("/model Deep"))
+    assert gateway.overrides[chat] == "c_deep"
+    assert _pending(paths) is None
+
+
+async def test_resuming_a_chat_drops_a_held_model_rather_than_carrying_it_in(paths):
+    """A held model is what a Peer Attached to nothing remembers; attaching ends that.
+    It is not applied to the resumed Chat either — `/resume` is pure navigation, and the
+    Peer was told its *next* chat would run on it, not this older one."""
+    router, gateway = await _before_any_chat(paths)
+    gateway.add_chat("web-1", "Last month's taxes", _ago(days=30))
+    await router.handle(_inbound("/new"))
+    await router.handle(_inbound("/model Deep"))
+    assert _pending(paths) == "c_deep"
+
+    assert isinstance(await router.choose(_inbound(""), "resume:web-1"), Reply)
+    assert _pending(paths) is None
+
+    await router.handle(_inbound("where were we?"))
+    assert gateway.calls[-1]["chat_id"] == "web-1"
+    assert gateway.calls[-1]["model"] == "c_fast"  # the resumed Chat's own resolution
+    assert "web-1" not in gateway.overrides
+
+
+# --- /status says which model you are on ---
+
+
+async def test_status_names_the_model_this_chat_was_given(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+
+    outcome = await router.handle(_inbound("/status"))
+    assert isinstance(outcome, Reply)
+    assert "Model: Deep" in outcome.text
+    assert INHERITED_MODEL not in outcome.text  # its own choice, not a default
+
+
+async def test_status_marks_an_inherited_model_as_the_default(paths):
+    """A Chat that chose nothing follows whatever is Active, so a later switch moves it."""
+    router, _gateway = await _attached_to_a_chat(paths)
+
+    outcome = await router.handle(_inbound("/status"))
+    assert f"Model: Fast {INHERITED_MODEL}" in outcome.text
+
+
+async def test_status_names_what_an_inheriting_chat_actually_resolves_to(paths):
+    """Not the install-wide Active recomputed here — a Run thread inherits its Task's
+    model, and only the gateway resolves the whole chain."""
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    gateway.add_model("c_task", "Task's model")
+    gateway.inherited[chat] = "c_task"
+
+    outcome = await router.handle(_inbound("/status"))
+    assert f"Model: Task's model {INHERITED_MODEL}" in outcome.text
+    assert "Fast" not in outcome.text
+
+
+async def test_status_reports_a_model_held_for_the_chat_that_does_not_exist_yet(paths):
+    """Durable state a Peer set is never invisible to it."""
+    router, _gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+
+    outcome = await router.handle(_inbound("/status"))
+    assert NO_CHAT_YET in outcome.text
+    assert f"Model: Deep {PENDING_MODEL}" in outcome.text
+
+
+async def test_a_held_model_deleted_before_status_still_names_something(paths):
+    router, gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+    gateway.models = [m for m in gateway.models if m["id"] != "c_deep"]
+
+    outcome = await router.handle(_inbound("/status"))
+    assert f"Model: c_deep {PENDING_MODEL}" in outcome.text
+
+
+async def test_status_with_no_chat_and_nothing_held_says_no_more_than_it_did(paths):
+    router, _gateway = await _before_any_chat(paths)
+
+    outcome = await router.handle(_inbound("/status"))
+    assert outcome == Reply(status_text("Work", NO_CHAT_YET, 0))
+    assert "Model:" not in outcome.text
+
+
+async def test_status_leaves_the_profile_chat_and_size_lines_alone(paths):
+    """The model line is an addition; the three lines above it are untouched."""
+    router, gateway = await _attached_to_a_chat(paths)
+    gateway.chats[gateway.calls[0]["chat_id"]]["title"] = "Tax questions"
+    await router.handle(_inbound("/model Deep"))
+
+    outcome = await router.handle(_inbound("/status"))
+    assert outcome.text.splitlines() == [
+        "Profile: Work",
+        "Chat: Tax questions",
+        "Size: 1 exchanges",
+        "Model: Deep",
+    ]
+
+
+async def test_status_is_a_read_and_spends_nothing(paths):
+    """It never consumes a held model, never starts a Chat, and never runs a turn."""
+    router, gateway = await _before_any_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+
+    assert PENDING_MODEL in (await router.handle(_inbound("/status"))).text
+    assert PENDING_MODEL in (await router.handle(_inbound("/status"))).text
+    assert _pending(paths) == "c_deep"
+    assert gateway.calls == [] and gateway.chats == {}
+
+    await router.handle(_inbound("what is 2+2?"))
+    assert gateway.calls[-1]["model"] == "c_deep"  # still there to be spent
+
+
+async def test_status_on_an_attached_chat_moves_nothing_either(paths):
+    router, gateway = await _attached_to_a_chat(paths)
+    chat = gateway.calls[0]["chat_id"]
+    await router.handle(_inbound("/model Deep"))
+    before = dict(gateway.overrides), len(gateway.calls), gateway.chats[chat]["turns"]
+
+    await router.handle(_inbound("/status"))
+    assert (dict(gateway.overrides), len(gateway.calls), gateway.chats[chat]["turns"]) == before
+    assert _pending(paths) is None
 
 
 # --- /resume ---

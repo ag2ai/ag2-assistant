@@ -336,9 +336,11 @@ _Avoid_: open (that is the browser's **Thread**), selected, bound, current
 A **Chat override** chosen by a **Peer** that is not **Attached** to anything yet —
 the model its next message's Chat will be born with, held on the Peer until that Chat
 exists and consumed the moment it does. Dropped when the Peer detaches again or
-switches **Profile**. It exists only because a Channel has no client to remember an
-unsent choice in; the WebUI holds the same intent in the open page and loses it on a
-reload (ADR 0025).
+switches **Profile**, and by **Attaching** to any Chat — a held choice belongs to a Peer
+that is in none, so it never outlives that state. `/status` names one while it is held,
+so state that durable is never invisible. It exists only because a Channel has no client
+to remember an unsent choice in; the WebUI holds the same intent in the open page and
+loses it on a reload (ADR 0025).
 _Avoid_: default model (the install-wide **Active** is that), queued override, draft
 
 **Channel exposure**:
@@ -498,10 +500,11 @@ itself alone (a **Chat override**, Text only). The effective Active is the Chat
 override when set, else the profile override, else the install-wide Active, else the
 environment fallback (an env pin still wins last and is unswitchable); inside a Task
 **Run**'s thread the **Task**'s own model sits between the Chat override and the
-profile override. The models themselves stay a single shared install-wide list
-(ADR 0004) — only the *selection* is per-profile and per-chat. Switching persists and
-takes effect on the next message (Text) or next voice session (Live), never
-retroactively on one in flight.
+profile override for a reply you type there, and above the Chat override for the Run's
+own turn, which names it outright. The models themselves stay a single shared
+install-wide list (ADR 0004) — only the *selection* is per-profile and per-chat.
+Switching persists and takes effect on the next message (Text) or next voice session
+(Live), never retroactively on one in flight.
 _Avoid_: default, current, selected (a Secret's Default is the unrelated fallback
 concept)
 
@@ -519,11 +522,17 @@ A **Chat**'s optional choice of which shared **Text model** is **Active** for it
 overriding the profile's selection for that Chat only. Absent means the Chat inherits
 whatever is Active at the moment it speaks, so an un-overridden Chat follows a later
 profile or install-wide switch; setting one detaches that Chat from the drift.
-Text only — the spoken **Live model** has no per-chat counterpart. Set from the
-composer's model switcher (which offers "use default" to clear) and, from a
-**Channel**, by `/model`. The cheap-model background work a Chat provokes — its
-generated title, a **Run**'s summary — deliberately ignores the Chat override and
-stays on the profile's own cheap model (ADR 0025).
+Text only — the spoken **Live model** has no per-chat counterpart. An override naming
+a model that has since been deleted degrades to the layer directly beneath it — inside
+a **Run**'s thread, the **Task**'s model — and never straight to the profile's
+selection; one naming a model that exists but cannot run is not rescued at all. Set
+from the composer's model switcher (which offers "use default" to clear) and, from a
+**Channel**, by `/model`; `/status` reads it back, marking an inherited model as a
+default. Inside a **Run**'s thread it governs the replies you type
+there and not the Run's own turn, which keeps running on the **Task**'s model. The
+cheap-model background work a Chat provokes — its generated title, a Run's summary —
+deliberately ignores the Chat override and stays on the profile's own cheap model
+(ADR 0025).
 _Avoid_: chat model, pin (an env pin is the unrelated unswitchable fallback), thread
 model
 

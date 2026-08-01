@@ -240,9 +240,14 @@ def fake_title_factory(title="Fake Title", built=None):
     return factory
 
 
-def fake_summary_factory(summary="Fake summary.", name="Fake Task", description=""):
+def fake_summary_factory(summary="Fake summary.", name="Fake Task", description="", built=None):
     """A distiller factory for run summaries AND task auto-naming (one fake answers
-    both schemas — each reader picks the field it needs)."""
-    return lambda config: FakeStructuredAgent(
-        _canned(summary=summary, name=name, description=description)
-    )
+    both schemas — each reader picks the field it needs). Pass ``built`` to collect the
+    config each distiller was built from — which model summarised the run."""
+
+    def factory(config):
+        if built is not None:
+            built.append(config)
+        return FakeStructuredAgent(_canned(summary=summary, name=name, description=description))
+
+    return factory

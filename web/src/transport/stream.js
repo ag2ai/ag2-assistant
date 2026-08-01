@@ -61,7 +61,12 @@ export class StreamClient {
   }
   // A turn sent while one is already running is fed to it server-side (the agent
   // picks it up at its next step) — same frame either way.
-  send(text, attachments) { this._send({ text, attachments }) }
+  // `model` is a Text model chosen in the composer before this chat existed: the
+  // message that creates the chat adopts it as the Chat override (ADR 0025). Omitted
+  // once the chat exists — its override is set by PATCH /chats/{id}, not per message.
+  send(text, attachments, model = '') {
+    this._send(model ? { text, attachments, model } : { text, attachments })
+  }
   cancel() { this._send({ type: 'cancel' }) }
   answer(id, answer) { this._send({ type: 'answer', id, answer }) }
   feedback(payload) { this._send({ type: 'feedback', ...payload }) }

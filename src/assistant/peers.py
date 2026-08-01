@@ -21,6 +21,11 @@ class Peer:
     profile: str | None = None  # the selected profile's id
     chat: str | None = None  # the Chat it is Attached to, if any
     chats: list[str] = field(default_factory=list)  # every Chat it has spoken in
+    # The Pending override (ADR 0025): a Text model chosen while Attached to nothing,
+    # which the next message's Chat is born on. It lives here because a Channel has no
+    # client to hold an unsent choice in. Consumed by that Chat, dropped on detach or a
+    # Profile switch.
+    pending_model: str | None = None
 
 
 def _peer(entry: dict) -> Peer:
@@ -34,6 +39,9 @@ def _peer(entry: dict) -> Peer:
         profile=entry.get("profile"),
         chat=entry.get("chat"),
         chats=list(chats) if isinstance(chats, list) else [],
+        # Absent on every entry written before the Pending override existed, which reads
+        # the same as holding nothing — so an upgrading install needs no migration.
+        pending_model=entry.get("pending_model") or None,
     )
 
 
@@ -124,6 +132,9 @@ class PeerStore:
                 profile=pid,
                 platform=platform or current.platform,
                 chat=None if switched else current.chat,
+                # A model held for a Chat that was never started belongs to the Profile
+                # it was chosen in; leaving that Profile leaves it behind too.
+                pending_model=None if switched else current.pending_model,
             ),
         )
 
@@ -138,7 +149,12 @@ class PeerStore:
         sender: str = "",
     ) -> Peer:
         """Attach this conversation to ``chat``, creating nothing. The Chat joins the
-        Peer's own, so a Task started in it still delivers back to this conversation."""
+        Peer's own, so a Task started in it still delivers back to this conversation.
+
+        A Pending override belongs to a Peer Attached to nothing, so attaching drops it:
+        held alongside a Chat it could never be spent, since only ``detach`` gets back
+        out of that state — and it dropped it too. Callers that mean to hand it to the
+        Chat being started must take it before they get here."""
         entries = self._load()
         index = _index(entries, connection, chat_id)
         current = (
@@ -156,6 +172,7 @@ class PeerStore:
                 chats=chats,
                 sender=sender or current.sender,
                 platform=platform or current.platform,
+                pending_model=None,
             ),
         )
 
@@ -176,15 +193,38 @@ class PeerStore:
         self.attach(connection, chat_id, chat, platform=platform, surface=surface, sender=sender)
         return chat
 
+    def set_pending_model(self, connection: str, chat_id: str, model: str) -> Peer:
+        """Hold ``model`` for the Chat this conversation's next message starts, dropping
+        what it held for the empty string. Recording it makes the conversation known,
+        the way selecting a profile does."""
+        entries = self._load()
+        index = _index(entries, connection, chat_id)
+        current = _peer(entries[index]) if index is not None else Peer(connection, chat_id)
+        return self._save(entries, index, replace(current, pending_model=model.strip() or None))
+
+    def take_pending_model(self, connection: str, chat_id: str) -> str:
+        """The model this conversation was holding, cleared as it is handed over — the
+        Chat it starts owns it from here, so no later Chat inherits it. "" for none."""
+        entries = self._load()
+        index = _index(entries, connection, chat_id)
+        if index is None:
+            return ""
+        current = _peer(entries[index])
+        if current.pending_model is None:
+            return ""
+        self._save(entries, index, replace(current, pending_model=None))
+        return current.pending_model
+
     def detach(self, connection: str, chat_id: str) -> None:
-        """Leave the attached Chat as it is; the next message starts a fresh one."""
+        """Leave the attached Chat as it is; the next message starts a fresh one. Starting
+        over is a clean start, so a model held for that next Chat goes with it."""
         entries = self._load()
         index = _index(entries, connection, chat_id)
         if index is None:
             return
         current = _peer(entries[index])
-        if current.chat is not None:
-            self._save(entries, index, replace(current, chat=None))
+        if current.chat is not None or current.pending_model is not None:
+            self._save(entries, index, replace(current, chat=None, pending_model=None))
 
     def forget_chat(self, chat: str) -> None:
         """Drop a deleted Chat from the Peer that started it."""

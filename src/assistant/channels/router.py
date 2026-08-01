@@ -86,6 +86,38 @@ CHATS_OFFERED = 10
 TAIL_MESSAGES = 6
 TAIL_CHARS = 300
 
+# How many models a picker offers — the same bound the chat picker keeps, so a long
+# model list never buries the conversation in buttons.
+MODELS_OFFERED = CHATS_OFFERED
+
+# --- the model a Chat runs on (ADR 0025) ---
+
+CHOOSE_MODEL = "Which model should this chat run on?"
+USE_DEFAULT = "Use default"
+NO_MODELS = "No models are set up yet — add one in Settings → Models."
+# Said when "Use default" is picked before there is a Chat: whatever was being held for
+# the next one is dropped, and that Chat will be born inheriting like any other.
+PENDING_CLEARED = "Your next chat will run on the default model."
+MODEL_GONE = "That model is gone. Send /model to pick from the ones that are left."
+
+# What the browser's switcher says on a row it will not let you pick
+# (web/src/components/ModelSwitcherView.svelte); a tap here is told the same thing.
+MODEL_NOT_READY = "Not ready — add a key or sign in via Settings"
+# How the picker marks such a row, since an inline button cannot be greyed out: the
+# refusal's own first words, so the warning and the tap say the same thing.
+NOT_READY_SUFFIX = "(not ready)"
+
+# How `/status` marks a model the Chat never chose — it runs on whatever is Active, so
+# a later switch moves it.
+INHERITED_MODEL = "(default)"
+# How `/status` marks a Pending override: a model held for the Chat the next message
+# starts, not for one that exists.
+PENDING_MODEL = "(for your next chat)"
+
+# A model picker in a group would publish the install's model names to a room nobody
+# in the conversation owns.
+MODEL_IN_GROUP = "/model only works in a direct message. Set a group chat's model in the browser."
+
 # How files on a message are named to a Peer: their names, never their bytes and never
 # their paths (ADR 0020).
 FILES_LABEL = "Files:"
@@ -111,6 +143,7 @@ COMMANDS = (
     Command("stop", "Stop the turn that's running"),
     Command("status", "Show the profile and chat you're in"),
     Command("profile", "Choose which profile to talk to"),
+    Command("model", "Choose the model this chat runs on"),
     Command("help", "List these commands"),
 )
 
@@ -120,6 +153,9 @@ PROFILE_TOKEN = "profile:"
 CLEAR_TOKEN = "clear:"
 KEEP_TOKEN = "keep:"
 RESUME_TOKEN = "resume:"
+# A model option carries the configuration it offers; the bare token is "Use default",
+# which clears the Chat's override rather than naming a model.
+MODEL_TOKEN = "model:"
 # An answer names the Inquiry it resolves and the index of the option that was
 # tapped — an index, so a long option label cannot outgrow a platform's token cap.
 ANSWER_TOKEN = "answer:"
@@ -127,6 +163,34 @@ ANSWER_TOKEN = "answer:"
 
 def unknown_profile(name: str) -> str:
     return f"There is no profile called '{name}'. Send /profile to pick from the list."
+
+
+def unknown_model(name: str) -> str:
+    return f"There is no model called '{name}'. Send /model to pick from the list."
+
+
+def model_label(model: dict) -> str:
+    """One row in the `/model` picker: the model's name, marked when tapping it would
+    be refused — the browser greys such a row out, and a button cannot be."""
+    return f"{model['name']} {NOT_READY_SUFFIX}" if not model.get("ready", True) else model["name"]
+
+
+def model_set(name: str) -> str:
+    return f"This chat now runs on {name}."
+
+
+def model_pending(name: str) -> str:
+    """Said when a model is chosen with no Chat to write it to: the next message starts
+    a Chat already on it. Deliberately says "next chat", not "this one"."""
+    return f"Your next chat will run on {name}."
+
+
+def model_cleared(name: str) -> str:
+    """Said when a Chat gives up its own model: what it drops, and what it lands on —
+    which is the default here, the Task's model in a Run's thread."""
+    return "This chat no longer has a model of its own" + (
+        f" — it runs on {name}." if name else "."
+    )
 
 
 def unknown_command(name: str) -> str:
@@ -137,8 +201,11 @@ def help_text() -> str:
     return "\n".join(f"/{c.name} — {c.description}" for c in COMMANDS)
 
 
-def status_text(profile: str, title: str, turns: int) -> str:
-    return f"Profile: {profile}\nChat: {title}\nSize: {turns} exchanges"
+def status_text(profile: str, title: str, turns: int, model: str = "") -> str:
+    """Where a Peer stands: its profile, Chat and size, plus the model it runs on when
+    there is one to name."""
+    lines = [f"Profile: {profile}", f"Chat: {title}", f"Size: {turns} exchanges"]
+    return "\n".join([*lines, f"Model: {model}"] if model else lines)
 
 
 def relative_time(stamp: str) -> str:
@@ -617,6 +684,8 @@ class ChannelRouter:
             return await self._delete_chat(inbound, token.removeprefix(CLEAR_TOKEN))
         if token.startswith(RESUME_TOKEN):
             return await self._attach_chat(inbound, token.removeprefix(RESUME_TOKEN))
+        if token.startswith(MODEL_TOKEN):
+            return await self._choose_model(inbound, token.removeprefix(MODEL_TOKEN))
         if token.startswith(ANSWER_TOKEN):
             inquiry, _, index = token.removeprefix(ANSWER_TOKEN).partition(":")
             if not index.isdigit():
@@ -792,11 +861,113 @@ class ChannelRouter:
             return Refuse(unknown_profile(arg))
         return self._switch_to(inbound, match)
 
+    # ---- the model the Attached Chat runs on (ADR 0025) ----
+
+    async def _choose_model(self, inbound: InboundMessage, cid: str) -> Outcome:
+        """Apply a model tapped in the picker — the empty id being "Use default"."""
+        if not inbound.is_direct:
+            return Refuse(MODEL_IN_GROUP)
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        gateway = runtime[1]
+        if not cid:
+            return await self._set_model(inbound, gateway, None)
+        # Only a model that is still offered can be tapped onto a Chat.
+        match = self._model_by_id(gateway, cid)
+        if match is None:
+            return Refuse(MODEL_GONE)
+        return await self._set_model(inbound, gateway, match)
+
+    async def _set_model(self, inbound: InboundMessage, gateway, model: dict | None) -> Outcome:
+        """Set the Attached Chat's override to ``model``, or clear it for None, and say
+        what the Chat runs on now. With no Chat Attached the choice is held on the Peer
+        as a Pending override instead, for the Chat the next message starts.
+
+        A model that cannot run is refused rather than accepted and failed on the next
+        message — ahead of the chat lookup, so a held choice is held to the same bar as
+        an Attached one and the refusal arrives while the picker is still on screen."""
+        if model is not None and not model.get("ready", True):
+            return Refuse(MODEL_NOT_READY)
+        chat = self._attached_chat(inbound)
+        if chat is None:
+            self._peers.set_pending_model(
+                inbound.connection, inbound.chat_id, model["id"] if model else ""
+            )
+            return Reply(model_pending(model["name"]) if model else PENDING_CLEARED)
+        if not await gateway.update_chat(chat, model=model["id"] if model else ""):
+            return Refuse(CHAT_GONE)
+        if model is not None:
+            return Reply(model_set(model["name"]))
+        return Reply(model_cleared(await self._effective_model_name(gateway, chat)))
+
+    @staticmethod
+    def _model_by_id(gateway, cid: str) -> dict | None:
+        """The configured Text model with this id, or None when it is no longer offered."""
+        return next((m for m in gateway.text_models() if m["id"] == cid), None)
+
+    async def _effective_model_name(self, gateway, chat: str) -> str:
+        """What this Chat runs on now, named as the user knows it. Resolved by the
+        gateway, which is the only place the whole chain (env pin, Task, Active) lives."""
+        effective = await gateway.effective_model(chat)
+        # An env pin names a model that was never a configuration, so it names itself.
+        return (self._model_by_id(gateway, effective) or {}).get("name") or effective
+
+    async def _chat_model_line(self, gateway, chat: str) -> str:
+        """What `/status` says this Chat runs on: the model itself, marked a default
+        when the Chat has no override of its own and merely follows what is Active."""
+        named = await self._effective_model_name(gateway, chat)
+        if not named or await gateway.chat_model(chat):
+            return named
+        return f"{named} {INHERITED_MODEL}"
+
+    def _held_model_line(self, inbound: InboundMessage, gateway) -> str:
+        """What `/status` says about a Pending override, or nothing when none is held.
+        Read, never taken: only a message may spend what the Peer is holding."""
+        peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
+        held = peer.pending_model if peer is not None else None
+        if not held:
+            return ""
+        # A model deleted since it was chosen still names its id rather than nothing.
+        named = (self._model_by_id(gateway, held) or {}).get("name") or held
+        return f"{named} {PENDING_MODEL}"
+
+    async def _model_command(self, inbound: InboundMessage, arg: str) -> Outcome:
+        if not inbound.is_direct:
+            return Refuse(MODEL_IN_GROUP)
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        gateway = runtime[1]
+        models = gateway.text_models()
+        if not arg:
+            if not models:
+                return Reply(NO_MODELS)
+            return Choose(
+                CHOOSE_MODEL,
+                (
+                    Option(USE_DEFAULT, MODEL_TOKEN),
+                    *(
+                        Option(model_label(m), f"{MODEL_TOKEN}{m['id']}")
+                        for m in models[:MODELS_OFFERED]
+                    ),
+                ),
+            )
+
+        match = next(
+            (m for m in models if arg.casefold() in (m["id"].casefold(), m["name"].casefold())),
+            None,
+        )
+        if match is None:
+            return Refuse(unknown_model(arg))
+        return await self._set_model(inbound, gateway, match)
+
     async def _new_command(self, inbound: InboundMessage, arg: str) -> Outcome:
-        if self._attached_chat(inbound) is None:
-            return Reply(ALREADY_NEW)
+        fresh = self._attached_chat(inbound) is None
+        # Detach even when there is nothing to detach from: starting over also drops a
+        # model held for the Chat that never happened (ADR 0025).
         self._peers.detach(inbound.connection, inbound.chat_id)
-        return Reply(NEW_CHAT)
+        return Reply(ALREADY_NEW if fresh else NEW_CHAT)
 
     async def _clear_command(self, inbound: InboundMessage, arg: str) -> Outcome:
         chat = self._attached_chat(inbound)
@@ -837,12 +1008,16 @@ class ChannelRouter:
         resolved, gateway = runtime
         name = self._by_id(inbound)[resolved].name
         chat = self._attached_chat(inbound)
-        entry = None
-        if chat is not None:
-            entry = next((e for e in await gateway.list_chats() if e.get("chat_id") == chat), None)
+        if chat is None:
+            # The only branch a Pending override is reported on: a held model and an
+            # Attached Chat never coexist, so there is nothing here to adjudicate.
+            held = self._held_model_line(inbound, gateway)
+            return Reply(status_text(name, NO_CHAT_YET, 0, held))
+        entry = next((e for e in await gateway.list_chats() if e.get("chat_id") == chat), None)
         if entry is None:
             return Reply(status_text(name, NO_CHAT_YET, 0))
-        return Reply(status_text(name, chat_title(entry), entry["turns"]))
+        model = await self._chat_model_line(gateway, chat)
+        return Reply(status_text(name, chat_title(entry), entry["turns"], model))
 
     async def _help_command(self, inbound: InboundMessage, arg: str) -> Outcome:
         return Reply(help_text())
@@ -850,6 +1025,7 @@ class ChannelRouter:
     async def _command(self, inbound: InboundMessage, name: str, arg: str) -> Outcome:
         handlers = {
             "profile": self._profile_command,
+            "model": self._model_command,
             "new": self._new_command,
             "resume": self._resume_command,
             "clear": self._clear_command,
@@ -892,6 +1068,10 @@ class ChannelRouter:
             return runtime
         gateway = runtime[1]
 
+        # Taken *before* the Chat is resolved, and never after: starting a Chat attaches
+        # the Peer, and attaching drops what it was holding. This is the one place that
+        # gets to spend it.
+        chat_model = self._peers.take_pending_model(inbound.connection, inbound.chat_id)
         chat_id = self._chat_for(inbound)
 
         text = inbound.text
@@ -909,6 +1089,7 @@ class ChannelRouter:
             reply = await gateway.send_message(
                 text,
                 chat_id=chat_id,
+                chat_model=chat_model,
                 asker=asker,
                 attachments=attachments or [],
                 origin=peer_key(inbound.connection, inbound.chat_id),

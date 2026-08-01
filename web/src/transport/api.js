@@ -295,7 +295,13 @@ export const api = {
   health: () => j('GET', P('/health')),
   chats: () => j('GET', P('/chats')).then((d) => d.chats || []),
   deleteChat: (id) => j('DELETE', P('/chats/' + encodeURIComponent(id))),
-  // Partial chat-metadata update: {title?, starred?} (absent = unchanged).
+  // One chat: {chat_id, messages, model (its Chat override, '' = inherits),
+  // effective_model (what the next message runs on — the server resolves the chain,
+  // so the composer's switcher needs no second call)}. Unknown chats answer with an
+  // empty transcript, which is exactly the state of one not created yet.
+  chat: (id) => j('GET', P('/chats/' + encodeURIComponent(id))),
+  // Partial chat-metadata update: {title?, starred?, model?} (absent = unchanged;
+  // model '' clears the Chat override back to inheriting).
   updateChat: (id, patch) => j('PATCH', P('/chats/' + encodeURIComponent(id)), patch),
   // ---- Tasks: config CRUD; runs are chats on stream task-run:{id} ----
   tasks: () => j('GET', P('/tasks')).then((d) => d.tasks || []),
@@ -330,7 +336,8 @@ export const api = {
   // Per-profile model Active override (ADR 0015): point THIS profile's Active Text /
   // Live model at a shared install-wide config id; an empty string clears the override
   // (→ back to the install-wide Active). Distinct from the install-wide useLlmConfig /
-  // useLiveConfig the composer switcher and Models page call. → {ok, llm_override|
+  // useLiveConfig the Models page calls, and from the per-Chat override the composer's
+  // switcher sets with updateChat (ADR 0025). → {ok, llm_override|
   // live_override: id|null}. The effective + override ids are reported by settings().
   setLlmOverride: (configId = '') => j('POST', P('/settings/llm-override'), { config_id: configId }),
   setLiveOverride: (configId = '') => j('POST', P('/settings/live-override'), { config_id: configId }),

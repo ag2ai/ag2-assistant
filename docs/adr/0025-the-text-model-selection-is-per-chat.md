@@ -12,6 +12,17 @@ per-profile **Active override** (ADR 0015), only the *selection* moves down a le
 Resolution becomes, outermost first: **env pin > Chat override > Task model (inside a
 Run's thread only) > profile Active override > install-wide Active > env fallback**.
 
+That chain describes a turn a *person* sends. A caller that names a model outright —
+`send_message(..., llm_config_id=…)`, today only the Task service running a **Run**'s own
+turn — sits **above the Chat override**, directly under the env pin: naming a model means
+"run exactly this". So overriding a Run's thread retargets the follow-ups you type into
+it, while the Run itself keeps running on the Task's model, unchanged and unmigrated. The
+same thread therefore resolves two ways, by who is speaking, which is the point: the Task
+layer exists so a *manual* reply is answered by the model that did the work, and the
+override exists so you can ask one cheap follow-up about an expensive Run without editing
+the Task. A model chosen in a client before the Chat existed is not such a caller — it is
+the Chat's own first say, and sits at the Chat-override layer.
+
 An **env pin** is `AG2ASSISTANT_MODEL` in the *process* environment — a deployment-level
 model selection. A provider set without a model is not a pin of the model, and neither is
 a saved **Secret** whose env happens to carry the variable: that is user data, and letting
@@ -39,6 +50,13 @@ missing piece was never the mechanism; it was a place to record the intent per C
 - **A new Chat inherits the previous Chat's override** — rejected: it re-introduces the
   invisible drift the override exists to remove. A Chat override should always be
   something you did to *that* Chat.
+- **Let a Chat override outrank an explicitly-passed `llm_config_id`**, so that
+  overriding a Run's thread also moves the Run's own turns — rejected: it turns a chat
+  window into a silent editor of Task configuration. A Task's model is a property of the
+  automated work, chosen once and expected to hold; a thread override is a property of
+  the conversation you are having about it. Overriding a thread to a cheap model to ask
+  one question must not quietly downgrade every future run of that Task, and there would
+  be nothing in the Task editor to show that it had.
 - **Per-chat Live model too** — rejected for now: Live resolves on its own path from its
   own store, and a voice session's binding to a Chat is a separate question we did not
   want to answer in passing.
@@ -63,8 +81,13 @@ missing piece was never the mechanism; it was a place to record the intent per C
   default, not the Task's model, even though the Run itself ran on the Task's model. The
   auto-resolution from `chat_id` that already serves folder and command grants is
   extended to cover the model.
-- **A deleted model leaves a dangling override**, which falls silently down the chain and
-  is never swept up — matching the profile override's existing "degrade, don't fail". The
+- **A deleted model leaves a dangling override**, which falls silently to the layer
+  directly beneath it — in a Run's thread, the Task's model — and is never swept up,
+  matching the profile override's existing "degrade, don't fail". Degrading is *walking
+  the chain*, not skipping to the bottom: the drop happens where the override is read,
+  so the turn and `effective_model` cannot disagree about it. A model that still exists
+  but cannot run is not dangling and gets no rescue: that turn fails, exactly as an
+  unusable install-wide Active does today. The
   switcher always renders the *effective* model, so the display never lies; it simply
   does not mention the ghost. Deleting a model therefore stays O(1) instead of rewriting
   every transcript doc that ever referenced it.
@@ -72,5 +95,12 @@ missing piece was never the mechanism; it was a place to record the intent per C
   exists is ephemeral in the WebUI (component state, lost on reload) and durable on a
   Channel (**Pending override**, in `peers.json`). Accepted: a bot has no client to hold
   it, and materialising an empty Chat just to store it would litter the drawer.
+- **The WebUI switcher waits for its Chat read before it will act.** Which of the two
+  mechanisms a pick uses — a patch, or a model riding the first turn — depends on
+  whether the Chat exists, which only the read can say; and the wrong mechanism fails
+  *silently*, because the send path ignores a client-supplied model on a Chat that
+  already has a transcript. So "not loaded yet" is a third state, not a synonym for
+  "no Chat yet": the control is inert for that moment, and a pick that somehow beat the
+  read is reconciled into a patch when it lands.
 - **A group member cannot set the model at all**, though the same member can `/clear` the
   Chat. See the disclosure argument above.

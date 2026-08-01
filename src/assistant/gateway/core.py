@@ -48,6 +48,7 @@ from assistant.a2ui import (
 )
 from assistant.agent import create_agent, universal_turn_prompt
 from assistant.codex_auth import CodexAuth, CodexAuthError
+from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled, TurnFailed
 from assistant.folders import FolderStore
@@ -290,7 +291,11 @@ class Gateway:
     def _agent_for(self, llm_config_id: str | None):
         """The turn's agent: the profile default, or a cached per-LLM-config agent
         when a task pins a model. Unknown ids fall back to the default (the task
-        may reference a since-deleted configuration — degrade, don't fail)."""
+        may reference a since-deleted configuration — degrade, don't fail).
+
+        This is the LAST layer's degradation, not the general one: a dangling Chat
+        override is already dropped in ``_resolve_turn_model``, which walks it down to
+        the next layer instead (ADR 0025) — falling back here would skip the Task."""
         if not llm_config_id:
             return self._agent
         agent = self._model_agents.get(llm_config_id)
@@ -310,17 +315,40 @@ class Gateway:
         self._model_agents[llm_config_id] = agent
         return agent
 
-    async def _resolve_turn_model(self, chat_id: str, llm_config_id: str | None) -> str | None:
-        """The shared model configuration this turn runs on: env pin > Chat override >
-        the Task's model > the profile/install-wide Active, which is None (ADR 0025)."""
+    async def _resolve_turn_model(
+        self, chat_id: str, llm_config_id: str | None, chat_model: str = ""
+    ) -> str | None:
+        """The shared model configuration this turn runs on: env pin > an explicitly
+        passed ``llm_config_id`` > Chat override > the Task's model (a Run's thread only)
+        > the profile/install-wide Active, which is None (ADR 0025).
+
+        ``llm_config_id`` is a caller naming the model outright — today only the Task
+        service, for a Run's own turn. It outranks the Chat override: overriding a Run's
+        thread retargets the follow-ups you type there, never the automated work the Task
+        was configured to do. A manual reply passes nothing and resolves down the chain,
+        where the Chat override does outrank the Task's model.
+
+        ``chat_model`` is a selection a client made before this Chat existed; it sits at
+        the Chat-override layer, but only for the turn that CREATES the Chat (which then
+        records it — see ``_ensure_transcript_stub``). A Chat that already exists has
+        already had its say, whether that say was "inherit" or a model of its own; a
+        per-message model is deliberately not a thing (ADR 0025).
+        """
         if self._config.llm.env_pinned:
             return None
-        override = await self.chat_model(chat_id)
-        if override:
-            return override
-        # `llm_config_id` is the Task's model when a run passes it explicitly; a manual
-        # reply typed into that run's thread resolves the same model from the stream.
-        return llm_config_id or await self._task_model_for_stream(chat_id) or None
+        if llm_config_id:
+            return llm_config_id
+        doc = await self._read_chat_doc(chat_id, "chat model read")
+        chosen = doc.get("model") or (chat_model.strip() if not doc else "")
+        # A DANGLING override — its configuration was deleted — is no longer the Chat's
+        # say, so it degrades to the layer directly beneath it (in a Run's thread, the
+        # Task's model) rather than all the way to the profile default. Resolving it
+        # here rather than in ``_agent_for`` is also what keeps ``effective_model``
+        # honest: both read the same answer. A configuration that still exists but
+        # cannot run (no Secret) is NOT dangling and is deliberately not rescued — the
+        # turn fails as an unusable install-wide Active does (ADR 0025).
+        override = LlmConfigStore(self._config.paths).resolved_override(chosen)
+        return override or await self._task_model_for_stream(chat_id) or None
 
     async def _task_model_for_stream(self, chat_id: str) -> str:
         """The model the Task behind a run stream chose — '' for any other stream, or
@@ -525,6 +553,7 @@ class Gateway:
         task_id: str | None = None,
         origin: str = "",
         attachment_names: tuple[str, ...] = (),
+        chat_model: str = "",
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -540,7 +569,9 @@ class Gateway:
         as they're emitted — the voice channel forwards them so its client folds
         them with the same reducer the text path uses. Conversation/audio events are
         omitted (voice renders those itself). `llm_config_id` is a task's chosen model,
-        one layer of `_resolve_turn_model` — which settles this turn's model here, once.
+        the outermost layer of `_resolve_turn_model` below an env pin — which settles this
+        turn's model here, once. Naming it means "run exactly this", so a Run's own turn
+        is unmoved by an override set on its thread (ADR 0025).
         `task_id`, when this turn is a task run, scopes any command grant
         the turn mints via "always allow" to that task (survives its future runs)
         instead of persisting it globally; when omitted it is auto-resolved from
@@ -549,7 +580,9 @@ class Gateway:
         folder-grant resolution for that turn. `origin` names the Peer this message
         was written from, when a Channel wrote it — the mirror never sends a Peer its
         own turn back (ADR 0020). `attachment_names` are what those attachments are
-        called, so the mirror can name a file instead of carrying it.
+        called, so the mirror can name a file instead of carrying it. `chat_model` is a
+        model chosen in a client before this Chat existed — adopted as the Chat's own
+        override by the message that creates it, ignored once it exists (ADR 0025).
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -558,7 +591,7 @@ class Gateway:
         # Refresh first: subscription mode may rebuild the default agent with a
         # rotated OAuth token, and this turn must run on the fresh one.
         await self._ensure_subscription_fresh()
-        agent = self._agent_for(await self._resolve_turn_model(chat_id, llm_config_id))
+        agent = self._agent_for(await self._resolve_turn_model(chat_id, llm_config_id, chat_model))
 
         # A reply typed into a run's thread arrives without task context — resolve
         # it so task-scoped folder/command grants cover manual turns too.
@@ -577,7 +610,7 @@ class Gateway:
             # only after it completes. Without this, a chat in flight lives solely in
             # the web page's local state and vanishes on a profile switch (full-page
             # nav). The completed-turn write below stays the authority (§_persist_turn).
-            await self._ensure_transcript_stub(chat_id, text)
+            await self._ensure_transcript_stub(chat_id, text, chat_model)
             prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
             a2ui_runtime = None
             try:
@@ -879,7 +912,7 @@ class Gateway:
     def _transcript_path(self, chat_id: str) -> str:
         return f"{_TRANSCRIPT_PREFIX}{quote(chat_id, safe='')}.json"
 
-    async def _ensure_transcript_stub(self, chat_id, user_text) -> None:
+    async def _ensure_transcript_stub(self, chat_id, user_text, chat_model: str = "") -> None:
         """Write a minimal transcript doc as soon as a user message is accepted, so
         the chat is listable *during* the turn (not only after it completes).
 
@@ -888,7 +921,11 @@ class Gateway:
         from a lone pending user message, so we leave the existing doc untouched. The
         completing turn's ``_append_transcript`` fills in the agent reply in place.
         Called under the chat lock, so it never races the completion write. Best-
-        effort: a persistence hiccup here must not fail the user's turn."""
+        effort: a persistence hiccup here must not fail the user's turn.
+
+        ``chat_model`` is a model the user picked in a client before this Chat existed
+        (ADR 0025): the Chat is born already overridden to it, so the choice survives
+        the reload that the client-side one deliberately does not."""
         if self._writer is None or self._event_store is None:
             return
         path = self._transcript_path(chat_id)
@@ -901,6 +938,8 @@ class Gateway:
                 "updated": datetime.now().astimezone().isoformat(),
                 "title": None,  # named after the first exchange completes
             }
+            if chat_model.strip():
+                doc["model"] = chat_model.strip()
             await self._event_store.write(path, json.dumps(doc))
         except Exception as exc:
             log_suppressed("transcript stub write", exc, chat_id=chat_id)
@@ -1163,6 +1202,27 @@ class Gateway:
         """This chat's Chat override — the model configuration it runs on whatever is
         Active. '' when it inherits (no override recorded), including unknown chats."""
         return (await self._read_chat_doc(chat_id, "chat model read")).get("model") or ""
+
+    def text_models(self) -> list[dict]:
+        """The install's shared Text models as a client offering one to a Chat reads
+        them: each configuration's id and name, plus whether it can run right now —
+        the same readiness the browser's switcher greys a row out on."""
+        store = LlmConfigStore(self._config.paths)
+        bridge = parse_bridge(self._config.acp_bridge, self._config.acp_bridge_token)
+        return [
+            {
+                "id": entry.get("id", ""),
+                "name": entry.get("name", ""),
+                "model": entry.get("model", ""),
+                "ready": store.usable(
+                    entry,
+                    self._config.secret_env,
+                    search_path=self._config.search_path,
+                    bridge=bridge,
+                ),
+            }
+            for entry in store.list_configs()
+        ]
 
     async def update_chat(
         self,
