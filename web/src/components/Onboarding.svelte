@@ -22,7 +22,7 @@
   import { setActiveProfileId } from '../lib/profile.js'
   import { setAccent } from '../design/palette.js'
   import { FOCUS, focusLabel } from '../lib/focuses.js'
-  import { TYPE_LABEL } from '../lib/llm.js'
+  import { TYPE_LABEL } from '../lib/providerLabels.js'
   import {
     CLI_TYPE,
     agentAvailability,

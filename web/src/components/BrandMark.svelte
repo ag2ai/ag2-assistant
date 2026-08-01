@@ -1,7 +1,6 @@
 <script>
   // AG2 Assistant — BrandMark: a third party's official logo, from lib/brandMarks.js.
-  // Decoration beside a text label, so it is hidden from screen readers; renders
-  // nothing for an unknown key, leaving the fallback to the caller.
+  // Decoration, so hidden from screen readers; an unknown key draws nothing.
   import { brandMark } from '../lib/brandMarks.js'
 
   // brand: a platform id ('telegram', 'github', …) or an LLM/voice provider type.
@@ -20,8 +19,8 @@
 {#if mark}
   <svg
     xmlns="http://www.w3.org/2000/svg"
+    class="brandmark"
     width={size} height={size} viewBox={mark.viewBox || '0 0 24 24'}
-    style="display:inline-block;flex:none;vertical-align:middle"
     aria-hidden="true"
   >
     {#if mark.kind === 'multi'}
@@ -30,7 +29,7 @@
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
           {#each mark.stops as stop, i}
-            <stop offset={i / (mark.stops.length - 1)} stop-color={stop} />
+            <stop offset={i / Math.max(1, mark.stops.length - 1)} stop-color={stop} />
           {/each}
         </linearGradient>
       </defs>

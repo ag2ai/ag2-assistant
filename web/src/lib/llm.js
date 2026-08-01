@@ -1,8 +1,8 @@
 // Shared vocabulary for the install-wide named LLM configurations — one source of
-// truth for the human type label and the client-side "can this run right now?"
-// predicate. Consumed by Settings → Models (ModelsPage) and the composer's model
-// switcher so the two surfaces speak identically.
-// Provider marks live in lib/brandMarks.js.
+// truth for the client-side "can this run right now?" predicate. Consumed by
+// Settings → Models (ModelsPage) and the composer's model switcher so the two
+// surfaces speak identically. Type labels live in lib/providerLabels.js, marks in
+// lib/brandMarks.js.
 import { writable } from 'svelte/store'
 import { api } from '../transport/api.js'
 
@@ -28,14 +28,6 @@ export async function loadLlmConfigs() {
     providerDeps: d.provider_deps || {},
     loaded: true,
   })
-}
-
-// type -> the label the UI shows for it.
-export const TYPE_LABEL = {
-  openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
-  openai_subscription: 'OpenAI · ChatGPT subscription',
-  anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
-  claude_code: 'Claude Code · CLI login', codex: 'Codex · CLI login',
 }
 
 // Whether a config can actually run right now — the signal behind the health dot.

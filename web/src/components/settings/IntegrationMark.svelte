@@ -1,7 +1,6 @@
 <script>
   // One platform's mark, wherever Settings → Integrations names a platform. An
-  // unrecognised platform falls back to a neutral square carrying the name's first
-  // letter, which keeps two unknown Connections distinguishable.
+  // unrecognised platform falls back to a square carrying the name's first letter.
   import BrandMark from '../BrandMark.svelte'
   import { brandMark } from '../../lib/brandMarks.js'
 
@@ -9,7 +8,7 @@
   // platform is unrecognised. sm: the smaller size the Add grid draws marks at.
   let { platform, name = '', sm = false } = $props()
 
-  const known = $derived(!!brandMark(platform))
+  const known = $derived(brandMark(platform) !== null)
 </script>
 
 {#if known}

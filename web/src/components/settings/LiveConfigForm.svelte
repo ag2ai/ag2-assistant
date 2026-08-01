@@ -8,7 +8,7 @@
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api.js'
   import { getSettings } from './context.svelte.js'
-  import { PROVIDER_LABEL } from '../../lib/live.js'
+  import { PROVIDER_LABEL } from '../../lib/providerLabels.js'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'
 

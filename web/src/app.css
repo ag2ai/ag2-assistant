@@ -175,6 +175,9 @@
 }
 .iconbtn:hover { color: var(--ink); background: var(--code); }
 .iconbtn:disabled { opacity: .5; cursor: default; }
+/* A third party's brand mark (components/BrandMark.svelte) — sits inline beside a
+   label and never flexes, whatever size the caller asks for. */
+.brandmark { display: inline-block; flex: none; vertical-align: middle; }
 /* On/Off toggle switch — the single 2-position control for enable/disable across
    Settings (Skills install-wide + per-profile). A track with a sliding knob; the
    track fills accent when on. Use with role="switch" + aria-checked and a
@@ -296,8 +299,8 @@
 .settings .cnrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; margin-bottom: 6px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
 .settings .cnrow:hover { background: var(--code); }
 .settings .cnrow:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-/* The letter square standing in for an unrecognised platform. Sized to the brand mark
-   it substitutes for, so a known and an unknown row lead with the same width. */
+/* The letter square standing in for an unrecognised platform, sized to the brand
+   mark it substitutes for. */
 .settings .cnmark { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: color-mix(in srgb, var(--tint) 22%, transparent); color: var(--tint); font-size: 11px; font-weight: 700; }
 .settings .cnmark.sm { width: 16px; height: 16px; border-radius: 5px; font-size: 9px; }
 .settings .cnmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

@@ -9,7 +9,8 @@
   import { api } from '../../transport/api.js'
   import { SETTINGS_PAGE } from '../../store.js'
   import { replaceOverlay } from '../../router.js'
-  import { PROVIDER_LABEL, isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import { isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import { PROVIDER_LABEL } from '../../lib/providerLabels.js'
   import { getSettings } from './context.svelte.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 

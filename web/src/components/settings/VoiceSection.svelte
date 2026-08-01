@@ -10,7 +10,8 @@
   import { getSettings } from './context.svelte.js'
   import LiveConfigForm from './LiveConfigForm.svelte'
   import Icon from '../Icon.svelte'
-  import { PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import { liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import { PROVIDER_LABEL } from '../../lib/providerLabels.js'
   import BrandMark from '../BrandMark.svelte'
 
   const ctx = getSettings()

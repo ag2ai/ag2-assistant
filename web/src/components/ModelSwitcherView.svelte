@@ -8,9 +8,6 @@
   import Icon from './Icon.svelte'
   import BrandMark from './BrandMark.svelte'
 
-  // The size a switcher row's mark is drawn at, matched by the task page's switcher.
-  const MARK_SIZE = 14
-
   let {
     configs = [],
     activeId = null,        // the id shown selected on the button + checked in the menu
@@ -46,6 +43,11 @@
     open = false
     onDefault?.()
   }
+</script>
+
+<script module>
+  // The size every .modelsw-* row draws its brand mark at, here and on the task page.
+  export const MARK_SIZE = 14
 </script>
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') open = false }} />
