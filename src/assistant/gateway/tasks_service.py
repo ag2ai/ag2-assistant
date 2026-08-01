@@ -17,8 +17,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from assistant import connections
 from assistant.config import Config, load_config
+from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
 from assistant.tasks.model import (
     Run,
@@ -30,7 +30,7 @@ from assistant.tasks.model import (
     normalize_schedule,
 )
 from assistant.tasks.scheduling import compute_next_run, parse_dt, schedule_text
-from assistant.tasks.summary import suggest_task_meta, summarize_run
+from assistant.tasks.summary import default_summarizer, suggest_task_meta, summarize_run
 
 
 def _run_surface(task: Task, prior: list[str], folder_lines: list[str]) -> str:
@@ -121,9 +121,12 @@ class TaskService:
         max_concurrent: int = 3,
         scheduler_interval: float = 30.0,
         config_factory: Callable[[], Config] | None = None,
+        summary_factory: Callable[[Config], object] | None = None,
     ) -> None:
         self._config = config or load_config()
         self._config_factory = config_factory or load_config
+        # How the cheap-model distiller (run summaries, task auto-naming) is built.
+        self._summary_factory = summary_factory or default_summarizer
         self._store = store
         self._inquiries = inquiry_store
         self._scheduler = None
@@ -200,7 +203,11 @@ class TaskService:
         """A task queued before Connections existed points at a platform name; move it
         onto that platform's Connection so its outcome still reaches the chat."""
         try:
-            await self._store.rekey_origin_channels(connections.first_by_platform())
+            # The resolved secret env, not an empty one: this may be the first read of
+            # connections.json, and a store with no environment would migrate a
+            # token-seeded install into nothing.
+            store = ConnectionStore(self._config.paths, self._config.secret_env)
+            await self._store.rekey_origin_channels(store.first_by_platform())
         except Exception as exc:
             from assistant.observability import log_suppressed
 
@@ -253,9 +260,9 @@ class TaskService:
     def _validate_model(self, model: str | None) -> None:
         if not model:
             return
-        from assistant import llm_configs
+        from assistant.llm_configs import LlmConfigStore
 
-        if llm_configs.get_config(model) is None:
+        if LlmConfigStore(self._config.paths).get_config(model) is None:
             raise ValueError(
                 f"unknown model configuration id {model!r} — pick one from the "
                 "configured LLM configurations (or omit for the profile default)"
@@ -280,7 +287,9 @@ class TaskService:
         name = (name or "").strip()
         description = (description or "").strip()
         if not name:
-            gen_name, gen_desc = await suggest_task_meta(self._config, prompt)
+            gen_name, gen_desc = await suggest_task_meta(
+                self._config, prompt, agent_factory=self._summary_factory
+            )
             name = gen_name
             description = description or gen_desc
         task = await self._store.create_task(
@@ -465,7 +474,9 @@ class TaskService:
         if run_id in self._stopping:  # user Stop → the turn returned "" via TurnCancelled
             await self._finish(run_id, RunStatus.CANCELLED)
             return
-        summary = await summarize_run(self._config, task.prompt, reply)
+        summary = await summarize_run(
+            self._config, task.prompt, reply, agent_factory=self._summary_factory
+        )
         await self._finish(run_id, RunStatus.COMPLETED, summary=summary)
         await self._deliver(task, summary or (reply or "").strip()[:400])
 

@@ -23,8 +23,8 @@ from assistant.channels.router import (
 from assistant.channels.telegram import TelegramChannel
 
 
-def _telegram_channel():
-    ch = TelegramChannel(token="fake-token")
+def _telegram_channel(**kwargs):
+    ch = TelegramChannel(token="fake-token", **kwargs)
     ch._bot_username = "ag2assistantbot"
     ch._bot_id = 999
     return ch
@@ -93,9 +93,8 @@ async def test_a_reply_is_edited_into_the_placeholder_with_no_buttons():
     assert message.replies == []  # a short reply stays a single message
 
 
-async def test_a_long_reply_fills_the_placeholder_then_continues_in_new_messages(monkeypatch):
-    monkeypatch.setattr(telegram_mod, "TELEGRAM_LIMIT", 15)
-    ch = _telegram_channel()
+async def test_a_long_reply_fills_the_placeholder_then_continues_in_new_messages():
+    ch = _telegram_channel(message_limit=15)
     placeholder = _FakeMessage()
     message = _FakeMessage()
 
@@ -105,9 +104,8 @@ async def test_a_long_reply_fills_the_placeholder_then_continues_in_new_messages
     assert message.replies == ["Second part.", "Third part."]
 
 
-async def test_a_long_choice_puts_the_buttons_under_the_last_chunk(monkeypatch):
-    monkeypatch.setattr(telegram_mod, "TELEGRAM_LIMIT", 15)
-    ch = _telegram_channel()
+async def test_a_long_choice_puts_the_buttons_under_the_last_chunk():
+    ch = _telegram_channel(message_limit=15)
     placeholder = _FakeMessage()
     message = _FakeMessage()
 
@@ -585,9 +583,8 @@ async def test_a_silent_outcome_keeps_a_traced_placeholder():
     assert placeholder.text == _trace_text("read_file")
 
 
-async def test_a_long_reply_beneath_a_trace_is_still_split(monkeypatch):
-    monkeypatch.setattr(telegram_mod, "TELEGRAM_LIMIT", 15)
-    ch = _telegram_channel()
+async def test_a_long_reply_beneath_a_trace_is_still_split():
+    ch = _telegram_channel(message_limit=15)
     placeholder = _FakeMessage()
     message = _FakeMessage()
 

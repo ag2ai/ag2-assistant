@@ -11,9 +11,13 @@ from typing import TYPE_CHECKING, Protocol
 
 from ag2.events import ToolCallsEvent
 
-from assistant import connections, pairing, peers
+from assistant import connections
+from assistant import pairing as pairing_mod
 from assistant.channels.base import InboundMessage, should_respond
 from assistant.observability import log_suppressed
+from assistant.pairing import PairingStore
+from assistant.paths import Paths
+from assistant.peers import Peer, PeerStore
 
 if TYPE_CHECKING:
     from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
@@ -24,7 +28,7 @@ ATTACHMENT_ONLY_PROMPT = "Here is a file I'm sharing with you."
 # Said for a bare attachment whose download brought nothing back.
 ATTACHMENT_UNREADABLE = "I sent you a file, but it could not be read."
 
-# Platforms with a command surface. Discord and Slack have none (ADR 0019): they sit
+# Platforms with a command surface. Discord and Slack have none (ADR 0022): they sit
 # in their Channel's default profile, and a leading slash there is just words.
 COMMAND_PLATFORMS = ("telegram",)
 
@@ -452,12 +456,14 @@ def parse_command(text: str) -> tuple[str, str] | None:
 class ChannelRouter:
     """Turns a normalised inbound message into a platform-neutral outcome.
 
-    Built once per install and shared by every adapter (ADR 0019): the runtime a
+    Built once per install and shared by every adapter (ADR 0022): the runtime a
     message runs on is resolved when the message arrives, not captured at start.
     """
 
-    def __init__(self, directory: ProfileDirectory) -> None:
+    def __init__(self, directory: ProfileDirectory, paths: Paths) -> None:
         self._directory = directory
+        self._peers = PeerStore(paths)
+        self._pairing = PairingStore(paths)
 
     def accepts(self, inbound: InboundMessage) -> bool:
         """Whether this message runs a turn — an adapter's gate for showing platform
@@ -483,17 +489,17 @@ class ChannelRouter:
     def paired(self, inbound: InboundMessage) -> bool:
         """Whether this account may be served by the Connection it wrote to, pinning any
         pending handle it presents. Adapters call this before acting on a message."""
-        return pairing.is_paired(inbound.connection, inbound.sender_id, inbound.sender_handle)
+        return self._pairing.is_paired(inbound.connection, inbound.sender_id, inbound.sender_handle)
 
     def _pair(self, inbound: InboundMessage) -> Outcome:
         """Redeem the code an unpaired account has sent, against the Connection it sent
         it to; an unknown code is met with silence."""
-        outcome = pairing.redeem(
+        outcome = self._pairing.redeem(
             inbound.connection, inbound.text, inbound.sender_id, inbound.sender_handle
         )
-        if outcome == pairing.PAIRED:
+        if outcome == pairing_mod.PAIRED:
             return Reply(PAIRED)
-        if outcome == pairing.EXPIRED:
+        if outcome == pairing_mod.EXPIRED:
             return Refuse(CODE_EXPIRED)
         return NOTHING
 
@@ -518,10 +524,10 @@ class ChannelRouter:
 
     def _select(self, inbound: InboundMessage, pid: str) -> None:
         """Record this Peer's profile, leaving an unchanged selection alone."""
-        peer = peers.get_peer(inbound.connection, inbound.chat_id)
+        peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
         if peer is not None and peer.profile == pid:
             return  # nothing moved; don't rewrite the registry on every message
-        peers.select_profile(
+        self._peers.select_profile(
             inbound.connection,
             inbound.chat_id,
             pid,
@@ -534,7 +540,7 @@ class ChannelRouter:
     ) -> str | None:
         """The profile this Peer is talking to right now, without choosing one for it.
         Its own selection, else the Channel's default, else the sole running profile."""
-        peer = peers.get_peer(inbound.connection, inbound.chat_id)
+        peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
         if peer is not None and peer.profile in by_id:
             return peer.profile
         # The Connection default is a live fallback, never a stored selection: changing
@@ -556,13 +562,13 @@ class ChannelRouter:
             # A Chat cannot cross Profiles, so leaving one always leaves its Chat —
             # including for a Peer that was riding the Channel default rather than a
             # selection of its own.
-            peers.detach(inbound.connection, inbound.chat_id)
+            self._peers.detach(inbound.connection, inbound.chat_id)
         self._select(inbound, profile.id)
         return Reply(switched_to(profile.name) if moved else already_in(profile.name))
 
     def _withdrawn(self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]) -> bool:
         """Whether this Peer's own selection is out of reach from this surface."""
-        peer = peers.get_peer(inbound.connection, inbound.chat_id)
+        peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
         return peer is not None and peer.profile is not None and peer.profile not in by_id
 
     def _unreachable(self, inbound: InboundMessage, by_id: dict[str, AvailableProfile]) -> Outcome:
@@ -631,7 +637,7 @@ class ChannelRouter:
             return Refuse(NO_PROFILE)
         return resolved, gateway
 
-    def _exposed_to(self, peer: peers.Peer) -> bool:
+    def _exposed_to(self, peer: Peer) -> bool:
         """Whether the profile this Peer chose is still reachable from its surface — the
         same rule `_withdrawn` applies inbound, on the side no message passes through."""
         if peer.profile is None:
@@ -640,12 +646,12 @@ class ChannelRouter:
         return peer.profile in {p.id for p in self._directory.available_profiles(surface)}
 
     def _attached_chat(self, inbound: InboundMessage) -> str | None:
-        peer = peers.get_peer(inbound.connection, inbound.chat_id)
+        peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
         return peer.chat if peer is not None else None
 
     def _chat_for(self, inbound: InboundMessage) -> str:
         """The Chat this Peer speaks in, started on first use."""
-        return self._attached_chat(inbound) or peers.start_chat(
+        return self._attached_chat(inbound) or self._peers.start_chat(
             inbound.connection,
             inbound.chat_id,
             platform=inbound.platform,
@@ -671,7 +677,7 @@ class ChannelRouter:
         entry = next((e for e in await gateway.list_chats() if e.get("chat_id") == chat), None)
         if entry is None:
             return Refuse(CHAT_GONE)
-        peers.attach(
+        self._peers.attach(
             inbound.connection,
             inbound.chat_id,
             chat,
@@ -692,7 +698,7 @@ class ChannelRouter:
         ``files`` are the names of the files attached to the message; they are named,
         never carried.
         """
-        peer = peers.attached_to(chat)
+        peer = self._peers.attached_to(chat)
         if peer is None or peer_key(peer.connection, peer.chat_id) == origin:
             return
         if not self._exposed_to(peer):
@@ -704,7 +710,7 @@ class ChannelRouter:
     async def ask(self, chat: str, inquiry: str, text: str, options: tuple[str, ...]) -> None:
         """Show a question raised in ``chat`` to the Peer Attached to it, carrying the
         same options the browser offers so either surface can resolve it (ADR 0020)."""
-        peer = peers.attached_to(chat)
+        peer = self._peers.attached_to(chat)
         if peer is None or not self._exposed_to(peer):
             return
         question = Choose(
@@ -719,7 +725,7 @@ class ChannelRouter:
     async def retract(self, chat: str, inquiry: str) -> None:
         """Take back a question the Attached Peer was shown, once it has been resolved
         — on that platform, in the browser, or anywhere else."""
-        peer = peers.attached_to(chat)
+        peer = self._peers.attached_to(chat)
         if peer is None:
             return
         await self._directory.retract_channel(peer.connection, peer.chat_id, inquiry)
@@ -750,7 +756,7 @@ class ChannelRouter:
         if not isinstance(runtime, tuple):
             return runtime
         await runtime[1].delete_chat(chat)
-        peers.forget_chat(chat)
+        self._peers.forget_chat(chat)
         return Reply(CLEARED)
 
     # ---- commands ----
@@ -776,7 +782,7 @@ class ChannelRouter:
     async def _new_command(self, inbound: InboundMessage, arg: str) -> Outcome:
         if self._attached_chat(inbound) is None:
             return Reply(ALREADY_NEW)
-        peers.detach(inbound.connection, inbound.chat_id)
+        self._peers.detach(inbound.connection, inbound.chat_id)
         return Reply(NEW_CHAT)
 
     async def _clear_command(self, inbound: InboundMessage, arg: str) -> Outcome:

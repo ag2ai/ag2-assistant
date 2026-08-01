@@ -144,11 +144,14 @@ class TraceEditor:
 class TelegramChannel(Channel):
     platform = "telegram"
 
-    def __init__(self, token: str = "", connection: str = "") -> None:
+    def __init__(
+        self, token: str = "", connection: str = "", *, message_limit: int = TELEGRAM_LIMIT
+    ) -> None:
         self._token = token
         self.connection = connection
+        self._message_limit = message_limit
         if not self._token:
-            raise ValueError("a Telegram bot token is required.")
+            raise ValueError("Telegram needs a bot token; pass token= (TELEGRAM_BOT_TOKEN).")
         self._app: Application | None = None
         self._router: ChannelRouter | None = None
         self._bot_username: str | None = None
@@ -167,7 +170,7 @@ class TelegramChannel(Channel):
         # processes updates one-at-a-time and HITL deadlocks.
         self._app = Application.builder().token(self._token).concurrent_updates(True).build()
         self._app.add_handler(CallbackQueryHandler(self._on_callback))
-        # Commands are NOT excluded: the router owns the command surface (ADR 0019),
+        # Commands are NOT excluded: the router owns the command surface (ADR 0022),
         # so `/profile` has to reach it rather than being dropped here.
         self._app.add_handler(MessageHandler(filters.TEXT | filters.ATTACHMENT, self._on_message))
 
@@ -246,7 +249,7 @@ class TelegramChannel(Channel):
 
     async def _send(self, chat_id: str, text: str) -> None:
         """Send text to a chat as fresh message(s), rendered and within the size cap."""
-        for chunk in split_for_limit(self.format_outbound(text), TELEGRAM_LIMIT):
+        for chunk in split_for_limit(self.format_outbound(text), self._message_limit):
             await self._app.bot.send_message(int(chat_id), chunk)
 
     async def notify(self, chat_id: str, text: str) -> None:
@@ -270,7 +273,7 @@ class TelegramChannel(Channel):
         """Show a question mirrored from another surface, remembering the message so a
         reply to it answers it and a resolution elsewhere can take it back."""
         markup = self._options_markup(question)
-        chunks = split_for_limit(self.format_outbound(question.text), TELEGRAM_LIMIT)
+        chunks = split_for_limit(self.format_outbound(question.text), self._message_limit)
         message = None
         for index, chunk in enumerate(chunks):
             # Buttons belong under the whole question, so only the last chunk carries them.
@@ -437,7 +440,7 @@ class TelegramChannel(Channel):
         """Deliver text within Telegram's size cap: the first chunk edits the
         placeholder when there is one to edit, the rest follow as new messages in
         order."""
-        chunks = split_for_limit(text, TELEGRAM_LIMIT)
+        chunks = split_for_limit(text, self._message_limit)
         for index, chunk in enumerate(chunks):
             # Buttons belong under the whole answer, so only the last chunk carries them.
             markup_for_chunk = markup if index == len(chunks) - 1 else None

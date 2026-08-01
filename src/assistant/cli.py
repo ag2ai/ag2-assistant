@@ -9,10 +9,17 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from assistant import __version__, codex_auth, connections, profiles
-from assistant.agent import ask, tz_unset_in_container
-from assistant.channels import TOKEN_ARGS, ChannelRouter, get_channel
-from assistant.config import Config, load_config
+from assistant import __version__, profiles
+from assistant.agent import ask
+from assistant.channels import TOKEN_ARGS, AvailableProfile, ChannelRouter, get_channel
+from assistant.codex_auth import (
+    CodexAuth,
+    CodexAuthError,
+    build_authorize_url,
+    generate_pkce,
+)
+from assistant.config import Config, load_config, tz_unset_in_container
+from assistant.connections import ConnectionStore
 from assistant.folders import DuplicatePath, FolderStore
 from assistant.gateway.app import create_app
 from assistant.gateway.core import Gateway, build_gateway
@@ -23,21 +30,28 @@ from assistant.gateway.profile_manager import (
     resolve_active_profile,
 )
 from assistant.hitl import DesktopAsker
-from assistant.integrations.google_auth import (
-    credentials_path,
-    has_token,
-    is_configured,
-    login,
-    logout,
-)
+from assistant.integrations.google_auth import GoogleAuth
 from assistant.memory import clear_profile, read_profile
 from assistant.onboarding import needs_onboarding, run_onboarding
+from assistant.paths import Paths
 from assistant.permissions import PermissionStore, command_rule, parse_command_rule
+from assistant.profiles import ProfileRegistry
+from assistant.secrets import SecretStore
+
+# oauthlib treats a scope superset returned by Google as an error ("Scope has
+# changed"); a broader grant back is not a failure. Set here, at the entry point —
+# no module below it touches the process environment.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 app = typer.Typer(
     name="ag2-assistant",
     help="AG2 Assistant - Personal AI Assistant",
 )
+
+
+def default_paths() -> Paths:
+    """This install's on-disk layout. The one environment read in the package."""
+    return Paths.from_env(os.environ, Path.home())
 
 
 @app.callback()
@@ -54,8 +68,9 @@ def _global_options(
         os.environ["AG2ASSISTANT_DATA_DIR"] = str(Path(data_dir).expanduser())
 
 
-def _echo_local_time() -> None:
-    """Print the server's local time at startup, and flag an unset container TZ.
+def local_time_banner(now: datetime, *, tz_unset: bool) -> list[str]:
+    """The startup banner's clock lines: the server's local time, plus a hint when the
+    timezone is unset in a container.
 
     Scheduling is wall-clock in the local timezone (see ``tasks.scheduling``), so the
     process timezone decides when "remind me at 6am" actually fires. Container base
@@ -66,15 +81,22 @@ def _echo_local_time() -> None:
     The hint is limited to containers with no TZ set: a UTC host is a deliberate,
     ordinary choice and shouldn't be nagged.
     """
-    now = datetime.now().astimezone()
-    typer.echo(f"  Time    {now:%Y-%m-%d %H:%M %Z} (UTC{now:%z})")
-
-    if tz_unset_in_container():
-        typer.echo(
+    lines = [f"  Time    {now:%Y-%m-%d %H:%M %Z} (UTC{now:%z})"]
+    if tz_unset:
+        lines.append(
             "  Note: no TZ set, so this container is on UTC — scheduled tasks "
             '("remind me at 6am") will use UTC.'
         )
-        typer.echo("        Set it to your zone, e.g. -e TZ=Australia/Sydney")
+        lines.append("        Set it to your zone, e.g. -e TZ=Australia/Sydney")
+    return lines
+
+
+def _echo_local_time() -> None:
+    """Print the clock banner, resolving the container/TZ fact here at the boundary."""
+    for line in local_time_banner(
+        datetime.now().astimezone(), tz_unset=tz_unset_in_container(os.environ)
+    ):
+        typer.echo(line)
 
 
 def _resolve_profile_config(profile: str | None) -> Config:
@@ -85,7 +107,7 @@ def _resolve_profile_config(profile: str | None) -> Config:
     derived config so callers read profile-owned paths off ``config.data_dir``.
     """
     try:
-        _, config, _ = resolve_active_profile(profile)
+        _, config, _ = resolve_active_profile(profile, paths=default_paths(), env=os.environ)
     except ArchivedProfile as exc:
         typer.echo(f"profile '{exc}' is archived")
         raise typer.Exit(1)
@@ -126,7 +148,9 @@ def agent(
                 user_store_path = config.root_dir / "user.db"  # shared universal memory
                 if await needs_onboarding(user_store_path):
                     typer.echo("First time here — a few quick questions (all skippable):")
-                    await run_onboarding(asker, user_store_path)
+                    answers = await run_onboarding(asker, user_store_path, paths=config.paths)
+                    if loc := answers.get("location"):
+                        config.agent.location = loc  # apply to the config this run uses
             return await ask(message, config, memory=memory, platform=platform, asker=asker)
         finally:
             if asker is not None:
@@ -146,7 +170,8 @@ def onboard(
 
     Seeds the UNIVERSAL "who the user is" memory (``root_dir/user.db``), shared by
     every profile — so this is install-wide, not per-profile."""
-    user_store_path = _resolve_profile_config(profile).root_dir / "user.db"
+    config = _resolve_profile_config(profile)
+    user_store_path = config.root_dir / "user.db"
 
     async def run() -> None:
         if not force and not await needs_onboarding(user_store_path):
@@ -154,7 +179,7 @@ def onboard(
             return
         asker = DesktopAsker()
         try:
-            answers = await run_onboarding(asker, user_store_path)
+            answers = await run_onboarding(asker, user_store_path, paths=config.paths)
         finally:
             await asker.aclose()
         if answers:
@@ -184,7 +209,9 @@ def chat(
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
     try:
-        _, chat_config, factory = resolve_active_profile(profile)
+        _, chat_config, factory = resolve_active_profile(
+            profile, paths=default_paths(), env=os.environ
+        )
     except ArchivedProfile as exc:
         typer.echo(f"profile '{exc}' is archived")
         raise typer.Exit(1)
@@ -285,17 +312,18 @@ def profiles_create(
     NOT boot a runtime (a later `run`/`chat` picks it up). The first profile created
     becomes the active default automatically.
     """
+    registry = ProfileRegistry(default_paths())
     try:
-        meta = profiles.create_profile(name, accent)
+        meta = registry.create_profile(name, accent)
     except ValueError as exc:
         typer.echo(f"error: {exc}")
         raise typer.Exit(1)
 
-    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     typer.echo(f"Created profile '{meta.id}':")
     typer.echo(f"  name      {meta.name}")
     typer.echo(f"  accent    {meta.accent}")
-    typer.echo(f"  workspace {meta.workspace}")
+    typer.echo(f"  workspace {registry.profile_dir(meta.id) / 'workspace'}")
     typer.echo(f"\n`ag2-assistant run` and `ag2-assistant chat -p {meta.id}` will use it.")
 
 
@@ -306,18 +334,20 @@ def profiles_list(
     ),
 ) -> None:
     """List registered profiles (active default marked with *)."""
-    metas = profiles.list_profiles(include_archived=show_all)
+    registry = ProfileRegistry(default_paths())
+    metas = registry.list_profiles(include_archived=show_all)
     if not metas:
         typer.echo("(no profiles yet — create one with 'ag2-assistant profiles create <name>')")
         return
 
-    active = profiles.load_registry().get("active_default")
+    active = registry.load_registry().get("active_default")
     header = f"{'':1} {'id':16} {'name':20} {'accent':9} workspace"
     typer.echo(header)
     for meta in metas:
         mark = "*" if meta.id == active else " "
         name = meta.name + (" (archived)" if meta.archived else "")
-        typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.accent:9} {meta.workspace}")
+        workspace = registry.profile_dir(meta.id) / "workspace"
+        typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.accent:9} {workspace}")
 
 
 perms_app = typer.Typer(help="Manage command permissions (install-wide).")
@@ -486,15 +516,16 @@ def google_login(
     ),
 ) -> None:
     """Authorise AG2 Assistant to access your Google account (opens a browser once)."""
-    if not is_configured():
-        typer.echo(f"Missing OAuth client file at {credentials_path()}.")
+    google = GoogleAuth(default_paths())
+    if not google.is_configured():
+        typer.echo(f"Missing OAuth client file at {google.credentials_path}.")
         typer.echo(
             "Create a Desktop OAuth client in Google Cloud (enable Gmail/Calendar/"
             "Drive APIs), download its JSON, and save it to that path."
         )
         raise typer.Exit(1)
     try:
-        email = login(open_browser=not no_browser)
+        email = google.login(open_browser=not no_browser)
     except Exception as exc:
         typer.echo(f"Login failed: {exc}")
         raise typer.Exit(1)
@@ -504,14 +535,16 @@ def google_login(
 @google_app.command("logout")
 def google_logout() -> None:
     """Remove the stored Google token."""
-    typer.echo("Signed out of Google." if logout() else "Not signed in.")
+    google = GoogleAuth(default_paths())
+    typer.echo("Signed out of Google." if google.logout() else "Not signed in.")
 
 
 @google_app.command("status")
 def google_status() -> None:
     """Show Google integration status."""
-    typer.echo(f"OAuth client configured: {is_configured()}")
-    typer.echo(f"Signed in: {has_token()}")
+    google = GoogleAuth(default_paths())
+    typer.echo(f"OAuth client configured: {google.is_configured()}")
+    typer.echo(f"Signed in: {google.has_token()}")
 
 
 @app.command()
@@ -528,7 +561,7 @@ def gateway(
     typer.echo(f"  Web UI  http://{host}:{port}/")
     typer.echo(f"  API     http://{host}:{port}/api/p/{{pid}}/…")
     _echo_local_time()
-    uvicorn.run(create_app(ProfileManager(memory=memory)), host=host, port=port)
+    uvicorn.run(create_app(ProfileManager(memory=memory, env=os.environ)), host=host, port=port)
 
 
 @app.command("acp-bridge")
@@ -549,26 +582,129 @@ def acp_bridge(
     Run this on the HOST (not in Docker), then point the container at it with
     AG2ASSISTANT_ACP_BRIDGE=host.docker.internal:PORT (and _TOKEN if set)."""
     from assistant.coding.bridge_server import serve
+    from assistant.coding.detect import default_search_path
 
     try:
-        asyncio.run(serve(host=host, port=port, token=token))
+        asyncio.run(
+            serve(
+                host=host,
+                port=port,
+                token=token,
+                search_path=default_search_path(os.environ),
+                env=os.environ,
+            )
+        )
     except KeyboardInterrupt:
         typer.echo("\nacp-bridge stopped")
 
 
-def _cli_connection(platform: str) -> tuple[str, dict]:
+def _cli_connection(platform: str, paths: Paths | None = None, env=None) -> tuple[str, dict]:
     """The Connection a single-channel command runs as, with the adapter kwargs holding
-    its token(s) — the platform's first Connection, created from the env if it has none."""
+    its token(s) — the platform's first Connection, created from the env if it has none.
+
+    ``paths``/``env`` default to the install this process was started against; a caller
+    that has already resolved them passes them in. Seeding reads saved secrets over the
+    environment, so a token stored from the web UI also serves the CLI."""
+    paths = paths if paths is not None else default_paths()
+    env = os.environ if env is None else env
     envs = profiles.CHANNEL_TOKEN_ENVS[platform]
-    existing = connections.connections_for(platform)
+    store = ConnectionStore(paths, env)
+    existing = store.connections_for(platform)
     if existing:
         connection = existing[0]
     else:
-        connection = connections.create_connection(
-            platform, "", {e: os.environ.get(e, "") for e in envs}
-        )
-    tokens = connections.tokens_for(connection.id)
+        merged = SecretStore(paths).merged_env(env)
+        connection = store.create_connection(platform, "", {e: merged.get(e, "") for e in envs})
+    tokens = store.tokens_for(connection.id)
     return connection.id, {TOKEN_ARGS[e]: tokens.get(e, "") for e in envs}
+
+
+# The one profile a single-channel CLI command serves. It is never picked from a
+# list — there is nothing else to pick — but the router names it, so it has a name.
+CLI_PROFILE = AvailableProfile("default", "Default")
+
+
+class _CliDirectory:
+    """The `ProfileDirectory` behind a single-channel CLI command (ADR 0022).
+
+    `ag2-assistant telegram` runs no ProfileManager: one gateway, one Connection, one
+    adapter, decided at startup. It answers the router's six questions from that,
+    so the same router serves the CLI and the server without knowing which it is in.
+    """
+
+    def __init__(self, gateway: Gateway, connection: str, channel) -> None:
+        self._gateway = gateway
+        self._connection = connection
+        self._channel = channel
+
+    def available_profiles(self, surface: str) -> tuple[AvailableProfile, ...]:
+        """The one profile, reachable from every surface: a CLI install has no
+        registry to withdraw it from."""
+        return (CLI_PROFILE,)
+
+    def default_profile(self, connection: str) -> str | None:
+        """The one profile, so a platform without a picker still resolves."""
+        return CLI_PROFILE.id
+
+    def gateway_for_profile(self, pid: str) -> Gateway | None:
+        return self._gateway if pid == CLI_PROFILE.id else None
+
+    async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
+        """Push into a chat on the one Connection this command runs as. An outcome
+        whose origin is another Connection has no adapter here, and is dropped rather
+        than delivered down the wrong one."""
+        if connection == self._connection:
+            await self._channel.notify(chat_id, text)
+
+    async def ask_channel(self, connection: str, chat_id: str, inquiry: str, question) -> None:
+        if connection == self._connection:
+            await self._channel.ask(chat_id, inquiry, question)
+
+    async def retract_channel(self, connection: str, chat_id: str, inquiry: str) -> None:
+        if connection == self._connection:
+            await self._channel.retract(chat_id, inquiry)
+
+
+def _cli_router(
+    gateway: Gateway, connection: str, channel, paths: Paths
+) -> tuple[ChannelRouter, _CliDirectory]:
+    """The router a single-channel command hands its adapter — the same one the server
+    builds, over a directory holding just this command's gateway and channel. The
+    directory comes back too: task-run outcomes are pushed out through it."""
+    directory = _CliDirectory(gateway, connection, channel)
+    return ChannelRouter(directory, paths), directory
+
+
+async def _serve_channel(platform: str, label: str, *, memory: bool) -> None:
+    """Run one channel adapter against one gateway until interrupted — the body every
+    single-channel command shares, differing only in the platform it speaks."""
+    paths = default_paths()
+    gateway, tasks = build_gateway(memory=memory, platform=platform)
+    await gateway.start()
+    tasks.set_emitter(gateway.emit_event)
+    tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
+    # tools only; the scheduler runs in `ag2-assistant run`, not per channel
+    await tasks.start(scheduler=False)
+    cid, tokens = _cli_connection(platform, paths)
+    channel = get_channel(platform, connection=cid, **tokens)
+    router, directory = _cli_router(gateway, cid, channel, paths)
+    tasks.set_notifier(directory.notify_channel)  # run outcomes -> this channel
+    # Single-profile CLI: every message runs on the one gateway built here.
+    await channel.start(router)
+    typer.echo(f"AG2 Assistant is live on {label}. Press Ctrl+C to stop.")
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await channel.stop()
+        await tasks.close()
+        await gateway.close()
+
+
+def _run_channel(platform: str, label: str, *, memory: bool) -> None:
+    try:
+        asyncio.run(_serve_channel(platform, label, memory=memory))
+    except KeyboardInterrupt:
+        typer.echo("\nStopped.")
 
 
 @app.command()
@@ -576,36 +712,7 @@ def telegram(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
     """Run AG2 Assistant on Telegram (long-polling). Needs TELEGRAM_BOT_TOKEN in env/.env."""
-
-    async def run() -> None:
-        gateway, tasks = build_gateway(memory=memory, platform="telegram")
-        await gateway.start()
-        tasks.set_emitter(gateway.emit_event)
-        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
-        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
-        await tasks.start(scheduler=False)
-        cid, tokens = _cli_connection("telegram")
-        channel = get_channel("telegram", connection=cid, **tokens)
-
-        async def notify(connection: str, chat_id: str, text: str) -> None:
-            if connection == cid:
-                await channel.notify(chat_id, text)
-
-        tasks.set_notifier(notify)  # run outcomes -> this channel
-        # Single-profile CLI: every message runs on the one gateway built here.
-        await channel.start(ChannelRouter(lambda inbound: gateway))
-        typer.echo("AG2 Assistant is live on Telegram. Press Ctrl+C to stop.")
-        try:
-            await asyncio.Event().wait()
-        finally:
-            await channel.stop()
-            await tasks.close()
-            await gateway.close()
-
-    try:
-        asyncio.run(run())
-    except KeyboardInterrupt:
-        typer.echo("\nStopped.")
+    _run_channel("telegram", "Telegram", memory=memory)
 
 
 @app.command()
@@ -614,36 +721,7 @@ def discord(
 ) -> None:
     """Run AG2 Assistant on Discord. Needs DISCORD_BOT_TOKEN in env/.env and the
     Message Content Intent enabled in the Discord Developer Portal."""
-
-    async def run() -> None:
-        gateway, tasks = build_gateway(memory=memory, platform="discord")
-        await gateway.start()
-        tasks.set_emitter(gateway.emit_event)
-        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
-        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
-        await tasks.start(scheduler=False)
-        cid, tokens = _cli_connection("discord")
-        channel = get_channel("discord", connection=cid, **tokens)
-
-        async def notify(connection: str, chat_id: str, text: str) -> None:
-            if connection == cid:
-                await channel.notify(chat_id, text)
-
-        tasks.set_notifier(notify)  # run outcomes -> this channel
-        # Single-profile CLI: every message runs on the one gateway built here.
-        await channel.start(ChannelRouter(lambda inbound: gateway))
-        typer.echo("AG2 Assistant is live on Discord. Press Ctrl+C to stop.")
-        try:
-            await asyncio.Event().wait()
-        finally:
-            await channel.stop()
-            await tasks.close()
-            await gateway.close()
-
-    try:
-        asyncio.run(run())
-    except KeyboardInterrupt:
-        typer.echo("\nStopped.")
+    _run_channel("discord", "Discord", memory=memory)
 
 
 @app.command()
@@ -651,36 +729,7 @@ def slack(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
 ) -> None:
     """Run AG2 Assistant on Slack (Socket Mode). Needs SLACK_BOT_TOKEN and SLACK_APP_TOKEN."""
-
-    async def run() -> None:
-        gateway, tasks = build_gateway(memory=memory, platform="slack")
-        await gateway.start()
-        tasks.set_emitter(gateway.emit_event)
-        tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
-        # tools only; the scheduler runs in `ag2-assistant run`, not per channel
-        await tasks.start(scheduler=False)
-        cid, tokens = _cli_connection("slack")
-        channel = get_channel("slack", connection=cid, **tokens)
-
-        async def notify(connection: str, chat_id: str, text: str) -> None:
-            if connection == cid:
-                await channel.notify(chat_id, text)
-
-        tasks.set_notifier(notify)  # run outcomes -> this channel
-        # Single-profile CLI: every message runs on the one gateway built here.
-        await channel.start(ChannelRouter(lambda inbound: gateway))
-        typer.echo("AG2 Assistant is live on Slack. Press Ctrl+C to stop.")
-        try:
-            await asyncio.Event().wait()
-        finally:
-            await channel.stop()
-            await tasks.close()
-            await gateway.close()
-
-    try:
-        asyncio.run(run())
-    except KeyboardInterrupt:
-        typer.echo("\nStopped.")
+    _run_channel("slack", "Slack", memory=memory)
 
 
 @app.command()
@@ -707,14 +756,14 @@ def run(
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
-    manager = ProfileManager(memory=memory)
+    manager = ProfileManager(memory=memory, env=os.environ)
 
     if not rest:
         # Headless: run the manager directly (boot profiles + channels + schedulers),
         # no HTTP surface. Same lifecycle create_app would drive, minus the server.
         async def headless() -> None:
             await manager.start()
-            for connection in connections.list_connections():
+            for connection in ConnectionStore(default_paths()).list_connections():
                 if connection.id in manager.channels:
                     typer.echo(f"  channel: {connection.name} ({connection.platform})")
             _echo_local_time()
@@ -768,21 +817,22 @@ def auth_login(
     typer.echo("⚠️  Unofficial — this uses your ChatGPT subscription in a way OpenAI")
     typer.echo("   does not officially support; your account could be rate-limited.\n")
     try:
+        auth = CodexAuth(default_paths())
         if no_browser:
-            verifier, challenge = codex_auth.generate_pkce()
+            verifier, challenge = generate_pkce()
             state = _secrets.token_urlsafe(24)
-            url = codex_auth.build_authorize_url(challenge, state)
+            url = build_authorize_url(challenge, state)
             typer.echo("Open this URL, sign in, then paste the `code` from the redirect URL:\n")
             typer.echo(url + "\n")
             code = typer.prompt("code").strip()
-            codex_auth.exchange_code(code, verifier)
+            auth.exchange_code(code, verifier)
         else:
             typer.echo("Opening your browser to sign in with ChatGPT…")
-            codex_auth.run_local_login()
-    except codex_auth.CodexAuthError as exc:
+            auth.run_local_login()
+    except CodexAuthError as exc:
         typer.echo(f"Sign-in failed: {exc}")
         raise typer.Exit(1) from None
-    st = codex_auth.status()
+    st = auth.status()
     acct = st.get("account_id") or "unknown account"
     typer.echo(f"Signed in ✓ ({acct})")
 
@@ -790,13 +840,13 @@ def auth_login(
 @auth_app.command("logout")
 def auth_logout() -> None:
     """Remove the stored ChatGPT-subscription tokens."""
-    typer.echo("Signed out." if codex_auth.logout() else "Not signed in.")
+    typer.echo("Signed out." if CodexAuth(default_paths()).logout() else "Not signed in.")
 
 
 @auth_app.command("status")
 def auth_status() -> None:
     """Show whether you're signed in with ChatGPT."""
-    st = codex_auth.status()
+    st = CodexAuth(default_paths()).status()
     if st.get("signed_in"):
         typer.echo(f"Signed in ✓ (account: {st.get('account_id') or 'unknown'})")
     else:

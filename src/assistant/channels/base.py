@@ -58,7 +58,7 @@ def should_respond(msg: InboundMessage) -> bool:
 class Channel(ABC):
     """A messaging-platform adapter driven by the channel router.
 
-    One adapter per Connection (ADR 0019) — it is never owned by a profile, and the
+    One adapter per Connection (ADR 0022) — it is never owned by a profile, and the
     router it is handed decides which runtime each message runs on. The adapter knows
     its own Connection id and stamps it on every message it normalises.
     """

@@ -29,7 +29,7 @@ from math import isfinite
 from pathlib import Path
 
 from assistant import voice_providers
-from assistant.config import read_yaml, write_yaml
+from assistant.yamlio import read_yaml, write_yaml
 
 _MCP_KEY = "mcp_servers"
 _MCP_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -40,11 +40,14 @@ class Settings:
     """Per-profile settings persisted to one ``settings.json`` file.
 
     Bound to an explicit path at construction — there is no global default, so
-    each profile's runtime reads/writes only its own file.
+    each profile's runtime reads/writes only its own file. ``voice_provider`` is the
+    install-wide pin (``Config.voice_provider``) this store falls back to when the
+    profile has no persisted choice; this module never reads the environment.
     """
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, voice_provider: str = "") -> None:
         self._path = Path(path)
+        self._voice_pin = voice_provider
 
     # --- persistence ---
 
@@ -57,8 +60,8 @@ class Settings:
     # --- voice provider ---
 
     def voice_provider(self) -> str:
-        """The active realtime voice provider (persisted setting → env → default)."""
-        return voice_providers.active_provider(self.get_voice_provider())
+        """The active realtime voice provider (persisted setting → pin → default)."""
+        return voice_providers.active_provider(self.get_voice_provider(), self._voice_pin)
 
     def get_voice_provider(self) -> str | None:
         """The raw persisted voice-provider choice (or None)."""
@@ -219,11 +222,12 @@ class Settings:
         return True
 
 
-def profile_settings(data_dir) -> Settings:
+def profile_settings(data_dir, *, voice_provider: str = "") -> Settings:
     """The Settings store for a profile's data dir — backed by the profile's
     ``config.yaml``. Settings keys live at the top level of the same file as the
-    Config overlay sections; the read-modify-write in ``_write`` preserves them."""
-    return Settings(Path(data_dir) / "config.yaml")
+    Config overlay sections; the read-modify-write in ``_write`` preserves them.
+    Pass ``config.voice_provider`` to honour the install-wide voice pin."""
+    return Settings(Path(data_dir) / "config.yaml", voice_provider=voice_provider)
 
 
 # --- pure helpers (path-free; shared by validation and the Settings methods) ---

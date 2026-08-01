@@ -2,6 +2,7 @@
 folders, sandboxing. Tasks save into the SAME shared workspace as chat (no
 per-task subfolders)."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -165,11 +166,11 @@ def test_list_dirs_missing_or_not_a_dir_returns_none(tmp_path):
     assert list_dirs(str(f)) is None  # a file, not a directory
 
 
-def test_list_dirs_empty_path_defaults_to_home(tmp_path, monkeypatch):
-    # conftest points HOME at tmp_path; an empty path expands "~" to it.
-    (tmp_path / "proj").mkdir()
+def test_list_dirs_empty_path_defaults_to_home():
+    """An empty path expands "~" — the browser opens on the real home directory."""
     r = list_dirs("")
-    assert r is not None and "proj" in [d["name"] for d in r["dirs"]]
+    assert r is not None
+    assert r["path"] == str(Path.home())
 
 
 # ---- User-writable Files space (ADR 0007) ----

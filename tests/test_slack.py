@@ -12,12 +12,14 @@ def _slack_channel():
     return ch
 
 
-def test_requires_both_tokens(monkeypatch):
-    monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
-
+def test_requires_both_tokens():
+    """Tokens are handed over by the caller; the adapter never reads the environment."""
     with pytest.raises(ValueError):
         SlackChannel()
+    with pytest.raises(ValueError):
+        SlackChannel(bot_token="xoxb-fake")
+    with pytest.raises(ValueError):
+        SlackChannel(app_token="xapp-fake")
 
 
 def test_mention_inbound_strips_bot_token():

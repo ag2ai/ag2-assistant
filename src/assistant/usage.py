@@ -11,32 +11,38 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Mapping
 from datetime import datetime
-
-from assistant.config import data_dir
+from pathlib import Path
 
 # Approximate published list prices, USD per 1M tokens, as (input, output). Matched
 # by SUBSTRING against the model id (first match wins). These are ESTIMATES for the
 # HUD, not billing truth — override any of them in ~/.ag2assistant/pricing.json, e.g.
-#   {"gemini-3.5-flash": [0.30, 2.50], "gpt-5": {"input": 1.25, "output": 10.0}}
+#   {"gemini-3.6-flash": [0.30, 2.50], "gpt-5": {"input": 1.25, "output": 10.0}}
 _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
-    "gemini-3.5-flash": (0.30, 2.50),
+    "gemini-3.5-flash": (1.50, 9.00),
+    "gemini-3.6-flash": (1.50, 7.50),
+    "gemini-3.1-pro-preview": (2.00, 12.00),
     "gemini-3-pro": (2.00, 12.00),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-pro": (1.25, 10.00),
     "gpt-5": (1.25, 10.00),
+    "gpt-5.6-sol": (5.00, 30.00),
+    "gpt-5.6-terra": (2.00, 12.00),
+    "gpt-5.6-luna": (0.20, 1.20),
     "gpt-4o": (2.50, 10.00),
-    "claude-opus": (15.00, 75.00),
-    "claude-sonnet": (3.00, 15.00),
-    "claude-haiku": (0.80, 4.00),
+    "claude-opus": (5.00, 25.00),
+    "claude-sonnet": (2.00, 10.00),
+    "claude-haiku": (1.00, 5.00),
 }
 
 
-def _load_pricing() -> dict[str, tuple[float, float]]:
-    """Default table merged with any user overrides from pricing.json."""
+def load_pricing(path: Path) -> dict[str, tuple[float, float]]:
+    """Default table merged with any user overrides from ``path`` (an absent or
+    malformed file leaves the built-in table untouched)."""
     table = dict(_DEFAULT_PRICING)
     try:
-        raw = json.loads((data_dir() / "pricing.json").read_text())
+        raw = json.loads(Path(path).read_text())
         for key, val in raw.items():
             if isinstance(val, (list, tuple)) and len(val) == 2:
                 table[key.lower()] = (float(val[0]), float(val[1]))
@@ -47,10 +53,16 @@ def _load_pricing() -> dict[str, tuple[float, float]]:
     return table
 
 
-def estimate_cost(model: str, prompt_tokens: float, completion_tokens: float) -> float | None:
+def estimate_cost(
+    model: str,
+    prompt_tokens: float,
+    completion_tokens: float,
+    *,
+    pricing: Mapping[str, tuple[float, float]],
+) -> float | None:
     """Estimated USD cost for a turn, or None if the model has no known price."""
     m = (model or "").lower()
-    for key, (inp, out) in _load_pricing().items():
+    for key, (inp, out) in pricing.items():
         if key in m:
             return (prompt_tokens or 0) / 1e6 * inp + (completion_tokens or 0) / 1e6 * out
     return None
@@ -74,8 +86,11 @@ def _blank() -> dict:
 class UsageLedger:
     """Daily token + estimated-cost totals, persisted to disk. Thread-safe."""
 
-    def __init__(self, path):
-        self._path = path
+    def __init__(self, path: Path, *, pricing_path: Path):
+        self._path = Path(path)
+        # Where a user's price overrides live (install-wide); re-read per record so an
+        # edit applies without a restart, exactly as before.
+        self._pricing_path = Path(pricing_path)
         self._lock = threading.Lock()
         self._days: dict[str, dict] = {}
         self._load()
@@ -106,7 +121,7 @@ class UsageLedger:
         prompt = prompt_tokens or 0
         completion = completion_tokens or 0
         total = total_tokens or (prompt + completion)
-        cost = estimate_cost(model, prompt, completion)
+        cost = estimate_cost(model, prompt, completion, pricing=load_pricing(self._pricing_path))
         day = day or _today()
         with self._lock:
             d = self._days.setdefault(day, _blank())

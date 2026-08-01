@@ -1,5 +1,5 @@
 <script>
-  // Settings → Integrations (install-wide, ADR 0019): the list of Connections this
+  // Settings → Integrations (install-wide, ADR 0022): the list of Connections this
   // install has, and the grid of what it can add — deliberately the same two-part
   // shape as Settings → Models.
   //

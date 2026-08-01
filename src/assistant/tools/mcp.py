@@ -28,6 +28,7 @@ from ag2.tools.final.function_tool import FunctionDefinition, FunctionToolSchema
 from ag2.tools.final.toolkit import Toolkit
 from ag2.tools.tool import Tool
 
+from assistant.observability import log_suppressed
 from assistant.tools._mcp_compat import (
     AnyMCPConfig,
     MCPTool,
@@ -44,6 +45,9 @@ _NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
 # that orphaned toolkits after an agent reload self-clean without a dispose hook.
 _IDLE_CLOSE_S = 300.0
 
+# How long an unreachable server is left alone before discovery retries.
+_RETRY_AFTER_S = 60.0
+
 
 class _PersistentSession:
     """One long-lived MCP client session per server, shared across tool calls.
@@ -52,39 +56,49 @@ class _PersistentSession:
     process — around every call. Stateless servers don't care, but stateful ones
     break: Playwright MCP opens a browser that dies with the process the moment
     a call returns, so navigate → click can never work. This keeps ONE session
-    open, closing it after _IDLE_CLOSE_S of inactivity.
+    open, closing it after `idle_close_s` of inactivity.
 
     The session context manager is entered AND exited inside a dedicated runner
     task: anyio's stdio transport requires both to happen in the same task.
     Callers just await the shared session and invoke tools on it.
     """
 
-    __slots__ = ("_config", "_lock", "_task", "_ready", "_close", "_last_used")
+    __slots__ = (
+        "_config",
+        "_lock",
+        "_task",
+        "_ready",
+        "_close",
+        "_last_used",
+        "_session_factory",
+        "_idle_close_s",
+    )
 
-    def __init__(self) -> None:
+    def __init__(self, *, session_factory=mcp_session, idle_close_s: float = _IDLE_CLOSE_S) -> None:
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._ready: asyncio.Future | None = None
         self._close: asyncio.Event | None = None
         self._last_used = 0.0
+        self._session_factory = session_factory
+        self._idle_close_s = idle_close_s
 
     def _touch(self) -> None:
         self._last_used = time.monotonic()
 
     async def _run(self, resolved, ready: asyncio.Future) -> None:
         try:
-            async with mcp_session(resolved) as session:
+            async with self._session_factory(resolved) as session:
                 ready.set_result(session)
                 while True:  # idle-expire, or exit promptly when aclose() asks
-                    remaining = _IDLE_CLOSE_S - (time.monotonic() - self._last_used)
+                    remaining = self._idle_close_s - (time.monotonic() - self._last_used)
                     if remaining <= 0:
                         return
                     try:
-                        # Cap each wait so a changed idle window is re-read ≤1s later.
-                        await asyncio.wait_for(self._close.wait(), min(remaining, 1.0))
+                        await asyncio.wait_for(self._close.wait(), remaining)
                         return
                     except TimeoutError:
-                        continue
+                        continue  # a call may have touched us mid-wait — recompute
         except Exception as exc:
             if not ready.done():
                 ready.set_exception(exc)
@@ -139,6 +153,14 @@ class _PersistentSession:
             task.cancel()
 
 
+def describe_mcp_error(exc: BaseException) -> str:
+    """Flatten a server failure to the message a human can act on."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    detail = str(exc).strip()
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+
 def tool_prefix(server_name: str) -> str:
     """Provider-safe function-name prefix for an MCP server label."""
     prefix = _NAME_RE.sub("_", server_name.strip().lower()).strip("_")
@@ -179,18 +201,35 @@ def build_mcp_tools(servers: Iterable[dict]) -> list[Tool]:
 class NamespacedMCPToolkit(Toolkit):
     """Expose one MCP server as namespaced AG2 function tools."""
 
-    __slots__ = ("config", "_discovered", "_discover_lock", "_psession")
+    __slots__ = (
+        "config",
+        "_discovered",
+        "_discover_lock",
+        "_psession",
+        "_error",
+        "_error_at",
+        "_retry_after_s",
+    )
 
     def __init__(
         self,
         config: AnyMCPConfig,
         *,
         middleware: Iterable[ToolMiddleware] = (),
+        session_factory=mcp_session,
+        idle_close_s: float = _IDLE_CLOSE_S,
+        retry_after_s: float = _RETRY_AFTER_S,
     ) -> None:
         self.config = config
         self._discovered = False
         self._discover_lock = asyncio.Lock()
-        self._psession = _PersistentSession()  # shared by discovery + all proxies
+        self._retry_after_s = retry_after_s
+        # shared by discovery + all proxies
+        self._psession = _PersistentSession(
+            session_factory=session_factory, idle_close_s=idle_close_s
+        )
+        self._error: Exception | None = None
+        self._error_at = 0.0
         label = config.server_label if isinstance(config.server_label, str) else ""
         super().__init__(name=label or "mcp_toolkit", middleware=middleware)
 
@@ -202,6 +241,11 @@ class NamespacedMCPToolkit(Toolkit):
         """Close the server session/process now (idle expiry handles it otherwise)."""
         await self._psession.aclose()
 
+    @property
+    def last_error(self) -> Exception | None:
+        """Why the last discovery attempt failed; ``None`` if it worked."""
+        return self._error
+
     async def _discover_tools(self, context: Context) -> None:
         if self._discovered:
             return
@@ -209,9 +253,20 @@ class NamespacedMCPToolkit(Toolkit):
         async with self._discover_lock:
             if self._discovered:
                 return
+            if self._error is not None and time.monotonic() - self._error_at < self._retry_after_s:
+                return
 
-            resolved = resolve_config(self.config, context)
-            raw_tools = (await self._psession.list_tools(resolved)).tools
+            try:
+                resolved = resolve_config(self.config, context)
+                raw_tools = (await self._psession.list_tools(resolved)).tools
+            except Exception as exc:
+                # Every toolkit's schemas() is collected before the model is called,
+                # so raising here would abort turns that never touch MCP.
+                self._error = exc
+                self._error_at = time.monotonic()
+                label = getattr(self.config, "server_label", None) or "mcp"
+                log_suppressed("MCP tool discovery", exc, server=label)
+                return
 
             allowed = resolved.allowed_tools
             blocked = set(resolved.blocked_tools or [])
@@ -231,6 +286,7 @@ class NamespacedMCPToolkit(Toolkit):
                 self._tools[proxy.name] = proxy
 
             self._discovered = True
+            self._error = None
 
 
 class _NamespacedMCPProxyTool(Tool):
@@ -304,6 +360,7 @@ class _NamespacedMCPProxyTool(Tool):
 __all__ = [
     "NamespacedMCPToolkit",
     "build_mcp_tools",
+    "describe_mcp_error",
     "namespaced_tool_name",
     "tool_prefix",
 ]

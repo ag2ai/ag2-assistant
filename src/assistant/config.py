@@ -2,66 +2,44 @@
 
 Resolution order (highest precedence first):
   1. Environment variables (AG2ASSISTANT_*), loaded from .env if present
-  2. ~/.ag2assistant/config.yaml
+  2. <root>/config.yaml
   3. Built-in defaults
 
-Use `load_config()` to get a fully resolved Config; bare `Config()` is just the
-built-in defaults (handy in tests).
+`resolve_config(env, paths)` is the pure core: it reads nothing but the mapping and
+the layout handed to it. `load_config()` is the only boundary that consults the real
+process environment. A Config's path fields have no defaults — build one with
+`Config.for_paths(paths)`.
 """
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+from assistant.paths import Paths
+from assistant.yamlio import read_yaml, write_yaml
 
 if TYPE_CHECKING:
     from assistant.profiles import ProfileMeta  # type-only
 
 load_dotenv()
 
-# Data/identity: secrets, config, memory, tasks, and Google auth live under
-# ~/.ag2assistant; env-var overrides use the AG2ASSISTANT_ prefix.
-_DATA_DIR_NAME = ".ag2assistant"
+# Env-var overrides use the AG2ASSISTANT_ prefix; the on-disk layout itself lives in
+# assistant.paths.Paths.
 _ENV_PREFIX = "AG2ASSISTANT_"
 
-
-def _default_root() -> Path:
-    """The install root, honoring AG2ASSISTANT_DATA_DIR. Used by BOTH the layered
-    Config defaults and the standalone secrets/settings resolvers below so the two
-    never diverge (a container mounts persistent state at a fixed path via this env)."""
-    if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
-        return Path(v).expanduser()
-    return Path.home() / _DATA_DIR_NAME
-
-
-def read_yaml(path: Path) -> dict:
-    """Parse a YAML mapping file. A missing, malformed, or non-mapping file reads
-    as an empty dict — the same tolerance a malformed config.json had."""
-    try:
-        data = yaml.safe_load(Path(path).read_text())
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def write_yaml(path: Path, data: dict) -> None:
-    """Atomically write a YAML mapping (tmp file + os.replace, so a crashed write
-    never leaves a truncated config behind)."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
-    os.replace(tmp, path)
+# The file whose presence means "this process runs in a container".
+_CONTAINER_MARKER = Path("/.dockerenv")
 
 
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
     provider: str = "gemini"  # gemini | anthropic | openai | ollama
-    model: str = "gemini-3.5-flash"
+    model: str = "gemini-3.6-flash"
     api_key_env: str = "GEMINI_API_KEY"
     # How the OpenAI provider authenticates:
     #   "api_key"      — pay-per-token via OPENAI_API_KEY (default, unchanged path)
@@ -186,7 +164,8 @@ def apply_overlay(cfg: "Config", path: Path) -> None:
 
 
 class Config(BaseModel):
-    """Root AG2 Assistant configuration (built-in defaults; see `load_config`)."""
+    """Root AG2 Assistant configuration. Path fields are required — build one with
+    :meth:`for_paths` so the on-disk layout always comes from a resolved ``Paths``."""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
@@ -196,24 +175,64 @@ class Config(BaseModel):
     tasks: TasksConfig = Field(default_factory=TasksConfig)
     # The install root: holds only global files (profiles.json, secrets.json,
     # pricing.json, log) and the profiles/ tree. Stays fixed across with_profile().
-    root_dir: Path = Field(default_factory=_default_root)
+    root_dir: Path
     # Profile-owned data dir. Equals root_dir for the base config; with_profile()
     # repoints it at root_dir/profiles/<id>.
-    data_dir: Path = Field(default_factory=_default_root)
+    data_dir: Path
     # Where installed skills live (SKILL.md packages).
-    skills_dir: Path = Field(default_factory=lambda: _default_root() / "skills")
+    skills_dir: Path
     # The agent's working file space — a real, visible folder it can read/write via
-    # AG2's FilesystemToolkit (confined to here). Configurable via AG2ASSISTANT_WORKSPACE.
-    workspace_dir: Path = Field(default_factory=lambda: Path.home() / "Documents" / "AG2 Assistant")
+    # AG2's FilesystemToolkit (confined to here).
+    workspace_dir: Path
+    # Env vars the saved secrets contribute (provider keys, channel tokens, Ollama
+    # base URL), merged with whatever of those the process env already carried.
+    # Read instead of os.environ so no module below the boundary touches the process.
+    secret_env: dict[str, str] = Field(default_factory=dict)
+    # The INSTALL layout this config was resolved from. Unlike the fields above it is
+    # never repointed per profile, so anything holding a Config can locate the global
+    # stores (secrets, profiles, google, codex) without reading the environment.
+    paths: Paths
+    # Directories searched for external CLI binaries (the coding-agent ACP adapters,
+    # docker) — the process PATH, split once at the boundary. Empty means "nothing
+    # installed": no module below the boundary may fall back to os.environ.
+    search_path: list[Path] = Field(default_factory=list)
+    # The host ACP bridge to use instead of spawning coding agents locally, as
+    # ``host[:port]`` plus its optional shared token (see coding.detect.parse_bridge).
+    acp_bridge: str = ""
+    acp_bridge_token: str = ""
+    # Install-wide model/provider pins for the non-chat surfaces, from
+    # AG2ASSISTANT_VOICE_PROVIDER / AG2ASSISTANT_VOICE_MODEL / AG2ASSISTANT_IMAGE_MODEL.
+    # Empty means "unpinned"; the surface falls back to its own default.
+    voice_provider: str = ""
+    voice_model: str = ""
+    image_model: str = ""
+    # Resolved once at the boundary: containerised with no TZ set, i.e. the process is
+    # silently on UTC while scheduled tasks are wall-clock local (see
+    # ``tz_unset_in_container``). Nothing below the boundary re-derives it.
+    tz_unset_in_container: bool = False
 
-    def with_profile(self, meta: "ProfileMeta") -> "Config":
+    @classmethod
+    def for_paths(cls, paths: Paths, **overrides) -> "Config":
+        """A Config whose layout comes from ``paths``, every other field defaulted."""
+        base = {
+            "paths": paths,
+            "root_dir": paths.root,
+            "data_dir": paths.root,
+            "skills_dir": paths.skills_dir,
+            "workspace_dir": paths.workspace,
+        }
+        return cls(**{**base, **overrides})
+
+    def with_profile(
+        self, meta: "ProfileMeta", *, env: Mapping[str, str] | None = None
+    ) -> "Config":
         """A deep copy whose path fields are reinterpreted for a profile: data_dir and
-        skills_dir land under root_dir/profiles/<id>, workspace_dir is that profile dir's
+        skills_dir land under profiles/<id>, workspace_dir is that profile dir's
         ``workspace/`` subfolder (derived, not user-chosen), and the profile's config.yaml
-        overlay is applied (explicit AG2ASSISTANT_* env vars still win last). root_dir is
-        unchanged (the global files stay at the root)."""
+        overlay is applied (explicit AG2ASSISTANT_* vars in ``env`` still win last).
+        root_dir and ``paths`` are unchanged (the global files stay at the root)."""
         cfg = self.model_copy(deep=True)
-        cfg.data_dir = cfg.root_dir / "profiles" / meta.id
+        cfg.data_dir = self.paths.profile_dir(meta.id)
         cfg.skills_dir = cfg.data_dir / "skills"
         cfg.workspace_dir = cfg.data_dir / "workspace"
         apply_overlay(cfg, cfg.data_dir / "config.yaml")
@@ -221,118 +240,105 @@ class Config(BaseModel):
         # so it wins over the install-wide active; the env re-apply below still wins last.
         try:
             # local imports: both modules import config, so top-level would cycle
-            from assistant import llm_configs
+            from assistant.llm_configs import LlmConfigStore
             from assistant.settings import profile_settings
 
             override = profile_settings(cfg.data_dir).get_llm_override()
             if override:
-                llm_configs.apply_active(cfg, override_id=override)
+                LlmConfigStore(self.paths).apply_active(cfg, override_id=override)
         except Exception:
             pass
-        _apply_env_overrides(cfg, include_paths=False)
+        apply_env_overrides(cfg, env or {})
         return cfg
 
 
-def default_config_path() -> Path:
-    """Where AG2 Assistant looks for the global YAML config file."""
-    return _default_root() / "config.yaml"
-
-
-def read_global_config() -> dict:
+def read_global_config(paths: Paths) -> dict:
     """The raw global config.yaml document (empty dict when absent/malformed)."""
-    return read_yaml(default_config_path())
+    return read_yaml(paths.config_yaml)
 
 
-def update_global_section(key: str, value) -> None:
+def update_global_section(paths: Paths, key: str, value) -> None:
     """Read-modify-write one top-level section of the global config.yaml, preserving
     every other key (the file is shared: Config sections, llm_configs, data_dir)."""
-    data = read_yaml(default_config_path())
+    data = read_yaml(paths.config_yaml)
     data[key] = value
-    write_yaml(default_config_path(), data)
+    write_yaml(paths.config_yaml, data)
 
 
-def data_dir() -> Path:
-    """Resolve the data directory WITHOUT the full config layering, so the secrets /
-    settings stores can locate their files without recursing back into load_config()
-    (which itself consults settings). AG2ASSISTANT_DATA_DIR wins (highest precedence,
-    matching _apply_env_overrides); then a config.yaml data_dir; then the default root."""
-    if v := os.environ.get("AG2ASSISTANT_DATA_DIR"):
-        return Path(v).expanduser()
-    d = read_yaml(default_config_path()).get("data_dir")
-    if d:
-        return Path(d).expanduser()
-    return _default_root()
+def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
+    """Layer AG2ASSISTANT_* variables from ``env`` on top (highest precedence).
 
-
-def _apply_env_overrides(cfg: Config, *, include_paths: bool = True) -> None:
-    """Layer AG2ASSISTANT_* environment variables on top (highest precedence).
-
-    ``include_paths=False`` re-applies only the non-path overrides — used by
-    with_profile() after the overlay, where the profile paths are already final and
-    AG2ASSISTANT_DATA_DIR/WORKSPACE must not clobber them back to the root."""
-    env = os.environ.get
-    if v := env("AG2ASSISTANT_LLM_PROVIDER"):
+    Path fields are deliberately NOT touched: the on-disk layout is resolved once by
+    ``Paths.from_env`` (which reads the same AG2ASSISTANT_DATA_DIR/WORKSPACE), so
+    re-applying it here could only make ``cfg.paths`` and ``cfg.root_dir`` disagree."""
+    get = env.get
+    # Ambient host facts every module below the boundary must be handed, never read:
+    # where external CLIs live, and whether a host ACP bridge replaces local spawns.
+    # Same split as coding.detect.default_search_path (the boundary for callers with
+    # no Config, e.g. the acp-bridge daemon).
+    if v := get("PATH"):
+        cfg.search_path = [Path(p) for p in v.split(os.pathsep) if p]
+    if v := get("AG2ASSISTANT_ACP_BRIDGE"):
+        cfg.acp_bridge = v.strip()
+    if v := get("AG2ASSISTANT_ACP_BRIDGE_TOKEN"):
+        cfg.acp_bridge_token = v.strip()
+    if v := get("AG2ASSISTANT_VOICE_PROVIDER"):
+        cfg.voice_provider = v.strip()
+    if v := get("AG2ASSISTANT_VOICE_MODEL"):
+        cfg.voice_model = v.strip()
+    if v := get("AG2ASSISTANT_IMAGE_MODEL"):
+        cfg.image_model = v.strip()
+    if v := get("AG2ASSISTANT_LLM_PROVIDER"):
         cfg.llm.provider = v
-    if v := env("AG2ASSISTANT_MODEL"):
+    if v := get("AG2ASSISTANT_MODEL"):
         cfg.llm.model = v
-    if v := env("AG2ASSISTANT_API_KEY_ENV"):
+    if v := get("AG2ASSISTANT_API_KEY_ENV"):
         cfg.llm.api_key_env = v
-    if v := env("AG2ASSISTANT_OPENAI_AUTH_MODE"):
+    if v := get("AG2ASSISTANT_OPENAI_AUTH_MODE"):
         cfg.llm.auth_mode = v.strip().lower()
-    if v := env("AG2ASSISTANT_STREAMING"):
+    if v := get("AG2ASSISTANT_STREAMING"):
         cfg.llm.streaming = v.strip().lower() not in {"0", "false", "no", "off"}
-    if v := env("AG2ASSISTANT_AGGREGATE_MODEL"):
+    if v := get("AG2ASSISTANT_AGGREGATE_MODEL"):
         cfg.llm.aggregate_model = v
-    if v := env("AG2ASSISTANT_LLM_TIMEOUT"):
+    if v := get("AG2ASSISTANT_LLM_TIMEOUT"):
         try:
             cfg.llm.call_timeout_s = float(v)
         except ValueError:
             pass
-    if v := env("AG2ASSISTANT_LLM_RETRIES"):
+    if v := get("AG2ASSISTANT_LLM_RETRIES"):
         try:
             cfg.llm.call_retries = int(v)
         except ValueError:
             pass
-    if v := env("AG2ASSISTANT_SILENCE_ALERT"):
+    if v := get("AG2ASSISTANT_SILENCE_ALERT"):
         try:
             cfg.llm.silence_alert_s = float(v)
         except ValueError:
             pass
-    if v := env("AG2ASSISTANT_SILENCE_HALT"):
+    if v := get("AG2ASSISTANT_SILENCE_HALT"):
         try:
             cfg.llm.silence_halt_s = float(v)
         except ValueError:
             pass
-    if v := env("AG2ASSISTANT_LOCATION"):
+    if v := get("AG2ASSISTANT_LOCATION"):
         cfg.agent.location = v
-    if v := env("AG2ASSISTANT_REPLY_TIMEOUT"):
+    if v := get("AG2ASSISTANT_REPLY_TIMEOUT"):
         try:
             cfg.gateway.reply_timeout_s = float(v)
         except ValueError:
             pass
-    if include_paths:
-        if v := env("AG2ASSISTANT_WORKSPACE"):
-            cfg.workspace_dir = Path(v).expanduser()
-        if v := env("AG2ASSISTANT_DATA_DIR"):
-            # Redirect the whole install root (global files + profiles/ tree). Mirrors the
-            # default layout so with_profile() keeps repointing data_dir/skills_dir under it.
-            # Primarily for containers, which mount persistent state at a fixed path.
-            root = Path(v).expanduser()
-            cfg.root_dir = root
-            cfg.data_dir = root
-            cfg.skills_dir = root / "skills"
-    if v := env("AG2ASSISTANT_SANDBOX"):
+    if v := get("AG2ASSISTANT_SANDBOX"):
         cfg.tools.sandbox = v
-    if v := env("AG2ASSISTANT_DOCKER_IMAGE"):
+    if v := get("AG2ASSISTANT_DOCKER_IMAGE"):
         cfg.tools.docker_image = v
-    if v := env("AG2ASSISTANT_DOCKER_NETWORK"):
+    if v := get("AG2ASSISTANT_DOCKER_NETWORK"):
         cfg.tools.docker_network = v
-    if v := env("AG2ASSISTANT_AGGREGATE_EVERY_N"):
+    if v := get("AG2ASSISTANT_AGGREGATE_EVERY_N"):
         try:
             cfg.memory.aggregate_every_n_turns = int(v)
         except ValueError:
             pass
-    if v := env("AG2ASSISTANT_COMPACT_MAX_TOKENS"):
+    if v := get("AG2ASSISTANT_COMPACT_MAX_TOKENS"):
         try:
             cfg.memory.compact_max_tokens = int(v)
         except ValueError:
@@ -343,31 +349,58 @@ def _apply_env_overrides(cfg: Config, *, include_paths: bool = True) -> None:
         ("AG2ASSISTANT_TASKS_DIGEST_QUEUE_MAX", "digest_queue_max"),
         ("AG2ASSISTANT_TASKS_DIGEST_TIMEOUT", "digest_timeout_s"),
     ):
-        if v := env(env_name):
+        if v := get(env_name):
             try:
                 setattr(cfg.tasks, field, int(v))
             except ValueError:
                 pass
 
 
-def load_config(path: Path | None = None) -> Config:
-    """Resolve config from defaults ← config.yaml ← environment (env wins)."""
-    path = path or default_config_path()
-    data: dict = read_yaml(path) if path else {}
-    cfg = Config(**data)
-    # root_dir tracks whatever data_dir resolves to (config.json may override it); the
-    # profiles/ tree and global files live under this root. Profile derivation is via
-    # Config.with_profile(); load_config() itself is profile-agnostic.
-    cfg.root_dir = cfg.data_dir
+def tz_unset_in_container(env: Mapping[str, str], *, marker: Path = _CONTAINER_MARKER) -> bool:
+    """True when containerised with no TZ set — i.e. silently running on UTC.
+
+    Scheduled tasks are wall-clock local, so this is the one configuration where the
+    clock is probably not the one the user means. The startup banner and the agent's
+    environment block both key off this predicate (via ``Config``) so they cannot
+    disagree. ``marker`` is the file that says "containerised".
+    """
+    return marker.exists() and not env.get("TZ")
+
+
+def resolve_config(env: Mapping[str, str], paths: Paths) -> Config:
+    """Resolve a Config from defaults ← config.yaml ← ``env`` (env wins).
+
+    Pure: the only environment it sees is ``env`` and the only layout is ``paths``.
+    The saved secrets' env overlay lands on ``cfg.secret_env`` (and feeds the
+    AG2ASSISTANT_* layering) so nothing downstream has to read the process env."""
+    data = read_yaml(paths.config_yaml)
+    data.pop("data_dir", None)  # Paths already resolved the layout
+    cfg = Config.for_paths(paths, **data)
     # Derive the active named LLM configuration onto the flat cfg.llm fields
     # (provider/model/provider_options) so model_config & friends stay untouched.
-    # Lazy import breaks the cycle (llm_configs imports config.data_dir); a malformed
-    # store is swallowed like a malformed config.json — the flat defaults then apply.
+    # Lazy import breaks the cycle; a malformed store is swallowed like a malformed
+    # config.yaml — the flat defaults then apply.
     try:
-        from assistant import llm_configs  # local: import cycle (llm_configs imports config)
+        from assistant.llm_configs import LlmConfigStore  # local: import cycle
 
-        llm_configs.apply_active(cfg)
+        LlmConfigStore(paths).apply_active(cfg)
     except Exception:
         pass
-    _apply_env_overrides(cfg)  # explicit AG2ASSISTANT_* env still wins last
+    try:
+        from assistant.secrets import SecretStore  # local: import cycle
+
+        cfg.secret_env = SecretStore(paths).merged_env(env)
+    except Exception:
+        pass
+    # Saved secrets may carry AG2ASSISTANT_* values too, but an explicit env entry
+    # always wins over the store.
+    apply_env_overrides(cfg, {**cfg.secret_env, **dict(env)})
+    cfg.tz_unset_in_container = tz_unset_in_container(env)
     return cfg
+
+
+def load_config() -> Config:
+    """The entry-point boundary: the one place that reads os.environ and Path.home()
+    for configuration. Everything below takes the resolved Config/Paths."""
+    paths = Paths.from_env(os.environ, Path.home())
+    return resolve_config(os.environ, paths)

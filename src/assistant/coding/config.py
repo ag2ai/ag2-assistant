@@ -50,7 +50,7 @@ def build_config(
         turn_timeout=turn_timeout,
     )
     if endpoint is not None:
-        from assistant.coding import bridge_client
+        from assistant.coding.bridge_client import BridgeClient
 
-        cfg._connect = bridge_client.make_connector(endpoint, agent.name, directory)
+        cfg._connect = BridgeClient(endpoint).make_connector(agent.name, directory)
     return cfg

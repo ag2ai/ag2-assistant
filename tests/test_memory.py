@@ -63,52 +63,42 @@ def test_build_knowledge_config_cadence(tmp_path):
     assert single.aggregate_trigger.on_end is True
 
 
-def test_create_agent_single_shot_aggregates_on_end(tmp_path, monkeypatch):
+def _knowledge_of(agent):
+    """The KnowledgeConfig a built agent actually carries (AG2 keeps it here)."""
+    return agent._knowledge_context.config
+
+
+def _aggregate_model(agent) -> str:
+    """The model the passive aggregation pass would call."""
+    return _knowledge_of(agent).aggregate._config.model
+
+
+def test_create_agent_single_shot_aggregates_on_end(paths):
     """The CLI single-shot path enables on_end so one turn still gets learned."""
-    captured = {}
-
-    real = agent_mod.build_knowledge_config
-
-    def spy(*args, **kwargs):
-        captured.update(kwargs)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
-
-    cfg = Config()
-    agent_mod.create_agent(cfg, memory=True, skills=False, single_shot=True)
-    assert captured["on_end"] is True
-    assert captured["every_n_turns"] == cfg.memory.aggregate_every_n_turns
+    cfg = Config.for_paths(paths)
+    agent = agent_mod.create_agent(cfg, memory=True, skills=False, single_shot=True)
+    trigger = _knowledge_of(agent).aggregate_trigger
+    assert trigger.on_end is True
+    assert trigger.every_n_turns == cfg.memory.aggregate_every_n_turns
 
 
-def test_aggregation_uses_cheaper_model_by_default(monkeypatch):
+def test_long_running_chats_do_not_aggregate_on_end(paths):
+    """The counterpart: a normal chat agent batches by turns only, so a closing
+    conversation doesn't pay an aggregation call."""
+    agent = agent_mod.create_agent(Config.for_paths(paths), memory=True, skills=False)
+    assert _knowledge_of(agent).aggregate_trigger.on_end is False
+
+
+def test_aggregation_uses_cheaper_model_by_default(paths):
     """On Gemini with no explicit aggregate_model, the pass uses the cheaper one."""
-    captured = {}
-
-    real = agent_mod.build_knowledge_config
-
-    def spy(*args, **kwargs):
-        captured.update(kwargs)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(agent_mod, "build_knowledge_config", spy)
-
-    agent_mod.create_agent(Config(), memory=True, skills=False)
-    assert captured["aggregate_config"].model == agent_mod._DEFAULT_AGGREGATE_MODEL["gemini"]
+    agent = agent_mod.create_agent(Config.for_paths(paths), memory=True, skills=False)
+    assert _aggregate_model(agent) == agent_mod._DEFAULT_AGGREGATE_MODEL["gemini"]
 
 
-def test_explicit_aggregate_model_wins(monkeypatch):
-    captured = {}
-
-    real = agent_mod.build_knowledge_config
-    monkeypatch.setattr(
-        agent_mod,
-        "build_knowledge_config",
-        lambda *a, **k: (captured.update(k), real(*a, **k))[1],
-    )
-    cfg = Config(llm=LLMConfig(aggregate_model="gemini-2.5-flash"))
-    agent_mod.create_agent(cfg, memory=True, skills=False)
-    assert captured["aggregate_config"].model == "gemini-2.5-flash"
+def test_explicit_aggregate_model_wins(paths):
+    cfg = Config.for_paths(paths, llm=LLMConfig(aggregate_model="gemini-2.5-flash"))
+    agent = agent_mod.create_agent(cfg, memory=True, skills=False)
+    assert _aggregate_model(agent) == "gemini-2.5-flash"
 
 
 async def test_read_profile_empty(tmp_path):

@@ -286,7 +286,7 @@ its own name, token(s), **Connection default profile**, **Paired accounts**, gro
 pins and **Channel exposure**. The unit of configuration, and the key everything
 platform-side is stored under. A platform can be connected as many times as the user
 wants: two Telegram bots are two independent Connections. Install-wide and never
-owned by a Profile (ADR 0019). The **platform** survives as a field on it, saying
+owned by a Profile (ADR 0022). The **platform** survives as a field on it, saying
 which adapter to construct and which surfaces exist.
 _Avoid_: channel (the retired one-per-platform sense), integration (that is the
 Settings section listing Connections), bot (that is the platform-side account),

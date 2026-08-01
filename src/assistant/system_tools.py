@@ -15,7 +15,7 @@ from typing import Annotated
 from ag2 import Context, tool
 from pydantic import Field
 
-from assistant.peers import peer_for_chat
+from assistant.peers import PeerStore
 
 _CHAT_TAIL_TURNS = 20  # turns of a past conversation read_chat returns
 
@@ -44,14 +44,15 @@ async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
         log_suppressed("chat task-card event emit", exc, task_id=task_id, kind=kind)
 
 
-def _origin(context) -> tuple[str | None, str | None]:
+def _origin(peers: PeerStore | None, context) -> tuple[str | None, str | None]:
     """The Peer the current turn is running for, as (connection_id, platform_chat_id) —
     run outcomes get pushed back through that Connection, whichever Chat the Peer has
-    moved to since. (None, None) for a Chat no Peer started (web/CLI/task-run streams)."""
+    moved to since. (None, None) for a Chat no Peer started (web/CLI/task-run streams),
+    and for a toolkit built without a Peer registry to consult."""
     from assistant.channels.base import PUSH_CHANNELS
 
     sid = str(getattr(getattr(context, "stream", None), "id", "") or "")
-    peer = peer_for_chat(sid) if sid else None
+    peer = peers.peer_for_chat(sid) if peers is not None and sid else None
     if peer is not None and peer.connection and peer.platform in PUSH_CHANNELS:
         return peer.connection, peer.chat_id
     return None, None
@@ -68,13 +69,17 @@ def _task_line(t: dict) -> str:
     return f"{t['id']} · {t['name']} · {state}{last}"
 
 
-def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -> list:
+def build_system_tools(
+    tasks, settings, chats=None, platform: str = "gateway", peers: PeerStore | None = None
+) -> list:
     """Build the system toolkit. `tasks` is a TaskService; `settings` is the profile's
     `Settings` (the voice get/set tools read/write it, so they touch only this
     profile); `chats` (optional) is a provider with `list_chats()` and
     `transcript(chat_id)` (the gateway). `platform` is the surface ("gateway" for
     web, else a channel name) — on a channel, task confirmations note that follow-up
-    questions are asked in the web app."""
+    questions are asked in the web app. `peers` (optional) is the install's Peer
+    registry: given one, a task created in a channel conversation remembers the
+    Connection it came from so its outcome is pushed back there."""
     note = _followup_note(platform)
 
     # ---- tasks: a task is name + prompt + optional model + schedule ----
@@ -136,7 +141,7 @@ def build_system_tools(tasks, settings, chats=None, platform: str = "gateway") -
         """Create a task. Ask the user anything unclear BEFORE calling this —
         the prompt is what runs unattended, so it must be self-contained. A task's
         working folders are managed in the task's Folders UI, not through this tool."""
-        connection, chat = _origin(context)
+        connection, chat = _origin(peers, context)
         try:
             task = await tasks.create_task(
                 name=name,

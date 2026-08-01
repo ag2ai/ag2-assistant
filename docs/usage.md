@@ -332,7 +332,7 @@ or `AG2ASSISTANT_DATA_DIR`.)
 ```yaml
 llm:
   provider: gemini
-  model: gemini-3.5-flash
+  model: gemini-3.6-flash
   api_key_env: GEMINI_API_KEY
   aggregate_model: gemini-2.5-flash
 agent:
@@ -369,14 +369,23 @@ Every key above also has an env override (these win over `config.yaml`):
 
 ### Switching LLM providers
 
-Set the provider + model + the env var holding its key, and install that
-provider's extra (`pip install "ag2[anthropic]"` / `ag2[openai]`):
+Set the provider + model + the env var holding its key. Gemini and OpenAI are
+bundled; **Anthropic and Ollama need their provider extra installed first**
+(`pip install "ag2-assistant[anthropic]"` / `pip install "ag2-assistant[ollama]"`,
+or the `PROVIDER_EXTRAS` build arg for Docker), otherwise the provider fails at
+first use with a missing-dependency error:
 
 ```yaml
 llm: { provider: openai, model: gpt-4o, api_key_env: OPENAI_API_KEY }
 ```
 ```yaml
 llm: { provider: anthropic, model: claude-sonnet-4-6, api_key_env: ANTHROPIC_API_KEY }
+```
+
+A local Ollama model needs no key — pull it first with `ollama pull <model>`:
+
+```yaml
+llm: { provider: ollama, model: qwen3.5:4b, provider_options: { ollama: { host: http://localhost:11434 } } }
 ```
 
 Or quickly, without a file:

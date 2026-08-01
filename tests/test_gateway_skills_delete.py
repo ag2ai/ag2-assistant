@@ -8,16 +8,14 @@ can't be deleted (409).
 
 from fastapi.testclient import TestClient
 
-from assistant.config import load_config
 from assistant.gateway.app import create_app
-from assistant.gateway.profile_manager import ProfileManager
 from assistant.skills import SkillStateStore
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_manager, make_profile_app
+from tests.support.fakes import skill_catalog_factory
 
 
-def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
-    app, pid = make_profile_app(persist=True)
+def _client(paths):
+    app, pid = make_profile_app(paths, persist=True)
     return TestClient(app), pid
 
 
@@ -28,10 +26,10 @@ def _write_skill(skills_dir, name, desc="a global skill"):
     return d
 
 
-def test_delete_global_removes_from_projection(monkeypatch):
-    client, _pid = _client(monkeypatch)
+def test_delete_global_removes_from_projection(paths):
+    client, _pid = _client(paths)
     with client:
-        _write_skill(load_config().skills_dir, "extra-global")
+        _write_skill(paths.skills_dir, "extra-global")
         assert "extra-global" in {s["name"] for s in client.get("/api/skills").json()["skills"]}
 
         r = client.delete("/api/skills/extra-global")
@@ -42,8 +40,8 @@ def test_delete_global_removes_from_projection(monkeypatch):
         assert "extra-global" not in {s["name"] for s in client.get("/api/skills").json()["skills"]}
 
 
-def test_delete_bundled_is_409(monkeypatch):
-    client, _pid = _client(monkeypatch)
+def test_delete_bundled_is_409(paths):
+    client, _pid = _client(paths)
     with client:
         r = client.delete("/api/skills/web-research")  # first-party, read-only
         assert r.status_code == 409
@@ -51,105 +49,94 @@ def test_delete_bundled_is_409(monkeypatch):
         assert "web-research" in {s["name"] for s in client.get("/api/skills").json()["skills"]}
 
 
-def test_delete_unknown_is_404(monkeypatch):
-    client, _pid = _client(monkeypatch)
+def test_delete_unknown_is_404(paths):
+    client, _pid = _client(paths)
     with client:
         assert client.delete("/api/skills/does-not-exist").status_code == 404
 
 
-def test_delete_global_cascade_purges_suppressions(monkeypatch):
+def test_delete_global_cascade_purges_suppressions(paths):
     """Deleting a Global skill clears every profile's Suppression of it: a same-named
     re-install resolves default-on for every profile (no lingering suppression)."""
-    client, pid = _client(monkeypatch)
+    client, pid = _client(paths)
     with client:
-        _write_skill(load_config().skills_dir, "shared-x")
+        _write_skill(paths.skills_dir, "shared-x")
         # Suppress it for this profile, then delete it install-wide.
         client.post(api(pid, "/skills/shared-x/suppress"))
-        store = SkillStateStore(load_config().root_dir / "skills.json")
+        store = SkillStateStore(paths.root / "skills.json")
         assert store.is_suppressed("shared-x", pid) is True
 
         r = client.delete("/api/skills/shared-x")
         assert r.status_code == 200
-        store = SkillStateStore(load_config().root_dir / "skills.json")
+        store = SkillStateStore(paths.root / "skills.json")
         assert store.is_suppressed("shared-x", pid) is False
 
         # Re-install the same name → default-on everywhere (no ghost suppression).
-        _write_skill(load_config().skills_dir, "shared-x")
+        _write_skill(paths.skills_dir, "shared-x")
         by_name = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
         assert by_name["shared-x"]["available"] is True
         assert by_name["shared-x"]["suppressed"] is False
 
 
-def test_delete_global_fans_out(monkeypatch):
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=False)
+def test_delete_global_fans_out(paths):
+    """A Global delete rebuilds every runtime's agent, so the skill leaves every
+    profile's catalog — not just the projection on disk."""
+    agents: dict[str, list] = {}
+    manager = make_manager(paths, agent_factory=skill_catalog_factory(agents))
     app = create_app(manager)
     with TestClient(app) as client:
+        _write_skill(paths.skills_dir, "fan-skill")  # before boot, so both agents see it
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-        _write_skill(load_config().skills_dir, "fan-skill")
-
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(pid):
-            reloaded.append(pid)
-            return await orig(pid)
-
-        monkeypatch.setattr(manager, "reload", spy)
+        for pid in ("work", "personal"):
+            assert "fan-skill" in agents[pid][-1].catalog
 
         r = client.delete("/api/skills/fan-skill")
         assert r.json()["ok"]
-        assert set(reloaded) == {"work", "personal"}
+        for pid in ("work", "personal"):
+            assert "fan-skill" not in agents[pid][-1].catalog
+            assert "web-research" in agents[pid][-1].catalog  # only the deleted one goes
 
 
-def test_delete_profile_skill_affects_only_active_profile(monkeypatch):
+def test_delete_profile_skill_affects_only_active_profile(paths):
     """A Profile skill is deleted for the active profile only; the change reloads just
-    that profile. A shared skill can't be deleted from the profile tab (409)."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    that profile — Personal's agent is never rebuilt. A shared skill can't be deleted
+    from the profile tab (409)."""
+    agents: dict[str, list] = {}
+    manager = make_manager(paths, persist=True, agent_factory=skill_catalog_factory(agents))
     app = create_app(manager)
     with TestClient(app) as client:
+        # Placed before boot (the profile dir is derived from the id), so Work's agent
+        # is built with it and the delete's rebuild is what takes it away.
+        _write_skill(paths.profile_dir("work") / "skills", "work-only", "work's own skill")
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-
-        a_cfg = client.app.state.profiles.get("work").config
-        _write_skill(a_cfg.skills_dir, "work-only", "work's own skill")
-        assert "work-only" in {
-            s["name"] for s in client.get(api("work", "/skills")).json()["skills"]
-        }
-
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(pid):
-            reloaded.append(pid)
-            return await orig(pid)
-
-        monkeypatch.setattr(manager, "reload", spy)
+        assert "work-only" in agents["work"][-1].catalog
+        assert "work-only" not in agents["personal"][-1].catalog  # profile-owned, not shared
 
         r = client.delete(api("work", "/skills/work-only"))
         assert r.status_code == 200
         assert "work-only" not in {s["name"] for s in r.json()["skills"]}
-        assert reloaded == ["work"]  # only the active profile
+        assert "work-only" not in agents["work"][-1].catalog  # rebuilt without it
+        assert len(agents["personal"]) == 1  # only the active profile reloaded
 
         # A shared Bundled skill isn't this profile's own → 409 from the profile tab.
         assert client.delete(api("work", "/skills/web-research")).status_code == 409
 
 
-def test_delete_profile_skill_unknown_is_404(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_delete_profile_skill_unknown_is_404(paths):
+    client, pid = _client(paths)
     with client:
         assert client.delete(api(pid, "/skills/nope")).status_code == 404
 
 
-def test_delete_global_skill_when_name_differs_from_dir(monkeypatch):
+def test_delete_global_skill_when_name_differs_from_dir(paths):
     """A hand-placed Global skill in weather-helper/ whose frontmatter says name:
     weather lists as 'weather' with a Delete button. DELETE must resolve the real dir
     (not install_dir/'weather') so it's actually removable, not a 404 (finding 3)."""
-    client, _pid = _client(monkeypatch)
+    client, _pid = _client(paths)
     with client:
-        d = load_config().skills_dir / "weather-helper"
+        d = paths.skills_dir / "weather-helper"
         d.mkdir(parents=True, exist_ok=True)
         (d / "SKILL.md").write_text("---\nname: weather\ndescription: forecasts\n---\n# weather\n")
         assert "weather" in {s["name"] for s in client.get("/api/skills").json()["skills"]}
@@ -160,16 +147,15 @@ def test_delete_global_skill_when_name_differs_from_dir(monkeypatch):
         assert not d.exists()  # the real directory (weather-helper/) is gone
 
 
-def test_global_delete_preserves_same_named_profile_own_disable(monkeypatch):
+def test_global_delete_preserves_same_named_profile_own_disable(paths):
     """A Global 'foo' and a profile's OWN 'foo' can coexist. Disabling the own copy and
     then deleting the unrelated Global 'foo' must leave the own copy's off-state intact
     (finding 4) — it must not silently flip back to available."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    manager = make_manager(paths, persist=True)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        _write_skill(load_config().skills_dir, "foo", "global foo")
+        _write_skill(paths.skills_dir, "foo", "global foo")
         work_cfg = client.app.state.profiles.get("work").config
         _write_skill(work_cfg.skills_dir, "foo", "work's own foo")  # shadows the global here
 
@@ -184,16 +170,15 @@ def test_global_delete_preserves_same_named_profile_own_disable(monkeypatch):
         assert rows["foo"]["available"] is False  # own foo still disabled, not resurrected
 
 
-def test_profile_copy_delete_keeps_shadowed_global_suppression(monkeypatch):
+def test_profile_copy_delete_keeps_shadowed_global_suppression(paths):
     """Work suppressed a Global 'foo', then installed its OWN 'foo' shadowing it.
     Deleting the own copy reveals the Global 'foo' — which must stay Suppressed for
     Work, not flip to available (finding 5)."""
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+    manager = make_manager(paths, persist=True)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        _write_skill(load_config().skills_dir, "foo", "global foo")
+        _write_skill(paths.skills_dir, "foo", "global foo")
         client.post(api("work", "/skills/foo/suppress"))  # suppress the Global for Work
 
         work_cfg = client.app.state.profiles.get("work").config

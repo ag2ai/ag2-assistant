@@ -11,7 +11,10 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+.coverage
 .claude/settings.local.json
+
+tmp/
 
 # local-markdown issue tracker (specs + tickets, see docs/agents/issue-tracker.md)
 .scratch/

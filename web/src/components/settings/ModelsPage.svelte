@@ -23,7 +23,7 @@
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
   const TEMPLATES = [
-    { name: 'Gemini', type: 'gemini', model: 'gemini-3.5-flash', blurb: 'Google Gemini' },
+    { name: 'Gemini', type: 'gemini', model: 'gemini-3.6-flash', blurb: 'Google Gemini' },
     { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.6-terra', blurb: 'Responses API' },
     { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.6-terra', blurb: 'Chat Completions API' },
     {
@@ -33,6 +33,16 @@
       blurb: 'Use your ChatGPT/Codex subscription instead of an API key — unofficial, may break OpenAI ToS',
     },
     { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude' },
+    {
+      name: 'Claude Code', card: 'Claude Code · CLI login',
+      type: 'claude_code', model: '',
+      blurb: 'Run on your Claude Code CLI login (subscription) over ACP — no API key',
+    },
+    {
+      name: 'Codex', card: 'Codex · CLI login',
+      type: 'codex', model: '',
+      blurb: 'Run on your Codex CLI login (ChatGPT subscription) over ACP — no API key',
+    },
     { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Local Ollama' },
     {
       name: 'Local server', card: 'Local server — llama.cpp / vLLM / LM Studio',
@@ -48,6 +58,7 @@
 
   const configs = $derived($llmConfigs.configs)
   const envOverride = $derived($llmConfigs.envOverride)
+  const providerDeps = $derived($llmConfigs.providerDeps || {})
   let tests = $state({})       // config id -> {testing} | {ok, reply, latency_ms} | {ok:false, error}
   let busy = $state(false)
   let err = $state('')
@@ -109,6 +120,9 @@
   function keyChip(c) {
     if (c.key_source === 'subscription')
       return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
+    if (c.key_source === 'cli_login') return c.type === 'codex' ? 'Codex CLI login' : 'Claude Code CLI login'
+    if (c.type === 'claude_code') return 'Claude Code adapter not found — install claude-agent-acp'
+    if (c.type === 'codex') return 'Codex adapter not found — install @agentclientprotocol/codex-acp'
     if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
     if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
     if (c.key_source === 'not_needed') return 'no key needed'
@@ -149,9 +163,15 @@
         {c.name}
         {#if c.active}<span class="llmbadge">active</span>{/if}
       </div>
-      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
+      <!-- An empty model is legal for the CLI-login types (= the CLI's own default);
+           name it instead of leaving a dangling separator. -->
+      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model || 'CLI default'}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
+        <!-- Provider library missing: name the install command, not just a dead dot. -->
+        {#if c.deps && !c.deps.ok}
+          <span class="llmkey warn" title={c.deps.install}>needs {c.deps.install}</span>
+        {/if}
         <!-- Images follow the ACTIVE config: capable types advertise the chip, and on
              the active row it reads as "image generation enabled" (✓). -->
         {#if c.images}<span class="llmkey">images{c.active ? ' ✓' : ''}</span>{/if}
@@ -197,6 +217,9 @@
         <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
           <span class="mcpcathead"><img class="llmlogo sm" src={LOGO[t.type]} alt="" /> {t.card || t.name}</span>
           <span class="mcpcatblurb">{t.blurb}</span>
+          {#if providerDeps[t.type] && !providerDeps[t.type].ok}
+            <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>
+          {/if}
         </button>
       {/each}
     </div>

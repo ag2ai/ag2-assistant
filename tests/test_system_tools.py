@@ -1,11 +1,12 @@
 """The 6 task tools mirror the UI/REST surface exactly."""
 
-from assistant import peers
 from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
+from assistant.peers import PeerStore
 from assistant.system_tools import _origin, _schedule_arg, build_system_tools
 from assistant.tasks.store import TaskStore
+from tests.support.apps import make_paths
 
 
 class _Stream:
@@ -23,7 +24,7 @@ class _Ctx:
 
 def _svc(tmp_path):
     return TaskService(
-        config=Config(),
+        config=Config.for_paths(make_paths(tmp_path)),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )
@@ -37,20 +38,20 @@ def _tools(*args, **kwargs):
     return {t.name: t.model.call for t in build_system_tools(*args, **kwargs)}
 
 
-def test_origin_is_the_peer_a_chat_was_started_from():
+def test_origin_is_the_peer_a_chat_was_started_from(paths):
     """The origin is the Connection the conversation arrived on, so the outcome goes
     back out through that bot rather than through whichever one of its platform."""
-    chat = peers.start_chat("cn-work", "42", platform="telegram")
-    assert _origin(_Ctx(chat)) == ("cn-work", "42")
-    assert _origin(_Ctx("web-abc")) == (None, None)
-    assert _origin(_Ctx("task-run:run_1")) == (None, None)
+    chat = PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
+    assert _origin(PeerStore(paths), _Ctx(chat)) == ("cn-work", "42")
+    assert _origin(PeerStore(paths), _Ctx("web-abc")) == (None, None)
+    assert _origin(PeerStore(paths), _Ctx("task-run:run_1")) == (None, None)
 
 
-def test_origin_survives_the_peer_moving_to_another_chat():
+def test_origin_survives_the_peer_moving_to_another_chat(paths):
     """A task delivers back to the conversation, not to the Chat it was created in."""
-    chat = peers.start_chat("cn-work", "42", platform="telegram")
-    peers.start_chat("cn-work", "42", platform="telegram")
-    assert _origin(_Ctx(chat)) == ("cn-work", "42")
+    chat = PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
+    PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
+    assert _origin(PeerStore(paths), _Ctx(chat)) == ("cn-work", "42")
 
 
 def test_schedule_arg_shapes():
@@ -63,13 +64,13 @@ def test_schedule_arg_shapes():
     }
 
 
-async def test_create_update_run_delete_via_tools(tmp_path):
+async def test_create_update_run_delete_via_tools(tmp_path, paths):
     svc = _svc(tmp_path)
 
     class _Settings:  # the task tools never touch settings; voice tools do
         pass
 
-    tools = _tools(svc, _Settings())
+    tools = _tools(svc, _Settings(), peers=PeerStore(paths))
     for name in (
         "create_task",
         "update_task",
@@ -79,7 +80,7 @@ async def test_create_update_run_delete_via_tools(tmp_path):
         "delete_task",
     ):
         assert name in tools, f"missing tool {name}"
-    ctx = _Ctx(peers.start_chat("cn-work", "42", platform="telegram"))
+    ctx = _Ctx(PeerStore(paths).start_chat("cn-work", "42", platform="telegram"))
     msg = await tools["create_task"](
         name="Digest", prompt="collect news", schedule_kind="cron", cron="0 9 * * *", context=ctx
     )
@@ -103,14 +104,14 @@ async def test_create_update_run_delete_via_tools(tmp_path):
     assert "Deleted" in await tools["delete_task"](task_id=tid)
 
 
-async def test_task_tools_carry_description(tmp_path):
+async def test_task_tools_carry_description(tmp_path, paths):
     """Task tools carry the description to/from the service."""
     svc = _svc(tmp_path)
 
     class _Settings:
         pass
 
-    tools = _tools(svc, _Settings())
+    tools = _tools(svc, _Settings(), peers=PeerStore(paths))
     msg = await tools["create_task"](
         name="N",
         prompt="p",

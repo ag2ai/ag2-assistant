@@ -91,6 +91,54 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 
 Set up as many named model configurations as you like (Gemini, OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), test them, and switch the active one at any time in **Settings → Models**. Two OpenAI paths are supported: a normal **API key**, or **Sign in with ChatGPT**, which runs on your ChatGPT/Codex subscription instead of paying per token (unofficial — see `ag2-assistant auth --help`).
 
+**Anthropic and Ollama need one extra install.** Gemini, all three OpenAI paths, and the Claude Code / Codex CLI logins work out of the box. The other two ship as configuration types but their provider libraries aren't bundled — Settings → Models says so on the row and on the template card, so you find out before configuring, not at **Test** time:
+
+```bash
+pip install "ag2-assistant[anthropic]"   # Anthropic
+pip install "ag2-assistant[ollama]"      # Ollama (local models)
+```
+
+Installed with the one-line script or `uv tool install`? Add the extra to that environment instead:
+
+```bash
+uv tool install --with "ag2-assistant[ollama]" "git+https://github.com/ag2ai/ag2-assistant.git"
+```
+
+Running in Docker? A `pip install` inside a container doesn't survive recreation, so bake it into the image with the `PROVIDER_EXTRAS` build arg (space-separated, and it needs `build:` rather than the prebuilt image):
+
+```bash
+docker build --build-arg PROVIDER_EXTRAS="anthropic ollama" -t ag2-assistant .
+PROVIDER_EXTRAS="ollama" docker compose up -d --build
+```
+
+#### Claude Code (subscription) as the main model
+
+The **Claude Code · CLI login** configuration type runs the assistant's main agent on your own Claude Code CLI over [ACP](https://agentclientprotocol.com) — no API key, auth is the CLI's on-disk login (your Claude subscription). Requirements:
+
+```bash
+npm install -g @agentclientprotocol/claude-agent-acp   # the ACP adapter, must be on PATH
+claude --version                                        # Claude Code CLI installed and logged in
+```
+
+Add a "Claude Code" config in **Settings → Models**. The model list is read from the adapter itself (no model names are hardcoded here or in the UI), and leaving it on *CLI default* uses whatever your CLI is configured for. What you get:
+
+- **All assistant tools work.** The agent's full tool registry (weather, web search, memory, channels, skills, MCP servers, …) is served to Claude Code over a local in-process MCP gateway (`127.0.0.1`, secret URL path). Tool calls execute through the assistant's own event stream, so permissions, approval prompts, and streaming tool cards behave exactly as with any other provider.
+- **Workspace confinement.** The ACP session's filesystem access is scoped to the profile workspace directory.
+- **Advanced options** on the config are ACP constructor overrides (`turn_timeout`, `allow_terminal`, …), not API sampling params.
+
+Limitations: in Docker the assistant reaches the host CLI through the ACP bridge (`AG2ASSISTANT_ACP_BRIDGE` — container-only plumbing; don't set it for host runs) and tool exposure is disabled there; per-token usage/cost isn't reported for ACP turns. Note Anthropic's terms restrict *distributing* products that ride a claude.ai login — a locally-run personal instance driving your own CLI is the same shape as Zed's adapter.
+
+#### Codex (ChatGPT subscription) as the main model
+
+The **Codex · CLI login** configuration type is the same integration for OpenAI's Codex CLI: the main agent runs over ACP on your Codex CLI login (`~/.codex`), no API key. Requirements:
+
+```bash
+npm install -g @agentclientprotocol/codex-acp   # the ACP adapter, must be on PATH
+codex login status                               # Codex CLI logged in (ChatGPT subscription)
+```
+
+Add a "Codex" config in **Settings → Models**. Model and reasoning effort are two selects, filled from the adapter's own catalog (Codex reports them as one `name[reasoning]` id, which is what gets stored); *CLI default* uses the CLI's own model. Everything from the Claude Code section applies unchanged: the assistant's tools are exposed over the local MCP gateway, filesystem access is confined to the profile workspace, Advanced options are ACP constructor overrides, and the same Docker-bridge and usage-reporting limitations hold.
+
 ### Google
 
 Connect Google in Settings and the assistant can search and read your Gmail, draft and send mail (with your approval), read and create calendar events, and read Drive/Docs/Sheets.
@@ -211,7 +259,7 @@ Install-wide state lives under `~/.ag2assistant/` — the global `config.yaml` (
 
 ## Project Status
 
-- [x] Core agent with multi-provider support (Gemini, OpenAI, Anthropic, Ollama)
+- [x] Core agent with multi-provider support (Gemini, OpenAI, Anthropic, Ollama — the last two need a provider extra, see [Models](#models))
 - [x] Named model configurations + "Sign in with ChatGPT" subscription auth
 - [x] Profiles — isolated, colour-coded workspaces (own chats, tasks, memory, files)
 - [x] CLI (run, gateway, chat, agent, onboard, profiles, permissions, auth, google)

@@ -36,7 +36,7 @@ from ag2.knowledge.constants import LOG_PREFIX
 from ag2.knowledge.log import EventLogWriter
 from ag2.stream import MemoryStream
 
-from assistant import codex_auth, onboarding, secrets
+from assistant import onboarding
 from assistant import title as title_mod
 from assistant.a2ui import (
     durable_surfaces_from_messages,
@@ -46,6 +46,7 @@ from assistant.a2ui import (
     runtime as a2ui_runtime_factory,
 )
 from assistant.agent import create_agent, universal_turn_prompt
+from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled, TurnFailed
 from assistant.folders import FolderStore
@@ -59,6 +60,7 @@ from assistant.observability import (
     setup_logging,
 )
 from assistant.permissions import PermissionManager, PermissionStore
+from assistant.secrets import SecretStore
 from assistant.settings import profile_settings
 from assistant.storage import SerialStore
 from assistant.usage import UsageLedger
@@ -160,6 +162,8 @@ class Gateway:
         persist: bool = True,
         task_service=None,
         config_factory: Callable[[], Config] | None = None,
+        agent_factory: Callable | None = None,
+        title_factory: Callable | None = None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -167,6 +171,10 @@ class Gateway:
         self._onboard = onboard
         self._persist = persist
         self._tasks = task_service  # gives the universal agent its system tools
+        # How the turn agent and the one-shot chat titler are built. Injected so a
+        # caller (or a test) decides what an agent is; both default to production.
+        self._agent_factory = agent_factory or create_agent
+        self._title_factory = title_factory or title_mod.default_titler
         # How reload() re-resolves config. For a profile runtime this re-reads that
         # profile's registry entry + settings on every call (§4.1), so workspace/model
         # edits are picked up; for bare construction it defaults to load_config (the
@@ -195,7 +203,10 @@ class Gateway:
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
         # Per-profile daily token/cost tally for the activity HUD.
-        self._usage = UsageLedger(self._config.data_dir / "usage.json")
+        self._usage = UsageLedger(
+            self._config.data_dir / "usage.json",
+            pricing_path=self._config.paths.root / "pricing.json",
+        )
 
     def set_mirror(self, mirror) -> None:
         """Register who receives this gateway's completed turns (ADR 0020)."""
@@ -253,6 +264,7 @@ class Gateway:
         cfg = cfg or self._config
         extra_tools = None
         if self._tasks is not None:
+            from assistant.peers import PeerStore
             from assistant.settings import profile_settings
             from assistant.system_tools import build_system_tools
 
@@ -260,11 +272,15 @@ class Gateway:
             # wire duplicate task actions here. `platform` lets those tools note (on
             # channels) that follow-up questions go to the web app.
             # The voice get/set tools read/write THIS profile's settings.
-            settings = profile_settings(cfg.data_dir)
+            settings = profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
             extra_tools = build_system_tools(
-                self._tasks, settings, chats=self, platform=self._platform
+                self._tasks,
+                settings,
+                chats=self,
+                platform=self._platform,
+                peers=PeerStore(cfg.paths),
             )
-        return create_agent(
+        return self._agent_factory(
             cfg,
             memory=self._memory,
             platform=self._platform,
@@ -281,18 +297,19 @@ class Gateway:
         agent = self._model_agents.get(llm_config_id)
         if agent is not None:
             return agent
-        from assistant import llm_configs
+        from assistant.llm_configs import PROVIDER_OF, LlmConfigStore
 
-        entry = llm_configs.get_config(llm_config_id)
+        store = LlmConfigStore(self._config.paths)
+        entry = store.get_config(llm_config_id)
         if entry is None:
             return self._agent
         import copy
 
         cfg = copy.deepcopy(self._config)
-        provider = llm_configs.PROVIDER_OF[entry["type"]]
+        provider = PROVIDER_OF[entry["type"]]
         cfg.llm.provider = provider
         cfg.llm.model = entry["model"]
-        cfg.llm.provider_options[provider] = llm_configs.entry_options(entry)
+        cfg.llm.provider_options[provider] = store.entry_options(entry)
         cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
         agent = self._make_agent(cfg)
         self._model_agents[llm_config_id] = agent
@@ -310,8 +327,8 @@ class Gateway:
         if cfg.llm.provider.lower() != "openai" or cfg.llm.auth_mode != "subscription":
             return
         try:
-            creds = await asyncio.to_thread(codex_auth.ensure_fresh)
-        except codex_auth.CodexAuthError:
+            creds = await asyncio.to_thread(CodexAuth(cfg.paths).ensure_fresh)
+        except CodexAuthError:
             return  # let the turn fail with model_config's own clear error
         if creds.access_token != self._codex_token:
             self._codex_token = creds.access_token
@@ -320,8 +337,9 @@ class Gateway:
 
     async def start(self) -> None:
         """Create the shared agent and (optionally) the on-disk chat store."""
-        secrets.migrate()  # one-shot legacy -> Secret-entity upgrade (idempotent)
-        secrets.load_into_env()  # provider keys into env before any agent is built
+        # One-shot legacy -> Secret-entity upgrade (idempotent). Provider keys reach
+        # the agent through ``config.secret_env``, resolved with the config.
+        SecretStore(self._config.paths).migrate()
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
         self._agent = self._make_agent()
@@ -349,10 +367,13 @@ class Gateway:
         the agent). The task service rebuilds its planner/executor too, so scheduled
         work doesn't keep using stale keys. Voice needs no reload (built per voice
         session from env)."""
-        secrets.load_into_env()
         # Re-resolve via the injected factory (a profile runtime's factory re-reads
         # the profile's registry entry + settings; the default is load_config).
         self._config = self._config_factory()
+        # A turn already running captured the old agent and finishes on it, but
+        # its ACP subprocesses must not outlive the swap: close them now (aclose
+        # is safe/idempotent; non-ACP configs have no aclose and are skipped).
+        await self._aclose_agents([a for a in (self._agent, *self._model_agents.values()) if a])
         if self._agent is not None:
             self._agent = self._make_agent()
         # Stale per-model agents were built from the pre-reload config/keys; a task
@@ -772,7 +793,7 @@ class Gateway:
         assistant_tools = [n for n in assistant_tools if n]
         return build_voice_agent(
             self._config,
-            profile_settings(self._config.data_dir),
+            profile_settings(self._config.data_dir, voice_provider=self._config.voice_provider),
             self._tasks,
             delegate,
             voice=voice,
@@ -879,7 +900,9 @@ class Gateway:
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
         try:
-            title = await title_mod.generate_title(self._config, user_text, reply_text)
+            title = await title_mod.generate_title(
+                self._config, user_text, reply_text, agent_factory=self._title_factory
+            )
         except Exception as exc:
             log_suppressed("chat title generation", exc, chat_id=chat_id)
             return
@@ -1130,7 +1153,11 @@ class Gateway:
         user_store_path = self._config.root_dir / "user.db"  # shared universal memory
         try:
             if await onboarding.needs_onboarding(user_store_path):
-                await onboarding.run_onboarding(asker, user_store_path)
+                answers = await onboarding.run_onboarding(
+                    asker, user_store_path, paths=self._config.paths
+                )
+                if loc := answers.get("location"):
+                    self._config.agent.location = loc  # live, not just on the next start
         except Exception as exc:
             log_suppressed("onboarding", exc)
             # Onboarding is best-effort; never block the actual message.
@@ -1182,8 +1209,26 @@ class Gateway:
             "chats": len(self._streams),
         }
 
+    async def _aclose_agents(self, agents: list) -> None:
+        """Tear down model-config resources (ACP subprocess sessions) held by
+        outgoing agents. Dedup by config identity — the default agent and the
+        aggregation pass share one instance — and never let teardown break a
+        reload: a failed close only logs."""
+        seen: set[int] = set()
+        for agent in agents:
+            cfg = getattr(agent, "config", None)
+            aclose = getattr(cfg, "aclose", None)
+            if aclose is None or id(cfg) in seen:
+                continue
+            seen.add(id(cfg))
+            try:
+                await aclose()
+            except Exception as exc:
+                log_suppressed("closing ACP model sessions", exc)
+
     async def close(self) -> None:
         """Release in-memory chat state (persisted chats stay on disk)."""
+        await self._aclose_agents([a for a in (self._agent, *self._model_agents.values()) if a])
         self._streams.clear()
         self._locks.clear()
         self._loaded.clear()
@@ -1197,6 +1242,9 @@ def build_gateway(
     platform: str = "gateway",
     persist: bool = True,
     config_factory: Callable[[], Config] | None = None,
+    agent_factory: Callable | None = None,
+    title_factory: Callable | None = None,
+    summary_factory: Callable | None = None,
 ) -> "tuple[Gateway, object]":
     """Canonical construction: a Gateway wired to its TaskService, so the universal
     agent gets the task system tools (create/schedule/query). Used by the web app and
@@ -1208,7 +1256,9 @@ def build_gateway(
     that re-reads that profile's registry + settings (§4.1); when omitted both fall
     back to ``load_config`` (the profile-agnostic root config)."""
     config = config or load_config()
-    tasks = TaskService(config=config, config_factory=config_factory)
+    tasks = TaskService(
+        config=config, config_factory=config_factory, summary_factory=summary_factory
+    )
     gateway = Gateway(
         config=config,
         memory=memory,
@@ -1216,5 +1266,7 @@ def build_gateway(
         persist=persist,
         task_service=tasks,
         config_factory=config_factory,
+        agent_factory=agent_factory,
+        title_factory=title_factory,
     )
     return gateway, tasks

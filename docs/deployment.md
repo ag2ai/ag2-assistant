@@ -93,6 +93,19 @@ docker compose up -d         # build + run
 Open <http://localhost:8800/>. State (`ag2_data`) and the agent workspace (`ag2_workspace`)
 live in named volumes, so they survive `docker compose down` and restarts.
 
+#### Anthropic / Ollama model types
+
+Their provider libraries aren't in the base image, and a `pip install` inside a running
+container is lost the moment it's recreated — so bake them in at build time:
+
+```bash
+PROVIDER_EXTRAS="ollama" docker compose up -d --build   # or "anthropic ollama"
+```
+
+Compose passes it through to the `PROVIDER_EXTRAS` build arg. This needs a local build:
+the prebuilt GHCR image below ships neither library. Settings → Models flags any type
+whose library is missing, so you can tell at a glance whether it took.
+
 ### Prebuilt image
 
 Tagged releases publish an image to GHCR, so you can skip the local build:

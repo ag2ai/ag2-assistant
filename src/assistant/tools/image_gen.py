@@ -13,7 +13,6 @@ Other providers (Anthropic/Ollama) have no image model → the tool says so.
 """
 
 import contextlib
-import os
 from typing import Annotated
 from urllib.parse import quote
 
@@ -23,10 +22,11 @@ from ag2.config.gemini import GeminiConfig
 from ag2.tools import ImageGenerationTool
 from pydantic import Field
 
-from assistant import codex_auth, llm_configs, secrets
 from assistant.attachments import build_input
+from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
 from assistant.events import ImageGenerated
-from assistant.secrets import KEY_ENV
+from assistant.llm_configs import PROVIDER_OF, LlmConfigStore
+from assistant.secrets import KEY_ENV, SecretStore
 from assistant.workspace import resolve, write_image
 
 # Default image models (overridable via env so they track provider deprecations).
@@ -43,12 +43,13 @@ def _image_agent(config):
     When the store is empty, falls back to the flat ``config.llm.provider`` with the
     provider's env key. Built directly (not via model_config) to sidestep an import
     cycle."""
+    store = LlmConfigStore(config.paths)
     entry = None
-    if llm_configs.list_configs():
-        entry = llm_configs.image_entry()
+    if store.list_configs():
+        entry = store.image_entry()
         if entry is None:
             return None  # the ACTIVE config can't generate images
-        provider = llm_configs.PROVIDER_OF[entry["type"]]
+        provider = PROVIDER_OF[entry["type"]]
         model = entry["model"]
     else:
         provider = (config.llm.provider or "gemini").lower()
@@ -57,29 +58,29 @@ def _image_agent(config):
         model = config.llm.model
 
     def _key(name: str) -> str:
-        # Prefer the entry's referenced Secret; fall back to the provider env key
-        # (which a Default Secret populates at load_into_env).
-        own = secrets.secret_value(entry.get("secret_id", "")) if entry else ""
-        return own or os.environ.get(KEY_ENV.get(name, ""), "")
+        # Prefer the entry's referenced Secret; fall back to the provider key the
+        # resolved config carries (a Default Secret contributes it via secret_env).
+        own = SecretStore(config.paths).secret_value(entry.get("secret_id", "")) if entry else ""
+        return own or config.secret_env.get(KEY_ENV.get(name, ""), "")
 
     if entry is not None and entry["type"] == "openai_subscription":
         # ChatGPT subscription: the backend runs the native image tool too (verified
         # live — AG2 captures the streamed image on reply.files). Same construction
         # rules as model_config's subscription branch: token as bearer, Codex headers,
         # streaming forced on, storage forced off.
-        creds = codex_auth.creds_best_effort()
+        creds = CodexAuth(config.paths).creds_best_effort()
         cfg = OpenAIResponsesConfig(
             model=model,
             api_key=creds.access_token,
-            base_url=codex_auth.BACKEND_BASE,
-            default_headers=codex_auth.default_headers(creds),
+            base_url=BACKEND_BASE,
+            default_headers=default_headers(creds),
             streaming=True,
             store=False,
         )
         return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
 
     if provider == "gemini":
-        image_model = os.environ.get("AG2ASSISTANT_IMAGE_MODEL") or DEFAULT_GEMINI_IMAGE_MODEL
+        image_model = config.image_model or DEFAULT_GEMINI_IMAGE_MODEL
         cfg = GeminiConfig(
             model=image_model, api_key=_key("gemini"), response_modalities=["TEXT", "IMAGE"]
         )

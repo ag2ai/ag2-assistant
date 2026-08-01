@@ -12,6 +12,8 @@ contradicts. It is also given the user's *request* (intent) and the rated *conte
 just the reason, so it generalises correctly (topic vs format vs instruction-following).
 """
 
+from collections.abc import Callable
+
 from pydantic import BaseModel, Field
 
 from assistant.config import Config
@@ -58,6 +60,15 @@ Decide:
 - remove: any existing bullet above that this feedback DIRECTLY contradicts (the user now wants the opposite) — copy its text exactly so it can be removed. Be conservative; usually empty."""
 
 
+def default_learner(config: Config):
+    """The production learner: a one-shot agent on the cheap model."""
+    from ag2 import Agent  # local: lazy heavy import, guarded
+
+    from assistant.agent import cheap_model, model_config  # local: import cycle
+
+    return Agent("feedback-learner", config=model_config(config, cheap_model(config)))
+
+
 async def learn(
     config: Config,
     *,
@@ -65,6 +76,7 @@ async def learn(
     reason: str,
     content: str = "",
     request: str = "",
+    agent_factory: Callable[[Config], object] = default_learner,
 ) -> None:
     """Distil one feedback into the memory profile. Safe to fire-and-forget — swallows all
     errors and falls back to appending the raw reason so the signal is never lost."""
@@ -76,16 +88,8 @@ async def learn(
     thumb = "a thumbs-DOWN (disliked it)" if down else "a thumbs-UP (liked it)"
     polarity = "dislike" if down else "preference (a like)"
     try:
-        from ag2 import Agent  # local: lazy heavy import, guarded
-
-        from assistant.agent import (  # local: import cycle (assistant.agent)
-            cheap_model,
-            model_config,
-        )
-
         profile = (await read_profile(store_path)) or "(nothing yet)"
-        cfg = model_config(config, cheap_model(config))
-        agent = Agent("feedback-learner", config=cfg)
+        agent = agent_factory(config)
         prompt = _PROMPT.format(
             thumb=thumb,
             polarity=polarity,
@@ -94,8 +98,13 @@ async def learn(
             content=(content or "(not provided)")[:2000],
             reason=(reason or "").strip()[:1000],
         )
-        reply = await agent.ask(prompt, response_schema=FeedbackMemory)
-        out = await reply.content()
+        from assistant.structured import aclose_config, ask_structured
+
+        try:
+            out = await ask_structured(agent, prompt, FeedbackMemory)
+        finally:
+            # one-shot agent: reap the ACP subprocess behind its config, if any
+            await aclose_config(getattr(agent, "config", None))
         note = (getattr(out, "note", "") or "").strip()
         remove = getattr(out, "remove", None) or []
         # A successful run always returns (even a deliberate skip) — the fallback below

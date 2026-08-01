@@ -19,19 +19,19 @@ from assistant.gateway.core import Gateway
 from assistant.gateway.tasks_service import TaskService
 from assistant.tasks.store import TaskStore
 from assistant.workspace import mention_forms
-from tests.conftest import FakeAgent, api
+from tests.support.apps import api, make_paths
+from tests.support.fakes import fake_agent_factory
 
 
-async def _gateway(tmp_path, monkeypatch, *, tasks=False) -> Gateway:
+async def _gateway(tmp_path, *, tasks=False) -> Gateway:
     """A started, persistent Gateway over ``tmp_path`` with a fake agent. With
     ``tasks=True`` it also owns a real TaskStore/TaskService so run rows can be
     enriched with their parent Task."""
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-    cfg = Config(data_dir=tmp_path)
+    cfg = Config.for_paths(make_paths(tmp_path), data_dir=tmp_path)
     svc = None
     if tasks:
         svc = TaskService(config=cfg, store=TaskStore(path=tmp_path / "tasks.db"))
-    gw = Gateway(config=cfg, memory=False, task_service=svc)
+    gw = Gateway(config=cfg, memory=False, task_service=svc, agent_factory=fake_agent_factory())
     await gw.start()
     return gw
 
@@ -57,9 +57,9 @@ async def _seed_log(gw, sid, text):
 # ---- ticket 01: referenced-in-a-chat, path forms, isolation, moved path ----
 
 
-async def test_referenced_file_lists_its_chat(tmp_path, monkeypatch):
+async def test_referenced_file_lists_its_chat(tmp_path):
     """A real turn whose user message holds the file path → that chat is listed."""
-    gw = await _gateway(tmp_path, monkeypatch)
+    gw = await _gateway(tmp_path)
     await gw.send_message("Please read /ws/report.md and summarize it", chat_id="c1")
     rows = await gw.threads_mentioning(["/ws/report.md"])
     assert [r["stream_id"] for r in rows] == ["c1"]
@@ -68,10 +68,10 @@ async def test_referenced_file_lists_its_chat(tmp_path, monkeypatch):
     await gw.close()
 
 
-async def test_both_path_forms_match(tmp_path, monkeypatch):
+async def test_both_path_forms_match(tmp_path):
     """The OR-set matches a chat holding the absolute form AND one holding the
     workspace-relative form — a Files-space file is searched under both."""
-    gw = await _gateway(tmp_path, monkeypatch)
+    gw = await _gateway(tmp_path)
     await _seed_chat(gw, "cabs", "opened /ws/report.md earlier")
     await _seed_chat(gw, "crel", "produced deliverables/report.md")
     rows = await gw.threads_mentioning(["/ws/report.md", "deliverables/report.md"])
@@ -79,26 +79,26 @@ async def test_both_path_forms_match(tmp_path, monkeypatch):
     await gw.close()
 
 
-async def test_moved_path_returns_empty(tmp_path, monkeypatch):
+async def test_moved_path_returns_empty(tmp_path):
     """Path-historical: the transcript froze the OLD path, so a query for the file's
     new path finds nothing (no move/rename tracking)."""
-    gw = await _gateway(tmp_path, monkeypatch)
+    gw = await _gateway(tmp_path)
     await _seed_chat(gw, "c1", "see /ws/old-name.md")
     assert await gw.threads_mentioning(["/ws/new-name.md"]) == []
     await gw.close()
 
 
-async def test_no_paths_or_empty_store_is_empty(tmp_path, monkeypatch):
-    gw = await _gateway(tmp_path, monkeypatch)
+async def test_no_paths_or_empty_store_is_empty(tmp_path):
+    gw = await _gateway(tmp_path)
     assert await gw.threads_mentioning([]) == []
     assert await gw.threads_mentioning(["/ws/whatever.md"]) == []
     await gw.close()
 
 
-async def test_cross_profile_isolation(tmp_path, monkeypatch):
+async def test_cross_profile_isolation(tmp_path):
     """Two profiles = two stores; a mention in one is never surfaced by the other."""
-    gw_a = await _gateway(tmp_path / "a", monkeypatch)
-    gw_b = await _gateway(tmp_path / "b", monkeypatch)
+    gw_a = await _gateway(tmp_path / "a")
+    gw_b = await _gateway(tmp_path / "b")
     await _seed_chat(gw_a, "c1", "secret at /ws/secret.md")
     assert len(await gw_a.threads_mentioning(["/ws/secret.md"])) == 1
     assert await gw_b.threads_mentioning(["/ws/secret.md"]) == []
@@ -106,8 +106,8 @@ async def test_cross_profile_isolation(tmp_path, monkeypatch):
     await gw_b.close()
 
 
-async def test_ordering_newest_first(tmp_path, monkeypatch):
-    gw = await _gateway(tmp_path, monkeypatch)
+async def test_ordering_newest_first(tmp_path):
+    gw = await _gateway(tmp_path)
     await _seed_chat(gw, "old", "/ws/f.md", updated="2026-01-01T00:00:00+00:00")
     await _seed_chat(gw, "new", "/ws/f.md", updated="2026-06-01T00:00:00+00:00")
     rows = await gw.threads_mentioning(["/ws/f.md"])
@@ -115,8 +115,8 @@ async def test_ordering_newest_first(tmp_path, monkeypatch):
     await gw.close()
 
 
-async def test_result_cap_respected(tmp_path, monkeypatch):
-    gw = await _gateway(tmp_path, monkeypatch)
+async def test_result_cap_respected(tmp_path):
+    gw = await _gateway(tmp_path)
     for i in range(core_mod._MENTIONS_RESULT_CAP + 5):
         await _seed_chat(gw, f"c{i:03d}", "/ws/f.md")
     rows = await gw.threads_mentioning(["/ws/f.md"])
@@ -127,21 +127,21 @@ async def test_result_cap_respected(tmp_path, monkeypatch):
 # ---- ticket 02: event-log corpus, Task Runs, task-page skip ----
 
 
-async def test_event_log_only_mention_is_matched(tmp_path, monkeypatch):
+async def test_event_log_only_mention_is_matched(tmp_path):
     """A path present only in the raw event log (never the display transcript) still
     matches — the loose "mentioned anywhere" promise reads the log, not just messages."""
-    gw = await _gateway(tmp_path, monkeypatch)
+    gw = await _gateway(tmp_path)
     await _seed_log(gw, "logonly", json.dumps({"path": "deliverables/out.md"}) + "\n")
     rows = await gw.threads_mentioning(["deliverables/out.md"])
     assert [(r["stream_id"], r["kind"]) for r in rows] == [("logonly", "chat")]
     await gw.close()
 
 
-async def test_produced_file_on_run_lists_the_run(tmp_path, monkeypatch):
+async def test_produced_file_on_run_lists_the_run(tmp_path):
     """A deliverable produced by a Task Run — its path lives in a DeliverableProduced
     event on the run's log — surfaces the RUN, enriched with its parent Task name and
     run start time."""
-    gw = await _gateway(tmp_path, monkeypatch, tasks=True)
+    gw = await _gateway(tmp_path, tasks=True)
     task = await gw._tasks._store.create_task("Nightly digest", "gather news")
     run = await gw._tasks._store.create_run(task.id)
     event = {"type": "DeliverableProduced", "data": {"path": "deliverables/digest.md"}}
@@ -159,19 +159,19 @@ async def test_produced_file_on_run_lists_the_run(tmp_path, monkeypatch):
     await gw.close()
 
 
-async def test_task_page_stream_is_skipped(tmp_path, monkeypatch):
+async def test_task_page_stream_is_skipped(tmp_path):
     """A ``task:{id}`` page stream holds config, not a transcript — never a row, even
     if the path string happens to appear in it."""
-    gw = await _gateway(tmp_path, monkeypatch)
+    gw = await _gateway(tmp_path)
     await _seed_log(gw, "task:t1", json.dumps({"path": "deliverables/out.md"}) + "\n")
     assert await gw.threads_mentioning(["deliverables/out.md"]) == []
     await gw.close()
 
 
-async def test_dropped_segment_is_scanned(tmp_path, monkeypatch):
+async def test_dropped_segment_is_scanned(tmp_path):
     """A path that only survives in a dropped-turn log segment
     (``{sid}.dropped-N.jsonl``) is still matched and attributed to the base stream."""
-    gw = await _gateway(tmp_path, monkeypatch)
+    gw = await _gateway(tmp_path)
     await gw._event_store.write(
         f"{LOG_PREFIX}c1.dropped-1.jsonl", json.dumps({"path": "deliverables/gone.md"}) + "\n"
     )

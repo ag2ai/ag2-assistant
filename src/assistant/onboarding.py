@@ -13,12 +13,13 @@ once per profile, since every profile reads the same universal document.
 Every question is skippable (type "skip", or pick "No preference").
 """
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from assistant.config import read_global_config, update_global_section
 from assistant.hitl.base import Asker, Question
 from assistant.memory import PROFILE_PATH, build_profile_store, read_profile
+from assistant.paths import Paths
 
 _SKIP_WORDS = {"", "skip", "-", "—", "none", "n/a", "na", "no preference", "pass"}
 
@@ -88,9 +89,13 @@ async def needs_onboarding(user_store_path: Path) -> bool:
     return not profile.strip()
 
 
-def _persist_location(location: str, env_path: Path | None = None) -> None:
-    """Write AG2ASSISTANT_LOCATION into the process env and the project `.env`."""
-    os.environ["AG2ASSISTANT_LOCATION"] = location
+def _persist_location(location: str, paths: Paths | None, env_path: Path | None) -> None:
+    """Persist the answered location in the install's config.yaml (the durable store
+    every later start reads) and in the project `.env` (the dev-time override)."""
+    if paths is not None:
+        agent_section = dict(read_global_config(paths).get("agent") or {})
+        agent_section["location"] = location
+        update_global_section(paths, "agent", agent_section)
     env_path = env_path or Path(".env")
     line = f"AG2ASSISTANT_LOCATION={location}"
     try:
@@ -106,7 +111,7 @@ def _persist_location(location: str, env_path: Path | None = None) -> None:
         else:
             env_path.write_text(line + "\n")
     except OSError:
-        pass  # env file is best-effort; the in-process var is what matters now
+        pass  # env file is best-effort; config.yaml is the store that matters
 
 
 def identity_document(answers: dict[str, str]) -> str:
@@ -152,10 +157,16 @@ async def run_onboarding(
     asker: Asker,
     user_store_path: Path,
     env_path: Path | None = None,
+    *,
+    paths: Paths | None = None,
 ) -> dict[str, str]:
     """Ask the onboarding questions and seed the UNIVERSAL profile + location config.
 
-    Returns the (non-skipped) answers. Writes to the shared universal store
+    Returns the (non-skipped) answers; the caller applies the location to its live
+    ``Config`` (this function never writes to the process environment). Without
+    ``paths`` the location is only written to `.env`.
+
+    Writes to the shared universal store
     (``config.root_dir / "user.db"``, passed as `user_store_path`) since the answers
     are identity facts true across every persona; there is no marker file — an empty
     `user.db` is the only gate (`needs_onboarding`).
@@ -170,7 +181,7 @@ async def run_onboarding(
             answers[step.key] = ans.strip()
 
     if answers.get("location"):
-        _persist_location(answers["location"], env_path)
+        _persist_location(answers["location"], paths, env_path)
 
     profile_md = identity_document(answers)
     if profile_md:

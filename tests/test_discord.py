@@ -85,9 +85,8 @@ def test_normalize_marks_a_text_only_message_as_carrying_no_file():
     assert ch._normalize(_fake_message("hello", guild=False)).has_attachment is False
 
 
-def test_requires_token(monkeypatch):
-    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
-
+def test_requires_token():
+    """The token is handed over by the caller; the adapter never reads the environment."""
     with pytest.raises(ValueError):
         DiscordChannel()
 

@@ -5,7 +5,7 @@ nothing ever read it: anyone who learned the bot's handle got the assistant with
 tools, Folder Grants, memory and tasks. That was survivable only because a Channel was
 pinned to a single Profile and the bot was assumed secret.
 
-ADR 0019 and ADR 0020 make it unsurvivable. A stranger would now get `/profile` — an
+ADR 0022 and ADR 0020 make it unsurvivable. A stranger would now get `/profile` — an
 enumeration of every Profile in the install and entry into any of them — plus `/resume`
 into any Chat, including ones begun in the browser. So a **Paired account** allowlist
 becomes a precondition of the feature, not an enhancement: an unpaired account gets no

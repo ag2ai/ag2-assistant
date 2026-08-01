@@ -8,9 +8,12 @@ for a short name + one-sentence description from the task's prompt. Mirrors
 ``assistant/title.py``: structured output, never raises.
 """
 
+from collections.abc import Callable
+
 from pydantic import BaseModel, Field
 
 from assistant.config import Config
+from assistant.structured import aclose_config, ask_structured
 
 _MAX = 200
 
@@ -36,43 +39,56 @@ class TaskMeta(BaseModel):
     description: str = Field(default="", description="One-sentence description of the task.")
 
 
-def _default_factory(config: Config):
-    def make():
-        from ag2 import Agent
+def default_summarizer(config: Config):
+    """The production distiller: a one-shot agent on the cheap model."""
+    from ag2 import Agent
 
-        from assistant.agent import cheap_model, model_config
+    from assistant.agent import cheap_model, model_config
 
-        return Agent("run-summarizer", config=model_config(config, cheap_model(config)))
-
-    return make
+    return Agent("run-summarizer", config=model_config(config, cheap_model(config)))
 
 
-async def summarize_run(config: Config, task_prompt: str, reply: str, agent_factory=None) -> str:
+async def summarize_run(
+    config: Config,
+    task_prompt: str,
+    reply: str,
+    agent_factory: Callable[[Config], object] = default_summarizer,
+) -> str:
     """One-line outcome of a run, or "" on any failure (summary is optional)."""
     try:
-        agent = (agent_factory or _default_factory(config))()
-        r = await agent.ask(
-            _PROMPT.format(prompt=(task_prompt or "")[:2000], reply=(reply or "")[:4000]),
-            response_schema=RunSummary,
-        )
-        out = await r.content()
+        agent = agent_factory(config)
+        try:
+            out = await ask_structured(
+                agent,
+                _PROMPT.format(prompt=(task_prompt or "")[:2000], reply=(reply or "")[:4000]),
+                RunSummary,
+            )
+        finally:
+            await aclose_config(agent.config)  # one-shot agent: reap the ACP subprocess
         return " ".join(str(getattr(out, "summary", "")).split())[:_MAX]
     except Exception:
         return ""
 
 
-async def suggest_task_meta(config: Config, prompt: str, agent_factory=None) -> tuple[str, str]:
+async def suggest_task_meta(
+    config: Config,
+    prompt: str,
+    agent_factory: Callable[[Config], object] = default_summarizer,
+) -> tuple[str, str]:
     """(name, description) for a task created without a name, distilled from its
     prompt by the cheap model. On any LLM/parsing failure, falls back to the
     first 40 characters of the prompt as the name and an empty description —
     a task must always have SOME name, so this path never raises."""
     try:
-        agent = (agent_factory or _default_factory(config))()
-        r = await agent.ask(
-            _META_PROMPT.format(prompt=(prompt or "")[:2000]),
-            response_schema=TaskMeta,
-        )
-        out = await r.content()
+        agent = agent_factory(config)
+        try:
+            out = await ask_structured(
+                agent,
+                _META_PROMPT.format(prompt=(prompt or "")[:2000]),
+                TaskMeta,
+            )
+        finally:
+            await aclose_config(agent.config)  # one-shot agent: reap the ACP subprocess
         name = " ".join(str(getattr(out, "name", "")).split())
         description = " ".join(str(getattr(out, "description", "")).split())
         if not name:

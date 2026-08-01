@@ -1,6 +1,5 @@
 """AG2 Assistant agent built on AG2."""
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -18,11 +17,11 @@ from ag2.tools import SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
 from pydantic import Field
 
-from assistant import codex_auth
+from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
 from assistant.config import Config, load_config
 from assistant.folders import FolderStore
 from assistant.hitl import Asker, build_hitl_hook
-from assistant.integrations import google_auth
+from assistant.integrations.google_auth import GoogleAuth
 from assistant.memory import (
     build_compaction_config,
     build_knowledge_config,
@@ -55,13 +54,19 @@ _DEFAULT_AGGREGATE_MODEL = {
     "openai": "gpt-5-mini",
 }
 
+# Providers that are a coding CLI driven over ACP rather than an HTTP API: the
+# model config comes from acp_provider.BUILDERS and the per-call timeout does not
+# apply (see _build_middleware). Kept as a plain tuple so the branch below can be
+# taken without importing the coding package.
+ACP_PROVIDERS = ("claude_code", "codex")
+
 
 def model_config(config: Config, model: str | None = None):
     """Build the AG2 ModelConfig for the configured provider.
 
     `model` overrides `config.llm.model` (used for the cheaper aggregation pass).
-    The API key is read from os.environ by the provider's conventional var (filled
-    from the secrets store at startup / on reload), not the fixed api_key_env field.
+    The API key comes from ``config.secret_env`` by the provider's conventional var
+    (the secrets store contributes it at resolve time), not the fixed api_key_env field.
 
     `config.llm.provider_options[provider]` (Settings → Model & Keys → Advanced, or
     config.json) is merged into the provider config's kwargs LAST, so any of its
@@ -71,8 +76,14 @@ def model_config(config: Config, model: str | None = None):
     """
     model = model or config.llm.model
     provider = config.llm.provider.lower()
-    api_key = os.environ.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
+    api_key = config.secret_env.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     opts = dict(config.llm.provider_options.get(provider) or {})
+    if provider in ACP_PROVIDERS:
+        # Coding CLI over ACP: the CLI's own disk login is the auth (no key),
+        # and the entry's Advanced options are ACPConfig constructor overrides.
+        from assistant.coding import acp_provider
+
+        return acp_provider.BUILDERS[provider](config, model=model, options=opts)
     if provider == "anthropic":
         return AnthropicConfig(
             **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
@@ -87,7 +98,7 @@ def model_config(config: Config, model: str | None = None):
             # best-effort (never raises) — building the agent must not 500 a reload
             # when the token can't be refreshed; the turn then fails with the real
             # OpenAI error (e.g. unsupported_country) instead.
-            creds = codex_auth.creds_best_effort()
+            creds = CodexAuth(config.paths).creds_best_effort()
             # Advanced options (temperature, max_output_tokens, ...) merge first;
             # everything the subscription OWNS is forced afterwards, so options can
             # neither point elsewhere nor leak a key: the endpoint/token/headers are
@@ -101,8 +112,8 @@ def model_config(config: Config, model: str | None = None):
                     **sub_opts,
                     "model": model,
                     "api_key": creds.access_token,
-                    "base_url": codex_auth.BACKEND_BASE,
-                    "default_headers": codex_auth.default_headers(creds),
+                    "base_url": BACKEND_BASE,
+                    "default_headers": default_headers(creds),
                     "streaming": True,
                     "store": False,
                 }
@@ -125,7 +136,7 @@ def model_config(config: Config, model: str | None = None):
         return OllamaConfig(
             **{
                 "model": model,
-                "host": os.environ.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
+                "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
                 "streaming": config.llm.streaming,
                 **opts,
             }
@@ -142,6 +153,26 @@ def model_config(config: Config, model: str | None = None):
             **opts,
         }
     )
+
+
+def _build_middleware(config: Config) -> list:
+    """The per-agent LLM middleware stack for this provider."""
+    middleware = [
+        agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
+        # Retry a failed call before it kills the attempt/task. Listed BEFORE
+        # the timeout so it wraps it (AG2 nests later middleware closer to the
+        # call): each retry re-enters the timeout, getting a fresh window. A
+        # transient hang or 429/5xx becomes a hiccup, not a failure.
+        LLMRetryMiddleware(config.llm.call_retries),
+    ]
+    if config.llm.provider.lower() not in ACP_PROVIDERS:
+        # Wall-clock ceiling per LLM call: a hung/stalled provider call raises
+        # instead of awaiting forever (the incident's silent 2-hour hang). NOT
+        # for the CLI agent: there one "call" is the CLI agent's whole inner
+        # tool loop, so the per-call ceiling is ACPConfig.turn_timeout; the
+        # silence watchdog covers wedges.
+        middleware.append(LLMTimeoutMiddleware(config.llm.call_timeout_s))
+    return middleware
 
 
 def _default_aggregate_model(config: Config) -> str | None:
@@ -183,7 +214,7 @@ def build_skills_runtime(config: Config):
     extra.append(str(bundled_skills_dir()))
 
     if config.tools.sandbox == "docker":
-        if docker_available():
+        if docker_available(config.search_path):
             return build_docker_skill_runtime(
                 install_dir=config.skills_dir,
                 blocked=_SKILL_BLOCKED,
@@ -195,6 +226,29 @@ def build_skills_runtime(config: Config):
     return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
 
 
+def resolve_skills(config: Config, runtime):
+    """`runtime` filtered down to the skills resolved available for `config`.
+
+    This is the single resolution seam (ADR 0016): a skill turned off in the
+    install-wide `SkillStateStore`, or suppressed for this profile, is absent from
+    the view and unloadable through it. No other code path decides availability.
+    Resolution is **default-on** (a skill is available unless a record turns it
+    off) — the inverse of a Folders Grant; see `SkillStateStore` for why not to
+    "fix" that. `.skills` on the result is what an agent build would see.
+    """
+    store = SkillStateStore(config.root_dir / "skills.json")
+    profile = config.data_dir.name
+    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
+    return FilteredSkillRuntime(
+        runtime,
+        lambda skill: store.is_available(
+            skill.name,
+            profile,
+            origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
+        ),
+    )
+
+
 def build_skills_plugin(config: Config, runtime):
     """Progressive-disclosure Skills plugin over `runtime`, filtered by skill state.
 
@@ -203,29 +257,15 @@ def build_skills_plugin(config: Config, runtime):
     discovers what's available with no `list_skills` round-trip — and exposes
     `load_skill` / `read_skill_resource` / `run_skill_script` for those skills.
 
-    This is the single resolution seam (ADR 0016): the runtime is wrapped so a
-    skill turned off in the install-wide `SkillStateStore` is absent from the
-    catalog and unloadable. No other code path decides availability. Resolution
-    is **default-on** (a skill is available unless a record turns it off) — the
-    inverse of a Folders Grant; see `SkillStateStore` for why not to "fix" that.
+    What it may show is decided by `resolve_skills`, so a Disabled skill reaches
+    neither the catalog nor the activation tools.
 
     The catalog and the activation tools are a **construction-time snapshot**: a
     skill installed or toggled mid-session isn't reflected until the next agent
     build (a `ProfileManager.reload`) picks it up — which is exactly what the
     /api/skills routes trigger on every change.
     """
-    store = SkillStateStore(config.root_dir / "skills.json")
-    profile = config.data_dir.name
-    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
-    filtered = FilteredSkillRuntime(
-        runtime,
-        lambda skill: store.is_available(
-            skill.name,
-            profile,
-            origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
-        ),
-    )
-    return SkillPlugin(filtered)
+    return SkillPlugin(resolve_skills(config, runtime))
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:
@@ -378,16 +418,6 @@ def build_memory_tool(store_path, user_store_path):
     return remember
 
 
-def tz_unset_in_container() -> bool:
-    """True when containerised with no TZ set — i.e. silently running on UTC.
-
-    Scheduled tasks are wall-clock local, so this is the one configuration where the
-    clock is probably not the one the user means. The startup banner and the agent's
-    environment block both key off this predicate so they cannot disagree.
-    """
-    return Path("/.dockerenv").exists() and not os.environ.get("TZ")
-
-
 def environment_context(config: Config) -> str:
     """Live environment context (date, time, location) for the agent.
 
@@ -407,7 +437,7 @@ def environment_context(config: Config) -> str:
     lines = [f"- Current date and time: {when} {tz} ({off})".rstrip()]
     if config.agent.location:
         lines.append(f"- User location: {config.agent.location}")
-    if tz_unset_in_container():
+    if config.tz_unset_in_container:
         lines.append("- Tasks fire in this timezone — say it when confirming a time.")
     return "Environment (live):\n" + "\n".join(lines)
 
@@ -468,7 +498,11 @@ def chat_turn_timeout_guidance(config: Config) -> str:
 
 
 def turn_prompt(
-    config: Config, memory: bool = True, workspace: bool = True, google: bool | None = None
+    config: Config,
+    memory: bool = True,
+    workspace: bool = True,
+    google: bool | None = None,
+    google_auth: "GoogleAuth | None" = None,
 ) -> list[str]:
     """Per-turn system prompt: persona + live environment context.
 
@@ -489,7 +523,8 @@ def turn_prompt(
     if workspace:
         parts.append(workspace_guidance(config))
     try:
-        if google_auth.google_ready() if google is None else google:
+        ready = (google_auth or GoogleAuth(config.paths)).google_ready()
+        if ready if google is None else google:
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for turn prompt", exc)
@@ -520,7 +555,7 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
     if focuses:
         parts.append(focuses)
     try:
-        if google_auth.google_ready():
+        if GoogleAuth(config.paths).google_ready():
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for universal prompt", exc)
@@ -619,7 +654,8 @@ def create_agent(
         from assistant.self_tools import build_self_tools
         from assistant.settings import profile_settings
 
-        tools.extend(build_self_tools(config, profile_settings(config.data_dir)))
+        settings = profile_settings(config.data_dir, voice_provider=config.voice_provider)
+        tools.extend(build_self_tools(config, settings))
 
     # system tools (retrieval + actions over tasks/chats/questions) — these make
     # the agent "universal": it can know and do everything via tools (create/
@@ -678,17 +714,7 @@ def create_agent(
         assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
-        middleware=[
-            agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
-            # Retry a failed call before it kills the attempt/task. Listed BEFORE
-            # the timeout so it wraps it (AG2 nests later middleware closer to the
-            # call): each retry re-enters the timeout, getting a fresh window. A
-            # transient hang or 429/5xx becomes a hiccup, not a failure.
-            LLMRetryMiddleware(config.llm.call_retries),
-            # Wall-clock ceiling per LLM call: a hung/stalled provider call raises
-            # instead of awaiting forever (the incident's silent 2-hour hang).
-            LLMTimeoutMiddleware(config.llm.call_timeout_s),
-        ],
+        middleware=_build_middleware(config),
         observers=build_observers(  # stuck-turn + wedged-turn guards → stream alerts
             silence_alert_s=config.llm.silence_alert_s,
             silence_halt_s=config.llm.silence_halt_s,

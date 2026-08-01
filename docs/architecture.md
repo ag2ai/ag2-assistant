@@ -609,7 +609,7 @@ named, colour-coded runtime. A profile is a **directory** on disk and, at runtim
   `get_runtime` FastAPI dependency; global routes stay unprefixed (`/api/profiles`,
   `/api/secrets/key`, `/api/onboarded`, `/api/google/*`, `/api/status`,
   `/hitl/{id}`). No unprefixed aliases — a clean cutover.
-- **Connections — install-global, never owned by a profile (ADR 0019).** A
+- **Connections — install-global, never owned by a profile (ADR 0022).** A
   **Connection** is one configured instance of a platform (Telegram / Discord /
   Slack), with its own id, name, token(s), default profile, paired accounts, group
   pins and profile exposure; a platform can have as many as the user wants. The

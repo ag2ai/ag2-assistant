@@ -56,15 +56,18 @@ class SkillSourceError(Exception):
 # --- registry (skills.sh) -------------------------------------------------------
 
 
-async def registry_search(query: str, limit: int = 10) -> list[dict]:
+async def registry_search(
+    query: str, limit: int = 10, *, client: SkillsClient | None = None
+) -> list[dict]:
     """Search skills.sh and project each hit to the fields the UI needs: an
     ``install_id`` ready to pass back to :func:`registry_install`, plus name and
     description for the checklist row. Reuses ``SkillsClient.search`` — the same call
-    the agent's ``search_skills`` tool makes."""
+    the agent's ``search_skills`` tool makes. ``client`` overrides that registry
+    client (a test hands one whose HTTP transport is scripted)."""
     query = (query or "").strip()
     if not query:
         return []
-    records = await SkillsClient().search(query, limit)
+    records = await (client or SkillsClient()).search(query, limit)
     out: list[dict] = []
     for s in records:
         skill_id_val = s.get("skillId") or ""
@@ -97,7 +100,7 @@ def _split_install_id(install_id: str) -> tuple[str, str]:
     )
 
 
-async def registry_install(runtime, install_id: str) -> dict:
+async def registry_install(runtime, install_id: str, *, client: SkillsClient | None = None) -> dict:
     """Download a registry skill and install it into ``runtime``'s skills dir, replacing
     any same-named skill already there. Records provenance in the runtime's lock file
     (same as the agent's ``install_skill`` tool) and invalidates discovery so the next
@@ -105,9 +108,10 @@ async def registry_install(runtime, install_id: str) -> dict:
 
     Raises ``SkillDownloadError`` / ``SkillInstallError`` on a bad id or fetch failure —
     ``download_skill`` extracts into a temp dir and only calls ``runtime.install`` on
-    success, so a failure leaves nothing half-installed in the target."""
+    success, so a failure leaves nothing half-installed in the target. ``client``
+    overrides the registry client, as in :func:`registry_search`."""
     source, sid = _split_install_id(install_id)
-    client = SkillsClient()
+    client = client or SkillsClient()
     runtime.ensure_storage()
     meta, computed_hash = await client.download_skill(source, sid, runtime)
     SkillsLock(runtime.lock_dir / "skills-lock.json").record(meta.name, source, computed_hash)

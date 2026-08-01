@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-import assistant.gateway.tasks_service as tasks_service_mod
 from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.tasks.store import TaskStore
+from tests.support.fakes import fake_summary_factory
 
 
 class FakeGateway:
@@ -40,23 +40,21 @@ class FakeGateway:
         return True
 
 
-async def _svc(tmp_path, gw, monkeypatch):
+async def _svc(paths, tmp_path, gw, **summary):
+    """A TaskService whose cheap-model leg (run summaries + task auto-naming) is a
+    canned structured agent, so nothing here reaches an LLM."""
     svc = TaskService(
-        config=Config(),
+        config=Config.for_paths(paths),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        summary_factory=fake_summary_factory(summary="one-liner", **summary),
     )
     svc.set_gateway(gw)
-
-    async def fake_summary(config, prompt, reply, agent_factory=None):
-        return "one-liner"
-
-    monkeypatch.setattr(tasks_service_mod, "summarize_run", fake_summary)
     return svc
 
 
-async def test_create_validates_schedule_and_model(tmp_path, monkeypatch):
-    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+async def test_create_validates_schedule_and_model(paths, tmp_path):
+    svc = await _svc(paths, tmp_path, FakeGateway())
     with pytest.raises(ValueError):
         await svc.create_task(name="x", prompt="p", schedule={"kind": "cron", "cron": "junk"})
     with pytest.raises(ValueError):
@@ -65,9 +63,9 @@ async def test_create_validates_schedule_and_model(tmp_path, monkeypatch):
     assert t["schedule_desc"] == "manual" and t["last_run"] is None
 
 
-async def test_run_executes_as_chat_turn_with_prior_context(tmp_path, monkeypatch):
+async def test_run_executes_as_chat_turn_with_prior_context(paths, tmp_path):
     gw = FakeGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="Digest", prompt="collect news")
     run = await svc.start_run(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
@@ -83,7 +81,7 @@ async def test_run_executes_as_chat_turn_with_prior_context(tmp_path, monkeypatc
     assert [r["id"] for r in detail["runs"]] == [run2.id, run.id]
 
 
-async def test_run_turn_does_not_mint_chat_grant(tmp_path, monkeypatch):
+async def test_run_turn_does_not_mint_chat_grant(paths, tmp_path):
     """A run no longer mints a chat-scoped folder grant on its own stream — folder
     access is task-scoped now (task-run streams derive the task_id), so a run leaves
     the FolderStore untouched."""
@@ -91,7 +89,7 @@ async def test_run_turn_does_not_mint_chat_grant(tmp_path, monkeypatch):
 
     folders = FolderStore(path=tmp_path / "folders.json")
     gw = FakeGateway(folders=folders)
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="R", prompt="p")
     await svc.start_run(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
@@ -99,14 +97,14 @@ async def test_run_turn_does_not_mint_chat_grant(tmp_path, monkeypatch):
     assert grants == []  # nothing minted at all
 
 
-async def test_run_surface_lists_task_scope_folders(tmp_path, monkeypatch):
+async def test_run_surface_lists_task_scope_folders(paths, tmp_path):
     """The run's surface lists the task's own folders resolved from live task-scope
     grants (not a stored workdir) so the unattended agent knows where to work."""
     from assistant.folders import READ_WRITE, FolderStore
 
     folders = FolderStore(path=tmp_path / "folders.json")
     gw = FakeGateway(folders=folders)
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     wd = tmp_path / "proj"
     wd.mkdir()
     t = await svc.create_task(name="W", prompt="p")
@@ -116,7 +114,7 @@ async def test_run_surface_lists_task_scope_folders(tmp_path, monkeypatch):
     assert f"Working folder: {wd} (read-write)" in gw.sent[0]["surface"]
 
 
-async def test_migration_turns_workdir_into_task_scope_grant(tmp_path, monkeypatch):
+async def test_migration_turns_workdir_into_task_scope_grant(paths, tmp_path):
     """start() migrates a legacy single-workdir task into a task-scope Folder Grant
     exactly once (idempotent — a second start() adds no duplicate)."""
     import json
@@ -126,7 +124,7 @@ async def test_migration_turns_workdir_into_task_scope_grant(tmp_path, monkeypat
     root = tmp_path / "root"
     data = root / "profiles" / "p1"
     data.mkdir(parents=True)
-    cfg = Config(root_dir=root, data_dir=data)
+    cfg = Config.for_paths(paths, root_dir=root, data_dir=data)
     store = TaskStore(path=data / "tasks.db")
     svc = TaskService(config=cfg, store=store, inquiry_store=InquiryStore(path=data / "inq.db"))
     t = await store.create_task(name="W", prompt="p")
@@ -149,7 +147,7 @@ async def test_migration_turns_workdir_into_task_scope_grant(tmp_path, monkeypat
     assert len(grants) == 1
 
 
-async def test_migration_grant_failure_does_not_drop_later_tasks(tmp_path, monkeypatch):
+async def test_migration_grant_failure_does_not_drop_later_tasks(paths, tmp_path):
     """A grant_path hiccup on one legacy task must not sink the whole migration —
     the next legacy task's grant is still minted."""
     import json
@@ -159,49 +157,43 @@ async def test_migration_grant_failure_does_not_drop_later_tasks(tmp_path, monke
     root = tmp_path / "root"
     data = root / "profiles" / "p1"
     data.mkdir(parents=True)
-    cfg = Config(root_dir=root, data_dir=data)
+    cfg = Config.for_paths(paths, root_dir=root, data_dir=data)
     store = TaskStore(path=data / "tasks.db")
     svc = TaskService(config=cfg, store=store, inquiry_store=InquiryStore(path=data / "inq.db"))
 
     t1 = await store.create_task(name="W1", prompt="p")
     t2 = await store.create_task(name="W2", prompt="p")
-    wd1, wd2 = tmp_path / "proj1", tmp_path / "proj2"
-    wd1.mkdir()
+    wd2 = tmp_path / "proj2"
     wd2.mkdir()
+    # A legacy workdir that cannot be resolved at all (embedded NUL): granting it
+    # genuinely raises, which is the hiccup the batch has to survive.
+    unresolvable = f"{tmp_path}/proj1\x00"
     from assistant.tasks.store import _TASKS
 
-    for tid, wd in ((t1.id, wd1), (t2.id, wd2)):
+    for tid, wd in ((t1.id, unresolvable), (t2.id, str(wd2))):
         raw = json.loads(await store._store.read(f"{_TASKS}{tid}.json"))
-        raw["workdir"] = str(wd)
+        raw["workdir"] = wd
         raw["workdir_access"] = "read_write"
         await store._store.write(f"{_TASKS}{tid}.json", json.dumps(raw))
-
-    real_grant_path = FolderStore.grant_path
-
-    def flaky_grant_path(self, path, mode, profile, chat_id="", task_id=""):
-        if task_id == t1.id:
-            raise RuntimeError("boom")
-        return real_grant_path(self, path, mode, profile, chat_id=chat_id, task_id=task_id)
-
-    monkeypatch.setattr(FolderStore, "grant_path", flaky_grant_path)
 
     await svc.start(scheduler=False)
 
     folders = FolderStore(root / "folders.json")
-    assert folders.mode_for(wd1, "p1", task_id=t1.id) is None  # lost — grant_path raised
     assert folders.mode_for(wd2, "p1", task_id=t2.id) == "read_write"  # still minted
+    # the unresolvable one is simply absent — no half-written Folder for it
+    assert [f["path"] for f in folders.list_folders()] == [str(wd2.resolve())]
     await svc.close()
     await svc.close()
 
 
-async def test_delete_task_drops_task_scope_folder_grants(tmp_path, monkeypatch):
+async def test_delete_task_drops_task_scope_folder_grants(paths, tmp_path):
     """delete_task best-effort drops the deleted task's task-scope folder grants,
     and survives a folders store that raises (dropping grants is best-effort)."""
     from assistant.folders import READ_WRITE, FolderStore
 
     folders = FolderStore(path=tmp_path / "folders.json")
     gw = FakeGateway(folders=folders)
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     profile = svc._config.data_dir.name
     t = await svc.create_task(name="D", prompt="p")
     wd = tmp_path / "proj"
@@ -222,9 +214,9 @@ async def test_delete_task_drops_task_scope_folder_grants(tmp_path, monkeypatch)
     assert await svc.delete_task(t2["id"]) is True
 
 
-async def test_stop_run_cancels_the_turn(tmp_path, monkeypatch):
+async def test_stop_run_cancels_the_turn(paths, tmp_path):
     gw = FakeGateway(hang=True)
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="Long", prompt="dig forever")
     run = await svc.start_run(t["id"])
     await asyncio.sleep(0.05)  # let the turn start
@@ -234,9 +226,9 @@ async def test_stop_run_cancels_the_turn(tmp_path, monkeypatch):
     assert (await svc.get_run(run.id))["status"] == "cancelled"
 
 
-async def test_fire_rearms_cron_and_exhausts_once(tmp_path, monkeypatch):
+async def test_fire_rearms_cron_and_exhausts_once(paths, tmp_path):
     gw = FakeGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="C", prompt="p", schedule={"kind": "cron", "cron": "0 9 * * *"})
     before = (await svc.get_task(t["id"]))["next_run_at"]
     await svc._fire(t["id"])
@@ -253,13 +245,13 @@ async def test_fire_rearms_cron_and_exhausts_once(tmp_path, monkeypatch):
     assert got["runs"][0]["trigger"] == "once"
 
 
-async def test_fire_after_downtime_skips_missed_slots(tmp_path, monkeypatch):
+async def test_fire_after_downtime_skips_missed_slots(paths, tmp_path):
     """A cron task whose next_run_at went stale during downtime fires ONCE and
     re-arms into the future — no catch-up run per missed slot."""
     from datetime import datetime, timedelta
 
     gw = FakeGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="C", prompt="p", schedule={"kind": "cron", "cron": "0 9 * * *"})
     stale = (datetime.now().astimezone() - timedelta(days=3)).isoformat()
     await svc.store.update_task(t["id"], next_run_at=stale)
@@ -272,12 +264,12 @@ async def test_fire_after_downtime_skips_missed_slots(tmp_path, monkeypatch):
     assert len(after["runs"]) == 1
 
 
-async def test_failed_turn_marks_run_failed(tmp_path, monkeypatch):
+async def test_failed_turn_marks_run_failed(paths, tmp_path):
     class Boom(FakeGateway):
         async def send_message(self, *a, **kw):
             raise RuntimeError("provider down")
 
-    svc = await _svc(tmp_path, Boom(), monkeypatch)
+    svc = await _svc(paths, tmp_path, Boom())
     t = await svc.create_task(name="F", prompt="p")
     run = await svc.start_run(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
@@ -285,9 +277,9 @@ async def test_failed_turn_marks_run_failed(tmp_path, monkeypatch):
     assert view["status"] == "failed" and "provider down" in view["error"]
 
 
-async def test_delete_task_purges_runs_and_streams(tmp_path, monkeypatch):
+async def test_delete_task_purges_runs_and_streams(paths, tmp_path):
     gw = FakeGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="D", prompt="p")
     run = await svc.start_run(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
@@ -296,14 +288,14 @@ async def test_delete_task_purges_runs_and_streams(tmp_path, monkeypatch):
     assert await svc.get_task(t["id"]) is None and await svc.get_run(run.id) is None
 
 
-async def test_delete_task_drops_task_scoped_permissions(tmp_path, monkeypatch):
+async def test_delete_task_drops_task_scoped_permissions(paths, tmp_path):
     """delete_task best-effort drops the deleted task's task-scoped command grants —
     they'd otherwise be an orphaned, unreachable JSON entry (Task 4)."""
     from assistant.permissions import PermissionStore
 
     perms = PermissionStore(path=tmp_path / "perm.json")
     gw = FakeGateway(permissions=perms)
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="D", prompt="p")
     perms.grant_command("run_shell_command(git *)", task_id=t["id"])
     assert perms.granted_commands(task_id=t["id"]) == ["run_shell_command(git *)"]
@@ -312,17 +304,17 @@ async def test_delete_task_drops_task_scoped_permissions(tmp_path, monkeypatch):
     assert perms.granted_commands(task_id=t["id"]) == []
 
 
-async def test_delete_task_tolerates_gateway_without_permissions(tmp_path, monkeypatch):
+async def test_delete_task_tolerates_gateway_without_permissions(paths, tmp_path):
     """A gateway stub with no `.permissions` (plain FakeGateway, as most tests use)
     must not break delete_task — dropping task rules is best-effort."""
-    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+    svc = await _svc(paths, tmp_path, FakeGateway())
     t = await svc.create_task(name="D2", prompt="p")
     assert await svc.delete_task(t["id"]) is True
 
 
-async def test_list_tasks_carries_last_run_and_unread(tmp_path, monkeypatch):
+async def test_list_tasks_carries_last_run_and_unread(paths, tmp_path):
     gw = FakeGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="U", prompt="p")
     run = await svc.start_run(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
@@ -354,9 +346,9 @@ class _AskingGateway(FakeGateway):
         return False
 
 
-async def test_stop_run_releases_pending_inquiry(tmp_path, monkeypatch):
+async def test_stop_run_releases_pending_inquiry(paths, tmp_path):
     gw = _AskingGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="Ask", prompt="need input")
     run = await svc.start_run(t["id"])
     await asyncio.sleep(0.05)  # let the turn start and raise its inquiry
@@ -370,9 +362,9 @@ async def test_stop_run_releases_pending_inquiry(tmp_path, monkeypatch):
     assert await svc.pending_inquiries() == []  # the strip no longer strands it
 
 
-async def test_delete_task_releases_pending_inquiry(tmp_path, monkeypatch):
+async def test_delete_task_releases_pending_inquiry(paths, tmp_path):
     gw = _AskingGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="Ask2", prompt="need input")
     await svc.start_run(t["id"])
     await asyncio.sleep(0.05)  # let the turn start and raise its inquiry
@@ -384,11 +376,11 @@ async def test_delete_task_releases_pending_inquiry(tmp_path, monkeypatch):
     assert await svc.pending_inquiries() == []
 
 
-async def test_on_inquiry_flips_run_needs_input_and_back(tmp_path, monkeypatch):
+async def test_on_inquiry_flips_run_needs_input_and_back(paths, tmp_path):
     """A raised inquiry flips its RUNNING run to NEEDS_INPUT; answering it flips
     the run back to RUNNING — TaskService._on_inquiry, exercised through the
     real InquiryStore (create/answer), not a mock of the hook itself."""
-    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
+    svc = await _svc(paths, tmp_path, FakeGateway())
     t = await svc.create_task(name="Ask3", prompt="p")
     run = await svc.store.create_run(t["id"])  # RUNNING by default; no job attached
     assert (await svc.get_run(run.id))["status"] == "running"
@@ -400,22 +392,19 @@ async def test_on_inquiry_flips_run_needs_input_and_back(tmp_path, monkeypatch):
     assert (await svc.get_run(run.id))["status"] == "running"
 
 
-async def test_create_task_autonames_when_name_empty(tmp_path, monkeypatch):
-    svc = await _svc(tmp_path, FakeGateway(), monkeypatch)
-
-    async def fake_meta(config, prompt, agent_factory=None):
-        return "Auto name", "Auto description."
-
-    monkeypatch.setattr(tasks_service_mod, "suggest_task_meta", fake_meta)
+async def test_create_task_autonames_when_name_empty(paths, tmp_path):
+    svc = await _svc(
+        paths, tmp_path, FakeGateway(), name="Auto name", description="Auto description."
+    )
     t = await svc.create_task(name="", prompt="do things", schedule=None)
     assert t["name"] == "Auto name" and t["description"] == "Auto description."
     t2 = await svc.create_task(name="Manual", prompt="p", schedule=None, description="given")
     assert t2["name"] == "Manual" and t2["description"] == "given"
 
 
-async def test_notifier_gets_channel_outcomes_only(tmp_path, monkeypatch):
+async def test_notifier_gets_channel_outcomes_only(paths, tmp_path):
     gw = FakeGateway()
-    svc = await _svc(tmp_path, gw, monkeypatch)
+    svc = await _svc(paths, tmp_path, gw)
     pushed = []
 
     async def notify(platform, chat_id, text):

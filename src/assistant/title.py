@@ -6,11 +6,14 @@ same structured-output primitive the planner/executor use. It runs exactly **onc
 per chat (a single revision), fire-and-forget so it never delays the response.
 """
 
+from collections.abc import Callable
+
 from ag2 import Agent
 from pydantic import BaseModel, Field
 
 from assistant.agent import cheap_model, model_config
 from assistant.config import Config
+from assistant.structured import aclose_config, ask_structured
 
 
 class ChatTitle(BaseModel):
@@ -39,11 +42,24 @@ def _clean_title(raw: str | None) -> str | None:
     return title[:80] or None
 
 
-async def generate_title(config: Config, user_text: str, agent_text: str) -> str | None:
+def default_titler(config: Config) -> Agent:
+    """The production titler: a one-shot agent on the cheap model."""
+    return Agent("titler", config=model_config(config, cheap_model(config)))
+
+
+async def generate_title(
+    config: Config,
+    user_text: str,
+    agent_text: str,
+    *,
+    agent_factory: Callable[[Config], Agent] = default_titler,
+) -> str | None:
     """Ask the cheap model for a chat title (None on any failure)."""
-    cfg = model_config(config, cheap_model(config))
-    agent = Agent("titler", config=cfg)
+    agent = agent_factory(config)
     prompt = _PROMPT.format(user=(user_text or "")[:2000], agent=(agent_text or "")[:2000])
-    reply = await agent.ask(prompt, response_schema=ChatTitle)
-    out = await reply.content()
+    try:
+        out = await ask_structured(agent, prompt, ChatTitle)
+    finally:
+        # One-shot agent: reap the ACP subprocess behind its config, if any.
+        await aclose_config(getattr(agent, "config", None))
     return _clean_title(getattr(out, "title", None))

@@ -15,40 +15,23 @@ a fixed registry (no free-form types, no ``base_url``/``host``/subscription), so
 only key sources are the config's referenced Secret, the provider's shared env key,
 or none.
 
-The bridge to the runtime is :func:`active_config` + :func:`resolve_key`, read fresh
+The bridge to the runtime is :meth:`LiveConfigStore.active_config` +
+:meth:`LiveConfigStore.resolve_key`, read fresh
 by :mod:`assistant.voice` when a voice session connects — so nothing needs reloading
 when the active config changes. An empty store (or an unresolved ``active``) makes the
 call site fall back to the profile's legacy ``voice_provider``/voice, exactly like an
 empty ``llm_configs`` falling back to the flat ``llm:`` defaults.
 """
 
-import os
+from collections.abc import Mapping
 from secrets import token_hex
 
-from assistant import secrets, voice_providers
+from assistant import voice_providers
 from assistant.config import read_global_config, update_global_section
-from assistant.secrets import KEY_ENV
+from assistant.paths import Paths
+from assistant.secrets import KEY_ENV, SecretStore
 
 _SECTION = "live_configs"
-
-
-def _read() -> dict:
-    """The store section (``{"active": id|None, "configs": [...]}``) of the global
-    config.yaml. A missing or malformed section reads as an empty store."""
-    data = read_global_config().get(_SECTION)
-    if not isinstance(data, dict):
-        return {"active": None, "configs": []}
-    configs = data.get("configs")
-    return {
-        "active": data.get("active"),
-        "configs": [c for c in configs if isinstance(c, dict)] if isinstance(configs, list) else [],
-    }
-
-
-def _write(data: dict) -> None:
-    update_global_section(
-        _SECTION, {"active": data.get("active"), "configs": list(data.get("configs") or [])}
-    )
 
 
 def _clean_entry(raw: dict) -> dict:
@@ -84,136 +67,150 @@ def _clean_entry(raw: dict) -> dict:
     return entry
 
 
-def list_configs() -> list[dict]:
-    """Every configuration in the store, in insertion order (empty list when unset)."""
-    return list(_read().get("configs") or [])
+class LiveConfigStore:
+    """One install's named live (voice) configurations, in the ``live_configs:``
+    section of the global ``config.yaml``."""
 
+    def __init__(self, paths: Paths) -> None:
+        self._paths = paths
+        self._secrets = SecretStore(paths)
 
-def get_config(cid: str) -> dict | None:
-    """One configuration by id, or None if absent."""
-    return next((c for c in list_configs() if c.get("id") == cid), None)
+    def _read(self) -> dict:
+        """The store section (``{"active": id|None, "configs": [...]}``) of the global
+        config.yaml. A missing or malformed section reads as an empty store."""
+        data = read_global_config(self._paths).get(_SECTION)
+        if not isinstance(data, dict):
+            return {"active": None, "configs": []}
+        configs = data.get("configs")
+        return {
+            "active": data.get("active"),
+            "configs": [c for c in configs if isinstance(c, dict)]
+            if isinstance(configs, list)
+            else [],
+        }
 
+    def _write(self, data: dict) -> None:
+        update_global_section(
+            self._paths,
+            _SECTION,
+            {"active": data.get("active"), "configs": list(data.get("configs") or [])},
+        )
 
-def save_config(raw: dict) -> dict:
-    """Create (no ``id``) or update (``id`` present) a configuration and return the
-    stored entry. A new entry gets an id ``"lv_" + token_hex(4)``; updating an unknown
-    id raises ``KeyError``."""
-    entry = _clean_entry(raw)
-    data = _read()
-    configs = list(data.get("configs") or [])
-    if "id" in entry:
-        for i, existing in enumerate(configs):
-            if existing.get("id") == entry["id"]:
-                configs[i] = entry
-                break
+    def list_configs(self) -> list[dict]:
+        """Every configuration in the store, in insertion order (empty when unset)."""
+        return list(self._read().get("configs") or [])
+
+    def get_config(self, cid: str) -> dict | None:
+        """One configuration by id, or None if absent."""
+        return next((c for c in self.list_configs() if c.get("id") == cid), None)
+
+    def save_config(self, raw: dict) -> dict:
+        """Create (no ``id``) or update (``id`` present) a configuration and return the
+        stored entry. A new entry gets an id ``"lv_" + token_hex(4)``; updating an
+        unknown id raises ``KeyError``."""
+        entry = _clean_entry(raw)
+        data = self._read()
+        configs = list(data.get("configs") or [])
+        if "id" in entry:
+            for i, existing in enumerate(configs):
+                if existing.get("id") == entry["id"]:
+                    configs[i] = entry
+                    break
+            else:
+                raise KeyError(entry["id"])
         else:
-            raise KeyError(entry["id"])
-    else:
-        entry["id"] = "lv_" + token_hex(4)
-        configs.append(entry)
-    data["configs"] = configs
-    _write(data)
-    return entry
+            entry["id"] = "lv_" + token_hex(4)
+            configs.append(entry)
+        data["configs"] = configs
+        self._write(data)
+        return entry
 
+    def delete_config(self, cid: str) -> bool:
+        """Remove a configuration by id (False if unknown). Deleting the active one is
+        allowed: the active pointer moves to the first remaining config, or None when it
+        was the last (voice then falls back to the profile's legacy provider)."""
+        data = self._read()
+        configs = list(data.get("configs") or [])
+        if not any(c.get("id") == cid for c in configs):
+            return False
+        remaining = [c for c in configs if c.get("id") != cid]
+        data["configs"] = remaining
+        if data.get("active") == cid:
+            data["active"] = remaining[0]["id"] if remaining else None
+        self._write(data)
+        return True
 
-def delete_config(cid: str) -> bool:
-    """Remove a configuration by id (returns False if unknown). Deleting the active one
-    is allowed: the active pointer moves to the first remaining config, or None when it
-    was the last (voice then falls back to the profile's legacy provider / empty state)."""
-    data = _read()
-    configs = list(data.get("configs") or [])
-    if not any(c.get("id") == cid for c in configs):
+    def set_secret_id(self, cid: str, sid: str) -> bool:
+        """Point one config at a Secret by id (empty ``sid`` clears the reference).
+        Returns False for an unknown config."""
+        data = self._read()
+        configs = list(data.get("configs") or [])
+        for i, entry in enumerate(configs):
+            if entry.get("id") == cid:
+                configs[i] = {**entry, "secret_id": (sid or "").strip()}
+                data["configs"] = configs
+                self._write(data)
+                return True
         return False
-    remaining = [c for c in configs if c.get("id") != cid]
-    data["configs"] = remaining
-    if data.get("active") == cid:
-        data["active"] = remaining[0]["id"] if remaining else None
-    _write(data)
-    return True
 
+    def active_id(self) -> str | None:
+        """The id of the active configuration, or None (empty store / none selected)."""
+        return self._read().get("active")
 
-def set_secret_id(cid: str, sid: str) -> bool:
-    """Point one config at a Secret by id (empty ``sid`` clears the reference).
-    Returns False for an unknown config. Used by the save flow and by the
-    legacy-store migration."""
-    data = _read()
-    configs = list(data.get("configs") or [])
-    for i, entry in enumerate(configs):
-        if entry.get("id") == cid:
-            configs[i] = {**entry, "secret_id": (sid or "").strip()}
-            data["configs"] = configs
-            _write(data)
-            return True
-    return False
+    def set_active(self, cid: str) -> bool:
+        """Make ``cid`` the active configuration (False for an unknown id)."""
+        data = self._read()
+        if not any(c.get("id") == cid for c in (data.get("configs") or [])):
+            return False
+        data["active"] = cid
+        self._write(data)
+        return True
 
+    def active_config(self) -> dict | None:
+        """The active configuration entry, or None when the store is empty or its
+        ``active`` id doesn't resolve to a present entry."""
+        aid = self.active_id()
+        return self.get_config(aid) if aid else None
 
-def active_id() -> str | None:
-    """The id of the active configuration, or None (empty store / none selected)."""
-    return _read().get("active")
-
-
-def set_active(cid: str) -> bool:
-    """Make ``cid`` the active configuration (returns False for an unknown id)."""
-    data = _read()
-    if not any(c.get("id") == cid for c in (data.get("configs") or [])):
+    def set_voice(self, cid: str, voice: str) -> bool:
+        """Persist a config's chosen voice (each live config carries its own). Returns
+        False for an unknown id or a voice the config's provider doesn't offer."""
+        data = self._read()
+        configs = list(data.get("configs") or [])
+        for i, entry in enumerate(configs):
+            if entry.get("id") == cid:
+                p = voice_providers.get(entry.get("provider"))
+                if voice not in p.voices:
+                    return False
+                configs[i] = {**entry, "voice": voice}
+                data["configs"] = configs
+                self._write(data)
+                return True
         return False
-    data["active"] = cid
-    _write(data)
-    return True
 
+    def resolve_key(self, entry: dict, env: Mapping[str, str]) -> str:
+        """The raw API key a session for this config would send: its referenced Secret,
+        else the provider's shared key from ``env`` (which a Default Secret contributes
+        via ``Config.secret_env``). Empty string when neither is set (the builders then
+        get an empty key and fail loudly). In-process only — never returned by any
+        endpoint."""
+        own = self._secrets.secret_value(entry.get("secret_id") or "")
+        if own:
+            return own
+        return env.get(KEY_ENV.get(entry.get("provider", ""), ""), "")
 
-def active_config() -> dict | None:
-    """The active configuration entry, or None when the store is empty or its
-    ``active`` id doesn't resolve to a present entry."""
-    aid = active_id()
-    return get_config(aid) if aid else None
+    def key_source(self, entry: dict, env: Mapping[str, str]) -> str:
+        """Which key this config would send, for honest UI labelling: ``"secret"`` (its
+        referenced Secret), ``"shared"`` (the provider's key in ``env``), or ``"none"``
+        (nothing available — the config can't run)."""
+        if self._secrets.secret_value(entry.get("secret_id") or ""):
+            return "secret"
+        provider = entry.get("provider", "")
+        if self._secrets.status(env).get(provider, {}).get("set"):
+            return "shared"
+        return "none"
 
-
-def set_voice(cid: str, voice: str) -> bool:
-    """Persist a config's chosen voice (each live config carries its own). Returns
-    False for an unknown id or a voice the config's provider doesn't offer."""
-    data = _read()
-    configs = list(data.get("configs") or [])
-    for i, entry in enumerate(configs):
-        if entry.get("id") == cid:
-            p = voice_providers.get(entry.get("provider"))
-            if voice not in p.voices:
-                return False
-            configs[i] = {**entry, "voice": voice}
-            data["configs"] = configs
-            _write(data)
-            return True
-    return False
-
-
-def resolve_key(entry: dict) -> str:
-    """The raw API key a session for this config would send: its referenced Secret,
-    else the provider's shared env key (which a Default Secret populates at
-    load_into_env). Empty string when neither is set (the builders then get an
-    empty key and fail loudly). In-process only — never returned by any endpoint."""
-    own = secrets.secret_value(entry.get("secret_id") or "")
-    if own:
-        return own
-    return _shared_key(entry.get("provider", ""))
-
-
-def _shared_key(provider: str) -> str:
-    return os.environ.get(KEY_ENV.get(provider, ""), "")
-
-
-def key_source(entry: dict) -> str:
-    """Which key this config would send, for honest UI labelling: ``"secret"`` (its
-    referenced Secret), ``"shared"`` (the provider's env key), or ``"none"`` (nothing
-    available — the config can't run)."""
-    if secrets.secret_value(entry.get("secret_id") or ""):
-        return "secret"
-    provider = entry.get("provider", "")
-    if secrets.status().get(provider, {}).get("set"):
-        return "shared"
-    return "none"
-
-
-def usable(entry: dict) -> bool:
-    """Whether this configuration can actually open a session right now — a per-config
-    key OR the provider's shared env key must be present."""
-    return key_source(entry) != "none"
+    def usable(self, entry: dict, env: Mapping[str, str]) -> bool:
+        """Whether this configuration can actually open a session right now — a
+        per-config key OR the provider's shared key must be present."""
+        return self.key_source(entry, env) != "none"
