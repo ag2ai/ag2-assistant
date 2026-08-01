@@ -14,6 +14,7 @@
   import { getSettings } from './context.svelte.js'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'
+  import { TYPE_LABEL } from '../../lib/providerLabels.js'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.js'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
@@ -24,16 +25,12 @@
   //   parent — first-ever config, or re-saving the already-active one).
   let { config, activate = false, onSaved, onCancel } = $props()
 
+  // The dropdown's own order, but never its own labels — providerLabels.js is the
+  // single type→presentation lookup, so a type renamed there is renamed here too.
   const TYPES = [
-    { id: 'openai_responses', label: 'OpenAI · Responses' },
-    { id: 'openai', label: 'OpenAI · Chat Completions' },
-    { id: 'openai_subscription', label: 'OpenAI · ChatGPT subscription' },
-    { id: 'anthropic', label: 'Anthropic' },
-    { id: 'gemini', label: 'Gemini' },
-    { id: 'ollama', label: 'Ollama' },
-    { id: 'claude_code', label: 'Claude Code · CLI login' },
-    { id: 'codex', label: 'Codex · CLI login' },
-  ]
+    'openai_responses', 'openai', 'openai_subscription', 'anthropic',
+    'gemini', 'ollama', 'claude_code', 'codex',
+  ].map((id) => ({ id, label: TYPE_LABEL[id] }))
   // base_url applies to openai/openai_responses/anthropic; host to ollama only.
   // Subscription mode has no endpoint or key fields — both come from codex_auth.
   const usesBaseUrl = (t) => t === 'openai' || t === 'openai_responses' || t === 'anthropic'

@@ -20,43 +20,16 @@
   import VoiceSection from './VoiceSection.svelte'
   import Icon from '../Icon.svelte'
   import { llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
-  import { TYPE_LABEL } from '../../lib/providerLabels.js'
+  import { TYPE_LABEL, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER } from '../../lib/providerLabels.js'
+  import { MODEL_TEMPLATES } from '../../lib/modelTemplates.js'
   import BrandMark from '../BrandMark.svelte'
-  // One-click starting points. Picking a card opens the editor prefilled — the
-  // two-field local-server case is one click plus a model name.
-  const TEMPLATES = [
-    { name: 'Gemini', type: 'gemini', model: 'gemini-3.6-flash', blurb: 'Google Gemini' },
-    { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.6-terra', blurb: 'Responses API' },
-    { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.6-terra', blurb: 'Chat Completions API' },
-    {
-      name: 'OpenAI · ChatGPT subscription',
-      card: 'OpenAI · Sign in with ChatGPT',
-      type: 'openai_subscription', model: 'gpt-5.6-terra',
-      blurb: 'Use your ChatGPT/Codex subscription instead of an API key — unofficial, may break OpenAI ToS',
-    },
-    { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude' },
-    {
-      name: 'Claude Code', card: 'Claude Code · CLI login',
-      type: 'claude_code', model: '',
-      blurb: 'Run on your Claude Code CLI login (subscription) over ACP — no API key',
-    },
-    {
-      name: 'Codex', card: 'Codex · CLI login',
-      type: 'codex', model: '',
-      blurb: 'Run on your Codex CLI login (ChatGPT subscription) over ACP — no API key',
-    },
-    { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Local Ollama' },
-    {
-      name: 'Local server', card: 'Local server — llama.cpp / vLLM / LM Studio',
-      type: 'openai', model: '', base_url: 'http://localhost:8080/v1',
-      blurb: 'OpenAI-compatible local server — just set the model name',
-    },
-    {
-      name: 'Anthropic-compatible', card: 'Anthropic-compatible — MiniMax & proxies',
-      type: 'anthropic', model: 'MiniMax-M2.5', base_url: 'https://api.minimax.io/anthropic',
-      blurb: 'Anthropic-API server like MiniMax cloud — set the model, endpoint and key',
-    },
-  ]
+  // One-click starting points, under a heading each. Picking a card opens the
+  // editor prefilled — the two-field compatible-endpoint case is one click plus a
+  // model name. The cards and their headings live in lib/ (store-free, so a test
+  // can enumerate them); the page only lays them out.
+  const TEMPLATE_GROUPS = GROUP_ORDER
+    .map((group) => ({ group, templates: MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === group) }))
+    .filter((g) => g.templates.length)
 
   const configs = $derived($llmConfigs.configs)
   const envOverride = $derived($llmConfigs.envOverride)
@@ -213,18 +186,25 @@
       <Icon name="plus" size={14} /> Add model
     </button>
   {:else}
-    <div class="setsec">Start from a template</div>
-    <div class="mcpcat">
-      {#each TEMPLATES as t}
-        <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
-          <span class="mcpcathead"><BrandMark brand={t.type} size={16} /> {t.card || t.name}</span>
-          <span class="mcpcatblurb">{t.blurb}</span>
-          {#if providerDeps[t.type] && !providerDeps[t.type].ok}
-            <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
+    {#each TEMPLATE_GROUPS as { group, templates } (group)}
+      <div class="setsec">{group}</div>
+      <div class="mcpcat">
+        {#each templates as t}
+          <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
+            <span class="mcpcathead">
+              <BrandMark brand={t.type} size={16} /> {t.card || t.name}
+              <!-- What you must bring, on every card. Marking only the exceptions
+                   would make "API key" an invisible default. -->
+              <span class="mcpcatchip">{TYPE_CHIP[t.type]}</span>
+            </span>
+            <span class="mcpcatblurb">{t.blurb}</span>
+            {#if providerDeps[t.type] && !providerDeps[t.type].ok}
+              <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+    {/each}
     <div class="keyrow" style="justify-content:flex-end">
       <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
     </div>

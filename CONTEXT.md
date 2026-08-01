@@ -484,6 +484,17 @@ the shared model list (ADR 0015 · ADR 0004 amendment).
 _Avoid_: profile model (there is no per-profile model, only a per-profile selection),
 default
 
+**Template** (model):
+A prefilled starting point for creating a **Text model** — a vendor, a type, and
+default field values, offered as a grid of cards when adding a model. Picking one
+opens the model editor prefilled; a Template is never saved, never listed, and has no
+lifecycle of its own — it exists only in the moment of creation. Templates are
+presented in groups under one rule: those needing no API key group together and come
+first, everything else groups by vendor. A Template's group and its **Credential
+source** both follow from its type, never from the Template itself.
+_Avoid_: preset, starter, example (a Template is prefill, not a sample), provider (a
+Template names one but is not one)
+
 ## Secrets
 
 **Secret**:
@@ -512,8 +523,22 @@ is the models' concept)
 The link from one Text or Live model to the Secret it authenticates with. Distinct
 from a **File reference** (an `@`-pointer to a file) — this is the model→Secret
 sense of the word, and stays qualified as "Referenced (secret)". Optional —
-an empty reference means fallback (Default, then environment). Deleting a Secret is
+an empty reference means fallback (Default, then environment), or, for a model whose
+**Credential source** is a subscription or a CLI login, no Secret at any point.
+Deleting a Secret is
 always allowed; models referencing it degrade to fallback and their health/key-source
 labelling reports it honestly. In the model form, pasting a raw key mints a new
 Secret on the spot with an auto-generated name, renameable later.
 _Avoid_: attached, bound, owned (a Secret is never owned by one model)
+
+**Credential source**:
+Where a **Text model**'s credentials actually come from when a call is made — a
+**Referenced** Secret, a provider **Default**, the environment, an OAuth subscription
+sign-in, a CLI login the user already holds, or nothing at all (a local or
+custom-endpoint model needing no key). Exactly one applies to any model at any moment,
+and the model's key labelling names it honestly rather than merely reporting whether a
+Secret exists. Distinguishes the two credential paths that bypass Secrets entirely:
+a subscription model authenticates with an OAuth sign-in, and a CLI-login model
+borrows the session of a provider's own command-line tool.
+_Avoid_: key source (the implementation's field name), auth, key (bare), credential
+(the Secret entry already claims this word)
