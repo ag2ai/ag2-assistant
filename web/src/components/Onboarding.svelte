@@ -23,6 +23,7 @@
   import { setAccent } from '../design/palette.js'
   import { FOCUS, focusLabel } from '../lib/focuses.js'
   import { TYPE_LABEL } from '../lib/providerLabels.js'
+  import { featuredModelsFor } from '../lib/knownModels.js'
   import {
     CLI_TYPE,
     agentAvailability,
@@ -51,23 +52,13 @@
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
     { icon: 'brain', title: 'Remembers what matters', desc: 'Builds a private memory of your preferences so it gets more helpful over time.' },
   ]
-  // Single source of truth for selectable models — finish() maps the chosen label
-  // back to provider/model via this list. The first entry per provider is that tab's
-  // default (recommended); the rest are common alternatives shown as extra pills.
-  const MODELS = [
-    { label: 'Gemini · Gemini 3.5 Flash', provider: 'gemini', model: 'gemini-3.6-flash' },
-    { label: 'Gemini · Gemini 3.1 Flash Lite', provider: 'gemini', model: 'gemini-3.1-flash-lite' },
-    { label: 'Gemini · Gemini 3.1 Pro Preview', provider: 'gemini', model: 'gemini-3.1-pro-preview' },
-    { label: 'OpenAI · GPT-5.6 Luna', provider: 'openai', model: 'gpt-5.6-luna' },
-    { label: 'OpenAI · GPT-5.6 Terra', provider: 'openai', model: 'gpt-5.6-terra' },
-    { label: 'OpenAI · GPT-5.6 Sol', provider: 'openai', model: 'gpt-5.6-sol' },
-    { label: 'OpenAI · GPT-5.4 Mini', provider: 'openai', model: 'gpt-5.4-mini' },
-    { label: 'OpenAI · GPT-5.4 Nano', provider: 'openai', model: 'gpt-5.4-nano' },
-    { label: 'Anthropic · Claude Sonnet 5', provider: 'anthropic', model: 'claude-sonnet-5' },
-    { label: 'Anthropic · Claude Haiku 4.5', provider: 'anthropic', model: 'claude-haiku-4.5' },
-    { label: 'Anthropic · Claude Opus 4.8', provider: 'anthropic', model: 'claude-opus-4-8' },
-  ]
-  const modelsFor = (provider) => MODELS.filter((m) => m.provider === provider)
+  // Selectable models come from lib/knownModels.js — the featured entries per provider,
+  // in table order. A pill names its vendor too, because three tabs' models share
+  // `modelLabel`, which is what finish() maps back to provider/model.
+  const VENDOR = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic' }
+  const modelsFor = (provider) =>
+    featuredModelsFor(provider).map((m) => ({ label: `${VENDOR[provider]} · ${m.label}`, provider, model: m.id }))
+  const MODELS = [...modelsFor('gemini'), ...modelsFor('openai'), ...modelsFor('anthropic')]
   // Connect step is organised as provider tabs. Each key-based tab owns one API-key
   // field (keyed into `keys`) plus its provider's models; the OAuth tab hosts the
   // ChatGPT subscription sign-in instead, and the two `cli` tabs the ACP CLI logins
