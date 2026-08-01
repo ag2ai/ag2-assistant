@@ -522,7 +522,10 @@ The models an *authority* says it offers, read live and never stored. Two kinds 
 authority answer: an ACP adapter, asked for the catalog behind a CLI-login **Text
 model**, and a provider endpoint, asked for the catalog behind a keyed one. A catalog
 is the sole authority on which model names *exist*; when it cannot be read, the reason
-is named rather than hidden, and **Known models** stands in.
+is named rather than hidden, and **Known models** stands in. Which side reads it
+follows the credential: the gateway asks with a saved **Secret** or with no key at
+all, and the browser asks the provider directly with a key that has only been pasted
+(ADR 0024).
 _Avoid_: model list (bare — collides with the list of saved Text models), available
 models, inventory
 

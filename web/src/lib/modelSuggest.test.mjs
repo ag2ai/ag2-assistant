@@ -9,6 +9,9 @@ import {
   isNotChatModel,
   permanentNoCatalog,
   suggestModels,
+  browserProbeRequest,
+  parseCatalogPayload,
+  probeStatusReason,
 } from './modelSuggest.js'
 import { KNOWN_MODELS, knownModel } from './knownModels.js'
 
@@ -247,4 +250,131 @@ test('only the OpenAI family is deny-listed — the others answer with their own
 test('an Anthropic catalog is offered exactly as it came', () => {
   const catalog = ['claude-sonnet-5', 'claude-opus-4-8']
   assert.deepEqual(ids(suggestModels({ type: 'anthropic', catalog })).sort(), catalog.slice().sort())
+})
+
+// ---- A pasted key is the browser's to send (ADR 0024) --------------------------
+
+test('a pasted key makes the probe the browser’s, not the gateway’s', () => {
+  // The key never reaches our backend until the user commits to a Secret from it.
+  for (const type of ['gemini', 'openai', 'openai_responses', 'anthropic']) {
+    assert.equal(catalogSource(type, { hasPastedKey: true }), 'browser', type)
+  }
+})
+
+test('a pasted key wins over a saved Secret while it is still unsaved', () => {
+  assert.equal(catalogSource('openai', { hasCredential: true, hasPastedKey: true }), 'browser')
+})
+
+test('clearing the pasted key falls back to the Secret’s gateway probe', () => {
+  assert.equal(catalogSource('openai', { hasCredential: true, hasPastedKey: false }), 'gateway')
+})
+
+test('a keyless local host stays the gateway’s even if a key was pasted', () => {
+  // Ollama takes no key, and only the gateway can reach a host behind a bridge.
+  assert.equal(catalogSource('ollama', { hasPastedKey: true }), 'gateway')
+})
+
+test('a type that can never be probed is not probed by the browser either', () => {
+  assert.equal(catalogSource('openai_subscription', { hasPastedKey: true }), '')
+  assert.equal(catalogSource('codex', { hasPastedKey: true }), '')
+})
+
+test('OpenAI takes the pasted key as a bearer token', () => {
+  const req = browserProbeRequest({ type: 'openai', key: 'sk-test' })
+  assert.equal(req.url, 'https://api.openai.com/v1/models')
+  assert.equal(req.headers.Authorization, 'Bearer sk-test')
+})
+
+test('Gemini takes the pasted key in the query string', () => {
+  const req = browserProbeRequest({ type: 'gemini', key: 'AIza-test' })
+  assert.equal(req.url, 'https://generativelanguage.googleapis.com/v1beta/models?key=AIza-test')
+  assert.deepEqual(req.headers, {})
+})
+
+test('a pasted key with URL-hostile characters still reaches Gemini intact', () => {
+  const req = browserProbeRequest({ type: 'gemini', key: 'a+b/c=d&e' })
+  assert.ok(req.url.endsWith('/models?key=a%2Bb%2Fc%3Dd%26e'))
+})
+
+test('Anthropic needs its own header, plus permission to be called from a browser', () => {
+  const req = browserProbeRequest({ type: 'anthropic', key: 'sk-ant' })
+  assert.equal(req.url, 'https://api.anthropic.com/v1/models')
+  assert.equal(req.headers['x-api-key'], 'sk-ant')
+  assert.ok(req.headers['anthropic-version'])
+  assert.equal(req.headers['anthropic-dangerous-direct-browser-access'], 'true')
+})
+
+test('a key is never carried in a header Anthropic would ignore', () => {
+  const req = browserProbeRequest({ type: 'anthropic', key: 'sk-ant' })
+  assert.equal(req.headers.Authorization, undefined)
+})
+
+test('a custom endpoint is asked at its own address, not the vendor’s', () => {
+  const req = browserProbeRequest({ type: 'openai', baseUrl: 'http://localhost:8080/v1/', key: 'k' })
+  assert.equal(req.url, 'http://localhost:8080/v1/models')
+})
+
+test('with nothing pasted there is no browser request to make', () => {
+  assert.equal(browserProbeRequest({ type: 'openai', key: '' }), null)
+  assert.equal(browserProbeRequest({ type: 'openai', key: '   ' }), null)
+})
+
+test('the browser never builds a request for a type it cannot probe', () => {
+  // Ollama is the gateway's, and a subscription has no key to ask with at all.
+  for (const type of ['ollama', 'openai_subscription', 'codex', 'claude_code', '']) {
+    assert.equal(browserProbeRequest({ type, key: 'k' }), null, type)
+  }
+})
+
+test('an OpenAI payload parses to the ids it listed', () => {
+  const ids_ = parseCatalogPayload('openai', { data: [{ id: 'gpt-5.4' }, { id: 'gpt-5.4-nano' }] })
+  assert.deepEqual(ids_, ['gpt-5.4', 'gpt-5.4-nano'])
+})
+
+test('an Anthropic payload parses on the same shape as OpenAI’s', () => {
+  assert.deepEqual(parseCatalogPayload('anthropic', { data: [{ id: 'claude-sonnet-5' }] }), ['claude-sonnet-5'])
+})
+
+test('Gemini names lose the prefix its API wraps them in', () => {
+  const payload = { models: [{ name: 'models/gemini-3.6-flash' }] }
+  assert.deepEqual(parseCatalogPayload('gemini', payload), ['gemini-3.6-flash'])
+})
+
+test('Gemini’s own metadata says what is a chat model', () => {
+  const payload = { models: [
+    { name: 'models/gemini-3.6-flash', supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/text-embedding-005', supportedGenerationMethods: ['embedContent'] },
+  ] }
+  assert.deepEqual(parseCatalogPayload('gemini', payload), ['gemini-3.6-flash'])
+})
+
+test('a Gemini entry declaring no methods is offered, never hidden', () => {
+  const payload = { models: [{ name: 'models/gemini-9' }, { name: 'models/gemini-8', supportedGenerationMethods: [] }] }
+  assert.deepEqual(parseCatalogPayload('gemini', payload), ['gemini-9', 'gemini-8'])
+})
+
+test('a payload in no shape we recognise is no model list', () => {
+  // The endpoint answered, but it publishes nothing we can read as a catalog.
+  for (const payload of [null, 'hello', {}, { data: 'nope' }, { models: 3 }]) {
+    assert.equal(parseCatalogPayload('openai', payload), null)
+    assert.equal(parseCatalogPayload('gemini', payload), null)
+  }
+})
+
+test('entries with no id are dropped rather than offered blank', () => {
+  assert.deepEqual(parseCatalogPayload('openai', { data: [{ id: '' }, null, { id: 'gpt-5.4' }] }), ['gpt-5.4'])
+})
+
+test('a rejected pasted key reads as unauthorized, not as a dead endpoint', () => {
+  assert.equal(probeStatusReason(401), 'unauthorized')
+  assert.equal(probeStatusReason(403), 'unauthorized')
+})
+
+test('an endpoint that answered an error publishes no list we can read', () => {
+  assert.equal(probeStatusReason(404), 'no_list_endpoint')
+  assert.equal(probeStatusReason(500), 'no_list_endpoint')
+})
+
+test('a plain answer carries no reason at all', () => {
+  assert.equal(probeStatusReason(200), '')
 })

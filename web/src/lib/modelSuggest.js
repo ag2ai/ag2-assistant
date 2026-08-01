@@ -1,5 +1,7 @@
-// What the Model field offers: which names, in what order, adorned how honestly.
-// Store-free and transport-free — every rule here is a pure function.
+// What the Model field offers: which names, in what order, adorned how honestly —
+// plus how the browser shapes and reads a probe of its own. Store-free and
+// request-free: every rule here is a pure function, and the one call that is not
+// pure lives in transport/modelCatalog.js.
 
 import { contextLabel, knownModel, knownModelsFor, priceLabel } from './knownModels.js'
 import { TYPE_LABEL } from './providerLabels.js'
@@ -13,13 +15,23 @@ const CATALOG_SOURCE = {
 }
 // The one type that always has something to ask with — Ollama needs no credential.
 const KEYLESS = ['ollama']
+// The types a browser can ask directly, holding a key the user pasted but has not
+// saved. Ollama is absent on purpose: it takes no key, and only the gateway can
+// reach a host behind a Docker bridge.
+const BROWSER_PROBEABLE = ['gemini', 'openai', 'openai_responses', 'anthropic']
 
 // Which side reads the catalog for this configuration; '' when nobody can. A keyed
 // type with no credential yet is asked of nobody: that is not a failure to reach
 // anything, so no request is made and nothing is reported.
-export function catalogSource(type, { hasCredential = false, hasEndpoint = false } = {}) {
+export function catalogSource(
+  type, { hasCredential = false, hasEndpoint = false, hasPastedKey = false } = {},
+) {
   const source = CATALOG_SOURCE[type] || ''
   if (!source) return ''
+  // A key that has only been pasted goes to the provider that owns it and never to
+  // our backend — so while it is unsaved, the browser is the side that asks (ADR
+  // 0024). Once it becomes a Secret the gateway takes over again.
+  if (hasPastedKey && BROWSER_PROBEABLE.includes(type)) return 'browser'
   return KEYLESS.includes(type) || hasCredential || hasEndpoint ? source : ''
 }
 
@@ -94,6 +106,75 @@ export function suggestModels({ type, query = '', catalog = null }) {
         return [...known.filter((m) => m.featured), ...known.filter((m) => !m.featured)]
       })()
   return entries.filter((m) => matches(query, m)).map((m) => row(m, unverified))
+}
+
+// ---- The browser's own probe, as pure pieces -----------------------------------
+//
+// A request builder and a response parser, so every per-provider quirk is tested
+// without injecting `fetch` and without a network. The vendor addresses mirror
+// provider_catalog.py's — the two paths ask the same endpoints the same way, and
+// differ only in who is holding the key.
+
+const DEFAULT_BASE_URL = {
+  gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  openai: 'https://api.openai.com/v1',
+  openai_responses: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+}
+const ANTHROPIC_VERSION = '2023-06-01'
+
+// Where to ask for this configuration's models with a pasted key, and with what
+// headers; null when the browser has no such request to make. A custom endpoint is
+// asked at its own address, not at the vendor whose wire it speaks.
+export function browserProbeRequest({ type, baseUrl = '', key = '' }) {
+  const secret = String(key || '').trim()
+  if (!secret || !DEFAULT_BASE_URL[type]) return null
+  const base = (String(baseUrl || '').trim() || DEFAULT_BASE_URL[type]).replace(/\/+$/, '')
+  if (type === 'gemini') return { url: `${base}/models?key=${encodeURIComponent(secret)}`, headers: {} }
+  if (type === 'anthropic')
+    return {
+      url: `${base}/models`,
+      headers: {
+        'x-api-key': secret,
+        'anthropic-version': ANTHROPIC_VERSION,
+        // Anthropic refuses browser-originated calls unless asked to allow them.
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+    }
+  return { url: `${base}/models`, headers: { Authorization: `Bearer ${secret}` } }
+}
+
+// The model ids a provider's payload lists, or null when it is in no shape we can
+// read as a catalog — an endpoint that answered but publishes no list.
+export function parseCatalogPayload(type, payload) {
+  if (!payload || typeof payload !== 'object') return null
+  if (type === 'gemini') {
+    if (!Array.isArray(payload.models)) return null
+    return payload.models
+      .filter((e) => e && typeof e === 'object')
+      // Gemini's own metadata decides what is a chat model. An entry declaring no
+      // generation methods is kept — an unrecognised shape is offered, never hidden.
+      .filter((e) => {
+        const methods = e.supportedGenerationMethods
+        return !Array.isArray(methods) || !methods.length || methods.includes('generateContent')
+      })
+      .map((e) => String(e.name || '').replace(/^models\//, ''))
+      .filter(Boolean)
+  }
+  if (!Array.isArray(payload.data)) return null
+  return payload.data
+    .filter((e) => e && typeof e === 'object')
+    .map((e) => String(e.id || ''))
+    .filter(Boolean)
+}
+
+// What an HTTP status says about why the catalog is empty; '' when it says nothing
+// went wrong. A refusal of the credential is worth more than a generic failure —
+// it is what surfaces a bad key at focus time rather than at Test time.
+export function probeStatusReason(status) {
+  if (status === 401 || status === 403) return 'unauthorized'
+  if (status >= 400) return 'no_list_endpoint'
+  return ''
 }
 
 // What the quiet hint line says when no catalog could be read. Never the red error

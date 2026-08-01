@@ -11,6 +11,7 @@
   // value-unique Secret on save; api_key rides only the draft-test call).
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api.js'
+  import { fetchModelCatalog } from '../../transport/modelCatalog.js'
   import { codexOpen } from '../../store.js'
   import { getSettings } from './context.svelte.js'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
@@ -150,8 +151,13 @@
   // A credential exists when the config references a Secret, or when the provider's
   // shared key is set — the same key `keyUsage` above says the request would use.
   const hasCredential = $derived(!!secretId || !!ctx?.s?.keys?.[PROV_OF[type]]?.set)
+  // The pasted key settles on BLUR, like the endpoint fields: it is what the probe
+  // is keyed on, and one request per keystroke of a key typed by hand would be absurd.
+  let settledKey = $state('')
   const catalogFrom = $derived(
-    catalogSource(type, { hasCredential, hasEndpoint: !!baseUrl.trim() }),
+    catalogSource(type, {
+      hasCredential, hasEndpoint: !!baseUrl.trim(), hasPastedKey: !!settledKey,
+    }),
   )
   const permanentReason = $derived(permanentNoCatalog(type))
   let probed = $state(false)
@@ -160,21 +166,39 @@
   let catalogReason = $state('')
   const catalogHint = $derived(probed && !probing ? catalogNote(catalogReason, type) : '')
 
+  // Only the newest probe may answer. Settling a key and pressing Re-read fires two
+  // in a row, and the slower one landing last would describe the older question.
+  let probeSeq = 0
+
   async function probeCatalog(refresh = false) {
     if (!catalogFrom) { providerCatalog = null; catalogReason = ''; return }
     probed = true
     probing = true
+    const seq = ++probeSeq
+    let result
     try {
-      const r = await api.llmCatalog(
-        { type, base_url: baseUrl.trim(), host: host.trim(), secret_id: secretId },
-        refresh,
-      )
-      providerCatalog = (r.models || []).map((m) => m.id)
-      catalogReason = r.reason || ''
+      // A pasted key is sent by the browser to the provider that owns it; a saved
+      // Secret is the gateway's to resolve, because the browser holds only its
+      // last-4 hint. The two paths answer in one envelope (ADR 0024).
+      const r = catalogFrom === 'browser'
+        ? await fetchModelCatalog({ type, baseUrl: baseUrl.trim(), key: settledKey, refresh })
+        : await api.llmCatalog(
+            { type, base_url: baseUrl.trim(), host: host.trim(), secret_id: secretId },
+            refresh,
+          )
+      // A reason means no catalog was read, so Known models stand in — an empty
+      // list would offer nothing at all where the honest answer is "unverified".
+      const reason = r.reason || ''
+      result = {
+        reason,
+        catalog: reason ? null : (r.models || []).map((m) => (typeof m === 'string' ? m : m.id)),
+      }
     } catch {
-      providerCatalog = null
-      catalogReason = 'unreachable'
+      result = { reason: 'unreachable', catalog: null }
     }
+    if (seq !== probeSeq) return
+    catalogReason = result.reason
+    providerCatalog = result.catalog
     probing = false
   }
 
@@ -182,7 +206,7 @@
   // describe a configuration the user has moved on from. Only once a first probe
   // has happened — before that, focusing the field is still what starts it.
   $effect(() => {
-    type; secretId; catalogFrom      // the identity inputs this list describes
+    type; secretId; settledKey; catalogFrom   // the identity inputs this list describes
     if (untrack(() => probed)) untrack(() => probeCatalog())
   })
 
@@ -190,6 +214,12 @@
   // through empty without meaning it, and a probe per keystroke would be absurd.
   function settleEndpoint() {
     if (probed) probeCatalog()
+  }
+
+  // Leaving the key field is what makes a pasted key the thing the list describes.
+  // Clearing it falls back to the referenced Secret's gateway probe, if there is one.
+  function settleKey() {
+    settledKey = pastedKey.trim()
   }
 
   // ACP model picker: the adapter's live catalog, fetched once per agent when its
@@ -301,7 +331,9 @@
         const s = await createOrSnap({ name: autoSecretName(name, pastedKey), value: pastedKey.trim() })
         payload.secret_id = s.id
         secretId = s.id
+        // The key is a Secret now, so the list goes back to the gateway path.
         pastedKey = ''
+        settledKey = ''
         loadSecrets()
       }
       delete payload.api_key  // never persisted; Secrets carry the key
@@ -384,7 +416,6 @@
         {/each}
       </select>
     </div>
-  {:else}
   {:else if acpAgent}
     <div class="llmfield">
       <label for="lf-model">Model</label>
@@ -481,7 +512,10 @@
         </select>
       </div>
       <div class="llmkeyfield">
-        <input id="lf-key" type="password" bind:value={pastedKey} placeholder="…or paste a new key to create a secret" />
+        <!-- onblur settles the key the model list is read with: pasting one and
+             moving to the Model field lists what THAT key can reach, before any
+             save, over a request the browser makes to the provider itself. -->
+        <input id="lf-key" type="password" bind:value={pastedKey} onblur={settleKey} placeholder="…or paste a new key to create a secret" />
       </div>
       {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}
       <span class="llmhint">{keyUsage}</span>
