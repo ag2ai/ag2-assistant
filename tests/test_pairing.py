@@ -6,6 +6,8 @@ account presenting it, and is matched by id ever after. Every one of these is a 
 to one Connection, so two Telegram bots have two rosters.
 """
 
+import time
+
 from assistant import pairing as pairing_mod
 from assistant.pairing import PairingStore
 
@@ -132,6 +134,17 @@ def test_a_code_cannot_be_used_twice(paths):
     PairingStore(paths).redeem(WORK, code, "42")
     assert PairingStore(paths).redeem(WORK, code, "99") == pairing_mod.UNKNOWN
     assert PairingStore(paths).is_paired(WORK, "99") is False
+
+
+def test_a_code_lives_the_ten_minutes_the_spec_states(paths):
+    """The lifetime is a stated default, not an implementation detail — a code issued
+    without one expires ten minutes ahead and no further."""
+    issued_at = time.time()
+    PairingStore(paths).issue_code(WORK)
+
+    remaining = PairingStore(paths).live_code(WORK).expires_at - issued_at
+
+    assert 10 * 60 <= remaining < 11 * 60
 
 
 def test_an_expired_code_is_refused_and_reported_as_expired(paths):

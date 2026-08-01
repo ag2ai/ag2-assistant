@@ -57,12 +57,15 @@ Ruff owns formatting and import order — line length 100, double quotes, rule s
   code does — not why it exists, what it replaced, or how it was decided. Keep
   each one to two lines at most.
 - **Breaking changes land backward-compatibly.** Installed data outlives the code
-  that wrote it, so a change to a persisted shape ships with the migration that
-  carries an existing install across it. Keep the migration self-contained and
-  idempotent — one adoption path, run once, resuming cleanly on a second boot —
-  and delete the code it replaced rather than branching on both shapes forever.
-  In-process shims that only ease a refactor still go: this is a fast-moving
-  prototype, and only *persisted* state earns a compatibility path.
+  that wrote it, so a change to a persisted shape ships the adoption that carries an
+  existing install across it, and the code it replaced is deleted rather than
+  branched on both shapes forever. Two shapes of adoption, and they have different
+  rules. A **migration** rewrites what was authored: make it self-contained, run it
+  once, record that it ran, and resume cleanly on a second boot. An **inference
+  rule** re-derives a field that was derived anyway: re-run it every boot, record
+  nothing, and make sure it can only ever narrow — it must not be able to grant what
+  its source does not already grant. In-process shims that only ease a refactor still
+  go: this is a fast-moving prototype, and only *persisted* state earns either.
 - **Surface config, don't guess it.** Prefer exposing a choice in onboarding or
   Settings over silent auto-detection or a hardcoded magic default.
 - **Actions are buttons, never arrow text.** A clickable action in the UI must be

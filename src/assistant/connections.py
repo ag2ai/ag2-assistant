@@ -304,14 +304,13 @@ class ConnectionStore:
         self.adopt_peer_senders()
 
     def adopt_peer_senders(self) -> int:
-        """Stamp the account onto every Peer recorded before senders were, against this
-        install's paired accounts. Idempotent: a stamped Peer is left alone."""
+        """Stamp each sender-less Peer named by one of this install's paired accounts.
+        Re-run every boot (ADR 0022); a Peer that already holds a sender is left alone."""
         return self._peers.adopt_senders(self._pairing.is_paired)
 
     def _migrate(self) -> list[dict]:
-        """One Connection per platform that already has its token(s), its ids persisted
-        before anything is stamped with them. Seeding nothing writes no file, so a
-        reader without the install's environment cannot lock migration out."""
+        """One Connection per platform that already has its token(s), persisted before
+        anything is stamped with them. Writes no file when nothing is seeded."""
         entries = [asdict(_new(p, PLATFORM_TITLES[p])) for p in self._seeded_platforms()]
         if not entries:
             return []

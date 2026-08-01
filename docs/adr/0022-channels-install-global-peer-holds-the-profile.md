@@ -59,11 +59,20 @@ Telegram would be a confusing dead state, not a safe one.
   platform comes up on Connections with its default Profiles, paired accounts, live
   code, Peers, group pins and withdrawals intact, and answers without a reconnect. The
   adoption runs once on boot, records itself in `connections.json`, and is a no-op on
-  every boot after. A second adoption stamps each Peer with the account that speaks in
-  it, which the push gate below needs; a Peer no paired account names keeps none and is
-  closed to a push until its next message stamps one. The old Settings section and the
-  old Chat id scheme are gone from the code; only the reading of what an old install
-  wrote survives.
+  every boot after. The old Settings section and the old Chat id scheme are gone from
+  the code; only the reading of what an old install wrote survives.
+- **A Peer's sender is inferred, not migrated.** The push gate below needs the account a
+  Peer belongs to, and a Peer written before that field existed holds none. Rather than a
+  one-shot migration, every boot re-runs one rule: a Peer holding no sender whose chat id
+  the pairing list recognises is stamped with it — which is exactly a direct conversation,
+  since a DM is named by the account id itself. Nothing else is stamped; a group keeps no
+  sender and stays closed to a push until a message arrives to stamp one.
+
+  It is a standing rule rather than a recorded migration because the field is *derived*.
+  Re-deriving it needs no marker to stay honest, picks up a Peer whose account is paired
+  later, and cannot widen reach: the rule's only source is the pairing list, so it can
+  name nobody who could not already write in. A marker would add a second thing that can
+  be wrong about the first, buying nothing but one skipped scan of a small file.
 - **Pushing into a conversation passes the same gates as answering in it.** A run
   outcome, a mirrored turn and a mirrored question all go through the router, which
   re-reads the pairing list and the exposure record first — revocation and withdrawal

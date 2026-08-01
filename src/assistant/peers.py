@@ -3,6 +3,7 @@ Connection it arrived on plus the chat id, holding the Profile it talks to."""
 
 import json
 import secrets
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 
 from assistant.paths import Paths
@@ -210,10 +211,9 @@ class PeerStore:
         if len(kept) != len(entries):
             self._write(kept)
 
-    def adopt_senders(self, is_paired) -> int:
-        """Stamp the account onto every Peer recorded before senders were, and return how
-        many moved. A direct conversation is named by the account id itself, so a chat id
-        ``is_paired`` recognises is that Peer's sender; the rest keep none."""
+    def adopt_senders(self, is_paired: Callable[[str, str], bool]) -> int:
+        """Stamp each sender-less Peer whose chat id ``is_paired`` recognises with that
+        account, and return how many moved."""
         entries = self._load()
         moved = [
             e
