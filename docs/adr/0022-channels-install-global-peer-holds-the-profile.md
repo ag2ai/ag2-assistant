@@ -68,7 +68,8 @@ Telegram would be a confusing dead state, not a safe one.
   the pairing list recognises is stamped with it, since a DM is named by the account id
   itself. Nothing else is stamped; a group is skipped on its surface rather than trusted to
   hold an id no account could share, and stays closed to a push until a message stamps one.
-  A Peer old enough to record no surface at all is skipped too: unknown is not direct.
+  A Peer old enough to record no surface at all is skipped too — unknown is not direct — and
+  is stamped by its next message rather than at boot.
 
   It is a standing rule rather than a recorded migration because the field is *derived*.
   Re-deriving it needs no marker to stay honest, picks up a Peer whose account is paired
@@ -79,3 +80,14 @@ Telegram would be a confusing dead state, not a safe one.
   outcome, a mirrored turn and a mirrored question all go through the router, which
   re-reads the pairing list and the exposure record first — revocation and withdrawal
   close the push side in the same breath as the inbound one, not one restart later.
+- **The gate reads the Peer's state now, so a task already running can lag it by one
+  run.** A Peer holds one sender and one Peer profile; both can move between a task
+  starting and its outcome landing. In a group, the sender is the account last served,
+  not the one that started the task, so a revoked account's outcome still arrives if
+  another paired member speaks first — a DM is immune, having one speaker. On both
+  surfaces, re-pointing a Peer from X to Y means the gate asks whether Y is exposed, so
+  an outcome started under a since-withdrawn X still lands. Both reach people who may
+  already read the conversation, so neither is a leak to an outsider. Closing them means
+  the Task carrying its own origin — the account and the profile it started under —
+  alongside `origin_channel` and `origin_chat`, and the gate judging that instead of the
+  Peer's present state.

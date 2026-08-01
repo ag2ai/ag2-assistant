@@ -55,3 +55,7 @@ out from under the others.
   there, and re-pointing is a WebUI action.
 - The allowlist is per Channel, not per Profile — it answers "who may speak", while
   exposure answers "what may be spoken to". Neither substitutes for the other.
+- Revocation bites at once inbound, and outbound too — a push re-reads the allowlist
+  before delivering (ADR 0022). The one lag is a task already running in a group: the
+  gate resolves the Peer's current sender, so a revoked account's outcome still arrives
+  if another paired member spoke while the run was in flight.
