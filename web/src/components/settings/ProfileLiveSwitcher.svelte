@@ -9,7 +9,7 @@
   import { api } from '../../transport/api.js'
   import { SETTINGS_PAGE } from '../../store.js'
   import { replaceOverlay } from '../../router.js'
-  import { LOGO, PROVIDER_LABEL, isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import { PROVIDER_LABEL, isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
   import { getSettings } from './context.svelte.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
@@ -29,7 +29,7 @@
   {configs} {activeId} busy={ctx.busy} down {inherited}
   title="Voice model for this profile — takes effect next voice session"
   placeholder="Choose a voice model"
-  logoFor={(c) => LOGO[c.provider]}
+  brandFor={(c) => c.provider}
   labelFor={(c) => `${PROVIDER_LABEL[c.provider]} · ${c.model}${c.voice ? ` · ${c.voice}` : ''}`}
   usable={isUsable}
   defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active voice' }}

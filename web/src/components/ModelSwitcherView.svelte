@@ -6,6 +6,11 @@
   // either "set install-wide Active" or "set this profile's Active override". Styles are
   // the global .modelsw-* classes in app.css.
   import Icon from './Icon.svelte'
+  import BrandMark from './BrandMark.svelte'
+
+  // The mark a switcher row leads with — 14px, the smallest size the app draws a brand
+  // at, and the size the task page's own switcher matches.
+  const MARK_SIZE = 14
 
   let {
     configs = [],
@@ -15,7 +20,8 @@
     disabled = false,
     title = '',
     placeholder = 'Choose a model',
-    logoFor,                // (c) => logo src
+    brandFor,               // (c) => brand key, for lib/brandMarks — text configs key
+                            // off `type`, voice ones off `provider`
     labelFor,               // (c) => sub-line text
     usable = () => true,
     down = false,           // open the menu downward (header-mounted) vs up (composer)
@@ -56,7 +62,7 @@
     <div class="modelsw-wrap">
       <button class="modelsw-btn" disabled={busy || disabled} onclick={() => (open = !open)} {title}>
         {#if activeConfig}
-          <img class="modelsw-logo" src={logoFor(activeConfig)} alt="" />
+          <BrandMark brand={brandFor(activeConfig)} size={MARK_SIZE} />
           <span class="modelsw-name">{activeConfig.name}</span>
           {#if inherited}<span class="modelsw-tag">inherited</span>{/if}
           <span class="modelsw-dot" class:warn={!usable(activeConfig)}></span>
@@ -85,7 +91,7 @@
               title={usable(c) ? '' : 'Not ready — add a key or sign in via Settings'}
               onclick={() => choose(c)}
             >
-              <img class="modelsw-logo" src={logoFor(c)} alt="" />
+              <BrandMark brand={brandFor(c)} size={MARK_SIZE} />
               <span class="modelsw-itemmeta">
                 <span class="modelsw-name">
                   {c.name}{#if !inherited && c.id === activeId}<Icon name="check" size={12} />{/if}

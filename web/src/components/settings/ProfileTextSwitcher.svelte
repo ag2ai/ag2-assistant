@@ -8,7 +8,7 @@
   import { api } from '../../transport/api.js'
   import { SETTINGS_PAGE } from '../../store.js'
   import { replaceOverlay } from '../../router.js'
-  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   import { getSettings } from './context.svelte.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
@@ -28,7 +28,7 @@
 <ModelSwitcherView
   {configs} {activeId} {envOverride} busy={ctx.busy} down {inherited}
   title="Text model for this profile — takes effect next message"
-  logoFor={(c) => LOGO[c.type]}
+  brandFor={(c) => c.type}
   labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
   defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active model' }}

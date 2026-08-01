@@ -17,7 +17,7 @@
   import { api } from '../../transport/api.js'
   import { SETTINGS_PAGE } from '../../store.js'
   import { openOverlay } from '../../router.js'
-  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
   let busy = $state(false)
@@ -42,7 +42,7 @@
 <ModelSwitcherView
   {configs} activeId={active} {envOverride} {busy}
   title="Model for your next message"
-  logoFor={(c) => LOGO[c.type]}
+  brandFor={(c) => c.type}
   labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
   emptyLabel="No models configured — add one in Settings"
