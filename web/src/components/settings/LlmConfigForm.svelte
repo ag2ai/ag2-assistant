@@ -19,7 +19,7 @@
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.js'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.js'
   import { familyOf } from '../../lib/knownModels.js'
-  import { catalogNote, catalogSource } from '../../lib/modelSuggest.js'
+  import { catalogNote, catalogSource, permanentNoCatalog } from '../../lib/modelSuggest.js'
   import ModelCombobox from './ModelCombobox.svelte'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
@@ -146,7 +146,14 @@
   // whose Model field is never touched makes no request at all. `probed` is what
   // makes a re-probe conditional — the identity effect below must not be the thing
   // that fires the first one. No client cache beyond this form's lifetime.
-  const catalogFrom = $derived(catalogSource(type))
+  //
+  // A credential exists when the config references a Secret, or when the provider's
+  // shared key is set — the same key `keyUsage` above says the request would use.
+  const hasCredential = $derived(!!secretId || !!ctx?.s?.keys?.[PROV_OF[type]]?.set)
+  const catalogFrom = $derived(
+    catalogSource(type, { hasCredential, hasEndpoint: !!baseUrl.trim() }),
+  )
+  const permanentReason = $derived(permanentNoCatalog(type))
   let probed = $state(false)
   let probing = $state(false)
   let providerCatalog = $state(null)   // null = none read; an array = the live list
@@ -395,7 +402,11 @@
         catalog={providerCatalog} loading={probing} onFirstFocus={() => probeCatalog()}
       />
     </div>
-    {#if catalogFrom && probed}
+    {#if permanentReason}
+      <!-- No list exists for this type and none ever will, so there is nothing to
+           re-read and no button offering to. -->
+      <div class="llmfield"><span class="llmhint">{catalogNote(permanentReason, type)}</span></div>
+    {:else if catalogFrom && probed}
       <!-- One row for both states, like the ACP picker's: why there is no list (if
            so) plus a manual re-read, for a key just fixed or a model just pulled.
            Always the quiet hint line — a background probe is never a red error. -->

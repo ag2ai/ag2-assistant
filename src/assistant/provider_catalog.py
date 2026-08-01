@@ -22,9 +22,18 @@ NOT_PROBEABLE = "not_probeable"
 
 # The types the gateway can probe. A keyed type's key comes from its Secret, never
 # from the request — a pasted key is the browser's to send (ADR 0024).
-GATEWAY_PROBEABLE = ("ollama",)
+GATEWAY_PROBEABLE = ("ollama", "gemini", "openai", "openai_responses", "anthropic")
+# ChatGPT-subscription models have no API key to probe with, permanently.
+NEVER_PROBEABLE = ("openai_subscription",)
 
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+DEFAULT_BASE_URL = {
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "openai": "https://api.openai.com/v1",
+    "openai_responses": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+}
+ANTHROPIC_VERSION = "2023-06-01"
 # One HTTP read against a provider. Short: the field stays typeable while it runs,
 # and a slow provider must not hold the request open.
 PROBE_TIMEOUT = 8.0
@@ -66,6 +75,51 @@ def _ollama_tags(payload: dict) -> list[str]:
     return [str(m.get("name") or m.get("model") or "") for m in models if isinstance(m, dict)]
 
 
+def _gemini_models(payload: dict) -> list[str]:
+    """Gemini's own metadata decides what is a chat model: an entry that declares
+    generation methods keeps only if it can ``generateContent``. One that declares
+    none is kept — an unrecognised shape is offered, never hidden."""
+    models = payload.get("models")
+    if not isinstance(models, list):
+        raise CatalogUnavailable(NO_LIST_ENDPOINT)
+    out = []
+    for entry in models:
+        if not isinstance(entry, dict):
+            continue
+        methods = entry.get("supportedGenerationMethods")
+        if isinstance(methods, list) and methods and "generateContent" not in methods:
+            continue
+        out.append(str(entry.get("name") or "").removeprefix("models/"))
+    return out
+
+
+def _data_ids(payload: dict) -> list[str]:
+    """The OpenAI/Anthropic list shape: ``{"data": [{"id": ...}]}``. Both return
+    chat models among others; what is not a chat model is filtered client-side, by
+    one deny-list shared with the browser probe."""
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise CatalogUnavailable(NO_LIST_ENDPOINT)
+    return [str(e.get("id") or "") for e in data if isinstance(e, dict)]
+
+
+def _request(target: CatalogTarget) -> tuple[str, dict[str, str]]:
+    """Where to ask ``target`` for its models, and with what headers. A custom
+    endpoint is asked at its own address, not at the vendor whose wire it speaks."""
+    ctype = target.type
+    if ctype == "ollama":
+        return (target.host or DEFAULT_OLLAMA_HOST).rstrip("/") + "/api/tags", {}
+    base = (target.base_url or DEFAULT_BASE_URL[ctype]).rstrip("/")
+    if ctype == "gemini":
+        return f"{base}/models?key={target.api_key}", {}
+    if ctype == "anthropic":
+        return f"{base}/models", {
+            "x-api-key": target.api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+        }
+    return f"{base}/models", {"Authorization": f"Bearer {target.api_key}"}
+
+
 async def probe_provider_models(
     target: CatalogTarget, *, client: httpx.AsyncClient | None = None
 ) -> list[str]:
@@ -74,13 +128,17 @@ async def probe_provider_models(
     The production probe behind the app's ``llm_catalog_probe`` seam. ``client`` is
     injected by tests that want the read to go over a MockTransport.
     """
-    if target.type != "ollama":
+    if target.type not in GATEWAY_PROBEABLE:
         raise CatalogUnavailable(NOT_PROBEABLE)
-    url = (target.host or DEFAULT_OLLAMA_HOST).rstrip("/") + "/api/tags"
+    # A keyed type with neither a key nor an endpoint of its own has nothing to ask
+    # with. That is not a failure to reach anything, so it never reads as unreachable.
+    if target.type != "ollama" and not target.api_key and not target.base_url:
+        raise CatalogUnavailable(NOT_PROBEABLE)
+    url, headers = _request(target)
     owned = client is None
     http = client or httpx.AsyncClient(timeout=PROBE_TIMEOUT)
     try:
-        response = await http.get(url)
+        response = await http.get(url, headers=headers)
     except httpx.HTTPError as exc:
         raise CatalogUnavailable(UNREACHABLE) from exc
     finally:
@@ -96,4 +154,10 @@ async def probe_provider_models(
         raise CatalogUnavailable(NO_LIST_ENDPOINT) from exc
     if not isinstance(payload, dict):
         raise CatalogUnavailable(NO_LIST_ENDPOINT)
-    return [tag for tag in _ollama_tags(payload) if tag]
+    if target.type == "ollama":
+        names = _ollama_tags(payload)
+    elif target.type == "gemini":
+        names = _gemini_models(payload)
+    else:
+        names = _data_ids(payload)
+    return [name for name in names if name]

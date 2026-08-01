@@ -4,14 +4,46 @@
 import { contextLabel, knownModel, knownModelsFor, priceLabel } from './knownModels.js'
 import { TYPE_LABEL } from './providerLabels.js'
 
-// Which side can read a Model catalog for a type. The gateway probes what needs no
-// credential of the user's: it is the side that can reach a host behind a Docker
-// bridge or on an internal network, and no key's blast radius is at stake.
-const CATALOG_SOURCE = { ollama: 'gateway' }
+// Which side can read a Model catalog for a type. The gateway probes what it holds
+// the credential for, and what needs none: it is the side that can reach a host
+// behind a Docker bridge or on an internal network.
+const CATALOG_SOURCE = {
+  ollama: 'gateway', gemini: 'gateway',
+  openai: 'gateway', openai_responses: 'gateway', anthropic: 'gateway',
+}
+// The one type that always has something to ask with — Ollama needs no credential.
+const KEYLESS = ['ollama']
 
-// '' when no catalog can be read for this type at all.
-export function catalogSource(type) {
-  return CATALOG_SOURCE[type] || ''
+// Which side reads the catalog for this configuration; '' when nobody can. A keyed
+// type with no credential yet is asked of nobody: that is not a failure to reach
+// anything, so no request is made and nothing is reported.
+export function catalogSource(type, { hasCredential = false, hasEndpoint = false } = {}) {
+  const source = CATALOG_SOURCE[type] || ''
+  if (!source) return ''
+  return KEYLESS.includes(type) || hasCredential || hasEndpoint ? source : ''
+}
+
+// The reason a type will never have a catalog, whatever the user does about it.
+export function permanentNoCatalog(type) {
+  return type === 'openai_subscription' ? 'not_probeable' : ''
+}
+
+// Names positively recognised as not a chat model. OpenAI is the only provider that
+// returns embeddings, speech, image and moderation models alongside chat ones;
+// Gemini and Ollama answer with their own metadata, and Anthropic's list is chat-only.
+const NOT_CHAT = [
+  'embedding', 'tts', 'whisper', 'transcribe', 'dall-e', 'moderation', 'audio', 'realtime',
+  'image', 'sora', 'search-', 'computer-use',
+]
+const DENY_LISTED = { openai: true, openai_responses: true, openai_subscription: true }
+
+// Whether a catalog name should be hidden for this type. Fails OPEN: a name is
+// removed only when positively recognised as not a chat model, so a brand-new
+// family the app has never heard of is always offered.
+export function isNotChatModel(type, id) {
+  if (!DENY_LISTED[type]) return false
+  const name = String(id || '').toLowerCase()
+  return NOT_CHAT.some((marker) => name.includes(marker))
 }
 
 // One offered name: `unverified` says nothing confirmed it exists, and an empty
@@ -39,7 +71,7 @@ function fromCatalog(type, catalog) {
   const rows = []
   for (const raw of catalog) {
     const id = String(raw || '').trim()
-    if (!id || seen.has(id)) continue
+    if (!id || seen.has(id) || isNotChatModel(type, id)) continue
     seen.add(id)
     rows.push(knownModel(id) || { id, label: id })
   }

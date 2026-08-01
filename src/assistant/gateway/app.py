@@ -1183,6 +1183,10 @@ def create_app(
                 {"ok": False, "error": "this route accepts no key material"}, status_code=400
             )
         ctype = params.get("type", "")
+        if ctype in provider_catalog.NEVER_PROBEABLE:
+            # A permanent property, not a state the user could fix — so it is answered
+            # rather than probed, and worded that way in the field.
+            return JSONResponse(as_view([], "", provider_catalog.NOT_PROBEABLE))
         if ctype not in provider_catalog.GATEWAY_PROBEABLE:
             return JSONResponse(
                 {"ok": False, "error": f"no provider catalog for: {ctype}"}, status_code=404

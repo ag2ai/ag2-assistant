@@ -108,3 +108,63 @@ def test_every_read_probes_because_there_is_no_server_cache(profile_app_factory)
     for _ in range(3):
         client.get("/api/llm-configs/models", params={"type": "ollama"})
     assert len(seen) == 3
+
+
+# ---- Keyed types: the route resolves the Secret, and takes no key from the caller --
+
+
+def _with_secret(paths, provider="gemini", value="sk-saved", default=False):
+    """A Secret on disk, the way Settings → Secrets would have written it."""
+    from assistant.secrets import SecretStore
+
+    store = SecretStore(paths)
+    return store.create_secret(
+        name=f"{provider} key", value=value, provider=provider, default=default
+    )
+
+
+def test_a_referenced_secret_is_what_the_probe_is_given(profile_app_factory, paths):
+    secret = _with_secret(paths)
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    client.get("/api/llm-configs/models", params={"type": "gemini", "secret_id": secret["id"]})
+    assert [t.api_key for t in seen] == ["sk-saved"]
+
+
+def test_a_dangling_secret_reference_leaves_the_probe_keyless(profile_app_factory):
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    client.get("/api/llm-configs/models", params={"type": "gemini", "secret_id": "gone"})
+    assert [t.api_key for t in seen] == [""]
+
+
+def test_a_rejected_secret_reads_as_unauthorized(profile_app_factory):
+    client, _pid = _app(profile_app_factory, raises=CatalogUnavailable("unauthorized"))
+    body = client.get("/api/llm-configs/models", params={"type": "gemini"}).json()
+    assert body == {"models": [], "current": "", "reason": "unauthorized"}
+
+
+def test_a_custom_endpoint_is_passed_through_to_the_probe(profile_app_factory):
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    client.get(
+        "/api/llm-configs/models",
+        params={"type": "anthropic", "base_url": "https://api.minimax.io/anthropic"},
+    )
+    assert [t.base_url for t in seen] == ["https://api.minimax.io/anthropic"]
+
+
+def test_the_chatgpt_subscription_is_answered_without_probing_anything(profile_app_factory):
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    r = client.get("/api/llm-configs/models", params={"type": "openai_subscription"})
+    assert r.status_code == 200
+    assert r.json() == {"models": [], "current": "", "reason": "not_probeable"}
+    assert seen == [], "a type with no key to probe with was probed anyway"
+
+
+def test_every_keyed_type_is_served_rather_than_404ed(profile_app_factory):
+    client, _pid = _app(profile_app_factory, models=["a-model"])
+    for ctype in ("gemini", "openai", "openai_responses", "anthropic"):
+        body = client.get("/api/llm-configs/models", params={"type": ctype}).json()
+        assert body["models"] == [{"id": "a-model", "name": "a-model", "description": ""}], ctype

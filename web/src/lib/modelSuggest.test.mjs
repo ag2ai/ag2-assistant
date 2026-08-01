@@ -3,7 +3,13 @@
 // Run: npm test
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { catalogNote, catalogSource, suggestModels } from './modelSuggest.js'
+import {
+  catalogNote,
+  catalogSource,
+  isNotChatModel,
+  permanentNoCatalog,
+  suggestModels,
+} from './modelSuggest.js'
 import { KNOWN_MODELS, knownModel } from './knownModels.js'
 
 const ids = (rows) => rows.map((r) => r.id)
@@ -150,8 +156,32 @@ test('a keyless local host is the gateway’s to probe, not the browser’s', ()
 })
 
 test('a type with no catalog to read asks nobody', () => {
-  for (const type of ['claude_code', 'codex', '', 'nonsense']) {
+  for (const type of ['claude_code', 'codex', 'openai_subscription', '', 'nonsense']) {
     assert.equal(catalogSource(type), '', type)
+  }
+})
+
+test('a keyed type is the gateway’s once a credential exists', () => {
+  for (const type of ['gemini', 'openai', 'openai_responses', 'anthropic']) {
+    assert.equal(catalogSource(type, { hasCredential: true }), 'gateway', type)
+  }
+})
+
+test('a keyed type with no credential yet is asked of nobody', () => {
+  // Not a failure to reach anything — nothing to ask with. No request, no report.
+  for (const type of ['gemini', 'openai', 'openai_responses', 'anthropic']) {
+    assert.equal(catalogSource(type), '', type)
+  }
+})
+
+test('a keyless custom endpoint is asked anyway', () => {
+  assert.equal(catalogSource('openai', { hasEndpoint: true }), 'gateway')
+})
+
+test('the ChatGPT subscription can never have a catalog, and says which', () => {
+  assert.equal(permanentNoCatalog('openai_subscription'), 'not_probeable')
+  for (const type of ['gemini', 'ollama', 'anthropic', 'codex']) {
+    assert.equal(permanentNoCatalog(type), '', type)
   }
 })
 
@@ -182,4 +212,39 @@ test('every reason ends by saying known names are still on offer', () => {
 test('a catalog that answered has nothing to explain', () => {
   assert.equal(catalogNote('', 'ollama'), '')
   assert.equal(catalogNote(undefined, 'ollama'), '')
+})
+
+// ---- The deny-list: it fails open, and only OpenAI needs it ---------------------
+
+test('an OpenAI catalog containing an embeddings model does not offer it', () => {
+  const rows = suggestModels({ type: 'openai', catalog: ['gpt-5.6-terra', 'text-embedding-3-large'] })
+  assert.deepEqual(ids(rows), ['gpt-5.6-terra'])
+})
+
+test('speech, image, moderation and realtime models are dropped too', () => {
+  const catalog = ['tts-1', 'whisper-1', 'dall-e-3', 'omni-moderation-latest', 'gpt-realtime', 'gpt-audio']
+  assert.deepEqual(suggestModels({ type: 'openai_responses', catalog }), [])
+})
+
+test('a brand-new family the app has never heard of is still offered', () => {
+  // The filter fails open: removal needs positive recognition, never a guess.
+  const rows = suggestModels({ type: 'openai', catalog: ['gpt-7-quasar', 'o9-preview', 'zeta-9'] })
+  assert.deepEqual(ids(rows).sort(), ['gpt-7-quasar', 'o9-preview', 'zeta-9'])
+})
+
+test('dated snapshots stay visible beside their floating alias', () => {
+  const catalog = ['gpt-5.6-terra', 'gpt-5.6-terra-2026-04-01']
+  assert.deepEqual(ids(suggestModels({ type: 'openai', catalog })).sort(), catalog.sort())
+})
+
+test('only the OpenAI family is deny-listed — the others answer with their own metadata', () => {
+  for (const type of ['gemini', 'anthropic', 'ollama']) {
+    assert.equal(isNotChatModel(type, 'text-embedding-005'), false, type)
+  }
+  assert.equal(isNotChatModel('openai', 'text-embedding-3-large'), true)
+})
+
+test('an Anthropic catalog is offered exactly as it came', () => {
+  const catalog = ['claude-sonnet-5', 'claude-opus-4-8']
+  assert.deepEqual(ids(suggestModels({ type: 'anthropic', catalog })).sort(), catalog.slice().sort())
 })
