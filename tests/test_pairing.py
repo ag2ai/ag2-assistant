@@ -142,7 +142,7 @@ def test_a_code_lives_the_ten_minutes_the_spec_states(paths):
 
     remaining = PairingStore(paths).live_code(WORK).expires_at - issued_at
 
-    assert 10 * 60 <= remaining < 11 * 60
+    assert 10 * 60 <= remaining < 10 * 60 + 5
 
 
 def test_an_expired_code_is_refused_and_reported_as_expired(paths):

@@ -306,13 +306,11 @@ fallback Profile, an unrelated install-level setting)
 One conversation on the platform side — a direct message or a group — identified by
 its **Connection** and that platform's own chat id. Keyed by the Connection, not the
 platform: on Telegram a direct message's chat id is the user's own id, identical
-across two bots, so two Connections would otherwise share one conversation. This is
-what a Connection actually talks
-to, and what holds everything persisting between messages: its **Peer profile**, its
-**Peer sender**, and the **Chat** it is currently attached to. A Peer starts many Chats
-over time and keeps
-owning the ones it leaves — that is how a **Task** started in a conversation delivers
-its outcome back there.
+across two bots, so two Connections would otherwise share one conversation. This is what
+a Connection actually talks to, and what holds everything persisting between messages:
+its **Peer profile**, its **Peer sender**, and the **Chat** it is currently attached to.
+A Peer starts many Chats over time and keeps owning the ones it leaves — that is how a
+**Task** started in a conversation delivers its outcome back there.
 _Avoid_: session (the retired chat-sense name — see **Chat**), chat (that is the
 persisted entity a Peer attaches to), user (a Peer is a conversation; several people
 speak in a group Peer), conversation
@@ -358,13 +356,10 @@ _Avoid_: user (**Profile**'s _Avoid_ already reserves the word), member, allowli
 entry
 
 **Peer sender**:
-The platform account a **Peer** is judged by — the last one it served. It is what makes a
-push gateable: nothing arrives in a conversation unasked unless that account is still a
-**Paired account** of the Connection, which is how revocation closes the outbound side and
-not merely the inbound one. In a direct message it is simply the person; in a group it
-moves to whoever spoke last, so the gate tracks who is talking rather than who started a
-given **Task**. A Peer holding none is closed to a push until a message stamps one
-(ADR 0022).
+The platform account a **Peer** is judged by — the last one it served, and the account a
+push into that conversation is gated on being a **Paired account** of the Connection. In a
+direct message it is the person; in a group it is whoever spoke last, and a Peer holding
+none is closed to a push until a message stamps one (ADR 0022).
 _Avoid_: owner (a Peer has none — a group Peer belongs to no one account), author,
 last speaker (an unpaired one is turned away before it can stamp anything), sender_id
 (that is the inbound message's field, from which this is taken)

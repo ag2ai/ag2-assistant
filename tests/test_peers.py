@@ -186,8 +186,7 @@ def _paired(*known: tuple[str, str]):
 
 
 def test_a_direct_peer_is_stamped_with_the_account_its_chat_id_names(paths):
-    """A DM is named by the account id itself, so the pairing list recognises it and the
-    push side keeps working across the upgrade."""
+    """A DM is named by the account id itself, so the pairing list recognises it."""
     PeerStore(paths).select_profile("cn-work", "42", "work", platform="telegram")
 
     assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 1
@@ -201,6 +200,14 @@ def test_a_peer_no_paired_account_names_is_left_without_a_sender(paths):
 
     assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 0
     assert PeerStore(paths).get_peer("cn-work", "-100").sender == ""
+
+
+def test_a_group_is_never_stamped_even_when_a_paired_account_names_it(paths):
+    """A group whose chat id collides with a paired account id stays closed to a push."""
+    PeerStore(paths).select_profile("cn-work", "42", "work", platform="telegram", surface="group")
+
+    assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 0
+    assert PeerStore(paths).get_peer("cn-work", "42").sender == ""
 
 
 def test_stamping_senders_is_idempotent_and_never_overwrites_one(paths):

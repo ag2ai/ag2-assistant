@@ -17,7 +17,7 @@ class Peer:
     chat_id: str  # the platform's own chat/conversation id
     platform: str = ""  # which platform that Connection runs on
     surface: str = "dm"  # "dm" | "group"
-    sender: str = ""  # the account that last spoke here; "" when none was recorded
+    sender: str = ""  # the account last served here; "" when none was recorded
     profile: str | None = None  # the selected profile's id
     chat: str | None = None  # the Chat it is Attached to, if any
     chats: list[str] = field(default_factory=list)  # every Chat it has spoken in
@@ -212,13 +212,15 @@ class PeerStore:
             self._write(kept)
 
     def adopt_senders(self, is_paired: Callable[[str, str], bool]) -> int:
-        """Stamp each sender-less Peer with the account its chat id names — the chat id is
-        offered to ``is_paired(connection, account)`` — and return how many moved."""
+        """Stamp each sender-less direct Peer with the account its chat id names — the chat
+        id is offered to ``is_paired(connection, account)`` — and return how many moved."""
         entries = self._load()
         moved = [
             e
             for e in entries
-            if not e.get("sender") and is_paired(e.get("connection") or "", e["chat_id"])
+            if not e.get("sender")
+            and e.get("surface", "dm") == "dm"
+            and is_paired(e.get("connection") or "", e["chat_id"])
         ]
         for entry in moved:
             entry["sender"] = entry["chat_id"]

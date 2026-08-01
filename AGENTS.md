@@ -63,8 +63,11 @@ Ruff owns formatting and import order — line length 100, double quotes, rule s
   - A **migration** rewrites what was authored. Make it self-contained, run it once,
     record that it ran, and resume cleanly on a second start.
   - An **inference rule** re-derives a field that was derived anyway. Re-run it on
-    every start, record nothing, and make sure it can only ever narrow — it must not
-    be able to grant what its source does not already grant.
+    every start, record nothing, and make sure it can name nobody its source could not
+    already name — it must not be able to grant what its source does not already grant.
+
+  Which shape you have is decided by the source of truth: if it still exists at read
+  time, re-derive it as an inference rule; if the old shape is gone, migrate.
 
   In-process shims that only ease a refactor still go: this is a fast-moving
   prototype, and only *persisted* state earns either.
