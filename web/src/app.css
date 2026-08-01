@@ -265,7 +265,7 @@
 .settings .llmrow.clickable { cursor: pointer; }
 .settings .llmrow.clickable:hover { background: var(--code); }
 .settings .llmrow.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.settings .llmlogo { width: 20px; height: 20px; flex: none; opacity: .85; object-fit: contain; }
+.settings .llmlogo { width: 20px; height: 20px; flex: none; object-fit: contain; }
 .settings .llmlogo.sm { width: 16px; height: 16px; }
 .settings .llmmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .settings .llmname { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); }

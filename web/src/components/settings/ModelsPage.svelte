@@ -19,7 +19,8 @@
   import LlmConfigForm from './LlmConfigForm.svelte'
   import VoiceSection from './VoiceSection.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import BrandMark from '../BrandMark.svelte'
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
   const TEMPLATES = [
@@ -157,7 +158,7 @@
     onclick={() => { if (!c.active && !busy && !editing) use(c) }}
     onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
   >
-    <img class="llmlogo" src={LOGO[c.type]} alt="" />
+    <BrandMark brand={c.type} />
     <div class="llmmeta">
       <div class="llmname">
         {c.name}
@@ -215,7 +216,7 @@
     <div class="mcpcat">
       {#each TEMPLATES as t}
         <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
-          <span class="mcpcathead"><img class="llmlogo sm" src={LOGO[t.type]} alt="" /> {t.card || t.name}</span>
+          <span class="mcpcathead"><BrandMark brand={t.type} size={16} /> {t.card || t.name}</span>
           <span class="mcpcatblurb">{t.blurb}</span>
           {#if providerDeps[t.type] && !providerDeps[t.type].ok}
             <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>

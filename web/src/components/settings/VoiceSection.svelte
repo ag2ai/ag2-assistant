@@ -10,7 +10,8 @@
   import { getSettings } from './context.svelte.js'
   import LiveConfigForm from './LiveConfigForm.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import { PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import BrandMark from '../BrandMark.svelte'
 
   const ctx = getSettings()
 
@@ -86,7 +87,7 @@
     onclick={() => { if (!c.active && !busy && !editing) use(c) }}
     onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
   >
-    <img class="llmlogo" src={LOGO[c.provider]} alt="" />
+    <BrandMark brand={c.provider} />
     <div class="llmmeta">
       <div class="llmname">
         {c.name}
@@ -133,7 +134,7 @@
     <div class="mcpcat">
       {#each providers as p}
         <button class="mcpcatcard" onclick={() => pickTemplate(p)}>
-          <span class="mcpcathead"><img class="llmlogo sm" src={LOGO[p.name]} alt="" /> {PROVIDER_LABEL[p.name]}</span>
+          <span class="mcpcathead"><BrandMark brand={p.name} size={16} /> {PROVIDER_LABEL[p.name]}</span>
           <span class="mcpcatblurb">Realtime voice · {p.default_model}</span>
         </button>
       {/each}

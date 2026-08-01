@@ -15,6 +15,15 @@
   let { brand, size = 20 } = $props()
 
   const mark = $derived(brandMark(brand))
+
+  // A gradient is referenced by id, and ids are document-wide: two Gemini marks on the
+  // same page sharing one would have the second silently redefine the first. One id per
+  // instance, fixed at creation so it survives a `brand` change.
+  const gradientId = `brandmark-gradient-${++seq}`
+</script>
+
+<script module>
+  let seq = 0
 </script>
 
 {#if mark}
@@ -26,6 +35,15 @@
   >
     {#if mark.kind === 'multi'}
       {#each mark.parts as part}<path d={part.path} fill={part.fill} />{/each}
+    {:else if mark.kind === 'gradient'}
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+          {#each mark.stops as stop, i}
+            <stop offset={i / (mark.stops.length - 1)} stop-color={stop} />
+          {/each}
+        </linearGradient>
+      </defs>
+      <path d={mark.path} fill="url(#{gradientId})" />
     {:else}
       <path d={mark.path} fill={mark.fill || 'currentColor'} />
     {/if}
