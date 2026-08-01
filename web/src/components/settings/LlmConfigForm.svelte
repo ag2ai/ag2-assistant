@@ -18,6 +18,8 @@
   import { TYPE_LABEL } from '../../lib/providerLabels.js'
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.js'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.js'
+  import { familyOf } from '../../lib/knownModels.js'
+  import ModelCombobox from './ModelCombobox.svelte'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
 
@@ -118,11 +120,10 @@
 
   // Model names belong to their provider ("haiku" means nothing to Codex), so
   // switching type clears the model instead of carrying a stale name into the
-  // new picker. Exception: the two OpenAI API surfaces are the same catalog, so
-  // switching between them keeps the model. Only a user-driven change resets —
-  // the initial value from an edited/prefilled entry is never touched.
-  const MODEL_FAMILY = { openai: 'openai', openai_responses: 'openai' }
-  const modelFamily = (t) => MODEL_FAMILY[t] || t
+  // new picker. The families are lib/knownModels.js's — the OpenAI surfaces share
+  // one, so switching between them keeps the model. A CLI type belongs to no family
+  // there and stands for itself. Only a user-driven change resets.
+  const modelFamily = (t) => familyOf(t) || t
   function changeType(next) {
     if (next === type) return
     if (modelFamily(next) !== modelFamily(type)) model = ''
@@ -331,11 +332,18 @@
       </select>
     </div>
   {:else}
+  {:else if acpAgent}
     <div class="llmfield">
       <label for="lf-model">Model</label>
-      <!-- No catalog: for the CLI types the placeholder stays empty on purpose (an
-           invented example is worse than none — acpNote explains what happened). -->
-      <input id="lf-model" bind:value={model} placeholder={acpAgent ? '' : 'e.g. gemini-3.6-flash'} />
+      <!-- A CLI type whose adapter answered nothing: the placeholder stays empty on
+           purpose (an invented example is worse than none — acpNote says what happened). -->
+      <input id="lf-model" bind:value={model} placeholder="" />
+    </div>
+  {:else}
+    <div class="llmfield">
+      <label for="lf-model">Model</label>
+      <!-- Known models, offered but never imposed: whatever is typed here wins. -->
+      <ModelCombobox bind:value={model} {type} placeholder="e.g. gemini-3.6-flash" />
     </div>
   {/if}
   {#if acpAgent && !acpLoading}
