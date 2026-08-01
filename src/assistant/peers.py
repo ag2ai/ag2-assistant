@@ -219,7 +219,7 @@ class PeerStore:
             e
             for e in entries
             if not e.get("sender")
-            and e.get("surface", "dm") == "dm"
+            and e.get("surface") == "dm"
             and is_paired(e.get("connection") or "", e["chat_id"])
         ]
         for entry in moved:

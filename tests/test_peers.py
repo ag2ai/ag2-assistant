@@ -210,6 +210,14 @@ def test_a_group_is_never_stamped_even_when_a_paired_account_names_it(paths):
     assert PeerStore(paths).get_peer("cn-work", "42").sender == ""
 
 
+def test_a_peer_recorded_before_surfaces_were_is_never_stamped(paths):
+    """No recorded surface is not a DM: it stamps on its next message instead."""
+    PeerStore(paths)._write([{"connection": "cn-work", "chat_id": "42", "profile": "work"}])
+
+    assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 0
+    assert PeerStore(paths).get_peer("cn-work", "42").sender == ""
+
+
 def test_stamping_senders_is_idempotent_and_never_overwrites_one(paths):
     PeerStore(paths).select_profile("cn-work", "42", "work", platform="telegram", sender="99")
 

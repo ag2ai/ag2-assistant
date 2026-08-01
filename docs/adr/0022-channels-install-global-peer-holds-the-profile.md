@@ -68,6 +68,7 @@ Telegram would be a confusing dead state, not a safe one.
   the pairing list recognises is stamped with it, since a DM is named by the account id
   itself. Nothing else is stamped; a group is skipped on its surface rather than trusted to
   hold an id no account could share, and stays closed to a push until a message stamps one.
+  A Peer old enough to record no surface at all is skipped too: unknown is not direct.
 
   It is a standing rule rather than a recorded migration because the field is *derived*.
   Re-deriving it needs no marker to stay honest, picks up a Peer whose account is paired
