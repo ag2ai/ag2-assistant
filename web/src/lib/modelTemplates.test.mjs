@@ -1,7 +1,6 @@
-// The template-grid seam: every starting point the Models page offers must land
-// under a heading, wear a chip naming what the user brings, and draw a brand mark.
+// The template-grid seam: every starting point the Models page offers lands under
+// a heading, wears a chip naming what the user brings, and draws a brand mark.
 // Run: npm test
-// Nothing here pins the shape of a lookup — only what a card ends up presenting.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { MODEL_TEMPLATES } from './modelTemplates.js'
@@ -35,12 +34,12 @@ test('no group in the order is empty', () => {
   }
 })
 
-// The grouping rule, stated as an assertion: no API key ⟺ the subscription group.
-test('the no-key templates are exactly the subscription group', () => {
+// The grouping rule, stated as an assertion: subscription-backed ⟺ that group.
+test('the subscription-backed templates are exactly the subscription group', () => {
   for (const t of MODEL_TEMPLATES) {
-    const keyless = TYPE_CHIP[t.type] !== 'API key' && TYPE_CHIP[t.type] !== 'no key'
+    const subscriptionBacked = TYPE_CHIP[t.type] === 'OAuth' || TYPE_CHIP[t.type] === 'ACP'
     const grouped = TYPE_GROUP[t.type] === SUBSCRIPTION_GROUP
-    assert.equal(grouped, keyless, `${label(t)} breaks the grouping rule`)
+    assert.equal(grouped, subscriptionBacked, `${label(t)} breaks the grouping rule`)
   }
   const subscription = MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === SUBSCRIPTION_GROUP)
   assert.equal(subscription.length, 3)

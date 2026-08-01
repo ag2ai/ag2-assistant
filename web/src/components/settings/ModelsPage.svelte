@@ -23,10 +23,8 @@
   import { TYPE_LABEL, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER } from '../../lib/providerLabels.js'
   import { MODEL_TEMPLATES } from '../../lib/modelTemplates.js'
   import BrandMark from '../BrandMark.svelte'
-  // One-click starting points, under a heading each. Picking a card opens the
-  // editor prefilled — the two-field compatible-endpoint case is one click plus a
-  // model name. The cards and their headings live in lib/ (store-free, so a test
-  // can enumerate them); the page only lays them out.
+  // The template cards, bucketed under their headings in render order — picking
+  // one opens the editor prefilled. Empty groups drop out rather than head nothing.
   const TEMPLATE_GROUPS = GROUP_ORDER
     .map((group) => ({ group, templates: MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === group) }))
     .filter((g) => g.templates.length)
@@ -193,8 +191,7 @@
           <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
             <span class="mcpcathead">
               <BrandMark brand={t.type} size={16} /> {t.card || t.name}
-              <!-- What you must bring, on every card. Marking only the exceptions
-                   would make "API key" an invisible default. -->
+              <!-- What this card asks you to bring, worn by every card. -->
               <span class="mcpcatchip">{TYPE_CHIP[t.type]}</span>
             </span>
             <span class="mcpcatblurb">{t.blurb}</span>

@@ -1,15 +1,8 @@
 // The one-click starting points Settings → Models offers when adding a Text model.
-// Store-free and transport-free, like providerLabels.js beside it, so one test can
-// enumerate every card and assert it resolves to a heading, a chip and a mark.
-//
-// Each descriptor: `name` is what the saved config gets called, `card` (optional)
-// is the grid label when it differs, and the rest is the prefill the editor opens
-// with. A card's group and chip are NOT declared here — both follow from `type`
-// (see TYPE_GROUP / TYPE_CHIP), so adding a template cannot forget either.
-//
-// Blurbs are authored per card rather than derived from type, which is what lets
-// `OpenAI-compatible` make no image-generation claim despite sharing the `openai`
-// type with configurations that can generate images. Do not derive them.
+// Store-free and transport-free, so tests can enumerate them.
+
+// `name` is what the saved config gets called, `card` the grid label where it
+// differs; the rest prefills the editor. Group and chip come from `type`.
 export const MODEL_TEMPLATES = [
   {
     name: 'OpenAI · ChatGPT subscription',
@@ -23,8 +16,7 @@ export const MODEL_TEMPLATES = [
     blurb: 'Your Claude subscription, via the Claude Code CLI you’re already signed in to',
   },
   {
-    // Says "your ChatGPT plan" for the same reason the card above it does: one
-    // subscription, two doors — not two products.
+    // Names the same ChatGPT plan the card above does: one credential, two doors.
     name: 'Codex', card: 'Codex · CLI login',
     type: 'codex', model: '',
     blurb: 'Your ChatGPT plan, via the Codex CLI you’re already signed in to',
@@ -37,8 +29,7 @@ export const MODEL_TEMPLATES = [
   },
   { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude, direct from Anthropic' },
   {
-    // Seeds MiniMax even though the card no longer names it: a live endpoint is a
-    // better starting point than a blank one, and the URL is there to be replaced.
+    // Seeds a live MiniMax endpoint even though the card no longer names MiniMax.
     name: 'Anthropic-compatible',
     type: 'anthropic', model: 'MiniMax-M2.5', base_url: 'https://api.minimax.io/anthropic',
     blurb: 'Any Anthropic-API endpoint — set the model name and URL',

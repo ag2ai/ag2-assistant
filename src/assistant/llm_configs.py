@@ -46,12 +46,8 @@ from assistant.config import read_global_config, update_global_section
 from assistant.paths import Paths
 from assistant.secrets import SecretStore
 
-# The supported configuration types. ``openai`` = Chat Completions API, the surface
-# OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) implement reliably — the UI
-# labels it "OpenAI-compatible" rather than "Chat Completions", because pointing at
-# someone else's endpoint is now the only reason to pick it: the first-party OpenAI
-# path is always ``openai_responses``. Configs saved under the older meaning keep
-# working untouched and are simply labelled by the new one; there is no migration.
+# The supported configuration types. ``openai`` = an OpenAI-compatible endpoint
+# (llama.cpp, vLLM, LM Studio, cloud proxies), reached over the Chat Completions API;
 # ``openai_responses`` = OpenAI's Responses API (their preferred surface, also enables
 # the native image-generation tool); ``openai_subscription`` = "Sign in with ChatGPT",
 # reaching the ChatGPT backend on the user's Codex/ChatGPT subscription (no API key,
