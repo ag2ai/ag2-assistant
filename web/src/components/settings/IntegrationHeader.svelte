@@ -5,12 +5,13 @@
   // connections, Google, GitHub) so the three read as one page.
   import Icon from '../Icon.svelte'
   import IntegrationStatus from './IntegrationStatus.svelte'
+  import IntegrationMark from './IntegrationMark.svelte'
 
   // onRename: async (name) => boolean — true when the rename was accepted. Absent
   // for the single-instance integrations, which have no name of their own.
-  // mark: the letter standing in for the provider's logo — the platform's, not the
+  // platform: the CATALOG id whose mark is drawn — the platform's, not the
   // connection's, so two differently-named Telegram bots still read as Telegram.
-  let { tint, mark, label, tag = '', status, onRename = null, busy = false } = $props()
+  let { label, platform, tag = '', status, onRename = null, busy = false } = $props()
 
   let renaming = $state(false)
   let draft = $state('')
@@ -30,7 +31,7 @@
 </script>
 
 <div class="cnhead">
-  <span class="cnmark" style="--tint:{tint}">{mark}</span>
+  <IntegrationMark {platform} name={label} />
   <div class="cnheadmeta">
     {#if renaming}
       <input

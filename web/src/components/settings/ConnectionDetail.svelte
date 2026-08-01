@@ -5,7 +5,7 @@
   // The Profiles table and the Paired accounts / Groups sections slot in between.
   import { profiles } from '../../store.js'
   import { api } from '../../transport/api.js'
-  import { MARK_TINT, byId, connectionStatus } from '../../lib/integrations.js'
+  import { byId, connectionStatus } from '../../lib/integrations.js'
   import IntegrationHeader from './IntegrationHeader.svelte'
   import ConnectionProfiles from './ConnectionProfiles.svelte'
   import ConnectionPairing from './ConnectionPairing.svelte'
@@ -73,15 +73,18 @@
   }
 
   // "TELEGRAM_BOT_TOKEN …9f2c" — what is actually set, never the value.
+  // `entry` is absent when this build does not know the platform — the pane still has
+  // to open, so the user can reach the disconnect button on a Connection it cannot
+  // otherwise describe.
   const tokenHints = $derived(
-    entry.fields
+    (entry?.fields || [])
       .map((f) => `${f.label.toLowerCase()} ${connection.tokens?.[f.env]?.hint || ''}`.trim())
       .join(' · '),
   )
 </script>
 
 <IntegrationHeader
-  tint={MARK_TINT[connection.platform]} mark={entry.label[0]} label={connection.name} {tag} {status}
+  platform={connection.platform} label={connection.name} {tag} {status}
   onRename={rename} {busy}
 />
 
@@ -90,7 +93,7 @@
 <ConnectionGroups {connection} />
 
 <div class="setgroup">Connection</div>
-<p class="setsub">{entry.label} · {tokenHints || 'token set when this connection was made'}</p>
+<p class="setsub">{entry?.label || connection.platform} · {tokenHints || 'token set when this connection was made'}</p>
 
 {#if err}<p class="cnerr">{err}</p>{/if}
 {#if note}<p class="cnnote">{note}</p>{/if}

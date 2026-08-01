@@ -47,13 +47,6 @@ export const CATALOG = [
 
 export const byId = Object.fromEntries(CATALOG.map((e) => [e.id, e]))
 
-// Single-letter mark where a provider logo would go — the repo ships no Telegram /
-// Discord / Slack SVGs.
-export const MARK_TINT = {
-  telegram: '#2aabee', discord: '#5865f2', slack: '#611f69',
-  google: '#ea4335', github: '#8b949e',
-}
-
 // A surface's column heading in the Profiles table. The kinds come from
 // GET /api/connections/{cid}/exposure (assistant/connections.py surfaces()): `dm` and
 // `group` where the two switch independently, one `all` where they do not.

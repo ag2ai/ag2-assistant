@@ -20,8 +20,9 @@
   import ConnectionDetail from './ConnectionDetail.svelte'
   import IntegrationHeader from './IntegrationHeader.svelte'
   import IntegrationStatus from './IntegrationStatus.svelte'
+  import IntegrationMark from './IntegrationMark.svelte'
   import {
-    CATALOG, MARK_TINT, byId, connectionStatus, googleStatus, githubStatus,
+    CATALOG, byId, connectionStatus, googleStatus, githubStatus,
   } from '../../lib/integrations.js'
 
   const ctx = getSettings()
@@ -103,12 +104,12 @@
   <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
   <ConnectionDetail
     connection={open}
-    tag={count(open.platform) > 1 ? byId[open.platform].label : ''}
+    tag={count(open.platform) > 1 ? byId[open.platform]?.label || open.platform : ''}
     reload={load} onDisconnected={back}
   />
 {:else if openKey === 'google'}
   <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
-  <IntegrationHeader tint={MARK_TINT.google} mark="G" label="Google" status={googleStatus(ctx.google)} />
+  <IntegrationHeader platform="google" label="Google" status={googleStatus(ctx.google)} />
   <div class="setgroup">Account</div>
   <p class="setsub">
     {byId.google.setup} Gmail, Calendar and Drive tools appear once you are signed in.
@@ -119,7 +120,7 @@
   </div>
 {:else if openKey === 'github'}
   <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
-  <IntegrationHeader tint={MARK_TINT.github} mark="G" label="GitHub" status={githubStatus(ctx.s?.keys)} />
+  <IntegrationHeader platform="github" label="GitHub" status={githubStatus(ctx.s?.keys)} />
   <div class="setgroup">Token</div>
   <p class="setsub">{byId.github.blurb} {byId.github.setup}</p>
   {#if ctx.err}<p class="cnerr">{ctx.err}</p>{/if}
@@ -160,12 +161,13 @@
 
   {#each list as c (c.id)}
     <button class="cnrow" onclick={() => (openKey = c.id)}>
-      <span class="cnmark" style="--tint:{MARK_TINT[c.platform]}">{byId[c.platform].label[0]}</span>
+      <IntegrationMark platform={c.platform} name={c.name} />
       <span class="cnmeta">
         <span class="cnname">
           {c.name}
-          <!-- The platform is only worth saying once it stops being the row's identity. -->
-          {#if count(c.platform) > 1}<span class="cntag">{byId[c.platform].label}</span>{/if}
+          <!-- The platform is only worth saying once it stops being the row's identity.
+               An unrecognised platform has no label to say, so it says its own id. -->
+          {#if count(c.platform) > 1}<span class="cntag">{byId[c.platform]?.label || c.platform}</span>{/if}
         </span>
         <IntegrationStatus status={connectionStatus(c, profById[c.default_profile]?.name)} />
       </span>
@@ -175,7 +177,7 @@
 
   {#if googleOn}
     <button class="cnrow" onclick={() => (openKey = 'google')}>
-      <span class="cnmark" style="--tint:{MARK_TINT.google}">G</span>
+      <IntegrationMark platform="google" name="Google" />
       <span class="cnmeta">
         <span class="cnname">Google</span>
         <IntegrationStatus status={googleStatus(ctx.google)} />
@@ -186,7 +188,7 @@
 
   {#if githubOn}
     <button class="cnrow" onclick={() => (openKey = 'github')}>
-      <span class="cnmark" style="--tint:{MARK_TINT.github}">G</span>
+      <IntegrationMark platform="github" name="GitHub" />
       <span class="cnmeta">
         <span class="cnname">GitHub</span>
         <IntegrationStatus status={githubStatus(ctx.s?.keys)} />
@@ -205,7 +207,7 @@
       {#each addable as e (e.id)}
         <button class="mcpcatcard" onclick={() => pick(e)}>
           <span class="mcpcathead">
-            <span class="cnmark sm" style="--tint:{MARK_TINT[e.id]}">{e.label[0]}</span>
+            <IntegrationMark platform={e.id} name={e.label} sm />
             {e.label}
             {#if count(e.id)}<span class="cntag">{count(e.id)} connected</span>{/if}
           </span>

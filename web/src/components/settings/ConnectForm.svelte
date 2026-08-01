@@ -3,7 +3,8 @@
   // and connecting lands in the new connection's settings. A name is asked for only
   // where a platform can be connected more than once ("Telegram" tells you nothing
   // when there are three of them); Connect stays refused until every token is filled.
-  import { MARK_TINT, nextConnectionName } from '../../lib/integrations.js'
+  import { nextConnectionName } from '../../lib/integrations.js'
+  import IntegrationMark from './IntegrationMark.svelte'
 
   // entry: a CATALOG entry. connections: the current list, for the default name and
   // the "already connected" count. onConnect(name, tokens) does the write and may
@@ -37,7 +38,7 @@
 </script>
 
 <div class="cnhead">
-  <span class="cnmark" style="--tint:{MARK_TINT[entry.id]}">{entry.label[0]}</span>
+  <IntegrationMark platform={entry.id} name={entry.label} />
   <div class="cnheadmeta">
     <div class="cnheadname">Connect {entry.label}</div>
     <span class="cnhint">{entry.setup}</span>
