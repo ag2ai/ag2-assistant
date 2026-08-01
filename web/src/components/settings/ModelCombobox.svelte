@@ -1,18 +1,12 @@
 <script>
   // The Model field: a text box that also offers real model names, each adorned with
-  // what it costs and how much it holds. Modelled on the composer's `@` picker —
-  // a role="listbox" popup, not a native datalist (rich rows do not render reliably)
-  // and not a select-with-Other (an arbitrary name is the normal case here).
-  //
-  // Thin by design: every decision about which names to offer and in what order is
-  // lib/modelSuggest.js. What the user typed always wins — a name off the list is
-  // never blocked, never warned about and never replaced.
+  // price and context, in a role="listbox" popup like the composer's `@` picker.
+  // Which names, in what order, is lib/modelSuggest.js — what is typed always wins.
   import { suggestModels } from '../../lib/modelSuggest.js'
 
-  // `catalog` is the live Model catalog when one was read, null when none could be;
-  // `loading` says a probe is in flight. The field stays typeable throughout — a
-  // probe never blocks the user, it only changes what is on offer. onFirstFocus
-  // fires once so an editor the user never touches here costs no request.
+  // `catalog` is the live Model catalog, null when none could be read; `loading`
+  // says a probe is in flight, and the field stays typeable throughout.
+  // onFirstFocus fires once, so an untouched field costs no request.
   let {
     value = $bindable(''), type, id = 'lf-model', placeholder = '',
     catalog = null, loading = false, onFirstFocus = null,
@@ -26,8 +20,7 @@
   const results = $derived(suggestModels({ type, query: value, catalog }))
   const optionId = (i) => `${id}-opt-${i}`
 
-  // Reopening on every keystroke would make Escape useless, so the list opens on
-  // focus and on a deliberate edit, and index resets whenever the results move.
+  // The active row resets whenever the results move under it.
   $effect(() => {
     results
     index = 0
@@ -44,7 +37,7 @@
 
   function key(e) {
     if (e.key === 'Escape') {
-      // Leaves the typed text exactly as it is — dismissing never loses work.
+      // Closes the list and leaves the typed text exactly as it is.
       if (open) { e.preventDefault(); e.stopPropagation(); open = false }
       return
     }
@@ -72,7 +65,7 @@
     <!-- mousedown+preventDefault keeps the input focused so the pick lands before blur. -->
     <div class="llmcombolist" id={`${id}-list`} role="listbox" aria-label="Model suggestions">
       {#if loading}
-        <!-- A quiet row, not a disabled field: there is always a fallback list here. -->
+        <!-- A quiet row, not a disabled field. -->
         <div class="llmcomboload">Reading the provider's model list…</div>
       {/if}
       {#each results as r, i (r.id)}

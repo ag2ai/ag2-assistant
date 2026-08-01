@@ -48,6 +48,18 @@ def test_the_host_the_user_typed_is_what_gets_asked(profile_app_factory):
     assert [t.host for t in seen] == ["http://box:11434"]
 
 
+def test_an_entry_with_no_host_is_probed_where_the_install_runs_ollama(profile_app_factory, paths):
+    # A Docker install reaches Ollama at the host bridge, not at its own localhost —
+    # the same address the turn would use is the one whose tags are worth listing.
+    from assistant.secrets import SecretStore
+
+    SecretStore(paths).set_key("ollama", "http://host.docker.internal:11434")
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    client.get("/api/llm-configs/models", params={"type": "ollama"})
+    assert [t.host for t in seen] == ["http://host.docker.internal:11434"]
+
+
 def test_an_unreachable_host_reads_as_unreachable(profile_app_factory):
     client, _pid = _app(profile_app_factory, raises=CatalogUnavailable("unreachable"))
     body = client.get("/api/llm-configs/models", params={"type": "ollama"}).json()
@@ -131,10 +143,35 @@ def test_a_referenced_secret_is_what_the_probe_is_given(profile_app_factory, pat
     assert [t.api_key for t in seen] == ["sk-saved"]
 
 
-def test_a_dangling_secret_reference_leaves_the_probe_keyless(profile_app_factory):
+def test_a_dangling_secret_reference_falls_back_like_the_request_would(profile_app_factory, paths):
+    # No Secret and no default key on this install: nothing to probe with.
     seen = []
     client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
     client.get("/api/llm-configs/models", params={"type": "gemini", "secret_id": "gone"})
+    assert [t.api_key for t in seen] == [""]
+
+
+def test_the_install_wide_key_is_what_a_config_without_a_secret_is_probed_with(
+    profile_app_factory, paths
+):
+    # It is the key the turn itself would send, so the list must describe it —
+    # otherwise the probe comes back keyless and the field says the type has no
+    # model list at all, which is only ever true of the ChatGPT subscription.
+    _with_secret(paths, provider="gemini", value="sk-default", default=True)
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    client.get("/api/llm-configs/models", params={"type": "gemini"})
+    assert [t.api_key for t in seen] == ["sk-default"]
+
+
+def test_a_custom_endpoint_is_never_handed_the_install_wide_key(profile_app_factory, paths):
+    _with_secret(paths, provider="anthropic", value="sk-default", default=True)
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    client.get(
+        "/api/llm-configs/models",
+        params={"type": "anthropic", "base_url": "https://api.minimax.io/anthropic"},
+    )
     assert [t.api_key for t in seen] == [""]
 
 

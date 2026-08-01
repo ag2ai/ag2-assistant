@@ -235,6 +235,12 @@ test('a brand-new family the app has never heard of is still offered', () => {
   assert.deepEqual(ids(rows).sort(), ['gpt-7-quasar', 'o9-preview', 'zeta-9'])
 })
 
+test('a chat model whose name merely mentions a tool is still offered', () => {
+  // Search and computer-use are things a chat model does, not other kinds of model.
+  const catalog = ['gpt-4o-search-preview', 'computer-use-preview']
+  assert.deepEqual(ids(suggestModels({ type: 'openai', catalog })).sort(), catalog.sort())
+})
+
 test('dated snapshots stay visible beside their floating alias', () => {
   const catalog = ['gpt-5.6-terra', 'gpt-5.6-terra-2026-04-01']
   assert.deepEqual(ids(suggestModels({ type: 'openai', catalog })).sort(), catalog.sort())
@@ -372,7 +378,15 @@ test('a rejected pasted key reads as unauthorized, not as a dead endpoint', () =
 
 test('an endpoint that answered an error publishes no list we can read', () => {
   assert.equal(probeStatusReason(404), 'no_list_endpoint')
-  assert.equal(probeStatusReason(500), 'no_list_endpoint')
+  assert.equal(probeStatusReason(400), 'no_list_endpoint')
+})
+
+test('a provider having a bad moment is unreachable, not a missing list', () => {
+  // no_list_endpoint is permanent and stops the user waiting; a 5xx or a rate
+  // limit is worth retrying, so it must not be told in those words.
+  for (const status of [429, 500, 502, 503]) {
+    assert.equal(probeStatusReason(status), 'unreachable', String(status))
+  }
 })
 
 test('a plain answer carries no reason at all', () => {

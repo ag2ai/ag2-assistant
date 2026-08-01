@@ -1,9 +1,7 @@
 // What this install knows *about* a model name — its label, its price, how much it
 // holds, and whether the app puts it forward. Store-free and transport-free.
-//
-// This table is deliberately NOT an inventory: it never decides which models exist,
-// only what a name means. A live Model catalog decides membership; a name this table
-// has never heard of is still offered, plainly, with no price.
+// Not an inventory: a live Model catalog decides which names exist, this only says
+// what one means.
 
 // LLM config type -> the family whose models it can run. The CLI logins read a live
 // catalog from their own adapter, so they belong to no family here.

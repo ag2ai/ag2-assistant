@@ -173,7 +173,7 @@ from assistant.pairing import PairedAccount, PairingStore
 from assistant.peers import Peer, PeerStore
 from assistant.permissions import PermissionStore, command_rule, shell_prefix
 from assistant.profiles import ProfileRegistry
-from assistant.secrets import KEY_ENV, DuplicateValue, SecretStore
+from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV, DuplicateValue, SecretStore
 from assistant.settings import profile_settings
 from assistant.skills import (
     DISABLE_OWN,
@@ -226,9 +226,8 @@ _WS_PROFILE_ARCHIVED = 4001  # runtime archived while this socket was open (§4.
 # overrides it. The real value only bounds a genuinely wedged provider call.
 _LLM_TEST_TIMEOUT_S = 30.0
 
-# Query names GET /api/llm-configs/models refuses outright. A pasted key belongs to
-# the provider that owns it and never to us (ADR 0024); refusing rather than ignoring
-# is what makes routing one through here fail loudly instead of silently.
+# Query names GET /api/llm-configs/models refuses outright rather than ignores, so
+# routing a pasted key through it fails loudly (ADR 0024).
 _CATALOG_KEY_PARAMS = ("api_key", "apikey", "key", "secret", "token", "password")
 
 
@@ -1170,13 +1169,9 @@ def create_app(
 
     @app.get("/api/llm-configs/models")
     async def llm_config_models(request: Request) -> Response:
-        """A provider's model catalog for the Model field's combobox, in the ACP
-        catalog route's ``{models, current, reason}`` envelope. The configuration is
-        identified by non-secret fields only — type, endpoint and ``secret_id``.
-
-        No key material is accepted: a key the user has merely pasted is the browser's
-        to send straight to the provider that owns it (ADR 0024). There is no
-        server-side cache either, so ``?refresh=1`` only forbids the HTTP one."""
+        """A provider's model catalog in the ACP route's ``{models, current, reason}``
+        envelope, named by type, endpoint and ``secret_id`` — no key material (ADR
+        0024). ``?refresh=1`` forbids the HTTP cache; there is no other."""
         params = request.query_params
         if any(name in params for name in _CATALOG_KEY_PARAMS):
             return JSONResponse(
@@ -1184,18 +1179,25 @@ def create_app(
             )
         ctype = params.get("type", "")
         if ctype in provider_catalog.NEVER_PROBEABLE:
-            # A permanent property, not a state the user could fix — so it is answered
-            # rather than probed, and worded that way in the field.
+            # Answered rather than probed: no key exists to probe with.
             return JSONResponse(as_view([], "", provider_catalog.NOT_PROBEABLE))
         if ctype not in provider_catalog.GATEWAY_PROBEABLE:
             return JSONResponse(
                 {"ok": False, "error": f"no provider catalog for: {ctype}"}, status_code=404
             )
+        env = secret_env()
+        base_url = params.get("base_url", "")
+        api_key = secret_store.secret_value(params.get("secret_id", ""))
+        if not api_key and not base_url:
+            # The install-wide key the request itself would fall back to — but never
+            # to a custom endpoint, which _config_kwargs also refuses to hand it to.
+            api_key = env.get(KEY_ENV.get(llm_configs.PROVIDER_OF.get(ctype, ""), ""), "")
         target = provider_catalog.CatalogTarget(
             type=ctype,
-            base_url=params.get("base_url", ""),
-            host=params.get("host", ""),
-            api_key=secret_store.secret_value(params.get("secret_id", "")),
+            base_url=base_url,
+            # Same host the turn would use: the entry's, else the install's.
+            host=params.get("host", "") or env.get(OLLAMA_BASE_ENV, ""),
+            api_key=api_key,
         )
         reason = ""
         models: list[str] = []
@@ -1204,8 +1206,7 @@ def create_app(
         except provider_catalog.CatalogUnavailable as exc:
             reason = exc.reason
         except Exception:
-            # A probe that blew up is an endpoint we could not read, not a 500 the
-            # user caused: the field degrades to Known models and says so quietly.
+            # A probe that blew up is an endpoint we could not read, not a 500.
             reason = provider_catalog.UNREACHABLE
         rows = [CatalogModel(id=m, name=m, description="") for m in models]
         cache = "no-store" if _truthy(params.get("refresh", "")) else "private, max-age=30"

@@ -1,29 +1,20 @@
 """Ask a provider endpoint which models it offers, for the Model field's combobox.
 
-The sibling of ``coding/model_catalog.py``: that one asks an ACP adapter behind a
-CLI login, this one asks a provider endpoint behind a keyed or keyless Text model.
-Both answer in the same ``{models, current, reason}`` envelope.
-
-A catalog is the sole authority on which model names exist. When one cannot be
-read, the reason is named rather than hidden — the Model field says which of the
-four cases applies and offers Known models in the meantime.
+Answers in ``coding/model_catalog.py``'s ``{models, current, reason}`` envelope, or
+names which of the four reasons stopped it.
 """
 
 import httpx
 
-# Why a catalog could not be read. `unauthorized` is the credential being rejected,
-# `unreachable` a dead endpoint (or, on the browser path, a CORS refusal a browser
-# cannot tell apart from one), `no_list_endpoint` a live endpoint that publishes no
-# list, and `not_probeable` a type no probe can work on in principle.
+# Why a catalog could not be read: a rejected credential, an endpoint that could not
+# be reached, one that answered but lists nothing, and a type no probe applies to.
 UNAUTHORIZED = "unauthorized"
 UNREACHABLE = "unreachable"
 NO_LIST_ENDPOINT = "no_list_endpoint"
 NOT_PROBEABLE = "not_probeable"
 
-# The types the gateway can probe. A keyed type's key comes from its Secret, never
-# from the request — a pasted key is the browser's to send (ADR 0024).
+# The types the gateway probes, and the one it answers without probing.
 GATEWAY_PROBEABLE = ("ollama", "gemini", "openai", "openai_responses", "anthropic")
-# ChatGPT-subscription models have no API key to probe with, permanently.
 NEVER_PROBEABLE = ("openai_subscription",)
 
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
@@ -34,9 +25,8 @@ DEFAULT_BASE_URL = {
     "anthropic": "https://api.anthropic.com/v1",
 }
 ANTHROPIC_VERSION = "2023-06-01"
-# One HTTP read against a provider. Short: the field stays typeable while it runs,
-# and a slow provider must not hold the request open.
-PROBE_TIMEOUT = 8.0
+# Default seconds for one HTTP read against a provider; callers pass their own.
+DEFAULT_PROBE_TIMEOUT = 8.0
 
 
 class CatalogUnavailable(Exception):
@@ -48,11 +38,7 @@ class CatalogUnavailable(Exception):
 
 
 class CatalogTarget:
-    """A resolved place to ask for a model list — never the configuration itself.
-
-    ``api_key`` is resolved from the entry's Secret by the caller; the route that
-    builds one of these accepts no key material as input.
-    """
+    """A resolved place to ask for a model list, with the key already looked up."""
 
     __slots__ = ("type", "base_url", "host", "api_key")
 
@@ -67,8 +53,8 @@ class CatalogTarget:
 
 
 def _ollama_tags(payload: dict) -> list[str]:
-    """The tags actually pulled on that host. A response without a ``models`` array
-    came from something that is not Ollama, so it publishes no list we can read."""
+    """The tags pulled on that host; ``no_list_endpoint`` when the payload has no
+    ``models`` array."""
     models = payload.get("models")
     if not isinstance(models, list):
         raise CatalogUnavailable(NO_LIST_ENDPOINT)
@@ -76,9 +62,8 @@ def _ollama_tags(payload: dict) -> list[str]:
 
 
 def _gemini_models(payload: dict) -> list[str]:
-    """Gemini's own metadata decides what is a chat model: an entry that declares
-    generation methods keeps only if it can ``generateContent``. One that declares
-    none is kept — an unrecognised shape is offered, never hidden."""
+    """Gemini's models, keeping every entry that can ``generateContent`` and every
+    entry that declares no generation methods at all."""
     models = payload.get("models")
     if not isinstance(models, list):
         raise CatalogUnavailable(NO_LIST_ENDPOINT)
@@ -94,9 +79,8 @@ def _gemini_models(payload: dict) -> list[str]:
 
 
 def _data_ids(payload: dict) -> list[str]:
-    """The OpenAI/Anthropic list shape: ``{"data": [{"id": ...}]}``. Both return
-    chat models among others; what is not a chat model is filtered client-side, by
-    one deny-list shared with the browser probe."""
+    """The ids in the OpenAI/Anthropic ``{"data": [{"id": ...}]}`` shape. Non-chat
+    names are dropped client-side, by one deny-list shared with the browser probe."""
     data = payload.get("data")
     if not isinstance(data, list):
         raise CatalogUnavailable(NO_LIST_ENDPOINT)
@@ -105,13 +89,14 @@ def _data_ids(payload: dict) -> list[str]:
 
 def _request(target: CatalogTarget) -> tuple[str, dict[str, str]]:
     """Where to ask ``target`` for its models, and with what headers. A custom
-    endpoint is asked at its own address, not at the vendor whose wire it speaks."""
+    endpoint is asked at its own address, not at its vendor's."""
     ctype = target.type
     if ctype == "ollama":
         return (target.host or DEFAULT_OLLAMA_HOST).rstrip("/") + "/api/tags", {}
     base = (target.base_url or DEFAULT_BASE_URL[ctype]).rstrip("/")
     if ctype == "gemini":
-        return f"{base}/models?key={target.api_key}", {}
+        # Header, not the `?key=` the browser path must use: a URL reaches our logs.
+        return f"{base}/models", {"x-goog-api-key": target.api_key}
     if ctype == "anthropic":
         return f"{base}/models", {
             "x-api-key": target.api_key,
@@ -120,23 +105,37 @@ def _request(target: CatalogTarget) -> tuple[str, dict[str, str]]:
     return f"{base}/models", {"Authorization": f"Bearer {target.api_key}"}
 
 
+def status_reason(status: int) -> str:
+    """What an HTTP status says about why no catalog came back; "" when it says
+    nothing went wrong. A 5xx or a 429 is a bad moment, not a missing list."""
+    if status in (401, 403):
+        return UNAUTHORIZED
+    if status == 429 or status >= 500:
+        return UNREACHABLE
+    if status >= 400:
+        return NO_LIST_ENDPOINT
+    return ""
+
+
 async def probe_provider_models(
-    target: CatalogTarget, *, client: httpx.AsyncClient | None = None
+    target: CatalogTarget,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = DEFAULT_PROBE_TIMEOUT,
 ) -> list[str]:
     """The model ids ``target`` offers, or raise :class:`CatalogUnavailable`.
 
-    The production probe behind the app's ``llm_catalog_probe`` seam. ``client`` is
-    injected by tests that want the read to go over a MockTransport.
+    The production probe behind the app's ``llm_catalog_probe`` seam; ``client`` lets
+    a test drive it over a MockTransport.
     """
     if target.type not in GATEWAY_PROBEABLE:
         raise CatalogUnavailable(NOT_PROBEABLE)
-    # A keyed type with neither a key nor an endpoint of its own has nothing to ask
-    # with. That is not a failure to reach anything, so it never reads as unreachable.
+    # Nothing to ask with, and nothing was asked — never a failure to reach anything.
     if target.type != "ollama" and not target.api_key and not target.base_url:
         raise CatalogUnavailable(NOT_PROBEABLE)
     url, headers = _request(target)
     owned = client is None
-    http = client or httpx.AsyncClient(timeout=PROBE_TIMEOUT)
+    http = client or httpx.AsyncClient(timeout=timeout)
     try:
         response = await http.get(url, headers=headers)
     except httpx.HTTPError as exc:
@@ -144,10 +143,9 @@ async def probe_provider_models(
     finally:
         if owned:
             await http.aclose()
-    if response.status_code in (401, 403):
-        raise CatalogUnavailable(UNAUTHORIZED)
-    if response.status_code >= 400:
-        raise CatalogUnavailable(NO_LIST_ENDPOINT)
+    reason = status_reason(response.status_code)
+    if reason:
+        raise CatalogUnavailable(reason)
     try:
         payload = response.json()
     except ValueError as exc:

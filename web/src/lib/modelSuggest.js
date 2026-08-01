@@ -1,65 +1,66 @@
 // What the Model field offers: which names, in what order, adorned how honestly —
-// plus how the browser shapes and reads a probe of its own. Store-free and
-// request-free: every rule here is a pure function, and the one call that is not
-// pure lives in transport/modelCatalog.js.
+// plus how the browser shapes and reads a probe of its own. Every rule here is a
+// pure function; the one call that is not lives in transport/modelCatalog.js.
 
 import { contextLabel, knownModel, knownModelsFor, priceLabel } from './knownModels.js'
 import { TYPE_LABEL } from './providerLabels.js'
 
-// Which side can read a Model catalog for a type. The gateway probes what it holds
-// the credential for, and what needs none: it is the side that can reach a host
-// behind a Docker bridge or on an internal network.
-const CATALOG_SOURCE = {
-  ollama: 'gateway', gemini: 'gateway',
-  openai: 'gateway', openai_responses: 'gateway', anthropic: 'gateway',
+// Why no catalog came back. The same four tokens provider_catalog.py names.
+export const REASON = Object.freeze({
+  UNAUTHORIZED: 'unauthorized',
+  UNREACHABLE: 'unreachable',
+  NO_LIST_ENDPOINT: 'no_list_endpoint',
+  NOT_PROBEABLE: 'not_probeable',
+})
+
+// One row per type the app can read a catalog for: whether it needs a credential at
+// all, and whether a browser holding a pasted key may ask the provider itself.
+// Ollama is gateway-only — only that side reaches a host behind a Docker bridge.
+const CATALOG_TYPE = {
+  ollama: { keyless: true, browser: false },
+  gemini: { keyless: false, browser: true },
+  openai: { keyless: false, browser: true },
+  openai_responses: { keyless: false, browser: true },
+  anthropic: { keyless: false, browser: true },
 }
-// The one type that always has something to ask with — Ollama needs no credential.
-const KEYLESS = ['ollama']
-// The types a browser can ask directly, holding a key the user pasted but has not
-// saved. Ollama is absent on purpose: it takes no key, and only the gateway can
-// reach a host behind a Docker bridge.
-const BROWSER_PROBEABLE = ['gemini', 'openai', 'openai_responses', 'anthropic']
 
 // Which side reads the catalog for this configuration; '' when nobody can. A keyed
-// type with no credential yet is asked of nobody: that is not a failure to reach
-// anything, so no request is made and nothing is reported.
+// type with no credential yet is asked of nobody — no request, nothing reported.
 export function catalogSource(
   type, { hasCredential = false, hasEndpoint = false, hasPastedKey = false } = {},
 ) {
-  const source = CATALOG_SOURCE[type] || ''
-  if (!source) return ''
-  // A key that has only been pasted goes to the provider that owns it and never to
-  // our backend — so while it is unsaved, the browser is the side that asks (ADR
-  // 0024). Once it becomes a Secret the gateway takes over again.
-  if (hasPastedKey && BROWSER_PROBEABLE.includes(type)) return 'browser'
-  return KEYLESS.includes(type) || hasCredential || hasEndpoint ? source : ''
+  const rules = CATALOG_TYPE[type]
+  if (!rules) return ''
+  // An unsaved key goes to the provider that owns it, never to our backend (ADR
+  // 0024); once it becomes a Secret the gateway takes over again.
+  if (hasPastedKey && rules.browser) return 'browser'
+  return rules.keyless || hasCredential || hasEndpoint ? 'gateway' : ''
 }
 
 // The reason a type will never have a catalog, whatever the user does about it.
 export function permanentNoCatalog(type) {
-  return type === 'openai_subscription' ? 'not_probeable' : ''
+  return type === 'openai_subscription' ? REASON.NOT_PROBEABLE : ''
 }
 
-// Names positively recognised as not a chat model. OpenAI is the only provider that
-// returns embeddings, speech, image and moderation models alongside chat ones;
-// Gemini and Ollama answer with their own metadata, and Anthropic's list is chat-only.
+// Names positively recognised as not a chat model. OpenAI is the only provider whose
+// list mixes them in; Gemini and Ollama answer with their own metadata, and
+// Anthropic's list is chat-only.
 const NOT_CHAT = [
   'embedding', 'tts', 'whisper', 'transcribe', 'dall-e', 'moderation', 'audio', 'realtime',
-  'image', 'sora', 'search-', 'computer-use',
+  'image', 'sora',
 ]
 const DENY_LISTED = { openai: true, openai_responses: true, openai_subscription: true }
 
-// Whether a catalog name should be hidden for this type. Fails OPEN: a name is
-// removed only when positively recognised as not a chat model, so a brand-new
-// family the app has never heard of is always offered.
+// Whether a catalog name should be hidden for this type. Fails OPEN: only a name
+// positively recognised as not a chat model is removed.
 export function isNotChatModel(type, id) {
   if (!DENY_LISTED[type]) return false
   const name = String(id || '').toLowerCase()
   return NOT_CHAT.some((marker) => name.includes(marker))
 }
 
-// One offered name: `unverified` says nothing confirmed it exists, and an empty
-// `price` says this install knows the name but not what it costs.
+// One offered name: `unverified` says nothing confirmed it exists, an empty `price`
+// that the table has never heard of it.
 const row = (entry, unverified) => ({
   id: entry.id,
   label: entry.label || entry.id,
@@ -75,9 +76,7 @@ const matches = (query, entry) => {
 }
 
 // The names a Model catalog returned, adorned by whatever Known models recognises.
-// The catalog decides membership; the table only says what a name means, so a name
-// it has never heard of is offered plain and a name it knows but the catalog omitted
-// is not offered at all.
+// The catalog decides membership, so an unrecognised name is offered plain.
 function fromCatalog(type, catalog) {
   const seen = new Set()
   const rows = []
@@ -95,8 +94,7 @@ function fromCatalog(type, catalog) {
 }
 
 // The names to offer for a config type, ranked and filtered by what the user has
-// typed. With no Model catalog to consult, Known models stand in, marked unverified —
-// nothing has confirmed those names exist and the user is not told otherwise.
+// typed. With no Model catalog to consult, Known models stand in, marked unverified.
 export function suggestModels({ type, query = '', catalog = null }) {
   const unverified = !catalog
   const entries = catalog
@@ -109,11 +107,8 @@ export function suggestModels({ type, query = '', catalog = null }) {
 }
 
 // ---- The browser's own probe, as pure pieces -----------------------------------
-//
 // A request builder and a response parser, so every per-provider quirk is tested
-// without injecting `fetch` and without a network. The vendor addresses mirror
-// provider_catalog.py's — the two paths ask the same endpoints the same way, and
-// differ only in who is holding the key.
+// without injecting `fetch`. The addresses are provider_catalog.py's.
 
 const DEFAULT_BASE_URL = {
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
@@ -124,8 +119,7 @@ const DEFAULT_BASE_URL = {
 const ANTHROPIC_VERSION = '2023-06-01'
 
 // Where to ask for this configuration's models with a pasted key, and with what
-// headers; null when the browser has no such request to make. A custom endpoint is
-// asked at its own address, not at the vendor whose wire it speaks.
+// headers; null when the browser has no such request to make.
 export function browserProbeRequest({ type, baseUrl = '', key = '' }) {
   const secret = String(key || '').trim()
   if (!secret || !DEFAULT_BASE_URL[type]) return null
@@ -152,8 +146,7 @@ export function parseCatalogPayload(type, payload) {
     if (!Array.isArray(payload.models)) return null
     return payload.models
       .filter((e) => e && typeof e === 'object')
-      // Gemini's own metadata decides what is a chat model. An entry declaring no
-      // generation methods is kept — an unrecognised shape is offered, never hidden.
+      // Gemini's own metadata decides; an entry declaring no methods is kept.
       .filter((e) => {
         const methods = e.supportedGenerationMethods
         return !Array.isArray(methods) || !methods.length || methods.includes('generateContent')
@@ -168,27 +161,26 @@ export function parseCatalogPayload(type, payload) {
     .filter(Boolean)
 }
 
-// What an HTTP status says about why the catalog is empty; '' when it says nothing
-// went wrong. A refusal of the credential is worth more than a generic failure —
-// it is what surfaces a bad key at focus time rather than at Test time.
+// What an HTTP status says about why no catalog came back; '' when it says nothing
+// went wrong. A 5xx or a 429 is a bad moment, not an endpoint without a list.
 export function probeStatusReason(status) {
-  if (status === 401 || status === 403) return 'unauthorized'
-  if (status >= 400) return 'no_list_endpoint'
+  if (status === 401 || status === 403) return REASON.UNAUTHORIZED
+  if (status === 429 || status >= 500) return REASON.UNREACHABLE
+  if (status >= 400) return REASON.NO_LIST_ENDPOINT
   return ''
 }
 
-// What the quiet hint line says when no catalog could be read. Never the red error
-// line: a key found wrong by a background probe is a hint, one found wrong by Test
-// is a verdict.
+// What the quiet hint line says when no catalog could be read — never the red error
+// line, which is Test's.
 export function catalogNote(reason, type) {
   const provider = TYPE_LABEL[type] || 'the provider'
-  if (reason === 'unauthorized')
+  if (reason === REASON.UNAUTHORIZED)
     return `${provider} rejected this credential, so its model list couldn't be read. Known names are offered below.`
-  if (reason === 'unreachable')
+  if (reason === REASON.UNREACHABLE)
     return `Couldn't reach ${provider} for its model list. Known names are offered below.`
-  if (reason === 'no_list_endpoint')
+  if (reason === REASON.NO_LIST_ENDPOINT)
     return 'This endpoint answered but publishes no model list. Type the name it expects — known names are offered below.'
-  if (reason === 'not_probeable')
+  if (reason === REASON.NOT_PROBEABLE)
     return `${provider} has no model list to read. Known names are offered below.`
   return ''
 }

@@ -3,8 +3,7 @@
 
 // `name` is what the saved config gets called, `card` the grid label where it
 // differs; the rest prefills the editor. Group and chip come from `type`.
-// `model` names an entry of lib/knownModels.js, which owns every fact about it —
-// knownModels.test.mjs is the gate that keeps a seed from naming a model nobody knows.
+// `model` names an entry of lib/knownModels.js, which owns every fact about it.
 export const MODEL_TEMPLATES = [
   {
     name: 'OpenAI · ChatGPT subscription',

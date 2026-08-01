@@ -142,17 +142,13 @@
     settleEndpoint()
   }
 
-  // Provider model catalog: what the endpoint this model points at says it offers.
-  // Read on FIRST FOCUS of the Model field and never on form open, so an editor
-  // whose Model field is never touched makes no request at all. `probed` is what
-  // makes a re-probe conditional — the identity effect below must not be the thing
-  // that fires the first one. No client cache beyond this form's lifetime.
-  //
+  // Provider model catalog: what the endpoint this model points at says it offers,
+  // read on FIRST FOCUS of the Model field and never on form open.
   // A credential exists when the config references a Secret, or when the provider's
-  // shared key is set — the same key `keyUsage` above says the request would use.
+  // shared key is set — the same key `keyUsage` says the request would use.
   const hasCredential = $derived(!!secretId || !!ctx?.s?.keys?.[PROV_OF[type]]?.set)
   // The pasted key settles on BLUR, like the endpoint fields: it is what the probe
-  // is keyed on, and one request per keystroke of a key typed by hand would be absurd.
+  // is keyed on, and a request per keystroke would be absurd.
   let settledKey = $state('')
   const catalogFrom = $derived(
     catalogSource(type, {
@@ -166,8 +162,7 @@
   let catalogReason = $state('')
   const catalogHint = $derived(probed && !probing ? catalogNote(catalogReason, type) : '')
 
-  // Only the newest probe may answer. Settling a key and pressing Re-read fires two
-  // in a row, and the slower one landing last would describe the older question.
+  // Only the newest probe may answer: two in flight can land in either order.
   let probeSeq = 0
 
   async function probeCatalog(refresh = false) {
@@ -177,17 +172,15 @@
     const seq = ++probeSeq
     let result
     try {
-      // A pasted key is sent by the browser to the provider that owns it; a saved
-      // Secret is the gateway's to resolve, because the browser holds only its
-      // last-4 hint. The two paths answer in one envelope (ADR 0024).
+      // A pasted key the browser sends itself; a saved Secret only the gateway can
+      // resolve (ADR 0024). Both answer in one envelope.
       const r = catalogFrom === 'browser'
         ? await fetchModelCatalog({ type, baseUrl: baseUrl.trim(), key: settledKey, refresh })
         : await api.llmCatalog(
             { type, base_url: baseUrl.trim(), host: host.trim(), secret_id: secretId },
             refresh,
           )
-      // A reason means no catalog was read, so Known models stand in — an empty
-      // list would offer nothing at all where the honest answer is "unverified".
+      // A reason means no catalog was read, so Known models stand in.
       const reason = r.reason || ''
       result = {
         reason,
@@ -202,22 +195,21 @@
     probing = false
   }
 
-  // Re-read whenever the identity the list describes changes, so suggestions never
-  // describe a configuration the user has moved on from. Only once a first probe
-  // has happened — before that, focusing the field is still what starts it.
+  // Re-read whenever the identity the list describes changes — but only once a
+  // first probe has happened, because focus is what starts that one.
   $effect(() => {
     type; secretId; settledKey; catalogFrom   // the identity inputs this list describes
     if (untrack(() => probed)) untrack(() => probeCatalog())
   })
 
   // The endpoint fields settle on BLUR, not on input: select-all-and-retype passes
-  // through empty without meaning it, and a probe per keystroke would be absurd.
+  // through empty without meaning it.
   function settleEndpoint() {
     if (probed) probeCatalog()
   }
 
-  // Leaving the key field is what makes a pasted key the thing the list describes.
-  // Clearing it falls back to the referenced Secret's gateway probe, if there is one.
+  // Leaving the key field makes a pasted key what the list describes; clearing it
+  // falls back to the referenced Secret's gateway probe.
   function settleKey() {
     settledKey = pastedKey.trim()
   }
@@ -439,8 +431,7 @@
       <div class="llmfield"><span class="llmhint">{catalogNote(permanentReason, type)}</span></div>
     {:else if catalogFrom && probed}
       <!-- One row for both states, like the ACP picker's: why there is no list (if
-           so) plus a manual re-read, for a key just fixed or a model just pulled.
-           Always the quiet hint line — a background probe is never a red error. -->
+           so) plus a manual re-read. Always the quiet hint line, never the red one. -->
       <div class="llmfield">
         <span class="llmhint">
           {#if catalogHint}{catalogHint} {/if}
@@ -512,9 +503,8 @@
         </select>
       </div>
       <div class="llmkeyfield">
-        <!-- onblur settles the key the model list is read with: pasting one and
-             moving to the Model field lists what THAT key can reach, before any
-             save, over a request the browser makes to the provider itself. -->
+        <!-- onblur settles the key the model list is read with, so moving from here
+             to the Model field lists what THAT key reaches, before any save. -->
         <input id="lf-key" type="password" bind:value={pastedKey} onblur={settleKey} placeholder="…or paste a new key to create a secret" />
       </div>
       {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}

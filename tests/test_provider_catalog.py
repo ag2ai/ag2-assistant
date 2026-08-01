@@ -82,6 +82,15 @@ async def test_a_rejected_credential_is_unauthorized(status):
     assert caught.value.reason == "unauthorized"
 
 
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+async def test_a_provider_having_a_bad_moment_is_unreachable(status):
+    # "publishes no model list" is permanent and tells the user to stop waiting; a
+    # rate limit or a crash is the opposite, and must not be told in those words.
+    with pytest.raises(CatalogUnavailable) as caught:
+        await _probe(failing_responder(status))
+    assert caught.value.reason == "unreachable"
+
+
 async def test_a_type_with_no_provider_list_is_not_probeable():
     async with async_client(json_responder(TAGS)) as client:
         with pytest.raises(CatalogUnavailable) as caught:
@@ -131,11 +140,13 @@ async def test_a_gemini_model_that_declares_no_methods_is_kept():
     assert await _keyed(json_responder(payload), "gemini") == ["zeta-9"]
 
 
-async def test_gemini_takes_its_key_in_the_query_and_not_in_a_header():
+async def test_gemini_takes_its_key_in_a_header_and_never_in_the_url():
+    # A URL carrying a key reaches proxy and access logs; a header does not. The
+    # browser path has no such choice, this one does.
     handler, sent = recording_responder(GEMINI_LIST)
     await _keyed(handler, "gemini")
-    assert "key=sk-live" in sent[0]["url"]
-    assert "sk-live" not in str(sent[0]["headers"])
+    assert sent[0]["headers"]["x-goog-api-key"] == "sk-live"
+    assert "sk-live" not in sent[0]["url"]
 
 
 async def test_openai_takes_a_bearer_header():
