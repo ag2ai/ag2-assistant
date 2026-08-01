@@ -330,6 +330,16 @@ class LlmConfigStore:
         aid = self.active_id()
         return self.get_config(aid) if aid else None
 
+    def resolved_override(self, override_id: str | None) -> str:
+        """``override_id`` when it names a config that is still present, else '' — a
+        dangling Active override reads as no override."""
+        return override_id if (override_id and self.get_config(override_id)) else ""
+
+    def effective_active_id(self, override_id: str | None = None) -> str:
+        """The Active configuration id under an Active override: the override when it
+        resolves, else the install-wide Active. '' when neither does."""
+        return self.resolved_override(override_id) or self.active_id() or ""
+
     def entry_options(self, entry: dict) -> dict:
         """The ``provider_options`` kwargs derived from one entry, ready to drop into
         ``cfg.llm.provider_options[provider]``.
@@ -384,9 +394,7 @@ class LlmConfigStore:
         override (deleted config) silently falls back to the install-wide active, never an
         error. ``Config.with_profile`` passes it so the effective Active is env pin >
         profile override > install-wide active > env fallback."""
-        entry = self.get_config(override_id) if override_id else None
-        if entry is None:
-            entry = self.active_config()
+        entry = self.get_config(self.effective_active_id(override_id))
         if entry is None:
             return
         provider = PROVIDER_OF[entry["type"]]

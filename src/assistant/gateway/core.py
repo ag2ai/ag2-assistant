@@ -15,6 +15,7 @@ stream, never crossing histories.
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import re
@@ -54,6 +55,7 @@ from assistant.gateway.repair import repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
 from assistant.gateway.wire import is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
+from assistant.llm_configs import PROVIDER_OF, LlmConfigStore
 from assistant.observability import (
     capture_failure,
     log_suppressed,
@@ -294,14 +296,10 @@ class Gateway:
         agent = self._model_agents.get(llm_config_id)
         if agent is not None:
             return agent
-        from assistant.llm_configs import PROVIDER_OF, LlmConfigStore
-
         store = LlmConfigStore(self._config.paths)
         entry = store.get_config(llm_config_id)
         if entry is None:
             return self._agent
-        import copy
-
         cfg = copy.deepcopy(self._config)
         provider = PROVIDER_OF[entry["type"]]
         cfg.llm.provider = provider
@@ -311,6 +309,48 @@ class Gateway:
         agent = self._make_agent(cfg)
         self._model_agents[llm_config_id] = agent
         return agent
+
+    async def _resolve_turn_model(self, chat_id: str, llm_config_id: str | None) -> str | None:
+        """The shared model configuration this turn runs on: env pin > Chat override >
+        the Task's model > the profile/install-wide Active, which is None (ADR 0025)."""
+        if self._config.llm.env_pinned:
+            return None
+        override = await self.chat_model(chat_id)
+        if override:
+            return override
+        # `llm_config_id` is the Task's model when a run passes it explicitly; a manual
+        # reply typed into that run's thread resolves the same model from the stream.
+        return llm_config_id or await self._task_model_for_stream(chat_id) or None
+
+    async def _task_model_for_stream(self, chat_id: str) -> str:
+        """The model the Task behind a run stream chose — '' for any other stream, or
+        when the run/task is gone or the task names no model of its own."""
+        task_id = await self._task_for_stream(chat_id)
+        if not task_id or self._tasks is None:
+            return ""
+        try:
+            task = await self._tasks.get_task(task_id)
+        except Exception as exc:
+            log_suppressed("run thread task model lookup", exc, chat_id=chat_id)
+            return ""
+        return (task or {}).get("model") or ""
+
+    def _active_model_id(self) -> str:
+        """The configuration id Active for this profile: its Active override when that
+        resolves, else the install-wide Active. '' when neither does."""
+        return LlmConfigStore(self._config.paths).effective_active_id(
+            profile_settings(self._config.data_dir).get_llm_override()
+        )
+
+    async def effective_model(self, chat_id: str) -> str:
+        """What a message sent to this chat right now would run on, so a client can
+        render it without resolving the chain: a configuration id, or the pinned model
+        name under an env pin. '' when neither governs the turn."""
+        if self._config.llm.env_pinned:
+            return self._config.llm.model
+        resolved = await self._resolve_turn_model(chat_id, None)
+        store = LlmConfigStore(self._config.paths)
+        return store.resolved_override(resolved) or self._active_model_id()
 
     async def _ensure_subscription_fresh(self) -> None:
         """When OpenAI runs in ChatGPT-subscription mode, refresh the OAuth access
@@ -499,9 +539,9 @@ class Gateway:
         the agent's structured events (tool calls, task cards, deliverables, …) raw
         as they're emitted — the voice channel forwards them so its client folds
         them with the same reducer the text path uses. Conversation/audio events are
-        omitted (voice renders those itself). `llm_config_id` pins the turn to a
-        task's chosen model (a cached per-config agent) instead of the profile
-        default. `task_id`, when this turn is a task run, scopes any command grant
+        omitted (voice renders those itself). `llm_config_id` is a task's chosen model,
+        one layer of `_resolve_turn_model` — which settles this turn's model here, once.
+        `task_id`, when this turn is a task run, scopes any command grant
         the turn mints via "always allow" to that task (survives its future runs)
         instead of persisting it globally; when omitted it is auto-resolved from
         `chat_id` for a run's thread (``task-run:{run_id}``), so a manual reply
@@ -518,7 +558,7 @@ class Gateway:
         # Refresh first: subscription mode may rebuild the default agent with a
         # rotated OAuth token, and this turn must run on the fresh one.
         await self._ensure_subscription_fresh()
-        agent = self._agent_for(llm_config_id)
+        agent = self._agent_for(await self._resolve_turn_model(chat_id, llm_config_id))
 
         # A reply typed into a run's thread arrives without task context — resolve
         # it so task-scoped folder/command grants cover manual turns too.
@@ -897,6 +937,8 @@ class Gateway:
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
         try:
+            # Deliberate carve-out (ADR 0025): the titler takes the PROFILE's config,
+            # never the turn's — a Chat override does not reach the cheap model.
             title = await title_mod.generate_title(
                 self._config, user_text, reply_text, agent_factory=self._title_factory
             )
@@ -919,18 +961,23 @@ class Gateway:
         except Exception as exc:
             log_suppressed("chat title persist", exc, chat_id=chat_id)
 
-    async def transcript(self, chat_id: str) -> list[dict]:
-        """The display transcript (role/text turns) for a chat."""
+    async def _read_chat_doc(self, chat_id: str, what: str) -> dict:
+        """A chat's transcript document, or {} when there is no store, no document, or
+        it does not parse (logged as ``what``)."""
         if self._event_store is None:
-            return []
+            return {}
         path = self._transcript_path(chat_id)
         if not await self._event_store.exists(path):
-            return []
+            return {}
         try:
-            return json.loads(await self._event_store.read(path)).get("messages", [])
+            return json.loads(await self._event_store.read(path))
         except Exception as exc:
-            log_suppressed("transcript read", exc, chat_id=chat_id)
-            return []
+            log_suppressed(what, exc, chat_id=chat_id)
+            return {}
+
+    async def transcript(self, chat_id: str) -> list[dict]:
+        """The display transcript (role/text turns) for a chat."""
+        return (await self._read_chat_doc(chat_id, "transcript read")).get("messages", [])
 
     async def list_chats(self) -> list[dict]:
         """List persisted chats (id, last update, preview), newest first."""
@@ -1112,10 +1159,21 @@ class Gateway:
         self._locks.pop(chat_id, None)
         return removed
 
+    async def chat_model(self, chat_id: str) -> str:
+        """This chat's Chat override — the model configuration it runs on whatever is
+        Active. '' when it inherits (no override recorded), including unknown chats."""
+        return (await self._read_chat_doc(chat_id, "chat model read")).get("model") or ""
+
     async def update_chat(
-        self, chat_id: str, *, title: str | None = None, starred: bool | None = None
+        self,
+        chat_id: str,
+        *,
+        title: str | None = None,
+        starred: bool | None = None,
+        model: str | None = None,
     ) -> bool:
-        """Partial metadata update on a persisted chat: rename and/or star.
+        """Partial metadata update on a persisted chat: rename, star, and/or set the
+        Chat override (``model``: None = unchanged, '' = clear, else set).
 
         A user title is authoritative: the auto-titler only fills an empty title,
         so it never overwrites this. Returns False for an unknown chat.
@@ -1135,6 +1193,13 @@ class Gateway:
                 doc["title"] = title.strip()[:200]
             if starred is not None:
                 doc["starred"] = bool(starred)
+            if model is not None:
+                # Absent key = inheriting, so clearing removes it rather than
+                # recording an empty selection.
+                if model.strip():
+                    doc["model"] = model.strip()
+                else:
+                    doc.pop("model", None)
             await self._event_store.write(path, json.dumps(doc))
         return True
 

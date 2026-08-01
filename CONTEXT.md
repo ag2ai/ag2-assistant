@@ -332,6 +332,15 @@ Chat it leaves stays exactly as it was, reachable again later and from the brows
 throughout.
 _Avoid_: open (that is the browser's **Thread**), selected, bound, current
 
+**Pending override** (Peer):
+A **Chat override** chosen by a **Peer** that is not **Attached** to anything yet —
+the model its next message's Chat will be born with, held on the Peer until that Chat
+exists and consumed the moment it does. Dropped when the Peer detaches again or
+switches **Profile**. It exists only because a Channel has no client to remember an
+unsent choice in; the WebUI holds the same intent in the open page and loses it on a
+reload (ADR 0025).
+_Avoid_: default model (the install-wide **Active** is that), queued override, draft
+
 **Channel exposure**:
 The set of surfaces a Profile is reachable from. Surfaces belong to a **Connection**,
 not to a platform — one per Connection, except on Telegram where direct messages and
@@ -484,24 +493,39 @@ _Avoid_: provider (bare — a Text model has a provider too)
 **Active** (model):
 The single Text model and single Live model currently in effect. The install-wide
 Active is the default; a **Profile** may override *which* shared model is Active for
-it (a per-profile **Active override**), and the effective Active is the profile
-override when set, else the install-wide Active, else the environment fallback (an
-env pin still wins last and is unswitchable). The models themselves stay a single
-shared install-wide list (ADR 0004) — only the *selection* is per-profile. Switching
-persists and takes effect on the next message (Text) or next voice session (Live),
-never retroactively on one in flight.
+it (a per-profile **Active override**), and a **Chat** may override it again for
+itself alone (a **Chat override**, Text only). The effective Active is the Chat
+override when set, else the profile override, else the install-wide Active, else the
+environment fallback (an env pin still wins last and is unswitchable); inside a Task
+**Run**'s thread the **Task**'s own model sits between the Chat override and the
+profile override. The models themselves stay a single shared install-wide list
+(ADR 0004) — only the *selection* is per-profile and per-chat. Switching persists and
+takes effect on the next message (Text) or next voice session (Live), never
+retroactively on one in flight.
 _Avoid_: default, current, selected (a Secret's Default is the unrelated fallback
 concept)
 
 **Active override** (per-profile model):
 A Profile's optional choice of which shared **Text model** and which shared **Live
 model** is **Active** for it, overriding the install-wide Active for that Profile
-only. Set from two model switchers in the header of Settings → **Profiles** (Text
-reuses the composer's switcher; Live is a parallel one), each offering "use install
-default" to clear the override. Stored in the Profile's config overlay, never forking
-the shared model list (ADR 0015 · ADR 0004 amendment).
+only. Set from two model switchers in the header of Settings → **Profiles**, each
+offering "use install default" to clear the override. Stored in the Profile's config
+overlay, never forking the shared model list (ADR 0015 · ADR 0004 amendment).
 _Avoid_: profile model (there is no per-profile model, only a per-profile selection),
 default
+
+**Chat override** (per-chat model):
+A **Chat**'s optional choice of which shared **Text model** is **Active** for it,
+overriding the profile's selection for that Chat only. Absent means the Chat inherits
+whatever is Active at the moment it speaks, so an un-overridden Chat follows a later
+profile or install-wide switch; setting one detaches that Chat from the drift.
+Text only — the spoken **Live model** has no per-chat counterpart. Set from the
+composer's model switcher (which offers "use default" to clear) and, from a
+**Channel**, by `/model`. The cheap-model background work a Chat provokes — its
+generated title, a **Run**'s summary — deliberately ignores the Chat override and
+stays on the profile's own cheap model (ADR 0025).
+_Avoid_: chat model, pin (an env pin is the unrelated unswitchable fallback), thread
+model
 
 **Template** (model):
 A prefilled starting point for creating a **Text model** — a vendor, a type, and
@@ -525,7 +549,7 @@ is the sole authority on which model names *exist*; when it cannot be read, the 
 is named rather than hidden, and **Known models** stands in. Which side reads it
 follows the credential: the gateway asks with a saved **Secret** or with no key at
 all, and the browser asks the provider directly with a key that has only been pasted
-(ADR 0024).
+(ADR 0025).
 _Avoid_: model list (bare — collides with the list of saved Text models), available
 models, inventory
 

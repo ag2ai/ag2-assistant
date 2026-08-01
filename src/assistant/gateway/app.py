@@ -290,10 +290,12 @@ class MessageResponse(BaseModel):
 
 
 class ChatPatch(BaseModel):
-    """Partial chat-metadata update: rename and/or star. Absent field = unchanged."""
+    """Partial chat-metadata update: rename, star, and/or set the Chat override.
+    Absent field = unchanged; ``model=""`` clears the override back to inheriting."""
 
     title: str | None = None
     starred: bool | None = None
+    model: str | None = None
 
 
 class CredentialsUpload(BaseModel):
@@ -2521,10 +2523,13 @@ def create_app(
 
     @p.get("/chats/{chat_id}")
     async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """The display transcript for a chat, for the UI to restore."""
+        """The display transcript for a chat, plus its Chat override and the model it
+        would run on right now (so the composer's switcher needs no second call)."""
         return {
             "chat_id": chat_id,
             "messages": await runtime.gateway.transcript(chat_id),
+            "model": await runtime.gateway.chat_model(chat_id),
+            "effective_model": await runtime.gateway.effective_model(chat_id),
         }
 
     @p.delete("/chats/{chat_id}")
@@ -2539,10 +2544,13 @@ def create_app(
     async def update_chat(
         chat_id: str, patch: ChatPatch, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
-        """Rename and/or star a chat. 400 on an empty patch, 404 on unknown chat."""
-        if patch.title is None and patch.starred is None:
+        """Rename, star, and/or set the Chat override. 400 on an empty patch, 404 on
+        unknown chat."""
+        if patch.title is None and patch.starred is None and patch.model is None:
             return JSONResponse({"error": "empty patch"}, status_code=400)
-        ok = await runtime.gateway.update_chat(chat_id, title=patch.title, starred=patch.starred)
+        ok = await runtime.gateway.update_chat(
+            chat_id, title=patch.title, starred=patch.starred, model=patch.model
+        )
         if not ok:
             return Response(status_code=404)
         return {"ok": True}
@@ -2764,8 +2772,7 @@ def create_app(
         # each header switcher can render the current choice + mark it
         # inherited-vs-overridden without a second fetch. A dangling override reads as
         # no override → the install-wide Active (matching the resolution layer).
-        llm_ovr = settings.get_llm_override()
-        llm_ovr = llm_ovr if (llm_ovr and llm_store.get_config(llm_ovr)) else None
+        llm_ovr = llm_store.resolved_override(settings.get_llm_override()) or None
         live_ovr = settings.get_live_override()
         live_ovr = live_ovr if (live_ovr and live_store.get_config(live_ovr)) else None
         return {
@@ -2779,7 +2786,7 @@ def create_app(
             # Per-profile Text/Live Active override + effective Active (drives the
             # Profiles-header switchers). override=None → inherits the install-wide.
             "llm_override": llm_ovr,
-            "llm_active": llm_ovr or llm_store.active_id(),
+            "llm_active": llm_store.effective_active_id(llm_ovr) or None,
             "live_override": live_ovr,
             "live_active": live_ovr or live_store.active_id(),
             "codex": codex.status(),  # ChatGPT-subscription sign-in state
