@@ -2,7 +2,7 @@
 // truth for the human type label and the client-side "can this run right now?"
 // predicate. Consumed by Settings → Models (ModelsPage) and the composer's model
 // switcher so the two surfaces speak identically.
-// What a provider looks like is lib/brandMarks.js's business, not this file's.
+// Provider marks live in lib/brandMarks.js.
 import { writable } from 'svelte/store'
 import { api } from '../transport/api.js'
 

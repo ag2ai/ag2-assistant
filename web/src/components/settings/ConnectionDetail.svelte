@@ -5,7 +5,7 @@
   // The Profiles table and the Paired accounts / Groups sections slot in between.
   import { profiles } from '../../store.js'
   import { api } from '../../transport/api.js'
-  import { byId, connectionStatus } from '../../lib/integrations.js'
+  import { byId, platformLabel, connectionStatus } from '../../lib/integrations.js'
   import IntegrationHeader from './IntegrationHeader.svelte'
   import ConnectionProfiles from './ConnectionProfiles.svelte'
   import ConnectionPairing from './ConnectionPairing.svelte'
@@ -29,7 +29,10 @@
   let confirmOff = $state(false)
   let drafts = $state({})
 
-  const ready = $derived(entry.fields.every((f) => (drafts[f.env] || '').trim()))
+  // Empty for a platform this build does not know, so the pane still opens on its
+  // name and status and the disconnect button stays reachable.
+  const fields = $derived(entry?.fields || [])
+  const ready = $derived(fields.length > 0 && fields.every((f) => (drafts[f.env] || '').trim()))
 
   async function rename(name) {
     err = ''; busy = true
@@ -48,7 +51,7 @@
     err = ''; note = ''; busy = true
     try {
       await api.replaceConnectionTokens(connection.id, Object.fromEntries(
-        entry.fields.map((f) => [f.env, (drafts[f.env] || '').trim()]),
+        fields.map((f) => [f.env, (drafts[f.env] || '').trim()]),
       ))
       await reload()
       drafts = {}
@@ -73,11 +76,8 @@
   }
 
   // "TELEGRAM_BOT_TOKEN …9f2c" — what is actually set, never the value.
-  // `entry` is absent when this build does not know the platform — the pane still has
-  // to open, so the user can reach the disconnect button on a Connection it cannot
-  // otherwise describe.
   const tokenHints = $derived(
-    (entry?.fields || [])
+    fields
       .map((f) => `${f.label.toLowerCase()} ${connection.tokens?.[f.env]?.hint || ''}`.trim())
       .join(' · '),
   )
@@ -93,7 +93,7 @@
 <ConnectionGroups {connection} />
 
 <div class="setgroup">Connection</div>
-<p class="setsub">{entry?.label || connection.platform} · {tokenHints || 'token set when this connection was made'}</p>
+<p class="setsub">{platformLabel(connection.platform)} · {tokenHints || 'token set when this connection was made'}</p>
 
 {#if err}<p class="cnerr">{err}</p>{/if}
 {#if note}<p class="cnnote">{note}</p>{/if}
@@ -104,7 +104,7 @@
     right for a rotated token, wrong for a different bot, which belongs in its own
     integration.
   </p>
-  {#each entry.fields as f (f.env)}
+  {#each fields as f (f.env)}
     <div class="keyrow">
       <span class="kp">{f.label}</span>
       <input

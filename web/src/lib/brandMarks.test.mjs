@@ -1,15 +1,14 @@
-// The brand-mark seam: given a key, what does the app draw? Run: node --test src/lib
+// The brand-mark seam: given a key, what does the app draw? Run: npm test
 // Path geometry is content, not behaviour — nothing here pins a `d` string. What is
 // asserted is the shape of the answer: which brands carry a colour, which do not, and
 // that an unknown key is survivable.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { brandMark } from './brandMarks.js'
-import { CATALOG } from './integrations.js'
+import { CATALOG, platformLabel } from './integrations.js'
 
-// The provider types both logo maps key by. Spelled out rather than imported, because
-// lib/llm.js and lib/live.js pull in Svelte stores and the transport layer; the point
-// of the check is that this list and the seam agree, so the list is the fixture.
+// The provider types the app configures, spelled out as the fixture: lib/llm.js and
+// lib/live.js cannot be imported here, as they pull in stores and the transport layer.
 const TEXT_PROVIDERS = [
   'openai', 'openai_responses', 'openai_subscription',
   'anthropic', 'gemini', 'ollama', 'claude_code', 'codex',
@@ -74,11 +73,14 @@ test('Slack and Google resolve as multi-part, each part carrying its own fill', 
 })
 
 test('an unknown key resolves to nothing rather than throwing', () => {
-  // Reachable by downgrading the app while a Connection names a platform a newer
-  // version added — the crash this seam exists to prevent.
   assert.equal(brandMark('a-platform-from-the-future'), null)
   assert.equal(brandMark(undefined), null)
   assert.equal(brandMark(''), null)
+})
+
+test('an unknown platform still has a label to show, and it is not blank', () => {
+  for (const entry of CATALOG) assert.equal(platformLabel(entry.id), entry.label)
+  assert.equal(platformLabel('a-platform-from-the-future'), 'a-platform-from-the-future')
 })
 
 test('no brand entry declares both a flat fill and a gradient', () => {

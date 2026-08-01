@@ -8,8 +8,7 @@
   import Icon from './Icon.svelte'
   import BrandMark from './BrandMark.svelte'
 
-  // The mark a switcher row leads with — 14px, the smallest size the app draws a brand
-  // at, and the size the task page's own switcher matches.
+  // The size a switcher row's mark is drawn at, matched by the task page's switcher.
   const MARK_SIZE = 14
 
   let {

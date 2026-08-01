@@ -2,7 +2,7 @@
 // spoken counterpart of lib/llm.js. One source of truth for the human label and the
 // "can this run right now?" predicate. Consumed by Settings → Models → Live
 // (VoiceSection). Mutate via the API, then loadLiveConfigs() to refresh.
-// What a provider looks like is lib/brandMarks.js's business, not this file's.
+// Provider marks live in lib/brandMarks.js.
 import { writable } from 'svelte/store'
 import { api } from '../transport/api.js'
 

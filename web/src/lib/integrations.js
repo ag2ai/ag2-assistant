@@ -47,6 +47,11 @@ export const CATALOG = [
 
 export const byId = Object.fromEntries(CATALOG.map((e) => [e.id, e]))
 
+// A platform's display label, or its raw id when this build does not know it.
+export function platformLabel(id) {
+  return byId[id]?.label || id
+}
+
 // A surface's column heading in the Profiles table. The kinds come from
 // GET /api/connections/{cid}/exposure (assistant/connections.py surfaces()): `dm` and
 // `group` where the two switch independently, one `all` where they do not.

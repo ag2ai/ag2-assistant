@@ -296,10 +296,10 @@
 .settings .cnrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; margin-bottom: 6px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
 .settings .cnrow:hover { background: var(--code); }
 .settings .cnrow:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-/* The tinted letter square, now reached only when this build does not recognise a
-   Connection's platform — the one case where a letter is the honest thing to draw. */
-.settings .cnmark { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: color-mix(in srgb, var(--tint) 22%, transparent); color: var(--tint); font-size: 13px; font-weight: 700; }
-.settings .cnmark.sm { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; }
+/* The letter square standing in for an unrecognised platform. Sized to the brand mark
+   it substitutes for, so a known and an unknown row lead with the same width. */
+.settings .cnmark { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: color-mix(in srgb, var(--tint) 22%, transparent); color: var(--tint); font-size: 11px; font-weight: 700; }
+.settings .cnmark.sm { width: 16px; height: 16px; border-radius: 5px; font-size: 9px; }
 .settings .cnmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .settings .cnname { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--ink); }
 .settings .cntag { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }

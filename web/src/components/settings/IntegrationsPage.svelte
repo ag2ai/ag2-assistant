@@ -22,7 +22,7 @@
   import IntegrationStatus from './IntegrationStatus.svelte'
   import IntegrationMark from './IntegrationMark.svelte'
   import {
-    CATALOG, byId, connectionStatus, googleStatus, githubStatus,
+    CATALOG, byId, platformLabel, connectionStatus, googleStatus, githubStatus,
   } from '../../lib/integrations.js'
 
   const ctx = getSettings()
@@ -104,7 +104,7 @@
   <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
   <ConnectionDetail
     connection={open}
-    tag={count(open.platform) > 1 ? byId[open.platform]?.label || open.platform : ''}
+    tag={count(open.platform) > 1 ? platformLabel(open.platform) : ''}
     reload={load} onDisconnected={back}
   />
 {:else if openKey === 'google'}
@@ -165,9 +165,8 @@
       <span class="cnmeta">
         <span class="cnname">
           {c.name}
-          <!-- The platform is only worth saying once it stops being the row's identity.
-               An unrecognised platform has no label to say, so it says its own id. -->
-          {#if count(c.platform) > 1}<span class="cntag">{byId[c.platform]?.label || c.platform}</span>{/if}
+          <!-- The platform is only worth saying once it stops being the row's identity. -->
+          {#if count(c.platform) > 1}<span class="cntag">{platformLabel(c.platform)}</span>{/if}
         </span>
         <IntegrationStatus status={connectionStatus(c, profById[c.default_profile]?.name)} />
       </span>
