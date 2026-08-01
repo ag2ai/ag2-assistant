@@ -265,8 +265,6 @@
 .settings .llmrow.clickable { cursor: pointer; }
 .settings .llmrow.clickable:hover { background: var(--code); }
 .settings .llmrow.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.settings .llmlogo { width: 20px; height: 20px; flex: none; object-fit: contain; }
-.settings .llmlogo.sm { width: 16px; height: 16px; }
 .settings .llmmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .settings .llmname { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
 .settings .llmbadge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; }
@@ -730,7 +728,6 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .modelsw-btn { display: inline-flex; align-items: center; gap: 6px; border: none; background: none; color: var(--muted); border-radius: 999px; padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .modelsw-btn:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink); }
 .modelsw-btn:disabled { opacity: .6; cursor: default; }
-.modelsw-logo { width: 14px; height: 14px; object-fit: contain; }
 /* Model name is technical metadata → mono (Geist Mono). */
 .modelsw-name { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); letter-spacing: -.01em; }
 .modelsw-name.muted { color: var(--muted); }
