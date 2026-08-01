@@ -1,71 +1,66 @@
 """Install from the skills.sh registry — target-by-surface (ADR 0017 t04).
 
-The registry is faked at the ``SkillsClient`` seam (no network): ``search`` returns
-canned records; ``download_skill`` stages a real SKILL.md and installs it via the
-runtime, exactly as the live path would. Asserts search projection, that a Global
-install lands install-wide + fans out, a Profile install lands only for that profile,
-and that a name collision replaces.
+The registry answers over a scripted HTTP transport (``ScriptedSkillsClient``), so
+ag2's real search and download code runs: the tarball is a real ``.tar.gz``, hashed,
+extracted and installed through the runtime exactly as the live path would. Asserts the
+search projection, that a Global install lands install-wide + fans out, that a Profile
+install lands only for that profile, and that a name collision replaces.
 """
 
-import tempfile
-from pathlib import Path
-
-from ag2.exceptions import SkillDownloadError
-from ag2.tools.skills.skill_types import SkillMetadata
+import httpx
 from fastapi.testclient import TestClient
 
 from assistant.gateway.app import create_app
-from assistant.gateway.profile_manager import ProfileManager
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_manager, make_profile_app
+from tests.support.fakes import skill_catalog_factory
+from tests.support.http import ScriptedSkillsClient
+from tests.support.stubs import skill_tarball
+
+_SEARCH_HITS = [
+    {
+        "name": "react-best-practices",
+        "skillId": "react-best-practices",
+        "source": "vercel-labs/agent-skills",
+        "description": "React rules",
+        "installs": 1234,
+    },
+    {
+        "name": "standalone",
+        "skillId": "",
+        "source": "me/standalone",
+        "description": "A standalone skill",
+        "installs": 7,
+    },
+]
 
 
-def _fake_registry(monkeypatch, *, desc="installed via registry"):
-    """Patch SkillsClient so search/download don't hit the network. download_skill
-    stages a SKILL.md named after the skill id's last segment and installs it."""
-    import assistant.skills_install as si
+def _registry(*, skill="standalone", nested=False, desc="installed via registry", status=200):
+    """A registry client whose two endpoints are scripted: skills.sh search returns the
+    canned hits, and the GitHub tarball endpoint returns a real archive carrying
+    ``skill`` (``nested`` for the monorepo layout). ``status`` other than 200 makes the
+    download fail the way a missing repo does."""
 
-    async def fake_search(self, query, limit=10):
-        return [
-            {
-                "name": "react-best-practices",
-                "skillId": "react-best-practices",
-                "source": "vercel-labs/agent-skills",
-                "description": "React rules",
-                "installs": 1234,
-            },
-            {
-                "name": "standalone",
-                "skillId": "",
-                "source": "me/standalone",
-                "description": "A standalone skill",
-                "installs": 7,
-            },
-        ]
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "/search" in request.url.path:
+            return httpx.Response(200, json={"skills": _SEARCH_HITS})
+        if status != 200:  # /repos/{owner}/{repo}/tarball
+            return httpx.Response(status, json={"message": "Not Found"})
+        return httpx.Response(
+            200,
+            content=skill_tarball(skill, description=desc, nested=nested),
+            headers={"content-type": "application/gzip"},
+        )
 
-    async def fake_download(self, source, skill_id, runtime):
-        name = (skill_id or source.split("/")[-1]).split("/")[-1]
-        with tempfile.TemporaryDirectory() as td:
-            staged = Path(td) / name
-            staged.mkdir(parents=True)
-            (staged / "SKILL.md").write_text(
-                f"---\nname: {name}\ndescription: {desc}\n---\n# {name}\n"
-            )
-            runtime.install(staged, name)
-        return SkillMetadata(name=name, description=desc), "deadbeef"
-
-    monkeypatch.setattr(si.SkillsClient, "search", fake_search)
-    monkeypatch.setattr(si.SkillsClient, "download_skill", fake_download)
+    return ScriptedSkillsClient(handle)
 
 
-def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
-    app, pid = make_profile_app(persist=True)
+def _client(paths, **kwargs):
+    app, pid = make_profile_app(paths, persist=True, skills_client=_registry(), **kwargs)
     return TestClient(app), pid
 
 
-def test_search_projects_results(monkeypatch):
-    _fake_registry(monkeypatch)
-    client, _pid = _client(monkeypatch)
+def test_search_projects_results(paths):
+    client, _pid = _client(paths)
     with client:
         r = client.post("/api/skills/search", json={"query": "react"})
         assert r.status_code == 200
@@ -81,76 +76,75 @@ def test_search_projects_results(monkeypatch):
         assert by_name["standalone"]["install_id"] == "me/standalone"
 
 
-def test_install_global_lands_and_fans_out(monkeypatch):
-    _fake_registry(monkeypatch)
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=False)
-    app = create_app(manager)
+def test_search_failure_is_502(paths):
+    """A dead registry surfaces a 502 instead of a 500 — the page stays usable."""
+
+    def dead(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("skills.sh is unreachable", request=request)
+
+    app, _pid = make_profile_app(paths, persist=True, skills_client=ScriptedSkillsClient(dead))
+    with TestClient(app) as client:
+        r = client.post("/api/skills/search", json={"query": "react"})
+        assert r.status_code == 502
+        assert "search failed" in r.json()["error"]
+
+
+def test_install_global_lands_and_fans_out(paths):
+    """A Global install writes into the Global layer and rebuilds every runtime's agent,
+    so the new skill is in every profile's catalog."""
+    agents: dict[str, list] = {}
+    manager = make_manager(paths, agent_factory=skill_catalog_factory(agents))
+    app = create_app(manager, skills_client=_registry())
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        for pid in ("work", "personal"):
+            assert "standalone" not in agents[pid][-1].catalog
 
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(pid):
-            reloaded.append(pid)
-            return await orig(pid)
-
-        monkeypatch.setattr(manager, "reload", spy)
-
-        r = client.post(
-            "/api/skills/install",
-            json={"install_id": "vercel-labs/agent-skills/react-best-practices"},
-        )
+        r = client.post("/api/skills/install", json={"install_id": "me/standalone"})
         assert r.status_code == 200, r.text
-        assert r.json()["installed"][0]["name"] == "react-best-practices"
-        # In the install-wide projection as a Global skill.
+        assert r.json()["installed"][0]["name"] == "standalone"
+        # In the install-wide projection as a Global skill...
         by_name = {s["name"]: s for s in r.json()["skills"]}
-        assert by_name["react-best-practices"]["origin"] == "global"
-        # Fanned out to every live runtime.
-        assert set(reloaded) == {"work", "personal"}
+        assert by_name["standalone"]["origin"] == "global"
+        # ...on disk in the Global layer, with the downloaded SKILL.md...
+        installed = paths.skills_dir / "standalone" / "SKILL.md"
+        assert "installed via registry" in installed.read_text()
+        # ...and fanned out to every live runtime.
+        for pid in ("work", "personal"):
+            assert "standalone" in agents[pid][-1].catalog
 
 
-def test_install_profile_lands_only_for_that_profile(monkeypatch):
-    _fake_registry(monkeypatch)
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
-    app = create_app(manager)
+def test_install_profile_lands_only_for_that_profile(paths):
+    agents: dict[str, list] = {}
+    manager = make_manager(paths, persist=True, agent_factory=skill_catalog_factory(agents))
+    app = create_app(manager, skills_client=_registry())
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(pid):
-            reloaded.append(pid)
-            return await orig(pid)
-
-        monkeypatch.setattr(manager, "reload", spy)
 
         r = client.post(api("work", "/skills/install"), json={"install_id": "me/standalone"})
         assert r.status_code == 200, r.text
         # Present for work as a profile-owned skill...
         w = {s["name"]: s for s in client.get(api("work", "/skills")).json()["skills"]}
         assert w["standalone"]["origin"] == "profile"
-        # ...absent for personal, and only work reloaded.
+        assert "standalone" in agents["work"][-1].catalog
+        # ...absent for personal, whose agent was never rebuilt.
         p = {s["name"] for s in client.get(api("personal", "/skills")).json()["skills"]}
         assert "standalone" not in p
-        assert reloaded == ["work"]
+        assert len(agents["personal"]) == 1
 
 
-def test_install_collision_replaces(monkeypatch):
-    _fake_registry(monkeypatch, desc="first")
-    client, _pid = _client(monkeypatch)
-    with client:
+def test_install_collision_replaces(paths):
+    app, _pid = make_profile_app(paths, persist=True, skills_client=_registry(desc="first"))
+    with TestClient(app) as client:
         client.post("/api/skills/install", json={"install_id": "me/standalone"})
         first = {s["name"]: s for s in client.get("/api/skills").json()["skills"]}
         assert first["standalone"]["description"] == "first"
 
-        # Re-install the same name with a new description → replaces in place.
-        _fake_registry(monkeypatch, desc="second")
+    # Re-install the same name from a registry now serving a new description → replaces.
+    app, _pid = make_profile_app(paths, persist=True, skills_client=_registry(desc="second"))
+    with TestClient(app) as client:
         r = client.post("/api/skills/install", json={"install_id": "me/standalone"})
         again = {s["name"]: s for s in r.json()["skills"]}
         assert again["standalone"]["description"] == "second"
@@ -158,24 +152,35 @@ def test_install_collision_replaces(monkeypatch):
         assert sum(1 for s in r.json()["skills"] if s["name"] == "standalone") == 1
 
 
-def test_install_failure_is_400_and_nothing_installed(monkeypatch):
-    """A registry download failure surfaces a clean 400 and leaves nothing behind."""
-    import assistant.skills_install as si
+def test_install_from_a_monorepo_resolves_the_skill_subdir(paths):
+    """``owner/repo/skill`` installs that skill's directory out of a repo of many —
+    the extractor's monorepo path, not the standalone fallback."""
+    registry = _registry(skill="react-best-practices", nested=True, desc="React rules")
+    app, _pid = make_profile_app(paths, persist=True, skills_client=registry)
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/skills/install",
+            json={"install_id": "vercel-labs/agent-skills/react-best-practices"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["installed"][0]["name"] == "react-best-practices"
+        skill_md = paths.skills_dir / "react-best-practices" / "SKILL.md"
+        assert "React rules" in skill_md.read_text()
 
-    async def boom(self, source, skill_id, runtime):
-        raise SkillDownloadError("Skill not found: me/nope")
 
-    monkeypatch.setattr(si.SkillsClient, "download_skill", boom)
-    client, _pid = _client(monkeypatch)
-    with client:
+def test_install_failure_is_400_and_nothing_installed(paths):
+    """A registry 404 surfaces a clean 400 and leaves nothing behind."""
+    app, _pid = make_profile_app(paths, persist=True, skills_client=_registry(status=404))
+    with TestClient(app) as client:
         r = client.post("/api/skills/install", json={"install_id": "me/nope"})
         assert r.status_code == 400
         assert "not found" in r.json()["error"].lower()
         assert "nope" not in {s["name"] for s in client.get("/api/skills").json()["skills"]}
+        assert not (paths.skills_dir / "nope").exists()
 
 
-def test_install_without_source_is_400(monkeypatch):
-    client, _pid = _client(monkeypatch)
+def test_install_without_source_is_400(paths):
+    client, _pid = _client(paths)
     with client:
         r = client.post("/api/skills/install", json={})
         assert r.status_code == 400

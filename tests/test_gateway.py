@@ -24,40 +24,62 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from starlette.websockets import WebSocketDisconnect
 
-import assistant.gateway.core as core_mod
 import assistant.onboarding as onboarding
-import assistant.profiles as profiles_mod
-import assistant.secrets as secrets
-import assistant.title as title_mod
-from assistant import codex_auth, llm_configs, profiles
+from assistant import codex_auth
 from assistant.agent import model_config
-from assistant.config import Config, load_config
+from assistant.codex_auth import CodexAuth
+from assistant.config import Config, load_config, write_yaml
 from assistant.events import Attachment, TurnCancelled
-from assistant.gateway import app as app_mod
-from assistant.gateway.app import _decode_attachments, _origin_ok, create_app
+from assistant.gateway.app import _allowed_origins, _decode_attachments, _origin_ok, create_app
 from assistant.gateway.core import Gateway
-from assistant.gateway.profile_manager import ProfileManager
 from assistant.hitl import GatewayAsker, HitlServer
 from assistant.hitl.base import Question
+from assistant.llm_configs import TYPES, LlmConfigStore
 from assistant.memory import PROFILE_PATH, build_profile_store
-from assistant.onboarding import needs_onboarding
+from assistant.onboarding import STEPS, needs_onboarding
 from assistant.permissions import DENY
-from assistant.profiles import create_profile, profile_dir
-from tests.conftest import (
+from assistant.profiles import ProfileRegistry
+from assistant.secrets import SecretStore
+from tests.support.apps import api, make_manager, make_profile_app, write_codex_session
+from tests.support.fakes import (
     FakeAgent,
     FakeReply,
     FakeRunMixin,
-    api,
-    make_profile_app,
-    use_fake_agent,
+    fake_agent_factory,
+    fake_title_factory,
 )
 
 
+def _gateway(paths, *, agent=None, memory=False, data_dir=None, **kwargs):
+    """A Gateway over the isolated layout whose agent is a fake (no LLM)."""
+    config = (
+        Config.for_paths(paths) if data_dir is None else Config.for_paths(paths, data_dir=data_dir)
+    )
+    return Gateway(
+        config=config,
+        memory=memory,
+        agent_factory=fake_agent_factory(agent),
+        **kwargs,
+    )
+
+
+class RecordingAsker:
+    """An asker that records every question and skips them all — the onboarding
+    interview treats "" as a skip, so nothing is written and no .env is touched."""
+
+    def __init__(self):
+        self.asked: list[str] = []
+
+    async def ask(self, question, timeout=None):
+        self.asked.append(getattr(question, "text", question))
+        return ""
+
+
 @pytest.fixture
-def fake_gateway(monkeypatch):
+def fake_gateway(paths):
     """A Gateway whose agent is a deterministic fake (no LLM, no persistence)."""
 
-    gw = Gateway(memory=False, persist=False)
+    gw = _gateway(paths, persist=False)
     gw._agent = FakeAgent()
     return gw
 
@@ -106,40 +128,28 @@ async def test_forwarding_events_passes_structured_events_not_transcript(fake_ga
     assert captured["unsub"] == "sub-1"  # always unsubscribed
 
 
-async def test_gateway_auto_onboards_once(fake_gateway, monkeypatch):
-    """First message with an asker triggers onboarding exactly once."""
+async def test_gateway_auto_onboards_once(paths):
+    """First message with an asker triggers the real interview exactly once — the
+    universal store is empty, so the gate is open."""
 
-    calls = {"check": 0, "run": 0}
-
-    async def fake_needs(*a, **k):
-        calls["check"] += 1
-        return True
-
-    async def fake_run(asker, *a, **k):
-        calls["run"] += 1
-        return {}
-
-    monkeypatch.setattr(onboarding, "needs_onboarding", fake_needs)
-    monkeypatch.setattr(onboarding, "run_onboarding", fake_run)
-    fake_gateway._memory = True  # onboarding only runs when memory is on
-
-    class _Asker:
-        async def ask(self, q, timeout=None):
-            return "x"
-
-    asker = _Asker()
-    await fake_gateway.send_message("hi", chat_id="s1", asker=asker)
-    await fake_gateway.send_message("again", chat_id="s1", asker=asker)
-    assert calls["run"] == 1  # onboarded once, not on every message
+    gw = _gateway(paths, memory=True)  # onboarding only runs when memory is on
+    gw._agent = FakeAgent()
+    asker = RecordingAsker()
+    await gw.send_message("hi", chat_id="s1", asker=asker)
+    await gw.send_message("again", chat_id="s1", asker=asker)
+    assert asker.asked.count(STEPS[0].question.text) == 1  # onboarded once, not per message
 
 
-async def test_gateway_skips_onboarding_without_asker(fake_gateway, monkeypatch):
+async def test_gateway_skips_onboarding_without_asker(paths):
+    """Without an asker there is nothing to interview through, so the gate stays open
+    and the NEXT message (with an asker) still runs it."""
 
-    async def boom(*a, **k):
-        raise AssertionError("should not be called without an asker")
-
-    monkeypatch.setattr(onboarding, "needs_onboarding", boom)
-    await fake_gateway.send_message("hi", chat_id="s1")  # no asker → no onboarding
+    gw = _gateway(paths, memory=True)
+    gw._agent = FakeAgent()
+    await gw.send_message("hi", chat_id="s1")  # no asker → no onboarding
+    asker = RecordingAsker()
+    await gw.send_message("again", chat_id="s1", asker=asker)
+    assert asker.asked  # still pending, so it ran now
 
 
 async def test_chat_keeps_multi_turn_history(fake_gateway):
@@ -164,18 +174,16 @@ def test_status_shape(fake_gateway):
     assert status["chats"] == 0
 
 
-async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
+async def test_transcript_persists_across_instances(paths, tmp_path):
     """A new Gateway over the same data dir sees prior chats (resumable)."""
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-
-    gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    gw = _gateway(paths, data_dir=tmp_path)
     await gw.start()
     await gw.send_message("hello there", chat_id="s1")
     await gw.send_message("again", chat_id="s1")
     await gw.close()
 
-    gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    gw2 = _gateway(paths, data_dir=tmp_path)
     await gw2.start()
     turns = await gw2.transcript("s1")
     assert [m["role"] for m in turns] == ["user", "agent", "user", "agent"]
@@ -187,23 +195,17 @@ async def test_transcript_persists_across_instances(tmp_path, monkeypatch):
     assert s1["preview"] == "hello there"
 
 
-async def test_replay_and_chat_reads_share_one_sqlite_connection(tmp_path, monkeypatch):
+async def test_replay_and_chat_reads_share_one_sqlite_connection(paths, tmp_path):
     """Hydrating a chat and reading its metadata may happen in the same request burst."""
-    import assistant.gateway.core as core_mod
-    from assistant.config import Config
-    from assistant.events import Attachment
-    from assistant.gateway.core import Gateway
     from assistant.storage import SerialStore
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-
-    first = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    first = _gateway(paths, data_dir=tmp_path)
     await first.start()
     await first.send_message("hello", chat_id="s1")
     await first.emit_event("s1", Attachment("/tmp/demo.txt", name="demo.txt"))
     await first.close()
 
-    second = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    second = _gateway(paths, data_dir=tmp_path)
     await second.start()
     assert isinstance(second._event_store, SerialStore)
 
@@ -216,13 +218,11 @@ async def test_replay_and_chat_reads_share_one_sqlite_connection(tmp_path, monke
     await second.close()
 
 
-async def test_delete_chat_removes_transcript_and_event_log(tmp_path, monkeypatch):
+async def test_delete_chat_removes_transcript_and_event_log(paths, tmp_path):
     """Deleting a chat drops BOTH artifacts — the display transcript AND the AG2
     event log — so it neither lists nor resumes, even on a fresh Gateway."""
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: FakeAgent())
-
-    gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    gw = _gateway(paths, data_dir=tmp_path)
     await gw.start()
     await gw.send_message("keep me", chat_id="keep")
     await gw.send_message("delete me", chat_id="gone")
@@ -240,7 +240,7 @@ async def test_delete_chat_removes_transcript_and_event_log(tmp_path, monkeypatc
     await gw.close()
 
     # a fresh Gateway over the same data dir does not resurrect it
-    gw2 = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    gw2 = _gateway(paths, data_dir=tmp_path)
     await gw2.start()
     assert {s["chat_id"] for s in await gw2.list_chats()} == {"keep"}
     assert await gw2.transcript("gone") == []
@@ -266,20 +266,19 @@ class _SlowAgent(FakeRunMixin):
         return FakeReply(f"echo[{self._counts[sid]}]: {msg[0]}")
 
 
-async def _persistent_gateway(tmp_path, monkeypatch, agent):
+async def _persistent_gateway(paths, tmp_path, agent, **kwargs):
 
-    monkeypatch.setattr(core_mod, "create_agent", lambda *a, **k: agent)
-    gw = Gateway(config=Config(data_dir=tmp_path), memory=False)
+    gw = _gateway(paths, agent=agent, data_dir=tmp_path, **kwargs)
     await gw.start()
     gw._agent = agent
     return gw
 
 
-async def test_inflight_chat_listed_before_completion(tmp_path, monkeypatch):
+async def test_inflight_chat_listed_before_completion(paths, tmp_path):
     """(a) A chat is listed with the user-message preview *while* its (slow) turn
     is still running — the stub is written the instant the message is accepted."""
     slow = _SlowAgent()
-    gw = await _persistent_gateway(tmp_path, monkeypatch, slow)
+    gw = await _persistent_gateway(paths, tmp_path, slow)
     turn = asyncio.create_task(gw.send_message("search the web for X", chat_id="live"))
     try:
         # Let send_message reach the (blocked) agent turn.
@@ -303,17 +302,14 @@ async def test_inflight_chat_listed_before_completion(tmp_path, monkeypatch):
     await gw.close()
 
 
-async def test_inflight_stub_completed_in_place_no_duplicate(tmp_path, monkeypatch):
+async def test_inflight_stub_completed_in_place_no_duplicate(paths, tmp_path):
     """(b)+(c) After the turn completes the entry has the reply, one turn, a title,
     and the user message is NOT duplicated by the completion write; a second turn
     threads on without duplicating either (multi-turn stub is a no-op)."""
 
-    async def fake_title(config, user_text, reply_text):
-        return "Named Chat"
-
-    monkeypatch.setattr(title_mod, "generate_title", fake_title)
-
-    gw = await _persistent_gateway(tmp_path, monkeypatch, FakeAgent())
+    gw = await _persistent_gateway(
+        paths, tmp_path, FakeAgent(), title_factory=fake_title_factory("Named Chat")
+    )
     await gw.send_message("first question", chat_id="s1")
     for _ in range(50):  # title generation is fire-and-forget
         listed = await gw.list_chats()
@@ -346,14 +342,14 @@ async def test_inflight_stub_completed_in_place_no_duplicate(tmp_path, monkeypat
     await gw.close()
 
 
-async def test_inflight_chat_stream_replay_returns_user_event(tmp_path, monkeypatch):
+async def test_inflight_chat_stream_replay_returns_user_event(paths, tmp_path):
     """(d) Reopening an in-flight chat mid-turn replays the user message event, so
     the stream bridge shows the history so far and attaches live. Here the user event
     is emitted onto the chat stream before the (blocked) turn, exactly as the WS
     stream path does for a real message; a fresh bridge open() must replay it."""
 
     slow = _SlowAgent()
-    gw = await _persistent_gateway(tmp_path, monkeypatch, slow)
+    gw = await _persistent_gateway(paths, tmp_path, slow)
     # Emit a marker event onto the chat stream (persisted + replayable), the way the
     # app's stream handler surfaces the user's turn context before running it.
     await gw.emit_event("live", Attachment("/tmp/x.png", name="x.png"))
@@ -403,16 +399,16 @@ def test_rest_message_endpoint(profile_app):
     assert body["chat_id"] == "u1"
 
 
-def test_unknown_and_archived_profile_status(monkeypatch):
+def test_unknown_and_archived_profile_status(paths):
     """A prefixed route on an unknown pid 404s; on an archived pid 410s."""
 
-    use_fake_agent(monkeypatch)
-    work = profiles.create_profile("Work", "#109e91")
-    profiles.profile_dir(work.id).mkdir(parents=True, exist_ok=True)
-    keep = profiles.create_profile("Personal", "#f95339")  # so archive isn't the last
-    profiles.profile_dir(keep.id).mkdir(parents=True, exist_ok=True)
+    registry = ProfileRegistry(paths)
+    work = registry.create_profile("Work", "#109e91")
+    registry.profile_dir(work.id).mkdir(parents=True, exist_ok=True)
+    keep = registry.create_profile("Personal", "#f95339")  # so archive isn't the last
+    registry.profile_dir(keep.id).mkdir(parents=True, exist_ok=True)
 
-    app = create_app(ProfileManager(memory=False, persist=False))
+    app = create_app(make_manager(paths))
     with TestClient(app) as client:
         assert client.get(api("ghost", "/chats")).status_code == 404
         assert client.get(api(work.id, "/chats")).status_code == 200
@@ -452,27 +448,21 @@ def test_mcp_settings_endpoints(profile_app):
     assert client.delete(api(pid, "/settings/mcp/local")).status_code == 404
 
 
-def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
+def test_focuses_endpoint_saves_appears_in_settings_and_reloads(paths):
     """POST settings/focuses persists the (normalised) focuses, surfaces them in GET
     settings, and reference-swap reloads the runtime so the context line takes effect."""
 
-    use_fake_agent(monkeypatch)
-    meta = create_profile("Work", "#109e91")
-    profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    manager = ProfileManager(memory=False, persist=False)
+    registry = ProfileRegistry(paths)
+    meta = registry.create_profile("Work", "#109e91")
+    registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    built: list = []
+    manager = make_manager(paths, agent_factory=fake_agent_factory(built=built))
     app = create_app(manager)
     with TestClient(app) as client:
         pid = meta.id
         assert client.get(api(pid, "/settings")).json()["focuses"] == []
 
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(p):
-            reloaded.append(p)
-            return await orig(p)
-
-        monkeypatch.setattr(manager, "reload", spy)
+        built.clear()
 
         # client sends lowercase slugs; junk is dropped, order kept
         resp = client.post(
@@ -481,7 +471,7 @@ def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
         )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True, "focuses": ["coding", "research"]}
-        assert reloaded == [pid]  # context change → runtime reloaded
+        assert [cfg.data_dir.name for cfg in built] == [pid]  # context change → reloaded
 
         assert client.get(api(pid, "/settings")).json()["focuses"] == ["coding", "research"]
 
@@ -492,28 +482,22 @@ def test_focuses_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
         assert client.get(api(pid, "/settings")).json()["focuses"] == []
 
 
-def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(monkeypatch):
+def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(paths):
 
-    use_fake_agent(monkeypatch)
-    meta = create_profile("Work", "#109e91")
-    profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    manager = ProfileManager(memory=False, persist=False)
+    registry = ProfileRegistry(paths)
+    meta = registry.create_profile("Work", "#109e91")
+    registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    built: list = []
+    manager = make_manager(paths, agent_factory=fake_agent_factory(built=built))
     app = create_app(manager)
     with TestClient(app) as client:
         pid = meta.id
         assert client.get(api(pid, "/settings")).json()["reply_timeout_s"] == 600.0
 
-        reloaded: list[str] = []
-        orig = manager.reload
-
-        async def spy(p):
-            reloaded.append(p)
-            return await orig(p)
-
-        monkeypatch.setattr(manager, "reload", spy)
+        built.clear()
         response = client.post(api(pid, "/settings/reply-timeout"), json={"reply_timeout_s": 480})
         assert response.json() == {"ok": True, "reply_timeout_s": 480.0}
-        assert reloaded == [pid]
+        assert [cfg.data_dir.name for cfg in built] == [pid]
         assert client.get(api(pid, "/settings")).json()["reply_timeout_s"] == 480.0
 
         assert (
@@ -524,29 +508,28 @@ def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(monkeypatc
         )
 
 
-def test_fs_list_endpoint_lists_subdirs(tmp_path, monkeypatch):
+def test_fs_list_endpoint_lists_subdirs(paths, tmp_path):
 
-    (tmp_path / "alpha").mkdir()
-    (tmp_path / "beta").mkdir()
-    (tmp_path / "file.txt").write_text("x")
+    browse = tmp_path / "browse"
+    (browse / "alpha").mkdir(parents=True)
+    (browse / "beta").mkdir()
+    (browse / "file.txt").write_text("x")
 
-    use_fake_agent(monkeypatch)
-    app, _pid = make_profile_app()
+    app, _pid = make_profile_app(paths)
     with TestClient(app) as client:
-        r = client.get("/api/fs/list", params={"path": str(tmp_path)}).json()
+        r = client.get("/api/fs/list", params={"path": str(browse)}).json()
         assert r["ok"] is True
         assert [d["name"] for d in r["dirs"]] == ["alpha", "beta"]
 
-        bad = client.get("/api/fs/list", params={"path": str(tmp_path / "missing")}).json()
+        bad = client.get("/api/fs/list", params={"path": str(browse / "missing")}).json()
         assert bad["ok"] is False
 
 
-def test_fs_mkdir_creates_subfolder_and_returns_absolute_path(tmp_path, monkeypatch):
+def test_fs_mkdir_creates_subfolder_and_returns_absolute_path(paths, tmp_path):
     """The picker creates one subfolder in the folder it's viewing and gets back an
     ABSOLUTE path — `make_dir` reports a root-relative one, but the picker navigates
     into the result by absolute path."""
-    use_fake_agent(monkeypatch)
-    app, _pid = make_profile_app()
+    app, _pid = make_profile_app(paths)
     with TestClient(app) as client:
         r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "reports"})
         assert r.status_code == 200
@@ -558,9 +541,8 @@ def test_fs_mkdir_creates_subfolder_and_returns_absolute_path(tmp_path, monkeypa
         assert "reports" in [d["name"] for d in listed["dirs"]]
 
 
-def test_fs_mkdir_rejects_duplicate_without_clobbering(tmp_path, monkeypatch):
-    use_fake_agent(monkeypatch)
-    app, _pid = make_profile_app()
+def test_fs_mkdir_rejects_duplicate_without_clobbering(paths, tmp_path):
+    app, _pid = make_profile_app(paths)
     (tmp_path / "taken").mkdir()
     (tmp_path / "taken" / "keep.txt").write_text("still here")
     with TestClient(app) as client:
@@ -581,11 +563,10 @@ def test_fs_mkdir_rejects_duplicate_without_clobbering(tmp_path, monkeypatch):
         ("x" * 300, "Name is too long"),
     ],
 )
-def test_fs_mkdir_rejects_bad_names(tmp_path, monkeypatch, name, expected):
+def test_fs_mkdir_rejects_bad_names(paths, tmp_path, name, expected):
     """Every rejection is a 400 carrying a message meant to be shown as-is, and nothing
     is written — notably the over-long name, which used to escape as a 500."""
-    use_fake_agent(monkeypatch)
-    app, _pid = make_profile_app()
+    app, _pid = make_profile_app(paths)
     before = sorted(p.name for p in tmp_path.iterdir())  # the app puts its data dir here
     with TestClient(app) as client:
         r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": name})
@@ -594,9 +575,8 @@ def test_fs_mkdir_rejects_bad_names(tmp_path, monkeypatch, name, expected):
     assert sorted(p.name for p in tmp_path.iterdir()) == before
 
 
-def test_fs_mkdir_rejects_unreadable_parent(tmp_path, monkeypatch):
-    use_fake_agent(monkeypatch)
-    app, _pid = make_profile_app()
+def test_fs_mkdir_rejects_unreadable_parent(paths, tmp_path):
+    app, _pid = make_profile_app(paths)
     with TestClient(app) as client:
         r = client.post("/api/fs/mkdir", json={"path": str(tmp_path / "nope"), "name": "x"})
         assert r.status_code == 400
@@ -647,14 +627,14 @@ def test_favicon_served(profile_app):
 # --- HITL: global dispatcher over per-profile registries ---
 
 
-async def test_hitl_routes_served_by_gateway(monkeypatch):
+async def test_hitl_routes_served_by_gateway(paths):
     """The global /hitl page dispatches to the profile whose registry holds the id;
     the profile-scoped /hitl/pending lists that profile's questions."""
 
-    use_fake_agent(monkeypatch)
-    meta = profiles.create_profile("Test", "#109e91")
-    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    manager = ProfileManager(memory=False, persist=False)
+    registry = ProfileRegistry(paths)
+    meta = registry.create_profile("Test", "#109e91")
+    registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    manager = make_manager(paths)
     app = create_app(manager)
 
     transport = ASGITransport(app=app)
@@ -689,7 +669,7 @@ def test_decode_attachments():
     assert _decode_attachments([{"name": "x.png", "data": ""}]) == []  # empty → skipped
 
 
-def test_stream_timeout_sends_error_frame(monkeypatch):
+def test_stream_timeout_sends_error_frame(paths):
     """A turn that exceeds the configured reply timeout surfaces an error frame on the stream WS."""
 
     class _HangAgent(FakeRunMixin):
@@ -698,9 +678,8 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
         async def ask(self, *a, stream=None, **k):
             await asyncio.Event().wait()  # never returns → triggers wait_for timeout
 
-    use_fake_agent(monkeypatch, lambda *a, **k: _HangAgent())
-    monkeypatch.setenv("AG2ASSISTANT_REPLY_TIMEOUT", "0.2")
-    app, pid = make_profile_app()
+    write_yaml(paths.config_yaml, {"gateway": {"reply_timeout_s": 0.2}})
+    app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(_HangAgent()))
     with TestClient(app) as client:
         with client.websocket_connect(api(pid, "/stream?chat=s1")) as ws:
             while ws.receive_json().get("type") != "ready":
@@ -717,7 +696,7 @@ def test_stream_timeout_sends_error_frame(monkeypatch):
             assert saw_error
 
 
-def test_stream_cancel_stops_the_turn(monkeypatch):
+def test_stream_cancel_stops_the_turn(paths):
     """A `cancel` frame stops the running turn: AG2 propagates the cancellation into
     the run, a TurnCancelled event comes back out on the stream, and the turn ends."""
 
@@ -735,9 +714,7 @@ def test_stream_cancel_stops_the_turn(monkeypatch):
                 raise
 
     agent = _HangAgent()
-    use_fake_agent(monkeypatch, lambda *a, **k: agent)
-
-    app, pid = make_profile_app()
+    app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(agent))
     with TestClient(app) as client:
         with client.websocket_connect(api(pid, "/stream?chat=s1")) as ws:
             while ws.receive_json().get("type") != "ready":
@@ -877,10 +854,9 @@ async def test_conversation_resumes_across_restart(tmp_path):
 # --- cross-origin guard (defends a localhost gateway from malicious web pages) ---
 
 
-def test_origin_ok_unit(monkeypatch):
+def test_origin_ok_unit():
     """The same-origin rule: no-Origin and same host:port pass; others don't."""
 
-    monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
     assert _origin_ok(None, "127.0.0.1:8800")  # non-browser caller
     assert _origin_ok("http://127.0.0.1:8800", "127.0.0.1:8800")  # same-origin
     assert _origin_ok("http://127.0.0.1:8800/", "127.0.0.1:8800")  # trailing slash
@@ -888,21 +864,19 @@ def test_origin_ok_unit(monkeypatch):
     assert not _origin_ok("http://127.0.0.1:9999", "127.0.0.1:8800")  # other port
 
 
-def test_origin_allowlist_env(monkeypatch):
+def test_origin_allowlist_env():
     """AG2ASSISTANT_ALLOWED_ORIGINS adds extra accepted origins for proxied demos."""
 
-    monkeypatch.setenv("AG2ASSISTANT_ALLOWED_ORIGINS", "https://demo.example, http://foo")
-    assert _origin_ok("https://demo.example", "127.0.0.1:8800")
-    assert not _origin_ok("https://other.example", "127.0.0.1:8800")
+    allowed = _allowed_origins({"AG2ASSISTANT_ALLOWED_ORIGINS": "https://demo.example, http://foo"})
+    assert allowed == {"https://demo.example", "http://foo"}
+    assert _origin_ok("https://demo.example", "127.0.0.1:8800", allowed)
+    assert not _origin_ok("https://other.example", "127.0.0.1:8800", allowed)
 
 
-def test_cross_origin_requests_rejected(monkeypatch):
+def test_cross_origin_requests_rejected(paths):
     """Cross-origin REST and WebSocket attempts are refused; same-origin works."""
 
-    monkeypatch.delenv("AG2ASSISTANT_ALLOWED_ORIGINS", raising=False)
-    use_fake_agent(monkeypatch)
-
-    app, pid = make_profile_app()
+    app, pid = make_profile_app(paths)
     with TestClient(app) as client:  # TestClient's Host is "testserver"
         assert client.get("/api/health").status_code == 200  # no Origin → ok
         assert (
@@ -935,14 +909,14 @@ def test_cross_origin_requests_rejected(monkeypatch):
 # keeps the in-chat interview from firing for a web-onboarded user.
 
 
-def _identity_app():
+def _identity_app(paths):
 
-    return create_app(ProfileManager(memory=False, persist=False))
+    return create_app(make_manager(paths))
 
 
-def test_identity_endpoint_seeds_when_empty():
+def test_identity_endpoint_seeds_when_empty(paths):
 
-    app = _identity_app()
+    app = _identity_app(paths)
     with TestClient(app) as client:
         r = client.post(
             "/api/identity",
@@ -957,9 +931,9 @@ def test_identity_endpoint_seeds_when_empty():
         assert "Prefers answers that are concise." in doc
 
 
-def test_identity_endpoint_refuses_to_clobber_existing_doc():
+def test_identity_endpoint_refuses_to_clobber_existing_doc(paths):
 
-    app = _identity_app()
+    app = _identity_app(paths)
     with TestClient(app) as client:
         client.post(
             "/api/memory", json={"text": "# User profile\n\n## About the user\n- Name: Ada\n"}
@@ -973,9 +947,9 @@ def test_identity_endpoint_refuses_to_clobber_existing_doc():
         assert "Name: Mark" not in client.get("/api/memory").json()["text"]
 
 
-def test_identity_endpoint_noops_when_all_empty():
+def test_identity_endpoint_noops_when_all_empty(paths):
 
-    app = _identity_app()
+    app = _identity_app(paths)
     with TestClient(app) as client:
         r = client.post(
             "/api/identity", json={"name": "", "location": "  ", "hours": "", "style": ""}
@@ -986,27 +960,27 @@ def test_identity_endpoint_noops_when_all_empty():
         assert client.get("/api/memory").json()["text"].strip() == ""
 
 
-async def test_identity_seed_disables_interview_gate():
+async def test_identity_seed_disables_interview_gate(paths):
     """After the endpoint seeds the universal store, the in-chat interview gate is
     closed — a web-onboarded user's first chat won't trigger it."""
 
-    user_store_path = load_config().root_dir / "user.db"
+    user_store_path = paths.root / "user.db"
     assert await needs_onboarding(user_store_path) is True  # fresh install: gate open
 
-    app = _identity_app()
+    app = _identity_app(paths)
     with TestClient(app) as client:
         assert client.post("/api/identity", json={"location": "Sydney"}).json()["seeded"] is True
 
     assert await needs_onboarding(user_store_path) is False  # gate now closed
 
 
-async def test_identity_document_endpoint_parity():
+async def test_identity_document_endpoint_parity(paths):
     """The endpoint's stored doc is byte-identical to run_onboarding's for the same
     answers — both go through identity_document, the single formatter."""
 
     answers = {"name": "Ada", "location": "London", "hours": "9am–6pm", "style": "Short & direct"}
 
-    app = _identity_app()
+    app = _identity_app(paths)
     with TestClient(app) as client:
         client.post("/api/identity", json=answers)
         endpoint_doc = client.get("/api/memory").json()["text"]
@@ -1019,11 +993,11 @@ async def test_identity_document_endpoint_parity():
         async def ask(self, q, timeout=None):
             return self._vals.pop(0)
 
-    cli_store = load_config().root_dir / "cli_user.db"
+    cli_store = paths.root / "cli_user.db"
     await onboarding.run_onboarding(
         _Asker(["Ada", "London", "9am–6pm", "Short & direct"]),
         user_store_path=cli_store,
-        env_path=load_config().root_dir / ".env",
+        env_path=paths.root / ".env",
     )
     cli_doc = await build_profile_store(cli_store).read(PROFILE_PATH)
     assert endpoint_doc == cli_doc
@@ -1032,26 +1006,15 @@ async def test_identity_document_endpoint_parity():
 # ---- System health endpoint (the status-dot source, GET /health) ---------------
 
 
-def _fake_key_status(*, present: bool):
-    """A secrets.status() stand-in: all three providers set (or not), plus ollama."""
-    flag = {"set": present, "hint": "…key" if present else ""}
-    return {
-        "openai": dict(flag),
-        "gemini": dict(flag),
-        "anthropic": dict(flag),
-        "ollama": {"set": False, "base_url": "http://localhost:11434"},
-    }
-
-
-def test_profile_health_ok_and_down(profile_app, monkeypatch):
+def test_profile_health_ok_and_down(profile_app, paths):
     """The cheap health aggregate: healthy when the agent is up and the configured
     provider has a key; 'down' (agent can't run) when the key is missing. The dot
     reads `overall`; the panel reads `checks`."""
 
     client, pid = profile_app
 
-    # Provider key present + faked agent alive → all core signals green.
-    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
+    # A real key for the configured provider + faked agent alive → core signals green.
+    key = SecretStore(paths).create_secret("K", "sk-gemini-1", provider="gemini", default=True)
     body = client.get(api(pid, "/health")).json()
     assert body["overall"] == "ok"
     ids = {c["id"] for c in body["checks"]}
@@ -1063,22 +1026,22 @@ def test_profile_health_ok_and_down(profile_app, monkeypatch):
     assert mcp["state"] == "off" and mcp["servers"] == []
 
     # Drop the provider key → the configured provider (gemini) has no key → down.
-    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=False))
+    SecretStore(paths).delete_secret(key["id"])
     body = client.get(api(pid, "/health")).json()
     assert body["overall"] == "down"
     provider = next(c for c in body["checks"] if c["id"] == "provider")
     assert provider["state"] == "down"
 
 
-def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
+def test_profile_health_warns_on_channel_error(profile_app, paths):
     """A messaging channel bound to this profile that failed to start (start error
     recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
 
     client, pid = profile_app
 
-    monkeypatch.setattr(secrets, "status", lambda: _fake_key_status(present=True))
+    SecretStore(paths).create_secret("K", "sk-gemini-1", provider="gemini", default=True)
     # Bind discord to this profile and record a start error on the live manager.
-    monkeypatch.setattr(profiles_mod, "channel_bindings", lambda: {"discord": pid})
+    ProfileRegistry(paths).bind_channel("discord", pid)
     client.app.state.profiles.channel_errors["discord"] = "invalid bot token"
 
     body = client.get(api(pid, "/health")).json()
@@ -1091,19 +1054,18 @@ def test_profile_health_warns_on_channel_error(profile_app, monkeypatch):
 # ---- Named LLM configurations (global /api/llm-configs) ------------------------
 
 
-def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
+def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, paths):
     """Create/update/use/delete named configs; the raw key of a referenced Secret is
     never echoed (only its view with a hint), and deleting a config leaves the
     Secret in place (they're independent entities)."""
 
     client, pid = profile_app
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     # empty install
     r = client.get("/api/llm-configs").json()
     assert r["configs"] == [] and r["active"] is None and r["env_override"] is None
     # Every config type, including ones no config uses yet (the template grid).
-    assert set(r["provider_deps"]) == set(llm_configs.TYPES)
+    assert set(r["provider_deps"]) == set(TYPES)
     assert r["provider_deps"]["gemini"]["ok"] is True
     assert r["provider_deps"]["ollama"]["extra"] == "ollama"
 
@@ -1140,7 +1102,7 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
     entry = g["configs"][0]
     assert entry["key_source"] == "secret"
     assert entry["shared_key"]["env"] == "OPENAI_API_KEY"
-    assert entry["shared_key"]["set"] is False  # env cleared above
+    assert entry["shared_key"]["set"] is False  # the isolated install has no key
 
     # update keeping the secret_id reference → reference kept, model changed
     r = client.post(
@@ -1165,7 +1127,7 @@ def test_llm_configs_crud_use_delete_and_key_secrecy(profile_app, monkeypatch):
     assert client.get("/api/llm-configs").json()["active"] == cid  # first is still active
 
     assert client.delete(f"/api/llm-configs/{cid}").status_code == 200
-    assert secrets.get_secret(sid) is not None  # the Secret survives its referrer
+    assert SecretStore(paths).get_secret(sid) is not None  # the Secret survives its referrer
     assert client.get("/api/llm-configs").json()["active"] == cid2  # active moved on
 
     # unknown ids → 404
@@ -1192,50 +1154,60 @@ def test_llm_config_dry_construct_rejects_bad_options(profile_app):
     assert client.get("/api/llm-configs").json()["configs"] == []  # not saved
 
 
-def test_llm_config_env_override_surfaced(profile_app, monkeypatch):
+def test_llm_config_env_override_surfaced(paths):
     """When AG2ASSISTANT_MODEL / _LLM_PROVIDER is set (they pin the model in
-    load_config), GET reports it so the UI can show the 'pinned by env' banner."""
-    client, pid = profile_app
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("AG2ASSISTANT_MODEL", "gpt-x")
-    assert client.get("/api/llm-configs").json()["env_override"] == {
-        "provider": "openai",
-        "model": "gpt-x",
-    }
+    resolve_config), GET reports it so the UI can show the 'pinned by env' banner."""
+    env = {"AG2ASSISTANT_LLM_PROVIDER": "openai", "AG2ASSISTANT_MODEL": "gpt-x"}
+    manager = make_manager(paths, env=env)
+    with TestClient(create_app(manager)) as client:
+        assert client.get("/api/llm-configs").json()["env_override"] == {
+            "provider": "openai",
+            "model": "gpt-x",
+        }
+        # and the pin really reached the runtime's config
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        runtime = client.app.state.profiles.get("work")
+        assert (runtime.config.llm.provider, runtime.config.llm.model) == ("openai", "gpt-x")
 
 
-def _use_test_client(monkeypatch, *, client=None, reply="PONG", captured=None):
-    """Drive the /test round-trip through the REAL ``ag2.Agent`` — replacing only the
-    LLM client with an ``ag2.testing.TestClient`` (canned reply), never the Agent.
+class LlmProbe:
+    """The injected stand-in for the app's ``model_config`` probe: drives the /test
+    round-trip through the REAL ``ag2.Agent`` while replacing only the LLM client with
+    an ``ag2.testing.TestClient``.
 
-    ``model_config`` still runs for real (so its built config can be ``captured`` for
+    ``model_config`` still runs for real (its built config lands in ``captured`` for
     assertions); a ``TestConfig`` then stands in as the agent's config so ``.create()``
-    yields a ``TestClient`` instead of a network client. Pass ``client`` to inject a
-    raising/hanging double."""
+    yields the canned client instead of a network one. Set ``client`` to hand the agent
+    a raising/hanging double."""
 
-    class _Cfg(ag2.testing.TestConfig):
-        def create(self):
-            return client if client is not None else ag2.testing.TestClient(reply)
+    def __init__(self, *, reply="PONG"):
+        self.reply = reply
+        self.client = None
+        self.captured: dict = {}
 
-    def fake(cfg):
-        built = model_config(cfg)
-        if captured is not None:
-            captured["config"] = built
+    def __call__(self, config):
+        self.captured["config"] = model_config(config)
+        probe = self
+
+        class _Cfg(ag2.testing.TestConfig):
+            def create(self):
+                if probe.client is not None:
+                    return probe.client
+                return ag2.testing.TestClient(probe.reply)
+
         return _Cfg()
 
-    monkeypatch.setattr(app_mod, "model_config", fake)
 
-
-def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
+def test_llm_config_test_endpoint_pong_and_failures(profile_app_factory):
     """The /test endpoint runs a real PONG round-trip (LLM client canned via
     ag2.testing.TestClient, real Agent): a reply → {ok, reply, latency_ms}; any
     exception or a timeout → 502 {ok:false, error}."""
-    client, pid = profile_app
+    probe = LlmProbe()
+    client, _pid = profile_app_factory(llm_probe=probe, llm_probe_timeout_s=0.2)
     entry = client.post(
         "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
     ).json()["config"]
 
-    _use_test_client(monkeypatch, reply="PONG")
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
     assert r.status_code == 200
     body = r.json()
@@ -1246,19 +1218,18 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
         async def __call__(self, messages, context, **k):
             raise RuntimeError("nope-boom")
 
-    _use_test_client(monkeypatch, client=_Boom())
+    probe.client = _Boom()
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
     assert r.status_code == 502
     assert "nope-boom" in r.json()["error"]
 
-    # a wedged call trips the (monkeypatched-tiny) timeout → 502
+    # a wedged call trips the (tiny, injected) timeout → 502
     class _Hang(ag2.testing.TestClient):
         async def __call__(self, messages, context, **k):
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(5)
             return await super().__call__(messages, context, **k)
 
-    _use_test_client(monkeypatch, client=_Hang())
-    monkeypatch.setattr(app_mod, "_LLM_TEST_TIMEOUT_S", 0.01)
+    probe.client = _Hang()
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
     assert r.status_code == 502
 
@@ -1266,15 +1237,14 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app, monkeypatch):
     assert client.post("/api/llm-configs/c_ghost/test").status_code == 404
 
 
-def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
+def test_llm_config_draft_test_endpoint(profile_app_factory, paths):
     """POST /api/llm-configs/test pings an UNSAVED editor draft: nothing persisted,
     a typed api_key is used for the call, a blank one resolves the draft's
     ``secret_id`` reference, and validation errors come back as 400 (the literal
     "test" segment must not be captured by the /{cid} update route)."""
-    client, pid = profile_app
-
-    captured = {}
-    _use_test_client(monkeypatch, captured=captured)
+    probe = LlmProbe()
+    client, _pid = profile_app_factory(llm_probe=probe)
+    captured = probe.captured
 
     # pure draft (no id): tested and NOT saved
     r = client.post(
@@ -1288,7 +1258,7 @@ def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
         },
     )
     assert r.status_code == 200 and r.json()["ok"] is True
-    assert llm_configs.list_configs() == []  # nothing persisted
+    assert LlmConfigStore(paths).list_configs() == []  # nothing persisted
     assert getattr(captured["config"], "api_key", None) == "sk-draft-key-1"  # draft key used
 
     # a draft referencing a Secret with no typed key: the Secret's value is sent
@@ -1315,7 +1285,7 @@ def test_llm_config_draft_test_endpoint(profile_app, monkeypatch):
     assert "type must be one of" in r.json()["error"]
 
 
-def test_llm_config_subscription_entry_view_signed_in(profile_app, monkeypatch):
+def test_llm_config_subscription_entry_view_signed_in(profile_app, paths):
     """An openai_subscription config's row/chip need the live ChatGPT sign-in state and
     a 'subscription' key_source so the UI can label it honestly without a 2nd fetch.
     Endpoint fields are stripped for this type (codex_auth owns the endpoint)."""
@@ -1334,26 +1304,23 @@ def test_llm_config_subscription_entry_view_signed_in(profile_app, monkeypatch):
     assert entry["key_source"] == "subscription"
     assert entry["base_url"] == ""
 
-    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": True, "account_id": "acc"})
+    # a real signed-in session on disk, read live by the app's CodexAuth
+    write_codex_session(paths)
+    assert CodexAuth(paths).status()["signed_in"] is True
     assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is True
 
-    monkeypatch.setattr(codex_auth, "status", lambda: {"signed_in": False})
+    assert CodexAuth(paths).logout() is True  # signing out is observable too
     assert client.get("/api/llm-configs").json()["configs"][0]["signed_in"] is False
 
 
-def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monkeypatch):
+def test_llm_config_subscription_draft_test_routes_to_backend(profile_app_factory, paths):
     """Testing a subscription draft flows through model_config's subscription branch:
     the probe carries auth_mode=subscription, so the built client points at the ChatGPT
     backend with the codex token and server-side storage disabled."""
-    client, pid = profile_app
-    monkeypatch.setattr(
-        codex_auth,
-        "creds_best_effort",
-        lambda: codex_auth.Creds(access_token="TOK", account_id="acc"),
-    )
-
-    captured = {}
-    _use_test_client(monkeypatch, captured=captured)
+    write_codex_session(paths, access_token="TOK", account_id="acc")
+    probe = LlmProbe()
+    client, _pid = profile_app_factory(llm_probe=probe)
+    captured = probe.captured
     r = client.post(
         "/api/llm-configs/test",
         json={"name": "Sub", "type": "openai_subscription", "model": "gpt-5.5"},
@@ -1366,7 +1333,7 @@ def test_llm_config_subscription_draft_test_routes_to_backend(profile_app, monke
     assert cfg.store is False
 
 
-def test_secrets_crud_endpoints(profile_app):
+def test_secrets_crud_endpoints(profile_app, paths):
     """POST/GET/POST-{sid}/DELETE /api/secrets: safe views only (raw value never
     echoed), 409 + existing on a duplicate value, 404s, delete-always-succeeds."""
     client, pid = profile_app
@@ -1400,7 +1367,7 @@ def test_secrets_crud_endpoints(profile_app):
     r = client.post("/api/secrets/key", json={"provider": "openai", "value": "sk-ob-1"})
     assert r.status_code == 200
 
-    assert secrets.default_secret("openai")["hint"] == "…" + "sk-ob-1"[-4:]
+    assert SecretStore(paths).default_secret("openai")["hint"] == "…" + "sk-ob-1"[-4:]
 
 
 def test_llm_config_secret_reference_flow(profile_app):

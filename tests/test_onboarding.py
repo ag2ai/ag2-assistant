@@ -1,8 +1,11 @@
 """Tests for the first-run onboarding interview."""
 
+import os
+
 import pytest
 
 from assistant import onboarding
+from assistant.config import read_global_config, resolve_config, update_global_section
 from assistant.memory import PROFILE_PATH, build_profile_store
 
 
@@ -55,6 +58,23 @@ def test_identity_document_freetext_style_renders_verbatim():
     md = onboarding.identity_document({"style": "concise"})
     assert "## How they like things done" in md
     assert "Prefers answers that are concise." in md
+
+
+async def test_location_lands_in_the_install_config_not_the_process_env(isolate, paths):
+    """The answer is persisted where the next start reads it — config.yaml — and the
+    interview never writes to os.environ."""
+    user_store_path, env_path = isolate
+    paths.root.mkdir(parents=True, exist_ok=True)
+    update_global_section(paths, "llm", {"model": "gpt-5.5"})  # a neighbour to preserve
+    asker = ScriptedAsker(["Ada", "London, United Kingdom", "skip", "skip"])
+
+    await onboarding.run_onboarding(asker, user_store_path, env_path, paths=paths)
+
+    doc = read_global_config(paths)
+    assert doc["agent"]["location"] == "London, United Kingdom"
+    assert doc["llm"] == {"model": "gpt-5.5"}
+    assert resolve_config({}, paths).agent.location == "London, United Kingdom"
+    assert "AG2ASSISTANT_LOCATION" not in os.environ
 
 
 async def test_needs_onboarding_true_when_no_profile(isolate):

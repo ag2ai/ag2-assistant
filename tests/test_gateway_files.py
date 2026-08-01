@@ -4,7 +4,7 @@ by design — the mutation rules live in ``test_workspace.py``; here we lock the
 route wiring, status codes, and per-profile scoping."""
 
 from assistant.workspace import _MAX_WRITE_BYTES
-from tests.conftest import api
+from tests.support.apps import api
 
 
 def test_upload_lands_in_target_dir_and_shows_in_listing(profile_app):

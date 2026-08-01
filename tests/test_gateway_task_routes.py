@@ -7,17 +7,19 @@ from fastapi.testclient import TestClient
 from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
+from assistant.llm_configs import LlmConfigStore
 from assistant.tasks.store import TaskStore
-from tests.conftest import api, make_profile_app, use_fake_agent
+from tests.support.apps import api, make_profile_app
+from tests.support.fakes import fake_summary_factory
 
 
 def test_app_imports_cleanly():
     import assistant.gateway.app  # noqa: F401  (route wiring is executed at import)
 
 
-async def test_update_task_patch_semantics(tmp_path):
+async def test_update_task_patch_semantics(paths, tmp_path):
     svc = TaskService(
-        config=Config(),
+        config=Config.for_paths(paths),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )
@@ -32,9 +34,9 @@ async def test_update_task_patch_semantics(tmp_path):
     assert await svc.update_task("task-missing", name="X") is None
 
 
-async def test_starred_defaults_false_and_round_trips(tmp_path):
+async def test_starred_defaults_false_and_round_trips(paths, tmp_path):
     svc = TaskService(
-        config=Config(),
+        config=Config.for_paths(paths),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )
@@ -51,14 +53,13 @@ async def test_starred_defaults_false_and_round_trips(tmp_path):
 # ---- HTTP-level: /api/p/{pid}/tasks* and /runs* ----
 
 
-def _client(monkeypatch):
-    use_fake_agent(monkeypatch)
-    app, pid = make_profile_app(persist=True)
+def _client(paths, **kwargs):
+    app, pid = make_profile_app(paths, persist=True, **kwargs)
     return TestClient(app), pid
 
 
-def test_create_task_http_returns_200_with_task_body(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_create_task_http_returns_200_with_task_body(paths):
+    client, pid = _client(paths)
     with client:
         r = client.post(api(pid, "/tasks"), json={"name": "Digest", "prompt": "collect news"})
         assert r.status_code == 200, r.text
@@ -67,8 +68,8 @@ def test_create_task_http_returns_200_with_task_body(monkeypatch):
         assert task["model"] is None and task["id"]
 
 
-def test_create_task_http_bad_cron_is_422(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_create_task_http_bad_cron_is_422(paths):
+    client, pid = _client(paths)
     with client:
         r = client.post(
             api(pid, "/tasks"),
@@ -78,17 +79,16 @@ def test_create_task_http_bad_cron_is_422(monkeypatch):
         assert "error" in r.json()
 
 
-def test_get_task_http_missing_is_404(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_get_task_http_missing_is_404(paths):
+    client, pid = _client(paths)
     with client:
         assert client.get(api(pid, "/tasks/task-missing")).status_code == 404
 
 
-def test_patch_task_http_model_empty_clears_to_default(monkeypatch):
-    from assistant import llm_configs
-
-    cfg = llm_configs.save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
-    client, pid = _client(monkeypatch)
+def test_patch_task_http_model_empty_clears_to_default(paths):
+    # The store must be the one the routes read: the app's own layout.
+    cfg = LlmConfigStore(paths).save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
+    client, pid = _client(paths)
     with client:
         created = client.post(api(pid, "/tasks"), json={"name": "M", "prompt": "p"}).json()["task"]
         tid = created["id"]
@@ -103,8 +103,8 @@ def test_patch_task_http_model_empty_clears_to_default(monkeypatch):
         assert r.json()["task"]["model"] is None
 
 
-def test_patch_task_http_starred_toggles(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_patch_task_http_starred_toggles(paths):
+    client, pid = _client(paths)
     with client:
         created = client.post(api(pid, "/tasks"), json={"name": "S", "prompt": "p"}).json()["task"]
         assert created["starred"] is False
@@ -117,8 +117,8 @@ def test_patch_task_http_starred_toggles(monkeypatch):
         assert r.json()["task"]["starred"] is False
 
 
-def test_patch_task_http_bad_schedule_is_422(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_patch_task_http_bad_schedule_is_422(paths):
+    client, pid = _client(paths)
     with client:
         created = client.post(api(pid, "/tasks"), json={"name": "S", "prompt": "p"}).json()["task"]
         r = client.patch(
@@ -129,8 +129,8 @@ def test_patch_task_http_bad_schedule_is_422(monkeypatch):
         assert "error" in r.json()
 
 
-def test_run_stop_and_seen_http_wiring(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_run_stop_and_seen_http_wiring(paths):
+    client, pid = _client(paths)
     with client:
         created = client.post(api(pid, "/tasks"), json={"name": "R", "prompt": "go"}).json()["task"]
         r = client.post(api(pid, f"/tasks/{created['id']}/run"))
@@ -157,14 +157,11 @@ def _gateway(client, pid):
     return client.app.state.profiles.get(pid).gateway
 
 
-def test_create_task_autoname_and_description(monkeypatch):
-    from assistant.gateway import tasks_service as tasks_service_mod
-
-    async def fake_meta(config, prompt, agent_factory=None):
-        return "Auto name", "Auto description."
-
-    monkeypatch.setattr(tasks_service_mod, "suggest_task_meta", fake_meta)
-    client, pid = _client(monkeypatch)
+def test_create_task_autoname_and_description(paths):
+    client, pid = _client(
+        paths,
+        summary_factory=fake_summary_factory(name="Auto name", description="Auto description."),
+    )
     with client:
         r = client.post(
             api(pid, "/tasks"),
@@ -176,12 +173,12 @@ def test_create_task_autoname_and_description(monkeypatch):
         )
         assert r.status_code == 200, r.text
         t = r.json()["task"]
-        assert t["name"]  # generated (stubbed suggest_task_meta), never empty
+        assert t["name"] == "Auto name"  # generated by the cheap model, never empty
         assert t["description"] == "Daily news roundup"
 
 
-def test_task_permissions_list_and_revoke(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_task_permissions_list_and_revoke(paths):
+    client, pid = _client(paths)
     with client:
         created = client.post(api(pid, "/tasks"), json={"name": "A", "prompt": "p"}).json()["task"]
         tid = created["id"]
@@ -199,8 +196,8 @@ def test_task_permissions_list_and_revoke(monkeypatch):
         assert client.get(api(pid, f"/tasks/{tid}/permissions")).json()["rules"] == []
 
 
-def test_task_permissions_404_for_unknown_task(monkeypatch):
-    client, pid = _client(monkeypatch)
+def test_task_permissions_404_for_unknown_task(paths):
+    client, pid = _client(paths)
     with client:
         assert client.get(api(pid, "/tasks/task-missing/permissions")).status_code == 404
         r = client.request(

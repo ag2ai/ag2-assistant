@@ -1,8 +1,7 @@
 """ChatGPT-subscription auth (assistant.codex_auth) + its model_config wiring.
 
-No real network: the token endpoint is monkeypatched. The autouse HOME-isolation
-fixture (conftest) points data_dir() at a tmp root, so each test writes its own
-codex_auth.json.
+No real network: the token endpoint is answered by a real httpx client over
+``MockTransport``. Each test gets its own token store through the ``paths`` fixture.
 """
 
 import base64
@@ -10,11 +9,18 @@ import json
 import stat
 import time
 
-import httpx
 import pytest
 
 from assistant import agent, codex_auth
-from assistant.config import load_config
+from assistant.codex_auth import CodexAuth
+from assistant.config import resolve_config
+from tests.support import http
+
+
+@pytest.fixture
+def auth(paths) -> CodexAuth:
+    """The subscription auth over an isolated layout; no network client needed."""
+    return CodexAuth(paths)
 
 
 def _fake_jwt(payload: dict) -> str:
@@ -56,7 +62,7 @@ def test_extract_auth_code_bare_code():
     assert codex_auth.extract_auth_code("  abc123  ") == "abc123"
 
 
-def test_extract_auth_code_from_full_redirect_url():
+def test_extract_auth_code_from_full_redirect_url(auth):
     url = "http://localhost:1455/auth/callback?code=THE_CODE&state=xyz"
     assert codex_auth.extract_auth_code(url) == "THE_CODE"
 
@@ -77,12 +83,12 @@ def test_account_id_top_level_claim():
     assert codex_auth.account_id_from(_fake_jwt({"chatgpt_account_id": "acc-top"}), "") == "acc-top"
 
 
-def test_account_id_nested_auth_claim():
+def test_account_id_nested_auth_claim(auth):
     tok = _fake_jwt({"https://api.openai.com/auth": {"chatgpt_account_id": "acc-nested"}})
     assert codex_auth.account_id_from(tok, "") == "acc-nested"
 
 
-def test_account_id_organizations_fallback():
+def test_account_id_organizations_fallback(auth):
     tok = _fake_jwt({"https://api.openai.com/auth": {"organizations": [{"id": "org-1"}]}})
     assert codex_auth.account_id_from(tok, "") == "org-1"
 
@@ -100,12 +106,12 @@ def test_account_id_none_when_absent():
 # --- token store: roundtrip, 0600, expiry -------------------------------- #
 
 
-def test_store_tokens_writes_0600_with_absolute_expiry():
-    creds = codex_auth._store_tokens(
+def test_store_tokens_writes_0600_with_absolute_expiry(paths, auth):
+    creds = auth._store_tokens(
         {"access_token": "A1", "refresh_token": "R1", "id_token": "", "expires_in": 3600}
     )
     assert creds.access_token == "A1"
-    p = codex_auth._path()
+    p = paths.codex_tokens
     assert stat.S_IMODE(p.stat().st_mode) == 0o600
     data = json.loads(p.read_text())
     assert data["access_token"] == "A1"
@@ -113,74 +119,65 @@ def test_store_tokens_writes_0600_with_absolute_expiry():
     assert data["expires_at"] > time.time() + 3500
 
 
-def test_store_tokens_keeps_previous_refresh_when_absent():
-    codex_auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
+def test_store_tokens_keeps_previous_refresh_when_absent(auth):
+    auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
     # A response with no refresh_token must not wipe the stored one (OpenAI rotates).
-    codex_auth._store_tokens({"access_token": "A2", "expires_in": 3600})
-    assert codex_auth._read()["refresh_token"] == "R1"
+    auth._store_tokens({"access_token": "A2", "expires_in": 3600})
+    assert auth._read()["refresh_token"] == "R1"
 
 
 # --- ensure_fresh ----------------------------------------------------------- #
 
 
-def test_ensure_fresh_raises_when_not_signed_in():
+def test_ensure_fresh_raises_when_not_signed_in(auth):
     with pytest.raises(codex_auth.CodexAuthError):
-        codex_auth.ensure_fresh()
+        auth.ensure_fresh()
 
 
-def test_ensure_fresh_returns_cached_when_valid(monkeypatch):
-    codex_auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
-
-    def _boom(*a, **k):
+def test_ensure_fresh_returns_cached_when_valid(auth, paths):
+    def _boom(request):
         raise AssertionError("must not hit the network when the token is still valid")
 
-    monkeypatch.setattr(httpx, "post", _boom)
-    assert codex_auth.ensure_fresh().access_token == "A1"
+    auth = CodexAuth(paths, client=http.client(_boom))
+    auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
+    assert auth.ensure_fresh().access_token == "A1"
 
 
-def test_ensure_fresh_refreshes_near_expiry(monkeypatch):
-    codex_auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
-    data = codex_auth._read()
+def test_ensure_fresh_refreshes_near_expiry(auth, paths):
+    handler, sent = http.recording_responder(
+        {"access_token": "A2", "refresh_token": "R2", "expires_in": 3600}
+    )
+    auth = CodexAuth(paths, client=http.client(handler))
+    auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
+    data = auth._read()
     data["expires_at"] = time.time() + 5  # inside the refresh margin
-    codex_auth._write(data)
+    auth._write(data)
 
-    class FakeResp:
-        status_code = 200
-        text = ""
-
-        def json(self):
-            return {"access_token": "A2", "refresh_token": "R2", "expires_in": 3600}
-
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResp())
-    creds = codex_auth.ensure_fresh()
+    creds = auth.ensure_fresh()
     assert creds.access_token == "A2"
-    assert codex_auth._read()["refresh_token"] == "R2"
+    assert auth._read()["refresh_token"] == "R2"
+    # the refresh really went to the token endpoint, as a refresh_token grant
+    assert sent[0]["url"] == codex_auth.TOKEN_URL
+    assert http.form_of(sent[0]["body"])["grant_type"] == "refresh_token"
 
 
-def test_ensure_fresh_refresh_failure_raises(monkeypatch):
-    codex_auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
-    data = codex_auth._read()
+def test_ensure_fresh_refresh_failure_raises(auth, paths):
+    auth = CodexAuth(paths, client=http.client(http.failing_responder(400, "invalid_grant")))
+    auth._store_tokens({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600})
+    data = auth._read()
     data["expires_at"] = time.time() - 10  # already expired → forces a refresh
-    codex_auth._write(data)
+    auth._write(data)
 
-    class FakeResp:
-        status_code = 400
-        text = "invalid_grant"
-
-        def json(self):
-            return {}
-
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResp())
     with pytest.raises(codex_auth.CodexAuthError):
-        codex_auth.ensure_fresh()
+        auth.ensure_fresh()
 
 
 # --- status / logout / headers --------------------------------------------- #
 
 
-def test_status_and_logout():
-    assert codex_auth.status()["signed_in"] is False
-    codex_auth._store_tokens(
+def test_status_and_logout(auth):
+    assert auth.status()["signed_in"] is False
+    auth._store_tokens(
         {
             "access_token": "A",
             "refresh_token": "R",
@@ -188,12 +185,12 @@ def test_status_and_logout():
             "expires_in": 3600,
         }
     )
-    st = codex_auth.status()
+    st = auth.status()
     assert st["signed_in"] is True and st["account_id"] == "acc"
     assert "access_token" not in st and "refresh_token" not in st  # never leak raw tokens
-    assert codex_auth.logout() is True
-    assert codex_auth.status()["signed_in"] is False
-    assert codex_auth.logout() is False  # idempotent
+    assert auth.logout() is True
+    assert auth.status()["signed_in"] is False
+    assert auth.logout() is False  # idempotent
 
 
 def test_default_headers():
@@ -214,8 +211,8 @@ def test_default_headers_omits_missing():
 # --- model_config wiring ---------------------------------------------------- #
 
 
-def test_model_config_subscription_routes_to_backend(monkeypatch):
-    codex_auth._store_tokens(
+def test_model_config_subscription_routes_to_backend(auth, paths):
+    auth._store_tokens(
         {
             "access_token": "ACCESS",
             "refresh_token": "R",
@@ -223,9 +220,10 @@ def test_model_config_subscription_routes_to_backend(monkeypatch):
             "expires_in": 3600,
         }
     )
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("AG2ASSISTANT_OPENAI_AUTH_MODE", "subscription")
-    cfg = load_config()
+    cfg = resolve_config(
+        {"AG2ASSISTANT_LLM_PROVIDER": "openai", "AG2ASSISTANT_OPENAI_AUTH_MODE": "subscription"},
+        paths,
+    )
     mc = agent.model_config(cfg)
     assert type(mc).__name__ == "OpenAIResponsesConfig"
     assert mc.base_url == codex_auth.BACKEND_BASE
@@ -237,12 +235,12 @@ def test_model_config_subscription_routes_to_backend(monkeypatch):
     assert mc.streaming is True
 
 
-def test_model_config_subscription_merges_advanced_options(monkeypatch):
+def test_model_config_subscription_merges_advanced_options(auth, paths):
     """The Advanced (JSON) options of a subscription config still apply — but the
     fields the subscription owns (endpoint, token, headers, streaming, store) are
     forced AFTER the merge, so options can neither redirect the endpoint nor leak
     a key; our "api" surface switch is dropped as meaningless here."""
-    codex_auth._store_tokens(
+    auth._store_tokens(
         {
             "access_token": "ACCESS",
             "refresh_token": "R",
@@ -250,9 +248,10 @@ def test_model_config_subscription_merges_advanced_options(monkeypatch):
             "expires_in": 3600,
         }
     )
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("AG2ASSISTANT_OPENAI_AUTH_MODE", "subscription")
-    cfg = load_config()
+    cfg = resolve_config(
+        {"AG2ASSISTANT_LLM_PROVIDER": "openai", "AG2ASSISTANT_OPENAI_AUTH_MODE": "subscription"},
+        paths,
+    )
     cfg.llm.provider_options["openai"] = {
         "max_output_tokens": 2048,  # a real option → passes through
         "api": "chat",  # our surface switch → dropped
@@ -269,61 +268,54 @@ def test_model_config_subscription_merges_advanced_options(monkeypatch):
     assert mc.store is False
 
 
-def test_model_config_api_key_mode_unchanged(monkeypatch):
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("AG2ASSISTANT_OPENAI_AUTH_MODE", "api_key")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    cfg = load_config()
+def test_model_config_api_key_mode_unchanged(paths):
+    cfg = resolve_config(
+        {
+            "AG2ASSISTANT_LLM_PROVIDER": "openai",
+            "AG2ASSISTANT_OPENAI_AUTH_MODE": "api_key",
+            "OPENAI_API_KEY": "sk-test",
+        },
+        paths,
+    )
     mc = agent.model_config(cfg)
     assert mc.api_key == "sk-test"
     assert mc.base_url is None
 
 
-def test_model_config_subscription_does_not_raise_when_not_signed_in(monkeypatch):
+def test_model_config_subscription_does_not_raise_when_not_signed_in(paths):
     # Building the agent in subscription mode with no token must NOT raise (that would
     # 500 a reload); it returns a config with an empty key → the TURN fails cleanly.
-    monkeypatch.setenv("AG2ASSISTANT_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("AG2ASSISTANT_OPENAI_AUTH_MODE", "subscription")
-    cfg = load_config()
+    cfg = resolve_config(
+        {"AG2ASSISTANT_LLM_PROVIDER": "openai", "AG2ASSISTANT_OPENAI_AUTH_MODE": "subscription"},
+        paths,
+    )
     mc = agent.model_config(cfg)  # must not raise
     assert mc.base_url == codex_auth.BACKEND_BASE
     assert mc.api_key == ""
 
 
-def test_creds_best_effort_never_raises():
+def test_creds_best_effort_never_raises(auth, paths):
+    auth = CodexAuth(paths, client=http.client(http.failing_responder(403, "unsupported_country")))
     # not signed in → empty creds, no exception
-    assert codex_auth.creds_best_effort().access_token == ""
+    assert auth.creds_best_effort().access_token == ""
     # signed in but expired + refresh fails → falls back to the stored (stale) token
-    codex_auth._store_tokens({"access_token": "STALE", "refresh_token": "R", "expires_in": 3600})
-    d = codex_auth._read()
+    auth._store_tokens({"access_token": "STALE", "refresh_token": "R", "expires_in": 3600})
+    d = auth._read()
     d["expires_at"] = time.time() - 10
-    codex_auth._write(d)
-
-    class FakeResp:
-        status_code = 403
-        text = "unsupported_country"
-
-        def json(self):
-            return {}
-
-    orig = httpx.post
-    httpx.post = lambda *a, **k: FakeResp()
-    try:
-        assert codex_auth.creds_best_effort().access_token == "STALE"
-    finally:
-        httpx.post = orig
+    auth._write(d)
+    assert auth.creds_best_effort().access_token == "STALE"
 
 
-def _write_codex_cli(tmp_path, tokens: dict):
-    d = tmp_path / ".codex"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt", "tokens": tokens}))
+def _write_codex_cli(paths, tokens: dict):
+    """A signed-in official Codex CLI, at the location Paths points us to."""
+    paths.codex_auth.parent.mkdir(parents=True, exist_ok=True)
+    paths.codex_auth.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": tokens}))
 
 
-def test_reuses_codex_cli_session_when_no_own_login(tmp_path):
+def test_reuses_codex_cli_session_when_no_own_login(auth, paths):
     # No AG2-owned login, but the official Codex CLI is signed in → reuse its tokens.
     _write_codex_cli(
-        tmp_path,
+        paths,
         {
             "access_token": "CLI_ACCESS",
             "refresh_token": "r",
@@ -331,35 +323,33 @@ def test_reuses_codex_cli_session_when_no_own_login(tmp_path):
             "id_token": "",
         },
     )
-    assert codex_auth.is_signed_in() is True
-    st = codex_auth.status()
+    assert auth.is_signed_in() is True
+    st = auth.status()
     assert st["signed_in"] is True and st["source"] == "codex-cli" and st["account_id"] == "acc-cli"
-    creds = codex_auth.ensure_fresh()  # must not raise; returns the CLI token
+    creds = auth.ensure_fresh()  # must not raise; returns the CLI token
     assert creds.access_token == "CLI_ACCESS" and creds.account_id == "acc-cli"
 
 
-def test_own_login_takes_precedence_over_codex_cli(tmp_path):
-    _write_codex_cli(
-        tmp_path, {"access_token": "CLI", "refresh_token": "r", "account_id": "acc-cli"}
-    )
-    codex_auth._store_tokens({"access_token": "OWN", "refresh_token": "R", "expires_in": 3600})
-    assert codex_auth.status()["source"] == "ag2"
-    assert codex_auth.ensure_fresh().access_token == "OWN"
+def test_own_login_takes_precedence_over_codex_cli(auth, paths):
+    _write_codex_cli(paths, {"access_token": "CLI", "refresh_token": "r", "account_id": "acc-cli"})
+    auth._store_tokens({"access_token": "OWN", "refresh_token": "R", "expires_in": 3600})
+    assert auth.status()["source"] == "ag2"
+    assert auth.ensure_fresh().access_token == "OWN"
 
 
-def test_codex_cli_account_id_derived_from_jwt_when_absent(tmp_path):
+def test_codex_cli_account_id_derived_from_jwt_when_absent(auth, paths):
     # No explicit account_id in the CLI file → derive it from the id_token JWT.
     _write_codex_cli(
-        tmp_path,
+        paths,
         {
             "access_token": "A",
             "refresh_token": "r",
             "id_token": _fake_jwt({"chatgpt_account_id": "acc-jwt"}),
         },
     )
-    assert codex_auth._codex_cli_creds().account_id == "acc-jwt"
+    assert auth._codex_cli_creds().account_id == "acc-jwt"
 
 
-def test_config_auth_mode_env_override(monkeypatch):
-    monkeypatch.setenv("AG2ASSISTANT_OPENAI_AUTH_MODE", "SUBSCRIPTION")  # normalized to lower
-    assert load_config().llm.auth_mode == "subscription"
+def test_config_auth_mode_env_override(paths):
+    env = {"AG2ASSISTANT_OPENAI_AUTH_MODE": "SUBSCRIPTION"}  # normalized to lower
+    assert resolve_config(env, paths).llm.auth_mode == "subscription"

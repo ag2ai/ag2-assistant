@@ -16,8 +16,10 @@ from contextlib import AsyncExitStack
 import pytest
 from fastapi.testclient import TestClient
 
-from assistant import profiles
-from tests.conftest import api, use_fake_agent
+from assistant.llm_configs import LlmConfigStore
+from assistant.profiles import ProfileRegistry
+from tests.support.apps import api, make_manager
+from tests.support.fakes import fake_agent_factory
 
 
 async def _run_tool(tool, **kwargs):
@@ -28,14 +30,31 @@ async def _run_tool(tool, **kwargs):
         return await tool.model.asolve(stack=stack, cache_dependencies={}, **kwargs)
 
 
-def _two_profile_client(monkeypatch):
-    """A started app with two live profiles A (work) and B (personal); returns
-    ``(client_ctx, )`` — use as ``with _two_profile_client(mp) as client:``."""
-    from assistant.gateway.app import create_app
-    from assistant.gateway.profile_manager import ProfileManager
+@pytest.fixture
+def root(paths):
+    """The install root of the isolated layout (global, non-profile files)."""
+    return paths.root
 
-    use_fake_agent(monkeypatch)
-    manager = ProfileManager(memory=False, persist=True)
+
+@pytest.fixture
+def llm_store(paths) -> LlmConfigStore:
+    """The named-LLM-configuration store over that same layout."""
+    return LlmConfigStore(paths)
+
+
+@pytest.fixture
+def registry(paths) -> ProfileRegistry:
+    """The registry over the same layout the app resolves."""
+    return ProfileRegistry(paths)
+
+
+def _two_profile_client(paths):
+    """A started app with two live profiles A (work) and B (personal); returns
+    ``(client_ctx, )`` — use as ``with _two_profile_client(paths) as client:``.
+    The ambient environment is empty, so no AG2ASSISTANT_* pin can leak in."""
+    from assistant.gateway.app import create_app
+
+    manager = make_manager(paths, env={}, persist=True)
     app = create_app(manager)
     return TestClient(app)
 
@@ -50,8 +69,8 @@ def _boot_two(client):
 # --- a. chat isolation: A's chats has it, B's is empty; dbs in right dirs ---
 
 
-def test_chats_isolated(monkeypatch):
-    with _two_profile_client(monkeypatch) as client:
+def test_chats_isolated(root, registry, paths):
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
 
         r = client.post(api(a, "/message"), json={"text": "hi A", "chat_id": "s-a"})
@@ -65,22 +84,22 @@ def test_chats_isolated(monkeypatch):
 
         # each profile has its OWN chats.db under its own dir (persist=True creates
         # one per runtime at boot); the chat lives only in A's, and neither is the root's
-        assert (profiles.profile_dir(a) / "chats.db").exists()
-        assert (profiles.profile_dir(b) / "chats.db").exists()
-        assert profiles.profile_dir(a) != profiles.profile_dir(b)
-        assert not (profiles.data_dir() / "chats.db").exists()
+        assert (registry.profile_dir(a) / "chats.db").exists()
+        assert (registry.profile_dir(b) / "chats.db").exists()
+        assert registry.profile_dir(a) != registry.profile_dir(b)
+        assert not (root / "chats.db").exists()
 
 
 # --- b. remember tool: A's profile.db changes, B's absent; GET B/memory empty ---
 
 
-def test_remember_tool_isolated(monkeypatch):
+def test_remember_tool_isolated(registry, paths):
     """Invoke the built memory tool the way agent.py wires it (build_memory_tool over
     A's profile + universal store paths). A profile-scoped note lands in A's profile.db;
     B's memory endpoint stays empty."""
     from assistant.agent import build_memory_tool
 
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
         a_cfg = client.app.state.profiles.get(a).config
         a_store = a_cfg.data_dir / "profile.db"
@@ -96,19 +115,19 @@ def test_remember_tool_isolated(monkeypatch):
         assert "A likes terse answers" in a_mem
 
         # B is untouched: no profile.db, empty memory endpoint
-        assert not (profiles.profile_dir(b) / "profile.db").exists()
+        assert not (registry.profile_dir(b) / "profile.db").exists()
         assert client.get(api(b, "/memory")).json()["text"] == ""
         # a profile-scoped note must NOT have leaked into the shared universal layer
         assert client.get("/api/memory").json()["text"] == ""
 
 
-def test_remember_tool_universal_scope_shared(monkeypatch):
+def test_remember_tool_universal_scope_shared(root, paths):
     """A remember(scope="universal") writes the shared root/user.db — readable via the
     GLOBAL /api/memory and injected into BOTH profiles' contexts. A remember(scope=
     "profile") stays in that one profile's profile.db and is NOT visible universally."""
     from assistant.agent import build_memory_tool, universal_memory_guidance
 
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
         a_cfg = client.app.state.profiles.get(a).config
         b_cfg = client.app.state.profiles.get(b).config
@@ -141,10 +160,10 @@ def test_remember_tool_universal_scope_shared(monkeypatch):
         assert client.get(api(b, "/memory")).json()["text"] == ""
 
 
-def test_global_memory_api_roundtrip_shared(monkeypatch):
+def test_global_memory_api_roundtrip_shared(paths):
     """POST /api/memory (global) then GET /api/memory returns the same doc — and the
     doc is the SAME whether the caller was 'in' profile A or B (it's install-wide)."""
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
 
         marker = "# User profile\n- Name: TestUser"
@@ -159,7 +178,7 @@ def test_global_memory_api_roundtrip_shared(monkeypatch):
 # --- c. settings: A/settings/focuses updates A only; reload keeps A's data_dir ---
 
 
-def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
+def test_settings_focuses_isolated_and_reload_keeps_paths(root, registry, paths):
     """POST A/settings/focuses updates A's settings.json and reloads A's runtime; B is
     untouched. (The LLM is install-wide now, so focuses is the per-profile setting that
     exercises the same reload path.) Regression for the load_config() bug: after the
@@ -167,7 +186,7 @@ def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
     root/B) and reflects the new setting."""
     from assistant.settings import Settings
 
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
 
         a_runtime = client.app.state.profiles.get(a)
@@ -177,36 +196,33 @@ def test_settings_focuses_isolated_and_reload_keeps_paths(monkeypatch):
         assert r.status_code == 200, r.text
 
         # A's settings.json updated; B's has no focuses
-        assert Settings(profiles.profile_dir(a) / "config.yaml").get_focuses() == [
+        assert Settings(registry.profile_dir(a) / "config.yaml").get_focuses() == [
             "research",
             "coding",
         ]
-        assert Settings(profiles.profile_dir(b) / "config.yaml").get_focuses() == []
+        assert Settings(registry.profile_dir(b) / "config.yaml").get_focuses() == []
 
         # regression: after reload A's config still points at A's data_dir (not root/B)
         assert a_runtime.config.data_dir == a_data_dir
-        assert a_runtime.config.data_dir == profiles.profile_dir(a)
+        assert a_runtime.config.data_dir == registry.profile_dir(a)
 
         # B's runtime config untouched
         b_runtime = client.app.state.profiles.get(b)
-        assert b_runtime.config.data_dir == profiles.profile_dir(b)
+        assert b_runtime.config.data_dir == registry.profile_dir(b)
 
 
 # --- c2. per-profile LLM Active override (ADR 0015): A overrides, B inherits ---
 
 
-def test_llm_override_isolated_via_endpoint(monkeypatch):
+def test_llm_override_isolated_via_endpoint(llm_store, paths):
     """POST A/settings/llm-override points A's Active Text model at a shared config and
     reloads A's runtime; B inherits the install-wide Active and the install-wide Active
     itself never moves. Clearing restores inheritance; an unknown id is a 404."""
-    from assistant import llm_configs
 
-    monkeypatch.delenv("AG2ASSISTANT_LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("AG2ASSISTANT_MODEL", raising=False)
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
-        e1 = llm_configs.save_config({"name": "A", "type": "anthropic", "model": "claude-x"})
-        e2 = llm_configs.save_config({"name": "O", "type": "openai", "model": "gpt-x"})
+        e1 = llm_store.save_config({"name": "A", "type": "anthropic", "model": "claude-x"})
+        e2 = llm_store.save_config({"name": "O", "type": "openai", "model": "gpt-x"})
         # Activate e1 install-wide via the real endpoint so EVERY runtime reloads and
         # picks up the store (mirrors the composer switch); B then inherits claude-x.
         assert client.post(f"/api/llm-configs/{e1['id']}/use").status_code == 200
@@ -225,7 +241,7 @@ def test_llm_override_isolated_via_endpoint(monkeypatch):
         assert sb["llm_active"] == e1["id"]
         assert sb["assistant"]["model"] == "claude-x"
 
-        assert llm_configs.active_id() == e1["id"]  # install-wide Active untouched
+        assert llm_store.active_id() == e1["id"]  # install-wide Active untouched
 
         # Clear A's override → back to the inherited install-wide Active.
         r = client.post(api(a, "/settings/llm-override"), json={"config_id": ""})
@@ -242,17 +258,17 @@ def test_llm_override_isolated_via_endpoint(monkeypatch):
 # --- d. usage: recording a turn's usage in A writes A/usage.json only ---
 
 
-def test_usage_ledger_isolated(monkeypatch):
-    with _two_profile_client(monkeypatch) as client:
+def test_usage_ledger_isolated(root, registry, paths):
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
         a_gw = client.app.state.profiles.get(a).gateway
 
         # tally the way a turn does: the gateway's per-profile ledger
         a_gw._usage.record("gemini-3.6-flash", prompt_tokens=100, completion_tokens=50)
 
-        assert (profiles.profile_dir(a) / "usage.json").exists()
-        assert not (profiles.profile_dir(b) / "usage.json").exists()
-        assert not (profiles.data_dir() / "usage.json").exists()  # not the root
+        assert (registry.profile_dir(a) / "usage.json").exists()
+        assert not (registry.profile_dir(b) / "usage.json").exists()
+        assert not (root / "usage.json").exists()  # not the root
 
         a_today = client.get(api(a, "/usage")).json()
         assert a_today["total"] == 150
@@ -263,15 +279,15 @@ def test_usage_ledger_isolated(monkeypatch):
 # --- e. skills: a SKILL.md under A's skills_dir; B's lacks it; dirs differ ---
 
 
-def test_skills_dir_isolated(monkeypatch):
-    with _two_profile_client(monkeypatch) as client:
+def test_skills_dir_isolated(registry, paths):
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
         a_cfg = client.app.state.profiles.get(a).config
         b_cfg = client.app.state.profiles.get(b).config
 
         # each profile's skills_dir is its own profile-dir subfolder, never shared
-        assert a_cfg.skills_dir == profiles.profile_dir(a) / "skills"
-        assert b_cfg.skills_dir == profiles.profile_dir(b) / "skills"
+        assert a_cfg.skills_dir == registry.profile_dir(a) / "skills"
+        assert b_cfg.skills_dir == registry.profile_dir(b) / "skills"
         assert a_cfg.skills_dir != b_cfg.skills_dir
 
         # "install" a skill into A via config.skills_dir
@@ -285,11 +301,11 @@ def test_skills_dir_isolated(monkeypatch):
 # --- e2. skills: a Suppression in A is invisible to B; install-wide Disable hits both ---
 
 
-def test_skill_suppression_isolated_but_disable_is_global(monkeypatch):
+def test_skill_suppression_isolated_but_disable_is_global(paths):
     """A per-profile Suppression (ADR 0016 t02) turns a shared skill off for A only —
     B's resolved skill set is unchanged. An install-wide Disable, by contrast, changes
     both. Asserted through the /api/p/{pid}/skills projection the Skills tab reads."""
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
 
         def avail(pid, name):
@@ -316,13 +332,13 @@ def test_skill_suppression_isolated_but_disable_is_global(monkeypatch):
 # --- f. permissions: now GLOBAL — a grant is install-wide, visible to every profile ---
 
 
-def test_permissions_are_global(monkeypatch):
+def test_permissions_are_global(root, registry, paths):
     """Permissions moved from per-profile to a single install-wide store at
     config.root_dir/permissions.json — a grant made against one runtime's store is
     visible to the other, and no per-profile permissions.json is ever created."""
     from assistant.permissions import PermissionStore
 
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
         a_cfg = client.app.state.profiles.get(a).config
         b_cfg = client.app.state.profiles.get(b).config
@@ -342,15 +358,15 @@ def test_permissions_are_global(monkeypatch):
             "gmail_send" in client.app.state.profiles.get(b).gateway._permissions.granted_commands()
         )
         # and no per-profile file was created
-        assert not (profiles.profile_dir(a) / "permissions.json").exists()
-        assert not (profiles.profile_dir(b) / "permissions.json").exists()
+        assert not (registry.profile_dir(a) / "permissions.json").exists()
+        assert not (registry.profile_dir(b) / "permissions.json").exists()
 
 
 # --- g. MCP: POST A/settings/mcp; A lists it, B doesn't; A's agent tools include it ---
 
 
-def test_mcp_server_isolated(monkeypatch):
-    with _two_profile_client(monkeypatch) as client:
+def test_mcp_server_isolated(paths):
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
 
         server = {"name": "echo-mcp", "command": "echo", "args": ["hi"], "enabled": True}
@@ -378,14 +394,14 @@ def test_mcp_server_isolated(monkeypatch):
 # --- h. voice system tools: set_voice in A changes A's settings only ---
 
 
-def test_voice_system_tool_isolated(monkeypatch):
+def test_voice_system_tool_isolated(registry, paths):
     """Use the voice get/set system tools built for A (build_system_tools with A's
     Settings) — setting a voice writes A's settings.json, not B's (§4.8 system_tools row)."""
     from assistant import voice_providers
     from assistant.settings import Settings
     from assistant.system_tools import build_system_tools
 
-    with _two_profile_client(monkeypatch) as client:
+    with _two_profile_client(paths) as client:
         a, b = _boot_two(client)
         a_runtime = client.app.state.profiles.get(a)
         a_settings = Settings(a_runtime.config.data_dir / "config.yaml")
@@ -399,9 +415,9 @@ def test_voice_system_tool_isolated(monkeypatch):
         msg = asyncio.run(_run_tool(set_voice, voice=target))
         assert "Voice set to" in msg
 
-        assert Settings(profiles.profile_dir(a) / "config.yaml").get_voice() == target
+        assert Settings(registry.profile_dir(a) / "config.yaml").get_voice() == target
         # B's settings.json has no voice override → its provider default
-        b_settings = Settings(profiles.profile_dir(b) / "config.yaml")
+        b_settings = Settings(registry.profile_dir(b) / "config.yaml")
         assert (
             b_settings.get_voice() == voice_providers.get(b_settings.voice_provider()).default_voice
         )
@@ -410,27 +426,27 @@ def test_voice_system_tool_isolated(monkeypatch):
 # --- §6.4 concurrency: A's scheduler fires while B is active ---
 
 
-async def test_a_scheduler_fires_while_b_active(monkeypatch):
+async def test_a_scheduler_fires_while_b_active(registry, paths):
     """Schedule a near-due task in A's runtime, interact with B, and assert A's
     scheduler autonomously fires A's task to a terminal state — deterministic (fake
     agent, short interval, poll with timeout; no long sleeps)."""
     from datetime import datetime, timedelta
 
-    from assistant.config import load_config
+    from assistant.config import resolve_config
     from assistant.gateway.core import build_gateway
     from assistant.tasks.model import RunStatus
 
-    use_fake_agent(monkeypatch)
+    a_meta = registry.create_profile("Work", "#109e91")
+    b_meta = registry.create_profile("Personal", "#f95339")
+    registry.profile_dir(a_meta.id).mkdir(parents=True, exist_ok=True)
+    registry.profile_dir(b_meta.id).mkdir(parents=True, exist_ok=True)
 
-    a_meta = profiles.create_profile("Work", "#109e91")
-    b_meta = profiles.create_profile("Personal", "#f95339")
-    profiles.profile_dir(a_meta.id).mkdir(parents=True, exist_ok=True)
-    profiles.profile_dir(b_meta.id).mkdir(parents=True, exist_ok=True)
-
-    a_cfg = load_config().with_profile(a_meta)
-    b_cfg = load_config().with_profile(b_meta)
-    a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True)
-    b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True)
+    base = resolve_config({}, paths)
+    a_cfg = base.with_profile(a_meta)
+    b_cfg = base.with_profile(b_meta)
+    fake = fake_agent_factory()
+    a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True, agent_factory=fake)
+    b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True, agent_factory=fake)
     # build_gateway wires the TaskService into the Gateway's agent tools, but the
     # reverse wiring (turns/stops for runs) is the caller's job — normally done by
     # ProfileManager; do it here since this test drives build_gateway directly.

@@ -9,10 +9,16 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from assistant import __version__, codex_auth, profiles
-from assistant.agent import ask, tz_unset_in_container
-from assistant.channels import get_channel
-from assistant.config import Config, load_config
+from assistant import __version__
+from assistant.agent import ask
+from assistant.channels import channel_token_kwargs, get_channel
+from assistant.codex_auth import (
+    CodexAuth,
+    CodexAuthError,
+    build_authorize_url,
+    generate_pkce,
+)
+from assistant.config import Config, load_config, tz_unset_in_container
 from assistant.folders import DuplicatePath, FolderStore
 from assistant.gateway.app import create_app
 from assistant.gateway.core import Gateway, build_gateway
@@ -23,21 +29,34 @@ from assistant.gateway.profile_manager import (
     resolve_active_profile,
 )
 from assistant.hitl import DesktopAsker
-from assistant.integrations.google_auth import (
-    credentials_path,
-    has_token,
-    is_configured,
-    login,
-    logout,
-)
+from assistant.integrations.google_auth import GoogleAuth
 from assistant.memory import clear_profile, read_profile
 from assistant.onboarding import needs_onboarding, run_onboarding
+from assistant.paths import Paths
 from assistant.permissions import PermissionStore, command_rule, parse_command_rule
+from assistant.profiles import ProfileRegistry
+from assistant.secrets import SecretStore
+
+# oauthlib treats a scope superset returned by Google as an error ("Scope has
+# changed"); a broader grant back is not a failure. Set here, at the entry point —
+# no module below it touches the process environment.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 app = typer.Typer(
     name="ag2-assistant",
     help="AG2 Assistant - Personal AI Assistant",
 )
+
+
+def default_paths() -> Paths:
+    """This install's on-disk layout. The one environment read in the package."""
+    return Paths.from_env(os.environ, Path.home())
+
+
+def _channel_tokens(platform: str) -> dict[str, str]:
+    """This platform's tokens as channel-constructor kwargs. Saved secrets win over
+    the environment, so a token stored from the web UI also serves the CLI."""
+    return channel_token_kwargs(platform, SecretStore(default_paths()).merged_env(os.environ))
 
 
 @app.callback()
@@ -54,8 +73,9 @@ def _global_options(
         os.environ["AG2ASSISTANT_DATA_DIR"] = str(Path(data_dir).expanduser())
 
 
-def _echo_local_time() -> None:
-    """Print the server's local time at startup, and flag an unset container TZ.
+def local_time_banner(now: datetime, *, tz_unset: bool) -> list[str]:
+    """The startup banner's clock lines: the server's local time, plus a hint when the
+    timezone is unset in a container.
 
     Scheduling is wall-clock in the local timezone (see ``tasks.scheduling``), so the
     process timezone decides when "remind me at 6am" actually fires. Container base
@@ -66,15 +86,22 @@ def _echo_local_time() -> None:
     The hint is limited to containers with no TZ set: a UTC host is a deliberate,
     ordinary choice and shouldn't be nagged.
     """
-    now = datetime.now().astimezone()
-    typer.echo(f"  Time    {now:%Y-%m-%d %H:%M %Z} (UTC{now:%z})")
-
-    if tz_unset_in_container():
-        typer.echo(
+    lines = [f"  Time    {now:%Y-%m-%d %H:%M %Z} (UTC{now:%z})"]
+    if tz_unset:
+        lines.append(
             "  Note: no TZ set, so this container is on UTC — scheduled tasks "
             '("remind me at 6am") will use UTC.'
         )
-        typer.echo("        Set it to your zone, e.g. -e TZ=Australia/Sydney")
+        lines.append("        Set it to your zone, e.g. -e TZ=Australia/Sydney")
+    return lines
+
+
+def _echo_local_time() -> None:
+    """Print the clock banner, resolving the container/TZ fact here at the boundary."""
+    for line in local_time_banner(
+        datetime.now().astimezone(), tz_unset=tz_unset_in_container(os.environ)
+    ):
+        typer.echo(line)
 
 
 def _resolve_profile_config(profile: str | None) -> Config:
@@ -85,7 +112,7 @@ def _resolve_profile_config(profile: str | None) -> Config:
     derived config so callers read profile-owned paths off ``config.data_dir``.
     """
     try:
-        _, config, _ = resolve_active_profile(profile)
+        _, config, _ = resolve_active_profile(profile, paths=default_paths(), env=os.environ)
     except ArchivedProfile as exc:
         typer.echo(f"profile '{exc}' is archived")
         raise typer.Exit(1)
@@ -126,7 +153,9 @@ def agent(
                 user_store_path = config.root_dir / "user.db"  # shared universal memory
                 if await needs_onboarding(user_store_path):
                     typer.echo("First time here — a few quick questions (all skippable):")
-                    await run_onboarding(asker, user_store_path)
+                    answers = await run_onboarding(asker, user_store_path, paths=config.paths)
+                    if loc := answers.get("location"):
+                        config.agent.location = loc  # apply to the config this run uses
             return await ask(message, config, memory=memory, platform=platform, asker=asker)
         finally:
             if asker is not None:
@@ -146,7 +175,8 @@ def onboard(
 
     Seeds the UNIVERSAL "who the user is" memory (``root_dir/user.db``), shared by
     every profile — so this is install-wide, not per-profile."""
-    user_store_path = _resolve_profile_config(profile).root_dir / "user.db"
+    config = _resolve_profile_config(profile)
+    user_store_path = config.root_dir / "user.db"
 
     async def run() -> None:
         if not force and not await needs_onboarding(user_store_path):
@@ -154,7 +184,7 @@ def onboard(
             return
         asker = DesktopAsker()
         try:
-            answers = await run_onboarding(asker, user_store_path)
+            answers = await run_onboarding(asker, user_store_path, paths=config.paths)
         finally:
             await asker.aclose()
         if answers:
@@ -184,7 +214,9 @@ def chat(
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
     try:
-        _, chat_config, factory = resolve_active_profile(profile)
+        _, chat_config, factory = resolve_active_profile(
+            profile, paths=default_paths(), env=os.environ
+        )
     except ArchivedProfile as exc:
         typer.echo(f"profile '{exc}' is archived")
         raise typer.Exit(1)
@@ -285,17 +317,18 @@ def profiles_create(
     NOT boot a runtime (a later `run`/`chat` picks it up). The first profile created
     becomes the active default automatically.
     """
+    registry = ProfileRegistry(default_paths())
     try:
-        meta = profiles.create_profile(name, accent)
+        meta = registry.create_profile(name, accent)
     except ValueError as exc:
         typer.echo(f"error: {exc}")
         raise typer.Exit(1)
 
-    profiles.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     typer.echo(f"Created profile '{meta.id}':")
     typer.echo(f"  name      {meta.name}")
     typer.echo(f"  accent    {meta.accent}")
-    typer.echo(f"  workspace {meta.workspace}")
+    typer.echo(f"  workspace {registry.profile_dir(meta.id) / 'workspace'}")
     typer.echo(f"\n`ag2-assistant run` and `ag2-assistant chat -p {meta.id}` will use it.")
 
 
@@ -306,18 +339,20 @@ def profiles_list(
     ),
 ) -> None:
     """List registered profiles (active default marked with *)."""
-    metas = profiles.list_profiles(include_archived=show_all)
+    registry = ProfileRegistry(default_paths())
+    metas = registry.list_profiles(include_archived=show_all)
     if not metas:
         typer.echo("(no profiles yet — create one with 'ag2-assistant profiles create <name>')")
         return
 
-    active = profiles.load_registry().get("active_default")
+    active = registry.load_registry().get("active_default")
     header = f"{'':1} {'id':16} {'name':20} {'accent':9} workspace"
     typer.echo(header)
     for meta in metas:
         mark = "*" if meta.id == active else " "
         name = meta.name + (" (archived)" if meta.archived else "")
-        typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.accent:9} {meta.workspace}")
+        workspace = registry.profile_dir(meta.id) / "workspace"
+        typer.echo(f"{mark:1} {meta.id:16} {name:20} {meta.accent:9} {workspace}")
 
 
 perms_app = typer.Typer(help="Manage command permissions (install-wide).")
@@ -486,15 +521,16 @@ def google_login(
     ),
 ) -> None:
     """Authorise AG2 Assistant to access your Google account (opens a browser once)."""
-    if not is_configured():
-        typer.echo(f"Missing OAuth client file at {credentials_path()}.")
+    google = GoogleAuth(default_paths())
+    if not google.is_configured():
+        typer.echo(f"Missing OAuth client file at {google.credentials_path}.")
         typer.echo(
             "Create a Desktop OAuth client in Google Cloud (enable Gmail/Calendar/"
             "Drive APIs), download its JSON, and save it to that path."
         )
         raise typer.Exit(1)
     try:
-        email = login(open_browser=not no_browser)
+        email = google.login(open_browser=not no_browser)
     except Exception as exc:
         typer.echo(f"Login failed: {exc}")
         raise typer.Exit(1)
@@ -504,14 +540,16 @@ def google_login(
 @google_app.command("logout")
 def google_logout() -> None:
     """Remove the stored Google token."""
-    typer.echo("Signed out of Google." if logout() else "Not signed in.")
+    google = GoogleAuth(default_paths())
+    typer.echo("Signed out of Google." if google.logout() else "Not signed in.")
 
 
 @google_app.command("status")
 def google_status() -> None:
     """Show Google integration status."""
-    typer.echo(f"OAuth client configured: {is_configured()}")
-    typer.echo(f"Signed in: {has_token()}")
+    google = GoogleAuth(default_paths())
+    typer.echo(f"OAuth client configured: {google.is_configured()}")
+    typer.echo(f"Signed in: {google.has_token()}")
 
 
 @app.command()
@@ -528,7 +566,7 @@ def gateway(
     typer.echo(f"  Web UI  http://{host}:{port}/")
     typer.echo(f"  API     http://{host}:{port}/api/p/{{pid}}/…")
     _echo_local_time()
-    uvicorn.run(create_app(ProfileManager(memory=memory)), host=host, port=port)
+    uvicorn.run(create_app(ProfileManager(memory=memory, env=os.environ)), host=host, port=port)
 
 
 @app.command("acp-bridge")
@@ -549,9 +587,18 @@ def acp_bridge(
     Run this on the HOST (not in Docker), then point the container at it with
     AG2ASSISTANT_ACP_BRIDGE=host.docker.internal:PORT (and _TOKEN if set)."""
     from assistant.coding.bridge_server import serve
+    from assistant.coding.detect import default_search_path
 
     try:
-        asyncio.run(serve(host=host, port=port, token=token))
+        asyncio.run(
+            serve(
+                host=host,
+                port=port,
+                token=token,
+                search_path=default_search_path(os.environ),
+                env=os.environ,
+            )
+        )
     except KeyboardInterrupt:
         typer.echo("\nacp-bridge stopped")
 
@@ -569,7 +616,7 @@ def telegram(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("telegram")
+        channel = get_channel("telegram", **_channel_tokens("telegram"))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "telegram":
@@ -605,7 +652,7 @@ def discord(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("discord")
+        channel = get_channel("discord", **_channel_tokens("discord"))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "discord":
@@ -640,7 +687,7 @@ def slack(
         tasks.set_gateway(gateway)  # run_task_now from the channel executes runs here
         # tools only; the scheduler runs in `ag2-assistant run`, not per channel
         await tasks.start(scheduler=False)
-        channel = get_channel("slack")
+        channel = get_channel("slack", **_channel_tokens("slack"))
 
         async def notify(platform: str, chat_id: str, text: str) -> None:
             if platform == "slack":
@@ -686,7 +733,7 @@ def run(
     if sandbox:
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
 
-    manager = ProfileManager(memory=memory)
+    manager = ProfileManager(memory=memory, env=os.environ)
 
     if not rest:
         # Headless: run the manager directly (boot profiles + channels + schedulers),
@@ -747,21 +794,22 @@ def auth_login(
     typer.echo("⚠️  Unofficial — this uses your ChatGPT subscription in a way OpenAI")
     typer.echo("   does not officially support; your account could be rate-limited.\n")
     try:
+        auth = CodexAuth(default_paths())
         if no_browser:
-            verifier, challenge = codex_auth.generate_pkce()
+            verifier, challenge = generate_pkce()
             state = _secrets.token_urlsafe(24)
-            url = codex_auth.build_authorize_url(challenge, state)
+            url = build_authorize_url(challenge, state)
             typer.echo("Open this URL, sign in, then paste the `code` from the redirect URL:\n")
             typer.echo(url + "\n")
             code = typer.prompt("code").strip()
-            codex_auth.exchange_code(code, verifier)
+            auth.exchange_code(code, verifier)
         else:
             typer.echo("Opening your browser to sign in with ChatGPT…")
-            codex_auth.run_local_login()
-    except codex_auth.CodexAuthError as exc:
+            auth.run_local_login()
+    except CodexAuthError as exc:
         typer.echo(f"Sign-in failed: {exc}")
         raise typer.Exit(1) from None
-    st = codex_auth.status()
+    st = auth.status()
     acct = st.get("account_id") or "unknown account"
     typer.echo(f"Signed in ✓ ({acct})")
 
@@ -769,13 +817,13 @@ def auth_login(
 @auth_app.command("logout")
 def auth_logout() -> None:
     """Remove the stored ChatGPT-subscription tokens."""
-    typer.echo("Signed out." if codex_auth.logout() else "Not signed in.")
+    typer.echo("Signed out." if CodexAuth(default_paths()).logout() else "Not signed in.")
 
 
 @auth_app.command("status")
 def auth_status() -> None:
     """Show whether you're signed in with ChatGPT."""
-    st = codex_auth.status()
+    st = CodexAuth(default_paths()).status()
     if st.get("signed_in"):
         typer.echo(f"Signed in ✓ (account: {st.get('account_id') or 'unknown'})")
     else:
