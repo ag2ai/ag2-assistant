@@ -443,6 +443,25 @@ the Text section of Settings → Models; exactly one is Active install-wide.
 _Avoid_: LLM config (the `llm_configs` store/implementation name), model (bare —
 ambiguous with a Live model)
 
+**Custom endpoint** (Text model):
+A **Text model** that names its own endpoint rather than reaching its vendor's. Naming
+an endpoint is the whole of the distinction — there is no separate flag, and no
+recorded memory of the **Template** it came from. A Custom endpoint is the only kind
+of Text model that may choose its **API interface**; every other Text model reaches
+one vendor over one settled surface. Ollama is *not* a Custom endpoint: its local
+address is a different field and admits no interface choice.
+_Avoid_: compatible model, custom provider, self-hosted (an endpoint may be a cloud
+proxy), BYO endpoint
+
+**API interface**:
+The wire a **Custom endpoint** is spoken over — OpenAI · Responses, OpenAI · Chat
+Completions, or Anthropic. An attribute of a Text model, offered only once that model
+names an endpoint and hidden entirely otherwise: the vendor-reaching Text models each
+have exactly one surface and so present no choice. Naming an endpoint reveals the
+choice; withdrawing the endpoint settles it back to the vendor's own surface.
+_Avoid_: type (the stored field's name, which also carries the vendor), protocol, API
+version, provider (the vendor is a separate axis and is never chosen here)
+
 **Live model**:
 A named configuration for realtime voice — a Voice provider, a realtime model, an
 optional referenced Secret, and a chosen Voice. The spoken counterpart of a Text model.
@@ -491,7 +510,10 @@ opens the model editor prefilled; a Template is never saved, never listed, and h
 lifecycle of its own — it exists only in the moment of creation. Templates are
 presented in groups under one rule: those needing no API key group together and come
 first, everything else groups by vendor. A Template's group and its **Credential
-source** both follow from its type, never from the Template itself.
+source** both follow from its type, never from the Template itself. A Template that
+seeds an endpoint creates a **Custom endpoint**, whose **API interface** is then the
+user's to change; every other Template's surface is settled at the moment it is
+picked and is never presented again.
 _Avoid_: preset, starter, example (a Template is prefill, not a sample), provider (a
 Template names one but is not one)
 

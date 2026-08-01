@@ -2,10 +2,10 @@
 // group and its chip, for text (lib/llm.js) and voice (lib/live.js).
 // Store-free and transport-free, so tests can enumerate it.
 
-// LLM config type -> the label the UI shows for it. `openai` denotes a compatible
-// endpoint; the first-party OpenAI path is `openai_responses`.
+// LLM config type -> the label the UI shows for it. `openai` names a wire (Chat
+// Completions), not a deployment; the first-party OpenAI path is `openai_responses`.
 export const TYPE_LABEL = {
-  openai: 'OpenAI-compatible', openai_responses: 'OpenAI · Responses',
+  openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
   openai_subscription: 'OpenAI · ChatGPT subscription',
   anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
   claude_code: 'Claude Code · CLI login', codex: 'Codex · CLI login',

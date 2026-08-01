@@ -67,6 +67,14 @@ test('no template offers the bare openai type without an endpoint', () => {
   }
 })
 
+// "compatible" is a Template's word — the card you look for when you have your own
+// server. A type label names a wire, so it never says it.
+test('“compatible” names a card, never a type', () => {
+  for (const [type, text] of Object.entries(TYPE_LABEL)) {
+    assert.ok(!text.toLowerCase().includes('compatible'), `${type} is labelled as a deployment, not a wire`)
+  }
+})
+
 test('the two compatible cards are a matched pair', () => {
   const compatible = MODEL_TEMPLATES.filter((t) => label(t).endsWith('-compatible'))
   assert.deepEqual(compatible.map(label), ['OpenAI-compatible', 'Anthropic-compatible'])

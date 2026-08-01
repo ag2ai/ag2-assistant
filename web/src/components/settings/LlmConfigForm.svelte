@@ -4,10 +4,11 @@
   // inline-editor pattern: local state seeded from the passed config, Save/Cancel,
   // one inline error line for server 400/502 messages.
   //
-  // The type select toggles which endpoint field shows: base_url for openai* /
-  // anthropic, host for ollama, neither for gemini. The key field is a Secret
-  // picker plus a paste-to-create shortcut (a pasted key mints a value-unique
-  // Secret on save; api_key rides only the draft-test call).
+  // The type decides which endpoint field shows: base_url for openai* / anthropic,
+  // host for ollama, neither for gemini. The type is editable only as an API
+  // interface, and only once a Base URL names an endpoint. The key field is a
+  // Secret picker plus a paste-to-create shortcut (a pasted key mints a
+  // value-unique Secret on save; api_key rides only the draft-test call).
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api.js'
   import { codexOpen } from '../../store.js'
@@ -15,6 +16,7 @@
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'
   import { TYPE_LABEL } from '../../lib/providerLabels.js'
+  import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.js'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.js'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
@@ -25,15 +27,11 @@
   //   parent — first-ever config, or re-saving the already-active one).
   let { config, activate = false, onSaved, onCancel } = $props()
 
-  // The dropdown's own order; its labels come from providerLabels.js, the single
-  // type→presentation lookup.
-  const TYPES = [
-    'openai_responses', 'openai', 'openai_subscription', 'anthropic',
-    'gemini', 'ollama', 'claude_code', 'codex',
-  ].map((id) => ({ id, label: TYPE_LABEL[id] }))
-  // base_url applies to openai/openai_responses/anthropic; host to ollama only.
-  // Subscription mode has no endpoint or key fields — both come from codex_auth.
-  const usesBaseUrl = (t) => t === 'openai' || t === 'openai_responses' || t === 'anthropic'
+  // The wires a custom endpoint can be addressed over; the order and the membership
+  // are the seam's, the labels providerLabels.js's.
+  const INTERFACES = API_INTERFACES.map((id) => ({ id, label: TYPE_LABEL[id] }))
+  // Which endpoint field shows: base_url comes from the seam, host is ollama's
+  // alone, and subscription mode has neither (both come from codex_auth).
 
   // Capture the prop's initial values once (this form is freshly mounted per open,
   // so initial-value capture is exactly right). untrack keeps these out of the
@@ -129,6 +127,15 @@
     if (next === type) return
     if (modelFamily(next) !== modelFamily(type)) model = ''
     type = next
+  }
+
+  // A model that names its own endpoint says which wire that endpoint speaks.
+  const customEndpoint = $derived(offersApiInterface(type, baseUrl))
+  // A Base URL left empty settles the type onto its vendor's own surface, so no
+  // choice is stranded behind a control that is no longer shown. On blur, not on
+  // input: select-all-and-retype passes through empty without meaning it.
+  function settleBaseUrl() {
+    if (!baseUrl.trim()) changeType(settleWithoutBaseUrl(type))
   }
 
   // ACP model picker: the adapter's live catalog, fetched once per agent when its
@@ -270,12 +277,16 @@
     <label for="lf-name">Name</label>
     <input id="lf-name" bind:value={name} placeholder="e.g. Gemini Flash" />
   </div>
-  <div class="llmfield">
-    <label for="lf-type">Type</label>
-    <select id="lf-type" value={type} onchange={(e) => changeType(e.currentTarget.value)}>
-      {#each TYPES as t}<option value={t.id}>{t.label}</option>{/each}
-    </select>
-  </div>
+  {#if customEndpoint}
+    <!-- Shown only for a model that names its own endpoint; a vendor-reaching one
+         has one settled surface and shows nothing here. -->
+    <div class="llmfield">
+      <label for="lf-interface">API interface <span class="llmhint">which API surface this endpoint speaks</span></label>
+      <select id="lf-interface" value={type} onchange={(e) => changeType(e.currentTarget.value)}>
+        {#each INTERFACES as t}<option value={t.id}>{t.label}</option>{/each}
+      </select>
+    </div>
+  {/if}
   {#if acpLoading}
     <!-- Wait for the adapter's real catalog rather than offering a text box with
          invented example names: the CLI is the authority on what models exist. -->
@@ -341,8 +352,8 @@
 
   {#if usesBaseUrl(type)}
     <div class="llmfield">
-      <label for="lf-base">Base URL <span class="llmhint">optional — point at a compatible endpoint</span></label>
-      <input id="lf-base" bind:value={baseUrl} placeholder="e.g. http://localhost:8080/v1" spellcheck="false" />
+      <label for="lf-base">Base URL <span class="llmhint">optional — naming your own endpoint is also how you choose the API interface it speaks</span></label>
+      <input id="lf-base" bind:value={baseUrl} onblur={settleBaseUrl} placeholder="e.g. http://localhost:8080/v1" spellcheck="false" />
     </div>
   {:else if type === 'ollama'}
     <div class="llmfield">
