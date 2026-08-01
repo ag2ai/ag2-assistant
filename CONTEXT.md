@@ -517,6 +517,25 @@ picked and is never presented again.
 _Avoid_: preset, starter, example (a Template is prefill, not a sample), provider (a
 Template names one but is not one)
 
+**Model catalog**:
+The models an *authority* says it offers, read live and never stored. Two kinds of
+authority answer: an ACP adapter, asked for the catalog behind a CLI-login **Text
+model**, and a provider endpoint, asked for the catalog behind a keyed one. A catalog
+is the sole authority on which model names *exist*; when it cannot be read, the reason
+is named rather than hidden, and **Known models** stands in.
+_Avoid_: model list (bare — collides with the list of saved Text models), available
+models, inventory
+
+**Known models**:
+What this install knows *about* model names — a label, a price, and a context window
+per name, shipped with the app. Known models is emphatically not a statement that a
+name exists: it adorns the names a **Model catalog** returns, stands in (marked as
+unverified) when no catalog can be read, and supplies the names offered before any key
+is available. A name a catalog returns but Known models has never heard of is offered
+plainly; its missing price is the honest signal that it is newer than the app.
+_Avoid_: catalog (that is the live authority), default models, supported models (a
+Known model may not exist; an existing model may be unknown)
+
 ## Secrets
 
 **Secret**:
