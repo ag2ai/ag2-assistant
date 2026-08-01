@@ -212,8 +212,8 @@ class PeerStore:
             self._write(kept)
 
     def adopt_senders(self, is_paired: Callable[[str, str], bool]) -> int:
-        """Stamp each sender-less Peer whose chat id ``is_paired`` recognises with that
-        account, and return how many moved."""
+        """Stamp each sender-less Peer with the account its chat id names — the chat id is
+        offered to ``is_paired(connection, account)`` — and return how many moved."""
         entries = self._load()
         moved = [
             e

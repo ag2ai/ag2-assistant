@@ -63,8 +63,9 @@ Telegram would be a confusing dead state, not a safe one.
   the code; only the reading of what an old install wrote survives.
 - **A Peer's sender is inferred, not migrated.** The push gate below needs the account a
   Peer belongs to, and a Peer written before that field existed holds none. Rather than a
-  one-shot migration, every boot re-runs one rule: a Peer holding no sender whose chat id
-  the pairing list recognises is stamped with it — which is exactly a direct conversation,
+  one-shot migration, one rule re-runs whenever an install starts — the server on boot,
+  a single-channel CLI command on launch: a Peer holding no sender whose chat id the
+  pairing list recognises is stamped with it, which is exactly a direct conversation,
   since a DM is named by the account id itself. Nothing else is stamped; a group keeps no
   sender and stays closed to a push until a message arrives to stamp one.
 

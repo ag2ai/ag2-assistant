@@ -137,8 +137,6 @@ def test_a_code_cannot_be_used_twice(paths):
 
 
 def test_a_code_lives_the_ten_minutes_the_spec_states(paths):
-    """The lifetime is a stated default, not an implementation detail — a code issued
-    without one expires ten minutes ahead and no further."""
     issued_at = time.time()
     PairingStore(paths).issue_code(WORK)
 
