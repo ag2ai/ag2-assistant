@@ -125,6 +125,7 @@ from assistant import (
     __version__,
     live_configs,
     llm_configs,
+    provider_catalog,
     voice_providers,
 )
 from assistant import feedback as feedback_learner
@@ -141,7 +142,7 @@ from assistant.codex_auth import (
     generate_pkce,
 )
 from assistant.coding.detect import parse_bridge
-from assistant.coding.model_catalog import ModelCatalog, as_view
+from assistant.coding.model_catalog import CatalogModel, ModelCatalog, as_view
 from assistant.config import Config
 from assistant.connections import Connection, ConnectionStore, surface_key, surfaces
 from assistant.events import (
@@ -224,6 +225,16 @@ _WS_PROFILE_ARCHIVED = 4001  # runtime archived while this socket was open (§4.
 # Default ceiling on a provider "Test" call; `create_app(llm_probe_timeout_s=…)`
 # overrides it. The real value only bounds a genuinely wedged provider call.
 _LLM_TEST_TIMEOUT_S = 30.0
+
+# Query names GET /api/llm-configs/models refuses outright. A pasted key belongs to
+# the provider that owns it and never to us (ADR 0024); refusing rather than ignoring
+# is what makes routing one through here fail loudly instead of silently.
+_CATALOG_KEY_PARAMS = ("api_key", "apikey", "key", "secret", "token", "password")
+
+
+def _truthy(value: str) -> bool:
+    """A query flag the way FastAPI reads a bool one: 1/true/yes/on, case-blind."""
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 async def _live_key_probe(provider: str, api_key: str) -> None:
@@ -765,6 +776,7 @@ def create_app(
     google: GoogleAuth | None = None,
     llm_probe: Callable = model_config,
     llm_probe_timeout_s: float = _LLM_TEST_TIMEOUT_S,
+    llm_catalog_probe: Callable = provider_catalog.probe_provider_models,
     live_probe: Callable = _live_key_probe,
     skills_client: SkillsClient | None = None,
 ) -> FastAPI:
@@ -782,7 +794,9 @@ def create_app(
     default runs a real loopback listener, so it is injected rather than reached for.
     ``codex_client`` is the HTTP client that flow's token exchange goes out on,
     ``google`` is the Google integration the /api/google/* routes drive, and
-    ``live_probe`` is the voice-provider key probe behind the live-config "Test".
+    ``live_probe`` is the voice-provider key probe behind the live-config "Test",
+    ``llm_catalog_probe`` the provider model-list probe behind the Model field's
+    combobox (one async callable over a resolved provider identity).
     ``skills_client`` is the skills.sh registry client the search/install routes use
     (omitted: ag2's own, going to the live registry).
     """
@@ -1153,6 +1167,45 @@ def create_app(
             # reads this for types no config uses yet.
             "provider_deps": {t: llm_configs.deps_status(t) for t in llm_configs.TYPES},
         }
+
+    @app.get("/api/llm-configs/models")
+    async def llm_config_models(request: Request) -> Response:
+        """A provider's model catalog for the Model field's combobox, in the ACP
+        catalog route's ``{models, current, reason}`` envelope. The configuration is
+        identified by non-secret fields only — type, endpoint and ``secret_id``.
+
+        No key material is accepted: a key the user has merely pasted is the browser's
+        to send straight to the provider that owns it (ADR 0024). There is no
+        server-side cache either, so ``?refresh=1`` only forbids the HTTP one."""
+        params = request.query_params
+        if any(name in params for name in _CATALOG_KEY_PARAMS):
+            return JSONResponse(
+                {"ok": False, "error": "this route accepts no key material"}, status_code=400
+            )
+        ctype = params.get("type", "")
+        if ctype not in provider_catalog.GATEWAY_PROBEABLE:
+            return JSONResponse(
+                {"ok": False, "error": f"no provider catalog for: {ctype}"}, status_code=404
+            )
+        target = provider_catalog.CatalogTarget(
+            type=ctype,
+            base_url=params.get("base_url", ""),
+            host=params.get("host", ""),
+            api_key=secret_store.secret_value(params.get("secret_id", "")),
+        )
+        reason = ""
+        models: list[str] = []
+        try:
+            models = await llm_catalog_probe(target)
+        except provider_catalog.CatalogUnavailable as exc:
+            reason = exc.reason
+        except Exception:
+            # A probe that blew up is an endpoint we could not read, not a 500 the
+            # user caused: the field degrades to Known models and says so quietly.
+            reason = provider_catalog.UNREACHABLE
+        rows = [CatalogModel(id=m, name=m, description="") for m in models]
+        cache = "no-store" if _truthy(params.get("refresh", "")) else "private, max-age=30"
+        return JSONResponse(as_view(rows, "", reason), headers={"Cache-Control": cache})
 
     async def _save_llm_config(req: LlmConfigRequest, cid: str | None):
         """Shared create/update: dry-construct the derived model_config BEFORE

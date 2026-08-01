@@ -125,6 +125,19 @@ export const api = {
   // Test an UNSAVED editor draft (nothing persisted; a blank api_key falls back to
   // the stored key when cfg.id is set).
   testLlmConfigDraft: (cfg) => j('POST', G('/llm-configs/test'), cfg),
+  // A provider's model catalog for the Model field's combobox, in the same
+  // {models, current, reason} envelope codingModels() returns. The configuration is
+  // named by non-secret fields only — this route accepts no key material, because a
+  // pasted key goes to the provider that owns it and never to us (ADR 0024).
+  /** @returns {Promise<Catalog>} */
+  llmCatalog: ({ type, base_url = '', host = '', secret_id = '' }, refresh = false) => {
+    const q = new URLSearchParams({ type })
+    if (base_url) q.set('base_url', base_url)
+    if (host) q.set('host', host)
+    if (secret_id) q.set('secret_id', secret_id)
+    if (refresh) q.set('refresh', '1')
+    return j('GET', G(`/llm-configs/models?${q}`))
+  },
   // Named LIVE (voice) configurations — the spoken counterpart of the LLM configs,
   // same install-wide list + active shape. liveConfigs() → {configs:[entry +
   // {key:{set,hint}, key_source, shared_key, active}], active:id|null, providers:

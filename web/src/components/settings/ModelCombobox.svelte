@@ -9,13 +9,21 @@
   // never blocked, never warned about and never replaced.
   import { suggestModels } from '../../lib/modelSuggest.js'
 
-  let { value = $bindable(''), type, id = 'lf-model', placeholder = '' } = $props()
+  // `catalog` is the live Model catalog when one was read, null when none could be;
+  // `loading` says a probe is in flight. The field stays typeable throughout — a
+  // probe never blocks the user, it only changes what is on offer. onFirstFocus
+  // fires once so an editor the user never touches here costs no request.
+  let {
+    value = $bindable(''), type, id = 'lf-model', placeholder = '',
+    catalog = null, loading = false, onFirstFocus = null,
+  } = $props()
 
   let open = $state(false)
   let index = $state(0)
   let rows = $state([])
+  let focused = false
 
-  const results = $derived(suggestModels({ type, query: value }))
+  const results = $derived(suggestModels({ type, query: value, catalog }))
   const optionId = (i) => `${id}-opt-${i}`
 
   // Reopening on every keystroke would make Escape useless, so the list opens on
@@ -55,14 +63,18 @@
     {id} {placeholder} bind:value spellcheck="false" autocomplete="off"
     role="combobox" aria-expanded={open && results.length > 0} aria-autocomplete="list"
     aria-controls={`${id}-list`} aria-activedescendant={open && results.length ? optionId(index) : undefined}
-    onfocus={() => (open = true)}
+    onfocus={() => { open = true; if (!focused) { focused = true; onFirstFocus?.() } }}
     oninput={() => (open = true)}
     onblur={() => (open = false)}
     onkeydown={key}
   />
-  {#if open && results.length}
+  {#if open && (results.length || loading)}
     <!-- mousedown+preventDefault keeps the input focused so the pick lands before blur. -->
     <div class="llmcombolist" id={`${id}-list`} role="listbox" aria-label="Model suggestions">
+      {#if loading}
+        <!-- A quiet row, not a disabled field: there is always a fallback list here. -->
+        <div class="llmcomboload">Reading the provider's model list…</div>
+      {/if}
       {#each results as r, i (r.id)}
         <button
           type="button" class="llmcomborow" class:sel={i === index} id={optionId(i)}
@@ -106,4 +118,5 @@
     font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden;
   }
   .llmcombotag { border: 1px solid var(--line); border-radius: 999px; padding: 0 5px; letter-spacing: .3px; }
+  .llmcomboload { padding: 6px 8px; font-size: 12px; color: var(--text-muted); }
 </style>

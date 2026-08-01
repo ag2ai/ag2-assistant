@@ -19,6 +19,7 @@
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.js'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.js'
   import { familyOf } from '../../lib/knownModels.js'
+  import { catalogNote, catalogSource } from '../../lib/modelSuggest.js'
   import ModelCombobox from './ModelCombobox.svelte'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
@@ -137,6 +138,51 @@
   // input: select-all-and-retype passes through empty without meaning it.
   function settleBaseUrl() {
     if (!baseUrl.trim()) changeType(settleWithoutBaseUrl(type))
+    settleEndpoint()
+  }
+
+  // Provider model catalog: what the endpoint this model points at says it offers.
+  // Read on FIRST FOCUS of the Model field and never on form open, so an editor
+  // whose Model field is never touched makes no request at all. `probed` is what
+  // makes a re-probe conditional — the identity effect below must not be the thing
+  // that fires the first one. No client cache beyond this form's lifetime.
+  const catalogFrom = $derived(catalogSource(type))
+  let probed = $state(false)
+  let probing = $state(false)
+  let providerCatalog = $state(null)   // null = none read; an array = the live list
+  let catalogReason = $state('')
+  const catalogHint = $derived(probed && !probing ? catalogNote(catalogReason, type) : '')
+
+  async function probeCatalog(refresh = false) {
+    if (!catalogFrom) { providerCatalog = null; catalogReason = ''; return }
+    probed = true
+    probing = true
+    try {
+      const r = await api.llmCatalog(
+        { type, base_url: baseUrl.trim(), host: host.trim(), secret_id: secretId },
+        refresh,
+      )
+      providerCatalog = (r.models || []).map((m) => m.id)
+      catalogReason = r.reason || ''
+    } catch {
+      providerCatalog = null
+      catalogReason = 'unreachable'
+    }
+    probing = false
+  }
+
+  // Re-read whenever the identity the list describes changes, so suggestions never
+  // describe a configuration the user has moved on from. Only once a first probe
+  // has happened — before that, focusing the field is still what starts it.
+  $effect(() => {
+    type; secretId; catalogFrom      // the identity inputs this list describes
+    if (untrack(() => probed)) untrack(() => probeCatalog())
+  })
+
+  // The endpoint fields settle on BLUR, not on input: select-all-and-retype passes
+  // through empty without meaning it, and a probe per keystroke would be absurd.
+  function settleEndpoint() {
+    if (probed) probeCatalog()
   }
 
   // ACP model picker: the adapter's live catalog, fetched once per agent when its
@@ -342,9 +388,24 @@
   {:else}
     <div class="llmfield">
       <label for="lf-model">Model</label>
-      <!-- Known models, offered but never imposed: whatever is typed here wins. -->
-      <ModelCombobox bind:value={model} {type} placeholder="e.g. gemini-3.6-flash" />
+      <!-- Offered but never imposed: whatever is typed here wins. The list is the
+           provider's when one could be read, and Known models when it could not. -->
+      <ModelCombobox
+        bind:value={model} {type} placeholder="e.g. gemini-3.6-flash"
+        catalog={providerCatalog} loading={probing} onFirstFocus={() => probeCatalog()}
+      />
     </div>
+    {#if catalogFrom && probed}
+      <!-- One row for both states, like the ACP picker's: why there is no list (if
+           so) plus a manual re-read, for a key just fixed or a model just pulled.
+           Always the quiet hint line — a background probe is never a red error. -->
+      <div class="llmfield">
+        <span class="llmhint">
+          {#if catalogHint}{catalogHint} {/if}
+          <button class="linkbtn" onclick={() => probeCatalog(true)}>Re-read the model list</button>
+        </span>
+      </div>
+    {/if}
   {/if}
   {#if acpAgent && !acpLoading}
     <!-- One row for both states: why there's no list (if so) plus a manual re-probe,
@@ -366,7 +427,7 @@
   {:else if type === 'ollama'}
     <div class="llmfield">
       <label for="lf-host">Host</label>
-      <input id="lf-host" bind:value={host} placeholder="http://localhost:11434" spellcheck="false" />
+      <input id="lf-host" bind:value={host} onblur={settleEndpoint} placeholder="http://localhost:11434" spellcheck="false" />
     </div>
   {/if}
 
