@@ -26,7 +26,6 @@ test('every template wears one of the four chips', () => {
   }
 })
 
-// An empty heading is a promise of options the page cannot keep.
 test('no group in the order is empty', () => {
   for (const group of GROUP_ORDER) {
     const held = MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === group)
@@ -34,18 +33,20 @@ test('no group in the order is empty', () => {
   }
 })
 
-// The grouping rule, stated as an assertion: subscription-backed ⟺ that group.
-test('the subscription-backed templates are exactly the subscription group', () => {
+// The grouping rule, stated as an assertion: the three that need no API key sit
+// under that heading, and the other six sit under their vendor's.
+const NO_KEY_CARDS = ['OpenAI · Sign in with ChatGPT', 'Claude Code · CLI login', 'Codex · CLI login']
+
+test('the templates needing no API key are exactly the subscription group', () => {
+  const grouped = MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === SUBSCRIPTION_GROUP)
+  assert.deepEqual(grouped.map(label), NO_KEY_CARDS)
   for (const t of MODEL_TEMPLATES) {
-    const subscriptionBacked = TYPE_CHIP[t.type] === 'OAuth' || TYPE_CHIP[t.type] === 'ACP'
-    const grouped = TYPE_GROUP[t.type] === SUBSCRIPTION_GROUP
-    assert.equal(grouped, subscriptionBacked, `${label(t)} breaks the grouping rule`)
+    if (NO_KEY_CARDS.includes(label(t))) continue
+    assert.notEqual(TYPE_GROUP[t.type], SUBSCRIPTION_GROUP, `${label(t)} needs a key and is grouped as if it does not`)
+    assert.equal(TYPE_CHIP[t.type] === 'OAuth' || TYPE_CHIP[t.type] === 'ACP', false, `${label(t)} wears a subscription chip outside the group`)
   }
-  const subscription = MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === SUBSCRIPTION_GROUP)
-  assert.equal(subscription.length, 3)
 })
 
-// It answers a question the user does not know to ask, so it cannot be scrolled to.
 test('the subscription group comes first', () => {
   assert.equal(GROUP_ORDER[0], SUBSCRIPTION_GROUP)
 })
@@ -53,7 +54,9 @@ test('the subscription group comes first', () => {
 test('every blurb says something the card label does not', () => {
   for (const t of MODEL_TEMPLATES) {
     assert.ok(t.blurb?.trim(), `${label(t)} has no blurb`)
-    assert.notEqual(t.blurb.trim().toLowerCase(), label(t).trim().toLowerCase(), `${label(t)}’s blurb repeats its title`)
+    const blurb = t.blurb.trim().toLowerCase()
+    // A blurb the title already contains — `Claude` under `Claude Code` — adds nothing.
+    assert.ok(!label(t).trim().toLowerCase().includes(blurb), `${label(t)}’s blurb repeats its title`)
   }
 })
 

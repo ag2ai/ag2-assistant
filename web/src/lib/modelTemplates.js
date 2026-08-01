@@ -16,7 +16,7 @@ export const MODEL_TEMPLATES = [
     blurb: 'Your Claude subscription, via the Claude Code CLI you’re already signed in to',
   },
   {
-    // Names the same ChatGPT plan the card above does: one credential, two doors.
+    // Names the same ChatGPT plan the card above names.
     name: 'Codex', card: 'Codex · CLI login',
     type: 'codex', model: '',
     blurb: 'Your ChatGPT plan, via the Codex CLI you’re already signed in to',
@@ -29,7 +29,7 @@ export const MODEL_TEMPLATES = [
   },
   { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude, direct from Anthropic' },
   {
-    // Seeds a live MiniMax endpoint even though the card no longer names MiniMax.
+    // Seeds MiniMax's live endpoint and model; the card names neither.
     name: 'Anthropic-compatible',
     type: 'anthropic', model: 'MiniMax-M2.5', base_url: 'https://api.minimax.io/anthropic',
     blurb: 'Any Anthropic-API endpoint — set the model name and URL',

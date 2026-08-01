@@ -38,6 +38,10 @@
 
   let editing = $state(null)   // config/template being edited in the inline form (null = closed)
   let adding = $state(false)   // template card grid showing
+  // Two-step delete (the SkillsPage idiom): first click arms the row by id, the
+  // Confirm next to it actually deletes. Deleting a model is unrecoverable, and
+  // Delete sits one button away from Edit.
+  let confirming = $state('')
 
   onMount(reload)
 
@@ -68,14 +72,15 @@
       await api.deleteLlmConfig(c.id)
       const { [c.id]: _gone, ...rest } = tests
       tests = rest
+      confirming = ''
       await reload()
     } catch (e) { err = String(e.message || e) }
     busy = false
   }
 
   // Open the editor: a template (no id → create) or an existing row (edit).
-  function pickTemplate(t) { adding = false; editing = { ...t } }
-  function edit(c) { adding = false; editing = { ...c } }
+  function pickTemplate(t) { adding = false; confirming = ''; editing = { ...t } }
+  function edit(c) { adding = false; confirming = ''; editing = { ...c } }
 
   // The save should activate when it's the first-ever config (empty store), or when
   // re-saving the already-active config (keep it active). Otherwise the explicit Use
@@ -103,6 +108,12 @@
   }
 </script>
 
+<!-- One editor, two homes: under the row being edited (Edit on an existing config),
+     or at the foot of the list (a template picked from Add model). -->
+{#snippet editorForm()}
+  <LlmConfigForm config={editing} activate={activateOnSave} {onSaved} onCancel={() => (editing = null)} />
+{/snippet}
+
 <div class="setgroup">Text</div>
 
 {#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
@@ -119,16 +130,19 @@
 {/if}
 
 {#each configs as c (c.id)}
-  <!-- Click the row to make it the active config (unless it already is, or the
-       editor is open). Action buttons below stopPropagation so they never activate. -->
+  <!-- Click the row to make it the active config (unless it already is, the editor is
+       open, or the row is armed for delete — a stray click there shouldn't activate a
+       model you're about to remove). Action buttons stopPropagation so they never
+       activate either. -->
+  {@const idle = !editing && confirming !== c.id}
   <div
-    class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
-    role={!c.active && !editing ? 'button' : undefined}
-    tabindex={!c.active && !editing ? 0 : undefined}
+    class="llmrow" class:active={c.active} class:clickable={!c.active && idle && !busy}
+    role={!c.active && idle ? 'button' : undefined}
+    tabindex={!c.active && idle ? 0 : undefined}
     aria-label={!c.active ? `Use ${c.name}` : undefined}
-    title={!c.active && !editing ? 'Click to use this model' : ''}
-    onclick={() => { if (!c.active && !busy && !editing) use(c) }}
-    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
+    title={!c.active && idle ? 'Click to use this model' : ''}
+    onclick={() => { if (!c.active && !busy && idle) use(c) }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && idle) { e.preventDefault(); use(c) } }}
   >
     <BrandMark brand={c.type} />
     <div class="llmmeta">
@@ -162,23 +176,34 @@
     <!-- While the editor is open ALL row actions are disabled — mutating or testing
          the list mid-edit invites confusion (the editor has its own Test button).
          Each button stops propagation so it never triggers the row's click-to-use. -->
-    <button
-      class="open" disabled={busy || tests[c.id]?.testing || !!editing}
-      title={editing ? 'Editing in progress — use the editor’s Test button to test your changes' : ''}
-      onclick={(e) => { e.stopPropagation(); test(c) }}
-    >Test</button>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
-    <button
-      class="linkbtn danger" disabled={busy || !!editing}
-      title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
-      onclick={(e) => { e.stopPropagation(); remove(c) }}
-    >Delete</button>
+    {#if confirming === c.id}
+      <span class="llmconfirm">
+        Delete {c.name}?{#if c.active} The next model (or the defaults) takes over.{/if}
+      </span>
+      <button class="linkbtn danger" disabled={busy} onclick={(e) => { e.stopPropagation(); remove(c) }}>Confirm</button>
+      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
+    {:else}
+      <button
+        class="open" disabled={busy || tests[c.id]?.testing || !!editing}
+        title={editing ? 'Editing in progress — use the editor’s Test button to test your changes' : ''}
+        onclick={(e) => { e.stopPropagation(); test(c) }}
+      >Test</button>
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
+      <button
+        class="linkbtn danger" disabled={busy || !!editing}
+        title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
+        onclick={(e) => { e.stopPropagation(); confirming = c.id }}
+      >Delete</button>
+    {/if}
   </div>
+  {#if editing?.id === c.id}{@render editorForm()}{/if}
 {/each}
 
-{#if editing}
-  <LlmConfigForm config={editing} activate={activateOnSave} {onSaved} onCancel={() => (editing = null)} />
-{:else}
+<!-- An existing config's editor already rendered under its own row above, so down
+     here only a freshly picked template still needs a home. -->
+{#if editing && !editing.id}
+  {@render editorForm()}
+{:else if !editing}
   {#if !adding}
     <button class="addbtn" disabled={busy} onclick={() => (adding = true)}>
       <Icon name="plus" size={14} /> Add model
@@ -210,3 +235,8 @@
 
 <div class="setgroup">Live</div>
 <VoiceSection />
+
+<style>
+  /* The armed-row question, sat where the Test/Edit/Delete buttons were. */
+  .llmconfirm { font-size: 12px; color: var(--danger); margin-left: auto; text-align: right; }
+</style>

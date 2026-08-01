@@ -239,7 +239,7 @@
 .settings .mcpcatcard.openinputs { border-color: var(--accent); }
 .settings .mcpcatcard.added { opacity: .55; cursor: default; }
 .settings .mcpcatcard.added .mcpcathead { color: var(--accent); }
-.settings .mcpcathead { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.settings .mcpcathead { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .settings .mcpcatblurb { font-size: 11.5px; color: var(--muted); }
 .settings .mcpcatblurb.warn { color: var(--danger); }
 /* What a model template asks you to bring (API key / OAuth / ACP / no key): a

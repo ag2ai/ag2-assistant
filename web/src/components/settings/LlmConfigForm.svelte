@@ -25,8 +25,8 @@
   //   parent — first-ever config, or re-saving the already-active one).
   let { config, activate = false, onSaved, onCancel } = $props()
 
-  // The dropdown's own order, but never its own labels — providerLabels.js is the
-  // single type→presentation lookup, so a type renamed there is renamed here too.
+  // The dropdown's own order; its labels come from providerLabels.js, the single
+  // type→presentation lookup.
   const TYPES = [
     'openai_responses', 'openai', 'openai_subscription', 'anthropic',
     'gemini', 'ollama', 'claude_code', 'codex',
