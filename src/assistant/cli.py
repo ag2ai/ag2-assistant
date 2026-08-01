@@ -682,6 +682,7 @@ async def _serve_channel(platform: str, label: str, *, memory: bool) -> None:
     # tools only; the scheduler runs in `ag2-assistant run`, not per channel
     await tasks.start(scheduler=False)
     cid, tokens = _cli_connection(platform, paths)
+    ConnectionStore(paths).adopt_peer_senders()
     channel = get_channel(platform, connection=cid, **tokens)
     router = _cli_router(gateway, cid, channel, paths)
     tasks.set_notifier(router.push)  # run outcomes -> this channel, past the same gates

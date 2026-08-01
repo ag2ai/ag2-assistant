@@ -59,8 +59,11 @@ Telegram would be a confusing dead state, not a safe one.
   platform comes up on Connections with its default Profiles, paired accounts, live
   code, Peers, group pins and withdrawals intact, and answers without a reconnect. The
   adoption runs once on boot, records itself in `connections.json`, and is a no-op on
-  every boot after. The old Settings section and the old Chat id scheme are gone from
-  the code; only the reading of what an old install wrote survives.
+  every boot after. A second adoption stamps each Peer with the account that speaks in
+  it, which the push gate below needs; a Peer no paired account names keeps none and is
+  closed to a push until its next message stamps one. The old Settings section and the
+  old Chat id scheme are gone from the code; only the reading of what an old install
+  wrote survives.
 - **Pushing into a conversation passes the same gates as answering in it.** A run
   outcome, a mirrored turn and a mirrored question all go through the router, which
   re-reads the pairing list and the exposure record first — revocation and withdrawal

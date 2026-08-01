@@ -176,3 +176,35 @@ def test_adoption_leaves_a_peer_that_already_has_a_connection_alone(paths):
 
     assert PeerStore(paths).get_peer("cn-1", "42") is None
     assert PeerStore(paths).get_peer("cn-play", "42").profile == "home"
+
+
+# --- migration: a Peer recorded before senders were ---
+
+
+def _paired(*known: tuple[str, str]):
+    return lambda connection, account: (connection, account) in known
+
+
+def test_a_direct_peer_is_stamped_with_the_account_its_chat_id_names(paths):
+    """A DM is named by the account id itself, so the pairing list recognises it and the
+    push side keeps working across the upgrade."""
+    PeerStore(paths).select_profile("cn-work", "42", "work", platform="telegram")
+
+    assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 1
+    assert PeerStore(paths).get_peer("cn-work", "42").sender == "42"
+
+
+def test_a_peer_no_paired_account_names_is_left_without_a_sender(paths):
+    """A group, or a platform whose chat ids are not account ids — it stays closed to a
+    push until its next message stamps it."""
+    PeerStore(paths).select_profile("cn-work", "-100", "work", platform="telegram")
+
+    assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 0
+    assert PeerStore(paths).get_peer("cn-work", "-100").sender == ""
+
+
+def test_stamping_senders_is_idempotent_and_never_overwrites_one(paths):
+    PeerStore(paths).select_profile("cn-work", "42", "work", platform="telegram", sender="99")
+
+    assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 0
+    assert PeerStore(paths).get_peer("cn-work", "42").sender == "99"

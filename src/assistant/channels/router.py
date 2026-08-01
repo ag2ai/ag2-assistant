@@ -467,7 +467,7 @@ class ChannelRouter:
 
     def accepts(self, inbound: InboundMessage) -> bool:
         """Whether this message runs a turn — an adapter's gate for showing platform
-        feedback before the slow path. An unpaired account never opens it."""
+        feedback. An unpaired account never opens it; its message still goes to ``handle``."""
         return should_respond(inbound) and self.paired(inbound)
 
     def steers(self, inbound: InboundMessage) -> bool:
@@ -646,16 +646,11 @@ class ChannelRouter:
         return peer.profile in {p.id for p in self._directory.available_profiles(surface)}
 
     def _reachable(self, peer: Peer) -> bool:
-        """Whether anything may still be pushed into this Peer unasked: its account is
-        Paired to the Connection (ADR 0021) and its profile exposed there (ADR 0022).
-        Revocation closes this side too, not only the inbound one.
-
-        A Peer recorded before senders were stamped has none; its chat id is offered to
-        the pairing list instead, which admits a direct conversation the account id
-        names and closes everything else until the next inbound message stamps it.
-        """
-        account = peer.sender or peer.chat_id
-        return self._pairing.is_paired(peer.connection, account) and self._exposed_to(peer)
+        """Whether anything may be pushed into this Peer unasked: its account is Paired to
+        the Connection (ADR 0021) and its profile exposed there (ADR 0022)."""
+        return bool(peer.sender) and (
+            self._pairing.is_paired(peer.connection, peer.sender) and self._exposed_to(peer)
+        )
 
     def _attached_chat(self, inbound: InboundMessage) -> str | None:
         peer = self._peers.get_peer(inbound.connection, inbound.chat_id)
@@ -718,12 +713,8 @@ class ChannelRouter:
             await self._directory.notify_channel(peer.connection, peer.chat_id, body)
 
     async def push(self, connection: str, chat_id: str, text: str) -> None:
-        """Push a task-run outcome into the conversation the task was started from.
-
-        The task service delivers through here rather than reaching a Channel directly,
-        so an outcome passes the same gates a mirrored turn does — a revoked account or
-        a withdrawn profile is told nothing.
-        """
+        """Push a task-run outcome into the conversation the task was started from,
+        through the same gates a mirrored turn passes."""
         peer = self._peers.get_peer(connection, chat_id)
         if peer is None or not self._reachable(peer):
             return

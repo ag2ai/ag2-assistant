@@ -312,6 +312,7 @@ class ProfileManager:
         broken profile must not keep the others (or the server) down.
         """
         setup_logging(self.config)
+        self._connections.adopt_peer_senders()
         for meta in self._registry.list_profiles(include_archived=False):
             try:
                 await self._boot(meta)

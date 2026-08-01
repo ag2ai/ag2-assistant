@@ -1354,9 +1354,8 @@ async def test_answering_in_the_browser_retracts_the_prompt_on_the_platform(path
 
 # --- pushing a task outcome ---
 
-# A run outcome takes the same two gates a mirrored turn takes: the account must
-# still be Paired to the Connection (ADR 0021) and the profile still exposed to
-# the surface (ADR 0022). Nothing else reaches a conversation unasked.
+# A run outcome takes the two gates a mirrored turn takes: Paired account (ADR
+# 0021) and exposed profile (ADR 0022).
 
 
 async def test_a_task_outcome_reaches_the_peer_it_was_started_from(paths):
@@ -1391,27 +1390,25 @@ async def test_a_profile_withdrawn_from_groups_pushes_no_outcome_into_one(paths)
     assert directory.pushed == []
 
 
-async def test_a_peer_recorded_without_its_sender_is_reached_by_its_chat_id(paths):
-    """A registry written before senders were stamped holds none, so the chat id is
-    offered to the pairing list — a direct conversation the account id names goes on
-    being delivered to across the upgrade."""
-    router, directory = _mirroring(paths)
-    PeerStore(paths).select_profile("telegram", PAIRED_SENDER, "work", platform="telegram")
-
-    await router.push("telegram", PAIRED_SENDER, "✅ done")
-
-    assert directory.pushed == [("telegram", PAIRED_SENDER, "✅ done")]
-
-
-async def test_a_peer_recorded_without_its_sender_and_named_by_nothing_is_pushed_nothing(paths):
-    """Where the chat id names no paired account — a group, or a platform whose chat
-    ids are not account ids — it closes until the next message stamps the sender."""
+async def test_a_peer_holding_no_sender_is_pushed_nothing(paths):
+    """The pairing list cannot be consulted for it, so it is refused until the migration
+    stamps it or its next message does."""
     router, directory = _mirroring(paths)
     PeerStore(paths).select_profile("telegram", "c1", "work", platform="telegram")
 
     await router.push("telegram", "c1", "✅ done")
 
     assert directory.pushed == []
+
+
+async def test_the_next_message_stamps_a_peer_that_was_recorded_without_one(paths):
+    router, directory = _mirroring(paths)
+    PeerStore(paths).select_profile("telegram", "c1", "work", platform="telegram")
+
+    await router.handle(_inbound("still here"))
+    await router.push("telegram", "c1", "✅ done")
+
+    assert directory.pushed == [("telegram", "c1", "✅ done")]
 
 
 async def test_a_conversation_no_peer_was_recorded_for_is_pushed_nothing(paths):

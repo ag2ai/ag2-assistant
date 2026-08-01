@@ -301,6 +301,12 @@ class ConnectionStore:
         self._profiles.adopt_exposure(by_platform)
         self._peers.adopt_connections(by_platform)
         self._pairing.adopt_connections(by_platform)
+        self.adopt_peer_senders()
+
+    def adopt_peer_senders(self) -> int:
+        """Stamp the account onto every Peer recorded before senders were, against this
+        install's paired accounts. Idempotent: a stamped Peer is left alone."""
+        return self._peers.adopt_senders(self._pairing.is_paired)
 
     def _migrate(self) -> list[dict]:
         """One Connection per platform that already has its token(s), its ids persisted

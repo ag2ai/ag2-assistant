@@ -210,6 +210,22 @@ class PeerStore:
         if len(kept) != len(entries):
             self._write(kept)
 
+    def adopt_senders(self, is_paired) -> int:
+        """Stamp the account onto every Peer recorded before senders were, and return how
+        many moved. A direct conversation is named by the account id itself, so a chat id
+        ``is_paired`` recognises is that Peer's sender; the rest keep none."""
+        entries = self._load()
+        moved = [
+            e
+            for e in entries
+            if not e.get("sender") and is_paired(e.get("connection") or "", e["chat_id"])
+        ]
+        for entry in moved:
+            entry["sender"] = entry["chat_id"]
+        if moved:
+            self._write(entries)
+        return len(moved)
+
     def adopt_connections(self, by_platform: dict[str, str]) -> None:
         """Stamp the Connection migrated for each platform onto every Peer recorded against
         that platform, so an existing install's conversations continue in place."""
