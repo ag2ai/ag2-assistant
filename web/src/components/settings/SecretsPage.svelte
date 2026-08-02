@@ -5,7 +5,7 @@
   // the value. The provider tag is soft (grouping only); at most one tagged
   // Secret per provider is the Default — the install-wide fallback, badge shown.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { secretsStore, loadSecrets } from '../../lib/secrets.js'
   import { loadLlmConfigs } from '../../lib/llm.js'
   import { loadLiveConfigs } from '../../lib/live.js'

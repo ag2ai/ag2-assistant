@@ -1,5 +1,5 @@
 // Browser-global-free helpers for in-place file editing in the preview rail. The
-// fetch wrappers that use them live in transport/api.js.
+// fetch wrappers that use them live in transport/api/index.ts.
 
 // The bare content token inside an `ETag` header — its weak-`W/` prefix and quotes
 // stripped, or null when absent. Matches the unquoted etag a PUT hands back.

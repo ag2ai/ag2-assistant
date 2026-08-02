@@ -6,7 +6,7 @@
   // takes effect on the NEXT voice session (voice reads the effective config fresh at
   // connect — no runtime reload).
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { SETTINGS_PAGE } from '../../store.js'
   import { replaceOverlay } from '../../router.js'
   import { LOGO, PROVIDER_LABEL, isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.js'

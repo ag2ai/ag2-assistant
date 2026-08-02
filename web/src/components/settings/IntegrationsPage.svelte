@@ -2,7 +2,7 @@
   // Settings → Integrations (install-wide): messaging channels, Google connect, and
   // the GitHub token (skills registry — not a model provider, so it lives here).
   import { getSettings } from './context.svelte.js'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import Channels from '../Channels.svelte'
 
   const ctx = getSettings()

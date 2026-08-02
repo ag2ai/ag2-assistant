@@ -14,7 +14,7 @@
   // Settings sees them too. Presentation is the shared ModelSwitcherView. See
   // docs/adr/0004-shared-llm-config-store.md.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { SETTINGS_PAGE } from '../../store.js'
   import { openOverlay } from '../../router.js'
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'

@@ -5,7 +5,7 @@
 // updates every surface live. The snapshot is install-wide (all Folders + all
 // their grants); each surface derives its own view (this profile / this chat).
 import { writable } from 'svelte/store'
-import { api } from '../transport/api.js'
+import { api } from '../transport/api/index.ts'
 
 export const foldersStore = writable({ folders: [], loaded: false })
 

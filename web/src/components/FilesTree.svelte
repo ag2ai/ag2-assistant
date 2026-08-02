@@ -27,7 +27,7 @@
   import { reveal } from '../store.js'
   import { threadScope } from '../lib/threadScope.js'
   import { foldersStore } from '../lib/folders.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { ancestorDirs, iconForFile } from '../lib/preview.js'
   import { modeLabel, isFolderPath, folderAncestorDirs, folderAffordances } from '../lib/folderFiles.js'
   import { clearsTreeTarget } from '../lib/filesTree.js'

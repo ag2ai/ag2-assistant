@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import { inquiries, soundOnInput, profileEpoch } from '../store.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { go, route } from '../router.js'
   import { chime } from '../lib/chime.js'
 

@@ -6,7 +6,7 @@
   // Test pings the provider's models list, "Change voice" opens the picker scoped to
   // that config. Backed by the shared `liveConfigs` store (lib/live.js).
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { getSettings } from './context.svelte.js'
   import LiveConfigForm from './LiveConfigForm.svelte'
   import Icon from '../Icon.svelte'

@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { googleOpen } from '../store.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
 
   let st = $state(null)
   let creds = $state('')

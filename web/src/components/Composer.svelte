@@ -5,7 +5,7 @@
   import { send, stop, startVoice, stopVoice, voice } from '../controller.js'
   import { liveConfigs, loadLiveConfigs } from '../lib/live.js'
   import { llmConfigs } from '../lib/llm.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { getActiveProfileId } from '../lib/profile.js'
   import { chatChips, inheritedCount, addPlan } from '../lib/chatFolders.js'
   import { makePick, triggerAt, applyPick, composeMessage, highlightSegments } from '../lib/fileRefs.js'

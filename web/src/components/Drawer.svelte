@@ -3,7 +3,7 @@
   import { get } from 'svelte/store'
   import { chats, tasks, profiles, profileEpoch, pendingTaskEdit } from '../store.js'
   import { route, go, goTab, newChatId, openOverlay } from '../router.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { switchProfile } from '../controller.js'
   import Icon from './Icon.svelte'
   import RailResizer from './RailResizer.svelte'

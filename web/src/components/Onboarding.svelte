@@ -18,7 +18,7 @@
   //     profile before Continue, and on finish we navigate into the first one.
   import { onMount, onDestroy } from 'svelte'
   import { onboardingOpen, profile, profiles } from '../store.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { setActiveProfileId } from '../lib/profile.js'
   import { setAccent } from '../design/palette.js'
   import { FOCUS, focusLabel } from '../lib/focuses.js'

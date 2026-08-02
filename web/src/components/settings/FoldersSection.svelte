@@ -7,7 +7,7 @@
   // Folder with no usages anywhere, removes it from the registry. Shares the one Folder
   // snapshot (lib/folders.js) with the composer chip strip and chat folder modal.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { profiles } from '../../store.js'
   import { getActiveProfileId } from '../../lib/profile.js'
   import { getSettings } from './context.svelte.js'

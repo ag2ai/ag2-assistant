@@ -5,7 +5,7 @@
   // states; the current selection + inherited-vs-overridden come from the settings
   // payload (ctx.s.llm_active / .llm_override), reloaded by ctx.run after every change.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { SETTINGS_PAGE } from '../../store.js'
   import { replaceOverlay } from '../../router.js'
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'

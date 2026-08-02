@@ -3,7 +3,7 @@
 // subscribe; every mutation calls loadSecrets() so all surfaces stay in sync live.
 // Lives in lib/ (not store.js) for the same import-cycle reason as llm.js.
 import { writable } from 'svelte/store'
-import { api } from '../transport/api.js'
+import { api } from '../transport/api/index.ts'
 
 export const secretsStore = writable({ secrets: [], loaded: false })
 

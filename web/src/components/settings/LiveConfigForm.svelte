@@ -6,7 +6,7 @@
   // Advanced-JSON. Voice is NOT set here — it's chosen from the config row's
   // "Change voice" picker (a new config gets the provider's default voice until then).
   import { onMount, untrack } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { getSettings } from './context.svelte.js'
   import { PROVIDER_LABEL } from '../../lib/live.js'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'

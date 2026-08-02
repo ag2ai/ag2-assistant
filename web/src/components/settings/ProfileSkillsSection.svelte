@@ -8,7 +8,7 @@
   // A change reloads only this profile (its next turn reflects it). Re-points to the
   // active profile on each switch (profileEpoch), like the Memory tab.
   import { profileEpoch } from '../../store.js'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import SkillInstaller from './SkillInstaller.svelte'
 

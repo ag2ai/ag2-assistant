@@ -1,7 +1,7 @@
 <script>
   import { viewer, thread, runInfo } from '../../store.js'
   import { openAsideFile } from '../../router.js'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import { fmtStamp } from '../../lib/time.js'
   import { requestContext } from '../../lib/feedback.js'

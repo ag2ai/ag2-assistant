@@ -15,7 +15,7 @@
   // config id: {testing} → green PONG/latency or red error).
   // See docs/adr/0004-shared-llm-config-store.md.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import LlmConfigForm from './LlmConfigForm.svelte'
   import VoiceSection from './VoiceSection.svelte'
   import Icon from '../Icon.svelte'

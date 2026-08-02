@@ -8,7 +8,7 @@
   // Self-contained: this list is install-wide, not part of the per-profile /api/settings
   // payload, so it loads its own data via api.skills() rather than the shared ctx.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import SkillInstaller from './SkillInstaller.svelte'
 

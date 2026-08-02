@@ -10,7 +10,7 @@
   // panel is OPENED, and a server already known-down is NOT re-probed on reopen —
   // it shows its last error with a Recheck button that re-probes just that one.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import Icon from './Icon.svelte'
 
   let data = $state(null)          // {overall, checks:[…]} from the cheap poll

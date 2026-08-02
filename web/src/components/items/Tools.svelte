@@ -1,6 +1,6 @@
 <script>
   import { openAsideFile } from '../../router.js'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
 
   let { item } = $props()

@@ -3,7 +3,7 @@
   // full-size preview. The bytes live in the workspace (served via /api/files/raw).
   import { thread, runInfo } from '../../store.js'
   import { openAsideFile } from '../../router.js'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { requestContext } from '../../lib/feedback.js'
   import Feedback from './Feedback.svelte'
   import Icon from '../Icon.svelte'

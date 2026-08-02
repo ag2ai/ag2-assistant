@@ -6,7 +6,7 @@
   import { route, closeAside } from '../router.js'
   import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, openThreadRow } from '../store.js'
   import { threadScope } from '../lib/threadScope.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import Markdown from './Markdown.svelte'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'

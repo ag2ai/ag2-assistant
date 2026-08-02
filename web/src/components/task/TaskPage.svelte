@@ -6,7 +6,7 @@
   // all. `/t/new` is the same page opened directly in edit state (single column), where
   // Save POSTs instead of PATCHes. No modal. Each run opens as a chat thread at /r/{id}.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { go, goTab, route, openOverlay } from '../../router.js'
   import { profiles, tasks, pendingTaskEdit, SETTINGS_PAGE } from '../../store.js'
   import { getActiveProfileId } from '../../lib/profile.js'

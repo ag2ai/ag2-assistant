@@ -3,7 +3,7 @@
 // human label, and the "can this run right now?" predicate. Consumed by Settings →
 // Models → Live (VoiceSection). Mutate via the API, then loadLiveConfigs() to refresh.
 import { writable } from 'svelte/store'
-import { api } from '../transport/api.js'
+import { api } from '../transport/api/index.ts'
 import openaiLogo from '../assets/openai.svg'
 import geminiLogo from '../assets/gemini.svg'
 

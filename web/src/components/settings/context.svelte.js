@@ -25,7 +25,7 @@
 
 import { get } from 'svelte/store'
 import { getContext, setContext } from 'svelte'
-import { api } from '../../transport/api.js'
+import { api } from '../../transport/api/index.ts'
 import { closeOverlay } from '../../router.js'
 import {
   voicePickerOpen, voicePickerConfig, googleOpen, codexOpen,

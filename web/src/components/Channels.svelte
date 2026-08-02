@@ -8,7 +8,7 @@
   // store, mirroring the API-key inputs in Settings; values are never echoed back.
   import { onMount } from 'svelte'
   import { profiles } from '../store.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import Icon from './Icon.svelte'
 
   // Token env var(s) per platform — mirrors the backend CHANNEL_TOKEN_ENVS. Slack

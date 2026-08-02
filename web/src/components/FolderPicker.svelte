@@ -5,7 +5,7 @@
   // viewing in one click (Settings); otherwise `selected` (bindable) is set on confirm and the
   // host owns the commit (Onboarding's stepped flow). `busy` shows a saving state for onUse.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { invalidFolderName } from '../lib/folderName.js'
   import Icon from './Icon.svelte'
 

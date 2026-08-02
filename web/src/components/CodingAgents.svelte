@@ -4,7 +4,7 @@
   // owns its own fetch. Editing (bridge address/token) is done via ENV/compose in
   // v1 — this card only reports what the running process sees.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
 
   let data = $state(null)     // {mode, bridge, connected, agents, error?}
   let err = $state('')

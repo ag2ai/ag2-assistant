@@ -6,7 +6,7 @@
   import { getSettings } from './context.svelte.js'
   import { ag2View } from '../../store.js'
   import { toggleAsideInspector } from '../../router.js'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import MemoryDocEditor from './MemoryDocEditor.svelte'
 

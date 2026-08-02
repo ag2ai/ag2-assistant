@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { voicePickerOpen, voicePickerConfig } from '../store.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { loadLiveConfigs } from '../lib/live.js'
 
   // Which live config (if any) this picker targets — captured once at mount so the

@@ -10,7 +10,7 @@
   // in-progress config with "Signed in" ticked, and saves it there.
   import { onDestroy, tick } from 'svelte'
   import { codexOpen } from '../store.js'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
 
   let st = $state(null) // /api/codex/status
   let connecting = $state(false)

@@ -9,7 +9,7 @@
   // picker plus a paste-to-create shortcut (a pasted key mints a value-unique
   // Secret on save; api_key rides only the draft-test call).
   import { onMount, untrack } from 'svelte'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { codexOpen } from '../../store.js'
   import { getSettings } from './context.svelte.js'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
@@ -143,7 +143,7 @@
   // (family[effort] = model + reasoning); claude ids do NOT (the bracket there is
   // part of the model preference, e.g. "opus[1m]" = 1M context) — one flat select.
   const acpAgent = $derived(type === 'codex' ? 'codex' : type === 'claude_code' ? 'claude' : '')
-  /** @type {Record<string, 'loading' | import('../../transport/api.js').Catalog>} */
+  /** @type {Record<string, 'loading' | import('../../schemas/index.ts').CodingCatalog>} */
   let catalogs = $state({})
   function fetchCatalog(agent, refresh = false) {
     catalogs[agent] = 'loading'

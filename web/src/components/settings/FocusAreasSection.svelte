@@ -2,7 +2,7 @@
   // Profiles → Focus areas section: the focus pills. A per-profile persona attribute;
   // toggling a pill persists immediately for the active profile via setFocuses.
   import { getSettings } from './context.svelte.js'
-  import { api } from '../../transport/api.js'
+  import { api } from '../../transport/api/index.ts'
   import { FOCUS } from '../../lib/focuses.js'
   import Icon from '../Icon.svelte'
 

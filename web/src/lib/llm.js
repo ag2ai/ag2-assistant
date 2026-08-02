@@ -3,7 +3,7 @@
 // run right now?" predicate. Consumed by Settings → Models (ModelsPage) and the
 // composer's model switcher so the two surfaces speak identically.
 import { writable } from 'svelte/store'
-import { api } from '../transport/api.js'
+import { api } from '../transport/api/index.ts'
 import openaiLogo from '../assets/openai.svg'
 import anthropicLogo from '../assets/anthropic.svg'
 import geminiLogo from '../assets/gemini.svg'

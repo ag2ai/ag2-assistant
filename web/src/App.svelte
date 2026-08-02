@@ -4,7 +4,7 @@
   import { openThread, closeThread, switchProfile } from './controller.js'
   import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, ag2Version, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.js'
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.js'
-  import { api } from './transport/api.js'
+  import { api } from './transport/api/index.ts'
   import { setActiveProfileId, storedProfileId } from './lib/profile.js'
   import { setAccent } from './design/palette.js'
   import Onboarding from './components/Onboarding.svelte'

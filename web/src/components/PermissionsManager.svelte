@@ -11,7 +11,7 @@
   // `perms` wholesale from the endpoint's full-snapshot response ({ok, commands}) —
   // no follow-up GET needed.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import Icon from './Icon.svelte'
 
   let perms = $state({ commands: [] })

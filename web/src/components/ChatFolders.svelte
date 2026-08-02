@@ -10,7 +10,7 @@
   // already reach this chat are listed; new ones added from composer. `taskId`
   // is only ever set for a run's thread — plain chats get no Task folders section.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
+  import { api } from '../transport/api/index.ts'
   import { profiles } from '../store.js'
   import { foldersStore, loadFolders, applyFolders } from '../lib/folders.js'
   import { getActiveProfileId } from '../lib/profile.js'
