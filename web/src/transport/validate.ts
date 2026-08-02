@@ -28,10 +28,16 @@ export function getValidationMode(): ValidationMode {
   return mode
 }
 
-export function parse<T>(schema: z.ZodType<T>, data: unknown, label: string): T {
+// Generic over the schema, not its output: a caller holding an opaque
+// `S extends z.ZodTypeAny` (the transport helpers) can't satisfy z.ZodType<T>.
+export function parse<S extends z.ZodTypeAny>(
+  schema: S,
+  data: unknown,
+  label: string,
+): z.infer<S> {
   const result = schema.safeParse(data)
   if (result.success) return result.data
   if (mode === 'throw') throw new SchemaError(label, result.error)
   console.warn(`[schema] ${label}`, result.error.issues)
-  return data as T
+  return data as z.infer<S>
 }
