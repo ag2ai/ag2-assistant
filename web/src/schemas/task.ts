@@ -58,8 +58,13 @@ export type TaskList = z.infer<typeof TaskList>
 export const TaskEnvelope = z.object({ task: TaskWithRuns })
 export type TaskEnvelope = z.infer<typeof TaskEnvelope>
 
-export const RunEnvelope = z.object({ run: Run })
-export type RunEnvelope = z.infer<typeof RunEnvelope>
+// Both run routes answer through tasks_service.get_run, which stamps the owning
+// task's name onto the run view (tasks_service.py:354) — the run header reads it.
+export const RunDetail = Run.extend({ task_name: z.string() })
+export type RunDetail = z.infer<typeof RunDetail>
+
+export const RunDetailEnvelope = z.object({ run: RunDetail })
+export type RunDetailEnvelope = z.infer<typeof RunDetailEnvelope>
 
 export const RunList = z.object({ runs: z.array(Run) })
 export type RunList = z.infer<typeof RunList>

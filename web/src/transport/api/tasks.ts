@@ -7,7 +7,7 @@ import {
   InquiryList,
   NewTaskEnvelope,
   Ok,
-  RunEnvelope,
+  RunDetailEnvelope,
   TaskEnvelope,
   TaskList,
   TaskRules,
@@ -47,7 +47,7 @@ export const tasksApi = {
   deleteTask: (id: string) => del(P('/tasks/' + encodeURIComponent(id)), Ok),
 
   runTask: (id: string) =>
-    post(P('/tasks/' + encodeURIComponent(id) + '/run'), undefined, RunEnvelope).then((d) => d.run),
+    post(P('/tasks/' + encodeURIComponent(id) + '/run'), undefined, RunDetailEnvelope).then((d) => d.run),
 
   // Per-task command permission rules — the global commands store, scoped to one task.
   taskPermissions: (id: string) =>
@@ -56,7 +56,7 @@ export const tasksApi = {
   deleteTaskPermission: (id: string, rule: string) =>
     del(P('/tasks/' + encodeURIComponent(id) + '/permissions'), Ok, { rule }),
 
-  run: (id: string) => get(P('/runs/' + encodeURIComponent(id)), RunEnvelope).then((d) => d.run),
+  run: (id: string) => get(P('/runs/' + encodeURIComponent(id)), RunDetailEnvelope).then((d) => d.run),
 
   stopRun: (id: string) => post(P('/runs/' + encodeURIComponent(id) + '/stop'), undefined, Ok),
 

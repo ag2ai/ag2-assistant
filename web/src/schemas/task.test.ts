@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { HitlPending, Inquiry, Run, Task, TaskWithRuns } from './task.ts'
+import { HitlPending, Inquiry, Run, RunDetail, RunDetailEnvelope, Task, TaskWithRuns } from './task.ts'
 
 const run = {
   id: 'run-1', task_id: 't1', status: 'completed', trigger: 'manual',
@@ -74,4 +74,14 @@ test('HitlPending parses this profile own question registry', () => {
     pending: [{ id: 'q1', text: 'ok?', detail: '', options: [], kind: 'question', path: '/tmp/q1' }],
   })
   assert.equal(parsed.pending[0].id, 'q1')
+})
+
+test('RunDetail keeps the task_name the run header renders', () => {
+  const parsed = RunDetail.parse({ ...run, task_name: 'Daily digest' })
+  assert.equal(parsed.task_name, 'Daily digest')
+})
+
+test('RunDetailEnvelope wraps the run the run routes return', () => {
+  const parsed = RunDetailEnvelope.parse({ run: { ...run, task_name: '' } })
+  assert.equal(parsed.run.task_name, '')
 })
