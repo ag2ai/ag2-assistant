@@ -149,7 +149,11 @@
   {#if youtubeEmbed}
     <iframe class="a2ui-video" src={youtubeEmbed} title="Video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
   {:else}
-    <video class="a2ui-video" controls src={videoUrl} poster={a2uiValue(component.posterUrl, data) || undefined}></video>
+    <!-- A2UI carries no caption track, so the element declares an empty one
+         rather than claiming captions it does not have. -->
+    <video class="a2ui-video" controls src={videoUrl} poster={a2uiValue(component.posterUrl, data) || undefined}>
+      <track kind="captions" />
+    </video>
   {/if}
 {:else if type === 'textfield'}
   <label class="a2ui-field">

@@ -149,8 +149,8 @@
     {@const isActive = p.id === activeId}
     <div
       class="prow" class:active={isActive} class:clickable={!isActive}
-      role={isActive ? undefined : 'button'}
-      tabindex={isActive ? undefined : 0}
+      role="button" aria-disabled={isActive}
+      tabindex={isActive ? -1 : 0}
       title={isActive ? undefined : `Switch to ${p.name}`}
       onclick={isActive ? undefined : () => switchTo(p)}
       onkeydown={isActive ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTo(p) } }}

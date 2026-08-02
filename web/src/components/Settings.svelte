@@ -59,7 +59,9 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
-<div class="modal-backdrop" onclick={ctx.close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button and Escape, so it stays
+     out of the a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop" role="presentation" onclick={ctx.close}></div>
 <div class="modal settings">
   <button class="modal-x" aria-label="Close" onclick={ctx.close}>×</button>
   <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>

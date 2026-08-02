@@ -503,14 +503,17 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .toolcard .tcquery { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .toolcard .tcskill { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .genimage { margin: 8px 0; }
+/* The thumbnail's click target is a button wrapping the img; it adds no box of
+   its own so the image keeps being the whole visual. */
+.genimage .thumbbtn, .attach .thumbbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; }
 .genimage .thumb { max-width: 340px; max-height: 280px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
-.genimage .thumb:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.genimage .thumbbtn:hover .thumb { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 .genimage .filechip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--code); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 11px; font-size: 13px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .genimage .filechip:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 .attach { margin: 8px 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .attach .who { font-size: 11px; color: var(--muted); }
 .attach .thumb { max-width: 260px; max-height: 220px; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; display: block; background: #fff; }
-.attach .thumb:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.attach .thumbbtn:hover .thumb { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 .attach .filechip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--code); color: var(--ink); border-radius: var(--radius-sm); padding: 7px 11px; font-size: 13px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .attach .filechip:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 .dots span { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin-right: 4px; animation: blink 1.2s infinite both; }
@@ -644,7 +647,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .hitlhead { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; margin-bottom: 6px; }
 .qcard { border: 1px solid var(--accent-border); border-radius: 10px; padding: 10px 12px; margin: 6px 0; max-width: 760px; }
 .qcard .qk { font-size: 11px; color: var(--muted); }
-.qcard .qk a { color: var(--accent); cursor: pointer; }
+/* Navigates rather than links to a URL, so it is a button styled as a link. */
+.qcard .qk .tasklink { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
 .qcard .qt { margin: 4px 0; font-size: 14px; }
 .qcard .qd { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink); background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 4px 0; white-space: pre-wrap; word-break: break-word; overflow: auto; max-height: 240px; }
 .qcard .qopts { display: flex; flex-wrap: wrap; gap: 6px; }

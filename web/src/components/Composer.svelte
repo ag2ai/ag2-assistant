@@ -409,7 +409,9 @@
 </div>
 
 {#if picking}
-  <div class="modal-backdrop over" onclick={() => (picking = false)}></div>
+  <!-- Backdrop: click-to-dismiss duplicates the Cancel button, so it stays out of
+       the a11y tree rather than becoming a second focusable control. -->
+  <div class="modal-backdrop over" role="presentation" onclick={() => (picking = false)}></div>
   <div class="modal over">
     <h2>Add a folder to this chat</h2>
     <p class="muted cfhint">Gives this conversation <b>read</b> access to a folder outside the workspace. Change the mode or remove it anytime from the chip.</p>

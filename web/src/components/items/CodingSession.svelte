@@ -146,7 +146,7 @@
      clamp to two lines — the full prompt lives in the "Task brief" fold. */
   .head { min-width: 0; }
   .title { font-size: clamp(17px, 2.6vw, 22px) !important; line-height: 1.12 !important;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
   .chip { flex: none; padding: 2px 8px; font-family: var(--code); font-size: 8.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; border: 1px solid currentColor; border-radius: 2px; }
   .chip.ok { color: var(--up-d); }

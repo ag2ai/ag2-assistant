@@ -150,8 +150,8 @@
        editor is open). Action buttons below stopPropagation so they never activate. -->
   <div
     class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
-    role={!c.active && !editing ? 'button' : undefined}
-    tabindex={!c.active && !editing ? 0 : undefined}
+    role="button" aria-disabled={c.active || editing}
+    tabindex={!c.active && !editing ? 0 : -1}
     aria-label={!c.active ? `Use ${c.name}` : undefined}
     title={!c.active && !editing ? 'Click to use this model' : ''}
     onclick={() => { if (!c.active && !busy && !editing) use(c) }}

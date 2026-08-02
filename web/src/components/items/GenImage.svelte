@@ -22,8 +22,12 @@
       <Icon name="image-off" size={14} /> {item.path}
     </button>
   {:else}
-    <img class="thumb" src={api.fileUrl(item.path)} alt={item.prompt || 'generated image'}
-         title={item.prompt || ''} onclick={open} onerror={() => (broken = true)} />
+    <!-- The thumbnail opens the file, so the click target is a button; the img is
+         decoration inside it and keeps no listener of its own. -->
+    <button class="thumbbtn" onclick={open} title={item.prompt || ''} aria-label="Open generated image">
+      <img class="thumb" src={api.fileUrl(item.path)} alt={item.prompt || 'generated image'}
+           onerror={() => (broken = true)} />
+    </button>
   {/if}
   {#if item.path}
     <div class="itemfb"><Feedback targetKind="image" targetId={item.path} content={'Generated image — prompt: ' + (item.prompt || '')} {request} current={item.feedback} /></div>

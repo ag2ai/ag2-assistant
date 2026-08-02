@@ -37,7 +37,8 @@
     {#each rows as e (e._id)}
       {@const d = describe(e.type)}
       {@const c = (SUBSYSTEMS[d.sub] || {}).color || '#888'}
-      <div class="insp-row" onclick={() => toggle(e._id)} role="button" tabindex="0">
+      <div class="insp-row" role="button" tabindex="0" onclick={() => toggle(e._id)}
+        onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(e._id) } }}>
         <span class="insp-dot" style="background:{c}"></span>
         <span class="insp-name">{d.label}</span>
         <span class="insp-sub2" style="color:{c}">{d.sub}</span>

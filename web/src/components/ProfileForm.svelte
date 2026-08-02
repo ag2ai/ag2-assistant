@@ -13,6 +13,7 @@
   // shown inline. This lets each consumer choose what "submit" means (create,
   // create-then-continue, etc.). `accent` is an opaque #rrggbb hex (ADR 0002): a
   // preset swatch or any colour from the custom picker.
+  import { untrack } from 'svelte'
   import { PALETTES } from '../design/palette.js'
   import Icon from './Icon.svelte'
 
@@ -38,8 +39,10 @@
     PALETTES.filter((p) => !claimed.includes(p.hex) || keepAccents.includes(p.hex))
   )
 
-  let name = $state(initialName)
-  let accent = $state(initialAccent || (available[0] && available[0].hex) || PALETTES[0].hex)
+  // Seeded once on mount: a later prop change must not clobber what the user typed.
+  // The $effect below is what re-picks an accent when the current one gets claimed.
+  let name = $state(untrack(() => initialName))
+  let accent = $state(untrack(() => initialAccent || (available[0] && available[0].hex) || PALETTES[0].hex))
   let busy = $state(false)
   let error = $state('')
 

@@ -17,7 +17,8 @@
   const replacesCanvas = $derived(
     !!composingSurfaceId && $thread.items.some((entry) => entry.kind === 'a2ui' && entry.surfaceId === composingSurfaceId)
   )
-  let el
+  // bind:this target: the effect below reads it, so it has to be reactive.
+  let el = $state()
   $effect(() => {
     if (!el) return
     el.innerHTML = renderMarkdown(displayText)        // re-runs when item.text changes (streaming)

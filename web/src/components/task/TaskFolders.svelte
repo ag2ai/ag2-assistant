@@ -121,7 +121,9 @@
           <span class="cfmenuwrap">
             <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
-              <div class="cfscrim" onclick={() => (menuFor = '')}></div>
+              <!-- Scrim: closing on an outside click duplicates the kebab toggle,
+                   so it stays out of the a11y tree. -->
+              <div class="cfscrim" role="presentation" onclick={() => (menuFor = '')}></div>
               <div class="cfmenu">
                 <button onclick={() => { menuFor = ''; moveToProfile(f) }}><Icon name="users" size={14} /> Move to profile</button>
                 <button class="danger" onclick={() => { menuFor = ''; setTaskMode(f, null) }}><Icon name="trash" size={14} /> Delete</button>

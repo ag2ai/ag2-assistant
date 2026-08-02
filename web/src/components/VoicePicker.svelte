@@ -55,7 +55,9 @@
 </script>
 
 <!-- Scoped to a config → stack OVER Settings (.over) rather than replace it. -->
-<div class="modal-backdrop" class:over={!!configId} onclick={close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the
+     a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop" class:over={!!configId} role="presentation" onclick={close}></div>
 <div class="modal voicepick" class:over={!!configId}>
   <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Voice{provider ? ' — ' + (PROVIDER_LABEL[provider] || provider) : ''}</h2>

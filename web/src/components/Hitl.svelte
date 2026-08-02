@@ -73,7 +73,7 @@
       <div class="qcard">
         <div class="qk">
           {q.kind === 'permission' ? 'Permission' : 'Question'}
-          {#if q.task_title}· <a onclick={() => q.root_id && go('/t/' + q.root_id)}>{q.task_title}</a>{/if}
+          {#if q.task_title}· <button class="tasklink" onclick={() => q.root_id && go('/t/' + q.root_id)}>{q.task_title}</button>{/if}
         </div>
         <div class="qt">{q.text}</div>
         {#if q.detail}<div class="qd">{q.detail}</div>{/if}

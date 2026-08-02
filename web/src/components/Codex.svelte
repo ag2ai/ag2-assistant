@@ -108,7 +108,9 @@
   const close = () => ($codexOpen = false)
 </script>
 
-<div class="modal-backdrop over" onclick={close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the Cancel button, so it stays out of
+     the a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop over" role="presentation" onclick={close}></div>
 <div class="modal over codex">
   <h2>Sign in with ChatGPT</h2>
 

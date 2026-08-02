@@ -699,7 +699,6 @@
   .onb-sumicon { color: var(--accent); display: inline-flex; }
   .onb-sumkey { width: 64px; flex: none; font-size: var(--text-sm); color: var(--text-muted); }
   .onb-sumval { flex: 1; font-size: var(--text-sm); color: var(--text); }
-  .onb-sumval.cap { text-transform: capitalize; }
 
   /* Per-profile setup header + the per-profile Ready summary rows */
   .onb-setuphead { display: flex; align-items: center; gap: 10px; }

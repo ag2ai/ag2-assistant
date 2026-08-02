@@ -86,7 +86,9 @@
   }
 </script>
 
-<div class="modal-backdrop over" onclick={onClose}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the
+     a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop over" role="presentation" onclick={onClose}></div>
 <div class="modal over">
   <button class="modal-x" aria-label="Close" onclick={onClose}>×</button>
   <h2>Folder access — this chat</h2>
@@ -107,7 +109,9 @@
           <span class="cfmenuwrap">
             <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
-              <div class="cfscrim" onclick={() => (menuFor = '')}></div>
+              <!-- Scrim: closing on an outside click duplicates the kebab toggle,
+                   so it stays out of the a11y tree. -->
+              <div class="cfscrim" role="presentation" onclick={() => (menuFor = '')}></div>
               <div class="cfmenu">
                 {#if taskId}
                   <button onclick={() => { menuFor = ''; moveToTask(f) }}><Icon name="list" size={14} /> Move to task</button>

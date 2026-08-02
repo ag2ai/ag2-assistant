@@ -209,6 +209,15 @@
   const openTask = (id) => go('/t/' + id)
   const newChat = () => go('/c/' + newChatId())
 
+  // Keyboard twin of a row's click. Only the row itself acts: Enter/Space landing
+  // on a nested button or rename input belongs to that control, not the row.
+  function rowKey(e, run) {
+    if (e.target !== e.currentTarget) return
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    run()
+  }
+
   // Chat delete: a hover-revealed trash on the row swaps to an inline "Delete? yes/no"
   // confirm (mirrors the Files modal). Permanent — the backend drops the transcript
   // AND the full event log. If the open chat is the one deleted, hop to a fresh chat.
@@ -436,7 +445,9 @@
   {/if}
 
   {#if createOpen}
-    <div class="modal-backdrop" onclick={() => (createOpen = false)}></div>
+    <!-- Backdrop: click-to-dismiss duplicates the Cancel button, so it stays out
+         of the a11y tree rather than becoming a second focusable control. -->
+    <div class="modal-backdrop" role="presentation" onclick={() => (createOpen = false)}></div>
     <div class="modal profcreate">
       <h2>New profile</h2>
       <p class="pc-lead">A colour-coded, isolated workspace — its own chats, tasks, memory, and files.</p>
@@ -456,7 +467,9 @@
   </div>
 
   {#snippet chatRow(s)}
-    <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id} onclick={() => openChat(s.chat_id)}>
+    <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id}
+         role="button" tabindex="0"
+         onclick={() => openChat(s.chat_id)} onkeydown={(e) => rowKey(e, () => openChat(s.chat_id))}>
       {#if renameChat === s.chat_id}
         <input class="renamein" value={renameText} use:focusSelect
           oninput={(e) => (renameText = e.target.value)}
@@ -467,7 +480,8 @@
         <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.chat_id}</div>
       {/if}
       {#if confirmChat === s.chat_id}
-        <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+        <!-- Layout wrapper only: the click handler shields the row underneath. -->
+        <span class="rowconfirm" role="presentation" onclick={(e) => e.stopPropagation()}>
           <span class="confirm">Delete?</span>
           <button class="linkbtn danger" disabled={busyChat === s.chat_id}
             onclick={(e) => { e.stopPropagation(); delChat(s.chat_id) }}>{busyChat === s.chat_id ? '…' : 'yes'}</button>
@@ -478,6 +492,9 @@
         <button class="rowkebab" title="Chat actions" aria-haspopup="menu" aria-expanded={menuChat === s.chat_id}
           onclick={(e) => toggleMenu(e, s)}><Icon name="ellipsis-vertical" size={14} /></button>
         {#if menuChat === s.chat_id}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- The handler only shields the row underneath; it is not an action, so
+               there is nothing for a keyboard twin to do. -->
           <div class="chatmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
             onclick={(e) => e.stopPropagation()}>
             <button class="cmitem" role="menuitem" onclick={() => toggleStar(s)}>
@@ -503,7 +520,8 @@
   {#snippet taskRow(t)}
     {@const nextIn = !t.paused && t.next_run_at ? fmtNextIn(t.next_run_at) : ''}
     <div class="drow ttask" class:on={$route.name === 'task' && $route.id === t.id}
-         class:unseen={t.unread > 0} onclick={() => openTask(t.id)}>
+         class:unseen={t.unread > 0} role="button" tabindex="0"
+         onclick={() => openTask(t.id)} onkeydown={(e) => rowKey(e, () => openTask(t.id))}>
       <div class="tline1">
         {#if t.paused}<span class="statusicon" title="Paused"><Icon name="pause" size={14} /></span>
         {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
@@ -527,7 +545,8 @@
           {/if}
         {/if}
         {#if confirmTask === t.id}
-          <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+          <!-- Layout wrapper only: the click handler shields the row underneath. -->
+        <span class="rowconfirm" role="presentation" onclick={(e) => e.stopPropagation()}>
             <span class="confirm">Delete?</span>
             <button class="linkbtn danger" disabled={busyTask === t.id}
               onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : 'yes'}</button>
@@ -537,6 +556,9 @@
           <button class="rowkebab" title="Task actions" aria-haspopup="menu" aria-expanded={menuTask === t.id}
             onclick={(e) => toggleTaskMenu(e, t)}><Icon name="ellipsis-vertical" size={14} /></button>
           {#if menuTask === t.id}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- The handler only shields the row underneath; it is not an action, so
+                 there is nothing for a keyboard twin to do. -->
             <div class="chatmenu taskmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
               onclick={(e) => e.stopPropagation()}>
               <button class="cmitem" role="menuitem" onclick={() => toggleTaskStar(t)}>

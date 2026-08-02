@@ -10,7 +10,9 @@
   const dot = (sub) => (SUBSYSTEMS[sub] || {}).color || 'var(--line)'
 </script>
 
-<div class="modal-backdrop" onclick={close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the
+     a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop" role="presentation" onclick={close}></div>
 <div class="modal poweredby">
   <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Powered by AG2</h2>

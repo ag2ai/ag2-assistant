@@ -34,6 +34,15 @@ repos:
 
   - repo: local
     hooks:
+      # Typecheck the SPA source before the bundle is rebuilt: a type error must
+      # fail here rather than surface in CI after the bundle is committed.
+      - id: web-typecheck
+        name: typecheck web (svelte-check)
+        language: system
+        files: '^web/(src/.*|package\.json|tsconfig\.json)$'
+        pass_filenames: false
+        entry: bash -c 'cd web && npm run check'
+
       # Keep the committed SPA bundle in sync with its source. Any change to a Vite
       # build input under web/ rebuilds static/app and stages it into the same commit,
       # so the bundle can't drift (mirrors the CI "SPA bundle is up to date" gate).

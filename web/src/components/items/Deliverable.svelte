@@ -10,7 +10,7 @@
   const request = $derived(requestContext($thread.items, item, $runInfo))
   // The preview is a flattened 240-char teaser (newlines already collapsed at the
   // source), so block markdown can't render — strip the markers for a clean one-liner.
-  const teaser = (item.preview || '').replace(/[#*`>_~]/g, '').replace(/\s+/g, ' ').trim()
+  const teaser = $derived((item.preview || '').replace(/[#*`>_~]/g, '').replace(/\s+/g, ' ').trim())
 
   // Path-less fallback: no persisted file to click, so fetch the full asset text
   // into the transient viewer store. (With a path, the filename link opens the rail.)

@@ -33,7 +33,9 @@
   const close = () => ($googleOpen = false)
 </script>
 
-<div class="modal-backdrop" onclick={close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the
+     a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop" role="presentation" onclick={close}></div>
 <div class="modal">
   <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Google</h2>

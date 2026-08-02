@@ -18,8 +18,11 @@
 <div class="attach">
   <div class="who">You shared</div>
   {#if isImage && !broken}
-    <img class="thumb" src={api.fileUrl(item.path)} alt={item.name} title={item.name}
-         onclick={open} onerror={() => (broken = true)} />
+    <!-- The thumbnail opens the file, so the click target is a button; the img is
+         decoration inside it and keeps no listener of its own. -->
+    <button class="thumbbtn" onclick={open} title={item.name} aria-label="Open {item.name || item.path}">
+      <img class="thumb" src={api.fileUrl(item.path)} alt={item.name} onerror={() => (broken = true)} />
+    </button>
   {:else}
     <button class="filechip" onclick={open} title={item.path}>
       <Icon name={broken ? 'image-off' : 'paperclip'} size={14} /> {broken ? item.path : (item.name || item.path)}
