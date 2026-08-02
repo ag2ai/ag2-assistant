@@ -75,29 +75,30 @@ def build_self_tools(config, settings) -> list:
         """What's connected right now: the user's Google account and their MCP
         servers. Call this before claiming you can or can't reach their mail,
         calendar, or drive."""
-        from assistant.integrations import google_auth
+        from assistant.integrations.google_auth import GoogleAuth
 
+        google = GoogleAuth(config.paths)
         lines = []
         try:
-            if not google_auth.is_configured():
+            if not google.is_configured():
                 lines.append(
                     "Google: not set up (no OAuth client). The user adds it in "
                     "Settings → Integrations."
                 )
-            elif not google_auth.has_token():
+            elif not google.has_token():
                 lines.append(
                     "Google: set up but not signed in — sign in at Settings → Integrations."
                 )
-            elif not google_auth.libs_available():
-                who = google_auth.account_email() or "the user's account"
+            elif not google.libs_available():
+                who = google.account_email() or "the user's account"
                 lines.append(
                     f"Google: signed in as {who}, but the optional client libraries are "
                     f"NOT installed, so Gmail/Calendar/Drive tools are unavailable this "
-                    f"run. Tell the user to run `{google_auth.install_hint()}` and restart "
+                    f"run. Tell the user to run `{google.install_hint()}` and restart "
                     f"AG2 Assistant. Do not claim you can read their mail."
                 )
             else:
-                who = google_auth.account_email() or "unknown account"
+                who = google.account_email() or "unknown account"
                 lines.append(f"Google: connected as {who} (Gmail, Calendar, Drive read).")
         except Exception as exc:
             lines.append(f"Google: could not determine status ({exc}).")

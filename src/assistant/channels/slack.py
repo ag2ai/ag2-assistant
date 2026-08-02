@@ -9,7 +9,6 @@ Responds to all direct messages and to @mentions in channels. Uses Slack's
 
 import asyncio
 import contextlib
-import os
 import re
 
 import aiohttp
@@ -100,13 +99,16 @@ class SlackAsker(PendingGuard):
 class SlackChannel(Channel):
     platform = "slack"
 
-    def __init__(self, bot_token: str | None = None, app_token: str | None = None) -> None:
-        self._bot_token = bot_token or os.environ.get("SLACK_BOT_TOKEN", "")
-        self._app_token = app_token or os.environ.get("SLACK_APP_TOKEN", "")
+    def __init__(
+        self, bot_token: str = "", app_token: str = "", *, message_limit: int = SLACK_LIMIT
+    ) -> None:
+        self._bot_token = bot_token
+        self._app_token = app_token
+        self._message_limit = message_limit
         if not self._bot_token or not self._app_token:
             raise ValueError(
-                "SLACK_BOT_TOKEN and SLACK_APP_TOKEN must both be set "
-                "(env vars or constructor args)."
+                "Slack needs both tokens; pass bot_token=/app_token= "
+                "(SLACK_BOT_TOKEN and SLACK_APP_TOKEN)."
             )
         self._app = None
         self._handler = None
@@ -139,10 +141,10 @@ class SlackChannel(Channel):
 
     async def notify(self, chat_id: str, text: str) -> None:
         """Push a task-run outcome into a Slack channel. Mirrors `_respond`'s send
-        path — same `split_for_limit`/`SLACK_LIMIT` chunking and `format_outbound`
+        path — same `split_for_limit`/`message_limit` chunking and `format_outbound`
         — but posts via `self._app.client` directly since there's no `say()`
         callback outside of an event handler."""
-        for chunk in split_for_limit(self.format_outbound(text), SLACK_LIMIT):
+        for chunk in split_for_limit(self.format_outbound(text), self._message_limit):
             await self._app.client.chat_postMessage(channel=chat_id, text=chunk)
 
     def _mention_inbound(self, event: dict) -> InboundMessage | None:
@@ -244,7 +246,7 @@ class SlackChannel(Channel):
         except Exception as exc:  # surface failures to the user
             reply = f"Sorry, something went wrong: {exc}"
 
-        for chunk in split_for_limit(self.format_outbound(reply), SLACK_LIMIT):
+        for chunk in split_for_limit(self.format_outbound(reply), self._message_limit):
             await say(chunk)
 
         if reacted:

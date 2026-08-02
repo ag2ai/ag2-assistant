@@ -6,7 +6,7 @@ from ag2.events import BinaryType, TextInput
 
 from assistant.attachments import build_input
 from assistant.gateway.core import Gateway
-from tests.conftest import FakeRunMixin
+from tests.support.fakes import FakeRunMixin
 
 
 def _kind(inp):

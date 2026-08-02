@@ -28,8 +28,8 @@ def test_scheduler_lock_release_is_idempotent(tmp_path):
     a.release()
 
 
-async def test_start_without_scheduler_keeps_tools_but_no_loop(tmp_path):
-    svc = TaskService(config=Config(data_dir=tmp_path))
+async def test_start_without_scheduler_keeps_tools_but_no_loop(paths, tmp_path):
+    svc = TaskService(config=Config.for_paths(paths, data_dir=tmp_path))
     await svc.start(scheduler=False)
     try:
         assert svc._scheduler is None
@@ -40,9 +40,9 @@ async def test_start_without_scheduler_keeps_tools_but_no_loop(tmp_path):
         await svc.close()
 
 
-async def test_only_one_scheduler_leader_per_datadir(tmp_path):
-    a = TaskService(config=Config(data_dir=tmp_path))
-    b = TaskService(config=Config(data_dir=tmp_path))
+async def test_only_one_scheduler_leader_per_datadir(paths, tmp_path):
+    a = TaskService(config=Config.for_paths(paths, data_dir=tmp_path))
+    b = TaskService(config=Config.for_paths(paths, data_dir=tmp_path))
     await a.start(scheduler=True)
     await b.start(scheduler=True)
     try:
@@ -55,13 +55,13 @@ async def test_only_one_scheduler_leader_per_datadir(tmp_path):
         await b.close()
 
 
-async def test_scheduler_lock_frees_for_next_owner(tmp_path):
-    a = TaskService(config=Config(data_dir=tmp_path))
+async def test_scheduler_lock_frees_for_next_owner(paths, tmp_path):
+    a = TaskService(config=Config.for_paths(paths, data_dir=tmp_path))
     await a.start(scheduler=True)
     assert a._scheduler is not None
     await a.close()
 
-    b = TaskService(config=Config(data_dir=tmp_path))
+    b = TaskService(config=Config.for_paths(paths, data_dir=tmp_path))
     await b.start(scheduler=True)
     try:
         assert b._scheduler is not None

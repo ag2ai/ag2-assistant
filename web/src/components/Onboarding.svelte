@@ -22,6 +22,15 @@
   import { setActiveProfileId } from '../lib/profile.js'
   import { setAccent } from '../design/palette.js'
   import { FOCUS, focusLabel } from '../lib/focuses.js'
+  import { TYPE_LABEL } from '../lib/llm.js'
+  import {
+    CLI_TYPE,
+    agentAvailability,
+    canUseCliLogin,
+    cliDefaultLabel,
+    cliNote,
+  } from '../lib/cliLogin.js'
+  import { effortLabel, groupModels, joinModelId, splitModelId } from '../lib/codexModels.js'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
   import FolderPicker from './FolderPicker.svelte'
@@ -61,13 +70,20 @@
   const modelsFor = (provider) => MODELS.filter((m) => m.provider === provider)
   // Connect step is organised as provider tabs. Each key-based tab owns one API-key
   // field (keyed into `keys`) plus its provider's models; the OAuth tab hosts the
-  // ChatGPT subscription sign-in instead. The ACTIVE tab drives which model gets
-  // activated on finish (see `selectTab`); within a tab the user picks among its models.
+  // ChatGPT subscription sign-in instead, and the two `cli` tabs the ACP CLI logins
+  // (no key at all — auth is that CLI's own on-disk login). The ACTIVE tab drives
+  // which config gets created and activated on finish (see `chosenConfig`); within a
+  // tab the user picks among its models.
   const TABS = [
     { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: 'recommended', models: modelsFor('gemini') },
     { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: 'optional', models: modelsFor('openai') },
     { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
-    { id: 'oauth', label: 'OpenAI OAuth', oauth: true, hint: 'no API key · unofficial' },
+    // Labelled by what the user recognises (their ChatGPT login), not the mechanism —
+    // and short enough that six tabs still fit the column on one line.
+    { id: 'oauth', label: 'ChatGPT', oauth: true, hint: 'no API key · unofficial' },
+    // `cli` is the coding agent's name in coding/detect.py — what /api/coding/* keys on.
+    { id: 'claude_code', label: 'Claude Code', cli: 'claude', hint: 'no API key · CLI login' },
+    { id: 'codex', label: 'Codex', cli: 'codex', hint: 'no API key · CLI login' },
   ]
 
   let step = $state(0)
@@ -81,6 +97,7 @@
     activeTab = id
     const t = TABS.find((x) => x.id === id)
     if (t?.oauth) { if (codex?.signed_in) modelLabel = SUB_MODEL.label }
+    else if (t?.cli) { /* CLI tabs carry their own model in `cliModel` */ }
     else if (t?.models?.length) modelLabel = t.models[0].label
   }
   let name = $state($profile.name || '')
@@ -106,7 +123,66 @@
   let codexPoll = null
   const allModels = $derived(codex?.signed_in ? [...MODELS, SUB_MODEL] : MODELS)
 
-  onMount(async () => { try { codex = await api.codexStatus() } catch {} })
+  // ---- CLI logins (Claude Code / Codex over ACP) --------------------------------
+  // `agents` is the /api/coding/agents read (adapter present locally, or reachable
+  // on the host bridge in Docker); `catalogs` holds each adapter's live model list,
+  // fetched when its tab is first opened. missing key = not asked yet, 'loading' =
+  // in flight, else {models, current, reason} — the same shape and the same reason
+  // vocabulary Settings → Models uses. All the decisions made on these two reads
+  // live in lib/cliLogin.js.
+  let agents = $state(null)
+  let catalogs = $state({})
+  let cliModel = $state({ claude: '', codex: '' }) // '' = the CLI's own model
+  const cliAvail = $derived(currentTab.cli ? agentAvailability(agents, currentTab.cli) : null)
+  const cliCatalog = $derived(currentTab.cli ? catalogs[currentTab.cli] : undefined)
+  const cliLoading = $derived(!!currentTab.cli && (!cliAvail?.loaded || cliCatalog === 'loading'))
+  const cliState = $derived(typeof cliCatalog === 'object' ? cliCatalog : null)
+  const cliModels = $derived(cliState?.models ?? [])
+  const cliReady = $derived(!!currentTab.cli && canUseCliLogin(cliAvail, cliCatalog))
+  const cliHint = $derived(currentTab.cli ? cliNote(currentTab.cli, cliAvail, cliCatalog) : '')
+
+  function fetchCatalog(agent, refresh = false) {
+    catalogs[agent] = 'loading'
+    api.codingModels(agent, refresh)
+      .then((r) => { catalogs[agent] = { models: r.models || [], current: r.current || '', reason: r.reason || '' } })
+      .catch(() => { catalogs[agent] = { models: [], current: '', reason: 'probe_failed' } })
+  }
+  // "Re-check" after installing the adapter or logging the CLI in: both reads are
+  // stale then, and the availability read is what decides whether a probe is even
+  // possible — so re-read it first, then probe past the TTL cache.
+  async function recheckCli(agent) {
+    try { agents = await api.codingAgents() } catch {}
+    const a = agentAvailability(agents, agent)
+    if (a.available && a.mode === 'local') fetchCatalog(agent, true)
+    else { const { [agent]: _drop, ...rest } = catalogs; catalogs = rest }
+  }
+
+  // Probe only what the user actually opened, and only when the adapter is there to
+  // spawn: a probe costs an adapter launch, and in bridge mode there is nothing local
+  // to launch (coding/model_catalog.py says so with reason 'bridge').
+  $effect(() => {
+    const agent = currentTab.cli
+    if (agent && cliAvail?.available && cliAvail.mode === 'local' && catalogs[agent] === undefined) {
+      fetchCatalog(agent)
+    }
+  })
+
+  // codex reports one flat catalog of `family[effort]` ids; show it the way its own
+  // picker (and Settings) does — model and reasoning as two choices over one string.
+  const codexGroups = $derived(currentTab.cli === 'codex' ? groupModels(cliModels) : [])
+  const codexPick = $derived(splitModelId(cliModel.codex))
+  const codexEfforts = $derived(codexGroups.find((g) => g.family === codexPick.family)?.efforts || [])
+  function pickCodexFamily(family) {
+    // Keep the effort when the new family offers it, else fall back to its default.
+    const efforts = codexGroups.find((g) => g.family === family)?.efforts || []
+    const keep = efforts.some((e) => e.value === codexPick.effort) ? codexPick.effort : ''
+    cliModel.codex = joinModelId(family, keep)
+  }
+
+  onMount(async () => {
+    try { codex = await api.codexStatus() } catch {}
+    try { agents = await api.codingAgents() } catch { agents = { mode: 'local', connected: true, agents: [] } }
+  })
   onDestroy(() => { if (codexPoll) clearInterval(codexPoll) })
 
   async function connectCodex() {
@@ -180,8 +256,11 @@
     (focuses = focuses.includes(id) ? focuses.filter((x) => x !== id) : [...focuses, id])
 
   const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
-  // Connect is satisfied by a provider key OR a ChatGPT-subscription sign-in.
-  const canConnect = $derived(hasKey || !!codex?.signed_in)
+  // Connect is satisfied by a provider key, a ChatGPT-subscription sign-in, or a
+  // working CLI login. The CLI arm is scoped to the ACTIVE tab on purpose: the active
+  // tab is what `chosenConfig` creates, so an installed adapter must not unlock
+  // Continue while the user sits on the Gemini tab with no key typed.
+  const canConnect = $derived(hasKey || !!codex?.signed_in || cliReady)
   // Gate per step: Connect needs a key/sign-in; Profiles needs ≥1 created. The Set up
   // step is fully skippable, so it never gates Continue.
   const canNext = $derived(
@@ -247,6 +326,28 @@
 
   const addAnother = () => { showForm = true }
 
+  // The LLM configuration the active Connect tab describes, or null when nothing is
+  // selectable there. OpenAI with key auth defaults to the Responses API; the
+  // ChatGPT-subscription pill maps to the openai_subscription type (no key — the token
+  // rides from codex_auth at call time); a CLI tab maps to its ACP type, with an empty
+  // model meaning "whatever the CLI itself is set to".
+  function chosenConfig() {
+    if (currentTab.cli) {
+      if (!cliReady) return null
+      const type = CLI_TYPE[currentTab.cli]
+      return { name: TYPE_LABEL[type], type, model: cliModel[currentTab.cli] || '' }
+    }
+    const m = allModels.find((x) => x.label === modelLabel)
+    if (!m) return null
+    const type =
+      m.auth === 'subscription'
+        ? 'openai_subscription'
+        : m.provider === 'openai'
+          ? 'openai_responses'
+          : m.provider
+    return { name: m.label, type, model: m.model }
+  }
+
   // Persist global keys + the assistant model (targeting the active/first profile),
   // set the install-level onboarded flag ONCE, then enter the app. Per-profile
   // folders + focuses were already saved on the Set up pages.
@@ -256,21 +357,11 @@
       for (const [prov, val] of Object.entries(keys)) {
         if (val.trim()) { try { await api.setKey(prov, val.trim()) } catch {} }
       }
-      // Create the chosen model as the active LLM configuration. OpenAI with key
-      // auth defaults to the Responses API; the ChatGPT-subscription pill maps to the
-      // openai_subscription type (no key — the token rides from codex_auth at call
-      // time). Best-effort like the key writes above.
-      const m = allModels.find((x) => x.label === modelLabel)
-      if (m) {
-        const type =
-          m.auth === 'subscription'
-            ? 'openai_subscription'
-            : m.provider === 'openai'
-              ? 'openai_responses'
-              : m.provider
-        try {
-          await api.saveLlmConfig({ name: m.label, type, model: m.model, activate: true })
-        } catch {}
+      // Create the chosen model as the active LLM configuration. Best-effort like the
+      // key writes above.
+      const cfg = chosenConfig()
+      if (cfg) {
+        try { await api.saveLlmConfig({ ...cfg, activate: true }) } catch {}
       }
       // Seed the universal "who the user is" doc from the About-you answers (name from
       // Welcome). Posted once, at completion, so Back-navigation revisions are captured.
@@ -372,7 +463,7 @@
 
           {:else if step === CONNECT_STEP}
             <h2>Connect a model</h2>
-            <p class="lead">Add at least one provider key. It's stored locally and shared across all your profiles — you can change these anytime in Settings.</p>
+            <p class="lead">Add a provider key — or skip keys entirely and run on a subscription you already have: your ChatGPT login, or the Claude Code / Codex CLI. Whatever you choose is stored locally and shared across all your profiles; you can change it anytime in Settings.</p>
 
             <!-- Provider tabs: one panel per provider. The active tab drives which model
                  gets activated on finish; the OAuth tab hosts the ChatGPT sign-in flow. -->
@@ -423,6 +514,67 @@
                     <div class="onb-flabel"><span>Assistant model</span></div>
                     <div class="onb-pills"><span class="onb-pill on">{SUB_MODEL.label}</span></div>
                   </div>
+                {/if}
+              {:else if currentTab.cli}
+                <!-- CLI login over ACP: no key field and no endpoint — auth is that
+                     CLI's own on-disk login. What has to be true is that its ACP
+                     adapter answers; the model list comes from the adapter itself. -->
+                <div class="onb-field">
+                  <div class="onb-flabel">
+                    <span>Run on your {currentTab.label} CLI</span>
+                    <span class="hint">{currentTab.hint}</span>
+                  </div>
+                  {#if cliLoading}
+                    <p class="hint">Checking the {currentTab.label} adapter…</p>
+                  {:else if cliReady}
+                    <div class="onb-input" style="cursor:default">
+                      <Icon name="check" size={15} />
+                      <span style="flex:1;font-size:var(--text-sm)">
+                        {cliAvail.mode === 'bridge'
+                          ? 'Reachable through the host ACP bridge'
+                          : 'Adapter answered — running on your CLI login'}
+                      </span>
+                    </div>
+                  {/if}
+                  {#if cliHint}<p class="hint" class:warn={!cliReady}>{cliHint}</p>{/if}
+                  {#if !cliLoading}
+                    <button class="onb-btn ghost" style="align-self:flex-start;padding:0" onclick={() => recheckCli(currentTab.cli)}>
+                      Re-check
+                    </button>
+                  {/if}
+                </div>
+
+                {#if cliReady && currentTab.cli === 'claude'}
+                  <div class="onb-field">
+                    <div class="onb-flabel"><span>Assistant model</span></div>
+                    <div class="onb-pills">
+                      <button class="onb-pill" class:on={!cliModel.claude} onclick={() => (cliModel.claude = '')}>{cliDefaultLabel(cliCatalog)}</button>
+                      {#each cliModels as m}
+                        <button class="onb-pill" class:on={cliModel.claude === m.id} onclick={() => (cliModel.claude = m.id)}>{m.name || m.id}</button>
+                      {/each}
+                    </div>
+                  </div>
+                {:else if cliReady && currentTab.cli === 'codex'}
+                  <div class="onb-field">
+                    <div class="onb-flabel"><span>Assistant model</span></div>
+                    <div class="onb-pills">
+                      <button class="onb-pill" class:on={!cliModel.codex} onclick={() => (cliModel.codex = '')}>{cliDefaultLabel(cliCatalog)}</button>
+                      {#each codexGroups as g}
+                        <button class="onb-pill" class:on={codexPick.family === g.family} onclick={() => pickCodexFamily(g.family)}>{g.label}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  {#if codexEfforts.length}
+                    <div class="onb-field">
+                      <div class="onb-flabel"><span>Reasoning</span><span class="hint">how hard it thinks</span></div>
+                      <div class="onb-pills">
+                        <button class="onb-pill" class:on={!codexPick.effort} onclick={() => (cliModel.codex = joinModelId(codexPick.family, ''))}>{effortLabel('')}</button>
+                        {#each codexEfforts as e}
+                          <button class="onb-pill" class:on={codexPick.effort === e.value} onclick={() => (cliModel.codex = joinModelId(codexPick.family, e.value))}>{e.label}</button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
                 {/if}
               {:else}
                 <div class="onb-field">
@@ -539,7 +691,7 @@
       <div class="onb-nav">
         <button class="onb-btn ghost" onclick={back}><Icon name="chevron-left" size={16} /> Back</button>
         <div class="onb-navright">
-          {#if step === CONNECT_STEP && !canConnect}<span class="hint">Add a key or sign in with ChatGPT to continue</span>{/if}
+          {#if step === CONNECT_STEP && !canConnect}<span class="hint">Add a key, sign in with ChatGPT, or connect a CLI login to continue</span>{/if}
           {#if step === PROFILES_STEP && !created.length}<span class="hint">Create a profile to continue</span>{/if}
           {#if step === SETUP_STEP}
             <!-- Per-profile setup: Skip (no save) or advance (save + next profile / Ready). -->
@@ -614,6 +766,9 @@
   .onb-flabel > span:first-child { font-size: var(--text-sm); font-weight: var(--fw-semibold); }
   .onb-flabel .hint { font-size: var(--text-xs); color: var(--text-muted); }
   .hint { font-size: var(--text-xs); color: var(--text-muted); }
+  /* A missing adapter / unreachable bridge is the reason Continue stays shut — say it
+     in the same red the Models settings uses for the same class of problem. */
+  .hint.warn { color: var(--danger); }
 
   .onb-input {
     display: flex; align-items: center; gap: 9px; padding: 0 12px;
@@ -638,15 +793,19 @@
   .onb-pill:hover { border-color: var(--accent); }
   .onb-pill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
-  /* Connect provider tabs */
+  /* Connect provider tabs. Six of them share a 52ch column, so the row must never
+     wrap: each tab is sized by its own label (flex-basis auto) and grows into the
+     leftover space, with min-width 0 + ellipsis as the safety net on a narrow
+     window — a wrapped segmented control reads as two broken bars. */
   .onb-tabs {
     display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-sm);
-    background: var(--surface-sunk); border: 1px solid var(--line); flex-wrap: wrap;
+    background: var(--surface-sunk); border: 1px solid var(--line);
   }
   .onb-tab {
-    flex: 1; min-width: max-content; cursor: pointer; padding: 8px 14px;
+    flex: 1 1 auto; min-width: 0; cursor: pointer; padding: 8px 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     border: none; border-radius: calc(var(--radius-sm) - 2px); background: none;
-    color: var(--text-muted); font: inherit; font-size: var(--text-sm);
+    color: var(--text-muted); font: inherit; font-size: var(--text-xs);
     font-weight: var(--fw-semibold); transition: all var(--dur-fast) var(--ease-out);
   }
   .onb-tab:hover { color: var(--accent); }

@@ -12,6 +12,8 @@ deterministically in tests; the default runner drives ``ag2.acp``.
 
 import contextlib
 import os
+from collections.abc import Sequence
+from pathlib import Path
 from uuid import uuid4
 
 from ag2.acp.events import ACPPlan
@@ -87,19 +89,21 @@ async def run_coding_session(
     asker=None,
     surface_id: str | None = None,
     runner=None,
+    search_path: Sequence[Path] = (),
+    bridge: "detect.BridgeEndpoint | None" = None,
 ) -> str:
     """Run a coding task with a host CLI agent; return a summary for the agent.
 
-    When ``AG2ASSISTANT_ACP_BRIDGE`` is set (e.g. running in Docker), agents are
-    discovered and driven through the host bridge; otherwise the agent is spawned
-    as a local subprocess. Detection and diffing are identical in both modes.
+    With a host ``bridge`` (e.g. running in Docker) agents are discovered and driven
+    through it; otherwise the adapter is looked up on ``search_path`` and spawned as a
+    local subprocess. Detection and diffing are identical in both modes.
     """
-    endpoint = detect.bridge_endpoint()
+    endpoint = bridge
     if endpoint is not None:
-        from assistant.coding import bridge_client
+        from assistant.coding.bridge_client import BridgeClient
 
         try:
-            inventory = await bridge_client.list_agents(endpoint)
+            inventory = await BridgeClient(endpoint).list_agents()
         except Exception as exc:  # noqa: BLE001 — unreachable/refused bridge, don't crash the turn
             return (
                 f"Couldn't reach the host coding bridge at {endpoint.host}:{endpoint.port} "
@@ -111,9 +115,9 @@ async def run_coding_session(
             detail = f" Available via the host bridge: {', '.join(avail)}." if avail else ""
             return _NO_AGENT + detail
     else:
-        info = detect.resolve_agent(agent)
+        info = detect.resolve_agent(agent, search_path)
         if info is None:
-            avail = [a.label for a in detect.available_agents()]
+            avail = [a.label for a in detect.available_agents(search_path)]
             detail = f" Available: {', '.join(avail)}." if avail else ""
             return _NO_AGENT + detail
 

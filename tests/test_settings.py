@@ -8,12 +8,18 @@ import pytest
 import yaml
 
 from assistant import voice_providers
+from assistant.config import resolve_config
 from assistant.settings import Settings, profile_settings
 
 
 @pytest.fixture
 def settings(tmp_path):
     return Settings(tmp_path / "config.yaml")
+
+
+def _pinned(tmp_path, provider: str) -> Settings:
+    """The same profile's settings, read through a given install-wide voice pin."""
+    return Settings(tmp_path / "config.yaml", voice_provider=provider)
 
 
 def test_settings_preserve_overlay_sections(tmp_path):
@@ -33,23 +39,31 @@ def test_profile_settings_accessor(tmp_path):
     assert s._path == tmp_path / "config.yaml"
 
 
-def test_voice_provider_env(settings, monkeypatch):
-    monkeypatch.delenv("AG2ASSISTANT_VOICE_PROVIDER", raising=False)
-    assert settings.voice_provider() == "gemini"  # default
-    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "openai")
-    assert settings.voice_provider() == "openai"
-    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "OpenAI")  # case-insensitive
-    assert settings.voice_provider() == "openai"
-    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "bogus")  # unknown → gemini
-    assert settings.voice_provider() == "gemini"
+def test_voice_provider_pin(tmp_path):
+    """With nothing persisted, the install-wide pin (AG2ASSISTANT_VOICE_PROVIDER,
+    resolved into Config at the boundary) decides."""
+    assert _pinned(tmp_path, "").voice_provider() == "gemini"  # unpinned → default
+    assert _pinned(tmp_path, "openai").voice_provider() == "openai"
+    assert _pinned(tmp_path, "OpenAI").voice_provider() == "openai"  # case-insensitive
+    assert _pinned(tmp_path, "bogus").voice_provider() == "gemini"  # unknown → default
 
 
-def test_persisted_voice_provider_wins_over_env(settings, monkeypatch):
-    # A profile's persisted choice takes precedence over the env fallback.
-    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "gemini")
+def test_persisted_voice_provider_wins_over_the_pin(tmp_path):
+    # A profile's persisted choice takes precedence over the install-wide pin.
+    settings = _pinned(tmp_path, "gemini")
     assert settings.set_voice_provider("openai") is True
     assert settings.voice_provider() == "openai"
     assert settings.set_voice_provider("bogus") is False
+
+
+def test_the_pin_reaches_settings_from_the_environment(paths):
+    """End to end: the env var lands on Config at the boundary, and profile_settings
+    hands it to the store."""
+    cfg = resolve_config({"AG2ASSISTANT_VOICE_PROVIDER": "openai"}, paths)
+    assert cfg.voice_provider == "openai"
+    assert profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider).voice_provider() == (
+        "openai"
+    )
 
 
 def test_registry_has_both_providers():
@@ -71,18 +85,16 @@ def test_default_voice_per_provider(settings):
     assert settings.get_voice("openai") == "marin"
 
 
-def test_set_voice_is_per_provider(settings, monkeypatch):
+def test_set_voice_is_per_provider(settings, tmp_path):
     # selections for each provider are independent and both persist
     assert settings.set_voice("Kore", provider="gemini")
     assert settings.set_voice("cedar", provider="openai")
     assert settings.get_voice("gemini") == "Kore"
     assert settings.get_voice("openai") == "cedar"
 
-    # active-provider default resolution follows the env var (no persisted choice)
-    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "openai")
-    assert settings.get_voice() == "cedar"
-    monkeypatch.setenv("AG2ASSISTANT_VOICE_PROVIDER", "gemini")
-    assert settings.get_voice() == "Kore"
+    # active-provider default resolution follows the pin (no persisted choice)
+    assert _pinned(tmp_path, "openai").get_voice() == "cedar"
+    assert _pinned(tmp_path, "gemini").get_voice() == "Kore"
 
 
 def test_set_voice_rejects_unknown(settings):

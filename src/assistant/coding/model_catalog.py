@@ -29,7 +29,9 @@ import contextlib
 import json
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from assistant.coding import detect
 
@@ -38,11 +40,6 @@ PROBE_TIMEOUT = 20.0
 # The catalog changes with adapter/CLI releases, not per minute — cache briefly
 # so reopening the Settings form doesn't respawn the adapter every time.
 CACHE_TTL = 300.0
-
-_cache: dict[str, tuple[float, list["CatalogModel"], str]] = {}
-# agent -> the probe currently in flight, so concurrent form opens (or a double
-# render) share one adapter spawn instead of racing two.
-_inflight: dict[str, asyncio.Task] = {}
 
 
 @dataclass(frozen=True)
@@ -54,7 +51,7 @@ class CatalogModel:
     description: str
 
 
-def _parse(result: dict) -> tuple[list[CatalogModel], str]:
+def parse(result: dict) -> tuple[list[CatalogModel], str]:
     """The (models, current) out of a ``session/new`` result, tolerantly: an
     unknown/odd shape reads as an empty catalog, never raises.
 
@@ -99,105 +96,136 @@ def _current(value: object) -> str:
     return "" if current == "default" else current
 
 
-async def _probe(agent: str) -> tuple[list[CatalogModel], str]:
-    """Spawn the adapter and read its catalog. Raises on any transport failure —
-    the caller decides how a failure reads (the route maps it to an empty list)."""
-    info = detect.resolve_agent(agent)
-    if info is None:
-        return [], ""
-    proc = await asyncio.create_subprocess_exec(
-        *info.command,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    try:
+class ModelCatalog:
+    """The adapter model catalogs for one install, with its own TTL cache.
 
-        async def rpc(rid: int, method: str, params: dict) -> dict:
-            req = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params}
-            proc.stdin.write((json.dumps(req) + "\n").encode())
-            await proc.stdin.drain()
-            while True:  # skip notifications the adapter may interleave
-                line = await proc.stdout.readline()
-                if not line:
-                    raise RuntimeError(f"{agent} adapter closed the pipe during the probe")
-                try:
-                    msg = json.loads(line)
-                except ValueError:
-                    continue  # a launcher banner / stray log line, not JSON-RPC
-                if not isinstance(msg, dict):
-                    continue
-                if msg.get("id") == rid:
-                    if "error" in msg:
-                        raise RuntimeError(str(msg["error"])[:200])
-                    return msg.get("result") or {}
+    Nothing is shared between instances: two catalogs never see each other's cache,
+    and where adapters are looked up comes from ``search_path``. ``bridge`` is the
+    host ACP bridge (if any) — in that mode there is no local adapter to spawn, so
+    :meth:`unavailable_reason` says so instead of probing.
+    """
 
-        await rpc(
-            1,
-            "initialize",
-            {
-                "protocolVersion": 1,
-                "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}},
-            },
+    def __init__(
+        self,
+        *,
+        search_path: Sequence[Path] = (),
+        bridge: "detect.BridgeEndpoint | None" = None,
+        probe_timeout: float = PROBE_TIMEOUT,
+        cache_ttl: float = CACHE_TTL,
+        clock=time.monotonic,
+    ) -> None:
+        self._search_path = search_path
+        self._bridge = bridge
+        self._probe_timeout = probe_timeout
+        self._cache_ttl = cache_ttl
+        self._clock = clock
+        self._cache: dict[str, tuple[float, list[CatalogModel], str]] = {}
+        # agent -> the probe currently in flight, so concurrent form opens (or a
+        # double render) share one adapter spawn instead of racing two.
+        self._inflight: dict[str, asyncio.Task] = {}
+
+    async def _probe(self, agent: str) -> tuple[list[CatalogModel], str]:
+        """Spawn the adapter and read its catalog. Raises on any transport failure —
+        the caller decides how a failure reads (the route maps it to an empty list)."""
+        info = detect.resolve_agent(agent, self._search_path)
+        if info is None:
+            return [], ""
+        proc = await asyncio.create_subprocess_exec(
+            *info.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-        # cwd is required but irrelevant to the catalog; no MCP servers, no prompt.
-        result = await rpc(2, "session/new", {"cwd": tempfile.gettempdir(), "mcpServers": []})
-        return _parse(result)
-    finally:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        # Reap the child so no zombie outlives the probe (and short-lived event
-        # loops don't warn about an unfinished child watcher).
-        with contextlib.suppress(Exception):
-            await proc.wait()
+        try:
 
+            async def rpc(rid: int, method: str, params: dict) -> dict:
+                req = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params}
+                proc.stdin.write((json.dumps(req) + "\n").encode())
+                await proc.stdin.drain()
+                while True:  # skip notifications the adapter may interleave
+                    line = await proc.stdout.readline()
+                    if not line:
+                        raise RuntimeError(f"{agent} adapter closed the pipe during the probe")
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue  # a launcher banner / stray log line, not JSON-RPC
+                    if not isinstance(msg, dict):
+                        continue
+                    if msg.get("id") == rid:
+                        if "error" in msg:
+                            raise RuntimeError(str(msg["error"])[:200])
+                        return msg.get("result") or {}
 
-async def _probe_and_cache(agent: str) -> tuple[list[CatalogModel], str]:
-    """One timed probe plus the cache write — the body shared by concurrent callers."""
-    try:
-        models, current = await asyncio.wait_for(_probe(agent), timeout=PROBE_TIMEOUT)
-        if models:  # never cache a failure/empty probe — the user may be mid-install
-            _cache[agent] = (time.monotonic(), models, current)
-        return models, current
-    finally:
-        _inflight.pop(agent, None)
+            await rpc(
+                1,
+                "initialize",
+                {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}},
+                },
+            )
+            # cwd is required but irrelevant to the catalog; no MCP servers, no prompt.
+            result = await rpc(2, "session/new", {"cwd": tempfile.gettempdir(), "mcpServers": []})
+            return parse(result)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            # Reap the child so no zombie outlives the probe (and short-lived event
+            # loops don't warn about an unfinished child watcher).
+            with contextlib.suppress(Exception):
+                await proc.wait()
 
+    async def _probe_and_cache(self, agent: str) -> tuple[list[CatalogModel], str]:
+        """One timed probe plus the cache write — the body shared by concurrent callers."""
+        try:
+            models, current = await asyncio.wait_for(
+                self._probe(agent), timeout=self._probe_timeout
+            )
+            if models:  # never cache a failure/empty probe — the user may be mid-install
+                self._cache[agent] = (self._clock(), models, current)
+            return models, current
+        finally:
+            self._inflight.pop(agent, None)
 
-async def list_models(agent: str, refresh: bool = False) -> tuple[list[CatalogModel], str]:
-    """The adapter's model catalog and its current default, TTL-cached per agent.
+    async def list_models(
+        self, agent: str, refresh: bool = False
+    ) -> tuple[list[CatalogModel], str]:
+        """The adapter's model catalog and its current default, TTL-cached per agent.
 
-    Empty catalog when the adapter is missing; transport errors propagate (the
-    gateway route guards and serves them as an empty list).
-    """
-    now = time.monotonic()
-    cached = None if refresh else _cache.get(agent)
-    if cached is not None and now - cached[0] < CACHE_TTL:
-        return cached[1], cached[2]
-    task = _inflight.get(agent)
-    if task is None:
-        task = asyncio.ensure_future(_probe_and_cache(agent))
-        # Retrieve the exception even if every awaiter went away (client hung up),
-        # so a failed shared probe doesn't log "exception was never retrieved".
-        task.add_done_callback(lambda t: t.cancelled() or t.exception())
-        _inflight[agent] = task
-    # shield: one caller's cancellation must not kill the probe the others await.
-    return await asyncio.shield(task)
+        Empty catalog when the adapter is missing; transport errors propagate (the
+        gateway route guards and serves them as an empty list).
+        """
+        now = self._clock()
+        cached = None if refresh else self._cache.get(agent)
+        if cached is not None and now - cached[0] < self._cache_ttl:
+            return cached[1], cached[2]
+        task = self._inflight.get(agent)
+        if task is None:
+            task = asyncio.ensure_future(self._probe_and_cache(agent))
+            # Retrieve the exception even if every awaiter went away (client hung up),
+            # so a failed shared probe doesn't log "exception was never retrieved".
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            self._inflight[agent] = task
+        # shield: one caller's cancellation must not kill the probe the others await.
+        return await asyncio.shield(task)
 
+    def unavailable_reason(self, agent: str) -> str:
+        """Why no probe can run right now, as a stable token for the UI to word:
 
-def unavailable_reason(agent: str) -> str:
-    """Why no probe can run right now, as a stable token for the UI to word:
-
-    - ``"bridge"`` — host-bridge (Docker) mode: the adapter lives on the host,
-      out of reach of a local spawn, so there is no catalog to read.
-    - ``"adapter_missing"`` — the adapter is not on PATH.
-    - ``""`` — a probe is possible.
-    """
-    try:
-        if detect.bridge_endpoint() is not None:
-            return "bridge"
-        return "" if detect.resolve_agent(agent) is not None else "adapter_missing"
-    except Exception:
-        return "adapter_missing"
+        - ``"bridge"`` — host-bridge (Docker) mode: the adapter lives on the host,
+          out of reach of a local spawn, so there is no catalog to read.
+        - ``"adapter_missing"`` — the adapter is not on the search path.
+        - ``""`` — a probe is possible.
+        """
+        try:
+            if self._bridge is not None:
+                return "bridge"
+            if detect.resolve_agent(agent, self._search_path) is not None:
+                return ""
+            return "adapter_missing"
+        except Exception:
+            return "adapter_missing"
 
 
 def as_view(models: list[CatalogModel], current: str, reason: str = "") -> dict:

@@ -8,7 +8,6 @@ typing indicator isn't reliably rendered for bots on Desktop/Web).
 
 import asyncio
 import contextlib
-import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -100,10 +99,10 @@ class TelegramAsker(PendingGuard):
 class TelegramChannel(Channel):
     platform = "telegram"
 
-    def __init__(self, token: str | None = None) -> None:
-        self._token = token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    def __init__(self, token: str = "") -> None:
+        self._token = token
         if not self._token:
-            raise ValueError("TELEGRAM_BOT_TOKEN not set (env var or token= argument).")
+            raise ValueError("Telegram needs a bot token; pass token= (TELEGRAM_BOT_TOKEN).")
         self._app: Application | None = None
         self._gateway = None
         self._bot_username: str | None = None

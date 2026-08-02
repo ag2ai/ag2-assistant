@@ -37,9 +37,9 @@ def test_run_seen_at_back_compat():
     assert r.seen_at is None
 
 
-async def test_mark_run_seen_only_after_finished_idempotent(tmp_path):
+async def test_mark_run_seen_only_after_finished_idempotent(paths, tmp_path):
     svc = TaskService(
-        config=Config(),
+        config=Config.for_paths(paths),
         store=TaskStore(path=tmp_path / "tasks.db"),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
     )

@@ -8,13 +8,14 @@ import sys
 from ag2.events import ModelRequest, ModelResponse
 
 import assistant.observability as obs
-from assistant.config import load_config
+from assistant.config import Config
 from assistant.observability import (
     _AcpShutdownNoise,
     capture_failure,
     log_suppressed,
     setup_logging,
 )
+from tests.support.apps import make_paths
 
 
 class _Hist:
@@ -31,7 +32,7 @@ class _Stream:
 
 
 def _cfg(tmp_path):
-    cfg = load_config()
+    cfg = Config.for_paths(make_paths(tmp_path))
     cfg.root_dir = tmp_path / "root"  # the log lives at root_dir (shared across profiles)
     cfg.data_dir = tmp_path / "d"  # debug snapshots are per-profile (data_dir)
     return cfg

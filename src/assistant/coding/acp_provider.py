@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING
 
 from ag2.acp import ACPConfig, ClaudeCodeConfig, CodexConfig
 
-from assistant.coding import bridge_client, detect
+from assistant.coding import detect
+from assistant.coding.bridge_client import BridgeClient
 
 if TYPE_CHECKING:
     from assistant.config import Config
@@ -48,7 +49,11 @@ def _codex_session_config(model: str) -> str:
 
 
 def build_claude_config(
-    config: "Config", model: str | None = None, options: dict | None = None
+    config: "Config",
+    model: str | None = None,
+    options: dict | None = None,
+    *,
+    connector_factory=None,
 ) -> ACPConfig:
     """Claude Code as the assistant's main model.
 
@@ -56,11 +61,15 @@ def build_claude_config(
     "sonnet" or full versioned ids); unset → the CLI's own settings/default.
     """
     env = {"ANTHROPIC_MODEL": model} if model else None
-    return _build(ClaudeCodeConfig, "claude", config, model, env, options)
+    return _build(ClaudeCodeConfig, "claude", config, model, env, options, connector_factory)
 
 
 def build_codex_config(
-    config: "Config", model: str | None = None, options: dict | None = None
+    config: "Config",
+    model: str | None = None,
+    options: dict | None = None,
+    *,
+    connector_factory=None,
 ) -> ACPConfig:
     """Codex as the assistant's main model.
 
@@ -68,7 +77,7 @@ def build_codex_config(
     the Codex session config); unset → the CLI's own default.
     """
     env = {"CODEX_CONFIG": _codex_session_config(model)} if model else None
-    return _build(CodexConfig, "codex", config, model, env, options)
+    return _build(CodexConfig, "codex", config, model, env, options, connector_factory)
 
 
 # provider name → its builder, so callers dispatch without a name-to-function
@@ -83,6 +92,7 @@ def _build(
     model: str | None,
     model_env: dict[str, str] | None,
     options: dict | None,
+    connector_factory=None,
 ) -> ACPConfig:
     """The shared assembly behind both builders.
 
@@ -92,7 +102,7 @@ def _build(
     presets carry the right launch command ("claude-agent-acp" / "codex-acp").
     """
     workspace = str(config.workspace_dir)
-    endpoint = detect.bridge_endpoint()
+    endpoint = detect.parse_bridge(config.acp_bridge, config.acp_bridge_token)
     kwargs: dict = {
         "cwd": workspace,
         "fs_root": workspace,
@@ -113,5 +123,8 @@ def _build(
         kwargs.setdefault("expose_tools", False)
     cfg = config_cls(**kwargs)
     if endpoint is not None:
-        cfg._connect = bridge_client.make_connector(endpoint, agent, workspace)
+        if connector_factory is None:
+            cfg._connect = BridgeClient(endpoint).make_connector(agent, workspace)
+        else:
+            cfg._connect = connector_factory(endpoint, agent, workspace)
     return cfg

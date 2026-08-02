@@ -1,126 +1,181 @@
-"""§4.8 acceptance gates as tests — pin the global-path allowlist so no future
-code can quietly reintroduce a per-profile leak via a global default.
+"""Acceptance gates as tests: the environment is read at the boundary, nowhere else.
 
-Three static guards (no runtime, pure source scan):
+After the DI refactor the invariant is no longer "who may call ``data_dir()``" (that
+function is gone) but:
 
-1. ``test_no_global_path_defaults`` — every ``data_dir()`` / ``Path.home()`` hit
-   under ``src/assistant`` must live in the pinned allowlist (§4.8). Profile-owned
-   modules (settings, memory, usage[non-pricing], permissions, tasks store, hitl
-   inquiry, observability, onboarding) must have ZERO hits.
-2. ``test_settings_importers_pass_paths`` — no module importing ``assistant.settings``
-   may call ``Settings()`` with empty parens (the path must always be explicit).
-3. ``test_with_profile_overrides_every_path_field`` — iterate Config's ``Path``
-   model fields; ``with_profile()`` must move each away from its legacy root-level
-   value, except the intentional exception ``root_dir``.
+  ``os.environ`` / ``os.getenv`` / ``Path.home()`` are read ONLY in the entry points
+  — ``cli.py``, ``paths.py::Paths.from_env`` and ``config.py::load_config`` — and
+  everything below takes a resolved ``Paths`` / ``Config`` / explicit env mapping.
+
+The scan is an AST walk (not a regex), so prose in comments and docstrings can't
+trip it and no real read can hide from it. Modules that still read the environment
+are pinned in ``_DEFERRED`` with the plan task that removes them; the list is
+asserted to be free of stale rows, so it can only shrink.
 """
 
-import re
+import ast
 from pathlib import Path
 
-from assistant import profiles
 from assistant.config import Config
+from assistant.integrations.google_auth import GoogleAuth
+from assistant.profiles import ProfileRegistry
+from assistant.usage import UsageLedger
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "assistant"
 
-# Files permitted to call data_dir() / Path.home() — the complete set of
-# INTENTIONAL globals (§4.8 acceptance gate). Paths are relative to SRC.
-_ALLOWLIST = {
-    "config.py",  # root resolution itself
-    "secrets.py",  # global secrets.json
-    "llm_configs.py",  # install-wide named LLM configs (llm_configs.json), like secrets
-    "codex_auth.py",  # global ChatGPT-subscription tokens (account-level, like google_auth)
-    "profiles.py",  # the registry + default-workspace seed
-    "usage.py",  # pricing read ONLY (asserted below)
-    "integrations/google_auth.py",  # global OAuth files (routed via data_dir())
-    "gateway/app.py",  # fs-browser Path.home() starting points ONLY
+# The entry points: resolving the ambient environment is their whole job.
+_BOUNDARY = {
+    "cli.py",  # the CLI entry point wires everything from os.environ
+    "paths.py",  # Paths.from_env — the one place the layout comes from
+    "config.py",  # load_config — composes resolve_config with the real environment
 }
 
-# Modules that MUST have zero hits after their §4.8 rows landed.
-_MUST_BE_CLEAN = {
-    "observability.py",
-    "permissions.py",
-    "tasks/store.py",
-    "hitl/inquiry.py",
-    "memory.py",
-    "settings.py",
-    "onboarding.py",
+# Still reading the environment below the boundary, each with the task that ends it.
+# A row that no longer has a hit is a failure: this list may only shrink.
+_DEFERRED = {
+    # Accepted deviation (session 7): reverse-engineered OpenAI endpoint constants,
+    # env-overridable at import time and imported by name (agent.py, image_gen.py).
+    # No test patches them; threading them through as values would touch every
+    # model-config builder for a debug-only escape hatch documented in .env.example.
+    "codex_auth.py": "accepted — _const reads env once at import for the Codex endpoints",
 }
 
-_HIT = re.compile(r"data_dir\(\)|Path\.home\(\)")
+# load_config() re-reads the process environment, so calling it below the boundary is
+# the same leak by another name. These are the remaining ``config or load_config()``
+# fallbacks; each disappears when its caller is always handed a Config.
+_LOAD_CONFIG_DEFERRED = {
+    "memory.py": "Task 26 — the knowledge store takes a Config",
+    "agent.py": "Task 26 — create_agent/turn_prompt always receive a Config",
+    "gateway/core.py": "Task 27 — Gateway is always built with a Config",
+    "gateway/tasks_service.py": "Task 26 — TaskService is always built with a Config",
+    "gateway/profile_manager.py": "Task 27 — the manager always resolves from paths",
+}
 
 
-def _iter_hits():
-    """Yield (relpath, lineno, text) for every data_dir()/Path.home() hit in src."""
+def _modules():
     for path in sorted(SRC.rglob("*.py")):
-        rel = path.relative_to(SRC).as_posix()
-        for i, line in enumerate(path.read_text().splitlines(), start=1):
-            if _HIT.search(line):
-                yield rel, i, line.strip()
+        yield path.relative_to(SRC).as_posix(), ast.parse(path.read_text())
 
 
-def test_no_global_path_defaults():
-    """Every data_dir()/Path.home() hit must be in the pinned allowlist, and the
-    profile-owned modules must be entirely clean."""
-    hits = list(_iter_hits())
-    offenders = [(rel, ln, txt) for rel, ln, txt in hits if rel not in _ALLOWLIST]
-    assert not offenders, "global path default(s) outside the §4.8 allowlist:\n" + "\n".join(
-        f"  {rel}:{ln}: {txt}" for rel, ln, txt in offenders
-    )
-
-    # the modules whose §4.8 rows removed their global defaults must have NO hits
-    dirty = sorted({rel for rel, _, _ in hits if rel in _MUST_BE_CLEAN})
-    assert not dirty, f"modules expected to be free of global path defaults still hit one: {dirty}"
-
-
-def test_usage_data_dir_is_pricing_only():
-    """usage.py is allowlisted only for its pricing read — assert the single hit's
-    line context is the pricing.json read, not a usage/profile-owned path."""
-    usage_hits = [(ln, txt) for rel, ln, txt in _iter_hits() if rel == "usage.py"]
-    assert usage_hits, "expected usage.py to read pricing.json via data_dir()"
-    for _ln, txt in usage_hits:
-        assert "pricing" in txt, (
-            f"usage.py data_dir() hit is not the pricing read (profile-owned leak?): {txt}"
-        )
-
-
-def test_google_auth_uses_data_dir_not_path_home():
-    """google_auth.py routes its (intentionally global) OAuth files through data_dir()
-    — not a second hardcoded Path.home() construction (§4.8)."""
-    rel = "integrations/google_auth.py"
-    hits = [txt for r, _ln, txt in _iter_hits() if r == rel]
-    assert hits, "expected google_auth.py to locate its OAuth files via data_dir()"
-    assert all("Path.home()" not in txt for txt in hits), (
-        "google_auth.py must locate OAuth files via data_dir(), not Path.home()"
+def _is_attr(node, obj: str, attr: str) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == attr
+        and isinstance(node.value, ast.Name)
+        and node.value.id == obj
     )
 
 
-def test_settings_importers_pass_paths():
-    """No module importing assistant.settings may call ``Settings()`` with empty
-    parens — a cheap guard that the per-profile settings path is always explicit."""
-    empty_ctor = re.compile(r"\bSettings\(\s*\)")
-    offenders: list[tuple[str, int, str]] = []
-    for path in sorted(SRC.rglob("*.py")):
-        text = path.read_text()
-        if "assistant.settings" not in text and "from assistant import settings" not in text:
-            # only modules that actually pull in the settings module are relevant
-            if "import settings" not in text and "Settings(" not in text:
-                continue
-        for i, line in enumerate(text.splitlines(), start=1):
-            if empty_ctor.search(line):
-                offenders.append((path.relative_to(SRC).as_posix(), i, line.strip()))
+def _env_hits(tree) -> list[int]:
+    """Line numbers of every real os.environ / os.getenv / Path.home() access."""
+    lines = []
+    for node in ast.walk(tree):
+        if _is_attr(node, "os", "environ") or _is_attr(node, "os", "getenv"):
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Call) and _is_attr(node.func, "Path", "home"):
+            lines.append(node.lineno)
+    return lines
+
+
+def _load_config_calls(tree) -> list[int]:
+    """Line numbers of every load_config() call."""
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_config"
+    ]
+
+
+def _dirty(finder) -> dict[str, list[int]]:
+    return {rel: hits for rel, tree in _modules() if (hits := finder(tree))}
+
+
+def test_the_environment_is_read_only_at_the_boundary():
+    """No module outside the entry points and the pinned deferred list may touch the
+    process environment or $HOME."""
+    dirty = _dirty(_env_hits)
+    offenders = {
+        rel: hits for rel, hits in dirty.items() if rel not in _BOUNDARY and rel not in _DEFERRED
+    }
     assert not offenders, (
-        "Settings() called without an explicit path (per-profile path must be passed):\n"
-        + "\n".join(f"  {rel}:{ln}: {txt}" for rel, ln, txt in offenders)
+        "environment read below the boundary — take a resolved Paths/Config or an "
+        "explicit env mapping instead:\n"
+        + "\n".join(f"  {rel}:{hits}" for rel, hits in sorted(offenders.items()))
     )
 
 
-def test_with_profile_overrides_every_path_field():
+def test_the_deferred_environment_list_has_no_stale_rows():
+    """Every pinned exception must still be real, so the list can only shrink."""
+    dirty = _dirty(_env_hits)
+    stale = sorted(rel for rel in _DEFERRED if rel not in dirty)
+    assert not stale, f"these modules are clean now — drop them from _DEFERRED: {stale}"
+
+
+def test_load_config_is_called_only_at_the_boundary():
+    """``load_config()`` re-reads os.environ, so below the boundary it is the same
+    leak: those callers must be handed a Config instead."""
+    dirty = _dirty(_load_config_calls)
+    offenders = {
+        rel: hits
+        for rel, hits in dirty.items()
+        if rel not in _BOUNDARY and rel not in _LOAD_CONFIG_DEFERRED
+    }
+    assert not offenders, "load_config() called below the boundary:\n" + "\n".join(
+        f"  {rel}:{hits}" for rel, hits in sorted(offenders.items())
+    )
+
+
+def test_the_deferred_load_config_list_has_no_stale_rows():
+    dirty = _dirty(_load_config_calls)
+    stale = sorted(rel for rel in _LOAD_CONFIG_DEFERRED if rel not in dirty)
+    assert not stale, f"these modules no longer call load_config(): {stale}"
+
+
+def test_no_module_resolves_the_layout_for_itself():
+    """``Paths.from_env`` is the boundary's tool: a module below it that calls the
+    classmethod would re-derive the layout instead of taking the resolved one."""
+    offenders = {}
+    for rel, tree in _modules():
+        if rel in _BOUNDARY:
+            continue
+        hits = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and _is_attr(node.func, "Paths", "from_env")
+        ]
+        if hits:
+            offenders[rel] = hits
+    assert not offenders, f"Paths.from_env called below the boundary: {offenders}"
+
+
+def test_the_stores_take_their_paths_explicitly(paths, tmp_path):
+    """Spot-check the install-wide stores that used to derive global locations
+    themselves: each one's files now hang off the Paths it was handed."""
+    google = GoogleAuth(paths)
+    assert google.credentials_path == paths.google_credentials
+    assert google.token_path == paths.google_token
+    assert google.account_path == paths.google_account
+
+    # The usage ledger keeps the profile's ledger and the install-wide pricing file
+    # apart, and neither may be defaulted.
+    ledger = UsageLedger(tmp_path / "usage.json", pricing_path=paths.root / "pricing.json")
+    assert ledger._pricing_path == paths.root / "pricing.json"
+    try:
+        UsageLedger(tmp_path / "usage.json")
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("UsageLedger must not default its pricing path")
+
+
+def test_with_profile_overrides_every_path_field(paths):
     """Iterate Config's Path model fields; with_profile() must change each one away
     from its legacy root-level value, EXCEPT the intentional exception ``root_dir``
     (which by design still carries the root)."""
-
-    meta = profiles.create_profile("Work", "#109e91")
-    base = Config()
+    meta = ProfileRegistry(paths).create_profile("Work", "#109e91")
+    base = Config.for_paths(paths)
     derived = base.with_profile(meta)
 
     path_fields = [name for name, field in Config.model_fields.items() if field.annotation is Path]
@@ -137,3 +192,20 @@ def test_with_profile_overrides_every_path_field():
                 f"with_profile() left path field {name!r} at its legacy root-level "
                 f"location ({derived_val}) — installed state would leak across profiles"
             )
+
+
+def test_settings_importers_pass_paths():
+    """No module may call ``Settings()`` with empty parens — a cheap guard that the
+    per-profile settings path is always explicit."""
+    offenders = []
+    for rel, tree in _modules():
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "Settings"
+                and not node.args
+                and not node.keywords
+            ):
+                offenders.append(f"{rel}:{node.lineno}")
+    assert not offenders, f"Settings() called without an explicit path: {offenders}"

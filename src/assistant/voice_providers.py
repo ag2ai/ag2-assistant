@@ -11,7 +11,6 @@ provider you actually use needs its package installed and key set.
 """
 
 import asyncio
-import os
 import struct
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -74,22 +73,21 @@ def names() -> tuple[str, ...]:
     return tuple(_REGISTRY)
 
 
-def active_provider(persisted: str | None = None) -> str:
-    """The active voice provider: `persisted` (a profile's saved choice) →
-    AG2ASSISTANT_VOICE_PROVIDER → default. This module never reads settings itself
-    (that would need a profile it doesn't know) — the caller passes the profile's
-    persisted value from its `Settings`."""
+def active_provider(persisted: str | None = None, pin: str = "") -> str:
+    """The active voice provider: `persisted` (a profile's saved choice) → `pin`
+    (the install-wide ``Config.voice_provider``) → default. This module reads neither
+    settings nor the environment — the caller passes both values in."""
     p = (persisted or "").strip().lower()
     if p in _REGISTRY:
         return p
-    p = (os.environ.get("AG2ASSISTANT_VOICE_PROVIDER") or DEFAULT_PROVIDER).strip().lower()
+    p = (pin or DEFAULT_PROVIDER).strip().lower()
     return p if p in _REGISTRY else DEFAULT_PROVIDER
 
 
 def get(name: str | None = None) -> VoiceProvider:
-    """The provider by name, or the env/default active one when name is None / unknown.
+    """The provider by name, or the default one when name is None / unknown.
     Pass a profile's persisted choice (via `Settings.voice_provider()`) as `name` to
-    honour per-profile selection; a bare `get()` falls back to env → default only."""
+    honour per-profile selection; a bare `get()` is the default provider."""
     return _REGISTRY.get(name or active_provider(), _REGISTRY[DEFAULT_PROVIDER])
 
 
@@ -132,8 +130,10 @@ _GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 
 def _gemini_key(api_key: str, config: Config) -> str:
-    """Resolved Gemini key: the passed per-config/shared key, else the env fallback."""
-    return api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get(config.llm.api_key_env, "")
+    """Resolved Gemini key: the passed per-config/shared key, else the install's
+    resolved secrets (``Config.secret_env``)."""
+    env = config.secret_env
+    return api_key or env.get("GEMINI_API_KEY") or env.get(config.llm.api_key_env, "")
 
 
 def _gemini_realtime(config: Config, voice: str, model: str, api_key: str = ""):
@@ -176,7 +176,7 @@ async def _gemini_check(api_key: str) -> None:
     """Cheap key probe: list models (one page). Raises on a bad/absent key."""
     from google.genai import Client  # local: lazy Gemini GenAI SDK
 
-    client = Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
+    client = Client(api_key=api_key)
     await asyncio.to_thread(lambda: next(iter(client.models.list()), None))
 
 
@@ -200,8 +200,10 @@ _OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 _OPENAI_INPUT_RATE = 24000
 
 
-def _openai_key(api_key: str = "") -> str:
-    return api_key or os.environ.get("OPENAI_API_KEY", "")
+def _openai_key(api_key: str, config: Config) -> str:
+    """Resolved OpenAI key: the passed per-config/shared key, else the install's
+    resolved secrets (``Config.secret_env``)."""
+    return api_key or config.secret_env.get("OPENAI_API_KEY", "")
 
 
 def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
@@ -210,13 +212,13 @@ def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
     return oai.RealTimeConfig(
         model,
         output=oai.AudioOutput(voice=voice),
-        client=AsyncOpenAI(api_key=_openai_key(api_key)),
+        client=AsyncOpenAI(api_key=_openai_key(api_key, config)),
     )
 
 
 async def _openai_preview(config: Config, voice: str, text: str, api_key: str = "") -> bytes:
     tts = OpenAITTSConfig(
-        _OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key(api_key))
+        _OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key(api_key, config))
     )
     pcm = await tts.synthesize(text)  # 24 kHz mono PCM
     return pcm_to_wav(pcm, rate=24000)
@@ -224,7 +226,7 @@ async def _openai_preview(config: Config, voice: str, text: str, api_key: str = 
 
 async def _openai_check(api_key: str) -> None:
     """Cheap key probe: list models. Raises on a bad/absent key."""
-    await AsyncOpenAI(api_key=_openai_key(api_key)).models.list()
+    await AsyncOpenAI(api_key=api_key).models.list()
 
 
 # --- registration -----------------------------------------------------------

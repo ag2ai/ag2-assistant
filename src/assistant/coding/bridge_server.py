@@ -16,6 +16,8 @@ Security posture:
 
 import asyncio
 import os
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from assistant.coding import detect
 from assistant.coding.bridge_protocol import DEFAULT_PORT, encode_frame, read_frame
@@ -27,14 +29,16 @@ _ENV_WHITELIST = ("HOME", "PATH", "SHELL", "TERM", "USER", "LOGNAME", "LANG", "L
 _CHUNK = 65536
 
 
-def _child_env() -> dict:
-    return {k: os.environ[k] for k in _ENV_WHITELIST if k in os.environ}
+def child_env(env: Mapping[str, str]) -> dict:
+    """The whitelisted slice of ``env`` an adapter subprocess may see."""
+    return {k: env[k] for k in _ENV_WHITELIST if k in env}
 
 
-def _agents_payload() -> list[dict]:
+def _agents_payload(search_path: Sequence[Path]) -> list[dict]:
     """Host inventory, mirroring ``detect_agents`` but only wire-relevant fields."""
     return [
-        {"name": a.name, "label": a.label, "available": a.available} for a in detect.detect_agents()
+        {"name": a.name, "label": a.label, "available": a.available}
+        for a in detect.detect_agents(search_path)
     ]
 
 
@@ -88,8 +92,18 @@ async def _relay(reader, writer, proc) -> None:
 class BridgeServer:
     """Handles one connection at a time: authorize → dispatch (list / run)."""
 
-    def __init__(self, token: str = "") -> None:
+    def __init__(
+        self,
+        token: str = "",
+        *,
+        search_path: Sequence[Path] = (),
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         self._token = token
+        self._search_path = search_path
+        # Empty means "nothing to inherit": the adapter then sees only what the OS
+        # gives a bare exec. The daemon's entry point passes the host environment.
+        self._child_env = child_env(env or {})
 
     def _authorized(self, frame: dict) -> bool:
         return not self._token or frame.get("token") == self._token
@@ -115,7 +129,7 @@ class BridgeServer:
 
         op = frame.get("op")
         if op == "list":
-            await self._ack(writer, {"ok": True, "agents": _agents_payload()})
+            await self._ack(writer, {"ok": True, "agents": _agents_payload(self._search_path)})
             writer.close()
             return
         if op == "run":
@@ -128,7 +142,7 @@ class BridgeServer:
     async def _run(self, frame: dict, reader, writer) -> None:
         name = frame.get("agent", "") or ""
         cwd = frame.get("cwd", "") or ""
-        info = detect.resolve_agent(name)  # host-side `which`
+        info = detect.resolve_agent(name, self._search_path)  # host-side `which`
         if info is None:
             await self._ack(writer, {"ok": False, "error": f"agent not available: {name!r}"})
             writer.close()
@@ -141,7 +155,7 @@ class BridgeServer:
             proc = await asyncio.create_subprocess_exec(
                 *info.command,
                 cwd=cwd,
-                env=_child_env(),
+                env=self._child_env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
             )
@@ -153,15 +167,22 @@ class BridgeServer:
         await _relay(reader, writer, proc)
 
 
-async def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, token: str = "") -> None:
+async def serve(
+    host: str = "127.0.0.1",
+    port: int = DEFAULT_PORT,
+    token: str = "",
+    *,
+    search_path: Sequence[Path] = (),
+    env: Mapping[str, str] | None = None,
+) -> None:
     """Run the bridge server until cancelled (Ctrl-C)."""
-    server = BridgeServer(token)
+    server = BridgeServer(token, search_path=search_path, env=env)
     srv = await asyncio.start_server(server.handle, host, port)
     addrs = ", ".join(str(s.getsockname()) for s in srv.sockets)
     note = " (token required)" if token else " (NO token — bind to loopback only!)"
     print(f"acp-bridge listening on {addrs}{note}")
     print("Agents on this host:")
-    for a in detect.detect_agents():
+    for a in detect.detect_agents(search_path):
         print(f"  - {a.label} ({a.name}): {'available' if a.available else 'not installed'}")
     async with srv:
         await srv.serve_forever()

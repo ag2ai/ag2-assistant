@@ -13,8 +13,8 @@ def test_create_agent_default():
     assert agent is not None
 
 
-def test_create_agent_custom_config():
-    config = Config()
+def test_create_agent_custom_config(paths):
+    config = Config.for_paths(paths)
     config.agent.name = "test-bot"
     agent = create_agent(config)
     assert agent is not None
@@ -28,8 +28,8 @@ async def test_ask_returns_response():
     assert len(response) > 0
 
 
-def test_model_config_claude_code(tmp_path):
-    cfg = Config()
+def test_model_config_claude_code(paths, tmp_path):
+    cfg = Config.for_paths(paths)
     cfg.llm.provider = "claude_code"
     cfg.llm.model = "sonnet"
     cfg.workspace_dir = tmp_path
@@ -41,8 +41,8 @@ def test_model_config_claude_code(tmp_path):
     assert mc.turn_timeout == 120.0  # Advanced options reach the constructor
 
 
-def test_build_middleware_claude_code_skips_llm_timeout():
-    cfg = Config()
+def test_build_middleware_claude_code_skips_llm_timeout(paths):
+    cfg = Config.for_paths(paths)
     # One ACP "LLM call" is a whole inner tool loop; the 180s per-call ceiling
     # would kill normal turns. ACPConfig.turn_timeout is the ceiling instead.
     cfg.llm.provider = "claude_code"
@@ -53,12 +53,12 @@ def test_build_middleware_claude_code_skips_llm_timeout():
     assert any(isinstance(m, LLMTimeoutMiddleware) for m in _build_middleware(cfg))
 
 
-def test_model_config_codex(tmp_path):
+def test_model_config_codex(paths, tmp_path):
     import json
 
     from ag2.acp import CodexConfig
 
-    cfg = Config()
+    cfg = Config.for_paths(paths)
     cfg.llm.provider = "codex"
     cfg.llm.model = "gpt-5.6-sol[medium]"
     cfg.workspace_dir = tmp_path
@@ -75,10 +75,10 @@ def test_model_config_codex(tmp_path):
     }
 
 
-def test_model_config_codex_empty_model(tmp_path):
+def test_model_config_codex_empty_model(paths, tmp_path):
     from ag2.acp import CodexConfig
 
-    cfg = Config()
+    cfg = Config.for_paths(paths)
     cfg.llm.provider = "codex"
     cfg.llm.model = ""  # empty entry model = the CLI's own default
     cfg.workspace_dir = tmp_path
@@ -87,8 +87,8 @@ def test_model_config_codex_empty_model(tmp_path):
     assert mc.env is None
 
 
-def test_build_middleware_codex_skips_llm_timeout():
-    cfg = Config()
+def test_build_middleware_codex_skips_llm_timeout(paths):
+    cfg = Config.for_paths(paths)
     # Same reasoning as claude_code: one ACP "LLM call" is a whole inner tool
     # loop; ACPConfig.turn_timeout is the ceiling instead.
     cfg.llm.provider = "codex"
