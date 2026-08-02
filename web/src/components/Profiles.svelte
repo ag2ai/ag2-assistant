@@ -8,7 +8,7 @@
   // Archive (§4.9): archiving the active_default requires choosing a replacement
   // (pre-selected); archiving the ACTIVE profile switches to the replacement in place.
   // Archived section (ADR 0003): a collapsed disclosure with Restore + type-to-confirm Delete.
-  import { profiles } from '../store.js'
+  import { profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
   import { switchProfile, closeThread } from '../controller.js'
   import { getActiveProfileId } from '../lib/profile.js'

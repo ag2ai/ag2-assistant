@@ -7,7 +7,7 @@
   // and says HOW it resolved — answered / expired / cancelled — with its buttons
   // disabled, so a timed-out or task-ended prompt never leaves dead live controls.
   import { answer } from '../../controller.js'
-  import { runInfo } from '../../store.js'
+  import { runInfo } from '../../store.ts'
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   let { item } = $props()
   let text = $state('')

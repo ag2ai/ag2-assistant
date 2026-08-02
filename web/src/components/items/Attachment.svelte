@@ -2,7 +2,7 @@
   // A file the user attached — shown so it doesn't "disappear" from the thread.
   // Images render as a thumbnail; other types as a file chip. Click → full preview
   // (the type-aware Viewer). The bytes live in the workspace (served via /api/files/raw).
-  import { openAsideFile } from '../../router.js'
+  import { openAsideFile } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
   import { viewerKind } from '../../lib/preview.js'
   import Icon from '../Icon.svelte'

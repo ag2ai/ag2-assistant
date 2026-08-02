@@ -1,7 +1,7 @@
 <script>
-  import { thread, runInfo, profile, profiles } from '../store.js'
+  import { thread, runInfo, profile, profiles } from '../store.ts'
   import { llmConfigs } from '../lib/llm.js'
-  import { go, newChatId } from '../router.js'
+  import { go, newChatId } from '../router.ts'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
   import Thinking from './items/Thinking.svelte'

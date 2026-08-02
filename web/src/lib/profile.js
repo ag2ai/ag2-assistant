@@ -9,7 +9,7 @@
 // 'ag2-profile-id'. (Documented deviation.)
 
 import { get } from 'svelte/store'
-import { profiles, notice } from '../store.js'
+import { profiles, notice } from '../store.ts'
 
 const LS_KEY = 'ag2-profile-id'
 

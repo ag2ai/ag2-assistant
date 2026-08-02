@@ -1,6 +1,6 @@
 <script>
-  import { viewer, thread, runInfo } from '../../store.js'
-  import { openAsideFile } from '../../router.js'
+  import { viewer, thread, runInfo } from '../../store.ts'
+  import { openAsideFile } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import { fmtStamp } from '../../lib/time.js'

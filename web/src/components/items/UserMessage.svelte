@@ -1,7 +1,7 @@
 <script>
   import { parseMessage, highlightSegments } from '../../lib/fileRefs.js'
-  import { openAsideFile } from '../../router.js'
-  import { revealFolder } from '../../store.js'
+  import { openAsideFile } from '../../router.ts'
+  import { revealFolder } from '../../store.ts'
 
   let { item } = $props()
 

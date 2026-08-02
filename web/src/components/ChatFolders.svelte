@@ -11,7 +11,7 @@
   // is only ever set for a run's thread — plain chats get no Task folders section.
   import { onMount } from 'svelte'
   import { api } from '../transport/api/index.ts'
-  import { profiles } from '../store.js'
+  import { profiles } from '../store.ts'
   import { foldersStore, loadFolders, applyFolders } from '../lib/folders.js'
   import { getActiveProfileId } from '../lib/profile.js'
   import Icon from './Icon.svelte'

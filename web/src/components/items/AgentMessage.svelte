@@ -2,8 +2,8 @@
   import { renderMarkdown, linkifyDom, bindImages } from '../../lib/markdown.js'
   import { a2uiComposingSurfaceId, splitA2UIText } from '../../lib/a2ui.js'
   import A2UIComposing from './A2UIComposing.svelte'
-  import { go, openAsideFile } from '../../router.js'
-  import { thread, runInfo } from '../../store.js'
+  import { go, openAsideFile } from '../../router.ts'
+  import { thread, runInfo } from '../../store.ts'
   import { requestContext } from '../../lib/feedback.js'
   import Feedback from './Feedback.svelte'
   let { item } = $props()

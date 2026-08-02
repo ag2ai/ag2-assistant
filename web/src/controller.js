@@ -2,14 +2,14 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch } from './store.js'
+import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch } from './store.ts'
 import { StreamClient } from './transport/stream.ts'
 import { VoiceController } from './transport/voice.ts'
 import { api } from './transport/api/index.ts'
 import { foldEvent, isBusy, queueMessage } from './project.js'
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.js'
 import { setAccent } from './design/palette.js'
-import { go, closeAside, route } from './router.js'
+import { go, closeAside, route } from './router.ts'
 
 let client = null
 let panelTimer = null

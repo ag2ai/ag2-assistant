@@ -3,8 +3,8 @@
   // transient `viewer` body) beside the conversation in the grid's right column.
   // html/image/pdf render natively; md/code/text in-app; unknown types → download.
   import { onMount, onDestroy } from 'svelte'
-  import { route, closeAside } from '../router.js'
-  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, openThreadRow } from '../store.js'
+  import { route, closeAside } from '../router.ts'
+  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, openThreadRow } from '../store.ts'
   import { threadScope } from '../lib/threadScope.js'
   import { api } from '../transport/api/index.ts'
   import Markdown from './Markdown.svelte'

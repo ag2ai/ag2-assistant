@@ -9,7 +9,7 @@
   // modal and stays mounted underneath it — so on close the user lands back on their
   // in-progress config with "Signed in" ticked, and saves it there.
   import { onDestroy, tick } from 'svelte'
-  import { codexOpen } from '../store.js'
+  import { codexOpen } from '../store.ts'
   import { api } from '../transport/api/index.ts'
 
   let st = $state(null) // /api/codex/status

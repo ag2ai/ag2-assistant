@@ -3,8 +3,8 @@
   // header — back button, title/subtitle, and the SystemHealth / ThemeToggle / AG2
   // right-side actions — reads identically across chat, run, task and placeholders.
   // Styling lives globally in app.css (.mhead …); this component owns only markup.
-  import { ag2View } from '../store.js'
-  import { toggleAsideInspector } from '../router.js'
+  import { ag2View } from '../store.ts'
+  import { toggleAsideInspector } from '../router.ts'
   import Icon from './Icon.svelte'
   import ThemeToggle from './ThemeToggle.svelte'
   import SystemHealth from './SystemHealth.svelte'

@@ -3,7 +3,7 @@
   // (handle on its left edge, width = viewport-right − pointer-x); pass side="left"
   // with the drawer's store/clamp to resize the left drawer (width = pointer-x).
   // Pointer capture keeps the drag tracking across a preview <iframe>.
-  import { railWidth } from '../store.js'
+  import { railWidth } from '../store.ts'
   import { clampRailWidth } from '../lib/railWidth.js'
 
   // onGrab fires once when a drag begins; the preview passes it to exit expanded mode.

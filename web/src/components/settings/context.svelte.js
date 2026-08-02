@@ -26,11 +26,11 @@
 import { get } from 'svelte/store'
 import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api/index.ts'
-import { closeOverlay } from '../../router.js'
+import { closeOverlay } from '../../router.ts'
 import {
   voicePickerOpen, voicePickerConfig, googleOpen, codexOpen,
   poweredByOpen, onboardingOpen, profileEpoch,
-} from '../../store.js'
+} from '../../store.ts'
 
 const KEY = Symbol('settings')
 

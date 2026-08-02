@@ -1,5 +1,5 @@
 <script>
-  import { animations } from '../../store.js'
+  import { animations } from '../../store.ts'
   import WeatherGlyphBasic from './WeatherGlyphBasic.svelte'
 
   let { condition = 'cloudy', temperatureText = '', flush = false, zoom = 1 } = $props()

@@ -10,7 +10,7 @@
   // Secret on save; api_key rides only the draft-test call).
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { codexOpen } from '../../store.js'
+  import { codexOpen } from '../../store.ts'
   import { getSettings } from './context.svelte.js'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'

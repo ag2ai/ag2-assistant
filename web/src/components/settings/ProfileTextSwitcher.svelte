@@ -6,8 +6,8 @@
   // payload (ctx.s.llm_active / .llm_override), reloaded by ctx.run after every change.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { SETTINGS_PAGE } from '../../store.js'
-  import { replaceOverlay } from '../../router.js'
+  import { SETTINGS_PAGE } from '../../store.ts'
+  import { replaceOverlay } from '../../router.ts'
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   import { getSettings } from './context.svelte.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'

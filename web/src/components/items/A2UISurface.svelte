@@ -12,7 +12,7 @@
   import A2UIComposing from './A2UIComposing.svelte'
   import { a2uiComposingSurfaceId, withA2UIValue } from '../../lib/a2ui.js'
   import { a2uiAction } from '../../controller.js'
-  import { thread } from '../../store.js'
+  import { thread } from '../../store.ts'
 
   let { item } = $props()
   const data = $derived(item.data || {})

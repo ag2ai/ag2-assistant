@@ -1,5 +1,5 @@
 <script>
-  import { openAsideFile } from '../../router.js'
+  import { openAsideFile } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
 

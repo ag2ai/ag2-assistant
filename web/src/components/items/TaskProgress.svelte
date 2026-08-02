@@ -4,7 +4,7 @@
   // state the agent gathered via list_tasks/get_task). Shares the .bs shell with
   // the other editorial surfaces. No ticker — the docket is a ledger, not a feed.
   // Rows carrying a task id link through to the live task page (/t/<id>).
-  import { go } from '../../router.js'
+  import { go } from '../../router.ts'
 
   let { data = {} } = $props()
 

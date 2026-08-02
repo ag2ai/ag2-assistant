@@ -15,8 +15,8 @@
   // docs/adr/0004-shared-llm-config-store.md.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { SETTINGS_PAGE } from '../../store.js'
-  import { openOverlay } from '../../router.js'
+  import { SETTINGS_PAGE } from '../../store.ts'
+  import { openOverlay } from '../../router.ts'
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 

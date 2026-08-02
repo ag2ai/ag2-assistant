@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store'
+import { writable, derived, type Readable, type Writable } from 'svelte/store'
 import { getActiveProfileId } from './lib/profile.js'
 import { parse, resolve, SETTINGS_PAGE } from './lib/route.js'
 import { confirmDiscard } from './lib/unsavedGuard.js'
@@ -7,33 +7,43 @@ import { confirmDiscard } from './lib/unsavedGuard.js'
 // the PATH is the Page (profile + Tab + optional Thread); the HASH is the open
 // Modal slot (`#settings=<section>`), client-side only and never sent to the
 // gateway. `route` is the single source of truth; `settingsOpen`/the active
-// Section are DERIVED off it (see store.js) — no store↔URL drift.
+// Section are DERIVED off it (see store.ts) — no store↔URL drift.
 
 // SETTINGS_PAGE lives in the pure core (parse validates against it); re-export so
-// existing `import { SETTINGS_PAGE } from './router.js'` sites (if any) keep working.
+// existing `import { SETTINGS_PAGE } from './router.ts'` sites (if any) keep working.
 export { SETTINGS_PAGE }
 
-function read() { return parse(location.pathname, location.hash) }
-function current() { return { pathname: location.pathname, hash: location.hash } }
+// The route shape is the pure core's own — inferred from lib/route.js until task 17
+// converts it, so the two can never drift.
+export type Route = ReturnType<typeof parse>
+export type SettingsPage = (typeof SETTINGS_PAGE)[keyof typeof SETTINGS_PAGE]
 
-export const route = writable(read())
+// The right-rail occupant the `aside` hash key addresses.
+export type Aside = { kind: 'file'; path: string } | { kind: 'inspector' }
+
+function read(): Route { return parse(location.pathname, location.hash) }
+function current(): { pathname: string; hash: string } {
+  return { pathname: location.pathname, hash: location.hash }
+}
+
+export const route: Writable<Route> = writable(read())
 
 // Settings modal open/closed — DERIVED from the route (the open Modal lives in the
 // URL hash, `#settings=<section>`), so the URL is the single source of truth and
-// there's no store↔URL drift. Re-exported from store.js for consumers. Lives here,
-// beside `route`, to avoid a store.js↔router.js module-init cycle (store.js only
+// there's no store↔URL drift. Re-exported from store.ts for consumers. Lives here,
+// beside `route`, to avoid a store.ts↔router.ts module-init cycle (store.ts only
 // re-exports the binding; it never touches `route` at init).
-export const settingsOpen = derived(route, ($r) => $r.overlay === 'settings')
+export const settingsOpen: Readable<boolean> = derived(route, ($r) => $r.overlay === 'settings')
 
 // The pid segment for URLs: the one in the current path if any, else the active id.
-function currentPid() {
+function currentPid(): string {
   return read().pid || getActiveProfileId()
 }
 
 // go('/files') switches Tab and keeps the open Thread; go('/c/{id}') opens a
 // Thread in the current Tab. The current hash (an open Modal) is preserved, so
 // Page navigation never dismisses Settings. Pass a pid explicitly to switch profiles.
-export function go(path, pid = currentPid()) {
+export function go(path: string, pid: string = currentPid()): void {
   const full = resolve(current(), { type: 'go', path, pid })
   if (location.pathname + location.hash !== full) history.pushState({}, '', full)
   route.set(read())
@@ -43,7 +53,7 @@ export function go(path, pid = currentPid()) {
 // (that contract exists so Tab switches don't close your chat); deleting/leaving
 // a thread needs the opposite: land on the Tab's own empty page, not back on the
 // (now-gone) Thread. Preserves the hash, same as go().
-export function goTab(tab, pid = currentPid()) {
+export function goTab(tab: string, pid: string = currentPid()): void {
   const full = resolve(current(), { type: 'goTab', tab, pid })
   if (location.pathname + location.hash !== full) history.pushState({}, '', full)
   route.set(read())
@@ -53,7 +63,7 @@ export function goTab(tab, pid = currentPid()) {
 // /app/ or a stale pid into the resolved profile). Preserves the hash so cold
 // deep-links (`/app/#settings=…`) and the profile-switch reload survive. replaceState
 // so the bare URL doesn't linger in history.
-export function redirectToProfile(pid) {
+export function redirectToProfile(pid: string): void {
   const full = resolve(current(), { type: 'redirectToProfile', pid })
   if (location.pathname + location.hash !== full) history.replaceState({}, '', full)
   route.set(read())
@@ -64,19 +74,19 @@ export function redirectToProfile(pid) {
 // history entry (so Back dismisses it); switching Section and closing REPLACE (no
 // history spam per Section click; close strips the hash to reveal the Page).
 
-export function openOverlay(name, value) {
+export function openOverlay(name: string, value?: string): void {
   const full = resolve(current(), { type: 'openOverlay', name, value })
   history.pushState({}, '', full)
   route.set(read())
 }
 
-export function replaceOverlay(name, value) {
+export function replaceOverlay(name: string, value?: string): void {
   const full = resolve(current(), { type: 'replaceOverlay', name, value })
   history.replaceState({}, '', full)
   route.set(read())
 }
 
-export function closeOverlay() {
+export function closeOverlay(): void {
   const full = resolve(current(), { type: 'closeOverlay' })
   history.replaceState({}, '', full)
   route.set(read())
@@ -86,7 +96,7 @@ export function closeOverlay() {
 // Each helper touches only the `aside` hash key and preserves the Modal key.
 // Opening the rail from closed pushes (Back closes it); switching occupant replaces.
 
-function setAside(next) {
+function setAside(next: Aside | null): void {
   const cur = read().aside
   // Re-pointing the rail at the file it already shows isn't a teardown; any other
   // occupant change tears a dirty editor down, so guard it first.
@@ -100,12 +110,14 @@ function setAside(next) {
 }
 
 // Open a file preview in the rail. A blank path is a no-op (never closes the rail).
-export function openAsideFile(path) { if (path) setAside({ kind: 'file', path }) }
+export function openAsideFile(path: string | null | undefined): void {
+  if (path) setAside({ kind: 'file', path })
+}
 
 // Open the AG2 Inspector as the rail occupant.
-export function openAsideInspector() { setAside({ kind: 'inspector' }) }
+export function openAsideInspector(): void { setAside({ kind: 'inspector' }) }
 
-export function closeAside() {
+export function closeAside(): void {
   if (!confirmDiscard()) return
   const full = resolve(current(), { type: 'closeAside' })
   history.replaceState({}, '', full)
@@ -113,16 +125,16 @@ export function closeAside() {
 }
 
 // Toggle the Inspector as the rail occupant on/off.
-export function toggleAsideInspector() {
+export function toggleAsideInspector(): void {
   if (read().aside?.kind === 'inspector') closeAside()
   else openAsideInspector()
 }
 
 // Whether the AG2 Inspector occupies the rail; also gates the per-item provenance
-// tags. Derived from the route, re-exported from store.js as `ag2View`.
-export const ag2View = derived(route, ($r) => $r.aside?.kind === 'inspector')
+// tags. Derived from the route, re-exported from store.ts as `ag2View`.
+export const ag2View: Readable<boolean> = derived(route, ($r) => $r.aside?.kind === 'inspector')
 
-export function newChatId() {
+export function newChatId(): string {
   return 'web-' + Math.random().toString(36).slice(2, 10)
 }
 

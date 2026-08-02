@@ -3,8 +3,8 @@
   // is a projection of one AG2 Stream, so these {type,data} events ARE the AG2
   // primitives at work — including memory aggregation / usage / observer events
   // the normal UI folds away.
-  import { inspectorEvents, poweredByOpen } from '../store.js'
-  import { closeAside } from '../router.js'
+  import { inspectorEvents, poweredByOpen } from '../store.ts'
+  import { closeAside } from '../router.ts'
   import { describe, SUBSYSTEMS } from '../lib/ag2map.js'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'

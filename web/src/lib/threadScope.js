@@ -1,5 +1,5 @@
 import { derived } from 'svelte/store'
-import { route } from '../router.js'
+import { route } from '../router.ts'
 import { scopeToken } from './route.js'
 
 // The open Thread's Folder-grant scope token for the folder API's `chat_id` slot,

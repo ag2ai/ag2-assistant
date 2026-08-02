@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { voicePickerOpen, voicePickerConfig } from '../store.js'
+  import { voicePickerOpen, voicePickerConfig } from '../store.ts'
   import { api } from '../transport/api/index.ts'
   import { loadLiveConfigs } from '../lib/live.js'
 

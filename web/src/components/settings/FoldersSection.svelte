@@ -8,7 +8,7 @@
   // snapshot (lib/folders.js) with the composer chip strip and chat folder modal.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { profiles } from '../../store.js'
+  import { profiles } from '../../store.ts'
   import { getActiveProfileId } from '../../lib/profile.js'
   import { getSettings } from './context.svelte.js'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.js'

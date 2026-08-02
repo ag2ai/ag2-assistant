@@ -182,15 +182,19 @@ export type ClientFrame =
 // the wire, so they are plain types rather than schemas.
 export type Feedback = { sentiment?: string; reason?: string } | null
 
-type ItemBase = { id: number; at?: number }
+// Temporary union: three allocators write into one keyed list today — project.ts
+// nid() (numbers), controller.js _vkey() ('v{n}' voice bubbles) and Date.now()
+// (error notes). Tasks 15/16 share one allocator and narrow this back to number.
+type ItemBase = { id: number | string; at?: number }
 
 // One card per tool call the thread renders alongside the chips. lib/toolcards.js
 // builds them; task 18 replaces this with that module's own union.
 export type ToolCard = { id: number } & Record<string, unknown>
 
 export type ThreadItem =
-  | (ItemBase & { kind: 'user'; text: string; queued?: boolean })
-  | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; empty?: boolean; feedback?: Feedback })
+  // `voice` marks a bubble spoken in a live voice session — UserMessage/AgentMessage style it.
+  | (ItemBase & { kind: 'user'; text: string; queued?: boolean; voice?: boolean })
+  | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; empty?: boolean; voice?: boolean; feedback?: Feedback })
   | (ItemBase & { kind: 'tools'; names: { name: string; n: number }[]; cards: ToolCard[] })
   | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; ends?: boolean; pending?: boolean; a2uiActionPending?: boolean; surfaceId?: string })
   | (ItemBase & { kind: 'taskcard'; taskId: string; title?: string; scheduled: boolean })

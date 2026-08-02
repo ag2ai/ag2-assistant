@@ -10,7 +10,7 @@
   import GenImage from './items/GenImage.svelte'
   import Attachment from './items/Attachment.svelte'
   import A2UISurface from './items/A2UISurface.svelte'
-  import { ag2View } from '../store.js'
+  import { ag2View } from '../store.ts'
   import { itemAg2 } from '../lib/ag2map.js'
 
   let { item } = $props()

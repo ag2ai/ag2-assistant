@@ -5,7 +5,7 @@
   // Only the ACTIVE profile is editable (the whole Settings zone is scoped to it); picking
   // a swatch previews the scheme live (setAccent + store tint) and rolls back if unsaved.
   import { onDestroy } from 'svelte'
-  import { profiles } from '../../store.js'
+  import { profiles } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
   import { getActiveProfileId } from '../../lib/profile.js'
   import { PALETTES, setAccent, getAccent } from '../../design/palette.js'

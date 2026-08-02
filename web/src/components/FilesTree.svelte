@@ -23,8 +23,8 @@
   // rename/move (inline editor or drag a row onto a Directory), and recursive
   // Directory delete — alongside the agent's own writes.
   import { onMount, tick, untrack } from 'svelte'
-  import { openAsideFile, closeAside, route } from '../router.js'
-  import { reveal } from '../store.js'
+  import { openAsideFile, closeAside, route } from '../router.ts'
+  import { reveal } from '../store.ts'
   import { threadScope } from '../lib/threadScope.js'
   import { foldersStore } from '../lib/folders.js'
   import { api } from '../transport/api/index.ts'

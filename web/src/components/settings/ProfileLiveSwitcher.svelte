@@ -7,8 +7,8 @@
   // connect — no runtime reload).
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { SETTINGS_PAGE } from '../../store.js'
-  import { replaceOverlay } from '../../router.js'
+  import { SETTINGS_PAGE } from '../../store.ts'
+  import { replaceOverlay } from '../../router.ts'
   import { LOGO, PROVIDER_LABEL, isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
   import { getSettings } from './context.svelte.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'

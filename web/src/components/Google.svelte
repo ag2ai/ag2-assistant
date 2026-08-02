@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { googleOpen } from '../store.js'
+  import { googleOpen } from '../store.ts'
   import { api } from '../transport/api/index.ts'
 
   let st = $state(null)

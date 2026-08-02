@@ -7,8 +7,8 @@
   // Save POSTs instead of PATCHes. No modal. Each run opens as a chat thread at /r/{id}.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { go, goTab, route, openOverlay } from '../../router.js'
-  import { profiles, tasks, pendingTaskEdit, SETTINGS_PAGE } from '../../store.js'
+  import { go, goTab, route, openOverlay } from '../../router.ts'
+  import { profiles, tasks, pendingTaskEdit, SETTINGS_PAGE } from '../../store.ts'
   import { getActiveProfileId } from '../../lib/profile.js'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.js'
   import { llmConfigs, loadLlmConfigs, LOGO, TYPE_LABEL, isUsable } from '../../lib/llm.js'

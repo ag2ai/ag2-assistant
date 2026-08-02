@@ -1,8 +1,8 @@
 <script>
   // An image the agent generated/edited — shown inline as a thumbnail; click for the
   // full-size preview. The bytes live in the workspace (served via /api/files/raw).
-  import { thread, runInfo } from '../../store.js'
-  import { openAsideFile } from '../../router.js'
+  import { thread, runInfo } from '../../store.ts'
+  import { openAsideFile } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
   import { requestContext } from '../../lib/feedback.js'
   import Feedback from './Feedback.svelte'

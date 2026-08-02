@@ -4,7 +4,7 @@
   // its own header (accent, name, Active badge, back to the catalogue) and a horizontal tab
   // bar — General, Focus areas, Model, Folders, Skills, Memory — each a surface scoped to the ACTIVE
   // profile (the catalogue switches to the clicked profile before opening this).
-  import { profiles } from '../../store.js'
+  import { profiles } from '../../store.ts'
   import { getActiveProfileId } from '../../lib/profile.js'
   import Icon from '../Icon.svelte'
   import ProfileGeneralSection from './ProfileGeneralSection.svelte'

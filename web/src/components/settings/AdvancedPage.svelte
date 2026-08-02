@@ -4,8 +4,8 @@
   // (globalMemory/setGlobalMemory), so it lives here rather than the per-profile
   // Profile Memory tab (ADR 0015), edited inline.
   import { getSettings } from './context.svelte.js'
-  import { ag2View } from '../../store.js'
-  import { toggleAsideInspector } from '../../router.js'
+  import { ag2View } from '../../store.ts'
+  import { toggleAsideInspector } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import MemoryDocEditor from './MemoryDocEditor.svelte'

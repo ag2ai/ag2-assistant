@@ -1,9 +1,9 @@
 <script>
   // Compact header over a run's chat thread: which task, when, current status,
   // with a Stop for live runs and a link back to the task page.
-  import { runInfo } from '../../store.js'
+  import { runInfo } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
-  import { go } from '../../router.js'
+  import { go } from '../../router.ts'
   import Icon from '../Icon.svelte'
   import { fmtStamp } from '../../lib/time.js'
 

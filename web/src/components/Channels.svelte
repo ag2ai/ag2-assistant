@@ -7,7 +7,7 @@
   // are edited inline here (POST /api/channels/token) — stored in the global secrets
   // store, mirroring the API-key inputs in Settings; values are never echoed back.
   import { onMount } from 'svelte'
-  import { profiles } from '../store.js'
+  import { profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
   import Icon from './Icon.svelte'
 

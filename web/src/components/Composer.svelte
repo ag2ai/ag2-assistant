@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { thread, SETTINGS_PAGE, profiles, runInfo } from '../store.js'
-  import { openOverlay } from '../router.js'
+  import { thread, SETTINGS_PAGE, profiles, runInfo } from '../store.ts'
+  import { openOverlay } from '../router.ts'
   import { send, stop, startVoice, stopVoice, voice } from '../controller.js'
   import { liveConfigs, loadLiveConfigs } from '../lib/live.js'
   import { llmConfigs } from '../lib/llm.js'

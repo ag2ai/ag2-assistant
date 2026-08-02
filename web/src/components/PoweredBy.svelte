@@ -1,7 +1,7 @@
 <script>
   // The architecture map: which AG2 primitives power this assistant, and
   // (honestly) what's the app layer built on top.
-  import { poweredByOpen, appVersion, ag2Version } from '../store.js'
+  import { poweredByOpen, appVersion, ag2Version } from '../store.ts'
   import { PRIMITIVES, SUBSYSTEMS, AG2_DOCS } from '../lib/ag2map.js'
 
   const close = () => ($poweredByOpen = false)

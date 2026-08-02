@@ -6,7 +6,7 @@
   // an empty-state card when nothing's learned, else a clamped preview card. Editing is an
   // explicit, opt-in expansion — the raw textarea only appears when you choose to Edit.
   // Re-points to the active profile's persona on each profile switch (profileEpoch).
-  import { profileEpoch } from '../../store.js'
+  import { profileEpoch } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
 
   let text = $state('')

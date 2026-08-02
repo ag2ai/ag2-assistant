@@ -1,9 +1,9 @@
 <script>
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { inquiries, soundOnInput, profileEpoch } from '../store.js'
+  import { inquiries, soundOnInput, profileEpoch } from '../store.ts'
   import { api } from '../transport/api/index.ts'
-  import { go, route } from '../router.js'
+  import { go, route } from '../router.ts'
   import { chime } from '../lib/chime.js'
 
   let drafts = $state({})
