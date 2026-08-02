@@ -92,3 +92,41 @@ export type VoiceCatalog = z.infer<typeof VoiceCatalog>
 
 export const MemoryDoc = z.object({ text: z.string() })
 export type MemoryDoc = z.infer<typeof MemoryDoc>
+
+// The settings mutations each echo the one field they changed.
+export const VoiceSelected = z.object({ ok: z.literal(true), voice: z.string() })
+export type VoiceSelected = z.infer<typeof VoiceSelected>
+
+export const FocusesSaved = z.object({ ok: z.literal(true), focuses: z.array(z.string()) })
+export type FocusesSaved = z.infer<typeof FocusesSaved>
+
+export const LlmOverrideSaved = z.object({
+  ok: z.literal(true),
+  llm_override: z.string().nullable(),
+})
+export type LlmOverrideSaved = z.infer<typeof LlmOverrideSaved>
+
+export const LiveOverrideSaved = z.object({
+  ok: z.literal(true),
+  live_override: z.string().nullable(),
+})
+export type LiveOverrideSaved = z.infer<typeof LiveOverrideSaved>
+
+export const ReplyTimeoutSaved = z.object({
+  ok: z.literal(true),
+  reply_timeout_s: z.number(),
+})
+export type ReplyTimeoutSaved = z.infer<typeof ReplyTimeoutSaved>
+
+export const McpServerSaved = z.object({
+  ok: z.literal(true),
+  server: McpServer,
+  mcp_servers: z.array(McpServer),
+})
+export type McpServerSaved = z.infer<typeof McpServerSaved>
+
+export const McpServersSnapshot = z.object({
+  ok: z.literal(true),
+  mcp_servers: z.array(McpServer),
+})
+export type McpServersSnapshot = z.infer<typeof McpServersSnapshot>

@@ -140,3 +140,18 @@ export type FsListing = z.infer<typeof FsListing>
 // POST /api/fs/mkdir — failures are non-2xx and thrown by the transport.
 export const FsMkdirResult = z.object({ ok: z.literal(true), path: z.string() })
 export type FsMkdirResult = z.infer<typeof FsMkdirResult>
+
+// POST /api/identity — seed-only; `reason` says why a seed was skipped.
+export const IdentitySeeded = z.object({
+  ok: z.boolean(),
+  seeded: z.boolean(),
+  reason: z.string().optional(),
+})
+export type IdentitySeeded = z.infer<typeof IdentitySeeded>
+
+// POST /api/google/credentials — a bad client JSON answers 200 with ok:false.
+export const OkOrError = z.union([
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type OkOrError = z.infer<typeof OkOrError>

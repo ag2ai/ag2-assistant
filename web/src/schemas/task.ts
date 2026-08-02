@@ -95,3 +95,8 @@ export type HitlQuestion = z.infer<typeof HitlQuestion>
 
 export const HitlPending = z.object({ pending: z.array(HitlQuestion) })
 export type HitlPending = z.infer<typeof HitlPending>
+
+// POST /tasks answers with a freshly built row — tasks_service.create_task
+// returns _task_row() without the `runs` key GET /tasks/{id} adds.
+export const NewTaskEnvelope = z.object({ task: Task })
+export type NewTaskEnvelope = z.infer<typeof NewTaskEnvelope>
