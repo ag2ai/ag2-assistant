@@ -112,15 +112,62 @@ export const HANDLED_EVENTS = [
 ] as const
 export type HandledEvent = (typeof HANDLED_EVENTS)[number]
 
-// Frames the stream socket receives.
-export const ServerFrame = z.union([
-  z.object({ event: WireEvent }),
-  z.object({ type: z.literal('ready'), chat: z.string().optional() }),
-  z.object({ type: z.literal('turn_end') }),
-  z.object({ type: z.literal('queued'), text: z.string().optional() }),
-  z.object({ type: z.literal('error'), error: z.string().optional() }),
+// Frames the stream socket receives. stream_bridge.py stamps `chat` (the stream
+// id) on ready/turn_end/error; the failure text rides in `message`, not `error`.
+export const EventFrame = z.object({ event: WireEvent })
+export type EventFrame = z.infer<typeof EventFrame>
+
+export const ReadyFrame = z.object({ type: z.literal('ready'), chat: z.string().optional() })
+export type ReadyFrame = z.infer<typeof ReadyFrame>
+
+// `role` comes from the voice socket, which reuses this frame (app.py:3565).
+export const TurnEndFrame = z.object({
+  type: z.literal('turn_end'),
+  chat: z.string().optional(),
+  role: z.string().optional(),
+})
+export type TurnEndFrame = z.infer<typeof TurnEndFrame>
+
+export const QueuedFrame = z.object({
+  type: z.literal('queued'),
+  text: z.string().optional(),
+  chat: z.string().optional(),
+})
+export type QueuedFrame = z.infer<typeof QueuedFrame>
+
+export const ErrorFrame = z.object({
+  type: z.literal('error'),
+  message: z.string().optional(),
+  chat: z.string().optional(),
+})
+export type ErrorFrame = z.infer<typeof ErrorFrame>
+
+export const ControlFrame = z.discriminatedUnion('type', [
+  ReadyFrame,
+  TurnEndFrame,
+  QueuedFrame,
+  ErrorFrame,
 ])
+export type ControlFrame = z.infer<typeof ControlFrame>
+
+export const ServerFrame = z.union([EventFrame, ControlFrame])
 export type ServerFrame = z.infer<typeof ServerFrame>
+
+// Frames the voice socket receives on top of the shared event frame: the same
+// ready/turn_end/error plus its own live transcript (app.py:3565-3616).
+export const TranscriptFrame = z.object({
+  type: z.literal('transcript'),
+  role: z.enum(['user', 'agent']),
+  text: z.string(),
+  final: z.boolean().optional(),
+})
+export type TranscriptFrame = z.infer<typeof TranscriptFrame>
+
+export const VoiceFrame = z.union([
+  EventFrame,
+  z.discriminatedUnion('type', [ReadyFrame, TranscriptFrame, TurnEndFrame, ErrorFrame]),
+])
+export type VoiceFrame = z.infer<typeof VoiceFrame>
 
 // Frames the client sends. A turn is the bare {text, attachments} shape.
 export type ClientFrame =
