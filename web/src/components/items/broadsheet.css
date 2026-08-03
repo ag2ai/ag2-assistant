@@ -6,7 +6,7 @@
    palette). These are plain GLOBAL classes (.bs / .bs-*) so the
    three surfaces share ONE source of truth for the masthead,
    ticker, and footer chrome; each component keeps only its own
-   body styles in its scoped <style>. Imported once from main.js.
+   body styles in its scoped <style>. Imported once from main.ts.
 
    The palette is aliased onto .bs to short local names (--paper,
    --ink, --accent, …) so both these rules and each component's

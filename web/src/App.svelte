@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile, closeAside } from './router.ts'
-  import { openThread, closeThread, switchProfile } from './controller.js'
+  import { openThread, closeThread, switchProfile } from './controller.ts'
   import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, ag2Version, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.ts'
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.js'
   import { api } from './transport/api/index.ts'

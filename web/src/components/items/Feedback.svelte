@@ -3,7 +3,7 @@
   // reason field; Save is disabled until it's non-empty (both thumbs). Sends a
   // feedback frame upstream (controller.feedback) — the server emits a FeedbackGiven
   // event (which folds back into `current`) and a learner agent distils it into memory.
-  import { feedback, clearFeedback } from '../../controller.js'
+  import { feedback, clearFeedback } from '../../controller.ts'
   import Icon from '../Icon.svelte'
 
   let { targetKind, targetId, content = '', request = '', current = null } = $props()

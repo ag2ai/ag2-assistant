@@ -4,7 +4,7 @@
   import { chats, tasks, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
   import { route, go, goTab, newChatId, openOverlay } from '../router.ts'
   import { api } from '../transport/api/index.ts'
-  import { switchProfile } from '../controller.js'
+  import { switchProfile } from '../controller.ts'
   import Icon from './Icon.svelte'
   import RailResizer from './RailResizer.svelte'
   import { drawerWidth } from '../store.ts'

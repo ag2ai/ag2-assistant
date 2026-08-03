@@ -6,7 +6,7 @@
   // stays available. A retired card keeps the chosen chip highlighted (if answered)
   // and says HOW it resolved — answered / expired / cancelled — with its buttons
   // disabled, so a timed-out or task-ended prompt never leaves dead live controls.
-  import { answer } from '../../controller.js'
+  import { answer } from '../../controller.ts'
   import { runInfo } from '../../store.ts'
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
   let { item } = $props()

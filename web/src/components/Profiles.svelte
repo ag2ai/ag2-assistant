@@ -10,7 +10,7 @@
   // Archived section (ADR 0003): a collapsed disclosure with Restore + type-to-confirm Delete.
   import { profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
-  import { switchProfile, closeThread } from '../controller.js'
+  import { switchProfile, closeThread } from '../controller.ts'
   import { getActiveProfileId } from '../lib/profile.js'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'

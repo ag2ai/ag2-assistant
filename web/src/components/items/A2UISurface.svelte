@@ -11,7 +11,7 @@
   import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
   import { a2uiComposingSurfaceId, withA2UIValue } from '../../lib/a2ui.js'
-  import { a2uiAction } from '../../controller.js'
+  import { a2uiAction } from '../../controller.ts'
   import { thread } from '../../store.ts'
 
   let { item } = $props()

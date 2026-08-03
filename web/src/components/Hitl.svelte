@@ -11,7 +11,7 @@
   let first = true
 
   // The stream the open page renders inline: a run thread → "task-run:<id>"
-  // (mirrors controller.js's openThread chat mapping), a chat page → the chat
+  // (mirrors controller.ts's openThread chat mapping), a chat page → the chat
   // id. A task page (route.name === 'task') is config + a run list, not a
   // chat — it has no inline stream, so it maps to null (nothing to dedupe
   // against; its inquiries stay in the strip).
