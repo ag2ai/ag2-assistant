@@ -1147,6 +1147,13 @@ def create_app(
         """A throwaway Config carrying just the entry's derived provider/model/options,
         for the dry-construct + test round-trip. Streaming off (a one-shot probe)."""
         probe = Config.for_paths(paths)
+        # for_paths defaults every non-path field, so the host facts that reach a
+        # real turn via apply_env_overrides are absent here. The ACP builders read
+        # the bridge off the Config (acp_provider._build), so without this a Docker
+        # probe spawns the adapter locally — inside an image that has none — and
+        # reports a bare "[Errno 2]" instead of testing the host CLI at all.
+        probe.acp_bridge = manager.config.acp_bridge
+        probe.acp_bridge_token = manager.config.acp_bridge_token
         probe.llm.streaming = False
         probe.llm.provider = llm_configs.PROVIDER_OF[entry["type"]]
         probe.llm.model = entry["model"]

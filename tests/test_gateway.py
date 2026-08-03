@@ -1354,6 +1354,37 @@ def test_llm_config_draft_test_endpoint(profile_app_factory, paths):
     assert "type must be one of" in r.json()["error"]
 
 
+def test_llm_config_probe_carries_host_bridge(profile_app_factory):
+    """The /test probe's Config must carry the install's ACP host bridge.
+
+    ``Config.for_paths`` defaults every non-path field, so the bridge that reaches a
+    real turn through ``apply_env_overrides`` is absent unless the route copies it.
+    Without it a Docker probe spawns the adapter locally — inside an image that ships
+    none — and reports a bare "[Errno 2]" instead of testing the host CLI."""
+    seen: dict = {}
+
+    class _Probe(LlmProbe):
+        def __call__(self, config):
+            seen["config"] = config
+            return super().__call__(config)
+
+    client, _pid = profile_app_factory(
+        llm_probe=_Probe(),
+        env={
+            "AG2ASSISTANT_ACP_BRIDGE": "host.docker.internal:8801",
+            "AG2ASSISTANT_ACP_BRIDGE_TOKEN": "shared-secret",
+        },
+    )
+
+    r = client.post(
+        "/api/llm-configs/test",
+        json={"name": "Claude Code", "type": "claude_code", "model": ""},
+    )
+    assert r.status_code == 200, r.json()
+    assert seen["config"].acp_bridge == "host.docker.internal:8801"
+    assert seen["config"].acp_bridge_token == "shared-secret"
+
+
 def test_llm_config_subscription_entry_view_signed_in(profile_app, paths):
     """An openai_subscription config's row/chip need the live ChatGPT sign-in state and
     a 'subscription' key_source so the UI can label it honestly without a 2nd fetch.
