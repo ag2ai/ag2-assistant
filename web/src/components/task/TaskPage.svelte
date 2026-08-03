@@ -9,17 +9,17 @@
   import { api } from '../../transport/api/index.ts'
   import { go, goTab, route, openOverlay } from '../../router.ts'
   import { profiles, tasks, pendingTaskEdit, SETTINGS_PAGE } from '../../store.ts'
-  import { getActiveProfileId } from '../../lib/profile.js'
-  import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.js'
-  import { llmConfigs, loadLlmConfigs, LOGO, TYPE_LABEL, isUsable } from '../../lib/llm.js'
-  import { folderGrantDiff, taskEditPatch } from '../../lib/taskEdit.js'
+  import { getActiveProfileId } from '../../lib/profile.ts'
+  import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
+  import { llmConfigs, loadLlmConfigs, LOGO, TYPE_LABEL, isUsable } from '../../lib/llm.ts'
+  import { folderGrantDiff, taskEditPatch } from '../../lib/taskEdit.ts'
   import Icon from '../Icon.svelte'
   import AppBar from '../AppBar.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
 import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
   import ScheduleField from './ScheduleField.svelte'
-  import { fmtStamp, fmtNextIn } from '../../lib/time.js'
+  import { fmtStamp, fmtNextIn } from '../../lib/time.ts'
 
   const TERMINAL = ['completed', 'failed', 'cancelled']
 

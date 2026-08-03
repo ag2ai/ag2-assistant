@@ -11,7 +11,7 @@
   import Attachment from './items/Attachment.svelte'
   import A2UISurface from './items/A2UISurface.svelte'
   import { ag2View } from '../store.ts'
-  import { itemAg2 } from '../lib/ag2map.js'
+  import { itemAg2 } from '../lib/ag2map.ts'
 
   let { item } = $props()
   const map = {

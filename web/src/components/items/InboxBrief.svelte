@@ -4,7 +4,7 @@
   // dot + bold sender; mail that clearly asks for something carries a
   // "Reply?" flag. Subjects link to the thread in Gmail — agent-produced URLs,
   // so they pass through the safeUrl scheme guard.
-  import { safeUrl } from '../../lib/url.js'
+  import { safeUrl } from '../../lib/url.ts'
 
   let { data = {} } = $props()
 

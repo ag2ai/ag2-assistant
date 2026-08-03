@@ -3,7 +3,7 @@
   // toggling a pill persists immediately for the active profile via setFocuses.
   import { getSettings } from './context.svelte.js'
   import { api } from '../../transport/api/index.ts'
-  import { FOCUS } from '../../lib/focuses.js'
+  import { FOCUS } from '../../lib/focuses.ts'
   import Icon from '../Icon.svelte'
 
   const ctx = getSettings()

@@ -7,15 +7,15 @@ import {
   canUseCliLogin,
   cliDefaultLabel,
   cliNote,
-} from './cliLogin.js'
+} from './cliLogin.ts'
 
-const LOCAL = (available) => ({
+const LOCAL = (available: boolean) => ({
   mode: 'local',
   bridge: null,
   connected: true,
   agents: [{ name: 'claude', label: 'Claude Code', available }],
 })
-const BRIDGE = (connected, available = true) => ({
+const BRIDGE = (connected: boolean, available = true) => ({
   mode: 'bridge',
   bridge: 'host:8811',
   connected,

@@ -1,10 +1,10 @@
 <script>
-  import { renderMarkdown, linkifyDom, bindImages } from '../../lib/markdown.js'
-  import { a2uiComposingSurfaceId, splitA2UIText } from '../../lib/a2ui.js'
+  import { renderMarkdown, linkifyDom, bindImages } from '../../lib/markdown.ts'
+  import { a2uiComposingSurfaceId, splitA2UIText } from '../../lib/a2ui.ts'
   import A2UIComposing from './A2UIComposing.svelte'
   import { go, openAsideFile } from '../../router.ts'
   import { thread, runInfo } from '../../store.ts'
-  import { requestContext } from '../../lib/feedback.js'
+  import { requestContext } from '../../lib/feedback.ts'
   import Feedback from './Feedback.svelte'
   let { item } = $props()
   // The model writes A2UI messages into its reply text. That payload is never prose,

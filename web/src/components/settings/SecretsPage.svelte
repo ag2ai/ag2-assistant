@@ -6,9 +6,9 @@
   // Secret per provider is the Default — the install-wide fallback, badge shown.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { secretsStore, loadSecrets } from '../../lib/secrets.js'
-  import { loadLlmConfigs } from '../../lib/llm.js'
-  import { loadLiveConfigs } from '../../lib/live.js'
+  import { secretsStore, loadSecrets } from '../../lib/secrets.ts'
+  import { loadLlmConfigs } from '../../lib/llm.ts'
+  import { loadLiveConfigs } from '../../lib/live.ts'
   import Icon from '../Icon.svelte'
 
   const PROVIDERS = ['', 'openai', 'anthropic', 'gemini']

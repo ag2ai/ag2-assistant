@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isFolderPath, rawQuery, modeLabel, folderAncestorDirs, folderAffordances } from './folderFiles.js'
+import { isFolderPath, rawQuery, modeLabel, folderAncestorDirs, folderAffordances } from './folderFiles.ts'
 
 test('folderAffordances: read_write unlocks every mutation; read/none/unknown unlock none', () => {
   assert.deepEqual(folderAffordances('read_write'), { edit: true, rename: true, delete: true, move: true })

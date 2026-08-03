@@ -1,16 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { folderGrantDiff, taskEditPatch } from './taskEdit.js'
+import { folderGrantDiff, taskEditPatch } from './taskEdit.ts'
+import type { FolderGrantIntent, FolderGrantState } from './taskEdit.ts'
 
 // folderGrantDiff — current/intended entries are keyed by folder identity and carry
 // the profile-scope mode behind them; ops are tagged {kind, ...}. See module header.
 
 test('folderGrantDiff: no-op when intended equals current', () => {
-  const current = [
+  const current: FolderGrantState[] = [
     { id: 'f1', path: '/a', profileMode: null, taskMode: 'read' },        // task-only
     { id: 'f2', path: '/b', profileMode: 'read', taskMode: null },        // profile folder, no override
   ]
-  const intended = [
+  const intended: FolderGrantIntent[] = [
     { id: 'f1', path: '/a', profileMode: null, mode: 'read' },
     { id: 'f2', path: '/b', profileMode: 'read', mode: 'read' },
   ]
@@ -18,16 +19,16 @@ test('folderGrantDiff: no-op when intended equals current', () => {
 })
 
 test('folderGrantDiff: add a new task folder that already exists as a Folder', () => {
-  const current = []
-  const intended = [{ id: 'f9', path: '/new', profileMode: null, mode: 'read' }]
+  const current: FolderGrantState[] = []
+  const intended: FolderGrantIntent[] = [{ id: 'f9', path: '/new', profileMode: null, mode: 'read' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'set-grant', id: 'f9', path: '/new', mode: 'read' },
   ])
 })
 
 test('folderGrantDiff: add a folder that must be created before granting', () => {
-  const current = []
-  const intended = [{ id: null, path: '/fresh', profileMode: null, mode: 'read_write' }]
+  const current: FolderGrantState[] = []
+  const intended: FolderGrantIntent[] = [{ id: null, path: '/fresh', profileMode: null, mode: 'read_write' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'create-folder', path: '/fresh' },
     { kind: 'set-grant', id: null, path: '/fresh', mode: 'read_write' },
@@ -35,75 +36,75 @@ test('folderGrantDiff: add a folder that must be created before granting', () =>
 })
 
 test('folderGrantDiff: remove a task folder (dropped from intended) → revoke', () => {
-  const current = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read' }]
+  const current: FolderGrantState[] = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read' }]
   assert.deepEqual(folderGrantDiff(current, []), [
     { kind: 'revoke', id: 'f1', path: '/a' },
   ])
 })
 
 test('folderGrantDiff: task folder set to Off (mode null/none) → revoke', () => {
-  const current = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read' }]
-  const intended = [{ id: 'f1', path: '/a', profileMode: null, mode: 'none' }]
+  const current: FolderGrantState[] = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read' }]
+  const intended: FolderGrantIntent[] = [{ id: 'f1', path: '/a', profileMode: null, mode: 'none' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'revoke', id: 'f1', path: '/a' },
   ])
 })
 
 test('folderGrantDiff: change a task folder mode read → read_write', () => {
-  const current = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read' }]
-  const intended = [{ id: 'f1', path: '/a', profileMode: null, mode: 'read_write' }]
+  const current: FolderGrantState[] = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read' }]
+  const intended: FolderGrantIntent[] = [{ id: 'f1', path: '/a', profileMode: null, mode: 'read_write' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'set-grant', id: 'f1', path: '/a', mode: 'read_write' },
   ])
 })
 
 test('folderGrantDiff: change a task folder mode read_write → read', () => {
-  const current = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read_write' }]
-  const intended = [{ id: 'f1', path: '/a', profileMode: null, mode: 'read' }]
+  const current: FolderGrantState[] = [{ id: 'f1', path: '/a', profileMode: null, taskMode: 'read_write' }]
+  const intended: FolderGrantIntent[] = [{ id: 'f1', path: '/a', profileMode: null, mode: 'read' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'set-grant', id: 'f1', path: '/a', mode: 'read' },
   ])
 })
 
 test('folderGrantDiff: block a profile folder via a task `none` override', () => {
-  const current = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: null }]
-  const intended = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'none' }]
+  const current: FolderGrantState[] = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: null }]
+  const intended: FolderGrantIntent[] = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'none' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'set-grant', id: 'f2', path: '/b', mode: 'none' },
   ])
 })
 
 test('folderGrantDiff: widen a profile folder via a task read_write override', () => {
-  const current = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: null }]
-  const intended = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read_write' }]
+  const current: FolderGrantState[] = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: null }]
+  const intended: FolderGrantIntent[] = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read_write' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'set-grant', id: 'f2', path: '/b', mode: 'read_write' },
   ])
 })
 
 test('folderGrantDiff: profile folder back to profile mode → revoke the override', () => {
-  const current = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: 'read_write' }]
-  const intended = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read' }]
+  const current: FolderGrantState[] = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: 'read_write' }]
+  const intended: FolderGrantIntent[] = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'revoke', id: 'f2', path: '/b' },
   ])
 })
 
 test('folderGrantDiff: unblock a task-none profile folder → revoke the block', () => {
-  const current = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: 'none' }]
-  const intended = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read' }]
+  const current: FolderGrantState[] = [{ id: 'f2', path: '/b', profileMode: 'read', taskMode: 'none' }]
+  const intended: FolderGrantIntent[] = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read' }]
   assert.deepEqual(folderGrantDiff(current, intended), [
     { kind: 'revoke', id: 'f2', path: '/b' },
   ])
 })
 
 test('folderGrantDiff: re-mode + block in one Save, ordered per intended', () => {
-  const current = [
+  const current: FolderGrantState[] = [
     { id: 'f1', path: '/a', profileMode: null, taskMode: 'read' },   // task-only, widen
     { id: 'f2', path: '/b', profileMode: 'read', taskMode: null },   // profile, block
     { id: 'f3', path: '/c', profileMode: null, taskMode: 'read' },   // task-only, remove
   ]
-  const intended = [
+  const intended: FolderGrantIntent[] = [
     { id: 'f1', path: '/a', profileMode: null, mode: 'read_write' },
     { id: 'f2', path: '/b', profileMode: 'read', mode: 'none' },
   ]
@@ -116,7 +117,7 @@ test('folderGrantDiff: re-mode + block in one Save, ordered per intended', () =>
 
 test('folderGrantDiff: create — an unchanged profile folder yields no op (no task grant)', () => {
   // Create seeds profile folders at their profile mode against an empty `current`.
-  const intended = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read' }]
+  const intended: FolderGrantIntent[] = [{ id: 'f2', path: '/b', profileMode: 'read', mode: 'read' }]
   assert.deepEqual(folderGrantDiff([], intended), [])
 })
 

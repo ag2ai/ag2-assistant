@@ -1,7 +1,7 @@
 // Skills, per-profile layer (app.py 2777-2909; ADR 0016 t02 / ADR 0017). Rows add
 // {suppressed, available} to the install-wide shape; a change reloads only this
 // profile. Search reuses the global searchSkills — only install/discover is scoped.
-import { api as P } from '../../lib/profile.js'
+import { api as P } from '../../lib/profile.ts'
 import { del, get, post, postForm } from '../http.ts'
 import { ProfileSkillInstalled, ProfileSkillList, ProfileSkillMutated, SkillDiscovered } from '../../schemas/index.ts'
 import { formFile, type SkillInstallBody } from './skills.ts'

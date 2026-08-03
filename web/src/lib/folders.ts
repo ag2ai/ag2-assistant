@@ -6,10 +6,14 @@
 // their grants); each surface derives its own view (this profile / this chat).
 import { writable } from 'svelte/store'
 import { api } from '../transport/api/index.ts'
+import type { Folder } from '../schemas/index.ts'
 
-export const foldersStore = writable({ folders: [], loaded: false })
+// The install-wide snapshot every Folder surface subscribes to.
+export type FoldersSnapshot = { folders: Folder[]; loaded: boolean }
 
-export async function loadFolders() {
+export const foldersStore = writable<FoldersSnapshot>({ folders: [], loaded: false })
+
+export async function loadFolders(): Promise<void> {
   try {
     const r = await api.folders()
     foldersStore.set({ folders: r.folders || [], loaded: true })
@@ -21,7 +25,7 @@ export async function loadFolders() {
 // Every Folder mutator endpoint (create/update/delete, set/revoke grant) returns
 // the full {folders} snapshot — push it to the store so all subscribers refresh
 // at once. Returns the response untouched so callers can chain on it.
-export function applyFolders(r) {
+export function applyFolders<T extends { folders?: Folder[] }>(r: T): T {
   foldersStore.set({ folders: (r && r.folders) || [], loaded: true })
   return r
 }

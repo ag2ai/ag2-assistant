@@ -9,14 +9,15 @@ import {
   composeMessage,
   highlightSegments,
   parseMessage,
-} from './fileRefs.js'
+} from './fileRefs.ts'
+import type { RefKind, Segment } from './fileRefs.ts'
 
 // Reconstruct the original text from segments (the split must be lossless) and pull
 // out just the marked (highlighted) labels.
-const joined = (segs) => segs.map((s) => s.text).join('')
-const marks = (segs) => segs.filter((s) => s.mark).map((s) => s.text)
+const joined = (segs: Segment[]) => segs.map((s) => s.text).join('')
+const marks = (segs: Segment[]) => segs.filter((s) => s.mark).map((s) => s.text)
 
-const pick = (path, name, kind = 'file') => makePick({ path, name, dir: '', kind })
+const pick = (path: string, name: string, kind: RefKind = 'file') => makePick({ path, name, dir: '', kind })
 
 // ---- Trigger rule (story 19: only a fresh-token `@` opens the picker) ----
 

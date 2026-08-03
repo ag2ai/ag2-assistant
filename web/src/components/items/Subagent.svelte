@@ -1,6 +1,6 @@
 <script>
   import Item from '../Item.svelte'
-  import { fmtStamp } from '../../lib/time.js'
+  import { fmtStamp } from '../../lib/time.ts'
 
   let { item } = $props()
   const label = $derived(`${(item.agent || 'subagent').replace(/[-_]/g, ' ')} (subagent)`)

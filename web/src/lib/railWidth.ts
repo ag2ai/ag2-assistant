@@ -13,16 +13,16 @@ export const MIN_DRAWER_WIDTH = DEFAULT_DRAWER_WIDTH
 
 // Clamp a candidate pixel width into [min, max]. A non-finite / non-numeric input
 // (undefined, NaN, a bad localStorage value) falls back to the safe default.
-function clamp(px, min, max, def) {
+function clamp(px: number | string | null | undefined, min: number, max: number, def: number): number {
   const n = typeof px === 'number' ? px : Number(px)
   if (!Number.isFinite(n)) return def
   return Math.min(max, Math.max(min, n))
 }
 
-export function clampRailWidth(px) {
+export function clampRailWidth(px: number | string | null | undefined): number {
   return clamp(px, MIN_RAIL_WIDTH, MAX_RAIL_WIDTH, DEFAULT_RAIL_WIDTH)
 }
 
-export function clampDrawerWidth(px) {
+export function clampDrawerWidth(px: number | string | null | undefined): number {
   return clamp(px, MIN_DRAWER_WIDTH, MAX_DRAWER_WIDTH, DEFAULT_DRAWER_WIDTH)
 }

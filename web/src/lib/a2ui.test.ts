@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiValue, splitA2UIText, withA2UIValue } from './a2ui.js'
+import { a2uiComposingSurfaceId, a2uiValue, splitA2UIText, withA2UIValue } from './a2ui.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
 const BATCH =

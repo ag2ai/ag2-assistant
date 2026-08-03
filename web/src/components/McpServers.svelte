@@ -11,7 +11,7 @@
   // endpoints return the updated mcp_servers list so no full settings reload.
   import { onMount } from 'svelte'
   import { api } from '../transport/api/index.ts'
-  import { parseMcpPaste, MCP_CATALOG, catalogServer } from '../lib/mcp.js'
+  import { parseMcpPaste, MCP_CATALOG, catalogServer } from '../lib/mcp.ts'
   import Icon from './Icon.svelte'
 
   let servers = $state([])

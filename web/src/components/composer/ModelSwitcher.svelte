@@ -17,7 +17,7 @@
   import { api } from '../../transport/api/index.ts'
   import { SETTINGS_PAGE } from '../../store.ts'
   import { openOverlay } from '../../router.ts'
-  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
   let busy = $state(false)

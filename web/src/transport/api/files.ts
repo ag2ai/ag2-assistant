@@ -2,9 +2,9 @@
 // open Thread, the @-picker corpus and the preview rail's backlink (app.py
 // 2923-3240). The /files/raw routes bypass the JSON helpers — they carry bytes
 // and headers, and a 404 there is a missing file, not a vanished profile.
-import { api as P } from '../../lib/profile.js'
-import { parseEtag } from '../../lib/fileEdit.js'
-import { rawQuery } from '../../lib/folderFiles.js'
+import { api as P } from '../../lib/profile.ts'
+import { parseEtag } from '../../lib/fileEdit.ts'
+import { rawQuery } from '../../lib/folderFiles.ts'
 import { ApiError, del, get, post } from '../http.ts'
 import { parse } from '../validate.ts'
 import {

@@ -8,9 +8,9 @@
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api/index.ts'
   import { getSettings } from './context.svelte.js'
-  import { PROVIDER_LABEL } from '../../lib/live.js'
-  import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.js'
-  import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.js'
+  import { PROVIDER_LABEL } from '../../lib/live.ts'
+  import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
+  import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
 

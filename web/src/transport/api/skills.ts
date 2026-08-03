@@ -1,6 +1,6 @@
 // Skills, install-wide layer (app.py 1659-1849; ADR 0016/0017). Search is
 // target-agnostic; install/discover here land in the Global layer and fan out.
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post, postForm } from '../http.ts'
 import {
   SkillDiscovered,

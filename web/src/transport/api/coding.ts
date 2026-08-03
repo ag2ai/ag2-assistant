@@ -1,6 +1,6 @@
 // CLI coding agents: the Settings "Coding agents" card and one adapter's model
 // catalog (app.py 862-894, 2100-2117).
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { get } from '../http.ts'
 import { CodingAgents, CodingCatalog } from '../../schemas/index.ts'
 

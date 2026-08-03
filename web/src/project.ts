@@ -2,9 +2,9 @@
 // projection: the GUI is a view of the event stream. History (replay) and live
 // use the same reducer, so they produce identical items.
 
-import { cardFor } from './lib/toolcards.js'
-import { fmtDateTime } from './lib/time.js'
-import { applyA2UIMessage } from './lib/a2ui.js'
+import { cardFor } from './lib/toolcards.ts'
+import { fmtDateTime } from './lib/time.ts'
+import { applyA2UIMessage } from './lib/a2ui.ts'
 import { nextItemId as nid } from './lib/ids.ts'
 import { EventData, EventMeta, HANDLED_EVENTS, WireEvent } from './schemas/events.ts'
 import type { HandledEvent, ThreadItem, WireEvent as Wire } from './schemas/events.ts'
@@ -39,7 +39,7 @@ export function addTool(items: ThreadItem[], name: string, card: Record<string, 
   else last.names.push({ name: pretty, n: 1 })
   // A tool can contribute a card (file written, search run, …) — a projection of
   // the call's structured args, rendered alongside the chips. See lib/toolcards.js.
-  if (card) last.cards.push({ id: nid(), ...card })
+  if (card) last.cards.push({ ...card, id: nid() })
 }
 
 function prettyToolName(name: string): string {

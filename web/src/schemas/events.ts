@@ -192,8 +192,8 @@ export type Feedback = { sentiment?: string; reason?: string } | null
 // event's created_at (Unix seconds).
 type ItemBase = { id: number; at?: number }
 
-// One card per tool call the thread renders alongside the chips. lib/toolcards.js
-// builds them; task 18 replaces this with that module's own union.
+// One card per tool call the thread renders alongside the chips. lib/toolcards.ts
+// builds them; narrowing this to that module's own union is still open (task 18).
 export type ToolCard = { id: number } & Record<string, unknown>
 
 export type ThreadItem =

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { invalidFolderName } from './folderName.js'
+import { invalidFolderName } from './folderName.ts'
 
 // The picker's "new folder" field takes ONE name, not a path — `make_dir` would happily
 // build a tree from "a/b/c" (the Files tab relies on that), and a dot-prefixed name would

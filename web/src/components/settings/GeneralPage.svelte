@@ -2,7 +2,7 @@
   // Settings → General (per-device): Appearance, Animations, Notifications, Re-run setup.
   import { getSettings } from './context.svelte.js'
   import { soundOnInput, animations } from '../../store.ts'
-  import { chime } from '../../lib/chime.js'
+  import { chime } from '../../lib/chime.ts'
   import Icon from '../Icon.svelte'
   import Appearance from '../Appearance.svelte'
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { clampRailWidth, MIN_RAIL_WIDTH, MAX_RAIL_WIDTH, DEFAULT_RAIL_WIDTH,
-  clampDrawerWidth, MIN_DRAWER_WIDTH, MAX_DRAWER_WIDTH, DEFAULT_DRAWER_WIDTH } from './railWidth.js'
+  clampDrawerWidth, MIN_DRAWER_WIDTH, MAX_DRAWER_WIDTH, DEFAULT_DRAWER_WIDTH } from './railWidth.ts'
 
 test('clampRailWidth: below-min clamps up to MIN', () => {
   assert.equal(clampRailWidth(MIN_RAIL_WIDTH - 100), MIN_RAIL_WIDTH)

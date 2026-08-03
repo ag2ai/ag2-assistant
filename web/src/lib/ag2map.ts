@@ -3,12 +3,15 @@
 // every wire event {type, data} is an AG2 primitive (or an app event riding the
 // AG2 stream). `tail` is the last segment of the qualified type name.
 
-export const tail = (s) => (s || '').split('.').pop()
+export const tail = (s: string | null | undefined): string => (s || '').split('.').pop() ?? ''
 
 const DOCS = 'https://docs.ag2.ai'
 
 // Subsystems: the legend for the inspector + Powered-by page.
-export const SUBSYSTEMS = {
+// The inspector legend: subsystem → its colour and one-line blurb.
+export type Subsystem = { color: string; blurb: string }
+
+export const SUBSYSTEMS: Record<string, Subsystem> = {
   Model: { color: '#4c8bf5', blurb: 'AG2 Agent ↔ provider (the LLM calls)' },
   Tool: { color: '#1f9d55', blurb: 'AG2 tools (search, shell, code, fetch, filesystem, MCP…)' },
   Memory: { color: '#9b59b6', blurb: 'AG2 KnowledgeConfig — aggregation & compaction' },
@@ -22,7 +25,7 @@ export const SUBSYSTEMS = {
 }
 
 // tail(type) → subsystem. Native AG2 events.
-const EVENT_SUB = {
+const EVENT_SUB: Record<string, string> = {
   ModelRequest: 'Model', ModelResponse: 'Model', ModelMessage: 'Model', ModelMessageChunk: 'Model',
   ToolCallsEvent: 'Tool', ToolCallEvent: 'Tool', ToolResultEvent: 'Tool', ToolResultsEvent: 'Tool',
   GeminiToolCallEvent: 'Tool', OpenAIToolCallEvent: 'Tool', AnthropicToolCallEvent: 'Tool',
@@ -39,7 +42,7 @@ const EVENT_SUB = {
 
 // App-defined events (assistant.events.*) — our concepts, but they ride the AG2
 // Stream as BaseEvent subclasses, so still "on AG2", just app-layer.
-const APP_EVENT_SUB = {
+const APP_EVENT_SUB: Record<string, string> = {
   TaskCreated: 'Subagent', TaskScheduled: 'Subagent', DeliverableProduced: 'Subagent',
   InquiryRaised: 'HITL', InquiryAnswered: 'HITL', SubagentTrace: 'Subagent',
   FeedbackGiven: 'Memory', // 👍/👎 feeds the learned memory profile
@@ -48,8 +51,11 @@ const APP_EVENT_SUB = {
 }
 
 
+// What subsystem an event or item belongs to, and whether it is AG2's or ours.
+export type Ag2Tag = { sub: string; label: string; layer: 'ag2' | 'app' }
+
 // Describe a wire event for the inspector.
-export function describe(type) {
+export function describe(type: string | null | undefined): Ag2Tag {
   const t = tail(type)
   const native = (type || '').startsWith('ag2.')
   const sub = EVENT_SUB[t] || APP_EVENT_SUB[t] || 'Stream'
@@ -58,7 +64,7 @@ export function describe(type) {
 }
 
 // Thread item kind → the AG2 primitive it's a projection of (for inline tags).
-const ITEM_AG2 = {
+const ITEM_AG2: Record<string, Ag2Tag> = {
   user: { sub: 'Model', label: 'ModelRequest', layer: 'ag2' },
   agent: { sub: 'Model', label: 'ModelResponse', layer: 'ag2' },
   tools: { sub: 'Tool', label: 'ToolCallsEvent → AG2 tools', layer: 'ag2' },
@@ -69,11 +75,14 @@ const ITEM_AG2 = {
   a2ui: { sub: 'A2UI', label: 'A2UI surface', layer: 'app' },
   note: { sub: 'Stream', label: 'lifecycle note', layer: 'app' },
 }
-export const itemAg2 = (kind) => ITEM_AG2[kind] || null
+export const itemAg2 = (kind: string): Ag2Tag | null => ITEM_AG2[kind] || null
 
 // Curated architecture map for the "Powered by AG2" page. layer: 'ag2' (the
 // framework gives you this) vs 'app' (built on top of AG2).
-export const PRIMITIVES = [
+// One row of the "Powered by AG2" map; `sub` is absent for app-layer rows.
+export type Primitive = { sub?: string; name: string; what: string; layer: 'ag2' | 'app' }
+
+export const PRIMITIVES: Primitive[] = [
   { sub: 'Model', name: 'ag2.Agent', what: 'The universal runtime: model config, tools, knowledge, assembly, HITL, middleware, observers', layer: 'ag2' },
   { sub: 'Stream', name: 'Stream + EventLogWriter', what: 'One event stream is the log, the wire protocol, and the source this whole UI is a projection of', layer: 'ag2' },
   { sub: 'Memory', name: 'KnowledgeConfig + WorkingMemoryAggregate', what: 'Persistent learned profile, distilled & injected each turn (+ SummarizeCompact)', layer: 'ag2' },

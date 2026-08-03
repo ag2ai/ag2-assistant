@@ -3,7 +3,7 @@
 // 24 kHz PCM, and surfaces JSON frames (ready / transcript / turn_end / error)
 // to the caller. Audio + WS only — rendering is the controller's job.
 
-import { api as P } from '../lib/profile.js'
+import { api as P } from '../lib/profile.ts'
 import { VoiceFrame, type WireEvent } from '../schemas/events.ts'
 
 const WORKLET = `

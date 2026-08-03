@@ -1,6 +1,6 @@
 // Persistent, install-wide COMMAND permission grants (app.py 1465-1511). Every
 // mutation returns the full snapshot {ok, commands}.
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import { PermissionMutated, PermissionSnapshot } from '../../schemas/index.ts'
 

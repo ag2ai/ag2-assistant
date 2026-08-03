@@ -19,18 +19,18 @@
   import { onMount, onDestroy } from 'svelte'
   import { onboardingOpen, profile, profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
-  import { setActiveProfileId } from '../lib/profile.js'
+  import { setActiveProfileId } from '../lib/profile.ts'
   import { setAccent } from '../design/palette.js'
-  import { FOCUS, focusLabel } from '../lib/focuses.js'
-  import { TYPE_LABEL } from '../lib/llm.js'
+  import { FOCUS, focusLabel } from '../lib/focuses.ts'
+  import { TYPE_LABEL } from '../lib/llm.ts'
   import {
     CLI_TYPE,
     agentAvailability,
     canUseCliLogin,
     cliDefaultLabel,
     cliNote,
-  } from '../lib/cliLogin.js'
-  import { effortLabel, groupModels, joinModelId, splitModelId } from '../lib/codexModels.js'
+  } from '../lib/cliLogin.ts'
+  import { effortLabel, groupModels, joinModelId, splitModelId } from '../lib/codexModels.ts'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
   import FolderPicker from './FolderPicker.svelte'

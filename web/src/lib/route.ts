@@ -12,7 +12,37 @@
 
 const BASE = '/app'
 
-const dec = (s) => decodeURIComponent(s)
+// The drawer Tab, the open Thread's kind, and the main-pane driver.
+export type Tab = 'chats' | 'tasks' | 'files'
+export type ThreadKind = 'c' | 't' | 'r'
+export type RouteName = 'home' | 'chat' | 'task' | 'run' | 'files' | 'tasks'
+
+// The right-rail occupant (ADR 0009), or null when the rail is closed.
+export type Aside = { kind: 'inspector' } | { kind: 'file'; path: string }
+
+// What a URL parses to: the Page, plus the two orthogonal hash slots.
+export type Route = {
+  name: RouteName
+  tab: Tab
+  kind: ThreadKind | null
+  id: string | null
+  pid: string | null
+  overlay: 'settings' | null
+  overlayValue: string | null
+  aside: Aside | null
+}
+
+// One navigation, as the router's helpers express it.
+export type Intent =
+  | { type: 'go'; path: string; pid?: string | null }
+  | { type: 'goTab'; tab: Tab; pid?: string | null }
+  | { type: 'openOverlay' | 'replaceOverlay'; name: string; value?: string | null }
+  | { type: 'closeOverlay' }
+  | { type: 'openAside' | 'replaceAside'; aside: Aside | null }
+  | { type: 'closeAside' }
+  | { type: 'redirectToProfile'; pid: string }
+
+const dec = (s: string): string => decodeURIComponent(s)
 
 // The valid Settings Section ids — the modal's nav targets. Frozen so the
 // vocabulary can't mutate at runtime. Re-exported from ../store.js as the app's
@@ -27,13 +57,14 @@ export const SETTINGS_PAGE = Object.freeze({
   INTEGRATIONS: 'integrations',
   ADVANCED: 'advanced',
 })
-const SECTIONS = new Set(Object.values(SETTINGS_PAGE))
+// Validates arbitrary hash text, so the set is widened to string on purpose.
+const SECTIONS = new Set<string>(Object.values(SETTINGS_PAGE))
 
 // The main-pane driver, derived from what Thread (if any) is open, INDEPENDENT of
 // the Tab: an open Thread stays open while you switch drawer Tabs. With a Thread →
 // 'chat'/'task'/'run'; otherwise the Tab's own empty page ('files'/'tasks') or 'home'
 // (boot spins up a fresh chat) for chats.
-function threadName(tab, kind) {
+function threadName(tab: string, kind: ThreadKind | null): RouteName {
   if (kind === 'r') return 'run'
   if (kind === 't') return 'task'
   if (kind === 'c') return 'chat'
@@ -49,9 +80,9 @@ const HASH_KEY_ORDER = ['settings', 'aside']
 // Parse a multi-key hash fragment into an ordered key→raw-value Map. Grammar:
 // `#k1=v1&k2=v2`; each pair split on the FIRST `=` (a value may contain `=`/`/`).
 // A bare key (no `=`, e.g. `#settings`) maps to '' so it re-serializes bare.
-function parseHashKeys(hash) {
+function parseHashKeys(hash: string | null | undefined): Map<string, string> {
   const h = (hash || '').replace(/^#/, '')
-  const out = new Map()
+  const out = new Map<string, string>()
   if (!h) return out
   for (const part of h.split('&')) {
     if (!part) continue
@@ -65,8 +96,8 @@ function parseHashKeys(hash) {
 
 // Serialize a key→raw-value Map back to a hash string in canonical key order.
 // Only known keys are emitted (unknown fragments are noise). '' → a bare key.
-function buildHash(keys) {
-  const parts = []
+function buildHash(keys: Map<string, string>): string {
+  const parts: string[] = []
   for (const k of HASH_KEY_ORDER) {
     if (!keys.has(k)) continue
     const v = keys.get(k)
@@ -78,7 +109,7 @@ function buildHash(keys) {
 // Interpret the raw `aside` value into the rail occupant. `file:<path>` → a file
 // preview (path %-decoded); `inspector` → the Inspector; anything else, empty, or
 // `file:` with no path → null (rail closed), mirroring the bogus-Section fallback.
-function parseAside(value) {
+function parseAside(value: string | null | undefined): Aside | null {
   if (value == null || value === '') return null
   if (value === 'inspector') return { kind: 'inspector' }
   if (value.startsWith('file:')) {
@@ -90,7 +121,7 @@ function parseAside(value) {
 
 // Serialize a rail occupant to its raw `aside` value (inverse of parseAside); the
 // file path is encoded segment-wise so `&`/spaces are safe while `/` stays readable.
-function asideValue(aside) {
+function asideValue(aside: Aside | null | undefined): string | null {
   if (!aside) return null
   if (aside.kind === 'inspector') return 'inspector'
   if (aside.kind === 'file' && aside.path) {
@@ -101,13 +132,13 @@ function asideValue(aside) {
 
 // Parse the hash into the independent Modal slot (`overlay`/`overlayValue`, a
 // `settings` key validated to a Section) and the `aside` rail occupant.
-function parseHash(hash) {
+function parseHash(hash: string | null | undefined): Pick<Route, 'overlay' | 'overlayValue' | 'aside'> {
   const keys = parseHashKeys(hash)
   const overlay = keys.has('settings') ? 'settings' : null
   const section = keys.get('settings')
   return {
     overlay,
-    overlayValue: overlay ? (SECTIONS.has(section) ? section : SETTINGS_PAGE.GENERAL) : null,
+    overlayValue: overlay ? (section && SECTIONS.has(section) ? section : SETTINGS_PAGE.GENERAL) : null,
     aside: parseAside(keys.get('aside')),
   }
 }
@@ -118,12 +149,13 @@ function parseHash(hash) {
 // tab ∈ chats|tasks|files is the drawer (left rail); the trailing c|t|r + id is the
 // Thread in the main pane, preserved across Tab switches. Legacy
 // /app/{pid}/c/{id} and /t/{id} still parse (resolve() canonicalises them).
-export function parse(pathname, hash) {
+export function parse(pathname: string, hash: string | null | undefined): Route {
   const p = pathname
   const o = parseHash(hash)
   let m
   if ((m = p.match(/^\/app\/([^/]+)\/(chats|tasks|files)(?:\/(c|t|r)\/(.+?))?\/?$/))) {
-    const tab = m[2], kind = m[3] || null, id = m[4] ? dec(m[4]) : null
+    // The regex alternation IS the validation — these groups can only be those words.
+    const tab = m[2] as Tab, kind = (m[3] || null) as ThreadKind | null, id = m[4] ? dec(m[4]) : null
     return { name: threadName(tab, kind), tab, kind, id, pid: dec(m[1]), ...o }
   }
   if ((m = p.match(/^\/app\/([^/]+)\/t\/(.+)$/))) return { name: 'task', tab: 'tasks', kind: 't', id: dec(m[2]), pid: dec(m[1]), ...o }
@@ -137,7 +169,7 @@ export function parse(pathname, hash) {
 // (see lib/threadScope.js). A run → `task-run:{id}` (matches controller.openThread),
 // a Task page → `task:{id}`, a chat → its id; '' otherwise. The gateway decodes it
 // to the reachable profile ∪ (chat | task) Grants.
-export function scopeToken(r) {
+export function scopeToken(r: Pick<Route, 'kind' | 'id'> | null | undefined): string {
   if (!r?.id) return ''
   if (r.kind === 'r') return 'task-run:' + r.id
   if (r.kind === 't') return 'task:' + r.id
@@ -152,7 +184,7 @@ export function scopeToken(r) {
 //   • '/c/{id}' | '/t/{id}' | '/r/{id}' (thread shorthand) → open that Thread in
 //     the CURRENT Tab, so every existing go('/c/'…)/go('/t/'…)/go('/r/'…) call
 //     site keeps working.
-function normalizePath(path, r) {
+function normalizePath(path: string, r: Route): string {
   if (path === '/chats' || path === '/tasks' || path === '/files') {
     return path + (r.kind && r.id ? '/' + r.kind + '/' + r.id : '')
   }
@@ -176,7 +208,7 @@ function normalizePath(path, r) {
 //   • replaceAside      — same URL as openAside (switch occupant).      (shell replaces)
 //   • closeAside        — drop the aside key; preserves the Modal key.
 //   • redirectToProfile — canonicalise to /app/{pid}/; preserves the hash.
-export function resolve(current, intent) {
+export function resolve(current: { pathname: string; hash?: string | null }, intent: Intent): string {
   const r = parse(current.pathname, current.hash)
   const hash = current.hash || ''
   const keys = parseHashKeys(hash)

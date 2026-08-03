@@ -1,5 +1,5 @@
 // Chats: the drawer rows and their metadata (app.py 2227-2261).
-import { api as P } from '../../lib/profile.js'
+import { api as P } from '../../lib/profile.ts'
 import { del, get, patch } from '../http.ts'
 import { ChatList, Ok } from '../../schemas/index.ts'
 

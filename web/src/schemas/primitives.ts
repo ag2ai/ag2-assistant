@@ -11,6 +11,12 @@ export type ErrorBody = z.infer<typeof ErrorBody>
 export const Mode = z.enum(['read', 'read_write'])
 export type Mode = z.infer<typeof Mode>
 
+// A stored grant's mode. `none` is override-only — a chat- or task-scoped grant
+// blocking an inherited Folder (assistant/folders.py:37) — so it appears in a
+// Folder's `grants` but never as an effective mode.
+export const GrantMode = z.enum(['read', 'read_write', 'none'])
+export type GrantMode = z.infer<typeof GrantMode>
+
 // The trimmed Secret view embedded in an LLM/live config (app.py _llm_entry_view).
 export const SecretRef = z.object({
   id: z.string(),

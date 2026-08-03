@@ -11,7 +11,7 @@
   import { profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
   import { switchProfile, closeThread } from '../controller.ts'
-  import { getActiveProfileId } from '../lib/profile.js'
+  import { getActiveProfileId } from '../lib/profile.ts'
   import Icon from './Icon.svelte'
   import ProfileForm from './ProfileForm.svelte'
 

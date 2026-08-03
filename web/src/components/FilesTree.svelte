@@ -25,12 +25,12 @@
   import { onMount, tick, untrack } from 'svelte'
   import { openAsideFile, closeAside, route } from '../router.ts'
   import { reveal } from '../store.ts'
-  import { threadScope } from '../lib/threadScope.js'
-  import { foldersStore } from '../lib/folders.js'
+  import { threadScope } from '../lib/threadScope.ts'
+  import { foldersStore } from '../lib/folders.ts'
   import { api } from '../transport/api/index.ts'
-  import { ancestorDirs, iconForFile } from '../lib/preview.js'
-  import { modeLabel, isFolderPath, folderAncestorDirs, folderAffordances } from '../lib/folderFiles.js'
-  import { clearsTreeTarget } from '../lib/filesTree.js'
+  import { ancestorDirs, iconForFile } from '../lib/preview.ts'
+  import { modeLabel, isFolderPath, folderAncestorDirs, folderAffordances } from '../lib/folderFiles.ts'
+  import { clearsTreeTarget } from '../lib/filesTree.ts'
   import Icon from './Icon.svelte'
 
   let files = $state([])          // flat [{path,name,dir,size,modified}]

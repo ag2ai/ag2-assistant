@@ -7,7 +7,7 @@
   import { onDestroy } from 'svelte'
   import { profiles } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
-  import { getActiveProfileId } from '../../lib/profile.js'
+  import { getActiveProfileId } from '../../lib/profile.ts'
   import { PALETTES, setAccent, getAccent } from '../../design/palette.js'
   import Icon from '../Icon.svelte'
 

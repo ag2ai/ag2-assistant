@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
-import { clearsTreeTarget } from './filesTree.js'
+import { clearsTreeTarget } from './filesTree.ts'
 
 // The Files-tree body clears the upload/mkdir target on a background click but must
 // NOT do so when the click bubbled up from a row — the regression that made granted

@@ -1,7 +1,7 @@
 // Parser tests for the MCP smart-paste box. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseMcpPaste, guessName, sanitizeName, catalogServer, MCP_CATALOG } from './mcp.js'
+import { parseMcpPaste, guessName, sanitizeName, catalogServer, MCP_CATALOG } from './mcp.ts'
 
 test('standard mcpServers snippet (the README format)', () => {
   const { servers, error } = parseMcpPaste(`{
@@ -94,9 +94,11 @@ test('sanitizeName matches the backend name rule', () => {
 
 test('catalogServer folds inputs into args and env', () => {
   const files = MCP_CATALOG.find((e) => e.id === 'repo-files')
+  assert.ok(files)
   const server = catalogServer(files, { folder: '/tmp/proj' })
   assert.equal(server.args.at(-1), '/tmp/proj')
-  assert.ok(server.allowed_tools.includes('read_file'))
+  assert.ok(server.allowed_tools?.includes('read_file'))
   const gh = MCP_CATALOG.find((e) => e.id === 'github')
+  assert.ok(gh)
   assert.deepEqual(catalogServer(gh, { GITHUB_PERSONAL_ACCESS_TOKEN: 't' }).env, { GITHUB_PERSONAL_ACCESS_TOKEN: 't' })
 })

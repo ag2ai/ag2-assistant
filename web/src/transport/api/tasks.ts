@@ -1,6 +1,6 @@
 // Tasks: config CRUD plus the durable inquiries a run can block on (app.py
 // 2274-2414). Runs are chats on the stream task-run:{id}.
-import { api as P } from '../../lib/profile.js'
+import { api as P } from '../../lib/profile.ts'
 import { del, get, patch, post } from '../http.ts'
 import {
   HitlPending,

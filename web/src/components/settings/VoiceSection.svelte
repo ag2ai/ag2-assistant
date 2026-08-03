@@ -10,7 +10,7 @@
   import { getSettings } from './context.svelte.js'
   import LiveConfigForm from './LiveConfigForm.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
+  import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.ts'
 
   const ctx = getSettings()
 

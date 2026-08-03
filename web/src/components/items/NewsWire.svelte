@@ -2,7 +2,7 @@
   // "The Wire" — editorial broadsheet rendering of a NewsDigest A2UI surface.
   // Self-contained light/paper aesthetic (Fraunces serif + JetBrains Mono wire),
   // scoped so it doesn't inherit the chat theme. First story = lead; rest = list.
-  import { safeUrl } from '../../lib/url.js'
+  import { safeUrl } from '../../lib/url.ts'
 
   let { data = {} } = $props()
 

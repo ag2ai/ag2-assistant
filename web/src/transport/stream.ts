@@ -2,7 +2,7 @@
 // events ({event:{type,data}}) — replayed on connect, then live — and sends
 // turns. The caller folds events into thread items via project.ts.
 
-import { api as P, onProfileGone } from '../lib/profile.js'
+import { api as P, onProfileGone } from '../lib/profile.ts'
 import {
   ServerFrame,
   type ClientFrame,

@@ -8,7 +8,7 @@ import {
   mentionsLabel,
   mentionRowTitle,
   mentionRowIcon,
-} from './preview.js'
+} from './preview.ts'
 
 test('viewerKind: maps extensions to render kinds', () => {
   assert.equal(viewerKind('a.md'), 'markdown')

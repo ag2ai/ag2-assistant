@@ -3,8 +3,8 @@
   import { openAsideFile } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
-  import { fmtStamp } from '../../lib/time.js'
-  import { requestContext } from '../../lib/feedback.js'
+  import { fmtStamp } from '../../lib/time.ts'
+  import { requestContext } from '../../lib/feedback.ts'
   import Feedback from './Feedback.svelte'
   let { item } = $props()
   const request = $derived(requestContext($thread.items, item, $runInfo))

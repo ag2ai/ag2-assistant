@@ -5,7 +5,7 @@
   // the normal UI folds away.
   import { inspectorEvents, poweredByOpen } from '../store.ts'
   import { closeAside } from '../router.ts'
-  import { describe, SUBSYSTEMS } from '../lib/ag2map.js'
+  import { describe, SUBSYSTEMS } from '../lib/ag2map.ts'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'
 

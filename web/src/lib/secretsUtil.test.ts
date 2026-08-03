@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { autoSecretName, sortForProvider } from './secretsUtil.js'
+import { autoSecretName, sortForProvider } from './secretsUtil.ts'
 
 test('autoSecretName derives from config name + last4', () => {
   assert.equal(autoSecretName('My GPT', 'sk-abc-1234'), 'My GPT key …1234')

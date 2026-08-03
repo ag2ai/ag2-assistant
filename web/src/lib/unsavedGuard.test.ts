@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { setUnsavedGuard, confirmDiscard, DISCARD_PROMPT } from './unsavedGuard.js'
+import { setUnsavedGuard, confirmDiscard, DISCARD_PROMPT } from './unsavedGuard.ts'
 
 afterEach(() => setUnsavedGuard(null))
 
@@ -21,7 +21,7 @@ test('confirmDiscard: a clean editor proceeds without prompting', () => {
 
 test('confirmDiscard: a dirty editor prompts and proceeds when accepted', () => {
   setUnsavedGuard(() => true)
-  const seen = []
+  const seen: (string | undefined)[] = []
   const ok = confirmDiscard((msg) => { seen.push(msg); return true })
   assert.equal(ok, true)
   assert.deepEqual(seen, [DISCARD_PROMPT])

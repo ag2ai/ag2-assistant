@@ -4,7 +4,7 @@
   import { thread, runInfo } from '../../store.ts'
   import { openAsideFile } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
-  import { requestContext } from '../../lib/feedback.js'
+  import { requestContext } from '../../lib/feedback.ts'
   import Feedback from './Feedback.svelte'
   import Icon from '../Icon.svelte'
 

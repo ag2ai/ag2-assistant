@@ -3,7 +3,10 @@
 // the two lists can't drift. `id` is the lowercase slug persisted server-side
 // (per-profile settings.json → injected into the agent's context); `label`/`icon`
 // are display only.
-export const FOCUS = [
+// One focus the user can pick; `id` is the slug persisted server-side.
+export type Focus = { id: string; label: string; icon: string }
+
+export const FOCUS: Focus[] = [
   { id: 'research', label: 'Research', icon: 'search' },
   { id: 'coding', label: 'Coding', icon: 'code' },
   { id: 'scheduling', label: 'Scheduling', icon: 'clock' },
@@ -13,4 +16,4 @@ export const FOCUS = [
 ]
 
 // Human-readable labels for a saved slug list (unknown slugs pass through as-is).
-export const focusLabel = (id) => (FOCUS.find((f) => f.id === id) || { label: id }).label
+export const focusLabel = (id: string): string => (FOCUS.find((f) => f.id === id) || { label: id }).label

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { voicePickerOpen, voicePickerConfig } from '../store.ts'
   import { api } from '../transport/api/index.ts'
-  import { loadLiveConfigs } from '../lib/live.js'
+  import { loadLiveConfigs } from '../lib/live.ts'
 
   // Which live config (if any) this picker targets — captured once at mount so the
   // scope is stable while open. null → the profile's legacy voice setting.

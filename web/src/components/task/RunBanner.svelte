@@ -5,7 +5,7 @@
   import { api } from '../../transport/api/index.ts'
   import { go } from '../../router.ts'
   import Icon from '../Icon.svelte'
-  import { fmtStamp } from '../../lib/time.js'
+  import { fmtStamp } from '../../lib/time.ts'
 
   const TERMINAL = ['completed', 'failed', 'cancelled']
   const WORD = { completed: '✓ completed', failed: '✗ failed', cancelled: 'cancelled',

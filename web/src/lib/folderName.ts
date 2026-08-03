@@ -9,12 +9,12 @@ const NAME_MAX = 255
 
 // Byte length under UTF-8 — a name can pass a character count and still bust NAME_MAX
 // once non-ASCII (accents, CJK, emoji) is encoded, which is what the kernel measures.
-const byteLength = (s) => new TextEncoder().encode(s).length
+const byteLength = (s: string) => new TextEncoder().encode(s).length
 
 // Why `name` is unusable as a NEW single folder name, or null if it's fine. Messages are
 // written for the person typing and match the server's wording exactly, so a locally
 // caught problem and a server-rejected one read identically.
-export function invalidFolderName(name) {
+export function invalidFolderName(name: string | null | undefined): string | null {
   if (!name || !name.trim()) return 'Enter a folder name'
   if (name !== name.trim()) return "Name can't start or end with a space"
   if (name.includes('/') || name.includes('\\')) return "Name can't contain slashes"

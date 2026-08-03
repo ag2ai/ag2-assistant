@@ -14,25 +14,43 @@
 // bridge inventory is the only availability signal there.
 
 // agent name (coding/detect.py's) -> the npm package that installs its ACP adapter.
-export const ADAPTER_PKG = {
+// What the coding-agents read says about one agent.
+export type Availability = { loaded: boolean; mode: string; connected: boolean; available: boolean }
+
+// GET /api/coding/agents, as much of it as these decisions read.
+export type AgentsRead = {
+  mode?: string
+  connected?: boolean
+  agents?: readonly { name: string; available?: boolean }[]
+}
+
+// GET /api/coding/{agent}/models: 'loading' while the probe is in flight,
+// undefined before it is asked for at all.
+export type CatalogRead =
+  | { models?: unknown; current?: string; reason?: string }
+  | 'loading'
+  | null
+  | undefined
+
+export const ADAPTER_PKG: Record<string, string> = {
   claude: '@agentclientprotocol/claude-agent-acp',
   codex: '@agentclientprotocol/codex-acp',
 }
 
 // agent name -> the llm-config type it is saved as (llm_configs.CLI_LOGIN_TYPES).
-export const CLI_TYPE = { claude: 'claude_code', codex: 'codex' }
+export const CLI_TYPE: Record<string, string> = { claude: 'claude_code', codex: 'codex' }
 
 /**
  * What the coding-agents read says about one agent.
  * `loaded` is false until the read lands, so the panel can wait instead of
  * flashing an "install it" hint at someone who has it installed.
  */
-export function agentAvailability(agents, agent) {
+export function agentAvailability(agents: AgentsRead | null | undefined, agent: string): Availability {
   const loaded = !!agents && typeof agents === 'object'
-  const mode = (loaded && agents.mode) || 'local'
+  const mode = (loaded && agents?.mode) || 'local'
   // Only bridge mode can be disconnected; a local read always reached its answer.
-  const connected = mode === 'bridge' ? agents.connected !== false : true
-  const row = loaded ? (agents.agents || []).find((a) => a.name === agent) : null
+  const connected = mode === 'bridge' ? agents?.connected !== false : true
+  const row = loaded ? (agents?.agents || []).find((a) => a.name === agent) : null
   return { loaded, mode, connected, available: loaded && connected && !!row?.available }
 }
 
@@ -44,7 +62,7 @@ export function agentAvailability(agents, agent) {
  * executable sitting on PATH. In bridge mode no catalog can exist by design, so
  * the bridge's own inventory is the signal.
  */
-export function canUseCliLogin(availability, catalog) {
+export function canUseCliLogin(availability: Availability | null | undefined, catalog: CatalogRead): boolean {
   if (!availability?.available) return false
   if (availability.mode === 'bridge') return true
   return !!catalog && typeof catalog === 'object' && !catalog.reason
@@ -54,7 +72,11 @@ export function canUseCliLogin(availability, catalog) {
  * What the panel says when the option isn't (yet) usable, or when it is usable
  * but the model list isn't. Empty string = nothing to say.
  */
-export function cliNote(agent, availability, catalog) {
+export function cliNote(
+  agent: string,
+  availability: Availability | null | undefined,
+  catalog: CatalogRead,
+): string {
   if (!availability?.loaded) return ''
   if (availability.mode === 'bridge' && !availability.connected)
     return 'The host ACP bridge is unreachable — check AG2ASSISTANT_ACP_BRIDGE for this container.'
@@ -75,7 +97,7 @@ export function cliNote(agent, availability, catalog) {
  * selection when the adapter reported one — so an empty model is a legible
  * choice rather than a blind one (same wording as Settings → Models).
  */
-export function cliDefaultLabel(catalog) {
+export function cliDefaultLabel(catalog: CatalogRead): string {
   const current = typeof catalog === 'object' ? catalog?.current : ''
   return current ? `CLI default (${current})` : 'CLI default'
 }

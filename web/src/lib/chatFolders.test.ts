@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chatChips, inheritedCount, addPlan } from './chatFolders.js'
+import { chatChips, inheritedCount, addPlan } from './chatFolders.ts'
+import type { FolderRef } from './chatFolders.ts'
 
 const PID = 'work'
 const CHAT = 'web-abc'
@@ -49,12 +50,20 @@ const chatPlusTaskNone = { id: 'f11', name: 'chat-plus-tasknone', path: '/data/c
   { profile: PID, chat_id: '', task_id: TASK, mode: 'none' },     // task-none is a block, not a cover -> still a chip
 ] }
 
+// The fixture with this id, failing the test rather than passing undefined on.
+const byId = (id: string): FolderRef => {
+  const f = snap.find((x) => x.id === id)
+  assert.ok(f, `no fixture ${id}`)
+  return f
+}
+
 test('chatChips: only chat-ONLY folders (chat grant, no profile grant behind it)', () => {
   const chips = chatChips(snap, PID, CHAT)
   // f1 is chat-only; f3 has a profile grant (its override belongs in the note);
   // f6 is blocked (none). So only f1 renders as a removable chip.
   assert.deepEqual(chips.map((c) => c.id).sort(), ['f1'])
   const media = chips.find((c) => c.id === 'f1')
+  assert.ok(media)
   assert.equal(media.name, 'media')
   assert.equal(media.path, '/data/media')
   assert.equal(media.mode, 'read')
@@ -114,12 +123,12 @@ test('task grants are inherited, not chips, in a run chat', () => {
 test('task-none hides the profile folder from the run chat inherited note', () => {
   // f8 is visible without the task, hidden with it; f7 the other way around —
   // check each in isolation to pin the exact behavior.
-  assert.equal(inheritedCount([snap.find((f) => f.id === 'f8')], PID, CHAT, TASK), 0)
-  assert.equal(inheritedCount([snap.find((f) => f.id === 'f7')], PID, CHAT, TASK), 1)
+  assert.equal(inheritedCount([byId('f8')], PID, CHAT, TASK), 0)
+  assert.equal(inheritedCount([byId('f7')], PID, CHAT, TASK), 1)
 })
 
 test('addPlan treats a task-covered folder as covered', () => {
-  const plan = addPlan(snap.find((f) => f.id === 'f7'), PID, CHAT, TASK)
+  const plan = addPlan(byId('f7'), PID, CHAT, TASK)
   assert.equal(plan.status, 'covered')
 })
 
@@ -143,5 +152,5 @@ test('legacy grants without task_id stay profile-scoped', () => {
   // f2 (profile grant, no task_id key at all) stays inherited and never becomes
   // a chip, whether or not a taskId is passed.
   assert.equal(chatChips(snap, PID, CHAT, TASK).some((c) => c.id === 'f2'), false)
-  assert.equal(inheritedCount([snap.find((f) => f.id === 'f2')], PID, CHAT, TASK), 1)
+  assert.equal(inheritedCount([byId('f2')], PID, CHAT, TASK), 1)
 })

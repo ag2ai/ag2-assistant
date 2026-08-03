@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parse, resolve, scopeToken } from './route.js'
+import { parse, resolve, scopeToken } from './route.ts'
 
 // The four full-object parse assertions below carry every route field. `aside`
 // (the right-rail occupant, ADR 0009) defaults to null (rail closed).

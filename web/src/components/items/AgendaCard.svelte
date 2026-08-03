@@ -4,7 +4,7 @@
   // masthead; the single next-up event gets the accent treatment. Data comes from
   // the calendar tools (source-agnostic: the card renders whatever fed it).
   // Event/join links are agent-produced URLs → gated through safeUrl (http(s) only).
-  import { safeUrl } from '../../lib/url.js'
+  import { safeUrl } from '../../lib/url.ts'
 
   let { data = {} } = $props()
 

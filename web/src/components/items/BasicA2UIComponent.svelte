@@ -1,7 +1,7 @@
 <script>
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import { a2uiValue } from '../../lib/a2ui.js'
+  import { a2uiValue } from '../../lib/a2ui.ts'
 
   let { component, components = [], data = {}, onDataChange = () => {}, onAction = () => {}, depth = 0 } = $props()
   // The component graph is agent-produced and children are resolved by id from a

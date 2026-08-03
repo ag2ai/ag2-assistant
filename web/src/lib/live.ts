@@ -6,12 +6,21 @@ import { writable } from 'svelte/store'
 import { api } from '../transport/api/index.ts'
 import openaiLogo from '../assets/openai.svg'
 import geminiLogo from '../assets/gemini.svg'
+import type { LiveConfig, LiveProvider } from '../schemas/index.ts'
 
 // { configs, active, providers, loaded }. `providers` is the server catalog
 // ([{name, default_model, default_voice}]) that seeds the add-form + templates.
-export const liveConfigs = writable({ configs: [], active: null, providers: [], loaded: false })
+// { configs, active, providers, loaded }.
+export type LiveConfigsSnapshot = {
+  configs: LiveConfig[]
+  active: string | null
+  providers: LiveProvider[]
+  loaded: boolean
+}
 
-export async function loadLiveConfigs() {
+export const liveConfigs = writable<LiveConfigsSnapshot>({ configs: [], active: null, providers: [], loaded: false })
+
+export async function loadLiveConfigs(): Promise<void> {
   const d = await api.liveConfigs()
   liveConfigs.set({
     configs: d.configs || [],
@@ -22,14 +31,14 @@ export async function loadLiveConfigs() {
 }
 
 // provider -> logo (only realtime-capable providers exist here: gemini, openai).
-export const LOGO = { gemini: geminiLogo, openai: openaiLogo }
+export const LOGO: Record<string, string> = { gemini: geminiLogo, openai: openaiLogo }
 
 // provider -> the label the UI shows for it.
-export const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI' }
+export const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', openai: 'OpenAI' }
 
 // Whether a config can actually open a voice session right now — mirrors the server's
 // live_configs.usable(): 'none' key_source (no own key and no shared provider key) is
 // dead; anything else (own key / shared env key) is runnable.
-export function isUsable(c) {
+export function isUsable(c: Pick<LiveConfig, 'key_source'>): boolean {
   return c.key_source !== 'none'
 }

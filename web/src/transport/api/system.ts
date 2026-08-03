@@ -1,6 +1,6 @@
 // Install-wide status and account surfaces: activity, usage, onboarding, the
 // host folder picker, channels, the universal memory doc and the OAuth cards.
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { get, post } from '../http.ts'
 import {
   Channels,

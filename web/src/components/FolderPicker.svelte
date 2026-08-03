@@ -6,7 +6,7 @@
   // host owns the commit (Onboarding's stepped flow). `busy` shows a saving state for onUse.
   import { onMount } from 'svelte'
   import { api } from '../transport/api/index.ts'
-  import { invalidFolderName } from '../lib/folderName.js'
+  import { invalidFolderName } from '../lib/folderName.ts'
   import Icon from './Icon.svelte'
 
   let { roots = {}, start = '', selected = $bindable(''), onUse = null, busy = false } = $props()

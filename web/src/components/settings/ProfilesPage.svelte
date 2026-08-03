@@ -7,7 +7,7 @@
   // both a list AND a long stacked form.
   import { profiles } from '../../store.ts'
   import { switchProfile } from '../../controller.ts'
-  import { getActiveProfileId } from '../../lib/profile.js'
+  import { getActiveProfileId } from '../../lib/profile.ts'
   import Profiles from '../Profiles.svelte'
   import ProfileEditor from './ProfileEditor.svelte'
 

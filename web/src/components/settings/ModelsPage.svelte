@@ -19,7 +19,7 @@
   import LlmConfigForm from './LlmConfigForm.svelte'
   import VoiceSection from './VoiceSection.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
   const TEMPLATES = [

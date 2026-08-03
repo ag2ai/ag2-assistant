@@ -5,15 +5,15 @@
   import { onMount, onDestroy } from 'svelte'
   import { route, closeAside } from '../router.ts'
   import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, openThreadRow } from '../store.ts'
-  import { threadScope } from '../lib/threadScope.js'
+  import { threadScope } from '../lib/threadScope.ts'
   import { api } from '../transport/api/index.ts'
   import Markdown from './Markdown.svelte'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'
-  import { viewerKind, mentionsLabel, mentionRowTitle, mentionRowIcon } from '../lib/preview.js'
-  import { saveErrorMessage, isConflict } from '../lib/fileEdit.js'
-  import { setUnsavedGuard } from '../lib/unsavedGuard.js'
-  import { isFolderPath, folderAffordances } from '../lib/folderFiles.js'
+  import { viewerKind, mentionsLabel, mentionRowTitle, mentionRowIcon } from '../lib/preview.ts'
+  import { saveErrorMessage, isConflict } from '../lib/fileEdit.ts'
+  import { setUnsavedGuard } from '../lib/unsavedGuard.ts'
+  import { isFolderPath, folderAffordances } from '../lib/folderFiles.ts'
 
   // A URL-addressed file wins; a path-less transient body is the fallback when no
   // file is addressed. The rail shows exactly one of them.

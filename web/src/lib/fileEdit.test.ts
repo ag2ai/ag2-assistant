@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseEtag, saveErrorMessage, isConflict } from './fileEdit.js'
+import { parseEtag, saveErrorMessage, isConflict } from './fileEdit.ts'
 
 test('parseEtag: strips surrounding quotes to the raw token', () => {
   assert.equal(parseEtag('"abc123"'), 'abc123')

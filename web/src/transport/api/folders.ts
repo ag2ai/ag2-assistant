@@ -1,6 +1,6 @@
 // Folders + Grants — the install-wide registry (app.py 1512-1580, ADR 0006).
 // Every mutation echoes the whole snapshot alongside ok.
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import { FolderList, FolderMutated, FolderSaved, type Mode } from '../../schemas/index.ts'
 

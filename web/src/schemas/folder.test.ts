@@ -10,13 +10,24 @@ test('Folder carries its grants with the resolved mode', () => {
   assert.equal(parsed.grants[0].mode, 'read_write')
 })
 
-test('Folder rejects a grant mode outside read/read_write', () => {
+test('Folder rejects a grant mode outside read/read_write/none', () => {
   assert.throws(() =>
     Folder.parse({
       id: 'f1', name: 'repo', path: '/p', exists: false,
       grants: [{ profile: 'p1', chat_id: '', task_id: '', mode: 'write' }],
     }),
   )
+})
+
+test('Folder keeps a chat-scoped none grant — the per-chat block, not an absence', () => {
+  const parsed = Folder.parse({
+    id: 'f1', name: 'repo', path: '/p', exists: true,
+    grants: [
+      { profile: 'p1', chat_id: '', task_id: '', mode: 'read' },
+      { profile: 'p1', chat_id: 'web-abc', task_id: '', mode: 'none' },
+    ],
+  })
+  assert.equal(parsed.grants[1].mode, 'none')
 })
 
 test('FolderRoots keeps a missing-path root instead of dropping it', () => {

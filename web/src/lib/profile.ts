@@ -13,13 +13,13 @@ import { profiles, notice } from '../store.ts'
 
 const LS_KEY = 'ag2-profile-id'
 
-let _activeId = null
+let _activeId: string | null = null
 
-export function getActiveProfileId() {
+export function getActiveProfileId(): string | null {
   return _activeId
 }
 
-export function setActiveProfileId(pid) {
+export function setActiveProfileId(pid: string | null | undefined): void {
   _activeId = pid || null
   try {
     if (_activeId) localStorage.setItem(LS_KEY, _activeId)
@@ -27,28 +27,28 @@ export function setActiveProfileId(pid) {
   } catch {}
 }
 
-export function storedProfileId() {
+export function storedProfileId(): string | null {
   try { return localStorage.getItem(LS_KEY) || null } catch { return null }
 }
 
-export function clearStoredProfileId() {
+export function clearStoredProfileId(): void {
   try { localStorage.removeItem(LS_KEY) } catch {}
 }
 
 // Profile-scoped URL: api('/chats') -> '/api/p/<pid>/chats'.
-export function api(path) {
-  return `/api/p/${encodeURIComponent(_activeId)}${path}`
+export function api(path: string): string {
+  return `/api/p/${encodeURIComponent(_activeId ?? '')}${path}`
 }
 
 // Explicit-pid scoped URL: pidApi('work', '/settings/focuses') ->
 // '/api/p/work/settings/focuses'. Used by flows (onboarding's per-profile setup)
 // that must target a SPECIFIC profile rather than whichever one is active.
-export function pidApi(pid, path) {
+export function pidApi(pid: string, path: string): string {
   return `/api/p/${encodeURIComponent(pid)}${path}`
 }
 
 // Global (unprefixed) URL: globalApi('/profiles') -> '/api/profiles'.
-export function globalApi(path) {
+export function globalApi(path: string): string {
   return `/api${path}`
 }
 
@@ -63,7 +63,7 @@ export function globalApi(path) {
 // already scheduled).
 const RECOVER_DELAY = 1500
 let _recovering = false
-export function onProfileGone(reason = '') {
+export function onProfileGone(reason = ''): void {
   console.warn('[profile] active profile gone (' + reason + '); recovering')
   const goneId = _activeId               // the archived profile is still "active" here
   clearStoredProfileId()

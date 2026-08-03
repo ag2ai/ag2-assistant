@@ -1,4 +1,14 @@
 import { nextItemId } from './ids.ts'
+import type { ThreadItem } from '../schemas/events.ts'
+
+// An A2UI payload is an untyped dictionary — the catalog, not this module, gives
+// it meaning, so every read is guarded rather than declared.
+export type A2UIData = Record<string, unknown>
+
+// The one thread item this module owns.
+type A2UIItem = Extract<ThreadItem, { kind: 'a2ui' }>
+
+const isRecord = (v: unknown): v is A2UIData => !!v && typeof v === 'object' && !Array.isArray(v)
 
 let _seq = 0
 // Fallback surface id when a message omits one — a surface id is a string.
@@ -6,33 +16,39 @@ const nextSurfaceId = () => `a2ui-${Date.now()}-${++_seq}`
 
 export const BETA_CATALOG_ID = 'https://ag2.ai/assistant/a2ui/catalog.json'
 
-function pointerParts(path) {
+function pointerParts(path: unknown): string[] {
   return String(path || '').replace(/^\//, '').split('/').filter(Boolean)
     .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
 }
 
 // Resolve the literal-or-JSON-Pointer values used by the Basic Catalog.
-export function a2uiValue(value, data = {}) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.path !== 'string') {
+export function a2uiValue(value: unknown, data: A2UIData = {}): unknown {
+  const ref = value as { path?: unknown } | null
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof ref?.path !== 'string') {
     return value
   }
-  return pointerParts(value.path).reduce((current, part) => current?.[part], data)
+  // Indexed through a record view: a pointer may also walk arrays and strings.
+  return pointerParts(ref.path).reduce<unknown>(
+    (current, part) => (current == null ? undefined : (current as A2UIData)[part]),
+    data,
+  )
 }
 
 // Apply a client-side input update without mutating the durable surface payload.
-export function withA2UIValue(data = {}, path, value) {
+export function withA2UIValue(data: A2UIData = {}, path: unknown, value: unknown): A2UIData {
   const parts = pointerParts(path)
-  if (!parts.length) return value && typeof value === 'object' ? { ...value } : { value }
-  const next = { ...data }
-  let target = next
-  let source = data
+  if (!parts.length) return isRecord(value) || Array.isArray(value) ? { ...(value as A2UIData) } : { value }
+  const next: A2UIData = { ...data }
+  let target: A2UIData = next
+  let source: unknown = data
   for (const part of parts.slice(0, -1)) {
-    const child = source?.[part]
-    target[part] = child && typeof child === 'object' && !Array.isArray(child) ? { ...child } : {}
-    target = target[part]
+    const child = source == null ? undefined : (source as A2UIData)[part]
+    const branch: A2UIData = isRecord(child) ? { ...child } : {}
+    target[part] = branch
+    target = branch
     source = child
   }
-  target[parts.at(-1)] = value
+  target[parts.at(-1) ?? ''] = value
   return next
 }
 
@@ -51,7 +67,7 @@ const CLOSE_TAG = '</a2ui-json>'
 const HEADS = ['version', ...A2UI_KEYS].flatMap((k) => [`[{"${k}"`, `{"${k}"`])
 
 // End of the JSON value opened at `start`, or -1 if it hasn't been closed yet.
-function matchingJsonEnd(text, start) {
+function matchingJsonEnd(text: string, start: number): number {
   const open = text[start]
   const close = open === '[' ? ']' : '}'
   let depth = 0
@@ -72,16 +88,14 @@ function matchingJsonEnd(text, start) {
   return -1
 }
 
-function isA2UIPayload(value) {
+function isA2UIPayload(value: unknown): boolean {
   const messages = Array.isArray(value) ? value : [value]
-  return messages.some(
-    (m) => m && typeof m === 'object' && A2UI_KEYS.some((k) => k in m)
-  )
+  return messages.some((m) => isRecord(m) && A2UI_KEYS.some((k) => k in m))
 }
 
 // An unterminated JSON fragment: is this the beginning of an A2UI payload (hide it
 // and show the composing indicator) or just prose the user should see?
-function isA2UIPrefix(fragment) {
+function isA2UIPrefix(fragment: string): boolean {
   if (A2UI_KEYS.some((k) => fragment.includes(k))) return true
   const compact = fragment.replace(/\s+/g, '')
   return HEADS.some((h) => compact.startsWith(h) || h.startsWith(compact))
@@ -91,7 +105,7 @@ function isA2UIPrefix(fragment) {
  *  still streaming. Complete payloads are removed (the surface renders as its own
  *  item); a partial one sets `composing` so the UI can show a placeholder instead
  *  of a wall of half-typed JSON. */
-export function splitA2UIText(text) {
+export function splitA2UIText(text: string | null | undefined): { text: string; composing: boolean } {
   const source = text || ''
   let out = ''
   let composing = false
@@ -126,7 +140,7 @@ export function splitA2UIText(text) {
       break
     }
     const candidate = source.slice(start, end)
-    let parsed
+    let parsed: unknown
     try {
       parsed = JSON.parse(candidate)
     } catch {}
@@ -144,35 +158,38 @@ export function splitA2UIText(text) {
 // The surface id is usually emitted near the start of an A2UI operation, while
 // the component tree may still be streaming. It lets an existing canvas own its
 // loading state instead of adding a second placeholder to the thread.
-export function a2uiComposingSurfaceId(text) {
+export function a2uiComposingSurfaceId(text: string | null | undefined): string | null {
   const { composing } = splitA2UIText(text)
   if (!composing) return null
   const match = String(text || '').match(/"(?:createSurface|updateComponents|updateDataModel)"\s*:\s*\{[^}]*"surfaceId"\s*:\s*"([^"\\]+)"/)
   return match?.[1] || null
 }
 
-function componentKind(component = {}) {
+function componentKind(component: A2UIData = {}): unknown {
   return component.component || 'AnswerBrief'
 }
 
-function itemTitle(kind, data = {}) {
+// A title lifted from the data model, falling back when it isn't usable text.
+const titleOr = (v: unknown, fallback: string): string => (typeof v === 'string' && v ? v : fallback)
+
+function itemTitle(kind: unknown, data: A2UIData = {}): string {
   const k = String(kind || '').toLowerCase()
   if (k === 'weatherpanel') return 'Weather view'
-  if (k === 'decisionmatrix') return data.topic || 'Decision'
-  if (k === 'taskprogress') return data.title || 'Task status'
-  if (k === 'agendacard') return data.title || 'Agenda'
-  if (k === 'inboxbrief') return data.title || 'Inbox brief'
+  if (k === 'decisionmatrix') return titleOr(data.topic, 'Decision')
+  if (k === 'taskprogress') return titleOr(data.title, 'Task status')
+  if (k === 'agendacard') return titleOr(data.title, 'Agenda')
+  if (k === 'inboxbrief') return titleOr(data.title, 'Inbox brief')
   if (k === 'newsdigest') return 'News digest'
   if (k === 'restaurantfinder') return 'Open places'
   if (k === 'taskplan') return 'Task setup'
-  if (k === 'checklist') return data.title || 'Checklist'
+  if (k === 'checklist') return titleOr(data.title, 'Checklist')
   if (['column', 'row', 'list', 'card', 'text'].includes(k)) return 'Interactive view'
   return 'Structured answer'
 }
 
-function dataFromComponent(component = {}, existing = {}) {
+function dataFromComponent(component: A2UIData = {}, existing: A2UIData = {}): A2UIData {
   const kind = componentKind(component)
-  const data = { ...existing }
+  const data: A2UIData = { ...existing }
   for (const [key, value] of Object.entries(component)) {
     if (!['id', 'component', 'accessibility', '_components'].includes(key)) data[key] = value
   }
@@ -180,8 +197,13 @@ function dataFromComponent(component = {}, existing = {}) {
   return data
 }
 
-function ensureSurface(items, surfaceId, catalogId, version) {
-  let item = items.find((i) => i.kind === 'a2ui' && i.surfaceId === surfaceId)
+function ensureSurface(
+  items: ThreadItem[],
+  surfaceId: string,
+  catalogId: string | undefined,
+  version: string,
+): A2UIItem {
+  let item = items.find((i): i is A2UIItem => i.kind === 'a2ui' && i.surfaceId === surfaceId)
   if (!item) {
     item = {
       id: nextItemId(),
@@ -200,39 +222,48 @@ function ensureSurface(items, surfaceId, catalogId, version) {
   return item
 }
 
-export function applyA2UIMessage(items, message) {
-  if (!message || typeof message !== 'object') return null
-  const version = message.version || 'v1.0'
-  if (message.createSurface) {
+export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIItem | null {
+  if (!isRecord(message)) return null
+  const version = str(message.version) || 'v1.0'
+  if (isRecord(message.createSurface)) {
     const s = message.createSurface
-    const item = ensureSurface(items, s.surfaceId || nextSurfaceId(), s.catalogId || BETA_CATALOG_ID, version)
-    item.messages.push(message)
+    const item = ensureSurface(items, str(s.surfaceId) || nextSurfaceId(), str(s.catalogId) || BETA_CATALOG_ID, version)
+    record(item).push(message)
     return item
   }
-  if (message.updateComponents) {
+  if (isRecord(message.updateComponents)) {
     const u = message.updateComponents
-    const item = ensureSurface(items, u.surfaceId || nextSurfaceId(), undefined, version)
-    const components = Array.isArray(u.components) ? u.components : []
+    const item = ensureSurface(items, str(u.surfaceId) || nextSurfaceId(), undefined, version)
+    const components: unknown[] = Array.isArray(u.components) ? u.components : []
     item.components = components
-    const root = components.find((c) => c.id === 'root') || components[0] || {}
+    const found = components.find((c) => isRecord(c) && c.id === 'root') ?? components[0]
+    const root = isRecord(found) ? found : {}
     item.component = root
     item.data = dataFromComponent(root, item.data)
     item.title = itemTitle(componentKind(root), item.data)
-    item.messages.push(message)
+    record(item).push(message)
     return item
   }
-  if (message.updateDataModel) {
+  if (isRecord(message.updateDataModel)) {
     const u = message.updateDataModel
-    const item = ensureSurface(items, u.surfaceId || nextSurfaceId(), undefined, version)
-    if (!u.path || u.path === '/') item.data = typeof u.value === 'object' && u.value ? u.value : { value: u.value }
-    else item.data[u.path.replace(/^\//, '')] = u.value
-    item.messages.push(message)
+    const item = ensureSurface(items, str(u.surfaceId) || nextSurfaceId(), undefined, version)
+    const path = str(u.path)
+    if (!path || path === '/') item.data = isRecord(u.value) ? u.value : { value: u.value }
+    else item.data[path.replace(/^\//, '')] = u.value
+    record(item).push(message)
     return item
   }
-  if (message.deleteSurface) {
-    const id = message.deleteSurface.surfaceId
+  if (isRecord(message.deleteSurface)) {
+    const id = str(message.deleteSurface.surfaceId)
     const idx = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === id)
     if (idx >= 0) items.splice(idx, 1)
   }
   return null
 }
+
+// A payload field read as text; anything else reads as absent.
+const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+
+// The surface's message log. A surface first created by an A2UISurface event has
+// none, and pushing into it used to throw.
+const record = (item: A2UIItem): unknown[] => (item.messages ??= [])

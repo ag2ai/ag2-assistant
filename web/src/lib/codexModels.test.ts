@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { splitModelId, joinModelId, effortLabel, groupModels } from './codexModels.js'
+import { splitModelId, joinModelId, effortLabel, groupModels } from './codexModels.ts'
 
 test('splitModelId decomposes name[effort] and tolerates plain ids', () => {
   assert.deepEqual(splitModelId('gpt-5.6-sol[medium]'), { family: 'gpt-5.6-sol', effort: 'medium' })

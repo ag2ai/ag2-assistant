@@ -1,7 +1,7 @@
 // Named LLM + live (voice) configurations — install-wide lists and the active
 // selection (app.py 1103-1409). `api_key` is WRITE-ONLY and DRAFT-TEST ONLY:
 // create/update ignore it, the /test routes use a typed value directly.
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import {
   LiveConfigList,

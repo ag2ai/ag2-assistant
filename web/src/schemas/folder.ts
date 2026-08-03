@@ -1,12 +1,12 @@
 // Folders — directories outside the Root, granted per profile/task/chat.
 import { z } from 'zod'
-import { Mode } from './primitives.ts'
+import { GrantMode, Mode } from './primitives.ts'
 
 export const Grant = z.object({
   profile: z.string(),
   chat_id: z.string(),
   task_id: z.string(),
-  mode: Mode,
+  mode: GrantMode,
 })
 export type Grant = z.infer<typeof Grant>
 

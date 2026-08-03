@@ -1,5 +1,5 @@
 <script>
-  import { parseMessage, highlightSegments } from '../../lib/fileRefs.js'
+  import { parseMessage, highlightSegments } from '../../lib/fileRefs.ts'
   import { openAsideFile } from '../../router.ts'
   import { revealFolder } from '../../store.ts'
 

@@ -8,7 +8,7 @@
   import { api } from '../../transport/api/index.ts'
   import { SETTINGS_PAGE } from '../../store.ts'
   import { replaceOverlay } from '../../router.ts'
-  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
   import { getSettings } from './context.svelte.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 

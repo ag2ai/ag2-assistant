@@ -1,6 +1,6 @@
 // Per-profile settings, health, voice and the persona memory doc (app.py
 // 2415-2775, 2910-2922, 3241-3252).
-import { api as P, pidApi as PID } from '../../lib/profile.js'
+import { api as P, pidApi as PID } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import {
   FocusesSaved,

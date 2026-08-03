@@ -1,7 +1,7 @@
 <script>
   import { go } from '../../router.ts'
   import Icon from '../Icon.svelte'
-  import { fmtStamp } from '../../lib/time.js'
+  import { fmtStamp } from '../../lib/time.ts'
   let { item } = $props()
 </script>
 

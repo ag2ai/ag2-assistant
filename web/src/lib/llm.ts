@@ -8,6 +8,7 @@ import openaiLogo from '../assets/openai.svg'
 import anthropicLogo from '../assets/anthropic.svg'
 import geminiLogo from '../assets/gemini.svg'
 import ollamaLogo from '../assets/ollama.svg'
+import type { DepsStatus, LlmConfig, LlmEnvOverride } from '../schemas/index.ts'
 
 // Shared install-wide LLM config state — the single source of truth for BOTH the
 // composer's ModelSwitcher and Settings → Models. Two live views of the same list
@@ -16,11 +17,19 @@ import ollamaLogo from '../assets/ollama.svg'
 // store.js because it needs `api`, and store.js → api.js → lib/profile.js → store.js
 // would be an import cycle. See docs/adr/0004-shared-llm-config-store.md.
 // Mutate via the API, then call loadLlmConfigs() to refresh every subscriber.
-export const llmConfigs = writable({
+export type LlmConfigsSnapshot = {
+  configs: LlmConfig[]
+  active: string | null
+  envOverride: LlmEnvOverride | null
+  providerDeps: Record<string, DepsStatus>
+  loaded: boolean
+}
+
+export const llmConfigs = writable<LlmConfigsSnapshot>({
   configs: [], active: null, envOverride: null, providerDeps: {}, loaded: false,
 })
 
-export async function loadLlmConfigs() {
+export async function loadLlmConfigs(): Promise<void> {
   const d = await api.llmConfigs()
   llmConfigs.set({
     configs: d.configs || [],
@@ -36,14 +45,14 @@ export async function loadLlmConfigs() {
 // type -> provider logo (all three OpenAI surfaces share the OpenAI mark;
 // claude_code is Anthropic's CLI, so it wears the Anthropic mark; codex is
 // OpenAI's CLI, so it wears the OpenAI mark).
-export const LOGO = {
+export const LOGO: Record<string, string> = {
   openai: openaiLogo, openai_responses: openaiLogo, openai_subscription: openaiLogo,
   anthropic: anthropicLogo, gemini: geminiLogo, ollama: ollamaLogo,
   claude_code: anthropicLogo, codex: openaiLogo,
 }
 
 // type -> the label the UI shows for it.
-export const TYPE_LABEL = {
+export const TYPE_LABEL: Record<string, string> = {
   openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
   openai_subscription: 'OpenAI · ChatGPT subscription',
   anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
@@ -56,7 +65,7 @@ export const TYPE_LABEL = {
 // key_source 'none' = no key at all, subscription = needs signed_in. Everything else
 // (ollama / custom base_url / own key / shared env key) resolves to a non-'none'
 // source and is runnable.
-export function isUsable(c) {
+export function isUsable(c: LlmConfig): boolean {
   if (c.deps && !c.deps.ok) return false
   if (c.key_source === 'none') return false
   if (c.type === 'openai_subscription') return !!c.signed_in

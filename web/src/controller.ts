@@ -10,7 +10,7 @@ import { api } from './transport/api/index.ts'
 import { foldEvent, isBusy, queueMessage } from './project.ts'
 import { nextItemId } from './lib/ids.ts'
 import type { ThreadItem, WireEvent } from './schemas/events.ts'
-import { getActiveProfileId, setActiveProfileId } from './lib/profile.js'
+import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
 import { setAccent } from './design/palette.js'
 import { go, closeAside, route } from './router.ts'
 

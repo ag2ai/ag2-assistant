@@ -1,6 +1,6 @@
 // Secrets — named reusable API keys (app.py 945-1027). `value` is WRITE-ONLY:
 // no route ever echoes it back, views carry a last-4 hint instead.
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import { Ok, SecretList, SecretSaved } from '../../schemas/index.ts'
 

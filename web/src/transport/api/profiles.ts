@@ -1,5 +1,5 @@
 // Global profile registry routes (app.py 1851-1958).
-import { globalApi as G } from '../../lib/profile.js'
+import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import { Ok, ProfileEnvelope, ProfileList } from '../../schemas/index.ts'
 

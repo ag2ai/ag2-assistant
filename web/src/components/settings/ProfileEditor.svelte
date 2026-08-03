@@ -5,7 +5,7 @@
   // bar — General, Focus areas, Model, Folders, Skills, Memory — each a surface scoped to the ACTIVE
   // profile (the catalogue switches to the clicked profile before opening this).
   import { profiles } from '../../store.ts'
-  import { getActiveProfileId } from '../../lib/profile.js'
+  import { getActiveProfileId } from '../../lib/profile.ts'
   import Icon from '../Icon.svelte'
   import ProfileGeneralSection from './ProfileGeneralSection.svelte'
   import FocusAreasSection from './FocusAreasSection.svelte'

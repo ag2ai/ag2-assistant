@@ -4,7 +4,7 @@
   // which share one reactive $state context (settings/context.svelte.js).
   import { profiles, profileEpoch, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.ts'
   import { route, replaceOverlay } from '../router.ts'
-  import { getActiveProfileId } from '../lib/profile.js'
+  import { getActiveProfileId } from '../lib/profile.ts'
   import { createSettingsContext } from './settings/context.svelte.js'
   import GeneralPage from './settings/GeneralPage.svelte'
   import ProfilesPage from './settings/ProfilesPage.svelte'

@@ -1,5 +1,5 @@
 import { writable, type Writable } from 'svelte/store'
-import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.js'
+import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.ts'
 import type {
   ChatRow,
   Inquiry,
@@ -13,7 +13,7 @@ import type {
 // SETTINGS_PAGE — the valid Settings Section ids — lives in the pure route core
 // (lib/route.js validates the `#settings=<section>` hash against it). Re-export it
 // here so callers keep importing it from the store (SETTINGS_PAGE.MODELS, …).
-export { SETTINGS_PAGE } from './lib/route.js'
+export { SETTINGS_PAGE } from './lib/route.ts'
 // settingsOpen and ag2View (whether the AG2 Inspector occupies the rail) are derived
 // from the route; they live in router.ts to avoid a module-init cycle, re-exported here.
 export { settingsOpen, ag2View } from './router.ts'

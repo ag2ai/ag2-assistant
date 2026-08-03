@@ -1,7 +1,7 @@
 // The typed HTTP layer: one 410/404 profile-gone recovery, one error shape, and
 // one schema gate every response passes through.
 import type { z } from 'zod'
-import { onProfileGone } from '../lib/profile.js'
+import { onProfileGone } from '../lib/profile.ts'
 import { parse } from './validate.ts'
 
 // status/body ride on the error so callers can act on structured failures

@@ -9,7 +9,13 @@
 // True when a click on the tree body should CLEAR the selected target: only a click
 // on the tree background itself, never one on a row (`.ftrow`). A missing/invalid
 // target (no `closest`) is treated as "not background" — never wipe on uncertainty.
-export function clearsTreeTarget(target) {
-  if (!target || typeof target.closest !== 'function') return false
+export function clearsTreeTarget(target: unknown): boolean {
+  if (!canClose(target)) return false
   return !target.closest('.ftrow')
+}
+
+// Duck-typed instead of `instanceof Element`: the caller hands over an EventTarget,
+// and the test drives this with a jsdom element from another realm.
+function canClose(v: unknown): v is Pick<Element, 'closest'> {
+  return !!v && typeof (v as Partial<Element>).closest === 'function'
 }

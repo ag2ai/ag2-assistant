@@ -1,7 +1,8 @@
 import { writable, derived, type Readable, type Writable } from 'svelte/store'
-import { getActiveProfileId } from './lib/profile.js'
-import { parse, resolve, SETTINGS_PAGE } from './lib/route.js'
-import { confirmDiscard } from './lib/unsavedGuard.js'
+import { getActiveProfileId } from './lib/profile.ts'
+import { parse, resolve, SETTINGS_PAGE } from './lib/route.ts'
+import type { Tab } from './lib/route.ts'
+import { confirmDiscard } from './lib/unsavedGuard.ts'
 
 // Thin DOM/store shell over the pure route core (lib/route.js). The two dimensions:
 // the PATH is the Page (profile + Tab + optional Thread); the HASH is the open
@@ -37,7 +38,8 @@ export const settingsOpen: Readable<boolean> = derived(route, ($r) => $r.overlay
 
 // The pid segment for URLs: the one in the current path if any, else the active id.
 function currentPid(): string {
-  return read().pid || getActiveProfileId()
+  // Both empty only before boot resolves a profile, when no nav can run yet.
+  return read().pid || getActiveProfileId() || ''
 }
 
 // go('/files') switches Tab and keeps the open Thread; go('/c/{id}') opens a
@@ -53,7 +55,7 @@ export function go(path: string, pid: string = currentPid()): void {
 // (that contract exists so Tab switches don't close your chat); deleting/leaving
 // a thread needs the opposite: land on the Tab's own empty page, not back on the
 // (now-gone) Thread. Preserves the hash, same as go().
-export function goTab(tab: string, pid: string = currentPid()): void {
+export function goTab(tab: Tab, pid: string = currentPid()): void {
   const full = resolve(current(), { type: 'goTab', tab, pid })
   if (location.pathname + location.hash !== full) history.pushState({}, '', full)
   route.set(read())

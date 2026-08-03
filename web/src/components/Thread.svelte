@@ -1,6 +1,6 @@
 <script>
   import { thread, runInfo, profile, profiles } from '../store.ts'
-  import { llmConfigs } from '../lib/llm.js'
+  import { llmConfigs } from '../lib/llm.ts'
   import { go, newChatId } from '../router.ts'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
@@ -8,7 +8,7 @@
   import RunBanner from './task/RunBanner.svelte'
   import Icon from './Icon.svelte'
   import AppBar from './AppBar.svelte'
-  import { dayRows } from '../lib/time.js'
+  import { dayRows } from '../lib/time.ts'
 
   let scroller
   const tail = $derived($thread.items[$thread.items.length - 1])
