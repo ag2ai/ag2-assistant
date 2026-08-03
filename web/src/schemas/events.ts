@@ -3,6 +3,7 @@
 // unknown type falls through to the catch-all so a new backend event never
 // breaks the UI.
 import { z } from 'zod'
+import type { KeyedToolCard as ToolCard } from '../lib/toolcards.ts'
 
 const TextPart = z.object({ __event__: z.string().optional(), content: z.string().optional() })
 
@@ -192,9 +193,9 @@ export type Feedback = { sentiment?: string; reason?: string } | null
 // event's created_at (Unix seconds).
 type ItemBase = { id: number; at?: number }
 
-// One card per tool call the thread renders alongside the chips. lib/toolcards.ts
-// builds them; narrowing this to that module's own union is still open (task 18).
-export type ToolCard = { id: number } & Record<string, unknown>
+// One card per tool call the thread renders alongside the chips — the union
+// lib/toolcards.ts builds, keyed by `id` for the rendered list.
+export type { ToolCard }
 
 export type ThreadItem =
   // `voice` marks a bubble spoken in a live voice session — UserMessage/AgentMessage style it.

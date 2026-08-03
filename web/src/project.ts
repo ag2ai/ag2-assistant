@@ -3,6 +3,7 @@
 // use the same reducer, so they produce identical items.
 
 import { cardFor } from './lib/toolcards.ts'
+import type { ToolCard } from './lib/toolcards.ts'
 import { fmtDateTime } from './lib/time.ts'
 import { applyA2UIMessage } from './lib/a2ui.ts'
 import { nextItemId as nid } from './lib/ids.ts'
@@ -24,7 +25,7 @@ function joinText(parts: TextParts): string {
     .trim()
 }
 
-export function addTool(items: ThreadItem[], name: string, card: Record<string, unknown> | null = null): void {
+export function addTool(items: ThreadItem[], name: string, card: ToolCard | null = null): void {
   if (!name) return
   const pretty = prettyToolName(name)
   const prev = items[items.length - 1]

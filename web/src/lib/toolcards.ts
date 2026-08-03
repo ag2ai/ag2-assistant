@@ -10,6 +10,11 @@ export type ToolCard =
   | { kind: 'skill'; name: string; script?: string; ran?: boolean }
   | { kind: 'image'; prompt: string; edit: boolean }
 
+// The same card once it sits in a thread item: `id` keys the rendered list.
+// Distributed over the union so each variant keeps its own shape.
+type WithId<T> = T extends unknown ? T & { id: number } : never
+export type KeyedToolCard = WithId<ToolCard>
+
 // A tool call's arguments — JSON on the wire, already decoded on some events.
 type ToolArgs = Record<string, unknown>
 
