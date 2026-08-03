@@ -5,7 +5,7 @@
 import { cardFor } from './lib/toolcards.ts'
 import type { ToolCard } from './lib/toolcards.ts'
 import { fmtDateTime } from './lib/time.ts'
-import { applyA2UIMessage } from './lib/a2ui.ts'
+import { applyA2UIMessage, asComponent, asComponents } from './lib/a2ui.ts'
 import { nextItemId as nid } from './lib/ids.ts'
 import { EventData, EventMeta, HANDLED_EVENTS, WireEvent } from './schemas/events.ts'
 import type { HandledEvent, ThreadItem, WireEvent as Wire } from './schemas/events.ts'
@@ -323,8 +323,8 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       item.catalogId = d.catalog_id
       item.title = d.title
       item.intent = d.intent
-      item.component = d.component ?? {}
-      item.components = Array.isArray(nested) ? nested : d.components ?? []
+      item.component = asComponent(d.component)
+      item.components = asComponents(Array.isArray(nested) ? nested : d.components)
       item.data = d.data ?? {}
       break
     }

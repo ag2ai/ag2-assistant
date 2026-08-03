@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import WeatherCard from './WeatherCard.svelte'
@@ -10,14 +10,17 @@
   import InboxBrief from './InboxBrief.svelte'
   import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
-  import { a2uiComposingSurfaceId, withA2UIValue } from '../../lib/a2ui.ts'
+  import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
+  import type { A2UIAction, A2UIData, NewsStory, PlaceResult } from '../../lib/a2ui.ts'
   import { a2uiAction } from '../../controller.ts'
   import { thread } from '../../store.ts'
+  import type { ThreadItem } from '../../schemas/events.ts'
 
-  let { item } = $props()
+  type Props = { item: Extract<ThreadItem, { kind: 'a2ui' }> }
+  let { item }: Props = $props()
   const data = $derived(item.data || {})
-  const components = $derived(item.components || item.component?._components || [item.component].filter(Boolean))
-  const type = $derived(((item.component && item.component.component) || 'AnswerBrief').toLowerCase())
+  const components = $derived(item.components || item.component._components || [item.component])
+  const type = $derived((item.component.component || 'AnswerBrief').toLowerCase())
   const isBasicLayout = $derived(['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput'].includes(type))
   const componentIcon = $derived(
     isBasicLayout ? 'sparkles'
@@ -52,32 +55,32 @@
   const actionPending = $derived($thread.items.some(
     (entry) => entry.kind === 'note' && entry.a2uiActionPending && entry.surfaceId === item.surfaceId
   ))
-  let inputData = $state({})
+  let inputData: A2UIData = $state({})
 
   $effect(() => {
     inputData = data
   })
 
-  function setInputValue(path, value) {
+  function setInputValue(path: string, value: unknown) {
     inputData = withA2UIValue(inputData, path, value)
   }
 
-  function submitAction(action) {
+  function submitAction(action: A2UIAction) {
     a2uiAction({
       version: item.version || 'v1.0',
       action: { ...action, surfaceId: item.surfaceId, timestamp: new Date().toISOString() },
     })
   }
 
-  function list(value) {
-    return Array.isArray(value) ? value.filter(Boolean) : []
+  function list<T>(value: unknown): T[] {
+    return rows<T>(value)
   }
 
-  function storySummary(story) {
+  function storySummary(story: NewsStory): string {
     return story.summary || story.detail || story.text || ''
   }
 
-  function genericText(value) {
+  function genericText(value: unknown) {
     return ['structured answer', 'structured response', 'a2ui', ''].includes(String(value || '').toLowerCase())
   }
 
@@ -124,30 +127,30 @@
     <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
   {:else if type === 'taskplan'}
     <div class="a2ui-task">
-      <div class="a2ui-main">{data.objective || 'New task'}</div>
+      <div class="a2ui-main">{str(data.objective) || 'New task'}</div>
       <div class="a2ui-meta">
-        <span><Icon name="clock" size={12} /> {data.cadence || 'To be confirmed'}</span>
+        <span><Icon name="clock" size={12} /> {str(data.cadence) || 'To be confirmed'}</span>
         <span><Icon name="sparkles" size={12} /> Assistant plan</span>
       </div>
       <div class="a2ui-cols">
         <section>
           <div class="a2ui-label">Deliverables</div>
-          {#each list(data.deliverables) as row}
+          {#each list<string>(data.deliverables) as row}
             <div class="a2ui-row"><Icon name="check" size={12} /> {row}</div>
           {/each}
         </section>
         <section>
           <div class="a2ui-label">Next</div>
-          {#each list(data.nextSteps) as row}
+          {#each list<string>(data.nextSteps) as row}
             <div class="a2ui-row"><Icon name="chevron-right" size={12} /> {row}</div>
           {/each}
         </section>
       </div>
     </div>
   {:else if type === 'newsdigest'}
-    <div class="a2ui-main">{data.topic || 'Latest news'}</div>
+    <div class="a2ui-main">{str(data.topic) || 'Latest news'}</div>
     <div class="a2ui-list">
-      {#each list(data.stories) as story}
+      {#each list<NewsStory>(data.stories) as story}
         <div class="a2ui-story">
           <span><Icon name="globe" size={13} /></span>
           <div>
@@ -165,12 +168,12 @@
       {/each}
     </div>
   {:else if type === 'restaurantfinder'}
-    <div class="a2ui-main">{data.query || 'Restaurants'}</div>
+    <div class="a2ui-main">{str(data.query) || 'Restaurants'}</div>
     <div class="a2ui-pills">
-      {#each list(data.filters) as filter}<span>{filter}</span>{/each}
+      {#each list<string>(data.filters) as filter}<span>{filter}</span>{/each}
     </div>
     <div class="a2ui-list">
-      {#each list(data.results) as result}
+      {#each list<PlaceResult>(data.results) as result}
         <div class="a2ui-story">
           <span><Icon name="search" size={13} /></span>
           <div><strong>{result.name}</strong><small>{result.detail}</small></div>
@@ -178,9 +181,9 @@
       {/each}
     </div>
   {:else if type === 'checklist'}
-    <div class="a2ui-main">{data.title || item.title || 'Checklist'}</div>
+    <div class="a2ui-main">{str(data.title) || item.title || 'Checklist'}</div>
     <div class="a2ui-list">
-      {#each list(data.items) as row}
+      {#each list<string>(data.items) as row}
         <div class="a2ui-story">
           <span><Icon name="check" size={13} /></span>
           <div><strong>{row}</strong></div>
@@ -188,9 +191,9 @@
       {/each}
     </div>
   {:else}
-    <div class="a2ui-main">{data.topic || item.title || 'Structured response'}</div>
+    <div class="a2ui-main">{str(data.topic) || item.title || 'Structured response'}</div>
     <div class="a2ui-pills">
-      {#each list(data.sections) as section}<span>{section}</span>{/each}
+      {#each list<string>(data.sections) as section}<span>{section}</span>{/each}
     </div>
   {/if}
 </div>

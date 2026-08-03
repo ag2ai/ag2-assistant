@@ -15,10 +15,35 @@ type A2UIItem = Extract<ThreadItem, { kind: 'a2ui' }>
 // non-optional here and the rest optional. `additionalProperties` is false, so
 // no field is declared that the catalog cannot send.
 
+// One node of a component tree. Fields the renderer reads directly are declared;
+// bindable ones stay `unknown` because they arrive either literal or as a
+// {path} pointer and must go through a2uiValue(). Anything else reads as unknown.
+export type A2UIComponent = {
+  [key: string]: unknown
+  id?: string
+  component?: string
+  variant?: string
+  fit?: string
+  displayStyle?: string
+  enableDate?: boolean
+  enableTime?: boolean
+  steps?: number
+  children?: unknown[]
+  child?: unknown
+  options?: A2UIOption[]
+  action?: { event?: { name?: string; context?: unknown } }
+  _components?: A2UIComponent[]
+}
+
+export type A2UIOption = { value?: unknown; label?: unknown }
+
 export type WeatherRow = { label: string; value: string }
-// `summary` is not in the catalog; the renderer shows it when an older persisted
-// surface carries one.
-export type WeatherPanelData = { location?: string; condition?: string; rows?: unknown; summary?: unknown }
+
+// Result row of a RestaurantFinder surface.
+export type PlaceResult = { name: string; detail: string; url?: string }
+
+// An action a Button component submits back to the agent.
+export type A2UIAction = { name: string; sourceComponentId?: string; context?: unknown }
 
 // `meta` is back-compat: old surfaces stored "Source · 2h ago" in one field.
 export type NewsStory = {
@@ -317,10 +342,10 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
   if (isRecord(message.updateComponents)) {
     const u = message.updateComponents
     const item = ensureSurface(items, str(u.surfaceId) || nextSurfaceId(), undefined, version)
-    const components: unknown[] = Array.isArray(u.components) ? u.components : []
+    const components = asComponents(u.components)
     item.components = components
-    const found = components.find((c) => isRecord(c) && c.id === 'root') ?? components[0]
-    const root = isRecord(found) ? found : {}
+    const found = components.find((c) => c.id === 'root') ?? components[0]
+    const root = asComponent(found)
     item.component = root
     item.data = dataFromComponent(root, item.data)
     item.title = itemTitle(componentKind(root), item.data)
@@ -353,6 +378,14 @@ export const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 export function rows<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value.filter(Boolean) as T[]) : []
 }
+
+// The same assertion for a single component node, and for a node list.
+export const asComponent = (value: unknown): A2UIComponent => (isRecord(value) ? (value as A2UIComponent) : {})
+export const asComponents = (value: unknown): A2UIComponent[] => rows<A2UIComponent>(value)
+
+// The data-model path a bindable field points at; '' when it holds a literal.
+export const bindingPath = (value: unknown): string =>
+  isRecord(value) && typeof value.path === 'string' ? value.path : ''
 
 // The surface's message log. A surface first created by an A2UISurface event has
 // none, and pushing into it used to throw.

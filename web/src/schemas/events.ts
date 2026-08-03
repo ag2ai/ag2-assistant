@@ -4,6 +4,7 @@
 // breaks the UI.
 import { z } from 'zod'
 import type { KeyedToolCard as ToolCard } from '../lib/toolcards.ts'
+import type { A2UIComponent } from '../lib/a2ui.ts'
 
 const TextPart = z.object({ __event__: z.string().optional(), content: z.string().optional() })
 
@@ -209,4 +210,4 @@ export type ThreadItem =
   | (ItemBase & { kind: 'genimage'; path: string; prompt?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'attachment'; path: string; name?: string })
   | (ItemBase & { kind: 'inquiry'; inquiryId: string; question: string; detail: string; options: string[]; qkind?: string; resolved: boolean; answer?: string; resolution?: string })
-  | (ItemBase & { kind: 'a2ui'; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: Record<string, unknown>; components?: unknown[]; data: Record<string, unknown>; messages?: unknown[] })
+  | (ItemBase & { kind: 'a2ui'; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[] })
