@@ -7,7 +7,7 @@
   // identity colour, chosen at profile creation/edit and applied from the
   // registry on boot (App.svelte) — one control, not two competing ones. This
   // component now owns only the global day/night preference.
-  import { getTheme, setTheme } from '../design/palette.js'
+  import { getTheme, setTheme } from '../design/palette.ts'
   import Icon from './Icon.svelte'
 
   let theme = $state(getTheme())

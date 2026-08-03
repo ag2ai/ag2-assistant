@@ -11,8 +11,8 @@ export const DepsStatus = z.object({
 })
 export type DepsStatus = z.infer<typeof DepsStatus>
 
-// Which key an actual call would send.
-export const KeySource = z.enum(['secret', 'shared', 'not_needed', 'none', 'subscription'])
+// Which key an actual call would send (llm_configs.key_source docstring).
+export const KeySource = z.enum(['secret', 'shared', 'not_needed', 'none', 'subscription', 'cli_login'])
 export type KeySource = z.infer<typeof KeySource>
 
 export const LlmConfig = z.object({

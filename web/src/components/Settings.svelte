@@ -1,11 +1,11 @@
 <script>
   // Settings — thin shell. Owns the modal chrome, the sidebar nav, and the page
   // switch; all section markup lives in the six settings/*Page.svelte components,
-  // which share one reactive $state context (settings/context.svelte.js).
+  // which share one reactive $state context (settings/context.svelte.ts).
   import { profiles, profileEpoch, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.ts'
   import { route, replaceOverlay } from '../router.ts'
   import { getActiveProfileId } from '../lib/profile.ts'
-  import { createSettingsContext } from './settings/context.svelte.js'
+  import { createSettingsContext } from './settings/context.svelte.ts'
   import GeneralPage from './settings/GeneralPage.svelte'
   import ProfilesPage from './settings/ProfilesPage.svelte'
   import ModelsPage from './settings/ModelsPage.svelte'

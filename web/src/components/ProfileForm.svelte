@@ -14,7 +14,7 @@
   // create-then-continue, etc.). `accent` is an opaque #rrggbb hex (ADR 0002): a
   // preset swatch or any colour from the custom picker.
   import { untrack } from 'svelte'
-  import { PALETTES } from '../design/palette.js'
+  import { PALETTES } from '../design/palette.ts'
   import Icon from './Icon.svelte'
 
   let {

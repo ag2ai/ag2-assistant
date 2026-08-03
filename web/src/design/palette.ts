@@ -25,7 +25,9 @@ const THEME_KEY = 'ag2-theme'
 
 // The frontend's preset catalogue. `hex` is each preset's --p-500 (the applied
 // accent); the full hand-tuned ramp lives in design/tokens/palettes.css.
-export const PALETTES = [
+export type Palette = { id: string; label: string; hex: string }
+
+export const PALETTES: Palette[] = [
   { id: 'navy-blue', label: 'Navy Blue', hex: '#1d4ed8' },
   { id: 'royal-blue', label: 'Royal Blue', hex: '#1e40af' },
   { id: 'dark-indigo', label: 'Dark Indigo', hex: '#4338ca' },
@@ -40,7 +42,7 @@ export const DEFAULT_ACCENT = PALETTES[0].hex // navy blue
 // The 10 ramp stops, and how each is mixed from the picked colour (the picked
 // hex IS the 500 stop). Light stops mix toward white, dark stops toward black;
 // the fractions roughly mirror the hand-tuned preset ramps.
-const RAMP = [
+const RAMP: [stop: string, mix: number][] = [
   ['--p-50', 0.92],
   ['--p-100', 0.82],
   ['--p-200', 0.62],
@@ -53,32 +55,32 @@ const RAMP = [
   ['--p-900', -0.66],
 ]
 
-function normHex(value) {
+function normHex(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const s = value.trim().toLowerCase()
   return /^#[0-9a-f]{6}$/.test(s) ? s : null
 }
 
-function toRgb(hex) {
+function toRgb(hex: string): [number, number, number] {
   return [
     parseInt(hex.slice(1, 3), 16),
     parseInt(hex.slice(3, 5), 16),
     parseInt(hex.slice(5, 7), 16),
   ]
 }
-function toHex(r, g, b) {
-  const h = (n) => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, '0')
+function toHex(r: number, g: number, b: number): string {
+  const h = (n: number) => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, '0')
   return `#${h(r)}${h(g)}${h(b)}`
 }
 // mix > 0 → toward white by that fraction; mix < 0 → toward black by |mix|.
-function mixChannel(c, mix) {
+function mixChannel(c: number, mix: number): number {
   return mix >= 0 ? c + (255 - c) * mix : c * (1 + mix)
 }
 
 // Derive the full { '--p-50': '#..', … '--p-900': '#..' } ramp from one hex.
-function deriveRamp(hex) {
+function deriveRamp(hex: string): Record<string, string> {
   const [r, g, b] = toRgb(hex)
-  const out = {}
+  const out: Record<string, string> = {}
   for (const [stop, mix] of RAMP) {
     out[stop] = mix === 0 ? hex : toHex(mixChannel(r, mix), mixChannel(g, mix), mixChannel(b, mix))
   }
@@ -87,7 +89,7 @@ function deriveRamp(hex) {
 
 // Relative luminance (sRGB) of a hex, 0..1 — the "is this colour light?" signal
 // behind the adaptive ink below.
-function luminance(hex) {
+function luminance(hex: string): number {
   const [r, g, b] = toRgb(hex).map((c) => {
     const s = c / 255
     return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
@@ -97,7 +99,7 @@ function luminance(hex) {
 
 let _accent = DEFAULT_ACCENT // current applied accent hex
 
-function applyAccent(hex) {
+function applyAccent(hex: string): void {
   const preset = PRESET_BY_HEX.get(hex)
   if (preset) {
     // Preset colour: use its hand-tuned block; drop any custom inline ramp.
@@ -118,39 +120,41 @@ function applyAccent(hex) {
   ROOT.style.setProperty('--text-on-accent', light ? '#1d1a16' : '#ffffff')
 }
 
-export function setAccent(value) {
+export function setAccent(value: unknown): boolean {
   const hex = normHex(value) || DEFAULT_ACCENT
   _accent = hex
   applyAccent(hex)
-  try { localStorage.setItem(KEY, hex) } catch (e) {}
+  try { localStorage.setItem(KEY, hex) } catch {}
   document.dispatchEvent(new CustomEvent('ag2-accent-change', { detail: { accent: hex } }))
   return true
 }
 
-export function getAccent() {
+export function getAccent(): string {
   return _accent
 }
 
 // Readable ink for text/glyphs sitting ON a given accent hex (profile chips fill
 // with their own profile colour, not the applied accent, so they can't use the
 // global --text-on-accent). Same luminance rule as applyAccent.
-export function inkOn(value) {
+export function inkOn(value: unknown): string {
   const hex = normHex(value) || DEFAULT_ACCENT
   return luminance(hex) >= 0.45 ? '#1d1a16' : '#ffffff'
 }
 
 // The preset id whose --p-500 equals this hex, or null for a custom colour.
 // Handy for labelling ("Navy Blue") without re-implementing the match.
-export function presetIdForAccent(value) {
+export function presetIdForAccent(value: unknown): string | null {
   const hex = normHex(value)
   return hex ? PRESET_BY_HEX.get(hex) || null : null
 }
 
+export type ThemeMode = 'light' | 'dark' | 'auto'
+
 const MQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null
-let themeMode = 'auto' // tracks the user's choice; 'auto' follows the OS
+let themeMode: ThemeMode = 'auto' // tracks the user's choice; 'auto' follows the OS
 
 // Resolve 'auto' against the OS preference and apply the concrete theme.
-function applyResolvedTheme() {
+function applyResolvedTheme(): void {
   if (themeMode === 'light' || themeMode === 'dark') {
     ROOT.setAttribute('data-theme', themeMode)
   } else if (MQ && MQ.matches) {
@@ -160,24 +164,25 @@ function applyResolvedTheme() {
   }
 }
 
-export function setTheme(mode) {
+export function setTheme(mode: unknown): boolean {
   // 'light' | 'dark' | 'auto'
   if (mode !== 'light' && mode !== 'dark' && mode !== 'auto') return false
   themeMode = mode
   applyResolvedTheme()
-  try { localStorage.setItem(THEME_KEY, mode) } catch (e) {}
+  try { localStorage.setItem(THEME_KEY, mode) } catch {}
   document.dispatchEvent(new CustomEvent('ag2-theme-change', { detail: { theme: mode } }))
   return true
 }
 
-export function getTheme() {
+export function getTheme(): ThemeMode {
   return themeMode
 }
 
-function init() {
-  let saved, theme
-  try { saved = localStorage.getItem(KEY) } catch (e) {}
-  try { theme = localStorage.getItem(THEME_KEY) } catch (e) {}
+function init(): void {
+  let saved: string | null = null
+  let theme: string | null = null
+  try { saved = localStorage.getItem(KEY) } catch {}
+  try { theme = localStorage.getItem(THEME_KEY) } catch {}
   // localStorage is only a flash-avoiding *hint*; App.svelte corrects it from the
   // active profile's registry accent on boot.
   _accent = normHex(saved) || DEFAULT_ACCENT
@@ -195,4 +200,10 @@ function init() {
 init()
 
 // Console / agent surface. `setAccent` accepts any #rrggbb hex.
-window.AG2Accent = { PALETTES, setAccent, getAccent, presetIdForAccent, setTheme, getTheme }
+const surface = { PALETTES, setAccent, getAccent, presetIdForAccent, setTheme, getTheme }
+
+declare global {
+  interface Window { AG2Accent: typeof surface }
+}
+
+window.AG2Accent = surface

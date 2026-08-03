@@ -7,7 +7,7 @@
   // that config. Backed by the shared `liveConfigs` store (lib/live.js).
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { getSettings } from './context.svelte.js'
+  import { getSettings } from './context.svelte.ts'
   import LiveConfigForm from './LiveConfigForm.svelte'
   import Icon from '../Icon.svelte'
   import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.ts'

@@ -7,7 +7,7 @@
   // "Change voice" picker (a new config gets the provider's default voice until then).
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import { getSettings } from './context.svelte.js'
+  import { getSettings } from './context.svelte.ts'
   import { PROVIDER_LABEL } from '../../lib/live.ts'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'

@@ -20,7 +20,7 @@
   import { onboardingOpen, profile, profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
   import { setActiveProfileId } from '../lib/profile.ts'
-  import { setAccent } from '../design/palette.js'
+  import { setAccent } from '../design/palette.ts'
   import { FOCUS, focusLabel } from '../lib/focuses.ts'
   import { TYPE_LABEL } from '../lib/llm.ts'
   import {

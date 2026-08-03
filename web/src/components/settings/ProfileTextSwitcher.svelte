@@ -9,7 +9,7 @@
   import { SETTINGS_PAGE } from '../../store.ts'
   import { replaceOverlay } from '../../router.ts'
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
-  import { getSettings } from './context.svelte.js'
+  import { getSettings } from './context.svelte.ts'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
   const ctx = getSettings()

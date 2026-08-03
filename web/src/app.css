@@ -7,7 +7,7 @@
    names; alias them to the new semantic tokens so the whole app
    adopts the redesign with no per-component rewrite. Theme +
    palette switching is now attribute-driven on <html> via
-   design/palette.js — the old prefers-color-scheme block is
+   design/palette.ts — the old prefers-color-scheme block is
    retired (auto theme still follows the OS through palette.js).
    Resets, body, and scrollbars are owned by design/tokens/base.css.
    ============================================================ */

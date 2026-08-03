@@ -1,9 +1,20 @@
-<script>
+<script lang="ts">
   // Inline load/save textarea for one memory doc — shared by the Profile Memory tab
   // (per-profile persona) and Advanced's shared-identity editor. `load`/`save` are the
   // doc's endpoints; `epoch` re-loads when it changes (persona re-points on profile
   // switch, identity passes a constant).
-  let { load, save, hint, placeholder = '', minHeight = '160px', epoch = 0 } = $props()
+  import { errText } from '../../lib/errors.ts'
+
+  type Props = {
+    load: () => Promise<string>
+    save: (text: string) => Promise<unknown>
+    hint: string
+    placeholder?: string
+    minHeight?: string
+    epoch?: number
+  }
+
+  let { load, save, hint, placeholder = '', minHeight = '160px', epoch = 0 }: Props = $props()
 
   let text = $state('')
   let loading = $state(true)
@@ -14,7 +25,7 @@
   async function doLoad() {
     loading = true
     err = ''
-    try { text = (await load()) || '' } catch (e) { err = String(e.message || e) }
+    try { text = (await load()) || '' } catch (e) { err = errText(e) }
     loading = false
   }
   $effect(() => { epoch; doLoad() })
@@ -27,7 +38,7 @@
       saved = true
       setTimeout(() => (saved = false), 1500)
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = false
   }

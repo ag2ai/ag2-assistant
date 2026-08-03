@@ -30,6 +30,10 @@ export async function loadLiveConfigs(): Promise<void> {
   })
 }
 
+// What the Live list hands the inline editor: a saved config, or a provider
+// template prefill (no id and no secret yet).
+export type LiveConfigSeed = Partial<LiveConfig>
+
 // provider -> logo (only realtime-capable providers exist here: gemini, openai).
 export const LOGO: Record<string, string> = { gemini: geminiLogo, openai: openaiLogo }
 

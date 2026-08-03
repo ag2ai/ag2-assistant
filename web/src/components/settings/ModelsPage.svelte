@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Models: two stacked groups.
   //   • Text — the install-wide list of named LLM configurations and the one active
   //     selection (LLM is common across every profile — no per-profile override, no
@@ -19,10 +19,16 @@
   import LlmConfigForm from './LlmConfigForm.svelte'
   import VoiceSection from './VoiceSection.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
+  import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs, type LlmConfigSeed } from '../../lib/llm.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type { LlmConfig } from '../../schemas/index.ts'
+
+  // A starting point in the template grid: a config prefill plus its card copy.
+  type LlmTemplate = LlmConfigSeed & { name: string; type: string; model: string; card?: string; blurb: string }
+
   // One-click starting points. Picking a card opens the editor prefilled — the
   // two-field local-server case is one click plus a model name.
-  const TEMPLATES = [
+  const TEMPLATES: LlmTemplate[] = [
     { name: 'Gemini', type: 'gemini', model: 'gemini-3.6-flash', blurb: 'Google Gemini' },
     { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.6-terra', blurb: 'Responses API' },
     { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.6-terra', blurb: 'Chat Completions API' },
@@ -59,50 +65,55 @@
   const configs = $derived($llmConfigs.configs)
   const envOverride = $derived($llmConfigs.envOverride)
   const providerDeps = $derived($llmConfigs.providerDeps || {})
-  let tests = $state({})       // config id -> {testing} | {ok, reply, latency_ms} | {ok:false, error}
+  // One row's Test state: pending, then either the PONG reply or the error. The
+  // three shapes share one open record so the row can read any field it needs.
+  type TestState = { testing?: boolean; ok?: boolean; reply?: string; latency_ms?: number; error?: string }
+
+  let tests = $state<Record<string, TestState>>({})
   let busy = $state(false)
   let err = $state('')
 
-  let editing = $state(null)   // config/template being edited in the inline form (null = closed)
+  // config/template being edited in the inline form (null = closed)
+  let editing = $state<LlmConfigSeed | null>(null)
   let adding = $state(false)   // template card grid showing
 
   onMount(reload)
 
   // Thin wrapper: refresh the shared store and surface any failure in this page's err.
   async function reload() {
-    try { await loadLlmConfigs() } catch (e) { err = String(e.message || e) }
+    try { await loadLlmConfigs() } catch (e) { err = errText(e) }
   }
 
   // Test = per-row health map, exactly like McpServers.check.
-  async function test(c) {
+  async function test(c: LlmConfig) {
     tests = { ...tests, [c.id]: { testing: true } }
     try {
-      tests = { ...tests, [c.id]: { ok: true, ...(await api.testLlmConfig(c.id)) } }
+      tests = { ...tests, [c.id]: await api.testLlmConfig(c.id) }
     } catch (e) {
-      tests = { ...tests, [c.id]: { ok: false, error: String(e.message || e) } }
+      tests = { ...tests, [c.id]: { ok: false, error: errText(e) } }
     }
   }
 
-  async function use(c) {
+  async function use(c: LlmConfig) {
     err = ''; busy = true
-    try { await api.useLlmConfig(c.id); await reload() } catch (e) { err = String(e.message || e) }
+    try { await api.useLlmConfig(c.id); await reload() } catch (e) { err = errText(e) }
     busy = false
   }
 
-  async function remove(c) {
+  async function remove(c: LlmConfig) {
     err = ''; busy = true
     try {
       await api.deleteLlmConfig(c.id)
       const { [c.id]: _gone, ...rest } = tests
       tests = rest
       await reload()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 
   // Open the editor: a template (no id → create) or an existing row (edit).
-  function pickTemplate(t) { adding = false; editing = { ...t } }
-  function edit(c) { adding = false; editing = { ...c } }
+  function pickTemplate(t: LlmTemplate) { adding = false; editing = { ...t } }
+  function edit(c: LlmConfig) { adding = false; editing = { ...c } }
 
   // The save should activate when it's the first-ever config (empty store), or when
   // re-saving the already-active config (keep it active). Otherwise the explicit Use
@@ -111,13 +122,13 @@
 
   async function onSaved() { editing = null; await reload() }
 
-  const endpoint = (c) => (c.type === 'ollama' ? c.host : c.base_url) || ''
+  const endpoint = (c: LlmConfig) => (c.type === 'ollama' ? c.host : c.base_url) || ''
 
   // Honest key chip: name the key an actual call would send (key_source from the
   // server), not just whether a per-config key exists — a keyless Gemini config
   // still works via the shared env key, and a base_url config needs none at all.
   // Hints already carry the "…" ellipsis (e.g. "…abcd").
-  function keyChip(c) {
+  function keyChip(c: LlmConfig) {
     if (c.key_source === 'subscription')
       return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
     if (c.key_source === 'cli_login') return c.type === 'codex' ? 'Codex CLI login' : 'Claude Code CLI login'
@@ -150,7 +161,7 @@
        editor is open). Action buttons below stopPropagation so they never activate. -->
   <div
     class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
-    role="button" aria-disabled={c.active || editing}
+    role="button" aria-disabled={c.active || !!editing}
     tabindex={!c.active && !editing ? 0 : -1}
     aria-label={!c.active ? `Use ${c.name}` : undefined}
     title={!c.active && !editing ? 'Click to use this model' : ''}

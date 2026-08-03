@@ -15,7 +15,7 @@
   import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.ts'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
-  import { inkOn } from '../design/palette.js'
+  import { inkOn } from '../design/palette.ts'
 
   // Compact form of a cron description for the narrow schedule tag: abbreviate
   // day names and collapse "Every hour, between X and Y" → "Hourly X–Y"

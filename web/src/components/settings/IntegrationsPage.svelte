@@ -1,7 +1,7 @@
-<script>
+<script lang="ts">
   // Settings → Integrations (install-wide): messaging channels, Google connect, and
   // the GitHub token (skills registry — not a model provider, so it lives here).
-  import { getSettings } from './context.svelte.js'
+  import { getSettings } from './context.svelte.ts'
   import { api } from '../../transport/api/index.ts'
   import Channels from '../Channels.svelte'
 
@@ -33,7 +33,7 @@
 <p class="setsub">Skills registry — raises the rate limit. Optional.</p>
 <div class="keyrow">
   <span class="kp">GitHub</span>
-  <input type="password" placeholder={ctx.s.keys.github?.set ? '•••• ' + ctx.s.keys.github.hint : 'paste token'} bind:value={ctx.drafts.github} />
+  <input type="password" placeholder={ctx.s?.keys.github?.set ? '•••• ' + ctx.s.keys.github.hint : 'paste token'} bind:value={ctx.drafts.github} />
   <button class="open" disabled={ctx.busy} onclick={saveGithub}>Save</button>
-  {#if ctx.s.keys.github?.set}<button class="linkbtn" disabled={ctx.busy} onclick={clearGithub}>Clear</button>{/if}
+  {#if ctx.s?.keys.github?.set}<button class="linkbtn" disabled={ctx.busy} onclick={clearGithub}>Clear</button>{/if}
 </div>

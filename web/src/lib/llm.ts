@@ -42,6 +42,10 @@ export async function loadLlmConfigs(): Promise<void> {
   })
 }
 
+// What Settings → Models hands the inline editor: a saved config, or a template
+// prefill (no id and no secret yet).
+export type LlmConfigSeed = Partial<LlmConfig>
+
 // type -> provider logo (all three OpenAI surfaces share the OpenAI mark;
 // claude_code is Anthropic's CLI, so it wears the Anthropic mark; codex is
 // OpenAI's CLI, so it wears the OpenAI mark).

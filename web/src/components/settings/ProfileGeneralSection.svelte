@@ -8,7 +8,7 @@
   import { profiles } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
   import { getActiveProfileId } from '../../lib/profile.ts'
-  import { PALETTES, setAccent, getAccent } from '../../design/palette.js'
+  import { PALETTES, setAccent, getAccent } from '../../design/palette.ts'
   import Icon from '../Icon.svelte'
 
   const list = $derived($profiles.list || [])

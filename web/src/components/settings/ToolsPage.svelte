@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Tools & Permissions: MCP servers + the new install-wide permission grants.
   import McpServers from '../McpServers.svelte'
   import CodingAgents from '../CodingAgents.svelte'

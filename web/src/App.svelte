@@ -6,7 +6,7 @@
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.ts'
   import { api } from './transport/api/index.ts'
   import { setActiveProfileId, storedProfileId } from './lib/profile.ts'
-  import { setAccent } from './design/palette.js'
+  import { setAccent } from './design/palette.ts'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'

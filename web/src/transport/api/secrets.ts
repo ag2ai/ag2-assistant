@@ -12,11 +12,13 @@ export type SecretDraft = {
   default?: boolean
 }
 
+// SecretUpdateRequest (app.py 530): null leaves the field unchanged — the edit
+// form sends value:null to keep the stored key.
 export type SecretPatch = {
-  name?: string
-  value?: string
-  provider?: string
-  default?: boolean
+  name?: string | null
+  value?: string | null
+  provider?: string | null
+  default?: boolean | null
 }
 
 export const secretsApi = {

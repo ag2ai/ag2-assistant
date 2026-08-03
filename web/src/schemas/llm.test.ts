@@ -26,6 +26,11 @@ test('LlmConfig accepts a dangling secret reference', () => {
   assert.equal(parsed.secret, null)
 })
 
+test('LlmConfig accepts the cli_login key source of the ACP types', () => {
+  const cli = LlmConfig.parse({ ...base, type: 'codex', model: '', key_source: 'cli_login' })
+  assert.equal(cli.key_source, 'cli_login')
+})
+
 test('LlmConfig rejects an unknown key_source', () => {
   assert.throws(() => LlmConfig.parse({ ...base, key_source: 'magic' }))
 })

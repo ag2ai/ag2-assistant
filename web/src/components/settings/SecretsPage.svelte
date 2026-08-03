@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Secrets: the install-wide list of named reusable API keys
   // (CONTEXT.md "Secrets"). Values are WRITE-ONLY: the edit field is a password
   // input whose placeholder shows the stored last-4 hint; saving it blank keeps
@@ -9,14 +9,17 @@
   import { secretsStore, loadSecrets } from '../../lib/secrets.ts'
   import { loadLlmConfigs } from '../../lib/llm.ts'
   import { loadLiveConfigs } from '../../lib/live.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type { Secret } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
 
   const PROVIDERS = ['', 'openai', 'anthropic', 'gemini']
-  const PROVIDER_LABEL = { '': 'no provider', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini' }
+  const PROVIDER_LABEL: Record<string, string | undefined> = { '': 'no provider', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini' }
 
   const secrets = $derived($secretsStore.secrets)
 
-  let editingId = $state(null)   // secret id being edited, 'new' for the add form
+  // secret id being edited, 'new' for the add form, null when closed
+  let editingId = $state<string | null>(null)
   let name = $state('')
   let value = $state('')
   let provider = $state('')
@@ -27,7 +30,7 @@
   onMount(loadSecrets)
 
   function startAdd() { editingId = 'new'; name = ''; value = ''; provider = ''; isDefault = false; err = '' }
-  function startEdit(s) { editingId = s.id; name = s.name; value = ''; provider = s.provider; isDefault = s.default; err = '' }
+  function startEdit(s: Secret) { editingId = s.id; name = s.name; value = ''; provider = s.provider; isDefault = s.default; err = '' }
   function cancel() { editingId = null; err = '' }
 
   async function refresh() {
@@ -40,7 +43,7 @@
     try {
       if (editingId === 'new') {
         await api.createSecret({ name: name.trim(), value: value.trim(), provider, default: isDefault })
-      } else {
+      } else if (editingId) {
         await api.updateSecret(editingId, {
           name: name.trim(),
           value: value !== '' ? value.trim() : null,  // blank keeps the stored value
@@ -50,11 +53,11 @@
       }
       cancel()
       await refresh()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 
-  async function remove(s) {
+  async function remove(s: Secret) {
     const used = s.used_by?.length
       ? `\n\nUsed by ${s.used_by.length} model${s.used_by.length > 1 ? 's' : ''}: ${s.used_by.join(', ')}.\nThey will fall back to the provider default or env key.`
       : ''
@@ -63,7 +66,7 @@
     try {
       await api.deleteSecret(s.id)
       await refresh()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 </script>

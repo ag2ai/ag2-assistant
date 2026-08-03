@@ -11,7 +11,7 @@
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api/index.ts'
   import { codexOpen } from '../../store.ts'
-  import { getSettings } from './context.svelte.js'
+  import { getSettings } from './context.svelte.ts'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'

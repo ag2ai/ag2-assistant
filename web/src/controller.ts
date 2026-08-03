@@ -11,7 +11,7 @@ import { foldEvent, isBusy, queueMessage } from './project.ts'
 import { nextItemId } from './lib/ids.ts'
 import type { ThreadItem, WireEvent } from './schemas/events.ts'
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
-import { setAccent } from './design/palette.js'
+import { setAccent } from './design/palette.ts'
 import { go, closeAside, route } from './router.ts'
 
 // The two item kinds a voice session streams into (see _voiceTranscript).

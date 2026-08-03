@@ -10,7 +10,7 @@
   import { api } from '../../transport/api/index.ts'
   import { profiles } from '../../store.ts'
   import { getActiveProfileId } from '../../lib/profile.ts'
-  import { getSettings } from './context.svelte.js'
+  import { getSettings } from './context.svelte.ts'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
   import Icon from '../Icon.svelte'
   import WriteSwitch from '../WriteSwitch.svelte'
