@@ -474,10 +474,8 @@ class TaskService:
         if run_id in self._stopping:  # user Stop → the turn returned "" via TurnCancelled
             await self._finish(run_id, RunStatus.CANCELLED)
             return
-        # The cheap-model carve-out (ADR 0025), and not missed wiring: the summary is
-        # distilled from THIS PROFILE's config — never `task.model`, never the Chat
-        # override on the run's thread. A run pinned to an expensive model must not make
-        # its one-sentence outcome cost what the run cost.
+        # The summary is distilled from this profile's config — never `task.model`, never
+        # the Chat override on the run's thread (ADR 0025).
         summary = await summarize_run(
             self._config, task.prompt, reply, agent_factory=self._summary_factory
         )

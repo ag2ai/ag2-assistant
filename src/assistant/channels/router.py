@@ -863,14 +863,19 @@ class ChannelRouter:
 
     # ---- the model the Attached Chat runs on (ADR 0025) ----
 
-    async def _choose_model(self, inbound: InboundMessage, cid: str) -> Outcome:
-        """Apply a model tapped in the picker — the empty id being "Use default"."""
+    def _direct_gateway(self, inbound: InboundMessage):
+        """The Gateway for a `/model` request, or the Outcome that refuses it: the
+        command is direct-only, and needs a running profile behind it."""
         if not inbound.is_direct:
             return Refuse(MODEL_IN_GROUP)
         runtime = self._runtime(inbound)
-        if not isinstance(runtime, tuple):
-            return runtime
-        gateway = runtime[1]
+        return runtime[1] if isinstance(runtime, tuple) else runtime
+
+    async def _choose_model(self, inbound: InboundMessage, cid: str) -> Outcome:
+        """Apply a model tapped in the picker — the empty id being "Use default"."""
+        gateway = self._direct_gateway(inbound)
+        if isinstance(gateway, Outcome):
+            return gateway
         if not cid:
             return await self._set_model(inbound, gateway, None)
         # Only a model that is still offered can be tapped onto a Chat.
@@ -884,9 +889,7 @@ class ChannelRouter:
         what the Chat runs on now. With no Chat Attached the choice is held on the Peer
         as a Pending override instead, for the Chat the next message starts.
 
-        A model that cannot run is refused rather than accepted and failed on the next
-        message — ahead of the chat lookup, so a held choice is held to the same bar as
-        an Attached one and the refusal arrives while the picker is still on screen."""
+        A model that cannot run is refused, held choice and Attached one alike."""
         if model is not None and not model.get("ready", True):
             return Refuse(MODEL_NOT_READY)
         chat = self._attached_chat(inbound)
@@ -933,12 +936,9 @@ class ChannelRouter:
         return f"{named} {PENDING_MODEL}"
 
     async def _model_command(self, inbound: InboundMessage, arg: str) -> Outcome:
-        if not inbound.is_direct:
-            return Refuse(MODEL_IN_GROUP)
-        runtime = self._runtime(inbound)
-        if not isinstance(runtime, tuple):
-            return runtime
-        gateway = runtime[1]
+        gateway = self._direct_gateway(inbound)
+        if isinstance(gateway, Outcome):
+            return gateway
         models = gateway.text_models()
         if not arg:
             if not models:
@@ -1068,9 +1068,7 @@ class ChannelRouter:
             return runtime
         gateway = runtime[1]
 
-        # Taken *before* the Chat is resolved, and never after: starting a Chat attaches
-        # the Peer, and attaching drops what it was holding. This is the one place that
-        # gets to spend it.
+        # Taken before the Chat is resolved: attaching to one drops what the Peer holds.
         chat_model = self._peers.take_pending_model(inbound.connection, inbound.chat_id)
         chat_id = self._chat_for(inbound)
 

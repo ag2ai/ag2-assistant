@@ -22,9 +22,7 @@ class Peer:
     chat: str | None = None  # the Chat it is Attached to, if any
     chats: list[str] = field(default_factory=list)  # every Chat it has spoken in
     # The Pending override (ADR 0025): a Text model chosen while Attached to nothing,
-    # which the next message's Chat is born on. It lives here because a Channel has no
-    # client to hold an unsent choice in. Consumed by that Chat, dropped on detach or a
-    # Profile switch.
+    # which the next message's Chat is born on. Dropped on detach, attach, or a switch.
     pending_model: str | None = None
 
 
@@ -39,8 +37,8 @@ def _peer(entry: dict) -> Peer:
         profile=entry.get("profile"),
         chat=entry.get("chat"),
         chats=list(chats) if isinstance(chats, list) else [],
-        # Absent on every entry written before the Pending override existed, which reads
-        # the same as holding nothing — so an upgrading install needs no migration.
+        # Absent on an entry written before the Pending override existed, and absent
+        # reads as holding nothing.
         pending_model=entry.get("pending_model") or None,
     )
 
@@ -151,10 +149,8 @@ class PeerStore:
         """Attach this conversation to ``chat``, creating nothing. The Chat joins the
         Peer's own, so a Task started in it still delivers back to this conversation.
 
-        A Pending override belongs to a Peer Attached to nothing, so attaching drops it:
-        held alongside a Chat it could never be spent, since only ``detach`` gets back
-        out of that state — and it dropped it too. Callers that mean to hand it to the
-        Chat being started must take it before they get here."""
+        Attaching drops any Pending override: a caller handing it to the Chat it is
+        attaching must take it first."""
         entries = self._load()
         index = _index(entries, connection, chat_id)
         current = (
@@ -194,9 +190,8 @@ class PeerStore:
         return chat
 
     def set_pending_model(self, connection: str, chat_id: str, model: str) -> Peer:
-        """Hold ``model`` for the Chat this conversation's next message starts, dropping
-        what it held for the empty string. Recording it makes the conversation known,
-        the way selecting a profile does."""
+        """Hold ``model`` for the Chat this conversation's next message starts, the empty
+        string dropping what it held. Recording it makes the conversation known."""
         entries = self._load()
         index = _index(entries, connection, chat_id)
         current = _peer(entries[index]) if index is not None else Peer(connection, chat_id)

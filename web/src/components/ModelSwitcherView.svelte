@@ -22,11 +22,8 @@
     usable = () => true,
     down = false,           // open the menu downward (header-mounted) vs up (composer)
     inherited = false,      // the active selection is inherited (no override of its own)
-    inheritedTag = true,    // suffix the closed button with "inherited" when it is.
-                            // The composer turns this off: its button promises the
-                            // model your next message runs on, and nothing else —
-                            // where that model came from is the open menu's job
-                            // (which row carries the check). ADR 0025.
+    closedBadges = true,    // draw the "inherited" suffix and the readiness dot on the
+                            // closed button; the composer draws the model alone (ADR 0025)
     defaultEntry = null,    // { label, sub } → show a "use install default" item, else null
     emptyLabel = 'No models configured',
     onEmpty,                // () => void (empty-state click)
@@ -70,8 +67,10 @@
         {#if activeConfig}
           <BrandMark brand={brandFor(activeConfig)} size={MARK_SIZE} />
           <span class="modelsw-name">{activeConfig.name}</span>
-          {#if inherited && inheritedTag}<span class="modelsw-tag">inherited</span>{/if}
-          <span class="modelsw-dot" class:warn={!usable(activeConfig)}></span>
+          {#if closedBadges}
+            {#if inherited}<span class="modelsw-tag">inherited</span>{/if}
+            <span class="modelsw-dot" class:warn={!usable(activeConfig)}></span>
+          {/if}
         {:else}
           <span class="modelsw-name muted">{placeholder}</span>
         {/if}

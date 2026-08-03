@@ -289,13 +289,8 @@ class Gateway:
         )
 
     def _agent_for(self, llm_config_id: str | None):
-        """The turn's agent: the profile default, or a cached per-LLM-config agent
-        when a task pins a model. Unknown ids fall back to the default (the task
-        may reference a since-deleted configuration — degrade, don't fail).
-
-        This is the LAST layer's degradation, not the general one: a dangling Chat
-        override is already dropped in ``_resolve_turn_model``, which walks it down to
-        the next layer instead (ADR 0025) — falling back here would skip the Task."""
+        """The turn's agent: the profile default, or a cached per-LLM-config agent when
+        a task pins a model. An id naming no configuration falls back to the default."""
         if not llm_config_id:
             return self._agent
         agent = self._model_agents.get(llm_config_id)
@@ -318,35 +313,19 @@ class Gateway:
     async def _resolve_turn_model(
         self, chat_id: str, llm_config_id: str | None, chat_model: str = ""
     ) -> str | None:
-        """The shared model configuration this turn runs on: env pin > an explicitly
-        passed ``llm_config_id`` > Chat override > the Task's model (a Run's thread only)
-        > the profile/install-wide Active, which is None (ADR 0025).
+        """The shared model configuration this turn runs on: env pin > ``llm_config_id``
+        > Chat override > the Task's model (a Run's thread only) > None, the Active.
 
-        ``llm_config_id`` is a caller naming the model outright — today only the Task
-        service, for a Run's own turn. It outranks the Chat override: overriding a Run's
-        thread retargets the follow-ups you type there, never the automated work the Task
-        was configured to do. A manual reply passes nothing and resolves down the chain,
-        where the Chat override does outrank the Task's model.
-
-        ``chat_model`` is a selection a client made before this Chat existed; it sits at
-        the Chat-override layer, but only for the turn that CREATES the Chat (which then
-        records it — see ``_ensure_transcript_stub``). A Chat that already exists has
-        already had its say, whether that say was "inherit" or a model of its own; a
-        per-message model is deliberately not a thing (ADR 0025).
-        """
+        ``chat_model`` is a client's selection for a Chat that does not exist yet, and
+        applies only to the turn that creates it (ADR 0025)."""
         if self._config.llm.env_pinned:
             return None
         if llm_config_id:
             return llm_config_id
         doc = await self._read_chat_doc(chat_id, "chat model read")
         chosen = doc.get("model") or (chat_model.strip() if not doc else "")
-        # A DANGLING override — its configuration was deleted — is no longer the Chat's
-        # say, so it degrades to the layer directly beneath it (in a Run's thread, the
-        # Task's model) rather than all the way to the profile default. Resolving it
-        # here rather than in ``_agent_for`` is also what keeps ``effective_model``
-        # honest: both read the same answer. A configuration that still exists but
-        # cannot run (no Secret) is NOT dangling and is deliberately not rescued — the
-        # turn fails as an unusable install-wide Active does (ADR 0025).
+        # A dangling override — its configuration deleted — degrades to the layer
+        # directly beneath it. One that exists but cannot run is not dangling.
         override = LlmConfigStore(self._config.paths).resolved_override(chosen)
         return override or await self._task_model_for_stream(chat_id) or None
 
@@ -568,10 +547,8 @@ class Gateway:
         the agent's structured events (tool calls, task cards, deliverables, …) raw
         as they're emitted — the voice channel forwards them so its client folds
         them with the same reducer the text path uses. Conversation/audio events are
-        omitted (voice renders those itself). `llm_config_id` is a task's chosen model,
-        the outermost layer of `_resolve_turn_model` below an env pin — which settles this
-        turn's model here, once. Naming it means "run exactly this", so a Run's own turn
-        is unmoved by an override set on its thread (ADR 0025).
+        omitted (voice renders those itself). `llm_config_id` names a task's chosen model
+        outright, and outranks the Chat override in `_resolve_turn_model` (ADR 0025).
         `task_id`, when this turn is a task run, scopes any command grant
         the turn mints via "always allow" to that task (survives its future runs)
         instead of persisting it globally; when omitted it is auto-resolved from
@@ -580,9 +557,8 @@ class Gateway:
         folder-grant resolution for that turn. `origin` names the Peer this message
         was written from, when a Channel wrote it — the mirror never sends a Peer its
         own turn back (ADR 0020). `attachment_names` are what those attachments are
-        called, so the mirror can name a file instead of carrying it. `chat_model` is a
-        model chosen in a client before this Chat existed — adopted as the Chat's own
-        override by the message that creates it, ignored once it exists (ADR 0025).
+        called, so the mirror can name a file instead of carrying it. `chat_model` becomes
+        the override of the Chat this message creates, and is ignored on one that exists.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -923,9 +899,7 @@ class Gateway:
         Called under the chat lock, so it never races the completion write. Best-
         effort: a persistence hiccup here must not fail the user's turn.
 
-        ``chat_model`` is a model the user picked in a client before this Chat existed
-        (ADR 0025): the Chat is born already overridden to it, so the choice survives
-        the reload that the client-side one deliberately does not."""
+        ``chat_model`` is recorded as the new Chat's own override (ADR 0025)."""
         if self._writer is None or self._event_store is None:
             return
         path = self._transcript_path(chat_id)
@@ -976,8 +950,8 @@ class Gateway:
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
         try:
-            # Deliberate carve-out (ADR 0025): the titler takes the PROFILE's config,
-            # never the turn's — a Chat override does not reach the cheap model.
+            # The titler takes the profile's config, never the turn's: a Chat override
+            # does not reach the cheap model (ADR 0025).
             title = await title_mod.generate_title(
                 self._config, user_text, reply_text, agent_factory=self._title_factory
             )
@@ -1199,9 +1173,10 @@ class Gateway:
         return removed
 
     async def chat_model(self, chat_id: str) -> str:
-        """This chat's Chat override — the model configuration it runs on whatever is
-        Active. '' when it inherits (no override recorded), including unknown chats."""
-        return (await self._read_chat_doc(chat_id, "chat model read")).get("model") or ""
+        """This chat's Chat override — '' when it inherits, when the chat is unknown, or
+        when the override dangles, which is what the turn resolves it to (ADR 0025)."""
+        doc = await self._read_chat_doc(chat_id, "chat model read")
+        return LlmConfigStore(self._config.paths).resolved_override(doc.get("model"))
 
     def text_models(self) -> list[dict]:
         """The install's shared Text models as a client offering one to a Chat reads

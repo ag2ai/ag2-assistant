@@ -157,11 +157,21 @@ class FakeGateway:
     def text_models(self) -> list[dict]:
         return list(self.models)
 
+    def _live(self, cid: str) -> str:
+        """``cid`` when a model of that id is still configured, else '' — the real
+        gateway drops a dangling override rather than reporting it."""
+        return cid if any(m["id"] == cid for m in self.models) else ""
+
     async def chat_model(self, chat_id: str) -> str:
-        return self.overrides.get(chat_id, "")
+        return self._live(self.overrides.get(chat_id, ""))
 
     async def effective_model(self, chat_id: str) -> str:
-        return self.overrides.get(chat_id) or self.inherited.get(chat_id) or self.active_model
+        chosen = self._live(self.overrides.get(chat_id, ""))
+        return chosen or self.inherited.get(chat_id) or self.active_model
+
+    def delete_model(self, cid: str) -> None:
+        """Drop a model from Settings → Models, leaving any override naming it dangling."""
+        self.models = [m for m in self.models if m["id"] != cid]
 
     async def update_chat(self, chat_id: str, *, title=None, starred=None, model=None) -> bool:
         if chat_id not in self.chats:
@@ -1303,6 +1313,17 @@ async def test_status_names_the_model_this_chat_was_given(paths):
 async def test_status_marks_an_inherited_model_as_the_default(paths):
     """A Chat that chose nothing follows whatever is Active, so a later switch moves it."""
     router, _gateway = await _attached_to_a_chat(paths)
+
+    outcome = await router.handle(_inbound("/status"))
+    assert f"Model: Fast {INHERITED_MODEL}" in outcome.text
+
+
+async def test_status_marks_a_chat_whose_chosen_model_was_deleted_as_a_default(paths):
+    """A deleted model is no longer the Chat's say, so /status must not assert a choice
+    the turn no longer honours — it reports the default it has fallen back to."""
+    router, gateway = await _attached_to_a_chat(paths)
+    await router.handle(_inbound("/model Deep"))
+    gateway.delete_model("c_deep")
 
     outcome = await router.handle(_inbound("/status"))
     assert f"Model: Fast {INHERITED_MODEL}" in outcome.text

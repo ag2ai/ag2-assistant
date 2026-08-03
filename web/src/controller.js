@@ -103,9 +103,8 @@ export function send(text, attachments = []) {
   if (!client || (!text.trim() && !attachments.length)) return
   thread.update((t) => ({ ...t, busy: true }))
   const t = get(thread)
-  // A model chosen in the composer before this chat existed rides the message that
-  // creates it — there was no chat to PATCH at the time (ADR 0025). Empty for every
-  // other turn: an existing chat's override is already the server's to resolve.
+  // A model chosen before this chat existed rides the message that creates it; empty
+  // for every other turn, whose override the server already resolves (ADR 0025).
   let model = ''
   const cm = get(chatModel)
   if (cm.chatId === t.chat) {

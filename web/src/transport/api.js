@@ -296,9 +296,7 @@ export const api = {
   chats: () => j('GET', P('/chats')).then((d) => d.chats || []),
   deleteChat: (id) => j('DELETE', P('/chats/' + encodeURIComponent(id))),
   // One chat: {chat_id, messages, model (its Chat override, '' = inherits),
-  // effective_model (what the next message runs on — the server resolves the chain,
-  // so the composer's switcher needs no second call)}. Unknown chats answer with an
-  // empty transcript, which is exactly the state of one not created yet.
+  // effective_model}. An unknown chat answers with an empty transcript.
   chat: (id) => j('GET', P('/chats/' + encodeURIComponent(id))),
   // Partial chat-metadata update: {title?, starred?, model?} (absent = unchanged;
   // model '' clears the Chat override back to inheriting).

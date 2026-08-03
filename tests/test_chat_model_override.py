@@ -145,13 +145,13 @@ async def test_the_override_survives_a_gateway_restart(paths, gw):
 
 
 async def test_an_override_naming_a_deleted_model_falls_back_silently(paths, gw):
-    """A dangling override degrades to the Active model, and is left in the doc —
-    deleting a model never rewrites the chats that referenced it."""
+    """A dangling override degrades to the Active model, and reads as no override at
+    all — so every surface renders the model the turn actually ran on."""
     await gw.send_message("hi", chat_id="c1")
     await gw.update_chat("c1", model="c_deleted")
 
     assert await gw.send_message("hi", chat_id="c1") == "model-a"
-    assert await gw.chat_model("c1") == "c_deleted"
+    assert await gw.chat_model("c1") == ""
     # …and what /status and the WebUI render agrees with what the turn ran on.
     assert await gw.effective_model("c1") == _ids(paths)[0]
 
@@ -422,7 +422,7 @@ async def test_a_dangling_override_in_a_run_thread_falls_to_the_task_model(paths
         await gw.update_chat(stream, model="c_deleted")
         assert await gw.send_message("and?", chat_id=stream) == "model-b"
         assert await gw.effective_model(stream) == b
-        assert await gw.chat_model(stream) == "c_deleted"  # left in the doc, unswept
+        assert await gw.chat_model(stream) == ""  # no longer the Chat's say
     finally:
         await gw.close()
 
@@ -652,6 +652,20 @@ def test_patch_chat_model_sets_clears_and_reports(profile_app):
 
     # the empty string clears it, back to inheriting the Active model
     assert client.patch(api(pid, "/chats/c1"), json={"model": ""}).status_code == 200
+    body = client.get(api(pid, "/chats/c1")).json()
+    assert body["model"] == "" and body["effective_model"] == a
+
+
+def test_the_get_reports_a_deleted_override_as_inheriting(profile_app):
+    """A housekeeping delete in Settings → Models never breaks the switcher: the GET
+    reports the Chat as inheriting, so the closed button names the model it will run
+    on rather than falling to its placeholder."""
+    client, pid = profile_app
+    a, b = _api_models(client)
+    client.post(api(pid, "/message"), json={"text": "hi", "chat_id": "c1"})
+    client.patch(api(pid, "/chats/c1"), json={"model": b})
+
+    assert client.delete(f"/api/llm-configs/{b}").status_code == 200
     body = client.get(api(pid, "/chats/c1")).json()
     assert body["model"] == "" and body["effective_model"] == a
 

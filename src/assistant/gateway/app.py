@@ -282,9 +282,8 @@ class MessageRequest(BaseModel):
     text: str
     chat_id: str = "default"
     platform: str | None = None
-    # No per-message model here, deliberately (ADR 0025 "Out of Scope"): a model chosen
-    # in a client before its Chat existed rides the WebSocket frame the WebUI sends
-    # turns on, and a Channel resolves its own Pending override in the router.
+    # No model field: a choice made before the Chat existed rides the WebSocket frame,
+    # and a Channel resolves its own Pending override in the router (ADR 0025).
 
 
 class MessageResponse(BaseModel):
