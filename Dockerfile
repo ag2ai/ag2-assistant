@@ -29,17 +29,19 @@ ENV VIRTUAL_ENV=/opt/venv \
 WORKDIR /app
 COPY . .
 
-# Optional provider libraries to bake in, space-separated (`anthropic`, `ollama`):
-#   docker build --build-arg PROVIDER_EXTRAS="ollama" .
-ARG PROVIDER_EXTRAS=""
-
 # Reproducible install from the committed uv.lock: exact pinned versions, no
 # re-resolution. --no-editable installs the project as a wheel (nothing depends on
-# the /app source at runtime); --extra google adds Gmail/Calendar/Drive. Channels
-# (Telegram/Discord/Slack) and voice are already in the base deps. `uv sync`
-# creates /opt/venv with no pip/setuptools — minimal from the start.
-RUN uv sync --frozen --no-editable --extra google \
-    $(for e in $PROVIDER_EXTRAS; do printf -- '--extra %s ' "$e"; done)
+# the /app source at runtime). Every optional extra is baked in: google adds
+# Gmail/Calendar/Drive, anthropic/ollama add the provider client libraries. Those
+# two are opt-in for pip installs, but NOT here — the runtime is non-root with a
+# pip-less venv, so a user who hits "needs the anthropic extra" inside the
+# container has no way to fix it short of rebuilding. They cost 3 packages with
+# no transitive fan-out (anthropic, ollama, fix-busted-json — every other dep is
+# already pulled in), which is cheaper than the dead end. Channels
+# (Telegram/Discord/Slack) and
+# voice are already in the base deps. `uv sync` creates /opt/venv with no
+# pip/setuptools — minimal from the start.
+RUN uv sync --frozen --no-editable --extra google --extra anthropic --extra ollama
 
 # Slim the venv (~280MB saved) — all removals verified safe by booting the image:
 #   1. Vertex AI / Google Cloud SDK: ag2[gemini] declares google-cloud-aiplatform

@@ -95,16 +95,16 @@ live in named volumes, so they survive `docker compose down` and restarts.
 
 #### Anthropic / Ollama model types
 
-Their provider libraries aren't in the base image, and a `pip install` inside a running
-container is lost the moment it's recreated — so bake them in at build time:
+Nothing to do: their provider libraries are baked into the image — both the local build
+and the prebuilt GHCR one — because a `pip install` inside a running container is lost
+the moment it's recreated (and the runtime is non-root with a pip-less venv, so it
+wouldn't even succeed). Settings → Models flags any type whose library is missing; in
+Docker none should be flagged.
 
-```bash
-PROVIDER_EXTRAS="ollama" docker compose up -d --build   # or "anthropic ollama"
-```
-
-Compose passes it through to the `PROVIDER_EXTRAS` build arg. This needs a local build:
-the prebuilt GHCR image below ships neither library. Settings → Models flags any type
-whose library is missing, so you can tell at a glance whether it took.
+Ollama still needs a reachable server, and `localhost` inside the container is the
+container itself — point its host at the Docker host instead
+(`http://host.docker.internal:11434`; on Linux that name needs the `extra_hosts` entry
+noted below).
 
 ### Prebuilt image
 

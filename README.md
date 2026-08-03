@@ -104,12 +104,7 @@ Installed with the one-line script or `uv tool install`? Add the extra to that e
 uv tool install --with "ag2-assistant[ollama]" "git+https://github.com/ag2ai/ag2-assistant.git"
 ```
 
-Running in Docker? A `pip install` inside a container doesn't survive recreation, so bake it into the image with the `PROVIDER_EXTRAS` build arg (space-separated, and it needs `build:` rather than the prebuilt image):
-
-```bash
-docker build --build-arg PROVIDER_EXTRAS="anthropic ollama" -t ag2-assistant .
-PROVIDER_EXTRAS="ollama" docker compose up -d --build
-```
+Running in Docker? Nothing to install — the image already carries both libraries.
 
 #### Claude Code (subscription) as the main model
 
