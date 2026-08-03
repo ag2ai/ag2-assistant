@@ -1,5 +1,8 @@
+import { nextItemId } from './ids.ts'
+
 let _seq = 0
-const nextId = () => `a2ui-${Date.now()}-${++_seq}`
+// Fallback surface id when a message omits one — a surface id is a string.
+const nextSurfaceId = () => `a2ui-${Date.now()}-${++_seq}`
 
 export const BETA_CATALOG_ID = 'https://ag2.ai/assistant/a2ui/catalog.json'
 
@@ -181,7 +184,7 @@ function ensureSurface(items, surfaceId, catalogId, version) {
   let item = items.find((i) => i.kind === 'a2ui' && i.surfaceId === surfaceId)
   if (!item) {
     item = {
-      id: nextId(),
+      id: nextItemId(),
       kind: 'a2ui',
       version: version || 'v1.0',
       catalogId: catalogId || BETA_CATALOG_ID,
@@ -202,13 +205,13 @@ export function applyA2UIMessage(items, message) {
   const version = message.version || 'v1.0'
   if (message.createSurface) {
     const s = message.createSurface
-    const item = ensureSurface(items, s.surfaceId || nextId(), s.catalogId || BETA_CATALOG_ID, version)
+    const item = ensureSurface(items, s.surfaceId || nextSurfaceId(), s.catalogId || BETA_CATALOG_ID, version)
     item.messages.push(message)
     return item
   }
   if (message.updateComponents) {
     const u = message.updateComponents
-    const item = ensureSurface(items, u.surfaceId || nextId(), undefined, version)
+    const item = ensureSurface(items, u.surfaceId || nextSurfaceId(), undefined, version)
     const components = Array.isArray(u.components) ? u.components : []
     item.components = components
     const root = components.find((c) => c.id === 'root') || components[0] || {}
@@ -220,7 +223,7 @@ export function applyA2UIMessage(items, message) {
   }
   if (message.updateDataModel) {
     const u = message.updateDataModel
-    const item = ensureSurface(items, u.surfaceId || nextId(), undefined, version)
+    const item = ensureSurface(items, u.surfaceId || nextSurfaceId(), undefined, version)
     if (!u.path || u.path === '/') item.data = typeof u.value === 'object' && u.value ? u.value : { value: u.value }
     else item.data[u.path.replace(/^\//, '')] = u.value
     item.messages.push(message)

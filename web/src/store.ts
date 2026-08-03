@@ -46,7 +46,7 @@ export type Thread = {
 }
 
 // The active thread: a projection of one AG2 stream. `items` are folded from
-// `{type,data}` events (see project.js). `kind` is 'chat' or 'task'.
+// `{type,data}` events (see project.ts). `kind` is 'chat' or 'task'.
 export const thread: Writable<Thread> = writable({
   id: null,
   kind: 'chat',

@@ -22,7 +22,7 @@
 
   // Interleave day breakpoints: each row carries `sep`, the divider label to show
   // above the first item of a new calendar day (null otherwise). Items carry `at`
-  // (the source event's created_at, Unix seconds — see project.js). See dayRows.
+  // (the source event's created_at, Unix seconds — see project.ts). See dayRows.
   const rows = $derived(dayRows($thread.items))
   const showThinking = $derived($thread.busy && !(tail && tail.kind === 'agent' && tail.streaming))
 

@@ -6,7 +6,8 @@ import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, prof
 import { StreamClient } from './transport/stream.ts'
 import { VoiceController } from './transport/voice.ts'
 import { api } from './transport/api/index.ts'
-import { foldEvent, isBusy, queueMessage } from './project.js'
+import { foldEvent, isBusy, queueMessage } from './project.ts'
+import { nextItemId } from './lib/ids.ts'
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.js'
 import { setAccent } from './design/palette.js'
 import { go, closeAside, route } from './router.ts'
@@ -30,8 +31,7 @@ let voiceCtl = null
 let _voiceActive = false        // a voice session is running (mic state)
 let _suppressStream = false     // suppress stream folding while voice drives the thread,
                                 // and through the stop→reload window (cleared only by openThread)
-let _vitem = null, _vrole = null, _vseq = 0
-const _vkey = () => 'v' + ++_vseq
+let _vitem = null, _vrole = null
 
 // Buffer raw {type,data} events for the AG2 Inspector (bounded ring). The stream
 // already delivers every AG2 event here — we just keep them so the inspector can
@@ -77,7 +77,7 @@ export function openThread(kind, id) {
       return { ...t, items: t.items, busy: true }
     }),
     onError: (m) => thread.update((t) => {
-      t.items.push({ id: Date.now(), kind: 'note', icon: 'x', text: m.message || 'error', alert: true })
+      t.items.push({ id: nextItemId(), kind: 'note', icon: 'x', text: m.message || 'error', alert: true })
       return { ...t, busy: false }
     }),
   }).connect()
@@ -191,13 +191,13 @@ function _voiceTranscript(role, text, final) {
   thread.update((t) => {
     if (final && role === 'user') {
       if (_vitem && _vrole === 'user') _vitem.text = text
-      else { _vitem = { id: _vkey(), kind: 'user', text, voice: true }; t.items.push(_vitem) }
+      else { _vitem = { id: nextItemId(), kind: 'user', text, voice: true }; t.items.push(_vitem) }
       _vitem = null; _vrole = null
       return { ...t, items: t.items, busy: true }   // thinking until the agent replies
     }
     if (_vitem && _vrole === role) { _vitem.text += text }
     else {
-      _vitem = { id: _vkey(), kind: role === 'user' ? 'user' : 'agent', text, voice: true }
+      _vitem = { id: nextItemId(), kind: role === 'user' ? 'user' : 'agent', text, voice: true }
       t.items.push(_vitem); _vrole = role
     }
     return { ...t, items: t.items }

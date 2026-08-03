@@ -67,7 +67,8 @@ export const EventData = {
     data: z.record(z.string(), z.unknown()).optional(),
   }),
   A2UIActionSubmitted: z.object({ surface_id: z.string() }),
-  A2UIMessageEvent: z.object({ message: z.unknown().optional() }),
+  // ag2 A2UIMessageEvent carries exactly one canonical A2UI message dict.
+  A2UIMessageEvent: z.object({ message: z.record(z.string(), z.unknown()) }),
   Attachment: z.object({ path: z.string(), name: z.string().optional() }),
   InquiryRaised: z.object({
     inquiry_id: z.string(),
@@ -93,13 +94,17 @@ export const EventData = {
   }),
 } as const
 
-// Every event also carries the production time the reducer stamps items with.
+// gateway/wire.py to_wire sends exactly {type, data} — nothing else.
 export const WireEvent = z.object({
   type: z.string(),
   data: z.record(z.string(), z.unknown()).default({}),
-  created_at: z.number().optional(),
 })
 export type WireEvent = z.infer<typeof WireEvent>
+
+// Every event's data carries its production time (ag2 BaseEvent.created_at, Unix
+// seconds); the reducer stamps the items an event produces with it.
+export const EventMeta = z.object({ created_at: z.number().optional() })
+export type EventMeta = z.infer<typeof EventMeta>
 
 // The event names project.ts folds; anything else is ignored by design.
 export const HANDLED_EVENTS = [
@@ -182,10 +187,10 @@ export type ClientFrame =
 // the wire, so they are plain types rather than schemas.
 export type Feedback = { sentiment?: string; reason?: string } | null
 
-// Temporary union: three allocators write into one keyed list today — project.ts
-// nid() (numbers), controller.js _vkey() ('v{n}' voice bubbles) and Date.now()
-// (error notes). Tasks 15/16 share one allocator and narrow this back to number.
-type ItemBase = { id: number | string; at?: number }
+// `id` keys the rendered list; every producer takes it from lib/ids.ts so items
+// from the reducer, the controller and a2ui.js never collide. `at` is the source
+// event's created_at (Unix seconds).
+type ItemBase = { id: number; at?: number }
 
 // One card per tool call the thread renders alongside the chips. lib/toolcards.js
 // builds them; task 18 replaces this with that module's own union.

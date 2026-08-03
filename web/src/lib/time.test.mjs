@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { foldEvent } from '../project.js'
+import { foldEvent } from '../project.ts'
 import { dayKey, fmtDay, fmtDayShort, dayRows, taskRecencyAt } from './time.js'
 
 // Local noon of (today + offset), as Unix seconds — matches AG2 `created_at`.

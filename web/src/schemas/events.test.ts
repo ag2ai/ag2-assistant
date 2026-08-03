@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { EventData, ServerFrame, WireEvent } from './events.ts'
+import { EventData, EventMeta, ServerFrame, WireEvent } from './events.ts'
 
 test('WireEvent keeps a known event and defaults its data', () => {
   const ev = WireEvent.parse({ type: 'ModelMessageChunk', data: { content: 'hi' } })
@@ -19,8 +19,9 @@ test('WireEvent tolerates a fully qualified AG2 event name', () => {
   assert.equal(ev.type, 'ag2.events.ModelResponse')
 })
 
-test('WireEvent carries the production stamp the reducer copies onto items', () => {
-  assert.equal(WireEvent.parse({ type: 'Attachment', created_at: 1754035200 }).created_at, 1754035200)
+test('EventMeta reads the production stamp the reducer copies onto items', () => {
+  assert.equal(EventMeta.parse({ path: '/a', created_at: 1754035200 }).created_at, 1754035200)
+  assert.equal(EventMeta.parse({ path: '/a' }).created_at, undefined)
 })
 
 test('EventData narrows a ToolCallsEvent payload to its calls', () => {
