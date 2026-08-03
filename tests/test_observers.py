@@ -5,6 +5,7 @@ from contextlib import ExitStack
 
 from ag2.context import ConversationContext
 from ag2.events import (
+    BuiltinToolCallEvent,
     ModelResponse,
     ObserverAlert,
     Severity,
@@ -14,12 +15,27 @@ from ag2.events import (
 from ag2.observers import LoopDetector
 from ag2.stream import MemoryStream
 
-from assistant.observers import SilenceWatchdog, ToolChurnObserver, build_observers
+from assistant.observers import (
+    NativeToolLoopDetector,
+    SilenceWatchdog,
+    ToolChurnObserver,
+    build_observers,
+)
 
 
 def _calls(n, name="gmail_search"):
     # Varied arguments (the flail LoopDetector misses because it wants identical args).
     return [ToolCallEvent(name=name, arguments=f'{{"q":{i}}}') for i in range(n)]
+
+
+def _repeat(n, event_type=ToolCallEvent, name="read_file", arguments='{"path":"a"}'):
+    """`n` byte-identical calls — what the LoopDetector is built to catch.
+
+    The real stream delivers these one at a time (`EventWatch` calls its observer
+    with a single-element list per event), so feed them the same way.
+    """
+    kwargs = {"id": "t1"} if event_type is BuiltinToolCallEvent else {}
+    return [event_type(name=name, arguments=arguments, **kwargs) for _ in range(n)]
 
 
 async def test_tool_churn_alerts_at_threshold_then_once():
@@ -45,11 +61,52 @@ async def test_tool_churn_resets_after_a_final_response():
     assert await obs.process(_calls(3), None) is not None
 
 
+# --- NativeToolLoopDetector ------------------------------------------------
+#
+# ACP forwards the inner CLI agent's tool calls as `BuiltinToolCallEvent`s keyed
+# on (title, rawInput). rawInput is optional in the ACP schema, so distinct shell
+# commands collapse onto one key and read as a loop. Those must not reach the
+# detector; our own tools still must.
+
+
+async def _feed(obs, events):
+    """Deliver events one at a time, as `EventWatch` does, returning the alerts."""
+    alerts = [await obs.process([e], None) for e in events]
+    return [a for a in alerts if a is not None]
+
+
+async def test_loop_detector_still_flags_our_own_repeated_tool():
+    alerts = await _feed(NativeToolLoopDetector(), _repeat(3))
+    assert len(alerts) == 1
+    assert alerts[0].severity == Severity.WARNING
+    assert "read_file" in alerts[0].message
+
+
+async def test_loop_detector_ignores_acp_delegated_calls():
+    """Three identical `Terminal` calls from an ACP agent are not our loop."""
+    obs = NativeToolLoopDetector()
+    events = _repeat(3, BuiltinToolCallEvent, name="Terminal", arguments="{}")
+    assert await _feed(obs, events) == []
+    # ...and a *fourth* stays quiet too — they never entered the window at all.
+    assert await _feed(obs, events) == []
+
+
+async def test_acp_calls_do_not_break_detection_of_our_own_loop():
+    """Delegated calls are dropped before the window, not merely un-alerted — so
+    they cannot pad it and hide a real loop in our own tools."""
+    obs = NativeToolLoopDetector()
+    acp = _repeat(1, BuiltinToolCallEvent, name="Terminal", arguments="{}")[0]
+    ours = _repeat(3)
+    alerts = await _feed(obs, [ours[0], acp, ours[1], acp, ours[2]])
+    assert len(alerts) == 1 and "read_file" in alerts[0].message
+
+
 def test_build_observers_includes_loop_churn_and_watchdog():
 
     obs = build_observers()
     kinds = {type(o).__name__ for o in obs}
-    assert {"LoopDetector", "ToolChurnObserver", "SilenceWatchdog"} <= kinds
+    assert {"NativeToolLoopDetector", "ToolChurnObserver", "SilenceWatchdog"} <= kinds
+    # still an AG2 LoopDetector — we only narrow which events reach it
     assert any(isinstance(o, LoopDetector) for o in obs)
 
 
