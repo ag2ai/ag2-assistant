@@ -1,7 +1,9 @@
 <script>
   // First-run welcome: a warm multi-step flow. Now install-level (§5.5): one flow
   // can create SEVERAL profiles. Steps: Welcome (name) → Connect (global provider
-  // keys + model) → Profiles (the multi-profile creation LOOP, ProfileForm reused
+  // keys + model, SKIPPABLE — Settings → Models is the same flow, and an install may
+  // already carry keys from its environment) → Profiles (the multi-profile creation
+  // LOOP, ProfileForm reused
   // from the "+" chip modal so they can't drift) → Set up (ONE page PER created
   // profile: a Folder (granted read to it) + its focus areas, both skippable) → Ready. POST
   // /api/onboarded fires once, at flow completion.
@@ -249,14 +251,17 @@
   const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
   // Connect is satisfied by a provider key, a ChatGPT-subscription sign-in, or a
   // working CLI login. The CLI arm is scoped to the ACTIVE tab on purpose: the active
-  // tab is what `chosenConfig` creates, so an installed adapter must not unlock
-  // Continue while the user sits on the Gemini tab with no key typed.
+  // tab is what `chosenConfig` creates, so an installed adapter must not claim a
+  // connection while the user sits on the Gemini tab with no key typed.
+  //
+  // This is NOT a gate — Connect is skippable (Settings → Models is the same flow, and
+  // a Docker install may already carry keys in the environment). It only decides
+  // whether Continue reads "Continue" or "Skip for now", and whether finish() has a
+  // model to activate.
   const canConnect = $derived(hasKey || !!codex?.signed_in || cliReady)
-  // Gate per step: Connect needs a key/sign-in; Profiles needs ≥1 created. The Set up
-  // step is fully skippable, so it never gates Continue.
-  const canNext = $derived(
-    (step !== CONNECT_STEP || canConnect) && (step !== PROFILES_STEP || created.length > 0)
-  )
+  // Gate per step: only Profiles needs ≥1 created. Connect and Set up are both
+  // skippable, so neither gates Continue.
+  const canNext = $derived(step !== PROFILES_STEP || created.length > 0)
 
   const back = () => {
     if (step === SETUP_STEP && setupIdx > 0) { enterSetup(setupIdx - 1); return }
@@ -322,12 +327,18 @@
   // ChatGPT-subscription pill maps to the openai_subscription type (no key — the token
   // rides from codex_auth at call time); a CLI tab maps to its ACP type, with an empty
   // model meaning "whatever the CLI itself is set to".
+  //
+  // A key tab describes nothing until ITS key is filled: the step is skippable, and a
+  // model pill is pre-selected on every key tab, so without this a skipped Connect
+  // would still activate a keyless Gemini config.
   function chosenConfig() {
     if (currentTab.cli) {
       if (!cliReady) return null
       const type = CLI_TYPE[currentTab.cli]
       return { name: TYPE_LABEL[type], type, model: cliModel[currentTab.cli] || '' }
     }
+    if (currentTab.oauth && !codex?.signed_in) return null
+    if (currentTab.keyId && !keys[currentTab.keyId].trim()) return null
     const m = allModels.find((x) => x.label === modelLabel)
     if (!m) return null
     const type =
@@ -338,6 +349,11 @@
           : m.provider
     return { name: m.label, type, model: m.model }
   }
+
+  // What Ready reports under "Model": the config Connect would activate, or nothing at
+  // all when the step was skipped — `modelLabel` always holds a pill, so it can't
+  // stand in for "connected".
+  const chosenLabel = $derived(chosenConfig()?.name || '')
 
   // Persist global keys + the assistant model (targeting the active/first profile),
   // set the install-level onboarded flag ONCE, then enter the app. Per-profile
@@ -453,8 +469,11 @@
             </div>
 
           {:else if step === CONNECT_STEP}
-            <h2>Connect a model</h2>
-            <p class="lead">Add a provider key — or skip keys entirely and run on a subscription you already have: your ChatGPT login, or the Claude Code / Codex CLI. Whatever you choose is stored locally and shared across all your profiles; you can change it anytime in Settings.</p>
+            <div class="onb-optionalhead">
+              <h2>Connect a model</h2>
+              <span class="onb-optional">optional</span>
+            </div>
+            <p class="lead">Add a provider key — or skip keys entirely and run on a subscription you already have: your ChatGPT login, or the Claude Code / Codex CLI. Whatever you choose is stored locally and shared across all your profiles. You can skip this step and connect later in Settings → Models.</p>
 
             <!-- Provider tabs: one panel per provider. The active tab drives which model
                  gets activated on finish; the OAuth tab hosts the ChatGPT sign-in flow. -->
@@ -649,7 +668,7 @@
               </div>
             </div>
             <div class="onb-summary">
-              <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">Model</span><span class="onb-sumval">{modelLabel}</span></div>
+              <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">Model</span><span class="onb-sumval">{chosenLabel || 'Not connected — add one in Settings → Models'}</span></div>
             </div>
             <!-- Per-profile summary: name, accent dot, folder-or-—, focuses-or-—. -->
             <div class="onb-summary">
@@ -682,7 +701,7 @@
       <div class="onb-nav">
         <button class="onb-btn ghost" onclick={back}><Icon name="chevron-left" size={16} /> Back</button>
         <div class="onb-navright">
-          {#if step === CONNECT_STEP && !canConnect}<span class="hint">Add a key, sign in with ChatGPT, or connect a CLI login to continue</span>{/if}
+          {#if step === CONNECT_STEP && !canConnect}<span class="hint">You can connect a model later in Settings → Models</span>{/if}
           {#if step === PROFILES_STEP && !created.length}<span class="hint">Create a profile to continue</span>{/if}
           {#if step === SETUP_STEP}
             <!-- Per-profile setup: Skip (no save) or advance (save + next profile / Ready). -->
@@ -691,7 +710,9 @@
               {setupIdx < created.length - 1 ? 'Next profile' : 'Continue'} <Icon name="chevron-right" size={16} />
             </button>
           {:else if step < STEPS.length - 1}
-            <button class="onb-btn primary" disabled={!canNext} onclick={next}>Continue <Icon name="chevron-right" size={16} /></button>
+            <button class="onb-btn primary" disabled={!canNext} onclick={next}>
+              {step === CONNECT_STEP && !canConnect ? 'Skip for now' : 'Continue'} <Icon name="chevron-right" size={16} />
+            </button>
           {:else}
             <button class="onb-btn primary" disabled={busy} onclick={finish}>Start using AG2 Assistant <Icon name="send" size={15} /></button>
           {/if}
@@ -757,8 +778,8 @@
   .onb-flabel > span:first-child { font-size: var(--text-sm); font-weight: var(--fw-semibold); }
   .onb-flabel .hint { font-size: var(--text-xs); color: var(--text-muted); }
   .hint { font-size: var(--text-xs); color: var(--text-muted); }
-  /* A missing adapter / unreachable bridge is the reason Continue stays shut — say it
-     in the same red the Models settings uses for the same class of problem. */
+  /* A missing adapter / unreachable bridge is why this tab can't be the connection —
+     say it in the same red the Models settings uses for the same class of problem. */
   .hint.warn { color: var(--danger); }
 
   .onb-input {
@@ -852,6 +873,15 @@
   .onb-sumval.cap { text-transform: capitalize; }
 
   /* Per-profile setup header + the per-profile Ready summary rows */
+  /* Connect is skippable — say so next to the heading, in the same quiet pill the
+     Set up step uses for its own secondary note. */
+  .onb-optionalhead { display: flex; align-items: center; gap: 10px; }
+  .onb-optional {
+    font-size: var(--text-xs); font-weight: var(--fw-semibold); color: var(--text-muted);
+    background: var(--surface-sunk); border: 1px solid var(--line);
+    border-radius: var(--radius-pill); padding: 3px 10px;
+  }
+
   .onb-setuphead { display: flex; align-items: center; gap: 10px; }
   .onb-setupdot { width: 12px; height: 12px; flex: none; border-radius: var(--radius-pill); background: var(--dot, var(--accent)); }
   .onb-setupprog {
