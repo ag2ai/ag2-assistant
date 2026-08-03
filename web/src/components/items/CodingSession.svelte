@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // "The Workshop" — editorial rendering of a CodingSession A2UI surface: a host
   // CLI coding agent (Claude Code / Codex / OpenCode, driven over ACP) writing
   // code in an approved repo. The masthead shows a COMPACT derived title (the
@@ -6,18 +6,22 @@
   // works, a live strip with a blinking caret carries the state. Then the plan
   // and the working-tree diff as full unified hunks. Shares the .bs editorial
   // shell with the other surfaces.
-  let { data = {} } = $props()
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, CodingFile, CodingPlanStep } from '../../lib/a2ui.ts'
 
-  const agent = $derived(data.agent || 'Coding agent')
-  const directory = $derived(data.directory || '')
-  const task = $derived(String(data.task || 'Coding session'))
-  const status = $derived(String(data.status || 'running').toLowerCase())
-  const summary = $derived(data.summary || '')
-  const error = $derived(data.error || '')
-  const plan = $derived((Array.isArray(data.plan) ? data.plan : []).filter(Boolean))
-  const files = $derived((Array.isArray(data.files) ? data.files : []).filter(Boolean))
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
 
-  const STATUS = {
+  const agent = $derived(str(data.agent) || 'Coding agent')
+  const directory = $derived(str(data.directory))
+  const task = $derived(str(data.task) || 'Coding session')
+  const status = $derived((str(data.status) || 'running').toLowerCase())
+  const summary = $derived(str(data.summary))
+  const error = $derived(str(data.error))
+  const plan = $derived(rows<CodingPlanStep>(data.plan))
+  const files = $derived(rows<CodingFile>(data.files))
+
+  const STATUS: Record<string, { label: string; cls: string } | undefined> = {
     running: { label: 'Working', cls: 'run' },
     done: { label: 'Done', cls: 'ok' },
     failed: { label: 'Failed', cls: 'bad' },
@@ -26,7 +30,7 @@
 
   // Headline = first sentence/line of the task, hard-capped; the h1 is a
   // display face — a multi-paragraph prompt does not belong in it.
-  function titleOf(text) {
+  function titleOf(text: string) {
     const first = text.trim().split('\n', 1)[0]
     const sentence = first.split(/(?<=[.!?…:])\s+/, 1)[0] || first
     return sentence.length > 96 ? sentence.slice(0, 93).trimEnd() + '…' : sentence
@@ -37,10 +41,10 @@
   const totals = $derived(
     files.reduce((a, f) => ({ add: a.add + (f.added || 0), rem: a.rem + (f.removed || 0) }), { add: 0, rem: 0 })
   )
-  const PLAN_MARK = { completed: '✓', in_progress: '▸', pending: '○' }
+  const PLAN_MARK: Record<string, string | undefined> = { completed: '✓', in_progress: '▸', pending: '○' }
 
   // Split a unified-diff string into typed lines for +/- coloring.
-  function lines(hunks) {
+  function lines(hunks: string) {
     return String(hunks || '')
       .split('\n')
       .filter((l, i, a) => !(l === '' && i === a.length - 1))

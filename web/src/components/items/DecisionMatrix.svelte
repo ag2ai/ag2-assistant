@@ -1,17 +1,21 @@
-<script>
+<script lang="ts">
   // "The Verdict" — editorial broadsheet rendering of a DecisionMatrix A2UI
   // surface. Shares the day/night editorial language with NewsWire/MarketBoard/
   // WeatherCard (broadsheet.css .bs shell). Options are columns, criteria are
   // ruled rows; the recommended option gets the accent column and the verdict
   // reads like a pull quote. No ticker — a decision is a considered piece, not
   // a live feed.
-  let { data = {} } = $props()
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, DecisionCriterion, DecisionOption } from '../../lib/a2ui.ts'
 
-  const topic = $derived(data.topic || 'Decision')
-  const options = $derived((Array.isArray(data.options) ? data.options : []).filter(Boolean))
-  const criteria = $derived((Array.isArray(data.criteria) ? data.criteria : []).filter(Boolean))
-  const verdict = $derived(data.verdict || '')
-  const recIdx = $derived(options.findIndex((o) => o && o.name === data.recommended))
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
+
+  const topic = $derived(str(data.topic) || 'Decision')
+  const options = $derived(rows<DecisionOption>(data.options))
+  const criteria = $derived(rows<DecisionCriterion>(data.criteria))
+  const verdict = $derived(str(data.verdict))
+  const recIdx = $derived(options.findIndex((o) => o.name === data.recommended))
   const wins = $derived(options.map((o) => criteria.filter((c) => c.best === o.name).length))
 
   const edition = $derived(
@@ -56,8 +60,8 @@
 
       {#if criteria.some((c) => c.best)}
         <div class="cell crit tally">Criteria won</div>
-        {#each options as o, i}
-          <div class="cell val tally" class:rec={i === recIdx}>{wins[i]} / {criteria.length}</div>
+        {#each wins as won, i}
+          <div class="cell val tally" class:rec={i === recIdx}>{won} / {criteria.length}</div>
         {/each}
       {/if}
     </div>

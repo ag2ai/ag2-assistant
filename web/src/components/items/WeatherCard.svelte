@@ -1,11 +1,14 @@
-<script>
+<script lang="ts">
   // Editorial broadsheet rendering of a WeatherPanel A2UI surface.
   // Shares the "day/night edition" paper language with NewsWire/MarketBoard
   // (tokens/editorial.css, theme-aware via [data-theme]). The WebGPU
   // WeatherBanner is the hero band; rows become a ruled metric grid.
   import WeatherBanner from './WeatherBanner.svelte'
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, WeatherRow } from '../../lib/a2ui.ts'
 
-  let { data = {} } = $props()
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
 
   const WEATHER_CONDITIONS = ['sunny', 'partly-cloudy', 'cloudy', 'foggy', 'rainy', 'thunderstorm', 'snow', 'windy']
 
@@ -14,14 +17,14 @@
       ? String(data.condition).toLowerCase()
       : 'cloudy'
   )
-  const rows = $derived((Array.isArray(data.rows) ? data.rows : []).filter(Boolean))
-  const location = $derived(data.location || 'Forecast')
-  const summary = $derived(data.summary || '')
+  const metrics = $derived(rows<WeatherRow>(data.rows))
+  const location = $derived(str(data.location) || 'Forecast')
+  const summary = $derived(str(data.summary))
   const conditionLabel = $derived(
     condition.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
   )
   const tempText = $derived.by(() => {
-    const r = rows.find((x) => /temp/i.test(x?.label || ''))
+    const r = metrics.find((x) => /temp/i.test(x?.label || ''))
     const m = String(r?.value || '').match(/-?\d+°?/)
     return m ? m[0] : ''
   })
@@ -51,9 +54,9 @@
   <div class="bs-body">
     {#if summary}<p class="deck">{summary}</p>{/if}
 
-    {#if rows.length}
+    {#if metrics.length}
       <div class="grid">
-        {#each rows as r}
+        {#each metrics as r}
           <div class="cell">
             <div class="label">{r.label}</div>
             <div class="val">{r.value}</div>

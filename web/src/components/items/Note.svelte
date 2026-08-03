@@ -1,7 +1,10 @@
-<script>
+<script lang="ts">
   import Icon from '../Icon.svelte'
   import { fmtStamp } from '../../lib/time.ts'
-  let { item } = $props()
+  import type { ThreadItem } from '../../schemas/events.ts'
+
+  type Props = { item: Extract<ThreadItem, { kind: 'note' }> }
+  let { item }: Props = $props()
 </script>
 
 <div class="note" class:alert={item.alert} class:withicon={item.icon} class:pending={item.pending}>

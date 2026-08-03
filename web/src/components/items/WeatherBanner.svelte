@@ -1,15 +1,22 @@
-<script>
+<script lang="ts">
   import { animations } from '../../store.ts'
   import WeatherGlyphBasic from './WeatherGlyphBasic.svelte'
 
-  let { condition = 'cloudy', temperatureText = '', flush = false, zoom = 1 } = $props()
+  type Props = {
+    condition?: string
+    temperatureText?: string
+    flush?: boolean
+    zoom?: number
+  }
+  let { condition = 'cloudy', temperatureText = '', flush = false, zoom = 1 }: Props = $props()
 
   // Effective tier: 'high' needs WebGPU — browsers without it get 'basic'
-  // (animated vector glyphs) rather than a dead gradient.
-  const webgpu = typeof navigator !== 'undefined' && !!navigator.gpu
+  // (animated vector glyphs) rather than a dead gradient. `gpu` is not in lib.dom,
+  // so the probe is a key check rather than a property read.
+  const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator && !!navigator.gpu
   const mode = $derived($animations === 'high' && !webgpu ? 'basic' : $animations)
 
-  const EMOJI = {
+  const EMOJI: Record<string, string | undefined> = {
     sunny: '☀️',
     'partly-cloudy': '⛅',
     cloudy: '☁️',
@@ -22,7 +29,7 @@
   // HTML temperature tone per condition (dark digits on pale skies, light on dark)
   const LIGHT_TEMP = new Set(['rainy', 'thunderstorm'])
 
-  let canvas = $state(null)
+  let canvas: HTMLCanvasElement | undefined = $state()
   let active = $state(false) // WebGPU banner is live
 
   // Engine lifecycle tracks the canvas: it exists only while mode === 'high', so
@@ -30,7 +37,7 @@
   $effect(() => {
     if (!canvas) return
     let cancelled = false
-    let handle = null
+    let handle: { dispose: () => void } | null = null
     ;(async () => {
       try {
         const eng = await import('../../lib/weather/engine.js')
@@ -38,7 +45,7 @@
         handle = await eng.createBanner(canvas, condition, { temperatureText, zoom })
         if (cancelled) { handle.dispose(); handle = null; return }
         active = true
-      } catch (e) {
+      } catch {
         active = false // fall back to the static gradient
       }
     })()

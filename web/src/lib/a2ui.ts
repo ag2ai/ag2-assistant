@@ -8,6 +8,89 @@ export type A2UIData = Record<string, unknown>
 // The one thread item this module owns.
 type A2UIItem = Extract<ThreadItem, { kind: 'a2ui' }>
 
+// ── Catalog payloads ────────────────────────────────────────────────────────
+// Shapes declared by the backend catalog (assistant/a2ui.py assistant_catalog)
+// and, for CodingSession, by assistant/coding/surface.py. AG2 validates every
+// message against that catalog, so a schema `required` field is declared
+// non-optional here and the rest optional. `additionalProperties` is false, so
+// no field is declared that the catalog cannot send.
+
+export type WeatherRow = { label: string; value: string }
+// `summary` is not in the catalog; the renderer shows it when an older persisted
+// surface carries one.
+export type WeatherPanelData = { location?: string; condition?: string; rows?: unknown; summary?: unknown }
+
+// `meta` is back-compat: old surfaces stored "Source · 2h ago" in one field.
+export type NewsStory = {
+  title: string
+  source: string
+  published?: string
+  category?: string
+  summary?: string
+  why?: string
+  image?: string
+  url?: string
+  meta?: string
+  detail?: string
+  text?: string
+}
+
+export type MarketQuote = {
+  symbol: string
+  name: string
+  price: number
+  changePercent: number
+  change?: number
+  currency?: string
+  exchange?: string
+  dayLow?: number
+  dayHigh?: number
+  spark?: number[]
+  state?: string
+  note?: string
+}
+
+export type DecisionOption = { name: string; tagline?: string; price?: string }
+export type DecisionCriterion = { label: string; values: string[]; best?: string }
+
+export type InboxThread = {
+  from: string
+  subject: string
+  when?: string
+  gist?: string
+  unread?: boolean
+  needsReply?: boolean
+  url?: string
+}
+
+export type AgendaEvent = {
+  title: string
+  start?: string
+  end?: string
+  location?: string
+  allDay?: boolean
+  next?: boolean
+  url?: string
+  joinUrl?: string
+}
+
+export type TaskDeliverable = { description: string; status: string }
+export type TaskRow = {
+  title: string
+  status: string
+  id?: string
+  schedule?: string
+  nextRun?: string
+  objective?: string
+  progress?: string
+  deliverables?: TaskDeliverable[]
+  error?: string
+}
+
+// CodingSession is synthesized by the backend, not authored by the model.
+export type CodingPlanStep = { content: string; status: string }
+export type CodingFile = { path: string; status: string; hunks: string; added: number; removed: number }
+
 const isRecord = (v: unknown): v is A2UIData => !!v && typeof v === 'object' && !Array.isArray(v)
 
 let _seq = 0
@@ -262,7 +345,14 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
 }
 
 // A payload field read as text; anything else reads as absent.
-const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+export const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+
+// Rows of a catalog array field. AG2 validates element shape against the catalog
+// before the surface reaches the client, so the element type is asserted once
+// here instead of being re-guarded at every read in the renderers.
+export function rows<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value.filter(Boolean) as T[]) : []
+}
 
 // The surface's message log. A surface first created by an A2UISurface event has
 // none, and pushing into it used to throw.

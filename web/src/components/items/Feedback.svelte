@@ -1,17 +1,28 @@
-<script>
+<script lang="ts">
   // 👍/👎 with a MANDATORY reason on a generated item. Clicking a thumb opens a
   // reason field; Save is disabled until it's non-empty (both thumbs). Sends a
   // feedback frame upstream (controller.feedback) — the server emits a FeedbackGiven
   // event (which folds back into `current`) and a learner agent distils it into memory.
   import { feedback, clearFeedback } from '../../controller.ts'
   import Icon from '../Icon.svelte'
+  import type { Feedback as FeedbackMark } from '../../schemas/events.ts'
 
-  let { targetKind, targetId, content = '', request = '', current = null } = $props()
+  type Sentiment = 'up' | 'down'
+  // `targetId` is whatever keys the rated item — a created_at stamp for a message,
+  // an id or path elsewhere; it goes upstream as a string.
+  type Props = {
+    targetKind: string
+    targetId: string | number
+    content?: string
+    request?: string
+    current?: FeedbackMark
+  }
+  let { targetKind, targetId, content = '', request = '', current = null }: Props = $props()
 
-  let pending = $state(null) // 'up' | 'down' | null — thumb awaiting a reason
+  let pending: Sentiment | null = $state(null) // thumb awaiting a reason
   let reason = $state('')
-  let inputEl = $state(null)
-  let local = $state(null)   // optimistic mark until the event round-trips into `current`
+  let inputEl: HTMLInputElement | null = $state(null)
+  let local: FeedbackMark = $state(null)   // optimistic mark until the event round-trips into `current`
   let cleared = $state(false) // optimistic retraction until FeedbackCleared round-trips
   let noted = $state(false)   // brief "rating removed" note — only when a reason was learned
   const fb = $derived(cleared ? null : (local ?? current))
@@ -27,11 +38,11 @@
 
   // Clicking a thumb: the active one toggles off (unmark); any other opens the reason
   // editor to mark or switch sentiment.
-  function thumb(sentiment) {
+  function thumb(sentiment: Sentiment) {
     if (fb && fb.sentiment === sentiment && !pending) clear()
     else start(sentiment)
   }
-  function start(sentiment) {
+  function start(sentiment: Sentiment) {
     pending = sentiment
     reason = (fb && fb.sentiment === sentiment ? fb.reason : '') || ''
     queueMicrotask(() => inputEl && inputEl.focus())
@@ -53,7 +64,7 @@
     cleared = true; local = null; pending = null; reason = ''
     if (hadReason) { noted = true; setTimeout(() => (noted = false), 3200) }
   }
-  function key(e) {
+  function key(e: KeyboardEvent) {
     if (e.key === 'Enter') { e.preventDefault(); submit() }
     else if (e.key === 'Escape') cancel()
   }

@@ -1,10 +1,11 @@
-<script>
+<script lang="ts">
   // "Basic" weather glyphs — the middle tier of the app-wide `animations` setting. Simple
   // flat vector scenes with compositor-cheap CSS animation (transform/opacity
   // only, no canvas, no WebGPU). Same composition as the 3D scenes: the glyph
   // rides the right of the pill and is cropped by it; the HTML temperature
   // (rendered by WeatherBanner) holds the left.
-  let { condition = 'cloudy' } = $props()
+  type Props = { condition?: string }
+  let { condition = 'cloudy' }: Props = $props()
 </script>
 
 <div class="g g-{condition}" aria-hidden="true">

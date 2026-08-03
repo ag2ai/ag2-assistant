@@ -1,29 +1,32 @@
-<script>
+<script lang="ts">
   // "The Docket" — editorial broadsheet rendering of a TaskProgress A2UI surface:
   // a status board for the profile's durable tasks (the GUI projecting real task
   // state the agent gathered via list_tasks/get_task). Shares the .bs shell with
   // the other editorial surfaces. No ticker — the docket is a ledger, not a feed.
   // Rows carrying a task id link through to the live task page (/t/<id>).
   import { go } from '../../router.ts'
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, TaskRow } from '../../lib/a2ui.ts'
 
-  let { data = {} } = $props()
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
 
-  const title = $derived(data.title || 'Your tasks')
-  const tasks = $derived((Array.isArray(data.tasks) ? data.tasks : []).filter(Boolean))
+  const title = $derived(str(data.title) || 'Your tasks')
+  const tasks = $derived(rows<TaskRow>(data.tasks))
 
   const edition = $derived(
     new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
 
-  const STATUS = {
+  const STATUS: Record<string, { label: string; cls: string } | undefined> = {
     active: { label: 'Active', cls: 'ok' },
     scheduled: { label: 'Scheduled', cls: 'idle' },
     completed: { label: 'Completed', cls: 'done' },
     stopped: { label: 'Stopped', cls: 'idle' },
     failed: { label: 'Failing', cls: 'bad' },
   }
-  const chip = (t) => STATUS[String(t.status || '').toLowerCase()] || { label: t.status || '—', cls: 'idle' }
-  const MARK = { done: '✓', pending: '○', failed: '✕' }
+  const chip = (t: TaskRow) => STATUS[String(t.status || '').toLowerCase()] || { label: t.status || '—', cls: 'idle' }
+  const MARK: Record<string, string | undefined> = { done: '✓', pending: '○', failed: '✕' }
   const activeCount = $derived(tasks.filter((t) => ['active', 'scheduled'].includes(String(t.status).toLowerCase())).length)
 </script>
 

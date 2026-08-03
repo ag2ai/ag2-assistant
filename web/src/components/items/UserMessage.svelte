@@ -1,9 +1,12 @@
-<script>
+<script lang="ts">
   import { parseMessage, highlightSegments } from '../../lib/fileRefs.ts'
+  import type { ParsedRef } from '../../lib/fileRefs.ts'
   import { openAsideFile } from '../../router.ts'
   import { revealFolder } from '../../store.ts'
+  import type { ThreadItem } from '../../schemas/events.ts'
 
-  let { item } = $props()
+  type Props = { item: Extract<ThreadItem, { kind: 'user' }> }
+  let { item }: Props = $props()
 
   // Split off the `Referenced files:` block (ADR 0012) so the bubble reads naturally
   // with just the sentence, then highlight the surviving `@labels` — the same cosmetic
@@ -14,11 +17,11 @@
   // in the preview rail but browse a directory in the Files tree — a folder has no
   // preview (ADR 0012). Same-named refs share a label; the first drives the click.
   const refsFor = $derived.by(() => {
-    const m = new Map()
+    const m = new Map<string, ParsedRef[]>()
     for (const r of parsed.refs) m.set(r.label, [...(m.get(r.label) || []), r])
     return m
   })
-  function openRef(ref) {
+  function openRef(ref: ParsedRef | undefined) {
     if (!ref) return
     if (ref.kind === 'directory') revealFolder(ref.path)
     else openAsideFile(ref.path)

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // An image the agent generated/edited — shown inline as a thumbnail; click for the
   // full-size preview. The bytes live in the workspace (served via /api/files/raw).
   import { thread, runInfo } from '../../store.ts'
@@ -7,8 +7,10 @@
   import { requestContext } from '../../lib/feedback.ts'
   import Feedback from './Feedback.svelte'
   import Icon from '../Icon.svelte'
+  import type { ThreadItem } from '../../schemas/events.ts'
 
-  let { item } = $props()
+  type Props = { item: Extract<ThreadItem, { kind: 'genimage' }> }
+  let { item }: Props = $props()
   const open = () => openAsideFile(item.path)
   const request = $derived(requestContext($thread.items, item, $runInfo))
   // A thumbnail that fails to load (file moved/deleted) falls back to a chip so

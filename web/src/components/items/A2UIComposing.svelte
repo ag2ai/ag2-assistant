@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Placeholder shown while the model is still writing an A2UI payload into its
   // reply. The JSON itself is hidden (see splitA2UIText); this stands in for the
   // surface until the A2UISurface event arrives and renders the real thing.

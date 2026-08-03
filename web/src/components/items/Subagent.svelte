@@ -1,8 +1,10 @@
-<script>
+<script lang="ts">
   import Item from '../Item.svelte'
   import { fmtStamp } from '../../lib/time.ts'
+  import type { ThreadItem } from '../../schemas/events.ts'
 
-  let { item } = $props()
+  type Props = { item: Extract<ThreadItem, { kind: 'subagent' }> }
+  let { item }: Props = $props()
   const label = $derived(`${(item.agent || 'subagent').replace(/[-_]/g, ' ')} (subagent)`)
   const kids = $derived(item.items || [])
   const running = $derived((item.status || 'running') === 'running')

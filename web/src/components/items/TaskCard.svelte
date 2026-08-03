@@ -1,8 +1,11 @@
-<script>
+<script lang="ts">
   import { go } from '../../router.ts'
   import Icon from '../Icon.svelte'
   import { fmtStamp } from '../../lib/time.ts'
-  let { item } = $props()
+  import type { ThreadItem } from '../../schemas/events.ts'
+
+  type Props = { item: Extract<ThreadItem, { kind: 'taskcard' }> }
+  let { item }: Props = $props()
 </script>
 
 <div class="card">

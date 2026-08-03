@@ -1,29 +1,32 @@
-<script>
+<script lang="ts">
   // "The Wire" — editorial broadsheet rendering of a NewsDigest A2UI surface.
   // Self-contained light/paper aesthetic (Fraunces serif + JetBrains Mono wire),
   // scoped so it doesn't inherit the chat theme. First story = lead; rest = list.
   import { safeUrl } from '../../lib/url.ts'
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, NewsStory } from '../../lib/a2ui.ts'
 
-  let { data = {} } = $props()
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
 
-  const topic = $derived(data.topic || 'Latest news')
-  const stories = $derived((Array.isArray(data.stories) ? data.stories : []).filter(Boolean))
+  const topic = $derived(str(data.topic) || 'Latest news')
+  const stories = $derived(rows<NewsStory>(data.stories))
   const lead = $derived(stories[0] || null)
   const rest = $derived(stories.slice(1))
-  const sources = $derived([...new Set(stories.map((s) => s && s.source).filter(Boolean))])
+  const sources = $derived([...new Set(stories.map((s) => s.source).filter(Boolean))])
   const edition = $derived(
     new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
 
   // back-compat: old surfaces stored "Source · 2h ago" in `meta`
-  function srcOf(s) { return s.source || (s.meta ? String(s.meta).split('·')[0].trim() : '') }
-  function timeOf(s) { return s.published || (s.meta && String(s.meta).includes('·') ? String(s.meta).split('·')[1].trim() : '') }
+  function srcOf(s: NewsStory) { return s.source || (s.meta ? String(s.meta).split('·')[0].trim() : '') }
+  function timeOf(s: NewsStory) { return s.published || (s.meta && String(s.meta).includes('·') ? String(s.meta).split('·')[1].trim() : '') }
 
-  let open = $state({})
-  const toggle = (i) => (open = { ...open, [i]: !open[i] })
+  let open: Record<number, boolean> = $state({})
+  const toggle = (i: number) => (open = { ...open, [i]: !open[i] })
   // Enter/Space activate the disclosure like a button; preventDefault stops Space
   // from scrolling the page.
-  const onKey = (e, i) => {
+  const onKey = (e: KeyboardEvent, i: number) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       toggle(i)
@@ -80,7 +83,7 @@
     {#if rest.length}
       <div class="more-label">More on this</div>
       <div class="list">
-        {#snippet row(s, i)}
+        {#snippet row(s: NewsStory, i: number)}
           <div class="num">{String(i + 2).padStart(2, '0')}</div>
           <div>
             <h3>
