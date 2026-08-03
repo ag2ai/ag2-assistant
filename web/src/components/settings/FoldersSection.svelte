@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Profiles → Folders section (ADR 0015): the folders THIS profile can reach. Only
   // folders the active profile is granted appear (a two-way Read / Read+write switch,
   // no "off" — Delete is how you remove access). "Add a folder" registers it install-
@@ -12,6 +12,9 @@
   import { getActiveProfileId } from '../../lib/profile.ts'
   import { getSettings } from './context.svelte.ts'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
+  import { errText } from '../../lib/errors.ts'
+  import { ApiError } from '../../transport/http.ts'
+  import { FolderConflict, type Folder, type Mode } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
   import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
@@ -22,51 +25,54 @@
   let err = $state('')
   let adding = $state(false)
 
-  const pid = $derived($profiles.activeId || getActiveProfileId())
+  // '' only before boot picks a profile, when Settings can't be open (see router.currentPid).
+  const pid = $derived($profiles.activeId || getActiveProfileId() || '')
 
   // This profile's profile-scoped grant on a Folder (chat/task grants live elsewhere).
-  const grantOf = (f, p) => (f.grants || []).find((g) => g.profile === p && !g.chat_id && !g.task_id)
+  const grantOf = (f: Folder, p: string) => (f.grants || []).find((g) => g.profile === p && !g.chat_id && !g.task_id)
   // Only Folders this profile is granted — no "off" rows.
   const granted = $derived($foldersStore.folders.filter((f) => grantOf(f, pid)))
 
   onMount(() => { if (!$foldersStore.loaded) loadFolders() })
 
-  async function run(fn) {
+  async function run(fn: () => Promise<{ folders: Folder[] }>) {
     err = ''; busy = true
-    try { applyFolders(await fn()) } catch (e) { err = String(e.message || e) }
+    try { applyFolders(await fn()) } catch (e) { err = errText(e) }
     busy = false
   }
 
-  function setMode(f, mode) {
+  function setMode(f: Folder, mode: Mode) {
     if (grantOf(f, pid)?.mode === mode) return
     run(() => api.setGrant(f.id, pid, mode))
   }
 
   // Register + grant this profile read. On a 409 (path already registered) grant the
   // returned existing Folder instead; never downgrade a grant it already has.
-  async function addFolder(path) {
+  async function addFolder(path: string) {
     err = ''; busy = true
     try {
-      let folder
+      let folder: Folder | undefined
       try {
         const r = await api.createFolder(path)
         applyFolders(r)
         folder = r.folder
       } catch (e) {
-        if (e.status === 409 && e.body?.existing) folder = e.body.existing
+        // 409 = the path is already registered; the body points at that Folder.
+        const clash = e instanceof ApiError && e.status === 409 ? FolderConflict.safeParse(e.body) : null
+        if (clash?.success) folder = clash.data.existing
         else throw e
       }
-      if (!grantOf(folder, pid)) applyFolders(await api.setGrant(folder.id, pid, 'read'))
+      if (folder && !grantOf(folder, pid)) applyFolders(await api.setGrant(folder.id, pid, 'read'))
       adding = false
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = false
   }
 
   // Disable the Folder for this profile. The revoke endpoint GCs the Folder itself when
   // that leaves it with no usages anywhere (no other profile / chat / task grant).
-  const removeFolder = (f) => run(() => api.revokeGrant(f.id, pid))
+  const removeFolder = (f: Folder) => run(() => api.revokeGrant(f.id, pid))
 </script>
 
 <p class="muted permhint">Folders this profile may reach outside its default workspace </p>
@@ -84,7 +90,7 @@
       <span class="permval" title={f.path}>{f.path}{#if !f.exists} · <span class="missing">path not found</span>{/if}</span>
     </span>
     <div class="accctl">
-      <WriteSwitch mode={g?.mode} disabled={busy} onchange={(m) => setMode(f, m)} />
+      <WriteSwitch mode={g?.mode} disabled={busy} onchange={(m: Mode) => setMode(f, m)} />
       <button class="iconbtn" title="Delete folder" aria-label="Delete folder" disabled={busy} onclick={() => removeFolder(f)}><Icon name="trash" size={14} /></button>
     </div>
   </div>
@@ -93,7 +99,7 @@
 {#if !adding}
   <button class="open permadd" onclick={() => (adding = true)}>Add a folder…</button>
 {:else}
-  <FolderPicker roots={ctx.s.fs || {}} start={ctx.s.fs?.cwd || ''} {busy} onUse={addFolder} />
+  <FolderPicker roots={ctx.s?.fs} start={ctx.s?.fs?.cwd || ''} {busy} onUse={addFolder} />
   <div class="keyrow" style="justify-content:flex-end">
     <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
   </div>

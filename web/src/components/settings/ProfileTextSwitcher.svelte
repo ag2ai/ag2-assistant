@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Per-profile Text model switcher (ADR 0015): sets this profile's Active Text override
   // via api.setLlmOverride (not the install-wide useLlmConfig the composer calls). Reuses
   // ModelSwitcherView over the shared `llmConfigs` store for the list + env-pin/empty
@@ -11,6 +11,7 @@
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
   import { getSettings } from './context.svelte.ts'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
+  import type { LlmConfig } from '../../schemas/index.ts'
 
   const ctx = getSettings()
   onMount(() => { loadLlmConfigs().catch(() => {}) })
@@ -21,15 +22,15 @@
   const inherited = $derived(!ctx.s?.llm_override)          // no per-profile override → inheriting
 
   const gotoModels = () => replaceOverlay('settings', SETTINGS_PAGE.MODELS)
-  const choose = (c) => ctx.run(() => api.setLlmOverride(c.id))
+  const choose = (c: LlmConfig) => ctx.run(() => api.setLlmOverride(c.id))
   const useDefault = () => ctx.run(() => api.setLlmOverride(''))
 </script>
 
 <ModelSwitcherView
   {configs} {activeId} {envOverride} busy={ctx.busy} down {inherited}
   title="Text model for this profile — takes effect next message"
-  logoFor={(c) => LOGO[c.type]}
-  labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
+  logoFor={(c: LlmConfig) => LOGO[c.type]}
+  labelFor={(c: LlmConfig) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
   defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active model' }}
   emptyLabel="No models configured"

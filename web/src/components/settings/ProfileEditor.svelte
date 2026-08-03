@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Profile editor (ADR 0015, redesign §2 + §9): the second level of Settings → Profiles.
   // Reached by clicking a card in the catalogue. A profile is now a first-class entity with
   // its own header (accent, name, Active badge, back to the catalogue) and a horizontal tab
@@ -14,7 +14,8 @@
   import ProfileSkillsSection from './ProfileSkillsSection.svelte'
   import ProfileMemorySection from './ProfileMemorySection.svelte'
 
-  let { onBack } = $props()
+  type Props = { onBack: () => void }
+  let { onBack }: Props = $props()
 
   const list = $derived($profiles.list || [])
   const activeId = $derived($profiles.activeId || getActiveProfileId())

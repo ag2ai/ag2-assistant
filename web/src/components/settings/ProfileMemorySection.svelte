@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Profile editor → Memory tab (ADR 0015, redesign §8): this profile's persona memory —
   // preferences and context the assistant has learned for THIS persona only (the shared
   // "Who you are" identity lives in Settings → Advanced). The doc is free-form markdown
@@ -8,6 +8,7 @@
   // Re-points to the active profile's persona on each profile switch (profileEpoch).
   import { profileEpoch } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
+  import { errText } from '../../lib/errors.ts'
 
   let text = $state('')
   let draft = $state('')
@@ -21,7 +22,7 @@
 
   async function load() {
     loading = true; err = ''; editing = false
-    try { text = (await api.getMemory().then((r) => r.text)) || '' } catch (e) { err = String(e.message || e) }
+    try { text = (await api.getMemory().then((r) => r.text)) || '' } catch (e) { err = errText(e) }
     loading = false
   }
   // Re-load when the active profile changes (persona re-points on switch).
@@ -38,7 +39,7 @@
       editing = false
       saved = true
       setTimeout(() => (saved = false), 1500)
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 
@@ -48,7 +49,7 @@
       await api.setMemory('')
       text = ''
       editing = false
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 </script>

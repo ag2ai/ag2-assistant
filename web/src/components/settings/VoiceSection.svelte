@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Models → Live: the install-wide list of named voice (live) configs and
   // the one active selection — the spoken counterpart of the Text list in ModelsPage,
   // built from the same row/health-map/inline-form pattern. Each config is a
@@ -10,60 +10,66 @@
   import { getSettings } from './context.svelte.ts'
   import LiveConfigForm from './LiveConfigForm.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs } from '../../lib/live.ts'
+  import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs, type LiveConfigSeed } from '../../lib/live.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type { LiveConfig, LiveProvider } from '../../schemas/index.ts'
 
   const ctx = getSettings()
 
   const configs = $derived($liveConfigs.configs)
   const providers = $derived($liveConfigs.providers)
-  let tests = $state({})       // config id -> {testing} | {ok, reply, latency_ms} | {ok:false, error}
+  // One row's Test state: pending, then either the PONG reply or the error.
+  type TestState = { testing?: boolean; ok?: boolean; reply?: string; latency_ms?: number; error?: string }
+
+  let tests = $state<Record<string, TestState>>({})
   let busy = $state(false)
   let err = $state('')
 
-  let editing = $state(null)   // config/template being edited in the inline form (null = closed)
+  // config/template being edited in the inline form (null = closed)
+  let editing = $state<LiveConfigSeed | null>(null)
   let adding = $state(false)   // provider-template grid showing
 
   onMount(reload)
 
   async function reload() {
-    try { await loadLiveConfigs() } catch (e) { err = String(e.message || e) }
+    try { await loadLiveConfigs() } catch (e) { err = errText(e) }
   }
 
-  async function test(c) {
+  async function test(c: LiveConfig) {
     tests = { ...tests, [c.id]: { testing: true } }
     try {
-      tests = { ...tests, [c.id]: { ok: true, ...(await api.testLiveConfig(c.id)) } }
+      tests = { ...tests, [c.id]: await api.testLiveConfig(c.id) }
     } catch (e) {
-      tests = { ...tests, [c.id]: { ok: false, error: String(e.message || e) } }
+      tests = { ...tests, [c.id]: { ok: false, error: errText(e) } }
     }
   }
 
-  async function use(c) {
+  async function use(c: LiveConfig) {
     err = ''; busy = true
-    try { await api.useLiveConfig(c.id); await reload() } catch (e) { err = String(e.message || e) }
+    try { await api.useLiveConfig(c.id); await reload() } catch (e) { err = errText(e) }
     busy = false
   }
 
-  async function remove(c) {
+  async function remove(c: LiveConfig) {
     err = ''; busy = true
     try {
       await api.deleteLiveConfig(c.id)
       const { [c.id]: _gone, ...rest } = tests
       tests = rest
       await reload()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 
   // Open the editor: a provider template (no id → create) or an existing row (edit).
-  function pickTemplate(p) { adding = false; editing = { provider: p.name, name: PROVIDER_LABEL[p.name] + ' Live', model: '' } }
-  function edit(c) { adding = false; editing = { ...c } }
+  function pickTemplate(p: LiveProvider) { adding = false; editing = { provider: p.name, name: PROVIDER_LABEL[p.name] + ' Live', model: '' } }
+  function edit(c: LiveConfig) { adding = false; editing = { ...c } }
 
   const activateOnSave = $derived(editing?.id ? !!editing.active : configs.length === 0)
 
   async function onSaved() { editing = null; await reload() }
 
-  function keyChip(c) {
+  function keyChip(c: LiveConfig) {
     if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
     if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
     return 'no key — pick a secret or set ' + (c.shared_key?.env || 'the provider key')
@@ -79,7 +85,7 @@
 {#each configs as c (c.id)}
   <div
     class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
-    role="button" aria-disabled={c.active || editing}
+    role="button" aria-disabled={c.active || !!editing}
     tabindex={!c.active && !editing ? 0 : -1}
     aria-label={!c.active ? `Use ${c.name}` : undefined}
     title={!c.active && !editing ? 'Click to use this live model' : ''}

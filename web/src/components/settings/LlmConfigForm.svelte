@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Inline editor for one LLM configuration — used for both create (template
   // prefill, no id) and edit (row prefill, with id). Mirrors the Profiles.svelte
   // inline-editor pattern: local state seeded from the passed config, Save/Cancel,
@@ -15,14 +15,23 @@
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type { LlmConfigSeed } from '../../lib/llm.ts'
+  import type { LlmConfigDraft } from '../../transport/api/llm.ts'
+  import type { CodingCatalog, PingResult } from '../../schemas/index.ts'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
 
-  // config: {id?, name, type, model, base_url?, host?, options?, secret_id?,
-  //   secret?, secret_missing?} — a template prefill has no id/secret.
+  // config: a saved config, or a template prefill (no id/secret).
   // activate: whether the save should also make this config active (decided by the
   //   parent — first-ever config, or re-saving the already-active one).
-  let { config, activate = false, onSaved, onCancel } = $props()
+  type Props = {
+    config: LlmConfigSeed
+    activate?: boolean
+    onSaved: () => void
+    onCancel: () => void
+  }
+  let { config, activate = false, onSaved, onCancel }: Props = $props()
 
   const TYPES = [
     { id: 'openai_responses', label: 'OpenAI · Responses' },
@@ -36,7 +45,7 @@
   ]
   // base_url applies to openai/openai_responses/anthropic; host to ollama only.
   // Subscription mode has no endpoint or key fields — both come from codex_auth.
-  const usesBaseUrl = (t) => t === 'openai' || t === 'openai_responses' || t === 'anthropic'
+  const usesBaseUrl = (t: string) => t === 'openai' || t === 'openai_responses' || t === 'anthropic'
 
   // Capture the prop's initial values once (this form is freshly mounted per open,
   // so initial-value capture is exactly right). untrack keeps these out of the
@@ -74,7 +83,8 @@
   let busy = $state(false)
   let err = $state('')
   let testing = $state(false)
-  let testResult = $state(null)   // {ok, reply, latency_ms} | {ok:false, error} | null
+  // The draft Test outcome: the PONG round-trip, or the failure message.
+  let testResult = $state<PingResult | { ok: false; error: string } | null>(null)
 
   // ChatGPT-subscription sign-in state, for the openai_subscription form variant.
   // Seeded from the entry view's signed_in (editing a saved subscription config);
@@ -92,8 +102,8 @@
   // Live "which key will actually be sent" line under the picker — the honest
   // answer to why an empty selection can still work (default/env fallback) and
   // where a shared key will NOT go (custom endpoints get a placeholder).
-  const ENV_OF = { openai: 'OPENAI_API_KEY', openai_responses: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY' }
-  const PROV_OF = { openai: 'openai', openai_responses: 'openai', anthropic: 'anthropic', gemini: 'gemini' }
+  const ENV_OF: Record<string, string | undefined> = { openai: 'OPENAI_API_KEY', openai_responses: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY' }
+  const PROV_OF: Record<string, string | undefined> = { openai: 'openai', openai_responses: 'openai', anthropic: 'anthropic', gemini: 'gemini' }
   const pickerSecrets = $derived(sortForProvider($secretsStore.secrets, PROV_OF[type] || ''))
   const keyUsage = $derived.by(() => {
     if (type === 'openai_subscription')
@@ -104,7 +114,7 @@
       return 'Runs on your Codex CLI login (codex-acp) — no API key is involved.'
     if (type === 'ollama') return 'Ollama is local — no API key is used.'
     const env = ENV_OF[type]
-    const shared = ctx?.s?.keys?.[PROV_OF[type]]
+    const shared = ctx?.s?.keys?.[PROV_OF[type] || '']
     if (pastedKey.trim()) return 'A new Secret will be created from this key on save (rename it later in Settings → Secrets).'
     if (secretId) {
       const s = $secretsStore.secrets.find((x) => x.id === secretId)
@@ -126,9 +136,9 @@
   // new picker. Exception: the two OpenAI API surfaces are the same catalog, so
   // switching between them keeps the model. Only a user-driven change resets —
   // the initial value from an edited/prefilled entry is never touched.
-  const MODEL_FAMILY = { openai: 'openai', openai_responses: 'openai' }
-  const modelFamily = (t) => MODEL_FAMILY[t] || t
-  function changeType(next) {
+  const MODEL_FAMILY: Record<string, string | undefined> = { openai: 'openai', openai_responses: 'openai' }
+  const modelFamily = (t: string) => MODEL_FAMILY[t] || t
+  function changeType(next: string) {
     if (next === type) return
     if (modelFamily(next) !== modelFamily(type)) model = ''
     type = next
@@ -143,9 +153,8 @@
   // (family[effort] = model + reasoning); claude ids do NOT (the bracket there is
   // part of the model preference, e.g. "opus[1m]" = 1M context) — one flat select.
   const acpAgent = $derived(type === 'codex' ? 'codex' : type === 'claude_code' ? 'claude' : '')
-  /** @type {Record<string, 'loading' | import('../../schemas/index.ts').CodingCatalog>} */
-  let catalogs = $state({})
-  function fetchCatalog(agent, refresh = false) {
+  let catalogs = $state<Record<string, 'loading' | CodingCatalog>>({})
+  function fetchCatalog(agent: string, refresh = false) {
     catalogs[agent] = 'loading'
     api.codingModels(agent, refresh)
       .then((r) => { catalogs[agent] = { models: r.models || [], current: r.current || '', reason: r.reason || '' } })
@@ -163,7 +172,7 @@
   // The adapter's own current selection labels the "CLI default" row, so leaving
   // the model empty is a legible choice rather than a blind one.
   const defaultLabel = $derived(acpState?.current ? `CLI default (${acpState.current})` : 'CLI default')
-  const ADAPTER_PKG = { claude: '@agentclientprotocol/claude-agent-acp', codex: '@agentclientprotocol/codex-acp' }
+  const ADAPTER_PKG: Record<string, string | undefined> = { claude: '@agentclientprotocol/claude-agent-acp', codex: '@agentclientprotocol/codex-acp' }
   const acpNote = $derived.by(() => {
     if (!acpAgent || acpLoading || acpCatalog.length) return ''
     if (acpState?.reason === 'adapter_missing')
@@ -193,7 +202,7 @@
     return [{ family: codexPick.family, label: codexPick.family, efforts: codexPick.effort ? [{ value: codexPick.effort, label: effortLabel(codexPick.effort) }] : [] }, ...codexGroups]
   })
   const codexEfforts = $derived(codexFamilies.find((g) => g.family === codexPick.family)?.efforts || [])
-  function pickCodexFamily(family) {
+  function pickCodexFamily(family: string) {
     // Keep the effort when the new family offers it; otherwise fall back to the
     // family's own default (no bracket → the adapter's default tier).
     const efforts = codexFamilies.find((g) => g.family === family)?.efforts || []
@@ -207,8 +216,8 @@
   // config, so a bad option comes back as its message. Returns null on a local
   // validation error (err is set). api_key rides only the draft-test call (a
   // pasted key, used directly); save mints a Secret from it instead.
-  function buildPayload() {
-    let options = {}
+  function buildPayload(): LlmConfigDraft | null {
+    let options: Record<string, unknown> = {}
     const text = advText.trim()
     if (advOpen && text) {
       try { options = JSON.parse(text) } catch { err = 'Advanced: not valid JSON.'; return null }
@@ -249,7 +258,7 @@
       delete payload.api_key  // never persisted; Secrets carry the key
       await api.saveLlmConfig({ ...payload, activate: activate || useNow })
       onSaved()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 
@@ -262,7 +271,7 @@
     try {
       testResult = await api.testLlmConfigDraft(payload)
     } catch (e) {
-      testResult = { ok: false, error: String(e.message || e) }
+      testResult = { ok: false, error: errText(e) }
     }
     testing = false
   }

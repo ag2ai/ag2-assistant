@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Skills (install-wide, ADR 0016): every Bundled and Global skill the
   // agent can draw on, with an Enable/Disable toggle per row. Disabling drops a skill
   // from the <available_skills> catalog for EVERY profile from the next turn (the
@@ -11,6 +11,8 @@
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import SkillInstaller from './SkillInstaller.svelte'
+  import { errText } from '../../lib/errors.ts'
+  import type { Skill } from '../../schemas/index.ts'
 
   // Install targets the Global (install-wide) layer — the surface carries the target.
   const installer = {
@@ -21,7 +23,7 @@
     installUpload: api.installSkillUpload,
   }
 
-  let skills = $state([])
+  let skills = $state<Skill[]>([])
   let busy = $state(false)
   let err = $state('')
   // Two-step delete: first click arms the row (name), second confirms. Global only —
@@ -30,10 +32,10 @@
   // Display order is a SNAPSHOT taken at load, not a live sort: deletable-first, then
   // enabled-before-off. Freezing it means toggling a switch dims the row in place
   // instead of yanking it to the bottom mid-interaction — the re-sort lands on reload.
-  let order = $state([])
+  let order = $state<string[]>([])
 
   // deletable (non-bundled) first, then enabled before off; stable within each group.
-  const sortForDisplay = (list) =>
+  const sortForDisplay = (list: Skill[]) =>
     [...list].sort((a, b) =>
       (a.origin === 'bundled' ? 1 : 0) - (b.origin === 'bundled' ? 1 : 0) ||
       (a.enabled ? 0 : 1) - (b.enabled ? 0 : 1))
@@ -43,21 +45,21 @@
       const list = (await api.skills()).skills
       skills = list
       order = sortForDisplay(list).map((s) => s.name)
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
   }
   onMount(load)
 
-  const toggle = async (s) => {
+  const toggle = async (s: Skill) => {
     err = ''; busy = true
     try { skills = (await api.setSkillState(s.name, !s.enabled)).skills }
-    catch (e) { err = String(e.message || e) }
+    catch (e) { err = errText(e) }
     busy = false
   }
 
-  const del = async (s) => {
+  const del = async (s: Skill) => {
     err = ''; busy = true
     try { skills = (await api.deleteSkill(s.name)).skills; confirming = '' }
-    catch (e) { err = String(e.message || e) }
+    catch (e) { err = errText(e) }
     busy = false
   }
 

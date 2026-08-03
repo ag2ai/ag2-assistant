@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Profile editor → Model tab (ADR 0015, redesign §5): the per-profile model switchers —
   // Text + Voice — that set this profile's Active override (which shared model is Active
   // *for it*). Stacked as two labelled rows so each model is its own clear choice; Text

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Profile editor → Skills tab (ADR 0016 t02): the skills THIS profile can draw on.
   // Two kinds of row:
   //   • inherited Bundled/Global skills — Suppress here to turn one off for THIS profile
@@ -11,6 +11,8 @@
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import SkillInstaller from './SkillInstaller.svelte'
+  import { errText } from '../../lib/errors.ts'
+  import type { ProfileSkill } from '../../schemas/index.ts'
 
   // Install targets THIS profile — the surface carries the target. Registry search is
   // target-agnostic, so it reuses the global searchSkills; discover/install are scoped.
@@ -22,7 +24,7 @@
     installUpload: api.installProfileSkillUpload,
   }
 
-  let skills = $state([])
+  let skills = $state<ProfileSkill[]>([])
   let loading = $state(true)
   let busy = $state(false)
   let err = $state('')
@@ -31,24 +33,24 @@
 
   const load = async () => {
     loading = true; err = ''
-    try { skills = (await api.profileSkills()).skills } catch (e) { err = String(e.message || e) }
+    try { skills = (await api.profileSkills()).skills } catch (e) { err = errText(e) }
     loading = false
   }
   // Re-load when the active profile changes (the tab always configures the active one).
   $effect(() => { $profileEpoch; load() })
 
-  async function run(fn) {
+  async function run(fn: () => Promise<{ skills: ProfileSkill[] }>) {
     err = ''; busy = true
-    try { skills = (await fn()).skills } catch (e) { err = String(e.message || e) }
+    try { skills = (await fn()).skills } catch (e) { err = errText(e) }
     busy = false
   }
 
   // Inherited (bundled/global): Suppress ⇄ un-suppress for this profile only.
-  const toggleSuppress = (s) => run(() => api.suppressSkill(s.name, !s.suppressed))
+  const toggleSuppress = (s: ProfileSkill) => run(() => api.suppressSkill(s.name, !s.suppressed))
   // Profile-owned: Enable/Disable for this profile (its own state).
-  const toggleOwn = (s) => run(() => api.setProfileSkillState(s.name, !s.available))
+  const toggleOwn = (s: ProfileSkill) => run(() => api.setProfileSkillState(s.name, !s.available))
   // Profile-owned: delete from disk (this profile only). Clears confirm on success.
-  const del = (s) => run(() => api.deleteProfileSkill(s.name)).then(() => (confirming = ''))
+  const del = (s: ProfileSkill) => run(() => api.deleteProfileSkill(s.name)).then(() => (confirming = ''))
 
   // Two sections, profile-owned first: skills this profile installed itself, then the
   // Global/Bundled skills it inherits from the app. Same source list, split by origin.
@@ -59,7 +61,7 @@
 <!-- One row, shared by both sections (SkillsPage.svelte's .setrowwrap idiom): a
      .setrow (name + description) plus its controls as siblings. The On/Off state is
      the shared .setswitch (accent when on); Delete stays an inline linkbtn confirm. -->
-{#snippet skillRow(s)}
+{#snippet skillRow(s: ProfileSkill)}
   <div class="setrowwrap" class:off={!s.available}>
     <div class="setrow">
       <span class="sk">

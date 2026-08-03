@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Inline editor for one LIVE (voice) configuration — the spoken counterpart of
   // LlmConfigForm, trimmed to what realtime voice needs: Name, Provider (the fixed
   // 2-provider registry), Model (realtime model, defaults to the provider's), and a
@@ -8,17 +8,26 @@
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api/index.ts'
   import { getSettings } from './context.svelte.ts'
-  import { PROVIDER_LABEL } from '../../lib/live.ts'
+  import { PROVIDER_LABEL, type LiveConfigSeed } from '../../lib/live.ts'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type { LiveConfigDraft } from '../../transport/api/llm.ts'
+  import type { LiveProvider, PingResult } from '../../schemas/index.ts'
 
   const ctx = getSettings()  // ctx.s.keys → shared provider key {set, hint} per provider
 
-  // config: {id?, name, provider, model, secret_id?, secret?, secret_missing?}.
-  // providers: the server catalog
-  // [{name, default_model, default_voice}] (for the model placeholder). activate: whether
-  // the save should also make this config active (parent-decided).
-  let { config, providers = [], activate = false, onSaved, onCancel } = $props()
+  // config: a saved live config, or a provider template prefill (no id/secret).
+  // providers: the server catalog (for the model placeholder). activate: whether the
+  // save should also make this config active (parent-decided).
+  type Props = {
+    config: LiveConfigSeed
+    providers?: LiveProvider[]
+    activate?: boolean
+    onSaved: () => void
+    onCancel: () => void
+  }
+  let { config, providers = [], activate = false, onSaved, onCancel }: Props = $props()
 
   const PROVIDERS = ['gemini', 'openai']
 
@@ -41,14 +50,15 @@
   let busy = $state(false)
   let err = $state('')
   let testing = $state(false)
-  let testResult = $state(null)
+  // The draft Test outcome: the PONG round-trip, or the failure message.
+  let testResult = $state<PingResult | { ok: false; error: string } | null>(null)
 
   const defaultModel = $derived(providers.find((p) => p.name === provider)?.default_model || '')
   const pickerSecrets = $derived(sortForProvider($secretsStore.secrets, provider))
 
   // Live "which key will actually be sent" line — the honest answer to why an
   // empty selection can still work (the provider default / env key fallback).
-  const ENV_OF = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' }
+  const ENV_OF: Record<string, string | undefined> = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' }
   const keyUsage = $derived.by(() => {
     const env = ENV_OF[provider]
     const shared = ctx?.s?.keys?.[provider]
@@ -66,7 +76,7 @@
   // The request body Save and Test share — model blank is allowed (the server fills
   // the provider default). api_key rides only the draft-test call (a pasted key,
   // used directly); save mints a Secret from it instead.
-  function buildPayload() {
+  function buildPayload(): LiveConfigDraft {
     err = ''
     return {
       id: config.id,
@@ -93,7 +103,7 @@
       delete payload.api_key  // never persisted; Secrets carry the key
       await api.saveLiveConfig({ ...payload, activate: activate || useNow })
       onSaved()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 
@@ -103,7 +113,7 @@
     try {
       testResult = await api.testLiveConfigDraft(payload)
     } catch (e) {
-      testResult = { ok: false, error: String(e.message || e) }
+      testResult = { ok: false, error: errText(e) }
     }
     testing = false
   }

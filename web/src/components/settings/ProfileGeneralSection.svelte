@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Profile editor → General tab (ADR 0015, redesign §3): the active profile's IDENTITY —
   // name, accent colour, and the derived workspace (read-only). This is the editing home
   // that used to live inline in the Profiles list; the list is now a catalogue of cards.
@@ -9,6 +9,7 @@
   import { api } from '../../transport/api/index.ts'
   import { getActiveProfileId } from '../../lib/profile.ts'
   import { PALETTES, setAccent, getAccent } from '../../design/palette.ts'
+  import { errText } from '../../lib/errors.ts'
   import Icon from '../Icon.svelte'
 
   const list = $derived($profiles.list || [])
@@ -29,7 +30,7 @@
 
   // Re-seed the draft whenever the active profile changes (switch) — but never clobber an
   // in-flight edit of the SAME profile. Keyed on the profile id.
-  let seededId = $state(null)
+  let seededId = $state<string | null>(null)
   $effect(() => {
     if (active && active.id !== seededId) {
       seededId = active.id
@@ -46,7 +47,7 @@
 
   // Optimistically tint the active profile in the store so every accent-bound surface
   // (Drawer chips, the card dot) re-renders. Rolled back if the edit isn't saved.
-  function tintActive(hex) {
+  function tintActive(hex: string) {
     $profiles = {
       ...$profiles,
       list: (($profiles.list) || []).map((p) => (p.id === activeId ? { ...p, accent: hex } : p)),
@@ -54,13 +55,13 @@
   }
 
   // Live-preview an accent: global scheme + the profile-tinted surfaces. Not persisted.
-  function pickAccent(hex) {
+  function pickAccent(hex: string) {
     eAccent = hex
     setAccent(hex)
     tintActive(hex)
   }
-  function pickCustom(e) {
-    const v = (e.target.value || '').toLowerCase()
+  function pickCustom(e: Event & { currentTarget: HTMLInputElement }) {
+    const v = (e.currentTarget.value || '').toLowerCase()
     if (/^#[0-9a-f]{6}$/.test(v)) pickAccent(v)
   }
 
@@ -79,27 +80,28 @@
   async function save() {
     if (busy || !active) return
     const p = active
-    const body = {}
+    const body: { name?: string; accent?: string } = {}
     if (eName.trim() && eName.trim() !== origName) body.name = eName.trim()
     if (eAccent && eAccent !== origAccent) body.accent = eAccent
     if (!Object.keys(body).length) return
     busy = true; err = ''
     try {
       await api.updateProfile(p.id, body)
-      if ('name' in body) {
+      const renamed = body.name
+      if (renamed) {
         // Reflect the rename in the store list immediately.
-        $profiles = { ...$profiles, list: (($profiles.list) || []).map((x) => (x.id === p.id ? { ...x, name: body.name } : x)) }
-        origName = body.name
-        eName = body.name
+        $profiles = { ...$profiles, list: (($profiles.list) || []).map((x) => (x.id === p.id ? { ...x, name: renamed } : x)) }
+        origName = renamed
+        eName = renamed
       }
-      if ('accent' in body) {
+      if (body.accent) {
         if (p.id === activeId && eAccent !== getAccent()) setAccent(eAccent)
         origAccent = eAccent
       }
       saved = true
       setTimeout(() => (saved = false), 1500)
     } catch (e) {
-      err = (e && e.message) || 'Could not save profile'
+      err = errText(e, 'Could not save profile')
     }
     busy = false
   }

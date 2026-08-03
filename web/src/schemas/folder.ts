@@ -30,6 +30,14 @@ export const FolderSaved = z.object({
 })
 export type FolderSaved = z.infer<typeof FolderSaved>
 
+// 409 on create/update (app.py 1529): the path is already registered and the body
+// points at the Folder holding it. No `ok` key here, unlike SecretConflict.
+export const FolderConflict = z.object({
+  error: z.string(),
+  existing: Folder,
+})
+export type FolderConflict = z.infer<typeof FolderConflict>
+
 // Delete and the grant routes echo the snapshot only.
 export const FolderMutated = z.object({ ok: z.literal(true), folders: z.array(Folder) })
 export type FolderMutated = z.infer<typeof FolderMutated>
