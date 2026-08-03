@@ -830,7 +830,7 @@ def _pre_connection_install(paths, default_pid: str) -> None:
     them: a platform-keyed default profile, and a Peer named by platform alone."""
     registry = json.loads((paths.profiles_json).read_text())
     registry.pop("connection_defaults", None)
-    registry["channel_defaults"] = {"telegram": default_pid}
+    registry["channels"] = {"telegram": default_pid, "discord": None, "slack": None}
     (paths.profiles_json).write_text(json.dumps(registry))
     (paths.root / "peers.json").write_text(
         json.dumps({"peers": [{"platform": "telegram", "chat_id": "42", "profile": default_pid}]})
@@ -1292,7 +1292,7 @@ def _old_install(paths) -> None:
     group Peer pinned to a Profile, a paired account and a live pairing code."""
     registry = json.loads((paths.profiles_json).read_text())
     registry.pop("connection_defaults", None)
-    registry["channel_defaults"] = {"telegram": "work", "discord": "home"}
+    registry["channels"] = {"telegram": "work", "discord": "home", "slack": None}
     for entry in registry["profiles"]:
         if entry["id"] == "home":
             entry["withdrawn"] = ["telegram:group"]

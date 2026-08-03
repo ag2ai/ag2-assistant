@@ -299,7 +299,7 @@ class ProfileRegistry:
         """Carry a pre-Connection ``{platform: pid}`` default map onto the Connections
         migrated for those platforms, dropping the platform-keyed map."""
         data = self.load_registry()
-        legacy = data.pop("channel_defaults", None)
+        legacy = data.pop("channels", None)
         if not isinstance(legacy, dict):
             return
         for platform, cid in by_platform.items():
