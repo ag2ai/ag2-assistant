@@ -12,13 +12,17 @@ import {
   max, mix, smoothstep, sin, fract, step,
 } from 'three/tsl'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
+import type { SceneContext, SceneHandle } from '../engine.ts'
 
-const hash11 = (n) => fract(sin(n.mul(91.17)).mul(43758.5453))
+// A scalar TSL node — the shader-side counterpart of a number.
+type FloatNode = THREE.Node<'float'>
+
+const hash11 = (n: FloatNode): FloatNode => fract(sin(n.mul(91.17)).mul(43758.5453))
 
 const X = 7.2
 const WSPAN = 14.4
 
-export async function build(ctx) {
+export async function build(ctx: SceneContext): Promise<SceneHandle> {
   const { font, temperatureText } = ctx
   const tempText = (temperatureText || '18').slice(0, 4)
 
@@ -61,7 +65,27 @@ export async function build(ctx) {
   scene.add(sky)
 
   // wind flow-lines (GPU instanced)
-  function buildFlow(count, geo, mat, opts) {
+  // One layer of streaks: `count` instances of `geo`, placed by the shader from the
+  // per-layer knobs below.
+  type FlowOptions = {
+    count: number
+    spreadY: number
+    spreadZ: number
+    zBase: number
+    speedMin: number
+    speedVar: number
+    ampMin: number
+    ampVar: number
+    color: THREE.Node<'vec3'>
+    opacityUniform: FloatNode
+    fracUniform: FloatNode
+  }
+  function buildFlow(
+    count: number,
+    geo: THREE.BufferGeometry,
+    mat: THREE.MeshBasicNodeMaterial,
+    opts: FlowOptions,
+  ) {
     const idf = float(instanceIndex)
     const baseY = hash11(idf.add(0.5)).sub(0.5).mul(opts.spreadY)
     const zPos = hash11(idf.add(1.7)).sub(0.5).mul(opts.spreadZ).add(opts.zBase)
@@ -119,15 +143,18 @@ export async function build(ctx) {
   })
   geometry.computeBoundingBox()
   const bb = geometry.boundingBox
+  // Non-empty text always measures; no box means the font failed to load glyphs,
+  // and the banner falls back to the static gradient rather than render nothing.
+  if (!bb) throw new Error('no-glyph-bounds')
   geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
   const glyphH = bb.max.y - bb.min.y
   const glyphW = bb.max.x - bb.min.x
   const text = new THREE.Mesh(geometry, temperatureMaterial)
   temperatureGroup.add(text)
 
-  let prevT = null
+  let prevT: number | null = null
 
-  function frame(t) {
+  function frame(t: number) {
     // swelling, natural gustiness (layered sines) scaled per preset
     const g = 0.5 + 0.34 * Math.sin(t * 0.7) + 0.16 * Math.sin(t * 1.9 + 1.3)
     const gust = Math.max(0, Math.min(1, g)) * gustScale

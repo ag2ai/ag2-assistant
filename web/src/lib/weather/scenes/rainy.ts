@@ -9,10 +9,14 @@ import {
   mx_fractal_noise_float,
 } from 'three/tsl'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
+import type { SceneContext, SceneHandle } from '../engine.ts'
 
-const hash11 = (n) => fract(sin(n.mul(91.17)).mul(43758.5453))
+// A scalar TSL node — the shader-side counterpart of a number.
+type FloatNode = THREE.Node<'float'>
 
-export async function build(ctx) {
+const hash11 = (n: FloatNode): FloatNode => fract(sin(n.mul(91.17)).mul(43758.5453))
+
+export async function build(ctx: SceneContext): Promise<SceneHandle> {
   const { font, temperatureText } = ctx
   const tempText = (temperatureText || '14').slice(0, 4)
 
@@ -78,7 +82,10 @@ export async function build(ctx) {
   scene.add(rain)
 
   // impact ripple field
-  const rippleField = Fn(([q, spreadX, spreadY, offY, rate, sharp]) => {
+  const rippleField = Fn<
+    [THREE.Node<'vec2'>, FloatNode, FloatNode, FloatNode, FloatNode, FloatNode],
+    FloatNode
+  >(([q, spreadX, spreadY, offY, rate, sharp]) => {
     const acc = float(0.0).toVar()
     Loop({ start: 0, end: 7, type: 'int' }, ({ i }) => {
       const fi = float(i)
@@ -110,7 +117,7 @@ export async function build(ctx) {
   const rivulet = mx_fractal_noise_float(vec3(q.x.mul(9.0), q.y.mul(1.1).add(time.mul(0.55)), 0.0), 3).mul(0.5).add(0.5)
   const rivStreak = smoothstep(0.6, 0.95, rivulet).mul(tFace).mul(0.5)
   // light glyph so it reads against the dark rain sky; fresnel rim + drops sparkle
-  let tColor = vec3(0.78, 0.85, 0.94)
+  let tColor: THREE.Node<'vec3'> = vec3(0.78, 0.85, 0.94)
   tColor = mix(tColor, vec3(0.95, 0.98, 1.0), tFres)
   tColor = tColor.add(drops.mul(vec3(1.0, 1.06, 1.15)).mul(1.6))
   tColor = tColor.add(rivStreak.mul(vec3(0.4, 0.48, 0.58)))
@@ -125,13 +132,16 @@ export async function build(ctx) {
   })
   geometry.computeBoundingBox()
   const bb = geometry.boundingBox
+  // Non-empty text always measures; no box means the font failed to load glyphs,
+  // and the banner falls back to the static gradient rather than render nothing.
+  if (!bb) throw new Error('no-glyph-bounds')
   geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
   const glyphH = bb.max.y - bb.min.y
   const glyphW = bb.max.x - bb.min.x
   const text = new THREE.Mesh(geometry, temperatureMaterial)
   temperatureGroup.add(text)
 
-  function frame(t) {
+  function frame(t: number) {
     // the rain keeps falling (in-shader); gentle camera drift for a little life.
     // lookAt tracks camera.x so the drift is a pure translation.
     camera.position.x = Math.sin(t * 0.07) * 0.14

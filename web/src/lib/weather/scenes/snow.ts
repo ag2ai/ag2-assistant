@@ -13,10 +13,14 @@ import {
   mx_fractal_noise_float,
 } from 'three/tsl'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
+import type { SceneContext, SceneHandle } from '../engine.ts'
 
-const hash11 = (n) => fract(sin(n.mul(91.17)).mul(43758.5453))
+// A scalar TSL node — the shader-side counterpart of a number.
+type FloatNode = THREE.Node<'float'>
 
-export async function build(ctx) {
+const hash11 = (n: FloatNode): FloatNode => fract(sin(n.mul(91.17)).mul(43758.5453))
+
+export async function build(ctx: SceneContext): Promise<SceneHandle> {
   const { font, temperatureText } = ctx
   const tempText = (temperatureText || '-2').slice(0, 4)
 
@@ -98,7 +102,7 @@ export async function build(ctx) {
   const snowMask = smoothstep(0.34, 0.6, coverage.mul(0.78).add(edgeNoise.mul(0.4)))
   const tFace = max(normalView.z, 0.0)
   const tFres = tFace.oneMinus().pow(2.4)
-  let tColor = vec3(0.27, 0.33, 0.42)                       // dark cold steel-blue so it reads + caps pop
+  let tColor: THREE.Node<'vec3'> = vec3(0.27, 0.33, 0.42)                       // dark cold steel-blue so it reads + caps pop
   tColor = mix(tColor, vec3(0.6, 0.68, 0.8), tFres.mul(0.35)) // faint cool rim sheen
   tColor = mix(tColor, vec3(0.99, 1.0, 1.0), snowMask)     // white snow caps on top
   const temperatureMaterial = new THREE.MeshBasicNodeMaterial()
@@ -112,15 +116,18 @@ export async function build(ctx) {
   })
   geometry.computeBoundingBox()
   const bb = geometry.boundingBox
+  // Non-empty text always measures; no box means the font failed to load glyphs,
+  // and the banner falls back to the static gradient rather than render nothing.
+  if (!bb) throw new Error('no-glyph-bounds')
   geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
   const glyphH = bb.max.y - bb.min.y
   const glyphW = bb.max.x - bb.min.x
   const text = new THREE.Mesh(geometry, temperatureMaterial)
   temperatureGroup.add(text)
 
-  let startT = null
+  let startT: number | null = null
 
-  function frame(t) {
+  function frame(t: number) {
     if (startT === null) startT = t
     // snow builds up on the number, then holds
     uSnowAccum.value = Math.min(1, Math.max(0, (t - startT) / buildSeconds))

@@ -13,6 +13,7 @@ import { densityFogFactor, mix, pass, reference, uniform, vec2 } from 'three/tsl
 import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js'
 import { TreeGenerator } from 'three/addons/generators/TreeGenerator.js'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
+import type { SceneContext, SceneHandle } from '../engine.ts'
 
 const FOG_COLOR = 0xc6cace // bright cool haze; background matches so trunks read as silhouettes
 
@@ -20,7 +21,7 @@ const FOG_COLOR = 0xc6cace // bright cool haze; background matches so trunks rea
 const FOG_DENSITY = 0.085
 const SCATTERING = 1.6
 
-export async function build(ctx) {
+export async function build(ctx: SceneContext): Promise<SceneHandle> {
   const { renderer, font, temperatureText } = ctx
   const tempText = (temperatureText || '12').slice(0, 4)
 
@@ -37,7 +38,7 @@ export async function build(ctx) {
   const material = new THREE.MeshBasicNodeMaterial({ color: 0x000000 })
 
   const generator = new TreeGenerator(material)
-  const variants = []
+  const variants: THREE.BufferGeometry[] = []
   for (let v = 0; v < 5; v += 1) {
     const mesh = generator
       .setSeed(v + 1)
@@ -63,7 +64,7 @@ export async function build(ctx) {
   }
 
   // place a stand of pines, but keep a clearing centre-right so the number reads
-  const placements = variants.map(() => [])
+  const placements: THREE.Matrix4[][] = variants.map(() => [])
   const dummy = new THREE.Object3D()
   const cols = 9
   const rows = 7
@@ -119,6 +120,9 @@ export async function build(ctx) {
   })
   geometry.computeBoundingBox()
   const bb = geometry.boundingBox
+  // Non-empty text always measures; no box means the font failed to load glyphs,
+  // and the banner falls back to the static gradient rather than render nothing.
+  if (!bb) throw new Error('no-glyph-bounds')
   geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
   const glyphH = bb.max.y - bb.min.y
   const glyphW = bb.max.x - bb.min.x
@@ -144,7 +148,7 @@ export async function build(ctx) {
   const fogFactor = densityFogFactor(density).context({ getViewZ: () => scenePassViewZ })
   renderPipeline.outputNode = mix(scenePassColor, sceneColorBlurred, fogFactor)
 
-  function frame(t) {
+  function frame(t: number) {
     // slow lateral pan so the pines drift through the haze; lookAt tracks
     // camera.x (pure translation) and z stays fixed so the steady temperature
     // doesn't breathe with a dolly

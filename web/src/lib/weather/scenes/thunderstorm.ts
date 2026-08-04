@@ -15,10 +15,14 @@ import {
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
+import type { SceneContext, SceneHandle } from '../engine.ts'
 
-const hash11 = (n) => fract(sin(n.mul(91.17)).mul(43758.5453))
+// A scalar TSL node — the shader-side counterpart of a number.
+type FloatNode = THREE.Node<'float'>
 
-export async function build(ctx) {
+const hash11 = (n: FloatNode): FloatNode => fract(sin(n.mul(91.17)).mul(43758.5453))
+
+export async function build(ctx: SceneContext): Promise<SceneHandle> {
   const { renderer, font, temperatureText } = ctx
   const tempText = (temperatureText || '19').slice(0, 4)
 
@@ -110,7 +114,10 @@ export async function build(ctx) {
   scene.add(rain)
 
   // impact ripple field
-  const rippleField = Fn(([q, spreadX, spreadY, offY, rate, sharp]) => {
+  const rippleField = Fn<
+    [THREE.Node<'vec2'>, FloatNode, FloatNode, FloatNode, FloatNode, FloatNode],
+    FloatNode
+  >(([q, spreadX, spreadY, offY, rate, sharp]) => {
     const acc = float(0.0).toVar()
     Loop({ start: 0, end: 7, type: 'int' }, ({ i }) => {
       const fi = float(i)
@@ -141,7 +148,7 @@ export async function build(ctx) {
   const drops = rippleField(q, 2.8, 1.2, 0.1, uDropRate.mul(1.6), float(300.0)).mul(step(0.25, tFace))
   const rivulet = mx_fractal_noise_float(vec3(q.x.mul(9.0), q.y.mul(1.1).add(time.mul(0.55)), 0.0), 3).mul(0.5).add(0.5)
   const rivStreak = smoothstep(0.6, 0.95, rivulet).mul(tFace).mul(0.5)
-  let tColor = vec3(0.22, 0.26, 0.32)
+  let tColor: THREE.Node<'vec3'> = vec3(0.22, 0.26, 0.32)
   tColor = mix(tColor, vec3(0.72, 0.82, 0.94), tFres)
   tColor = tColor.add(drops.mul(vec3(1.0, 1.06, 1.15)).mul(1.6))
   tColor = tColor.add(rivStreak.mul(vec3(0.4, 0.48, 0.58)))
@@ -157,6 +164,9 @@ export async function build(ctx) {
   })
   geometry.computeBoundingBox()
   const bb = geometry.boundingBox
+  // Non-empty text always measures; no box means the font failed to load glyphs,
+  // and the banner falls back to the static gradient rather than render nothing.
+  if (!bb) throw new Error('no-glyph-bounds')
   geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
   const glyphH = bb.max.y - bb.min.y
   const glyphW = bb.max.x - bb.min.x
@@ -174,8 +184,8 @@ export async function build(ctx) {
   bolt.frustumCulled = false
   scene.add(bolt)
 
-  function jaggedPath(x0, y0, segs, len, jit) {
-    const pts = []
+  function jaggedPath(x0: number, y0: number, segs: number, len: number, jit: number) {
+    const pts: THREE.Vector3[] = []
     let x = x0
     let y = y0
     pts.push(new THREE.Vector3(x, y, -2.6))
@@ -212,11 +222,11 @@ export async function build(ctx) {
 
   // lightning scheduler / envelopes
   let strikeTime = -1e3
-  let nextStrike = null
+  let nextStrike: number | null = null
 
-  const spike = (a, t0, k) => (a < t0 ? 0 : Math.exp(-(a - t0) * k))
+  const spike = (a: number, t0: number, k: number) => (a < t0 ? 0 : Math.exp(-(a - t0) * k))
 
-  function frame(t) {
+  function frame(t: number) {
     if (nextStrike === null) nextStrike = t + strikeMin + Math.random() * strikeRange
 
     // lightning scheduler

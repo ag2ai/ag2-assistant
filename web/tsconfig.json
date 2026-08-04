@@ -7,9 +7,6 @@
     "strict": true,
     "noUnusedLocals": true,
     "allowImportingTsExtensions": true,
-    // Migration-only: TS modules still import not-yet-converted .js siblings and
-    // need their inferred types. Drops out once src/ holds no .js (task 18).
-    "allowJs": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,

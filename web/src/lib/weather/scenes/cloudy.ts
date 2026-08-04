@@ -13,8 +13,9 @@ import {
   min, max, clamp, exp, mix, smoothstep, mx_fractal_noise_float,
 } from 'three/tsl'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
+import type { SceneContext, SceneHandle } from '../engine.ts'
 
-export async function build(ctx) {
+export async function build(ctx: SceneContext): Promise<SceneHandle> {
   const { font, temperatureText } = ctx
   const tempText = (temperatureText || '22').slice(0, 4)
 
@@ -26,10 +27,6 @@ export async function build(ctx) {
   const AMBIENT = 0xb3bec7
   const SKY_TOP = 0x6f9ec4
   const SKY_BOTTOM = 0xdfeaf0
-  const TEXT_TOP = 0xffffff
-  const TEXT_BASE = 0xd7e0e5
-  const TEXT_SHADOW = 0x6e7880
-
   // ---------------------------------------------------------------- uniforms
   // higher = less cloud (erosion threshold); jittered per build so some clouds
   // come out denser, some wispier
@@ -41,9 +38,6 @@ export async function build(ctx) {
   const uSkyTop = uniform(new THREE.Color(SKY_TOP))
   const uSkyBottom = uniform(new THREE.Color(SKY_BOTTOM))
   const uAbsorption = uniform(ABSORPTION)
-  const uTextTop = uniform(new THREE.Color(TEXT_TOP))
-  const uTextBase = uniform(new THREE.Color(TEXT_BASE))
-  const uTextShadow = uniform(new THREE.Color(TEXT_SHADOW))
 
   // ---------------------------------------------------------------- scene
   const scene = new THREE.Scene()
@@ -84,7 +78,7 @@ export async function build(ctx) {
   const seed = vec3(Math.random() * 200 - 100, Math.random() * 200 - 100, Math.random() * 200 - 100)
 
   // density at a world point: fbm shaped into a horizontal cloud layer, wind-drifted
-  const densityAt = Fn(([p]) => {
+  const densityAt = Fn<[THREE.Node<'vec3'>], THREE.Node<'float'>>(([p]) => {
     const wind = vec3(time.mul(0.05), time.mul(0.01), time.mul(-0.02)).add(seed)
     // broad continuous mass + rounded billowy erosion → full but still puffy
     const base = mx_fractal_noise_float(p.mul(0.42).add(wind), 4).mul(0.5).add(0.5) // 0..1 broad shape
@@ -177,6 +171,9 @@ export async function build(ctx) {
   })
   geometry.computeBoundingBox()
   const bb = geometry.boundingBox
+  // Non-empty text always measures; no box means the font failed to load glyphs,
+  // and the banner falls back to the static gradient rather than render nothing.
+  if (!bb) throw new Error('no-glyph-bounds')
   geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
   const glyphH = bb.max.y - bb.min.y
   const glyphW = bb.max.x - bb.min.x
@@ -184,7 +181,7 @@ export async function build(ctx) {
   text.renderOrder = 1000
   temperatureGroup.add(text)
 
-  function frame(t) {
+  function frame(t: number) {
     // camera.zoom is read here (not at build) because the engine applies its zoom
     // knob after build() returns.
     const k = Math.tan((camera.fov * Math.PI) / 360) / camera.zoom

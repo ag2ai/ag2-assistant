@@ -13,10 +13,16 @@ import {
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
 
-// remap MaterialX fractal noise (~[-1,1]) into [0,1]
-const fbm01 = (p, octaves) => mx_fractal_noise_float(p, octaves).mul(0.5).add(0.5)
+import type { SceneContext, SceneHandle } from '../engine.ts'
 
-export async function build(ctx) {
+// A scalar TSL node — the shader-side counterpart of a number.
+type FloatNode = THREE.Node<'float'>
+
+// remap MaterialX fractal noise (~[-1,1]) into [0,1]
+const fbm01 = (p: THREE.Node<'vec3'>, octaves: number): FloatNode =>
+  mx_fractal_noise_float(p, octaves).mul(0.5).add(0.5)
+
+export async function build(ctx: SceneContext): Promise<SceneHandle> {
   const { renderer, font, temperatureText } = ctx
   const tempText = (temperatureText || '26').slice(0, 4)
 
@@ -49,7 +55,7 @@ export async function build(ctx) {
 
   // warm golden-yellow plasma (was red→orange); keep a little amber in the shadows
   // for depth but the ball should read yellow, not fiery
-  let sunColor = mix(vec3(1.0, 0.52, 0.08), vec3(1.0, 0.78, 0.16), smoothstep(0.15, 0.68, sunHeat))
+  let sunColor: THREE.Node<'vec3'> = mix(vec3(1.0, 0.52, 0.08), vec3(1.0, 0.78, 0.16), smoothstep(0.15, 0.68, sunHeat))
   sunColor = mix(sunColor, vec3(1.0, 0.9, 0.46), smoothstep(0.72, 1.08, boil)) // bright yellow core
   sunColor = sunColor.add(edge.mul(vec3(1.0, 0.66, 0.14)).mul(uIntensity.mul(0.32).add(0.5)))
   sunColor = sunColor.mul(uIntensity.mul(0.16).add(0.82)) // overall brightness down
@@ -65,7 +71,7 @@ export async function build(ctx) {
   root.add(sun)
 
   // soft round falloff from the point sprite coord, scaled by a per-layer opacity uniform
-  function makePointsMaterial(opacity, colorNode) {
+  function makePointsMaterial(opacity: number, colorNode: THREE.Node<'vec3'>) {
     const m = new THREE.PointsNodeMaterial()
     m.transparent = true
     m.depthWrite = false
@@ -83,7 +89,7 @@ export async function build(ctx) {
   const heatGeometry = new THREE.BufferGeometry()
   const heatCount = 180
   const heatPositions = new Float32Array(heatCount * 3)
-  const heatSeeds = []
+  const heatSeeds: { x: number; y: number; z: number; speed: number; phase: number }[] = []
   for (let i = 0; i < heatCount; i += 1) {
     const x = -4 + Math.random() * 8
     const y = -1.4 + Math.random() * 2.8
@@ -107,7 +113,7 @@ export async function build(ctx) {
   const tface = max(normalView.z, 0.0)
   const trim = tface.oneMinus().pow(1.45)
   const theat = smoothstep(0.24, 1.0, tboil.mul(0.74).add(tgrain.mul(0.52)).add(trim.mul(0.34)))
-  let tColor = mix(vec3(1.0, 0.22, 0.02), vec3(1.0, 0.66, 0.07), smoothstep(0.08, 0.62, theat))
+  let tColor: THREE.Node<'vec3'> = mix(vec3(1.0, 0.22, 0.02), vec3(1.0, 0.66, 0.07), smoothstep(0.08, 0.62, theat))
   tColor = mix(tColor, vec3(1.0, 0.94, 0.58), smoothstep(0.56, 1.0, tgrain))
   tColor = tColor.add(trim.mul(vec3(1.0, 0.46, 0.08)).mul(uIntensity.mul(0.5).add(0.75)))
   tColor = tColor.mul(uIntensity.mul(0.18).add(1.1))
@@ -123,6 +129,9 @@ export async function build(ctx) {
   })
   geometry.computeBoundingBox()
   const bb = geometry.boundingBox
+  // Non-empty text always measures; no box means the font failed to load glyphs,
+  // and the banner falls back to the static gradient rather than render nothing.
+  if (!bb) throw new Error('no-glyph-bounds')
   geometry.translate(-bb.min.x, -(bb.max.y + bb.min.y) / 2, 0)
   const glyphH = bb.max.y - bb.min.y // measured for exact half-panel scaling
   const glyphW = bb.max.x - bb.min.x // measured for centring in the free left region
@@ -141,7 +150,7 @@ export async function build(ctx) {
   const bloomPass = bloom(scenePassColor, 0.62, 0.55, 0.32) // strength, radius, threshold
   postProcessing.outputNode = scenePassColor.add(bloomPass)
 
-  function frame(t) {
+  function frame(t: number) {
     intensity += (targetIntensity - intensity) * 0.035
     const stormPulse = mode === 'storm' ? 0.28 * Math.sin(t * 5.8) + 0.18 * Math.sin(t * 9.6) : 0
     const live = Math.max(0.72, intensity + stormPulse)

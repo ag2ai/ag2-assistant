@@ -40,7 +40,7 @@
     let handle: { dispose: () => void } | null = null
     ;(async () => {
       try {
-        const eng = await import('../../lib/weather/engine.js')
+        const eng = await import('../../lib/weather/engine.ts')
         if (!eng.supportsWebGPU()) return
         handle = await eng.createBanner(canvas, condition, { temperatureText, zoom })
         if (cancelled) { handle.dispose(); handle = null; return }
