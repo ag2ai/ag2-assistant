@@ -8,7 +8,8 @@ import { rawQuery } from '../../lib/folderFiles.ts'
 import { ApiError, del, get, post } from '../http.ts'
 import { parse } from '../validate.ts'
 import {
-  FilesResponse,
+  FilesListing,
+  FolderListing,
   FolderRoots,
   Mentions,
   MkdirResult,
@@ -22,7 +23,9 @@ export type FileWithEtag = { text: string; etag: string | null; mode: string }
 export const filesApi = {
   // The whole Files space: {root, files, dirs} — dirs includes the empty
   // Directories the files-only list omits, because the tree needs them.
-  files: () => get(P('/files'), FilesResponse),
+  // No path argument, so this route always answers with the Files-space branch;
+  // the Folder branch is folderList's, below.
+  files: () => get(P('/files'), FilesListing),
 
   // The Thread-scoped Folder section of the tree (ADR 0013). chatId scopes
   // chat-only grants; empty = profile-level grants only.
@@ -38,7 +41,7 @@ export const filesApi = {
           encodeURIComponent(path) +
           (chatId ? '&chat_id=' + encodeURIComponent(chatId) : ''),
       ),
-      FilesResponse,
+      FolderListing,
     ),
 
   // Corpus search for the composer's @-picker (ADR 0012), ranked filename-first

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { folderGrantDiff, taskEditPatch } from './taskEdit.ts'
+import { folderGrantDiff, scheduleValue, taskEditPatch } from './taskEdit.ts'
 import type { FolderGrantIntent, FolderGrantState } from './taskEdit.ts'
 
 // folderGrantDiff — current/intended entries are keyed by folder identity and carry
@@ -182,4 +182,25 @@ test('taskEditPatch: a schedule change is carried whole', () => {
 
 test('taskEditPatch: schedule equal by value → not carried', () => {
   assert.deepEqual(taskEditPatch(base, { ...base, schedule: { kind: 'cron', at: null, cron: '0 3 * * *' } }), {})
+})
+
+test('scheduleValue: carries a cron schedule through', () => {
+  assert.deepEqual(scheduleValue({ kind: 'cron', at: null, cron: '0 9 * * 1-5' }), {
+    kind: 'cron', at: null, cron: '0 9 * * 1-5',
+  })
+})
+
+test('scheduleValue: carries a one-shot timestamp through', () => {
+  assert.deepEqual(scheduleValue({ kind: 'once', at: '2026-08-01T09:00:00Z', cron: null }), {
+    kind: 'once', at: '2026-08-01T09:00:00Z', cron: null,
+  })
+})
+
+test('scheduleValue: a missing or unrenderable schedule reads as unset manual', () => {
+  const manual = { kind: 'manual', at: null, cron: null }
+  assert.deepEqual(scheduleValue(null), manual)
+  assert.deepEqual(scheduleValue(undefined), manual)
+  assert.deepEqual(scheduleValue({}), manual)
+  // A kind the field has no preset for, and non-string at/cron, drop to the defaults.
+  assert.deepEqual(scheduleValue({ kind: 'interval', at: 7, cron: {} }), manual)
 })

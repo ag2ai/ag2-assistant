@@ -26,7 +26,8 @@ export type Run = z.infer<typeof Run>
 // assistant/tasks/model.py ScheduleKind, normalised to {kind, at, cron}. The
 // service validates the payload; the client only reads `kind`, so the rest stays
 // loose rather than a union that would reject a shape the backend later grows.
-export const Schedule = z.looseObject({ kind: z.enum(['manual', 'once', 'cron']) }).nullable()
+// Never null: model.py:87 defaults it and normalize_schedule(None) yields manual.
+export const Schedule = z.looseObject({ kind: z.enum(['manual', 'once', 'cron']) })
 export type Schedule = z.infer<typeof Schedule>
 
 export const Task = z.object({

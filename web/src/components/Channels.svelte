@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → "Channels" section (§4.5). Channels are an INSTALL-LEVEL resource:
   // each platform (Telegram / Discord / Slack) binds to exactly one profile or is
   // disabled — never per-profile toggles, never conflicts. State comes from the
@@ -9,36 +9,42 @@
   import { onMount } from 'svelte'
   import { profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { ChannelEntry, Channels } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
 
   // Token env var(s) per platform — mirrors the backend CHANNEL_TOKEN_ENVS. Slack
   // needs two (bot + app); the others a single token. `label` is null for a
   // single-field platform (no need to name it) and set when there's more than one.
-  const PLATFORMS = [
+  type TokenField = { env: string; label: string | null }
+  type Platform = { id: string; label: string; fields: TokenField[] }
+
+  const PLATFORMS: Platform[] = [
     { id: 'telegram', label: 'Telegram', fields: [{ env: 'TELEGRAM_BOT_TOKEN', label: null }] },
     { id: 'discord', label: 'Discord', fields: [{ env: 'DISCORD_BOT_TOKEN', label: null }] },
     { id: 'slack', label: 'Slack', fields: [{ env: 'SLACK_BOT_TOKEN', label: 'Bot token' }, { env: 'SLACK_APP_TOKEN', label: 'App token' }] },
   ]
 
   // {telegram|discord|slack: {profile: pid|null, token_present, active, error}}
-  let channels = $state(null)
+  let channels = $state<Channels | null>(null)
   let busy = $state('') // platform id currently rebinding/saving (disables its row)
   let err = $state('')
   // Per-env token draft inputs (ENV_NAME -> string). Emptied after a successful save.
-  let drafts = $state({})
+  let drafts = $state<Record<string, string>>({})
 
-  // Unarchived profiles, for the pickers + name/accent lookup.
-  const list = $derived(($profiles.list || []).filter((p) => !p.archived))
+  // Profiles for the pickers + name/accent lookup. GET /api/profiles keeps archived
+  // ones in their own list, so the store's list is already the unarchived set.
+  const list = $derived($profiles.list)
   const profById = $derived(Object.fromEntries(list.map((p) => [p.id, p])))
 
   async function load() {
     try {
       channels = await api.channels()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
   }
   onMount(load)
 
-  async function bind(platform, profile) {
+  async function bind(platform: string, profile: string) {
     if (busy) return
     busy = platform; err = ''
     // Empty <select> value means "Disabled" → null binding.
@@ -48,7 +54,7 @@
       // Merge the single updated entry the POST returns.
       channels = { ...channels, [platform]: res[platform] }
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = ''
   }
@@ -57,9 +63,9 @@
   // (present as a key in `drafts`) are sent; an empty string clears that token. After
   // save we merge the returned entry (which may flip to connected / error / waiting)
   // and drop the drafts so placeholders reflect the fresh token_present state.
-  async function saveTokens(pf) {
+  async function saveTokens(pf: Platform) {
     if (busy) return
-    const tokens = {}
+    const tokens: Record<string, string> = {}
     for (const f of pf.fields) {
       if (f.env in drafts) tokens[f.env] = drafts[f.env]
     }
@@ -72,17 +78,17 @@
       for (const f of pf.fields) delete next[f.env]
       drafts = next
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = ''
   }
 
   // Clear all token(s) for a platform (empty submit) — mirrors the "Clear" link on
   // the API-key rows, which clears without a confirm.
-  async function clearTokens(pf) {
+  async function clearTokens(pf: Platform) {
     if (busy) return
     busy = pf.id; err = ''
-    const tokens = {}
+    const tokens: Record<string, string> = {}
     for (const f of pf.fields) tokens[f.env] = ''
     try {
       const res = await api.channelTokens(pf.id, tokens)
@@ -91,7 +97,7 @@
       for (const f of pf.fields) delete next[f.env]
       drafts = next
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = ''
   }
@@ -100,7 +106,7 @@
   // (active) → bound-without-token (a normal "waiting" state, even though the
   // backend records a no-token error for it, so it takes precedence over the raw
   // error string) → a genuine start error (bad token / network) → bound.
-  function statusOf(id, c) {
+  function statusOf(id: string, c: ChannelEntry | undefined) {
     if (!c || c.profile == null) return { kind: 'off', text: 'disabled' }
     const name = profById[c.profile]?.name || c.profile
     if (c.active) return { kind: 'ok', text: `connected to ${name}` }
@@ -141,7 +147,7 @@
             class="chpick"
             value={c?.profile ?? ''}
             disabled={busy === pf.id}
-            onchange={(e) => bind(pf.id, e.target.value)}
+            onchange={(e) => bind(pf.id, e.currentTarget.value)}
           >
             <option value="">Disabled</option>
             {#each list as p (p.id)}

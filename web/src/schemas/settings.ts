@@ -14,6 +14,10 @@ export const McpServer = z.object({
 })
 export type McpServer = z.infer<typeof McpServer>
 
+// The install-wide filesystem anchors the folder pickers offer as shortcuts.
+export const FsRoots = z.object({ home: z.string(), cwd: z.string(), workspace: z.string() })
+export type FsRoots = z.infer<typeof FsRoots>
+
 // POST /settings/mcp/{name}/health — an unreachable server answers ok:false.
 export const McpHealth = z.union([
   z.object({ ok: z.literal(true), tools: z.array(z.string()) }),
@@ -48,7 +52,7 @@ export const ProfileSettings = z.object({
   mcp_servers: z.array(McpServer),
   focuses: z.array(z.string()),
   reply_timeout_s: z.number(),
-  fs: z.object({ home: z.string(), cwd: z.string(), workspace: z.string() }),
+  fs: FsRoots,
 })
 export type ProfileSettings = z.infer<typeof ProfileSettings>
 

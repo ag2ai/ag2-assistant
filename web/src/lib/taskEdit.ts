@@ -113,6 +113,21 @@ const scheduleEqual = (a: ScheduleRef, b: ScheduleRef): boolean => {
 // type stays loose enough for the backend to grow the shape.
 export type ScheduleRef = { kind?: unknown; at?: unknown; cron?: unknown } | null | undefined
 
+// The normalised triple the ScheduleField edits and the editor sends back. The wire
+// `Schedule` is a loose object (the backend may grow it); this is the writable subset.
+export type ScheduleValue = { kind: 'manual' | 'once' | 'cron'; at: string | null; cron: string | null }
+
+// Narrow a wire schedule down to the editable triple. Anything the field can't
+// render — a missing schedule, a non-string at/cron — reads as an unset manual one.
+export function scheduleValue(s: ScheduleRef): ScheduleValue {
+  const kind = s?.kind
+  return {
+    kind: kind === 'once' || kind === 'cron' ? kind : 'manual',
+    at: typeof s?.at === 'string' ? s.at : null,
+    cron: typeof s?.cron === 'string' ? s.cron : null,
+  }
+}
+
 // The editable fields, on both the server copy and the buffer.
 export type TaskEditFields = {
   name?: string | null

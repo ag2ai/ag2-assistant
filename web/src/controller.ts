@@ -9,7 +9,7 @@ import { VoiceController } from './transport/voice.ts'
 import { api } from './transport/api/index.ts'
 import { foldEvent, isBusy, queueMessage } from './project.ts'
 import { nextItemId } from './lib/ids.ts'
-import type { ThreadItem, WireEvent } from './schemas/events.ts'
+import type { AttachmentPayload, ThreadItem, WireEvent } from './schemas/events.ts'
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
 import { setAccent } from './design/palette.ts'
 import { go, closeAside, route } from './router.ts'
@@ -103,7 +103,7 @@ export function openThread(kind: ThreadKind, id: string): void {
   }
 }
 
-export function send(text: string, attachments: string[] = []): void {
+export function send(text: string, attachments: AttachmentPayload[] = []): void {
   if (!client || (!text.trim() && !attachments.length)) return
   thread.update((t) => ({ ...t, busy: true }))
   client.send(text, attachments)

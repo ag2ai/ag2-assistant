@@ -2,6 +2,7 @@ import { writable, type Writable } from 'svelte/store'
 import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.ts'
 import type {
   ChatRow,
+  HitlQuestion,
   Inquiry,
   MentionRow,
   Profile,
@@ -72,7 +73,14 @@ export const pendingTaskEdit: Writable<string | null> = writable(null)
 
 // Durable HITL: pending questions/permissions across all tasks, answerable
 // anywhere (polled). Survives restarts — backed by the InquiryStore.
-export const inquiries: Writable<Inquiry[]> = writable([])
+// The "Needs your input" strip merges two sources into one list: durable task
+// inquiries and the HitlServer's chat-turn permission prompts. `_src` says which
+// source a row came from; `_key` namespaces their two id spaces.
+export type InquiryRow =
+  | (Inquiry & { _src: 'inquiry'; _key: string })
+  | (HitlQuestion & { _src: 'hitl'; _key: string })
+
+export const inquiries: Writable<InquiryRow[]> = writable([])
 
 // Google connect modal open/closed.
 export const googleOpen = writable(false)

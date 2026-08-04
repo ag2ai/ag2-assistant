@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The task's page: a Cowork-style read-only view (name / description / status /
   // instructions / model / working folders / schedule / approvals) + its run history,
   // that edits ITSELF inline (ADR 0014). The pencil flips the whole page into a form;
@@ -12,7 +12,11 @@
   import { getActiveProfileId } from '../../lib/profile.ts'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
   import { llmConfigs, loadLlmConfigs, LOGO, TYPE_LABEL, isUsable } from '../../lib/llm.ts'
-  import { folderGrantDiff, taskEditPatch } from '../../lib/taskEdit.ts'
+  import { folderGrantDiff, scheduleValue, taskEditPatch } from '../../lib/taskEdit.ts'
+  import type { FolderGrantIntent, FolderGrantState, GrantOp, ScheduleValue, TaskFolderMode } from '../../lib/taskEdit.ts'
+  import { errText } from '../../lib/errors.ts'
+  import { ApiError } from '../../transport/http.ts'
+  import { FolderConflict, type Folder, type FsRoots, type GrantMode, type Mode, type RunStatus, type Task, type TaskWithRuns } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
   import AppBar from '../AppBar.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
@@ -21,10 +25,15 @@ import WriteSwitch from '../WriteSwitch.svelte'
   import ScheduleField from './ScheduleField.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.ts'
 
-  const TERMINAL = ['completed', 'failed', 'cancelled']
+  const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled']
 
-  let task = $state(null)     // server copy (null while loading / for 'new')
-  let perms = $state([])      // this task's always-allowed command rules
+  // One folder row in the read-only view: the grant reality the diff consumes, plus
+  // what the row renders. The edit buffer adds the intended effective `mode`.
+  type FolderStateRow = FolderGrantState & { name: string; exists: boolean }
+  type FolderRow = FolderGrantIntent & { name: string; exists: boolean; taskMode?: TaskFolderMode | null }
+
+  let task = $state<TaskWithRuns | null>(null)   // server copy (null while loading / for 'new')
+  let perms = $state<string[]>([])               // this task's always-allowed command rules
   let running = $state(false)
   let pausing = $state(false)
   let confirmDel = $state(false)
@@ -38,12 +47,12 @@ import WriteSwitch from '../WriteSwitch.svelte'
   let ename = $state('')
   let edesc = $state('')
   let eprompt = $state('')
-  let emodel = $state(null)
-  let eschedule = $state({ kind: 'manual', at: null, cron: null })
-  let efolders = $state([])   // intended folder set: [{ id, path, name, exists, profileMode, mode }]
+  let emodel = $state<string | null>(null)
+  let eschedule = $state<ScheduleValue>({ kind: 'manual', at: null, cron: null })
+  let efolders = $state<FolderRow[]>([])   // intended folder set
   let pickerOpen = $state(false)
   let modelOpen = $state(false)   // model-override popover (edit mode)
-  let roots = $state({})      // fs roots for the FolderPicker (cwd/home/workspace)
+  let roots = $state<Partial<FsRoots>>({})   // fs roots for the FolderPicker (cwd/home/workspace)
   let _createFoldersSeeded = false
 
   const isNew = $derived($route.id === 'new')
@@ -55,51 +64,60 @@ import WriteSwitch from '../WriteSwitch.svelte'
   // Live Folder snapshot — mirror TaskFolders' effective-access model exactly: a task
   // reaches its own task-scope folders AND the profile folders, with a task-scope grant
   // overriding the profile mode (a task 'none' override blocks a profile folder).
-  const pid = $derived($profiles.activeId || getActiveProfileId())
+  const pid = $derived($profiles.activeId || getActiveProfileId() || '')
   onMount(() => {
     if (!$foldersStore.loaded) loadFolders()
     if (!$llmConfigs.loaded) loadLlmConfigs()   // no composer here to seed the config list
-    api.settings().then((s) => { roots = s.fs || {} }).catch(() => {})
+    api.settings().then((s) => { roots = s.fs }).catch(() => {})
   })
 
   // App-bar subtitle: "Profile • Model", matching the run bar (Thread.svelte). While
   // editing, mirror the buffered model so the header stays an accurate reflection; the
   // task's own model wins, falling back to the install's active default.
-  const activeProfile = $derived(($profiles.list || []).find((p) => p.id === $profiles.activeId))
+  const activeProfile = $derived($profiles.list.find((p) => p.id === $profiles.activeId))
   const effModelId = $derived(inEdit ? emodel : task?.model)
   const taskModel = $derived($llmConfigs.configs.find((c) => c.id === (effModelId || $llmConfigs.active)))
   const subtitle = $derived([activeProfile?.name, taskModel?.name].filter(Boolean).join(' • '))
   // The Model row's read-only label: the task's chosen config, else "Profile default".
-  const modelRowLabel = $derived(
-    task?.model ? ($llmConfigs.configs.find((c) => c.id === task.model)?.name || task.model) : 'Profile default'
-  )
+  const modelRowLabel = $derived.by(() => {
+    const id = task?.model
+    if (!id) return 'Profile default'
+    return $llmConfigs.configs.find((c) => c.id === id)?.name || id
+  })
   // Edit-mode picker: the buffered override config (null `emodel` = Profile default).
   const emodelConfig = $derived($llmConfigs.configs.find((c) => c.id === emodel) || null)
   // Read-only preview: the saved override config (null model = Profile default, shown as
   // plain text; a stale/unknown id falls through to modelRowLabel's raw string).
-  const roModelConfig = $derived(task?.model ? ($llmConfigs.configs.find((c) => c.id === task.model) || null) : null)
+  const roModelConfig = $derived.by(() => {
+    const id = task?.model
+    return id ? $llmConfigs.configs.find((c) => c.id === id) || null : null
+  })
   // Buffer-only: pick a config id or null (Profile default). Unlike the composer's
   // ModelSwitcher this does NOT switch the install-wide active config — it just stages
   // the task's own override for Save.
-  function chooseModel(id) { emodel = id; modelOpen = false }
+  function chooseModel(id: string | null) { emodel = id; modelOpen = false }
   function openModelSettings() { modelOpen = false; openOverlay('settings', SETTINGS_PAGE.MODELS) }
 
-  const tGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.task_id === task.id && !g.chat_id)
-  const profileGrant = (f) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
-  const effMode = (f) => { const t = tGrant(f); return t ? t.mode : profileGrant(f)?.mode }
+  // A task-scope grant only exists once the task does — `/t/new` has none yet.
+  const tGrant = (f: Folder) => {
+    const cur = task
+    return cur ? f.grants.find((g) => g.profile === pid && g.task_id === cur.id && !g.chat_id) : undefined
+  }
+  const profileGrant = (f: Folder) => f.grants.find((g) => g.profile === pid && !g.chat_id && !g.task_id)
+  const effMode = (f: Folder): GrantMode | undefined => { const t = tGrant(f); return t ? t.mode : profileGrant(f)?.mode }
   // Split into the two read-only groups (Task folders / Profile folders): task-only
   // folders that grant access, and profile folders the task can still reach (a task
   // 'none' override drops them here). Same layout, minus the controls.
-  const _folders = $derived($foldersStore.folders || [])
+  const _folders = $derived($foldersStore.folders)
   const taskFolders = $derived(!task ? [] : _folders.filter((f) => { const t = tGrant(f); return t && t.mode !== 'none' && !profileGrant(f) }))
   const profileFolders = $derived(!task ? [] : _folders.filter((f) => profileGrant(f) && effMode(f) !== 'none'))
   const hasFolders = $derived(taskFolders.length > 0 || profileFolders.length > 0)
-  const modeLabel = (m) => (m === 'read_write' ? 'Read + write' : 'Read')
+  const modeLabel = (m: GrantMode | undefined) => (m === 'read_write' ? 'Read + write' : 'Read')
 
   // The task's CURRENT grant reality for this profile — every folder carrying a
   // profile- or task-scope grant, with both modes. This is the `current` side of
   // folderGrantDiff and the seed for the edit buffer.
-  function currentFolderState() {
+  function currentFolderState(): FolderStateRow[] {
     if (!task) return []
     return _folders
       .filter((f) => profileGrant(f) || tGrant(f))
@@ -118,15 +136,18 @@ import WriteSwitch from '../WriteSwitch.svelte'
   // resolve after B's has started. Each call claims the next token and checks
   // it's still current before committing ANY state.
   let _loadSeq = 0
-  async function load(id) {
+  async function load(id: string | null) {
     const seq = ++_loadSeq
     error = ''
     confirmDel = false
     editing = false
     _createFoldersSeeded = false
     if (id === 'new') { task = null; perms = []; seedBuffer(null); editing = true; return }
+    // The shell only mounts this page for /t/{id}, so a missing id means there is
+    // nothing to load rather than a task to report as absent.
+    if (!id) { task = null; perms = []; return }
     try {
-      const [t, p] = await Promise.all([api.task(id), api.taskPermissions(id).catch(() => [])])
+      const [t, p] = await Promise.all([api.task(id), api.taskPermissions(id).catch((): string[] => [])])
       if (seq !== _loadSeq) return
       task = t
       perms = p
@@ -137,7 +158,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
     } catch { if (seq === _loadSeq) { error = 'Task not found.'; task = null; perms = [] } }
   }
   // reload when the route's id changes
-  let _lastId = ''
+  let _lastId: string | null = ''
   $effect(() => { const id = $route.id; if (id !== _lastId) { _lastId = id; load(id) } })
 
   // Honour a one-shot "open Edit" request from the Drawer's task-row menu: it sets
@@ -162,10 +183,11 @@ import WriteSwitch from '../WriteSwitch.svelte'
   // summary fields the drawer can change, so richer local data (runs, prompt, grants)
   // is preserved.
   $effect(() => {
-    if (!task) return
-    const row = $tasks.find((x) => x.id === task.id)
-    if (row && (row.name !== task.name || row.paused !== task.paused)) {
-      task = { ...task, name: row.name, paused: row.paused }
+    const cur = task
+    if (!cur) return
+    const row = $tasks.find((x) => x.id === cur.id)
+    if (row && (row.name !== cur.name || row.paused !== cur.paused)) {
+      task = { ...cur, name: row.name, paused: row.paused }
     }
   })
 
@@ -174,12 +196,12 @@ import WriteSwitch from '../WriteSwitch.svelte'
   // Snapshot the task (and its effective folder set) into the local buffer. `t` may be
   // null for create. $state.snapshot, not structuredClone: `task` is a $state proxy and
   // structuredClone throws DataCloneError on proxies.
-  function seedBuffer(t) {
+  function seedBuffer(t: TaskWithRuns | null) {
     ename = t?.name || ''
     edesc = t?.description || ''
     eprompt = t?.prompt || ''
     emodel = t?.model ?? null
-    eschedule = t ? $state.snapshot(t.schedule) : { kind: 'manual', at: null, cron: null }
+    eschedule = t ? scheduleValue($state.snapshot(t.schedule)) : { kind: 'manual', at: null, cron: null }
     efolders = t ? currentFolderState().map((g) => ({ ...g, mode: g.taskMode ?? g.profileMode })) : createFolderSeed()
     pickerOpen = false
     modelOpen = false
@@ -188,10 +210,14 @@ import WriteSwitch from '../WriteSwitch.svelte'
   // still be editable up front — pick them at their profile mode so a change becomes a
   // task override on Save (folderGrantDiff turns mode≠profile into a set-grant against
   // the new task; an unchanged one is a no-op).
-  function createFolderSeed() {
-    return _folders
-      .filter((f) => profileGrant(f))
-      .map((f) => ({ id: f.id, path: f.path, name: f.name, exists: f.exists !== false, profileMode: profileGrant(f).mode, taskMode: null, mode: profileGrant(f).mode }))
+  function createFolderSeed(): FolderRow[] {
+    const rows: FolderRow[] = []
+    for (const f of _folders) {
+      const pg = profileGrant(f)
+      if (!pg) continue
+      rows.push({ id: f.id, path: f.path, name: f.name, exists: f.exists !== false, profileMode: pg.mode, taskMode: null, mode: pg.mode })
+    }
+    return rows
   }
   function startEdit() { if (!task) return; seedBuffer(task); error = ''; editing = true }
   // Edit only — create has no Cancel (you leave a New task by navigating away, not by
@@ -201,7 +227,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
   // Buffered folder mutations — nothing hits the server until Save. A task-only folder
   // switched Off is dropped from the buffer (removed); a profile folder switched Off
   // becomes a task `none` block (kept, so it can be re-enabled).
-  function setFolderMode(entry, next) {
+  function setFolderMode(entry: FolderRow, next: TaskFolderMode | null) {
     if (entry.profileMode == null) {
       if (next === null) efolders = efolders.filter((x) => x !== entry)
       else efolders = efolders.map((x) => (x === entry ? { ...x, mode: next } : x))
@@ -209,27 +235,30 @@ import WriteSwitch from '../WriteSwitch.svelte'
       efolders = efolders.map((x) => (x === entry ? { ...x, mode: next ?? 'none' } : x))
     }
   }
-  function addFolder(path) {
+  function addFolder(path: string) {
     pickerOpen = false
     if (!path || efolders.some((x) => x.path === path)) return
-    efolders = [...efolders, { id: null, path, name: path, exists: true, profileMode: null, mode: 'read' }]
+    efolders = [...efolders, { id: null, path, name: path, exists: true, profileMode: null, taskMode: null, mode: 'read' }]
   }
 
   // Apply the ordered op list from folderGrantDiff against `taskId`, resolving
   // freshly-created folders by path. 409 on create means the path is already a Folder —
   // fall back to the existing snapshot. Mirrors TaskFolders / the old modal's grant glue.
-  async function applyFolderOps(ops, taskId) {
-    const byPath = {}
+  async function applyFolderOps(ops: GrantOp[], taskId: string) {
+    const byPath: Record<string, string> = {}
     for (const op of ops) {
       if (op.kind === 'create-folder') {
-        let snap, folder
+        let snap: { folders: Folder[] }
+        let folder: Folder | undefined
         try {
           snap = await api.createFolder(op.path)
-          folder = (snap.folders || []).find((f) => f.path === op.path)
+          folder = snap.folders.find((f) => f.path === op.path)
         } catch (e) {
-          if (e.status === 409 && e.body?.existing?.id) {
+          // 409 = the path is already registered; the body points at that Folder.
+          const clash = e instanceof ApiError && e.status === 409 ? FolderConflict.safeParse(e.body) : null
+          if (clash?.success) {
             snap = await api.folders()
-            folder = (snap.folders || []).find((f) => f.id === e.body.existing.id)
+            folder = snap.folders.find((f) => f.id === clash.data.existing.id)
           } else throw e
         }
         if (folder) { byPath[op.path] = folder.id; applyFolders(snap) }
@@ -245,10 +274,12 @@ import WriteSwitch from '../WriteSwitch.svelte'
 
   async function save() {
     if (!eprompt.trim() || saving) return
+    const cur = task
+    if (!isNew && !cur) return    // nothing loaded yet, so nothing to PATCH
     saving = true
     error = ''
     try {
-      if (isNew) {
+      if (isNew || !cur) {
         // Create: POST (auto-names from the prompt when name is blank), then mint the
         // buffered folders against the new id. Folder attach is best-effort — the task
         // is already saved, so a folder failure must not sink the create.
@@ -264,16 +295,16 @@ import WriteSwitch from '../WriteSwitch.svelte'
         go('/t/' + created.id)
       } else {
         // Edit: build a minimal PATCH of changed task fields, then reconcile folders.
-        const patch = taskEditPatch(task, { name: ename, description: edesc, prompt: eprompt, model: emodel, schedule: $state.snapshot(eschedule) })
-        const updated = Object.keys(patch).length ? await api.updateTask(task.id, patch) : task
+        const patch = taskEditPatch(cur, { name: ename, description: edesc, prompt: eprompt, model: emodel, schedule: $state.snapshot(eschedule) })
+        const updated = Object.keys(patch).length ? await api.updateTask(cur.id, patch) : cur
         task = updated
         patchTaskInStore(updated)
         // Task is saved; apply the folder diff. A folder failure surfaces without
         // corrupting the saved task (we stay in edit mode with the error shown).
-        await applyFolderOps(folderGrantDiff(currentFolderState(), $state.snapshot(efolders)), task.id)
+        await applyFolderOps(folderGrantDiff(currentFolderState(), $state.snapshot(efolders)), cur.id)
         editing = false
       }
-    } catch (e) { error = e.message || 'save failed' }
+    } catch (e) { error = errText(e, 'save failed') }
     finally { saving = false }
   }
 
@@ -281,20 +312,21 @@ import WriteSwitch from '../WriteSwitch.svelte'
     if (running || !task) return
     running = true
     try { const run = await api.runTask(task.id); go('/r/' + run.id) }
-    catch (e) { error = e.message || 'run failed' } finally { running = false }
+    catch (e) { error = errText(e, 'run failed') } finally { running = false }
   }
 
   // Patch the shared task-list store so the drawer's paused glyph (and any other
   // $tasks reader) reflects the toggle immediately. The server copy is authoritative.
-  function patchTaskInStore(t) {
+  function patchTaskInStore(t: Task) {
     tasks.update((list) => list.map((x) => (x.id === t.id ? t : x)))
   }
 
   async function togglePause() {
-    if (!task || pausing) return
+    const cur = task
+    if (!cur || pausing) return
     pausing = true
-    try { task = await api.updateTask(task.id, { paused: !task.paused }); patchTaskInStore(task) }
-    catch (e) { error = e.message || 'pause failed' } finally { pausing = false }
+    try { task = await api.updateTask(cur.id, { paused: !cur.paused }); patchTaskInStore(task) }
+    catch (e) { error = errText(e, 'pause failed') } finally { pausing = false }
   }
 
   async function del() {
@@ -304,17 +336,18 @@ import WriteSwitch from '../WriteSwitch.svelte'
       await api.deleteTask(id)
       tasks.update((list) => list.filter((x) => x.id !== id))
       goTab('tasks')
-    } catch (e) { error = e.message }
+    } catch (e) { error = errText(e) }
   }
 
-  async function revoke(rule) {
-    if (!task) return
-    try { await api.deleteTaskPermission(task.id, rule); perms = await api.taskPermissions(task.id) }
-    catch (e) { error = e.message || 'revoke failed' }
+  async function revoke(rule: string) {
+    const cur = task
+    if (!cur) return
+    try { await api.deleteTaskPermission(cur.id, rule); perms = await api.taskPermissions(cur.id) }
+    catch (e) { error = errText(e, 'revoke failed') }
   }
 
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
-  const STAT_ICON = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
+  const STAT_ICON: Record<RunStatus, string> = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
 </script>
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') modelOpen = false }} />
@@ -334,7 +367,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
           {#if inEdit}
             <input class="tpnameinput" bind:value={ename} placeholder="Name — generated from the prompt if blank" />
             <input class="tpdescinput" bind:value={edesc} placeholder="Description (optional)" />
-          {:else}
+          {:else if task}
             <h1>{task.name}</h1>
             {#if task.description}<div class="tpdesc">{task.description}</div>{/if}
             <div class="tpstatus">
@@ -375,7 +408,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
       </div>
 
       <div class="tpcols" class:single={isNew}>
-        {#if !isNew}
+        {#if !isNew && task}
           <section>
             <h2>History</h2>
             {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
@@ -395,7 +428,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
           {#if inEdit}
             <textarea class="tpinput tpprompt-input" rows="6" bind:value={eprompt}
               placeholder="What should the agent do on every run? Be specific — it runs unattended."></textarea>
-          {:else}
+          {:else if task}
             <p class="tpprompt">{task.prompt}</p>
           {/if}
 
@@ -480,7 +513,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                        2-position Read/Read+write toggle + an explicit Delete, not the
                        3-position switch profile folders use. Mirrors TaskFolders. -->
                   <div class="fctl">
-                    <WriteSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
+                    <WriteSwitch mode={f.mode} onchange={(m: Mode) => setFolderMode(f, m)} />
                     <button class="iconbtn" title="Remove folder" aria-label="Remove folder" onclick={() => setFolderMode(f, null)}><Icon name="trash" size={14} /></button>
                   </div>
                 </div>
@@ -492,7 +525,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                 <div class="frow">
                   <span class="fico"><Icon name="folder" size={14} /></span>
                   <span class="fname" title={f.path}>{f.name}</span>
-                  <AccessSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
+                  <AccessSwitch mode={f.mode} onchange={(m: Mode | null) => setFolderMode(f, m)} />
                 </div>
               {/each}
             {/if}
@@ -532,7 +565,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
           <h2>Repeats</h2>
           {#if inEdit}
             <ScheduleField bind:schedule={eschedule} />
-          {:else}
+          {:else if task}
             <p class="tpmeta">{task.schedule_desc}</p>
           {/if}
 

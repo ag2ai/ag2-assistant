@@ -1,9 +1,15 @@
-<script>
+<script lang="ts">
   // Maps UI presets ⇄ the schedule union {kind, at, cron}. Presets serialise to
   // cron; anything unrecognised round-trips through the Custom field untouched.
-  let { schedule = $bindable() } = $props()
 
-  const PRESETS = [
+  import type { ScheduleValue } from '../../lib/taskEdit.ts'
+
+  type Preset = 'manual' | 'once' | 'hourly' | 'daily' | 'weekly' | 'weekdays' | 'custom'
+  type Props = { schedule: ScheduleValue }
+
+  let { schedule = $bindable() }: Props = $props()
+
+  const PRESETS: { id: Preset; label: string }[] = [
     { id: 'manual',   label: 'Manual' },
     { id: 'hourly',   label: 'Hourly' },
     { id: 'daily',    label: 'Daily' },
@@ -13,18 +19,17 @@
     { id: 'once',     label: 'Once at…' },
   ]
 
-  function detect(s) {
+  function detect(s: ScheduleValue): Preset {
     if (s.kind === 'manual') return 'manual'
     if (s.kind === 'once') return 'once'
     const c = s.cron || ''
     if (c === '0 * * * *') return 'hourly'
-    let m
-    if ((m = c.match(/^(\d+) (\d+) \* \* \*$/))) return 'daily'
-    if ((m = c.match(/^(\d+) (\d+) \* \* 1$/))) return 'weekly'
-    if ((m = c.match(/^(\d+) (\d+) \* \* 1-5$/))) return 'weekdays'
+    if (/^\d+ \d+ \* \* \*$/.test(c)) return 'daily'
+    if (/^\d+ \d+ \* \* 1$/.test(c)) return 'weekly'
+    if (/^\d+ \d+ \* \* 1-5$/.test(c)) return 'weekdays'
     return 'custom'
   }
-  function timeOf(cron) {
+  function timeOf(cron: string | null): string {
     const m = (cron || '').match(/^(\d+) (\d+) /)
     return m ? String(m[2]).padStart(2, '0') + ':' + String(m[1]).padStart(2, '0') : '09:00'
   }

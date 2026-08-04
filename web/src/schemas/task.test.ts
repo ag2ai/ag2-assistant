@@ -38,8 +38,14 @@ test('Task accepts a null model, null next_run_at and a null last_run', () => {
 
 test('Task keeps the schedule fields beyond kind', () => {
   const parsed = Task.parse(task)
-  assert.equal(parsed.schedule?.kind, 'cron')
+  assert.equal(parsed.schedule.kind, 'cron')
   assert.equal((parsed.schedule as Record<string, unknown>).cron, '0 9 * * *')
+})
+
+test('Task requires a schedule — the service always normalises one', () => {
+  // model.py:87 defaults it and normalize_schedule(None) yields manual, so a null
+  // here would be a backend contract change, not a case the UI must render.
+  assert.throws(() => Task.parse({ ...task, schedule: null }))
 })
 
 test('Task rejects a schedule kind the backend does not define', () => {

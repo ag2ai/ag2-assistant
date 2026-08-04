@@ -1,21 +1,21 @@
-<script module>
+<script module lang="ts">
   // Session-scoped tree state that must survive the component remounting each time
   // the Files tab is (re)activated: which Directories the user has expanded
   // (default is collapsed) and the current upload-target selection. A profile
   // switch is a full-page nav, so these reset with it — correct.
-  let sessionExpanded = new Set()
+  let sessionExpanded = new Set<string>()
   let sessionSelected = ''
   // Which granted-Folder Directories the user has expanded (absolute paths, kept apart
   // from the Files-space `sessionExpanded` so the Files-space reconcile never prunes
   // them). Module-scoped to survive the tab-remount; re-scoped when the Thread changes.
-  let sessionFolderExpanded = new Set()
+  let sessionFolderExpanded = new Set<string>()
   // The last Reveal request (store `epoch`) this tab has acted on. Module-scoped so it
   // survives the remount on tab (re)activation — otherwise a lingering reveal request
   // would re-fire every time the Files tab is opened normally.
   let handledRevealEpoch = 0
 </script>
 
-<script>
+<script lang="ts">
   // The profile's user-writable Files space rendered as an IDE-style Directory
   // tree (ADR 0007). Built client-side from the flat {files, dirs} listing by
   // splitting paths. Freshness is pull: loads when the tab opens and on ↻ refresh,
@@ -31,10 +31,17 @@
   import { ancestorDirs, iconForFile } from '../lib/preview.ts'
   import { modeLabel, isFolderPath, folderAncestorDirs, folderAffordances } from '../lib/folderFiles.ts'
   import { clearsTreeTarget } from '../lib/filesTree.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { FileRow, FolderListing, FolderRoot } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
 
-  let files = $state([])          // flat [{path,name,dir,size,modified}]
-  let dirs = $state([])           // flat [relpath] — includes empty Directories
+  // One assembled tree node: the Directory's own children, built from the flat lists.
+  type Node = { name: string; path: string; dirs: Map<string, Node>; files: FileRow[] }
+  // One lazily-pulled Folder Directory level; `err` marks a level that soft-degraded.
+  type Level = Pick<FolderListing, 'dirs' | 'files'> & { mode?: string; err?: boolean }
+
+  let files = $state<FileRow[]>([])   // flat [{path,name,dir,size,modified}]
+  let dirs = $state<string[]>([])     // flat [relpath] — includes empty Directories
   let root = $state('')
   let loading = $state(true)
   let err = $state('')
@@ -46,14 +53,14 @@
   let selected = $state(sessionSelected)
   $effect(() => { sessionSelected = selected })
 
-  let treeEl                      // the scroll container, for scrolling a revealed row in
+  let treeEl: HTMLElement | undefined   // the scroll container, for scrolling a revealed row in
   // Coalescing is scoped to the mount burst ONLY: onMount's load and a Reveal fired at
   // the same tab-open share a single request (per the Reveal decision — don't
   // double-fetch). Every post-mount caller (↻ refresh, delete/move/mkdir/upload, and a
   // Reveal into an already-open tab) forces its own fresh pull, so freshness is never
   // traded away — a Reveal is guaranteed to see a just-written file.
   let mounted = false
-  let inflight = null
+  let inflight: Promise<void> | null = null
   async function load() {
     if (!mounted && inflight) return inflight
     loading = true
@@ -61,12 +68,12 @@
     const p = (async () => {
       try {
         const r = await api.files()
-        files = r.files || []
-        dirs = r.dirs || []
-        root = r.root || ''
+        files = r.files
+        dirs = r.dirs
+        root = r.root
         reconcile()   // drop selection/expansion pointing at Directories that no longer exist
       } catch (e) {
-        err = String(e.message || e)
+        err = errText(e)
       }
       loading = false
     })()
@@ -97,17 +104,18 @@
   onMount(async () => { await load(); mounted = true })
 
   // ---- Tree assembly (directories-first, alphabetical, from the flat lists) ----
-  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   const tree = $derived.by(() => {
-    const rootNode = { name: '', path: '', dirs: new Map(), files: [] }
-    const ensure = (path) => {
+    const rootNode: Node = { name: '', path: '', dirs: new Map(), files: [] }
+    const ensure = (path: string): Node => {
       let cur = rootNode
       if (!path) return cur
       let acc = ''
       for (const part of path.split('/')) {
         acc = acc ? acc + '/' + part : part
-        if (!cur.dirs.has(part)) cur.dirs.set(part, { name: part, path: acc, dirs: new Map(), files: [] })
-        cur = cur.dirs.get(part)
+        let next = cur.dirs.get(part)
+        if (!next) { next = { name: part, path: acc, dirs: new Map(), files: [] }; cur.dirs.set(part, next) }
+        cur = next
       }
       return cur
     }
@@ -115,12 +123,12 @@
     for (const f of files) ensure(f.dir).files.push(f)
     return rootNode
   })
-  const subDirs = (node) => [...node.dirs.values()].sort(byName)
-  const subFiles = (node) => [...node.files].sort(byName)
+  const subDirs = (node: Node) => [...node.dirs.values()].sort(byName)
+  const subFiles = (node: Node) => [...node.files].sort(byName)
   const isEmpty = $derived(!files.length && !dirs.length)
 
-  const isOpen = (path) => expanded.has(path)
-  function toggle(path) {
+  const isOpen = (path: string) => expanded.has(path)
+  function toggle(path: string) {
     if (expanded.has(path)) expanded.delete(path)
     else expanded.add(path)
     expanded = new Set(expanded)   // reassign → reactive
@@ -128,10 +136,10 @@
   }
 
   // Files in (and under) a Directory — for the recursive-delete confirm count.
-  const countUnder = (path) => files.filter((f) => f.path === path || f.path.startsWith(path + '/')).length
+  const countUnder = (path: string) => files.filter((f) => f.path === path || f.path.startsWith(path + '/')).length
 
   // ---- Open (view/download) ----
-  const fmtSize = (n) =>
+  const fmtSize = (n: number) =>
     n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`
   // The Active file's path (the row highlighted to match the preview rail). Read
   // off the URL's aside slot, not a local flag, so it tracks Back/Forward,
@@ -144,7 +152,7 @@
   // folder that stands in for the hidden file and wears the active pill in its
   // place. Null when every ancestor is expanded, i.e. the file's own row shows.
   const activeDir = $derived.by(() => {
-    if (!activeInTree) return null
+    if (!activeInTree || !activePath) return null
     let acc = ''
     const parts = activePath.split('/')
     parts.pop()   // drop the filename; only ancestor Directories gate visibility
@@ -158,7 +166,7 @@
   const activeVisible = $derived(activeInTree && activeDir === null)
   // Open the file in the preview rail; unpreviewable types offer a download there.
   // Clicking the already-Active file toggles the rail shut.
-  function openFile(f) {
+  function openFile(f: { path: string }) {
     if (f.path === activePath) closeAside()
     else openAsideFile(f.path)
   }
@@ -168,32 +176,32 @@
   // lazy-expanded one Directory level at a time. `chatId` is the Thread's scope token
   // (lib/threadScope.js; '' → profile grants only) and re-scopes the section on a switch.
   const chatId = $derived($threadScope)
-  let folderRoots = $state([])                 // [{id,name,path,mode,exists}]
+  let folderRoots = $state<FolderRoot[]>([])
   let folderErr = $state('')
-  let folderLevels = $state(new Map())         // abs dir path -> {dirs:[{name,path}], files:[{name,path,size}], err?}
+  let folderLevels = $state(new Map<string, Level>())   // abs dir path -> its level
   let folderExpanded = $state(sessionFolderExpanded)
-  let folderLoading = $state(new Set())
+  let folderLoading = $state(new Set<string>())
 
   async function loadFolderRoots() {
     folderErr = ''
     try {
       const r = await api.folderRoots(chatId)
-      folderRoots = r.roots || []
+      folderRoots = r.roots
     } catch (e) {
-      folderErr = String(e.message || e)
+      folderErr = errText(e)
       folderRoots = []
     }
   }
   // Fetch one Directory level; a moved/revoked path soft-degrades to an empty, flagged
   // level (the rail's "not reachable" philosophy, ADR 0012) rather than throwing.
-  async function loadFolderLevel(path) {
+  async function loadFolderLevel(path: string) {
     folderLoading.add(path); folderLoading = new Set(folderLoading)
     try {
       const r = await api.folderList(path, chatId)
       // `mode` is THIS level's own resolved Grant mode (server-side), so its rows'
       // affordances track the Grant that actually covers this Directory, not just the
       // hosting root's (ticket 04).
-      folderLevels.set(path, { dirs: r.dirs || [], files: r.files || [], mode: r.mode || '' })
+      folderLevels.set(path, { dirs: r.dirs, files: r.files, mode: r.mode })
     } catch {
       folderLevels.set(path, { dirs: [], files: [], err: true })
     } finally {
@@ -201,7 +209,7 @@
       folderLoading.delete(path); folderLoading = new Set(folderLoading)
     }
   }
-  function toggleFolder(path) {
+  function toggleFolder(path: string) {
     if (folderExpanded.has(path)) folderExpanded.delete(path)
     else { folderExpanded.add(path); if (!folderLevels.has(path)) loadFolderLevel(path) }
     folderExpanded = new Set(folderExpanded)
@@ -253,7 +261,7 @@
     handledRevealEpoch = epoch
     revealInTree(path, kind)
   })
-  async function revealInTree(path, kind) {
+  async function revealInTree(path: string, kind: 'file' | 'directory') {
     // A Folder (absolute) file/directory lives in the Thread-scoped Folder section,
     // not the Files-space tree; expand it there instead.
     if (isFolderPath(path)) return revealInFolder(path, kind)
@@ -271,9 +279,9 @@
   // Reveal a Folder file/directory: re-resolve this Thread's roots, expand the hosting
   // root's ancestors down to it (each level pulled fresh), scroll it in; no host → no-op.
   // A directory reveal also expands the directory itself so its listing is visible.
-  async function revealInFolder(path, kind) {
+  async function revealInFolder(path: string, kind: 'file' | 'directory') {
     await loadFolderRoots()
-    let dirs = null
+    let dirs: string[] | null = null
     for (const r of folderRoots) {
       if (!r.exists) continue
       // A directory names itself; folderAncestorDirs stops at the parent, so append the
@@ -294,9 +302,9 @@
   }
   // Scroll the revealed row into view: a file rides the active pill (.ftrow.active); a
   // directory has no active state, so target its row by path.
-  function scrollRevealed(path, kind) {
+  function scrollRevealed(path: string, kind: 'file' | 'directory') {
     if (kind === 'directory') {
-      for (const el of treeEl?.querySelectorAll('[data-path]') || [])
+      for (const el of treeEl?.querySelectorAll<HTMLElement>('[data-path]') || [])
         if (el.dataset.path === path) return void el.scrollIntoView({ block: 'nearest' })
       return
     }
@@ -304,26 +312,30 @@
   }
 
   // ---- Selection (upload target) ----
-  const selectDir = (path) => { selected = path }
+  const selectDir = (path: string) => { selected = path }
   // The tree body clears the target only on a BACKGROUND click, not one that bubbled
   // up from a row — one guard in the surface that owns the rule (mirroring
   // onDocPointer's closest() menu check), so no row handler needs its own
   // stopPropagation and a new row type can't silently reintroduce the wipe.
-  const onTreeBodyClick = (e) => { if (clearsTreeTarget(e.target)) selected = '' }
+  const onTreeBodyClick = (e: MouseEvent) => {
+    if (e.target instanceof Element && clearsTreeTarget(e.target)) selected = ''
+  }
 
   // Scroll a just-created Directory / just-uploaded file into view by its path
   // (block:'nearest' → only when it's off-screen). Rows carry `data-path`; matched
   // exactly, so odd characters in a path need no CSS.escape. No-op if the row isn't
   // rendered (ancestor collapsed / not yet loaded).
-  function revealRow(path) {
-    for (const el of treeEl?.querySelectorAll('[data-path]') || [])
+  function revealRow(path: string) {
+    for (const el of treeEl?.querySelectorAll<HTMLElement>('[data-path]') || [])
       if (el.dataset.path === path) return void el.scrollIntoView({ block: 'nearest' })
   }
 
   // ---- Row kebab menu (one at a time, fixed-positioned so the scroll can't clip) ----
   let menu = $state('')            // node path whose menu is open
-  let menuAnchor = $state(null)    // kebab rect the open menu is positioned against
-  function toggleMenu(e, path) {
+  // The kebab rect the open menu is positioned against.
+  type Anchor = { top: number; bottom: number; left: number; right: number }
+  let menuAnchor = $state<Anchor | null>(null)
+  function toggleMenu(e: MouseEvent & { currentTarget: HTMLElement }, path: string) {
     e.stopPropagation()
     if (menu === path) { menu = ''; return }
     const r = e.currentTarget.getBoundingClientRect()
@@ -332,9 +344,9 @@
   }
   // Place the menu against the kebab, then flip/clamp it so it never spills off a
   // screen edge: right-aligned by default, opening upward when the bottom is tight.
-  function positionMenu(el, anchor) {
+  function positionMenu(el: HTMLElement, anchor: Anchor | null) {
     const m = 8  // keep this much gap from every viewport edge
-    const place = (a) => {
+    const place = (a: Anchor | null) => {
       if (!a) return
       const { width: w, height: h } = el.getBoundingClientRect()
       const vw = window.innerWidth, vh = window.innerHeight
@@ -351,10 +363,11 @@
     place(anchor)
     return { update: place }
   }
-  function onDocPointer(e) {
-    if (menu && !e.target.closest('.ftmenu') && !e.target.closest('.ftkebab')) menu = ''
+  function onDocPointer(e: PointerEvent) {
+    const t = e.target instanceof Element ? e.target : null
+    if (menu && !t?.closest('.ftmenu') && !t?.closest('.ftkebab')) menu = ''
   }
-  function onDocKey(e) {
+  function onDocKey(e: KeyboardEvent) {
     if (e.key === 'Escape') { menu = ''; if (renaming) cancelRename(); if (creating) creating = false }
   }
   onMount(() => {
@@ -369,13 +382,13 @@
   // ---- Delete (file or Directory, recursive) ----
   let confirming = $state('')      // path awaiting delete confirmation
   let busy = $state('')            // path currently mutating
-  async function del(path) {
+  async function del(path: string) {
     busy = path
     try {
       await api.deleteFile(path, chatId)
       if (isFolderPath(path)) await reloadFolders()
       else await load()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = ''
     confirming = ''
   }
@@ -385,14 +398,14 @@
   // creating intermediate Directories). parentOf gives the containing Directory.
   let renaming = $state('')        // path being renamed
   let renameText = $state('')
-  const parentOf = (path) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
-  function startRename(path, name) {
+  const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
+  function startRename(path: string, name: string) {
     menu = ''
     renaming = path
     renameText = name
   }
   function cancelRename() { renaming = '' }
-  async function commitRename(fromPath) {
+  async function commitRename(fromPath: string) {
     if (renaming !== fromPath) return    // already cancelled (Escape) — ignore blur
     const t = renameText.trim()
     renaming = ''
@@ -401,7 +414,7 @@
     if (to === fromPath) return
     await doMove(fromPath, to)
   }
-  async function doMove(from, to) {
+  async function doMove(from: string, to: string) {
     busy = from
     try {
       await api.moveFile(from, to, chatId)
@@ -412,10 +425,10 @@
       else if (activePath && activePath.startsWith(from + '/')) openAsideFile(to + activePath.slice(from.length))
       if (isFolderPath(from)) await reloadFolders()
       else await load()
-    } catch (e) { err = String(e.message || e) }   // 409 clash surfaces its message
+    } catch (e) { err = errText(e) }   // 409 clash surfaces its message
     busy = ''
   }
-  function focusSelect(node) { node.focus(); node.select() }
+  function focusSelect(node: HTMLInputElement) { node.focus(); node.select() }
 
   // ---- New Directory ----
   let creating = $state(false)
@@ -442,23 +455,24 @@
       selected = path
       await tick()
       revealRow(path)
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = ''
   }
 
   // ---- Upload (⤒ picker or OS drag-drop), auto-suffixed server-side ----
-  let fileInput
-  async function upload(fileList, targetDir) {
+  let fileInput: HTMLInputElement | undefined
+  async function upload(fileList: FileList | null, targetDir: string | null) {
     if (!fileList || !fileList.length) return
+    const dir = targetDir || ''   // no target Directory means the Files-space root
     busy = 'upload'
     try {
-      const res = await api.uploadFiles(fileList, targetDir || '', chatId)
-      const saved = res?.saved || []
-      if (isFolderPath(targetDir)) {
-        folderExpanded.add(targetDir); folderExpanded = new Set(folderExpanded)  // reveal the drop dir
+      const res = await api.uploadFiles(fileList, dir, chatId)
+      const saved = res.saved
+      if (isFolderPath(dir)) {
+        folderExpanded.add(dir); folderExpanded = new Set(folderExpanded)  // reveal the drop dir
         await reloadFolders()
       } else {
-        if (targetDir) { expanded.add(targetDir); expanded = new Set(expanded) }  // reveal the drop dir
+        if (dir) { expanded.add(dir); expanded = new Set(expanded) }       // reveal the drop dir
         await load()
       }
       // Select the first uploaded file the way a file CAN be selected — make it the
@@ -468,41 +482,43 @@
       // lands in `targetDir`, so its row path is targetDir + the (suffixed) basename.
       const first = saved[0]
       if (first) {
-        const rowPath = isFolderPath(targetDir)
-          ? targetDir.replace(/\/+$/, '') + '/' + first.split('/').pop()
+        const rowPath = isFolderPath(dir)
+          ? dir.replace(/\/+$/, '') + '/' + first.split('/').pop()
           : first
         openAsideFile(rowPath)
         await tick()
         revealRow(rowPath)
       }
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = ''
   }
-  function onPick(e) {
-    upload(e.target.files, selected)
-    e.target.value = ''            // let the same file be re-picked later
+  function onPick(e: Event & { currentTarget: HTMLInputElement }) {
+    upload(e.currentTarget.files, selected)
+    e.currentTarget.value = ''     // let the same file be re-picked later
   }
 
   // ---- Drag & drop: OS files → upload; an internal row → move ----
   const DRAG_TYPE = 'application/x-ag2-path'
-  let dropTarget = $state(null)    // Directory path currently hovered as a drop target ('' = root)
-  function onRowDragStart(e, path) {
+  let dropTarget = $state<string | null>(null)   // Directory hovered as a drop target ('' = root)
+  function onRowDragStart(e: DragEvent, path: string) {
+    if (!e.dataTransfer) return
     e.dataTransfer.setData(DRAG_TYPE, path)
     e.dataTransfer.effectAllowed = 'move'
   }
-  function onDirDragOver(e, path) {
+  function onDirDragOver(e: DragEvent, path: string) {
     e.preventDefault()
     e.stopPropagation()
     dropTarget = path
   }
-  function onRootDragOver(e) { e.preventDefault(); dropTarget = '' }
+  function onRootDragOver(e: DragEvent) { e.preventDefault(); dropTarget = '' }
   // `targetDir` is a Directory path when a row is the drop target, or null for the
   // tree body. Body drop: OS files go into the selected Directory (root if none,
   // per Ticket 02); an internal row moves to the root.
-  async function onDrop(e, targetDir) {
+  async function onDrop(e: DragEvent, targetDir: string | null) {
     e.preventDefault()
     e.stopPropagation()
     dropTarget = null
+    if (!e.dataTransfer) return
     if (e.dataTransfer.files && e.dataTransfer.files.length) {
       await upload(e.dataTransfer.files, targetDir ?? selected)   // OS files → upload
       return
@@ -530,7 +546,7 @@
 
     <span class="ftspacer"></span>
 
-    <button class="fttool" title="Upload into {selected || 'root'}" aria-label="Upload" onclick={() => fileInput.click()}><Icon name="plus" size={15} /></button>
+    <button class="fttool" title="Upload into {selected || 'root'}" aria-label="Upload" onclick={() => fileInput?.click()}><Icon name="plus" size={15} /></button>
     <button class="fttool" title="New directory in {selected || 'root'}" aria-label="New directory" onclick={startCreate}><Icon name="folder-plus" size={15} /></button>
     <button class="fttool" title="Refresh" aria-label="Refresh" onclick={load}><Icon name="rotate-cw" size={15} /></button>
 
@@ -581,7 +597,7 @@
   <p class="ftcaption" title={root}>{root}</p>
 </div>
 
-{#snippet level(node, depth)}
+{#snippet level(node: Node, depth: number)}
   {#each subDirs(node) as d (d.path)}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div
@@ -643,7 +659,7 @@
   {/each}
 {/snippet}
 
-{#snippet folderRoot(r)}
+{#snippet folderRoot(r: FolderRoot)}
   {@const aff = folderAffordances(r.mode)}
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
   <div
@@ -675,7 +691,7 @@
      mode threaded down: under a read_write Grant its rows gain the full mutation set
      (rename/delete/move + drop target), matching the Files-space tree; a read root shows
      none — preview/download only (ticket 04). The server enforces the same truth. -->
-{#snippet folderLevel(path, depth, mode)}
+{#snippet folderLevel(path: string, depth: number, mode: string)}
   {@const lvl = folderLevels.get(path)}
   <!-- Prefer this level's own server-resolved mode; fall back to the parent's until the
        listing loads. So a nested Directory whose Grant differs from the root resolves
@@ -738,7 +754,7 @@
   {/if}
 {/snippet}
 
-{#snippet rowActions(path, name, isDir)}
+{#snippet rowActions(path: string, name: string, isDir: boolean)}
   {#if confirming === path}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <span class="ftconfirm" onclick={(e) => e.stopPropagation()}>

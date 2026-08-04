@@ -2,7 +2,7 @@
 // Every mutation echoes the whole snapshot alongside ok.
 import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
-import { FolderList, FolderMutated, FolderSaved, type Mode } from '../../schemas/index.ts'
+import { FolderList, FolderMutated, FolderSaved, type GrantMode } from '../../schemas/index.ts'
 
 export const foldersApi = {
   folders: () => get(G('/folders'), FolderList),
@@ -15,8 +15,10 @@ export const foldersApi = {
 
   deleteFolder: (id: string) => del(G('/folders/' + encodeURIComponent(id)), FolderMutated),
 
-  // An empty chatId/taskId is a profile-scope grant.
-  setGrant: (id: string, profile: string, mode: Mode, chatId = '', taskId = '') =>
+  // An empty chatId/taskId is a profile-scope grant. `none` is the block a chat- or
+  // task-scoped grant writes over an inherited Folder; at profile scope it is a 400
+  // (folders.py:241).
+  setGrant: (id: string, profile: string, mode: GrantMode, chatId = '', taskId = '') =>
     post(
       G('/folders/' + encodeURIComponent(id) + '/grants'),
       { profile, chat_id: chatId, task_id: taskId, mode },

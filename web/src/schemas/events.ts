@@ -176,9 +176,13 @@ export const VoiceFrame = z.union([
 ])
 export type VoiceFrame = z.infer<typeof VoiceFrame>
 
+// One attachment a turn frame carries: the composer base64-encodes the file and the
+// gateway decodes it into an AG2 input (app.py:3689 _decode_attachments).
+export type AttachmentPayload = { name: string; mime: string; data: string }
+
 // Frames the client sends. A turn is the bare {text, attachments} shape.
 export type ClientFrame =
-  | { text: string; attachments?: string[] }
+  | { text: string; attachments?: AttachmentPayload[] }
   | { type: 'cancel' }
   | { type: 'answer'; id: string; answer: string }
   | { type: 'feedback'; [k: string]: unknown }

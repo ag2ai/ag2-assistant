@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The composer's model switcher: a fast shortcut for the install-wide ACTIVE LLM
   // configuration — the exact same action as Settings → Models' "Use" (POST
   // /llm-configs/{id}/use), surfaced next to the input. It is NOT a per-thread or
@@ -18,6 +18,7 @@
   import { SETTINGS_PAGE } from '../../store.ts'
   import { openOverlay } from '../../router.ts'
   import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
+  import type { LlmConfig } from '../../schemas/index.ts'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
   let busy = $state(false)
@@ -29,7 +30,7 @@
   const active = $derived($llmConfigs.active)
   const envOverride = $derived($llmConfigs.envOverride)
 
-  async function choose(c) {
+  async function choose(c: LlmConfig) {
     if (busy || c.id === active) return
     busy = true
     try { await api.useLlmConfig(c.id); await loadLlmConfigs() } catch { /* keep prior active */ }
@@ -42,8 +43,8 @@
 <ModelSwitcherView
   {configs} activeId={active} {envOverride} {busy}
   title="Model for your next message"
-  logoFor={(c) => LOGO[c.type]}
-  labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
+  logoFor={(c: LlmConfig) => LOGO[c.type]}
+  labelFor={(c: LlmConfig) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
   emptyLabel="No models configured — add one in Settings"
   onEmpty={openSettings}

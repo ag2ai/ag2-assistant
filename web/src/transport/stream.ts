@@ -5,6 +5,7 @@
 import { api as P, onProfileGone } from '../lib/profile.ts'
 import {
   ServerFrame,
+  type AttachmentPayload,
   type ClientFrame,
   type ErrorFrame,
   type QueuedFrame,
@@ -107,7 +108,7 @@ export class StreamClient {
   }
   // A turn sent while one is already running is fed to it server-side (the agent
   // picks it up at its next step) — same frame either way.
-  send(text: string, attachments?: string[]): void { this._send({ text, attachments }) }
+  send(text: string, attachments?: AttachmentPayload[]): void { this._send({ text, attachments }) }
   cancel(): void { this._send({ type: 'cancel' }) }
   answer(id: string, answer: string): void { this._send({ type: 'answer', id, answer }) }
   feedback(payload: Record<string, unknown>): void { this._send({ type: 'feedback', ...payload }) }

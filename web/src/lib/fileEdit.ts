@@ -16,21 +16,35 @@ export function parseEtag(value: string | null | undefined): string | null {
 
 // True for a stale-token save clash (ADR 0011) — the `409` the rail resolves with a
 // Reload/Overwrite choice, told apart from every other save failure.
-export function isConflict(err: SaveFailure | null | undefined): boolean {
-  return !!err && err.status === 409
+// A catch binding is `unknown` under strict mode, so both readers take `unknown` and
+// read the SaveFailure shape out of it rather than making the caller assert one.
+export function isConflict(err: unknown): boolean {
+  return failure(err).status === 409
 }
 
 // A save failure → the line shown in the rail: a server `{error}` body wins, else a
 // per-status message, else the raw transport error, else a generic fallback.
-export function saveErrorMessage(err: SaveFailure | null | undefined): string {
-  const fromBody = bodyError(err && err.body)
+export function saveErrorMessage(err: unknown): string {
+  const f = failure(err)
+  const fromBody = bodyError(f.body)
   if (fromBody) return fromBody
-  const status = err && err.status
+  const status = f.status
   if (status === 404) return 'This file no longer exists on disk.'
   if (status === 400) return 'Could not save — the file path is invalid.'
   if (status === 413) return 'Could not save — the file is too large.'
-  if (!status && err && err.message) return err.message
+  if (!status && f.message) return f.message
   return 'Could not save the file.'
+}
+
+// The SaveFailure fields a thrown value carries, each only when it is the right type.
+function failure(err: unknown): SaveFailure {
+  if (!err || typeof err !== 'object') return {}
+  const e = err as Record<string, unknown>
+  return {
+    status: typeof e.status === 'number' ? e.status : undefined,
+    body: e.body,
+    message: typeof e.message === 'string' ? e.message : undefined,
+  }
 }
 
 // The server's `{error}` line, when the failure body actually carries one.
