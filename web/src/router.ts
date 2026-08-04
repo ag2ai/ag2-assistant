@@ -36,6 +36,12 @@ export const route: Writable<Route> = writable(read())
 // re-exports the binding; it never touches `route` at init).
 export const settingsOpen: Readable<boolean> = derived(route, ($r) => $r.overlay === 'settings')
 
+// The "Powered by AG2" architecture map — the Modal slot's other occupant, so it
+// gets the same deal as Settings: deep-linkable (`#poweredby`), and Back dismisses
+// it. Opened from Settings it PUSHES over `#settings=…`, so Back lands you back in
+// Settings, where you came from. Re-exported from store.js for consumers.
+export const poweredByOpen = derived(route, ($r) => $r.overlay === 'poweredby')
+
 // The pid segment for URLs: the one in the current path if any, else the active id.
 function currentPid(): string {
   // Both empty only before boot resolves a profile, when no nav can run yet.
@@ -76,13 +82,15 @@ export function redirectToProfile(pid: string): void {
 // history entry (so Back dismisses it); switching Section and closing REPLACE (no
 // history spam per Section click; close strips the hash to reveal the Page).
 
-export function openOverlay(name: string, value?: string): void {
+// `value` may be null — a modal opened with nothing to carry (the map reached from
+// the Inspector has no Settings Section to return to) serialises as a bare key.
+export function openOverlay(name: string, value?: string | null): void {
   const full = resolve(current(), { type: 'openOverlay', name, value })
   history.pushState({}, '', full)
   route.set(read())
 }
 
-export function replaceOverlay(name: string, value?: string): void {
+export function replaceOverlay(name: string, value?: string | null): void {
   const full = resolve(current(), { type: 'replaceOverlay', name, value })
   history.replaceState({}, '', full)
   route.set(read())

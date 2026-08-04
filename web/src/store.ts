@@ -1,5 +1,6 @@
 import { writable, type Writable } from 'svelte/store'
 import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.ts'
+import { NO_CHAT_MODEL, type ChatModelState } from './lib/chatModel.ts'
 import type {
   ChatRow,
   HitlQuestion,
@@ -12,12 +13,13 @@ import type {
   WireEvent,
 } from './schemas/index.ts'
 // SETTINGS_PAGE — the valid Settings Section ids — lives in the pure route core
-// (lib/route.js validates the `#settings=<section>` hash against it). Re-export it
+// (lib/route.ts validates the `#settings=<section>` hash against it). Re-export it
 // here so callers keep importing it from the store (SETTINGS_PAGE.MODELS, …).
 export { SETTINGS_PAGE } from './lib/route.ts'
-// settingsOpen and ag2View (whether the AG2 Inspector occupies the rail) are derived
-// from the route; they live in router.ts to avoid a module-init cycle, re-exported here.
-export { settingsOpen, ag2View } from './router.ts'
+// settingsOpen, poweredByOpen and ag2View (whether the AG2 Inspector occupies the
+// rail) are derived from the route; they live in router.ts to avoid a module-init
+// cycle, re-exported here.
+export { settingsOpen, poweredByOpen, ag2View } from './router.ts'
 import { go } from './router.ts'
 
 // Multi-profile registry (§5.2). `list` mirrors GET /api/profiles; `activeId`
@@ -55,6 +57,11 @@ export const thread: Writable<Thread> = writable({
   items: [],
   busy: false,
 })
+
+// The open thread's Text-model selection — what the composer's switcher shows and
+// sets (ADR 0025). Reset by controller.openThread, filled from GET /chats/{id} by the
+// switcher, consumed by controller.send. Shape + rules: lib/chatModel.ts.
+export const chatModel: Writable<ChatModelState> = writable(NO_CHAT_MODEL)
 
 // Drawer: unified history of chats + tasks, plus the user-writable Files tree.
 export const chats: Writable<ChatRow[]> = writable([])
@@ -148,10 +155,12 @@ export function revealFolder(path: string | null | undefined): void {
 // validated against SETTINGS_PAGE by the pure core. Callers deep-link into a
 // Section with router.openOverlay('settings', SETTINGS_PAGE.MODELS) — a bad id is
 // impossible to mistype (no more 'model' vs 'models' drift). Settings binds each id
-// to a label + component. (SETTINGS_PAGE is re-exported from lib/route.js above.)
+// to a label + component. (SETTINGS_PAGE is re-exported from lib/route.ts above.)
 
-// "Powered by AG2" architecture-map modal open/closed.
-export const poweredByOpen = writable(false)
+// (poweredByOpen is re-exported from router.ts at the top of this file — like
+// settingsOpen it's derived from the route, so the "Powered by AG2" map lives at
+// `#poweredby` and Back dismisses it. Open it with router.openOverlay('poweredby');
+// close it with router.closeOverlay().)
 
 // App version, seeded from the GET /api/profiles boot payload. Shown in the
 // "Powered by AG2" modal footer. Empty until boot completes.

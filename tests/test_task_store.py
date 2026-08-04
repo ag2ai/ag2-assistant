@@ -86,6 +86,21 @@ def test_strip_workdirs_pops_legacy_fields_and_reports_them(tmp_path):
     asyncio.run(_run())
 
 
+async def test_rekey_origin_channels_moves_a_platform_origin_onto_its_connection(tmp_path):
+    """A task queued before Connections existed points at "telegram"; the outcome is
+    delivered through a Connection id, so the origin has to move with the rekeying."""
+    st = _store(tmp_path)
+    legacy = await st.create_task("A", "p", origin_channel="telegram", origin_chat="7")
+    already = await st.create_task("B", "p", origin_channel="cn_other", origin_chat="8")
+    homeless = await st.create_task("C", "p", origin_channel="slack", origin_chat="9")
+
+    assert await st.rekey_origin_channels({"telegram": "cn_tg"}) == 1
+    assert (await st.get_task(legacy.id)).origin_channel == "cn_tg"
+    assert (await st.get_task(already.id)).origin_channel == "cn_other"
+    assert (await st.get_task(homeless.id)).origin_channel == "slack"
+    assert await st.rekey_origin_channels({"telegram": "cn_tg"}) == 0  # idempotent
+
+
 def test_strip_workdirs_skips_id_less_record_from_moved(tmp_path):
     """A record missing its id (corrupt/legacy) must still be stripped on disk, but
     must NOT be reported in `moved` — an empty task_id would otherwise mint a

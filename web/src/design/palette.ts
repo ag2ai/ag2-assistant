@@ -36,17 +36,19 @@ declare global {
 // accent); the full hand-tuned ramp lives in design/tokens/palettes.css.
 export type Palette = { id: string; label: string; hex: string }
 
+// Order is the swatch order in the picker, and PALETTES[0] is what an unpicked
+// profile lands on — green leads so the row doesn't open on a run of blues.
 export const PALETTES: Palette[] = [
+  { id: 'forest-green', label: 'Forest Green', hex: '#166534' },
   { id: 'navy-blue', label: 'Navy Blue', hex: '#1d4ed8' },
   { id: 'royal-blue', label: 'Royal Blue', hex: '#1e40af' },
   { id: 'dark-indigo', label: 'Dark Indigo', hex: '#4338ca' },
   { id: 'deep-purple', label: 'Deep Purple', hex: '#5b21b6' },
-  { id: 'forest-green', label: 'Forest Green', hex: '#166534' },
   { id: 'burgundy', label: 'Burgundy', hex: '#9f1239' },
 ]
 // hex → preset id, for the match-by-hex fast path.
 const PRESET_BY_HEX = new Map(PALETTES.map((p) => [p.hex.toLowerCase(), p.id]))
-export const DEFAULT_ACCENT = PALETTES[0].hex // navy blue
+export const DEFAULT_ACCENT = PALETTES[0].hex // forest green
 
 // The 10 ramp stops, and how each is mixed from the picked colour (the picked
 // hex IS the 500 stop). Light stops mix toward white, dark stops toward black;

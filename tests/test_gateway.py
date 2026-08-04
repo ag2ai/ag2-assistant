@@ -29,6 +29,7 @@ from assistant import codex_auth
 from assistant.agent import model_config
 from assistant.codex_auth import CodexAuth
 from assistant.config import Config, load_config, write_yaml
+from assistant.connections import ConnectionStore
 from assistant.events import Attachment, TurnCancelled
 from assistant.gateway.app import _allowed_origins, _decode_attachments, _origin_ok, create_app
 from assistant.gateway.core import Gateway
@@ -165,6 +166,43 @@ async def test_chats_are_isolated(fake_gateway):
     reply = await fake_gateway.send_message("c", chat_id="s2")
     # s2 starts a fresh chain (length 1), unaffected by s1.
     assert reply == "echo[1]: c"
+
+
+async def test_only_the_completed_turn_is_mirrored(fake_gateway):
+    """The mirror gets the user's message and the final answer, once — never the
+    deltas, tool calls and produce events the turn emitted on the way (ADR 0020)."""
+    mirrored: list = []
+
+    async def mirror(chat_id, text, reply, *, origin="", files=()):
+        mirrored.append((chat_id, text, reply, origin, files))
+
+    fake_gateway.set_mirror(mirror)
+    await fake_gateway.send_message("hello", chat_id="s1", origin="telegram:42")
+
+    assert mirrored == [("s1", "hello", "echo[1]: hello", "telegram:42", ())]
+
+
+async def test_the_names_of_attached_files_reach_the_mirror(fake_gateway):
+    """The mirror names a file instead of carrying it, so it needs what it is called."""
+    mirrored: list = []
+
+    async def mirror(chat_id, text, reply, *, origin="", files=()):
+        mirrored.append(files)
+
+    fake_gateway.set_mirror(mirror)
+    await fake_gateway.send_message("look", chat_id="s1", attachment_names=("report.pdf",))
+
+    assert mirrored == [("report.pdf",)]
+
+
+async def test_a_mirror_that_fails_does_not_fail_the_turn(fake_gateway):
+    """A platform that is down loses the mirror, not the user's answer."""
+
+    async def mirror(*args, **kwargs):
+        raise RuntimeError("telegram is down")
+
+    fake_gateway.set_mirror(mirror)
+    assert await fake_gateway.send_message("hello", chat_id="s1") == "echo[1]: hello"
 
 
 def test_status_shape(fake_gateway):
@@ -767,6 +805,34 @@ async def test_feed_message_steers_the_running_turn(fake_gateway):
     assert agent.turns == 1  # steered the turn in flight; no second one was started
 
 
+async def test_is_running_tells_a_turn_in_flight_from_an_idle_chat(fake_gateway):
+    """What a channel asks before showing a placeholder a fed message would not fill."""
+    started = asyncio.Event()
+
+    class _SlowAgent(FakeRunMixin):
+        tools = []
+
+        def __init__(self):
+            self.release = asyncio.Event()
+
+        async def ask(self, *msg, stream=None, **k):
+            started.set()
+            await self.release.wait()
+            return FakeReply("done")
+
+    agent = _SlowAgent()
+    fake_gateway._agent = agent
+    assert fake_gateway.is_running("s3") is False
+
+    turn = asyncio.ensure_future(fake_gateway.send_message("go", chat_id="s3"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert fake_gateway.is_running("s3") is True
+
+    agent.release.set()
+    await turn
+    assert fake_gateway.is_running("s3") is False
+
+
 async def test_feed_message_is_false_when_nothing_is_running(fake_gateway):
     """Idle chat → the caller runs the message as a new turn instead."""
     assert await fake_gateway.feed_message("hello", chat_id="idle") is False
@@ -1034,15 +1100,18 @@ def test_profile_health_ok_and_down(profile_app, paths):
 
 
 def test_profile_health_warns_on_channel_error(profile_app, paths):
-    """A messaging channel bound to this profile that failed to start (start error
-    recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
+    """A messaging channel that defaults to this profile and failed to start (start
+    error recorded) rolls the overall up to 'warn' — auxiliary, so amber not red."""
 
     client, pid = profile_app
 
     SecretStore(paths).create_secret("K", "sk-gemini-1", provider="gemini", default=True)
-    # Bind discord to this profile and record a start error on the live manager.
-    ProfileRegistry(paths).bind_channel("discord", pid)
-    client.app.state.profiles.channel_errors["discord"] = "invalid bot token"
+    # Point the discord Connection's default at this profile and record a start error.
+    connection = ConnectionStore(paths).create_connection(
+        "discord", tokens={"DISCORD_BOT_TOKEN": "bad"}
+    )
+    ProfileRegistry(paths).set_connection_default(connection.id, pid)
+    client.app.state.profiles.channel_errors[connection.id] = "invalid bot token"
 
     body = client.get(api(pid, "/health")).json()
     assert body["overall"] == "warn"
@@ -1283,6 +1352,37 @@ def test_llm_config_draft_test_endpoint(profile_app_factory, paths):
     r = client.post("/api/llm-configs/test", json={"name": "X", "type": "nope", "model": "m"})
     assert r.status_code == 400
     assert "type must be one of" in r.json()["error"]
+
+
+def test_llm_config_probe_carries_host_bridge(profile_app_factory):
+    """The /test probe's Config must carry the install's ACP host bridge.
+
+    ``Config.for_paths`` defaults every non-path field, so the bridge that reaches a
+    real turn through ``apply_env_overrides`` is absent unless the route copies it.
+    Without it a Docker probe spawns the adapter locally — inside an image that ships
+    none — and reports a bare "[Errno 2]" instead of testing the host CLI."""
+    seen: dict = {}
+
+    class _Probe(LlmProbe):
+        def __call__(self, config):
+            seen["config"] = config
+            return super().__call__(config)
+
+    client, _pid = profile_app_factory(
+        llm_probe=_Probe(),
+        env={
+            "AG2ASSISTANT_ACP_BRIDGE": "host.docker.internal:8801",
+            "AG2ASSISTANT_ACP_BRIDGE_TOKEN": "shared-secret",
+        },
+    )
+
+    r = client.post(
+        "/api/llm-configs/test",
+        json={"name": "Claude Code", "type": "claude_code", "model": ""},
+    )
+    assert r.status_code == 200, r.json()
+    assert seen["config"].acp_bridge == "host.docker.internal:8801"
+    assert seen["config"].acp_bridge_token == "shared-secret"
 
 
 def test_llm_config_subscription_entry_view_signed_in(profile_app, paths):

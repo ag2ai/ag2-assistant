@@ -32,7 +32,7 @@ def _norm_accent(accent: str) -> str:
     return s.lower()
 
 
-# The canonical messaging platforms a channel can bind to. This is the single
+# The canonical messaging platforms a channel can run on. This is the single
 # source of truth for platform names.
 CHANNEL_PLATFORMS = ("telegram", "discord", "slack")
 
@@ -61,6 +61,8 @@ class ProfileMeta:
     accent: str
     created: str
     archived: bool = field(default=False)
+    # Channel exposure is default-allow: a surface is listed only to withdraw it.
+    withdrawn: list[str] = field(default_factory=list)
 
 
 def _now() -> str:
@@ -77,17 +79,21 @@ def _empty_registry() -> dict:
         "active_default": None,
         "onboarded": False,
         "profiles": [],
-        "channels": {p: None for p in CHANNEL_PLATFORMS},
+        "connection_defaults": {},
     }
 
 
 def _meta(entry: dict) -> ProfileMeta:
+    withdrawn = entry.get("withdrawn")
     return ProfileMeta(
         id=entry["id"],
         name=entry["name"],
         accent=entry["accent"],
         created=entry["created"],
         archived=bool(entry.get("archived", False)),
+        withdrawn=[s for s in withdrawn if isinstance(s, str)]
+        if isinstance(withdrawn, list)
+        else [],
     )
 
 
@@ -121,12 +127,10 @@ class ProfileRegistry:
         data.setdefault("onboarded", False)
         if not isinstance(data.get("profiles"), list):
             data["profiles"] = []
-        # channels is a top-level {platform: owning-pid|null} map; absent platforms
-        # read as null (unbound). Malformed → treated as all-unbound.
-        chans = data.get("channels")
-        if not isinstance(chans, dict):
-            chans = {}
-        data["channels"] = {p: chans.get(p) for p in CHANNEL_PLATFORMS}
+        # connection_defaults is a top-level {connection-id: default-pid} map; a
+        # Connection with no default is simply absent. Malformed → treated as all-unset.
+        defaults = data.get("connection_defaults")
+        data["connection_defaults"] = defaults if isinstance(defaults, dict) else {}
         return data
 
     def _write(self, data: dict) -> None:
@@ -198,14 +202,13 @@ class ProfileRegistry:
         return _meta(entry)
 
     def archive_profile(self, pid: str) -> ProfileMeta:
-        """Mark a profile archived and clear any channel bindings pointing at it
-        (registry-level only; runtime guardrails live in ProfileManager)."""
+        """Mark a profile archived and clear it as any Connection's default profile
+        (registry-level only; runtime guardrails live in ProfileManager). The Channels
+        themselves keep running — they are install-level and never owned by a profile."""
         data = self.load_registry()
         entry = _find(data, pid)
         entry["archived"] = True
-        for platform, owner in data["channels"].items():
-            if owner == pid:
-                data["channels"][platform] = None
+        _clear_connection_defaults(data, pid)
         self._write(data)
         return _meta(entry)
 
@@ -226,6 +229,9 @@ class ProfileRegistry:
         data = self.load_registry()
         entry = _find(data, pid)
         data["profiles"] = [e for e in data["profiles"] if e["id"] != pid]
+        # Archiving already cleared these, but deletion must never leave a Connection
+        # defaulting to a profile that no longer exists.
+        _clear_connection_defaults(data, pid)
         self._write(data)
         return _meta(entry)
 
@@ -246,29 +252,82 @@ class ProfileRegistry:
         data["onboarded"] = bool(value)
         self._write(data)
 
-    # --- channel bindings (install-level: a platform binds to one profile or is off) ---
+    # --- channel exposure (default-allow; a record exists only ever to withdraw) ---
 
-    def channel_bindings(self) -> dict[str, str | None]:
-        """The install-level channel→profile map. Every canonical platform is present;
-        an unbound platform reads as ``None``."""
-        return dict(self.load_registry()["channels"])
+    def set_exposure(self, pid: str, surface: str, exposed: bool) -> ProfileMeta:
+        """Expose or withdraw a profile on one surface. Exposing drops the record rather
+        than storing an allow — absence of a record is what reachable means. Surfaces are
+        a Connection's, so which ones exist is the caller's to check."""
+        data = self.load_registry()
+        entry = _find(data, pid)
+        listed = [s for s in _meta(entry).withdrawn if s != surface]
+        entry["withdrawn"] = listed if exposed else [*listed, surface]
+        self._write(data)
+        return _meta(entry)
 
-    def bind_channel(self, platform: str, pid: str | None) -> None:
-        """Bind ``platform`` to profile ``pid`` (or ``None`` to disable it).
+    def withdrawn_from(self, surface: str) -> set[str]:
+        """The ids of every profile withdrawn from ``surface``."""
+        return {e["id"] for e in self.load_registry()["profiles"] if surface in _meta(e).withdrawn}
 
-        Validates the platform against the canonical list and, when ``pid`` is given,
-        that the profile exists and is not archived. Two profiles enabling the same
-        channel is structurally impossible — a platform maps to exactly one pid."""
-        if platform not in CHANNEL_PLATFORMS:
-            raise ValueError(
-                f"unknown channel platform: {platform} (choose from {', '.join(CHANNEL_PLATFORMS)})"
-            )
+    # --- Connection default profiles (install-level; never profile-owned, ADR 0022) ---
+
+    def connection_defaults(self) -> dict[str, str]:
+        """The install-level Connection→default-profile map — where a conversation on
+        that Connection lands when nothing else has been chosen. A Connection with no
+        default is absent from it."""
+        return dict(self.load_registry()["connection_defaults"])
+
+    def set_connection_default(self, cid: str, pid: str | None) -> None:
+        """Set (or clear, with ``None``) the default profile for one Connection.
+
+        Validates, when ``pid`` is given, that the profile exists and is not archived.
+        This says nothing about whether the Connection runs — it runs whenever its
+        tokens are present."""
         data = self.load_registry()
         if pid is not None:
             entry = next((e for e in data["profiles"] if e["id"] == pid), None)
             if entry is None:
                 raise ValueError(f"unknown profile: {pid}")
             if entry.get("archived"):
-                raise ValueError(f"profile archived: {pid}")
-        data["channels"][platform] = pid
+                raise ValueError(f"profile is archived: {pid}")
+            data["connection_defaults"][cid] = pid
+        else:
+            data["connection_defaults"].pop(cid, None)
         self._write(data)
+
+    def adopt_channel_defaults(self, by_platform: dict[str, str]) -> None:
+        """Carry a pre-Connection ``{platform: pid}`` default map onto the Connections
+        migrated for those platforms, dropping the platform-keyed map."""
+        data = self.load_registry()
+        legacy = data.pop("channels", None)
+        if not isinstance(legacy, dict):
+            return
+        for platform, cid in by_platform.items():
+            pid = legacy.get(platform)
+            if pid is not None:
+                data["connection_defaults"][cid] = pid
+        self._write(data)
+
+    def adopt_exposure(self, by_platform: dict[str, str]) -> None:
+        """Carry every profile's platform-keyed withdrawals onto the matching surfaces of
+        the Connections migrated for those platforms, dropping the platform vocabulary."""
+        data = self.load_registry()
+        for entry in data["profiles"]:
+            kept = []
+            for surface in _meta(entry).withdrawn:
+                platform, _, kind = surface.partition(":")
+                if platform not in CHANNEL_PLATFORMS:
+                    kept.append(surface)
+                    continue
+                cid = by_platform.get(platform)
+                if cid is not None:
+                    kept.append(f"{cid}:{kind}" if kind else cid)
+            entry["withdrawn"] = kept
+        self._write(data)
+
+
+def _clear_connection_defaults(data: dict, pid: str) -> None:
+    """Drop ``pid`` as any Connection's default (in-memory; the caller writes)."""
+    data["connection_defaults"] = {
+        cid: default for cid, default in data["connection_defaults"].items() if default != pid
+    }

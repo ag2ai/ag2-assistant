@@ -19,48 +19,18 @@
   import LlmConfigForm from './LlmConfigForm.svelte'
   import VoiceSection from './VoiceSection.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, TYPE_LABEL, llmConfigs, loadLlmConfigs, type LlmConfigSeed } from '../../lib/llm.ts'
+  import { llmConfigs, loadLlmConfigs, type LlmConfigSeed } from '../../lib/llm.ts'
+  import { TYPE_LABEL, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER } from '../../lib/providerLabels.ts'
+  import { MODEL_TEMPLATES, type ModelTemplate } from '../../lib/modelTemplates.ts'
+  import BrandMark from '../BrandMark.svelte'
   import { errText } from '../../lib/errors.ts'
   import type { LlmConfig } from '../../schemas/index.ts'
 
-  // A starting point in the template grid: a config prefill plus its card copy.
-  type LlmTemplate = LlmConfigSeed & { name: string; type: string; model: string; card?: string; blurb: string }
-
-  // One-click starting points. Picking a card opens the editor prefilled — the
-  // two-field local-server case is one click plus a model name.
-  const TEMPLATES: LlmTemplate[] = [
-    { name: 'Gemini', type: 'gemini', model: 'gemini-3.6-flash', blurb: 'Google Gemini' },
-    { name: 'OpenAI', type: 'openai_responses', model: 'gpt-5.6-terra', blurb: 'Responses API' },
-    { name: 'OpenAI · Chat Completions', type: 'openai', model: 'gpt-5.6-terra', blurb: 'Chat Completions API' },
-    {
-      name: 'OpenAI · ChatGPT subscription',
-      card: 'OpenAI · Sign in with ChatGPT',
-      type: 'openai_subscription', model: 'gpt-5.6-terra',
-      blurb: 'Use your ChatGPT/Codex subscription instead of an API key — unofficial, may break OpenAI ToS',
-    },
-    { name: 'Anthropic', type: 'anthropic', model: 'claude-opus-4-8', blurb: 'Claude' },
-    {
-      name: 'Claude Code', card: 'Claude Code · CLI login',
-      type: 'claude_code', model: '',
-      blurb: 'Run on your Claude Code CLI login (subscription) over ACP — no API key',
-    },
-    {
-      name: 'Codex', card: 'Codex · CLI login',
-      type: 'codex', model: '',
-      blurb: 'Run on your Codex CLI login (ChatGPT subscription) over ACP — no API key',
-    },
-    { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Local Ollama' },
-    {
-      name: 'Local server', card: 'Local server — llama.cpp / vLLM / LM Studio',
-      type: 'openai', model: '', base_url: 'http://localhost:8080/v1',
-      blurb: 'OpenAI-compatible local server — just set the model name',
-    },
-    {
-      name: 'Anthropic-compatible', card: 'Anthropic-compatible — MiniMax & proxies',
-      type: 'anthropic', model: 'MiniMax-M2.5', base_url: 'https://api.minimax.io/anthropic',
-      blurb: 'Anthropic-API server like MiniMax cloud — set the model, endpoint and key',
-    },
-  ]
+  // The template cards, bucketed under their headings in render order — picking
+  // one opens the editor prefilled. Empty groups drop out rather than head nothing.
+  const TEMPLATE_GROUPS = GROUP_ORDER
+    .map((group) => ({ group, templates: MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === group) }))
+    .filter((g) => g.templates.length)
 
   const configs = $derived($llmConfigs.configs)
   const envOverride = $derived($llmConfigs.envOverride)
@@ -76,6 +46,10 @@
   // config/template being edited in the inline form (null = closed)
   let editing = $state<LlmConfigSeed | null>(null)
   let adding = $state(false)   // template card grid showing
+  // Two-step delete (the SkillsPage idiom): first click arms the row by id, the
+  // Confirm next to it actually deletes. Deleting a model is unrecoverable, and
+  // Delete sits one button away from Edit.
+  let confirming = $state('')
 
   onMount(reload)
 
@@ -106,14 +80,15 @@
       await api.deleteLlmConfig(c.id)
       const { [c.id]: _gone, ...rest } = tests
       tests = rest
+      confirming = ''
       await reload()
     } catch (e) { err = errText(e) }
     busy = false
   }
 
   // Open the editor: a template (no id → create) or an existing row (edit).
-  function pickTemplate(t: LlmTemplate) { adding = false; editing = { ...t } }
-  function edit(c: LlmConfig) { adding = false; editing = { ...c } }
+  function pickTemplate(t: ModelTemplate) { adding = false; confirming = ''; editing = { ...t } }
+  function edit(c: LlmConfig) { adding = false; confirming = ''; editing = { ...c } }
 
   // The save should activate when it's the first-ever config (empty store), or when
   // re-saving the already-active config (keep it active). Otherwise the explicit Use
@@ -141,6 +116,16 @@
   }
 </script>
 
+<!-- One editor, two homes: under the row being edited (Edit on an existing config),
+     or at the foot of the list (a template picked from Add model). -->
+{#snippet editorForm()}
+  <!-- Both call sites already stand inside an `editing` check; this one is what says
+       so to the type checker, which a snippet body cannot be narrowed through. -->
+  {#if editing}
+    <LlmConfigForm config={editing} activate={activateOnSave} {onSaved} onCancel={() => (editing = null)} />
+  {/if}
+{/snippet}
+
 <div class="setgroup">Text</div>
 
 {#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
@@ -157,18 +142,21 @@
 {/if}
 
 {#each configs as c (c.id)}
-  <!-- Click the row to make it the active config (unless it already is, or the
-       editor is open). Action buttons below stopPropagation so they never activate. -->
+  <!-- Click the row to make it the active config (unless it already is, the editor is
+       open, or the row is armed for delete — a stray click there shouldn't activate a
+       model you're about to remove). Action buttons stopPropagation so they never
+       activate either. -->
+  {@const idle = !editing && confirming !== c.id}
   <div
-    class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
-    role="button" aria-disabled={c.active || !!editing}
-    tabindex={!c.active && !editing ? 0 : -1}
+    class="llmrow" class:active={c.active} class:clickable={!c.active && idle && !busy}
+    role="button" aria-disabled={c.active || !idle}
+    tabindex={!c.active && idle ? 0 : -1}
     aria-label={!c.active ? `Use ${c.name}` : undefined}
-    title={!c.active && !editing ? 'Click to use this model' : ''}
-    onclick={() => { if (!c.active && !busy && !editing) use(c) }}
-    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
+    title={!c.active && idle ? 'Click to use this model' : ''}
+    onclick={() => { if (!c.active && !busy && idle) use(c) }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && idle) { e.preventDefault(); use(c) } }}
   >
-    <img class="llmlogo" src={LOGO[c.type]} alt="" />
+    <BrandMark brand={c.type} />
     <div class="llmmeta">
       <div class="llmname">
         {c.name}
@@ -200,40 +188,59 @@
     <!-- While the editor is open ALL row actions are disabled — mutating or testing
          the list mid-edit invites confusion (the editor has its own Test button).
          Each button stops propagation so it never triggers the row's click-to-use. -->
-    <button
-      class="open" disabled={busy || tests[c.id]?.testing || !!editing}
-      title={editing ? 'Editing in progress — use the editor’s Test button to test your changes' : ''}
-      onclick={(e) => { e.stopPropagation(); test(c) }}
-    >Test</button>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
-    <button
-      class="linkbtn danger" disabled={busy || !!editing}
-      title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
-      onclick={(e) => { e.stopPropagation(); remove(c) }}
-    >Delete</button>
+    {#if confirming === c.id}
+      <span class="llmconfirm">Delete?</span>
+      <button
+        class="linkbtn danger" disabled={busy}
+        title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
+        onclick={(e) => { e.stopPropagation(); remove(c) }}
+      >Confirm</button>
+      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
+    {:else}
+      <button
+        class="open" disabled={busy || tests[c.id]?.testing || !!editing}
+        title={editing ? 'Editing in progress — use the editor’s Test button to test your changes' : ''}
+        onclick={(e) => { e.stopPropagation(); test(c) }}
+      >Test</button>
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
+      <button
+        class="linkbtn danger" disabled={busy || !!editing}
+        title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
+        onclick={(e) => { e.stopPropagation(); confirming = c.id }}
+      >Delete</button>
+    {/if}
   </div>
+  {#if editing?.id === c.id}{@render editorForm()}{/if}
 {/each}
 
-{#if editing}
-  <LlmConfigForm config={editing} activate={activateOnSave} {onSaved} onCancel={() => (editing = null)} />
-{:else}
+<!-- An existing config's editor already rendered under its own row above, so down
+     here only a freshly picked template still needs a home. -->
+{#if editing && !editing.id}
+  {@render editorForm()}
+{:else if !editing}
   {#if !adding}
     <button class="addbtn" disabled={busy} onclick={() => (adding = true)}>
       <Icon name="plus" size={14} /> Add model
     </button>
   {:else}
-    <div class="setsec">Start from a template</div>
-    <div class="mcpcat">
-      {#each TEMPLATES as t}
-        <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
-          <span class="mcpcathead"><img class="llmlogo sm" src={LOGO[t.type]} alt="" /> {t.card || t.name}</span>
-          <span class="mcpcatblurb">{t.blurb}</span>
-          {#if providerDeps[t.type] && !providerDeps[t.type].ok}
-            <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
+    {#each TEMPLATE_GROUPS as { group, templates } (group)}
+      <div class="setsec">{group}</div>
+      <div class="mcpcat">
+        {#each templates as t}
+          <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
+            <span class="mcpcathead">
+              <BrandMark brand={t.type} size={16} /> {t.card || t.name}
+              <!-- What this card asks you to bring, worn by every card. -->
+              <span class="mcpcatchip">{TYPE_CHIP[t.type]}</span>
+            </span>
+            <span class="mcpcatblurb">{t.blurb}</span>
+            {#if providerDeps[t.type] && !providerDeps[t.type].ok}
+              <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+    {/each}
     <div class="keyrow" style="justify-content:flex-end">
       <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
     </div>
@@ -242,3 +249,8 @@
 
 <div class="setgroup">Live</div>
 <VoiceSection />
+
+<style>
+  /* The armed-row question, sat where the Test/Edit/Delete buttons were. */
+  .llmconfirm { font-size: 12px; color: var(--danger); white-space: nowrap; }
+</style>

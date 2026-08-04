@@ -17,8 +17,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from assistant.channels.base import PUSH_CHANNELS
 from assistant.config import Config, load_config
+from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
 from assistant.tasks.model import (
     Run,
@@ -138,6 +138,7 @@ class TaskService:
         self._gateway = None
         self._notify = None  # async (platform, chat_id, text) -> None
         self._emit = None  # async (chat_id, event) -> None
+        self._questions = None  # the question mirror: ask(...) / retract(...)
         if self._inquiries is not None:
             # InquiryStore only takes its change hook at construction (`on_change=`,
             # stored privately as `_on_change`) — there is no public setter. A store
@@ -155,6 +156,10 @@ class TaskService:
 
     def set_emitter(self, emitter) -> None:
         self._emit = emitter
+
+    def set_question_mirror(self, questions) -> None:
+        """Where a chat's questions go so an Attached Peer can answer them (ADR 0020)."""
+        self._questions = questions
 
     @property
     def store(self):
@@ -181,6 +186,7 @@ class TaskService:
         if self._inquiries is None:
             self._inquiries = InquiryStore(path=d / "inquiries.db", on_change=self._on_inquiry)
         await self._migrate_workdirs()
+        await self._migrate_origin_connections()
         if scheduler and self._scheduler is None:
             from assistant.scheduler_lock import SchedulerLock
             from assistant.tasks import Scheduler
@@ -192,6 +198,20 @@ class TaskService:
                     self._store, self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+
+    async def _migrate_origin_connections(self) -> None:
+        """A task queued before Connections existed points at a platform name; move it
+        onto that platform's Connection so its outcome still reaches the chat."""
+        try:
+            # The resolved secret env, not an empty one: this may be the first read of
+            # connections.json, and a store with no environment would migrate a
+            # token-seeded install into nothing.
+            store = ConnectionStore(self._config.paths, self._config.secret_env)
+            await self._store.rekey_origin_channels(store.first_by_platform())
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("task origin connection migration", exc)
 
     async def _migrate_workdirs(self) -> None:
         """Legacy single-workdir tasks → task-scope Folder Grants (spec 2026-07-20).
@@ -454,6 +474,8 @@ class TaskService:
         if run_id in self._stopping:  # user Stop → the turn returned "" via TurnCancelled
             await self._finish(run_id, RunStatus.CANCELLED)
             return
+        # The summary is distilled from this profile's config — never `task.model`, never
+        # the Chat override on the run's thread (ADR 0025).
         summary = await summarize_run(
             self._config, task.prompt, reply, agent_factory=self._summary_factory
         )
@@ -504,13 +526,9 @@ class TaskService:
         return n
 
     async def _deliver(self, task: Task, text: str) -> None:
-        """Push a completed run's outcome to the task's origin channel."""
-        if (
-            self._notify is None
-            or task.origin_channel not in PUSH_CHANNELS
-            or not task.origin_chat
-            or not text
-        ):
+        """Push a completed run's outcome back through the Connection the task came
+        from — ``origin_channel`` is that Connection's id."""
+        if self._notify is None or not task.origin_channel or not task.origin_chat or not text:
             return
         try:
             await self._notify(task.origin_channel, task.origin_chat, f"✅ {task.name}: {text}")
@@ -525,6 +543,7 @@ class TaskService:
         """InquiryStore change hook: surface the event on its stream AND flip the
         owning run between running ↔ needs_input."""
         await self._emit_inquiry(inquiry, kind)
+        await self._mirror_inquiry(inquiry, kind)
         rid = inquiry.task_id or ""
         if not rid.startswith("run-") or self._store is None:
             return
@@ -537,6 +556,23 @@ class TaskService:
             await self._store.set_run_status(rid, RunStatus.NEEDS_INPUT)
         elif kind in InquiryStatus.TERMINAL and run.status == RunStatus.NEEDS_INPUT:
             await self._store.set_run_status(rid, RunStatus.RUNNING)
+
+    async def _mirror_inquiry(self, inquiry, kind) -> None:
+        """Durable HITL lifecycle → the Attached Peer: a raised question is shown there
+        with its options, and any resolution takes it back."""
+        if self._questions is None or not inquiry.chat:
+            return
+        from assistant.observability import log_suppressed
+
+        try:
+            if kind == "raised":
+                await self._questions.ask(
+                    inquiry.chat, inquiry.id, inquiry.text, tuple(inquiry.options or ())
+                )
+            else:
+                await self._questions.retract(inquiry.chat, inquiry.id)
+        except Exception as exc:
+            log_suppressed("question mirror", exc, inquiry_id=inquiry.id, kind=kind)
 
     async def _emit_inquiry(self, inquiry, kind) -> None:
         """Durable HITL lifecycle → InquiryRaised/InquiryAnswered on its stream."""

@@ -26,6 +26,8 @@ SEARCH_LIMIT = 20
 
 # Directories whose subtrees are dev noise — hidden from the folder picker and
 # pruned during Folder walks/listings. The canonical list; ``filesearch`` reuses it.
+# Names only: a workspace listing hides what is on this list and nothing else, so a
+# folder the user made is never invisible for starting with a dot.
 SKIP_DIRS = frozenset(
     {
         ".git",
@@ -370,27 +372,30 @@ def delete(workspace_dir, rel: str) -> bool:
 
 
 def list_files(workspace_dir) -> list[dict]:
-    """Every file under the workspace, newest first — for the GUI Files browser."""
+    """Every file under the workspace, newest first — for the GUI Files browser.
+    ``SKIP_DIRS`` subtrees are pruned; every other directory is the user's to see."""
     root = _root(workspace_dir)
     if not root.exists():
         return []
     out: list[dict] = []
-    for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        try:
-            st = p.stat()
-        except OSError:
-            continue
-        out.append(
-            {
-                "path": str(p.relative_to(root)),
-                "name": p.name,
-                "dir": str(p.parent.relative_to(root)) if p.parent != root else "",
-                "size": st.st_size,
-                "modified": datetime.fromtimestamp(st.st_mtime).astimezone().isoformat(),
-            }
-        )
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        parent = Path(dirpath)
+        rel_dir = "" if parent == root else str(parent.relative_to(root))
+        for name in filenames:
+            try:
+                st = (parent / name).stat()
+            except OSError:
+                continue
+            out.append(
+                {
+                    "path": name if not rel_dir else f"{rel_dir}/{name}",
+                    "name": name,
+                    "dir": rel_dir,
+                    "size": st.st_size,
+                    "modified": datetime.fromtimestamp(st.st_mtime).astimezone().isoformat(),
+                }
+            )
     out.sort(key=lambda f: f["modified"], reverse=True)
     return out
 
@@ -398,17 +403,17 @@ def list_files(workspace_dir) -> list[dict]:
 def list_all_dirs(workspace_dir) -> list[str]:
     """Every Directory under the workspace root (recursively), workspace-relative —
     so the Files tree can show empty Directories that the files-only `list_files`
-    omits (New directory / move can create them). Sorted for a stable tree."""
+    omits (New directory / move can create them). Sorted for a stable tree.
+    ``SKIP_DIRS`` subtrees are pruned; every other directory is the user's to see."""
     root = _root(workspace_dir)
     if not root.exists():
         return []
     out: list[str] = []
-    for p in root.rglob("*"):
-        try:
-            if p.is_dir():
-                out.append(str(p.relative_to(root)))
-        except OSError:
-            continue
+    for dirpath, dirnames, _ in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        parent = Path(dirpath)
+        for name in dirnames:
+            out.append(name if parent == root else f"{parent.relative_to(root)}/{name}")
     out.sort()
     return out
 
@@ -441,7 +446,7 @@ def list_dirs(path: str) -> dict | None:
     try:
         for item in p.iterdir():
             if item.name.startswith(".") or item.name in SKIP_DIRS:
-                continue  # hide dotfolders + dev-noise dirs (__pycache__, node_modules, …)
+                continue  # the picker browses the whole host: hide dotfolders too
             try:
                 if item.is_dir():
                     dirs.append({"name": item.name, "path": str(item)})

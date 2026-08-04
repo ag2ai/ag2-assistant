@@ -1,9 +1,8 @@
 // Install-wide status and account surfaces: activity, usage, onboarding, the
-// host folder picker, channels, the universal memory doc and the OAuth cards.
+// host folder picker, the universal memory doc and the OAuth cards.
 import { globalApi as G } from '../../lib/profile.ts'
 import { get, post } from '../http.ts'
 import {
-  Channels,
   CodexLoginUrl,
   CodexStatus,
   FsListing,
@@ -54,14 +53,8 @@ export const systemApi = {
   codexSubmit: (state: string, code: string) => post(G('/codex/submit'), { state, code }, Ok),
   codexLogout: () => post(G('/codex/logout'), undefined, Ok),
 
-  // Messaging channels are install-level: a platform binds to exactly one profile
-  // (or is disabled). The bind persists even if start fails (active:false + error).
-  channels: () => get(G('/channels'), Channels),
-  channelBind: (platform: string, profile: string | null) =>
-    post(G('/channels'), { platform, profile }, Channels),
-  // tokens is {ENV_NAME: value|''} — empty clears. Values are never echoed.
-  channelTokens: (platform: string, tokens: Record<string, string>) =>
-    post(G('/channels/token'), { platform, tokens }, Channels),
+  // (A messaging platform is a Connection now, connected as many times as you
+  // want — its routes live in transport/api/connections.ts.)
 
   // The universal "who the user is" doc — one install-wide memory shared by every
   // profile. The per-profile persona memory is getMemory/setMemory in settings.ts.

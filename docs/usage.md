@@ -233,6 +233,16 @@ messages). Add the bot to a group, then `@youragent what's the weather?`.
 Each chat is its own isolated conversation, and AG2 Assistant tags what it learns about
 you with the `telegram` platform.
 
+**Choosing a profile:** one bot serves every profile in your install. The first time a
+conversation speaks, it lands in your only profile — or, if you have several, the bot
+asks which one to use before doing anything else. Send `/profile` at any time to pick
+from the list, or `/profile Work` to switch straight to one by name.
+
+Each conversation remembers its own choice across restarts, so a group can sit in one
+profile while your DM sits in another. Switching moves that conversation to a fresh
+chat (a chat cannot cross profiles); the one you left is untouched. `/profile` works in
+DMs only — a group's profile is set from **Settings → Channels**.
+
 ### Discord
 
 1. Create an application + bot at the [Discord Developer Portal](https://discord.com/developers/applications).
@@ -361,9 +371,9 @@ Every key above also has an env override (these win over `config.yaml`):
 
 Set the provider + model + the env var holding its key. Gemini and OpenAI are
 bundled; **Anthropic and Ollama need their provider extra installed first**
-(`pip install "ag2-assistant[anthropic]"` / `pip install "ag2-assistant[ollama]"`,
-or the `PROVIDER_EXTRAS` build arg for Docker), otherwise the provider fails at
-first use with a missing-dependency error:
+(`pip install "ag2-assistant[anthropic]"` / `pip install "ag2-assistant[ollama]"`;
+the Docker image already carries both), otherwise the provider fails at first use
+with a missing-dependency error:
 
 ```yaml
 llm: { provider: openai, model: gpt-4o, api_key_env: OPENAI_API_KEY }

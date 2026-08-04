@@ -1,13 +1,10 @@
 // Shared vocabulary for the install-wide named LLM configurations — one source of
-// truth for the provider logos, the human type label, and the client-side "can this
-// run right now?" predicate. Consumed by Settings → Models (ModelsPage) and the
-// composer's model switcher so the two surfaces speak identically.
+// truth for the client-side "can this run right now?" predicate. Consumed by
+// Settings → Models (ModelsPage) and the composer's model switcher so the two
+// surfaces speak identically. Type labels live in lib/providerLabels.js, marks in
+// lib/brandMarks.js.
 import { writable } from 'svelte/store'
 import { api } from '../transport/api/index.ts'
-import openaiLogo from '../assets/openai.svg'
-import anthropicLogo from '../assets/anthropic.svg'
-import geminiLogo from '../assets/gemini.svg'
-import ollamaLogo from '../assets/ollama.svg'
 import type { DepsStatus, LlmConfig, LlmEnvOverride } from '../schemas/index.ts'
 
 // Shared install-wide LLM config state — the single source of truth for BOTH the
@@ -46,22 +43,6 @@ export async function loadLlmConfigs(): Promise<void> {
 // prefill (no id and no secret yet).
 export type LlmConfigSeed = Partial<LlmConfig>
 
-// type -> provider logo (all three OpenAI surfaces share the OpenAI mark;
-// claude_code is Anthropic's CLI, so it wears the Anthropic mark; codex is
-// OpenAI's CLI, so it wears the OpenAI mark).
-export const LOGO: Record<string, string> = {
-  openai: openaiLogo, openai_responses: openaiLogo, openai_subscription: openaiLogo,
-  anthropic: anthropicLogo, gemini: geminiLogo, ollama: ollamaLogo,
-  claude_code: anthropicLogo, codex: openaiLogo,
-}
-
-// type -> the label the UI shows for it.
-export const TYPE_LABEL: Record<string, string> = {
-  openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
-  openai_subscription: 'OpenAI · ChatGPT subscription',
-  anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
-  claude_code: 'Claude Code · CLI login', codex: 'Codex · CLI login',
-}
 
 // Whether a config can actually run right now — the signal behind the health dot.
 // The API view carries no `usable` flag, so we derive it exactly as the server's

@@ -10,6 +10,7 @@ import {
   LlmConfigSaved,
   Ok,
   PingResult,
+  ProviderCatalog,
 } from '../../schemas/index.ts'
 
 // LlmConfigRequest in app.py. `id` picks create (absent) vs update (present) and
@@ -25,6 +26,15 @@ export type LlmConfigDraft = {
   api_key?: string | null
   options?: Record<string, unknown>
   activate?: boolean
+}
+
+// Which configuration a model catalog is read for — non-secret fields only, the
+// key named by reference (`secret_id`) and never by value.
+export type CatalogTarget = {
+  type: string
+  base_url?: string
+  host?: string
+  secret_id?: string
 }
 
 // LiveConfigRequest in app.py.
@@ -64,6 +74,20 @@ export const llmApi = {
   // Test an UNSAVED editor draft (nothing persisted; a blank api_key falls back
   // to the stored key when cfg.id is set).
   testLlmConfigDraft: (cfg: LlmConfigDraft) => post(G('/llm-configs/test'), cfg, PingResult),
+
+  // A provider's model catalog for the Model field's combobox, in the same
+  // {models, current, reason} envelope codingModels() returns. The configuration
+  // is named by non-secret fields only — this route accepts no key material,
+  // because a pasted key goes to the provider that owns it and never to us
+  // (ADR 0024); that probe is transport/modelCatalog.ts.
+  llmCatalog: (target: CatalogTarget, refresh = false) => {
+    const q = new URLSearchParams({ type: target.type })
+    if (target.base_url) q.set('base_url', target.base_url)
+    if (target.host) q.set('host', target.host)
+    if (target.secret_id) q.set('secret_id', target.secret_id)
+    if (refresh) q.set('refresh', '1')
+    return get(G(`/llm-configs/models?${q}`), ProviderCatalog)
+  },
 
   liveConfigs: () => get(G('/live-configs'), LiveConfigList),
 

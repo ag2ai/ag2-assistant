@@ -12,9 +12,11 @@ location — profile, Tab, and the optional open Thread — as
 when a Thread opens or closes, and the Thread suffix is preserved when the Tab
 switches: the two are **orthogonal** (opening the Files Tab must not close your open
 Chat). The transient **Modal** layer lives in the URL **hash** as a single overlay
-slot (`#settings=<section>`), client-side only and never sent to the gateway. The
-former `settingsOpen` / `settingsPage`-style stores become **derived** from the
-route, so the route is the single source of truth.
+slot, client-side only and never sent to the gateway. The slot's vocabulary is
+`#settings=<section>` and `#poweredby` (the AG2 architecture map, valueless); one
+occupant at a time, and opening either evicts the other. The former `settingsOpen`
+/ `settingsPage`-style stores become **derived** from the route, so the route is the
+single source of truth.
 
 ## Considered options
 

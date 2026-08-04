@@ -60,9 +60,21 @@ Ruff owns formatting and import order — line length 100, double quotes, rule s
 - **Comments say what, in ≤2 lines.** A comment or docstring describes what the
   code does — not why it exists, what it replaced, or how it was decided. Keep
   each one to two lines at most.
-- **No compat shims.** This is a fast-moving prototype: when you change or remove
-  something, delete the obsolete code and its guards outright rather than keeping
-  backward-compat fallbacks.
+- **Breaking changes land backward-compatibly.** Installed data outlives the code
+  that wrote it, so a change to a persisted shape ships the adoption that carries an
+  existing install across it, and the code it replaced is deleted rather than
+  branched on both shapes forever. Adoption comes in two shapes, with different rules:
+  - A **migration** rewrites what was authored. Make it self-contained, run it once,
+    record that it ran, and resume cleanly on a second start.
+  - An **inference rule** re-derives a field that was derived anyway. Re-run it on
+    every start, record nothing, and make sure it can name nobody its source could not
+    already name — it must not be able to grant what its source does not already grant.
+
+  Which shape you have is decided by the source of truth: if it still exists at read
+  time, re-derive it as an inference rule; if the old shape is gone, migrate.
+
+  In-process shims that only ease a refactor still go: this is a fast-moving
+  prototype, and only *persisted* state earns either.
 - **Surface config, don't guess it.** Prefer exposing a choice in onboarding or
   Settings over silent auto-detection or a hardcoded magic default.
 - **Actions are buttons, never arrow text.** A clickable action in the UI must be

@@ -26,13 +26,13 @@
 import { get } from 'svelte/store'
 import { getContext, setContext } from 'svelte'
 import { api } from '../../transport/api/index.ts'
-import { closeOverlay } from '../../router.ts'
+import { closeOverlay, openOverlay, route } from '../../router.ts'
 import { errText } from '../../lib/errors.ts'
 import type { ProfileSettings } from '../../schemas/settings.ts'
 import type { GoogleStatus } from '../../schemas/system.ts'
 import {
   voicePickerOpen, voicePickerConfig, googleOpen, codexOpen,
-  poweredByOpen, onboardingOpen, profileEpoch,
+  onboardingOpen, profileEpoch,
 } from '../../store.ts'
 
 export type SettingsContext = {
@@ -99,7 +99,13 @@ export function createSettingsContext(): SettingsContext {
     // away. It stacks over Settings (.modal.over) and closing it reveals the form
     // again, with its signed-in state refreshed.
     openCodex: () => codexOpen.set(true),
-    openPoweredBy: () => { closeOverlay(); poweredByOpen.set(true) },
+    // The architecture map shares the Modal slot with Settings, so opening it evicts
+    // Settings from the hash — but PUSHES, so Back closes the map and puts Settings
+    // right back where you left it. The Section we're leaving rides along in the hash
+    // (`#poweredby=advanced`) so the map can offer an explicit "Back to Settings"
+    // button too, landing on the same Section rather than a guessed default. Read off
+    // the route, not passed in: an onclick handler's only argument is the event.
+    openPoweredBy: () => openOverlay('poweredby', get(route).overlayValue),
     reRunSetup: () => { closeOverlay(); onboardingOpen.set(true) },
   })
 

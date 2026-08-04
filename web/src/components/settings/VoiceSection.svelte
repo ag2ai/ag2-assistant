@@ -10,7 +10,9 @@
   import { getSettings } from './context.svelte.ts'
   import LiveConfigForm from './LiveConfigForm.svelte'
   import Icon from '../Icon.svelte'
-  import { LOGO, PROVIDER_LABEL, liveConfigs, loadLiveConfigs, type LiveConfigSeed } from '../../lib/live.ts'
+  import { liveConfigs, loadLiveConfigs, type LiveConfigSeed } from '../../lib/live.ts'
+  import { PROVIDER_LABEL } from '../../lib/providerLabels.ts'
+  import BrandMark from '../BrandMark.svelte'
   import { errText } from '../../lib/errors.ts'
   import type { LiveConfig, LiveProvider } from '../../schemas/index.ts'
 
@@ -28,6 +30,8 @@
   // config/template being edited in the inline form (null = closed)
   let editing = $state<LiveConfigSeed | null>(null)
   let adding = $state(false)   // provider-template grid showing
+  // Two-step delete, same as the Text list above: arm the row, then Confirm.
+  let confirming = $state('')
 
   onMount(reload)
 
@@ -56,14 +60,15 @@
       await api.deleteLiveConfig(c.id)
       const { [c.id]: _gone, ...rest } = tests
       tests = rest
+      confirming = ''
       await reload()
     } catch (e) { err = errText(e) }
     busy = false
   }
 
   // Open the editor: a provider template (no id → create) or an existing row (edit).
-  function pickTemplate(p: LiveProvider) { adding = false; editing = { provider: p.name, name: PROVIDER_LABEL[p.name] + ' Live', model: '' } }
-  function edit(c: LiveConfig) { adding = false; editing = { ...c } }
+  function pickTemplate(p: LiveProvider) { adding = false; confirming = ''; editing = { provider: p.name, name: PROVIDER_LABEL[p.name] + ' Live', model: '' } }
+  function edit(c: LiveConfig) { adding = false; confirming = ''; editing = { ...c } }
 
   const activateOnSave = $derived(editing?.id ? !!editing.active : configs.length === 0)
 
@@ -83,16 +88,19 @@
 {/if}
 
 {#each configs as c (c.id)}
+  <!-- An armed row isn't click-to-use: a stray click shouldn't activate a model
+       you're about to delete. -->
+  {@const idle = !editing && confirming !== c.id}
   <div
-    class="llmrow" class:active={c.active} class:clickable={!c.active && !editing && !busy}
-    role="button" aria-disabled={c.active || !!editing}
-    tabindex={!c.active && !editing ? 0 : -1}
+    class="llmrow" class:active={c.active} class:clickable={!c.active && idle && !busy}
+    role="button" aria-disabled={c.active || !idle}
+    tabindex={!c.active && idle ? 0 : -1}
     aria-label={!c.active ? `Use ${c.name}` : undefined}
-    title={!c.active && !editing ? 'Click to use this live model' : ''}
-    onclick={() => { if (!c.active && !busy && !editing) use(c) }}
-    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && !editing) { e.preventDefault(); use(c) } }}
+    title={!c.active && idle ? 'Click to use this live model' : ''}
+    onclick={() => { if (!c.active && !busy && idle) use(c) }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && idle) { e.preventDefault(); use(c) } }}
   >
-    <img class="llmlogo" src={LOGO[c.provider]} alt="" />
+    <BrandMark brand={c.provider} />
     <div class="llmmeta">
       <div class="llmname">
         {c.name}
@@ -113,17 +121,26 @@
         {/if}
       </div>
     </div>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
-    <button
-      class="open" disabled={busy || tests[c.id]?.testing || !!editing}
-      onclick={(e) => { e.stopPropagation(); test(c) }}
-    >Test</button>
-    <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
-    <button
-      class="linkbtn danger" disabled={busy || !!editing}
-      title={c.active ? 'Deleting the active live model falls back to the next one (or legacy)' : ''}
-      onclick={(e) => { e.stopPropagation(); remove(c) }}
-    >Delete</button>
+    {#if confirming === c.id}
+      <span class="llmconfirm">Delete?</span>
+      <button
+        class="linkbtn danger" disabled={busy}
+        title={c.active ? 'Deleting the active live model falls back to the next one (or legacy)' : ''}
+        onclick={(e) => { e.stopPropagation(); remove(c) }}
+      >Confirm</button>
+      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
+    {:else}
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
+      <button
+        class="open" disabled={busy || tests[c.id]?.testing || !!editing}
+        onclick={(e) => { e.stopPropagation(); test(c) }}
+      >Test</button>
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
+      <button
+        class="linkbtn danger" disabled={busy || !!editing}
+        onclick={(e) => { e.stopPropagation(); confirming = c.id }}
+      >Delete</button>
+    {/if}
   </div>
 {/each}
 
@@ -139,7 +156,7 @@
     <div class="mcpcat">
       {#each providers as p}
         <button class="mcpcatcard" onclick={() => pickTemplate(p)}>
-          <span class="mcpcathead"><img class="llmlogo sm" src={LOGO[p.name]} alt="" /> {PROVIDER_LABEL[p.name]}</span>
+          <span class="mcpcathead"><BrandMark brand={p.name} size={16} /> {PROVIDER_LABEL[p.name]}</span>
           <span class="mcpcatblurb">Realtime voice · {p.default_model}</span>
         </button>
       {/each}
@@ -149,3 +166,8 @@
     </div>
   {/if}
 {/if}
+
+<style>
+  /* The armed-row question, sat where the row's action buttons were. */
+  .llmconfirm { font-size: 12px; color: var(--danger); white-space: nowrap; }
+</style>

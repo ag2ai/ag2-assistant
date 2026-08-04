@@ -182,7 +182,9 @@ export type AttachmentPayload = { name: string; mime: string; data: string }
 
 // Frames the client sends. A turn is the bare {text, attachments} shape.
 export type ClientFrame =
-  | { text: string; attachments?: AttachmentPayload[] }
+  // `model` rides only the message that CREATES a chat: a Text model chosen
+  // before the chat existed, adopted as its override (ADR 0025).
+  | { text: string; attachments?: AttachmentPayload[]; model?: string }
   | { type: 'cancel' }
   | { type: 'answer'; id: string; answer: string }
   | { type: 'feedback'; [k: string]: unknown }

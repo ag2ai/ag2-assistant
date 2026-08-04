@@ -11,13 +11,16 @@
   import { profiles, tasks, pendingTaskEdit, SETTINGS_PAGE } from '../../store.ts'
   import { getActiveProfileId } from '../../lib/profile.ts'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
-  import { llmConfigs, loadLlmConfigs, LOGO, TYPE_LABEL, isUsable } from '../../lib/llm.ts'
+  import { llmConfigs, loadLlmConfigs, isUsable } from '../../lib/llm.ts'
+  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
   import { folderGrantDiff, scheduleValue, taskEditPatch } from '../../lib/taskEdit.ts'
   import type { FolderGrantIntent, FolderGrantState, GrantOp, ScheduleValue, TaskFolderMode } from '../../lib/taskEdit.ts'
   import { errText } from '../../lib/errors.ts'
   import { ApiError } from '../../transport/http.ts'
   import { FolderConflict, type Folder, type FsRoots, type GrantMode, type RunStatus, type Task, type TaskWithRuns } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
+  import BrandMark from '../BrandMark.svelte'
+  import { MARK_SIZE } from '../ModelSwitcherView.svelte'
   import AppBar from '../AppBar.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
 import WriteSwitch from '../WriteSwitch.svelte'
@@ -443,7 +446,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                 <button class="modelsw-btn" onclick={() => (modelOpen = !modelOpen)}
                         aria-haspopup="menu" aria-expanded={modelOpen} title="Model for this task">
                   {#if emodelConfig}
-                    <img class="modelsw-logo" src={LOGO[emodelConfig.type]} alt="" />
+                    <BrandMark brand={emodelConfig.type} size={MARK_SIZE} />
                     <span class="modelsw-name">{emodelConfig.name}</span>
                     <span class="modelsw-dot" class:warn={!isUsable(emodelConfig)}></span>
                   {:else}
@@ -471,7 +474,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                         title={isUsable(c) ? '' : 'Not ready — add a key or sign in via Settings'}
                         onclick={() => chooseModel(c.id)}
                       >
-                        <img class="modelsw-logo" src={LOGO[c.type]} alt="" />
+                        <BrandMark brand={c.type} size={MARK_SIZE} />
                         <span class="modelsw-itemmeta">
                           <span class="modelsw-name">
                             {c.name}{#if c.id === emodel}<Icon name="check" size={12} />{/if}
@@ -492,7 +495,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                  across view and edit. A null model / stale id shows plain text. -->
             <div class="tpmodel-view">
               {#if roModelConfig}
-                <img class="modelsw-logo" src={LOGO[roModelConfig.type]} alt="" />
+                <BrandMark brand={roModelConfig.type} size={MARK_SIZE} />
                 <span class="modelsw-name">{roModelConfig.name}</span>
                 <span class="modelsw-dot" class:warn={!isUsable(roModelConfig)}></span>
               {:else}

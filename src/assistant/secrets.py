@@ -39,6 +39,11 @@ DEFAULT_OLLAMA_BASE = "http://localhost:11434"
 # with provider fields.
 _CHANNELS_FIELD = "channels"
 
+# A Connection's own token(s), under a Connection-scoped key: {connection id:
+# {ENV_NAME: value}}. Handed to that Connection's adapter explicitly, never exported
+# to the environment — one process can hold three Telegram tokens this way.
+_CONNECTION_TOKENS_FIELD = "connection_tokens"
+
 # Every env var name this store can stand for — the slice of a process environment
 # that is relevant to secrets, used by :meth:`SecretStore.merged_env`.
 SECRET_ENV_NAMES = frozenset(
@@ -108,6 +113,12 @@ def _saved_channel_tokens(data: dict) -> dict:
     return chans if isinstance(chans, dict) else {}
 
 
+def _stored_connection_tokens(data: dict) -> dict:
+    """The ``connection_tokens`` sub-map (empty dict if absent/malformed)."""
+    held = data.get(_CONNECTION_TOKENS_FIELD)
+    return held if isinstance(held, dict) else {}
+
+
 class SecretStore:
     """One install's secrets (``secrets.json``): provider API keys and channel tokens.
 
@@ -140,9 +151,10 @@ class SecretStore:
 
     def env_overlay(self) -> dict[str, str]:
         """The environment variables the saved secrets stand for: each provider's
-        DEFAULT Secret, the GitHub token, the Ollama base URL, and channel tokens.
-        A provider with no Default contributes nothing, so an .env-only key still
-        applies as the last-resort fallback."""
+        DEFAULT Secret, the GitHub token and the Ollama base URL. A provider with no
+        Default contributes nothing, so an .env-only key still applies as the
+        last-resort fallback. Channel tokens are a Connection's own and are never
+        exported — one process cannot hold three ``TELEGRAM_BOT_TOKEN`` values."""
         data = self._read()
         out: dict[str, str] = {}
         for s in _stored_secrets(data):
@@ -153,9 +165,6 @@ class SecretStore:
             out[KEY_ENV["github"]] = data["github"]
         if data.get("ollama_base_url"):
             out[OLLAMA_BASE_ENV] = data["ollama_base_url"]
-        for env_name, value in _saved_channel_tokens(data).items():
-            if env_name in CHANNEL_TOKEN_ENV_NAMES and value:
-                out[env_name] = value
         return out
 
     def merged_env(self, env: Mapping[str, str]) -> dict[str, str]:
@@ -340,25 +349,50 @@ class SecretStore:
     def clear(self, provider: str) -> bool:
         return self.set_key(provider, "")
 
-    def set_channel_token(self, env_name: str, value: str) -> bool:
-        """Set or clear (empty value) a channel bot token, keyed by its env var name
-        (e.g. ``TELEGRAM_BOT_TOKEN``). Returns False for an env name outside the closed
-        channel-token set. The new value shows up in the next :meth:`env_overlay`."""
-        if env_name not in CHANNEL_TOKEN_ENV_NAMES:
-            return False
-        value = (value or "").strip()
+    def channel_token(self, env_name: str, env: Mapping[str, str]) -> str:
+        """One channel token's raw value — the saved one, else ``env``. Read as a seed
+        for a first Connection only; nothing else consumes this."""
+        return _saved_channel_tokens(self._read()).get(env_name) or env.get(env_name, "")
+
+    def set_connection_tokens(self, cid: str, tokens: Mapping[str, str]) -> None:
+        """Merge token value(s) into one Connection's scoped store, keyed by env-var
+        name; an empty value clears that token. An env name outside the channel set →
+        ValueError."""
+        unknown = set(tokens) - CHANNEL_TOKEN_ENV_NAMES
+        if unknown:
+            raise ValueError(f"unknown channel token(s): {', '.join(sorted(unknown))}")
         data = self._read()
-        chans = _saved_channel_tokens(data)
-        if value:
-            chans[env_name] = value
-        else:
-            chans.pop(env_name, None)
-        if chans:
-            data[_CHANNELS_FIELD] = chans
-        else:
-            data.pop(_CHANNELS_FIELD, None)
+        all_held = _stored_connection_tokens(data)
+        held = dict(all_held.get(cid) or {})
+        for env_name, value in tokens.items():
+            value = (value or "").strip()
+            if value:
+                held[env_name] = value
+            else:
+                held.pop(env_name, None)
+        all_held[cid] = held
+        data[_CONNECTION_TOKENS_FIELD] = all_held
         self._write(data)
-        return True
+
+    def clear_connection_tokens(self, cid: str) -> None:
+        """Forget every token one Connection holds — it no longer exists."""
+        data = self._read()
+        all_held = _stored_connection_tokens(data)
+        if all_held.pop(cid, None) is None:
+            return
+        data[_CONNECTION_TOKENS_FIELD] = all_held
+        self._write(data)
+
+    def connection_tokens(self, cid: str) -> dict:
+        """The raw token(s) one Connection holds, keyed by env-var name. In-process
+        only — they flow into adapter construction, never out of an endpoint."""
+        held = _stored_connection_tokens(self._read()).get(cid)
+        return dict(held) if isinstance(held, dict) else {}
+
+    def connection_token_status(self, cid: str, env_names) -> dict:
+        """Per-token presence and a last-4 hint for one Connection (never a raw value)."""
+        held = self.connection_tokens(cid)
+        return {e: {"set": bool(held.get(e)), "hint": _hint(held.get(e) or "")} for e in env_names}
 
     def status(self, env: Mapping[str, str]) -> dict:
         """Per-provider presence + a last-4 hint (never the raw key): the provider's
@@ -382,15 +416,6 @@ class SecretStore:
         base = data.get("ollama_base_url") or env.get(OLLAMA_BASE_ENV) or ""
         out["ollama"] = {"set": bool(base), "base_url": base or DEFAULT_OLLAMA_BASE}
         return out
-
-    def channel_token_status(self, env: Mapping[str, str]) -> dict:
-        """Per-env-var presence for channel bot tokens (never the raw value). A token
-        present in ``env`` (e.g. from ``.env``) also counts as present."""
-        saved = _saved_channel_tokens(self._read())
-        return {
-            env_name: bool(saved.get(env_name) or env.get(env_name))
-            for env_name in sorted(CHANNEL_TOKEN_ENV_NAMES)
-        }
 
     def migrate(self) -> None:
         """One-shot upgrade of a legacy secrets.json into the Secret-entity shape

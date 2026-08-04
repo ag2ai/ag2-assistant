@@ -4,17 +4,24 @@
   // inline-editor pattern: local state seeded from the passed config, Save/Cancel,
   // one inline error line for server 400/502 messages.
   //
-  // The type select toggles which endpoint field shows: base_url for openai* /
-  // anthropic, host for ollama, neither for gemini. The key field is a Secret
-  // picker plus a paste-to-create shortcut (a pasted key mints a value-unique
-  // Secret on save; api_key rides only the draft-test call).
+  // The type decides which endpoint field shows: base_url for openai* / anthropic,
+  // host for ollama, neither for gemini. The type is editable only as an API
+  // interface, and only once a Base URL names an endpoint. The key field is a
+  // Secret picker plus a paste-to-create shortcut (a pasted key mints a
+  // value-unique Secret on save; api_key rides only the draft-test call).
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api/index.ts'
+  import { fetchModelCatalog } from '../../transport/modelCatalog.ts'
   import { codexOpen } from '../../store.ts'
   import { getSettings } from './context.svelte.ts'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
+  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
+  import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
+  import { familyOf } from '../../lib/knownModels.ts'
+  import { catalogNote, catalogSource, permanentNoCatalog } from '../../lib/modelSuggest.ts'
+  import ModelCombobox from './ModelCombobox.svelte'
   import { errText } from '../../lib/errors.ts'
   import type { LlmConfigSeed } from '../../lib/llm.ts'
   import type { LlmConfigDraft } from '../../transport/api/llm.ts'
@@ -33,19 +40,11 @@
   }
   let { config, activate = false, onSaved, onCancel }: Props = $props()
 
-  const TYPES = [
-    { id: 'openai_responses', label: 'OpenAI · Responses' },
-    { id: 'openai', label: 'OpenAI · Chat Completions' },
-    { id: 'openai_subscription', label: 'OpenAI · ChatGPT subscription' },
-    { id: 'anthropic', label: 'Anthropic' },
-    { id: 'gemini', label: 'Gemini' },
-    { id: 'ollama', label: 'Ollama' },
-    { id: 'claude_code', label: 'Claude Code · CLI login' },
-    { id: 'codex', label: 'Codex · CLI login' },
-  ]
-  // base_url applies to openai/openai_responses/anthropic; host to ollama only.
-  // Subscription mode has no endpoint or key fields — both come from codex_auth.
-  const usesBaseUrl = (t: string) => t === 'openai' || t === 'openai_responses' || t === 'anthropic'
+  // The wires a custom endpoint can be addressed over; the order and the membership
+  // are the seam's, the labels providerLabels.ts's.
+  const INTERFACES = API_INTERFACES.map((id) => ({ id, label: TYPE_LABEL[id] }))
+  // Which endpoint field shows: base_url comes from the seam, host is ollama's
+  // alone, and subscription mode has neither (both come from codex_auth).
 
   // Capture the prop's initial values once (this form is freshly mounted per open,
   // so initial-value capture is exactly right). untrack keeps these out of the
@@ -133,15 +132,98 @@
 
   // Model names belong to their provider ("haiku" means nothing to Codex), so
   // switching type clears the model instead of carrying a stale name into the
-  // new picker. Exception: the two OpenAI API surfaces are the same catalog, so
-  // switching between them keeps the model. Only a user-driven change resets —
-  // the initial value from an edited/prefilled entry is never touched.
-  const MODEL_FAMILY: Record<string, string | undefined> = { openai: 'openai', openai_responses: 'openai' }
-  const modelFamily = (t: string) => MODEL_FAMILY[t] || t
+  // new picker. The families are lib/knownModels.ts's — the OpenAI surfaces share
+  // one, so switching between them keeps the model. A CLI type belongs to no family
+  // there and stands for itself. Only a user-driven change resets.
+  const modelFamily = (t: string) => familyOf(t) || t
   function changeType(next: string) {
     if (next === type) return
     if (modelFamily(next) !== modelFamily(type)) model = ''
     type = next
+  }
+
+  // A model that names its own endpoint says which wire that endpoint speaks.
+  const customEndpoint = $derived(offersApiInterface(type, baseUrl))
+  // A Base URL left empty settles the type onto its vendor's own surface, so no
+  // choice is stranded behind a control that is no longer shown. On blur, not on
+  // input: select-all-and-retype passes through empty without meaning it.
+  function settleBaseUrl() {
+    if (!baseUrl.trim()) changeType(settleWithoutBaseUrl(type))
+    settleEndpoint()
+  }
+
+  // Provider model catalog: what the endpoint this model points at says it offers,
+  // read on FIRST FOCUS of the Model field and never on form open.
+  // A credential exists when the config references a Secret, or when the provider's
+  // shared key is set — the same key `keyUsage` says the request would use.
+  const hasCredential = $derived(!!secretId || !!ctx?.s?.keys?.[PROV_OF[type] || '']?.set)
+  // The pasted key settles on BLUR, like the endpoint fields: it is what the probe
+  // is keyed on, and a request per keystroke would be absurd.
+  let settledKey = $state('')
+  const catalogFrom = $derived(
+    catalogSource(type, {
+      hasCredential, hasEndpoint: !!baseUrl.trim(), hasPastedKey: !!settledKey,
+    }),
+  )
+  const permanentReason = $derived(permanentNoCatalog(type))
+  let probed = $state(false)
+  let probing = $state(false)
+  // null = none read; an array = the live list
+  let providerCatalog = $state<string[] | null>(null)
+  let catalogReason = $state('')
+  const catalogHint = $derived(probed && !probing ? catalogNote(catalogReason, type) : '')
+
+  // Only the newest probe may answer: two in flight can land in either order.
+  let probeSeq = 0
+
+  async function probeCatalog(refresh = false) {
+    if (!catalogFrom) { providerCatalog = null; catalogReason = ''; return }
+    probed = true
+    probing = true
+    const seq = ++probeSeq
+    let result: { reason: string; catalog: string[] | null }
+    try {
+      // A pasted key the browser sends itself; a saved Secret only the gateway can
+      // resolve (ADR 0024). Both answer in one envelope.
+      const r = catalogFrom === 'browser'
+        ? await fetchModelCatalog({ type, baseUrl: baseUrl.trim(), key: settledKey, refresh })
+        : await api.llmCatalog(
+            { type, base_url: baseUrl.trim(), host: host.trim(), secret_id: secretId },
+            refresh,
+          )
+      // A reason means no catalog was read, so Known models stand in.
+      const reason = r.reason || ''
+      result = {
+        reason,
+        catalog: reason ? null : (r.models || []).map((m) => (typeof m === 'string' ? m : m.id)),
+      }
+    } catch {
+      result = { reason: 'unreachable', catalog: null }
+    }
+    if (seq !== probeSeq) return
+    catalogReason = result.reason
+    providerCatalog = result.catalog
+    probing = false
+  }
+
+  // Re-read whenever the identity the list describes changes — but only once a
+  // first probe has happened, because focus is what starts that one.
+  $effect(() => {
+    // The identity inputs this list describes — read for the dependency, not the value.
+    void type; void secretId; void settledKey; void catalogFrom
+    if (untrack(() => probed)) untrack(() => probeCatalog())
+  })
+
+  // The endpoint fields settle on BLUR, not on input: select-all-and-retype passes
+  // through empty without meaning it.
+  function settleEndpoint() {
+    if (probed) probeCatalog()
+  }
+
+  // Leaving the key field makes a pasted key what the list describes; clearing it
+  // falls back to the referenced Secret's gateway probe.
+  function settleKey() {
+    settledKey = pastedKey.trim()
   }
 
   // ACP model picker: the adapter's live catalog, fetched once per agent when its
@@ -252,7 +334,9 @@
         const s = await createOrSnap({ name: autoSecretName(name, pastedKey), value: pastedKey.trim() })
         payload.secret_id = s.id
         secretId = s.id
+        // The key is a Secret now, so the list goes back to the gateway path.
         pastedKey = ''
+        settledKey = ''
         loadSecrets()
       }
       delete payload.api_key  // never persisted; Secrets carry the key
@@ -282,12 +366,16 @@
     <label for="lf-name">Name</label>
     <input id="lf-name" bind:value={name} placeholder="e.g. Gemini Flash" />
   </div>
-  <div class="llmfield">
-    <label for="lf-type">Type</label>
-    <select id="lf-type" value={type} onchange={(e) => changeType(e.currentTarget.value)}>
-      {#each TYPES as t}<option value={t.id}>{t.label}</option>{/each}
-    </select>
-  </div>
+  {#if customEndpoint}
+    <!-- Shown only for a model that names its own endpoint; a vendor-reaching one
+         has one settled surface and shows nothing here. -->
+    <div class="llmfield">
+      <label for="lf-interface">API interface <span class="llmhint">which API surface this endpoint speaks</span></label>
+      <select id="lf-interface" value={type} onchange={(e) => changeType(e.currentTarget.value)}>
+        {#each INTERFACES as t}<option value={t.id}>{t.label}</option>{/each}
+      </select>
+    </div>
+  {/if}
   {#if acpLoading}
     <!-- Wait for the adapter's real catalog rather than offering a text box with
          invented example names: the CLI is the authority on what models exist. -->
@@ -331,13 +419,37 @@
         {/each}
       </select>
     </div>
+  {:else if acpAgent}
+    <div class="llmfield">
+      <label for="lf-model">Model</label>
+      <!-- A CLI type whose adapter answered nothing: the placeholder stays empty on
+           purpose (an invented example is worse than none — acpNote says what happened). -->
+      <input id="lf-model" bind:value={model} placeholder="" />
+    </div>
   {:else}
     <div class="llmfield">
       <label for="lf-model">Model</label>
-      <!-- No catalog: for the CLI types the placeholder stays empty on purpose (an
-           invented example is worse than none — acpNote explains what happened). -->
-      <input id="lf-model" bind:value={model} placeholder={acpAgent ? '' : 'e.g. gemini-3.6-flash'} />
+      <!-- Offered but never imposed: whatever is typed here wins. The list is the
+           provider's when one could be read, and Known models when it could not. -->
+      <ModelCombobox
+        bind:value={model} {type} placeholder="e.g. gemini-3.6-flash"
+        catalog={providerCatalog} loading={probing} onFirstFocus={() => probeCatalog()}
+      />
     </div>
+    {#if permanentReason}
+      <!-- No list exists for this type and none ever will, so there is nothing to
+           re-read and no button offering to. -->
+      <div class="llmfield"><span class="llmhint">{catalogNote(permanentReason, type)}</span></div>
+    {:else if catalogFrom && probed}
+      <!-- One row for both states, like the ACP picker's: why there is no list (if
+           so) plus a manual re-read. Always the quiet hint line, never the red one. -->
+      <div class="llmfield">
+        <span class="llmhint">
+          {#if catalogHint}{catalogHint} {/if}
+          <button class="linkbtn" onclick={() => probeCatalog(true)}>Re-read the model list</button>
+        </span>
+      </div>
+    {/if}
   {/if}
   {#if acpAgent && !acpLoading}
     <!-- One row for both states: why there's no list (if so) plus a manual re-probe,
@@ -353,13 +465,13 @@
 
   {#if usesBaseUrl(type)}
     <div class="llmfield">
-      <label for="lf-base">Base URL <span class="llmhint">optional — point at a compatible endpoint</span></label>
-      <input id="lf-base" bind:value={baseUrl} placeholder="e.g. http://localhost:8080/v1" spellcheck="false" />
+      <label for="lf-base">Base URL <span class="llmhint">optional — naming your own endpoint is also how you choose the API interface it speaks</span></label>
+      <input id="lf-base" bind:value={baseUrl} onblur={settleBaseUrl} placeholder="e.g. http://localhost:8080/v1" spellcheck="false" />
     </div>
   {:else if type === 'ollama'}
     <div class="llmfield">
       <label for="lf-host">Host</label>
-      <input id="lf-host" bind:value={host} placeholder="http://localhost:11434" spellcheck="false" />
+      <input id="lf-host" bind:value={host} onblur={settleEndpoint} placeholder="http://localhost:11434" spellcheck="false" />
     </div>
   {/if}
 
@@ -402,7 +514,9 @@
         </select>
       </div>
       <div class="llmkeyfield">
-        <input id="lf-key" type="password" bind:value={pastedKey} placeholder="…or paste a new key to create a secret" />
+        <!-- onblur settles the key the model list is read with, so moving from here
+             to the Model field lists what THAT key reaches, before any save. -->
+        <input id="lf-key" type="password" bind:value={pastedKey} onblur={settleKey} placeholder="…or paste a new key to create a secret" />
       </div>
       {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}
       <span class="llmhint">{keyUsage}</span>

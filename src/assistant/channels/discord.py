@@ -16,8 +16,9 @@ import re
 import discord
 
 from assistant.attachments import build_input
-from assistant.channels.base import Channel, InboundMessage, should_respond
+from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import split_for_limit
+from assistant.channels.router import ChannelRouter, spoken_text
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
@@ -96,7 +97,10 @@ class DiscordAsker(PendingGuard):
 class DiscordChannel(Channel):
     platform = "discord"
 
-    def __init__(self, token: str = "", *, message_limit: int = DISCORD_LIMIT) -> None:
+    def __init__(
+        self, token: str = "", connection: str = "", *, message_limit: int = DISCORD_LIMIT
+    ) -> None:
+        self.connection = connection
         self._token = token
         self._message_limit = message_limit
         if not self._token:
@@ -105,7 +109,7 @@ class DiscordChannel(Channel):
         intents.message_content = True
         self._client = discord.Client(intents=intents)
         self._client.event(self.on_message)
-        self._gateway = None
+        self._router: ChannelRouter | None = None
         self._task: asyncio.Task | None = None
         self._bot_user_id: int | None = None
         self._pending = PendingAsks()
@@ -113,8 +117,8 @@ class DiscordChannel(Channel):
     def _asker_for(self, channel_id: str) -> Asker:
         return DiscordAsker(self._client, channel_id, self._pending)
 
-    async def start(self, gateway) -> None:
-        self._gateway = gateway
+    async def start(self, router: ChannelRouter) -> None:
+        self._router = router
         # login() initialises the client (so wait_until_ready works), then
         # connect() runs the gateway loop as a background task.
         await self._client.login(self._token)
@@ -162,9 +166,14 @@ class DiscordChannel(Channel):
             sender_id=str(message.author.id),
             chat_id=str(message.channel.id),
             platform=self.platform,
+            connection=self.connection,
             is_direct=is_direct,
             mentioned=mentioned,
+            has_attachment=bool(message.attachments),
             sender_name=getattr(message.author, "display_name", None),
+            # The @handle a Paired-account invitation is matched against once, before
+            # it pins to the numeric id above (ADR 0021).
+            sender_handle=getattr(message.author, "name", None),
             raw=message,
         )
 
@@ -179,21 +188,19 @@ class DiscordChannel(Channel):
             return
 
         inbound = self._normalize(message)
-        if inbound is None or not should_respond(inbound):
+        if inbound is None or not self._router.accepts(inbound):
             return
 
         async with message.channel.typing():
             attachments = await _download_attachments(message)
-            text = inbound.text or ("Here is a file I'm sharing with you." if attachments else "")
-            try:
-                reply = await self._gateway.send_message(
-                    text,
-                    chat_id=inbound.stable_id(),
-                    asker=self._asker_for(channel_id),
-                    attachments=attachments,
-                )
-            except Exception as exc:  # surface failures to the user
-                reply = f"Sorry, something went wrong: {exc}"
+            outcome = await self._router.handle(
+                inbound,
+                asker=self._asker_for(channel_id),
+                attachments=attachments,
+            )
 
-        for chunk in split_for_limit(self.format_outbound(reply), self._message_limit):
+        spoken = spoken_text(outcome)
+        if spoken is None:
+            return
+        for chunk in split_for_limit(self.format_outbound(spoken), self._message_limit):
             await message.channel.send(chunk)

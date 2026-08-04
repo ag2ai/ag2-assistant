@@ -49,17 +49,8 @@ export type StatusRow = z.infer<typeof StatusRow>
 export const StatusList = z.array(StatusRow)
 export type StatusList = z.infer<typeof StatusList>
 
-export const ChannelEntry = z.object({
-  profile: z.string().nullable(),
-  token_present: z.boolean(),
-  active: z.boolean(),
-  error: z.string().nullable(),
-})
-export type ChannelEntry = z.infer<typeof ChannelEntry>
-
-// Keyed by platform, both on the list route and on the single-entry responses.
-export const Channels = z.record(z.string(), ChannelEntry)
-export type Channels = z.infer<typeof Channels>
+// (A messaging platform is a Connection now, not a per-platform channel binding —
+// its shapes live in schemas/connection.ts.)
 
 export const GoogleStatus = z.object({
   configured: z.boolean(),
@@ -124,6 +115,16 @@ export const CodingCatalog = z.object({
   reason: z.enum(['', 'adapter_missing', 'bridge', 'probe_failed']),
 })
 export type CodingCatalog = z.infer<typeof CodingCatalog>
+
+// GET /api/llm-configs/models — the same {models, current, reason} envelope, with
+// provider_catalog.py's own reasons (lib/modelSuggest.ts REASON) instead of the ACP
+// route's. `current` is always '' here: a provider names no model of its own.
+export const ProviderCatalog = z.object({
+  models: z.array(CatalogModel),
+  current: z.string(),
+  reason: z.enum(['', 'unauthorized', 'unreachable', 'no_list_endpoint', 'not_probeable']),
+})
+export type ProviderCatalog = z.infer<typeof ProviderCatalog>
 
 // GET /api/fs/list — the host folder picker; an unreadable dir answers ok:false.
 export const FsListing = z.union([

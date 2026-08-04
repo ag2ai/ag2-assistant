@@ -12,10 +12,6 @@ services:
   ag2-assistant:
     build:
       context: .
-      args:
-        # Optional provider libraries for the Anthropic/Ollama model types, space
-        # separated ("ollama", "anthropic ollama"). Needs `build:`, not the prebuilt image.
-        PROVIDER_EXTRAS: "${PROVIDER_EXTRAS:-}"
     image: ghcr.io/ag2ai/ag2-assistant:latest
     ports:
       - "8800:8800"

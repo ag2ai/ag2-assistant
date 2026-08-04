@@ -82,6 +82,9 @@ class LLMConfig(BaseModel):
     # FATAL alert (→ HaltEvent) so a truly dead turn terminates deterministically
     # rather than alerting forever (env: AG2ASSISTANT_SILENCE_HALT).
     silence_halt_s: float = 900.0
+    # True when AG2ASSISTANT_MODEL in the process environment named ``model`` above,
+    # which outranks every Chat/Task/profile selection (ADR 0025).
+    env_pinned: bool = False
 
 
 class AgentConfig(BaseModel):
@@ -395,6 +398,9 @@ def resolve_config(env: Mapping[str, str], paths: Paths) -> Config:
     # Saved secrets may carry AG2ASSISTANT_* values too, but an explicit env entry
     # always wins over the store.
     apply_env_overrides(cfg, {**cfg.secret_env, **dict(env)})
+    # The pin is the deployment's own model choice: ``env`` only (a Secret's env is user
+    # data), and only a named model (a provider alone pins no model) — ADR 0025.
+    cfg.llm.env_pinned = bool(env.get("AG2ASSISTANT_MODEL", "").strip())
     cfg.tz_unset_in_container = tz_unset_in_container(env)
     return cfg
 
