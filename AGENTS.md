@@ -33,8 +33,12 @@ These are the same checks CI runs; a PR that fails them will not merge.
 ruff check .                       # lint
 ruff format .                      # auto-format (use --check to verify only)
 pytest -m "not integration" -q     # unit tests — no API key needed
+npm --prefix web run check         # typecheck the SPA (svelte-check, strict)
 npm --prefix web run build         # rebuild the SPA bundle if you touched web/
 ```
+
+`npm --prefix web run build` runs `check` first, so a bundle can never be built —
+or committed — with type errors.
 
 Integration tests (`pytest -m integration`) hit a real LLM/network/Docker and
 need API keys; they are excluded from the default run and from CI.
@@ -74,7 +78,7 @@ Ruff owns formatting and import order — line length 100, double quotes, rule s
 | Path | What lives there |
 |------|------------------|
 | `src/assistant/` | The Python package: `agent.py` (agent construction), `gateway/` (FastAPI REST + WebSocket + static hosting), `tools/` (web search, shell, code exec, image gen, files, Google, MCP), `channels/` (Telegram/Discord/Slack), `tasks/` (scheduling + execution), `hitl/` (human-in-the-loop), `memory.py`, `integrations/`, `skills/`. |
-| `web/` | Svelte + Vite source for the web UI. **This is the source of truth for the front-end.** |
+| `web/` | Svelte + Vite source for the web UI, TypeScript throughout. **This is the source of truth for the front-end.** |
 | `src/assistant/gateway/static/app/` | The **generated, committed** SPA bundle (see below). |
 | `tests/` | Pytest suite (`integration` marker for the slow, key-requiring ones). |
 | `docs/` | Architecture, usage, deployment. |
@@ -93,6 +97,21 @@ npm --prefix web run build
 Both a pre-commit hook and the CI `bundle-fresh` job rebuild the bundle and fail
 if the committed copy has drifted from `web/` source. If CI flags a stale bundle,
 run the build and commit `src/assistant/gateway/static/app/`.
+
+## Front-end types (`web/`)
+
+The whole SPA is TypeScript under `strict` — every `.ts` module and every
+`<script lang="ts">`. There are no `.js` files and no `.d.ts` files in `web/src/`.
+
+**The source of truth for API shapes is `web/src/schemas/` — zod schemas, not
+`.d.ts` declarations.** Each schema is declared once and the type is derived from
+it (`export type Task = z.infer<typeof Task>`), so a response shape and its type
+cannot drift apart. Every response goes through `transport/validate.ts::parse()`:
+in dev a mismatch throws `SchemaError`, in prod it logs `[schema] …` and passes
+the data through. Request bodies are typed but not validated at runtime.
+
+When you change a response body in `gateway/`, update the matching schema in
+`web/src/schemas/` in the same change — nothing generates them from OpenAPI.
 
 ## Testing
 
