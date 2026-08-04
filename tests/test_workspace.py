@@ -70,6 +70,17 @@ def test_list_files(tmp_path):
     assert files[0]["path"] == "ai-headlines/x.md" and files[0]["dir"] == "ai-headlines"
 
 
+def test_list_files_prunes_skip_dirs_and_keeps_every_other_dotfolder(tmp_path):
+    (tmp_path / "keep").mkdir()
+    (tmp_path / "keep" / "x.md").write_text("hi")
+    (tmp_path / ".notes").mkdir()  # the user's own — a leading dot is not a reason to hide
+    (tmp_path / ".notes" / "mine.md").write_text("mine")
+    for noisy in ("__pycache__", ".claude", "node_modules"):
+        (tmp_path / noisy).mkdir()
+        (tmp_path / noisy / "junk.txt").write_text("junk")
+    assert {f["path"] for f in list_files(tmp_path)} == {"keep/x.md", ".notes/mine.md"}
+
+
 def test_delete_removes_file_and_prunes_now_empty_folder(tmp_path):
     (tmp_path / "ai-headlines").mkdir()
     (tmp_path / "ai-headlines" / "x.md").write_text("hi")
@@ -349,6 +360,14 @@ def test_list_all_dirs_includes_empty_directories(tmp_path):
     (tmp_path / "withfile" / "f.md").write_text("f")
     dirs = list_all_dirs(tmp_path)
     assert "empty" in dirs and "withfile" in dirs
+
+
+def test_list_all_dirs_prunes_skip_dirs_and_keeps_every_other_dotfolder(tmp_path):
+    (tmp_path / "keep").mkdir()
+    (tmp_path / ".notes").mkdir()  # the user's own — a leading dot is not a reason to hide
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / "__pycache__" / "nested").mkdir(parents=True)
+    assert list_all_dirs(tmp_path) == [".notes", "keep"]  # nothing below a pruned dir is reached
 
 
 # ---- In-place editable writes: optimistic concurrency via content token (ADR 0011) ----
