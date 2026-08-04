@@ -300,6 +300,86 @@ test('resolve: an aside file path with special chars is encoded segment-wise', (
   )
 })
 
+// ── #poweredby: the Modal slot's second occupant ─────────────────────────────
+// The "Powered by AG2" map lives in the same slot as Settings, so it's
+// deep-linkable and browser Back dismisses it. It carries no value (a bare key).
+
+test('parse: bare #poweredby opens the map with no return target', () => {
+  const r = parse('/app/work/chats', '#poweredby')
+  assert.equal(r.overlay, 'poweredby')
+  assert.equal(r.overlayValue, null) // opened from the Inspector — no Settings to go back to
+  // The Page underneath is untouched.
+  assert.equal(r.tab, 'chats')
+  assert.equal(r.name, 'home')
+})
+
+test('parse: #poweredby=<section> carries the Settings Section to return to', () => {
+  const r = parse('/app/work/chats', '#poweredby=advanced')
+  assert.equal(r.overlay, 'poweredby')
+  assert.equal(r.overlayValue, 'advanced')
+})
+
+test('parse: a bogus #poweredby=<bad> return target is dropped, not defaulted', () => {
+  // Unlike the settings Section (which falls back to General), an unusable return
+  // target must vanish — the map then shows no Back button rather than a wrong one.
+  assert.equal(parse('/app/work/chats', '#poweredby=not-a-section').overlayValue, null)
+  assert.equal(parse('/app/work/chats', '#poweredby=').overlayValue, null)
+})
+
+test('parse: #poweredby coexists with an open aside', () => {
+  const r = parse('/app/work/chats', '#poweredby&aside=inspector')
+  assert.equal(r.overlay, 'poweredby')
+  assert.deepEqual(r.aside, { kind: 'inspector' })
+})
+
+test('parse: a hand-typed two-modal hash resolves to one occupant', () => {
+  // The Modal slot holds ONE modal; precedence order decides, never both.
+  const r = parse('/app/work/chats', '#poweredby&settings=models')
+  assert.equal(r.overlay, 'settings')
+  assert.equal(r.overlayValue, 'models')
+})
+
+test('resolve: opening the map from Settings evicts Settings, keeping the way back', () => {
+  const next = resolve({ pathname: '/app/work/chats', hash: '#settings=advanced' },
+    { type: 'openOverlay', name: 'poweredby', value: 'advanced' })
+  // The shell PUSHES this, so Back restores '#settings=advanced' — and the value
+  // rides along so the map's own "Settings" button lands on the same Section.
+  assert.equal(next, '/app/work/chats#poweredby=advanced')
+})
+
+test('resolve: the map\'s Back button returns to the Section it came from', () => {
+  // replaceOverlay (not push): returning to Settings overwrites the map's history
+  // entry rather than stacking a third one. Works for a cold deep-link too.
+  assert.equal(
+    resolve({ pathname: '/app/work/chats', hash: '#poweredby=advanced' },
+      { type: 'replaceOverlay', name: 'settings', value: 'advanced' }),
+    '/app/work/chats#settings=advanced',
+  )
+})
+
+test('resolve: opening Settings evicts the map (the slot swaps both ways)', () => {
+  assert.equal(
+    resolve({ pathname: '/app/work/chats', hash: '#poweredby' },
+      { type: 'openOverlay', name: 'settings', value: 'models' }),
+    '/app/work/chats#settings=models',
+  )
+})
+
+test('resolve: opening the map preserves the aside key', () => {
+  assert.equal(
+    resolve({ pathname: '/app/work/chats', hash: '#aside=inspector' },
+      { type: 'openOverlay', name: 'poweredby', value: null }),
+    '/app/work/chats#poweredby&aside=inspector',
+  )
+})
+
+test('resolve: closeOverlay dismisses the map, keeping the aside', () => {
+  assert.equal(
+    resolve({ pathname: '/app/work/chats', hash: '#poweredby&aside=inspector' }, { type: 'closeOverlay' }),
+    '/app/work/chats#aside=inspector',
+  )
+})
+
 test('resolve: goTab switches to a bare Tab and drops any open Thread suffix', () => {
   // Unlike 'go', which keeps an open Thread as a suffix across a Tab switch,
   // 'goTab' is for leaving/closing a Thread entirely (e.g. after deleting it).

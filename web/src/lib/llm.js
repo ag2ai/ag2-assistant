@@ -1,13 +1,10 @@
 // Shared vocabulary for the install-wide named LLM configurations — one source of
-// truth for the provider logos, the human type label, and the client-side "can this
-// run right now?" predicate. Consumed by Settings → Models (ModelsPage) and the
-// composer's model switcher so the two surfaces speak identically.
+// truth for the client-side "can this run right now?" predicate. Consumed by
+// Settings → Models (ModelsPage) and the composer's model switcher so the two
+// surfaces speak identically. Type labels live in lib/providerLabels.js, marks in
+// lib/brandMarks.js.
 import { writable } from 'svelte/store'
 import { api } from '../transport/api.js'
-import openaiLogo from '../assets/openai.svg'
-import anthropicLogo from '../assets/anthropic.svg'
-import geminiLogo from '../assets/gemini.svg'
-import ollamaLogo from '../assets/ollama.svg'
 
 // Shared install-wide LLM config state — the single source of truth for BOTH the
 // composer's ModelSwitcher and Settings → Models. Two live views of the same list
@@ -31,23 +28,6 @@ export async function loadLlmConfigs() {
     providerDeps: d.provider_deps || {},
     loaded: true,
   })
-}
-
-// type -> provider logo (all three OpenAI surfaces share the OpenAI mark;
-// claude_code is Anthropic's CLI, so it wears the Anthropic mark; codex is
-// OpenAI's CLI, so it wears the OpenAI mark).
-export const LOGO = {
-  openai: openaiLogo, openai_responses: openaiLogo, openai_subscription: openaiLogo,
-  anthropic: anthropicLogo, gemini: geminiLogo, ollama: ollamaLogo,
-  claude_code: anthropicLogo, codex: openaiLogo,
-}
-
-// type -> the label the UI shows for it.
-export const TYPE_LABEL = {
-  openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
-  openai_subscription: 'OpenAI · ChatGPT subscription',
-  anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
-  claude_code: 'Claude Code · CLI login', codex: 'Codex · CLI login',
 }
 
 // Whether a config can actually run right now — the signal behind the health dot.

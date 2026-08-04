@@ -118,6 +118,26 @@ class TaskStore:
                 moved.append((task_id, wd, access or "read"))
         return moved
 
+    async def rekey_origin_channels(self, by_platform: dict[str, str]) -> int:
+        """Rewrite every ``origin_channel`` still holding a platform name to that
+        platform's Connection id, and return how many records moved. Idempotent."""
+        moved = 0
+        for entry in await self._store.list(_TASKS):
+            if not entry.endswith(".json"):
+                continue
+            path = _TASKS + entry
+            try:
+                data = json.loads(await self._store.read(path))
+            except Exception:
+                continue  # corrupt records are _read_all's problem, not the migration's
+            cid = by_platform.get(data.get("origin_channel") or "")
+            if cid is None:
+                continue
+            data["origin_channel"] = cid
+            await self._store.write(path, json.dumps(data))
+            moved += 1
+        return moved
+
     async def update_task(self, task_id: str, **fields) -> Task | None:
         """Patch task fields. ``id``/``created_at`` are protected; ``updated_at``
         bumps on every write. ``next_run_at`` re-derives from the schedule when

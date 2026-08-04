@@ -7,8 +7,8 @@
 //     /app/{pid}/{tab}[/{c|t|r}/{id}] — Tab and Thread are orthogonal.
 //   • the HASH carries two orthogonal, client-side-only overlay slots as a
 //     multi-key fragment (`#k1=v1&k2=v2`, `&`-separated, each pair split on the
-//     first `=`): the open Modal (`settings=<section>`) and the right-rail
-//     `aside` occupant (`aside=file:<path>` | `aside=inspector`).
+//     first `=`): the open Modal (`settings=<section>` | `poweredby`) and the
+//     right-rail `aside` occupant (`aside=file:<path>` | `aside=inspector`).
 
 const BASE = '/app'
 
@@ -42,9 +42,15 @@ function threadName(tab, kind) {
   return 'home'
 }
 
+// The Modal slot's vocabulary, in precedence order. The slot holds ONE modal at a
+// time: `settings` carries the open Section, `poweredby` optionally carries the
+// Section to return to. Every modal here is URL-addressed, so Back dismisses it and
+// × / Esc / Back all funnel through the same closeOverlay.
+const MODAL_KEYS = ['settings', 'poweredby']
+
 // The canonical serialization order of the hash keys, so a built URL is
 // deterministic regardless of how the caller's keys were ordered.
-const HASH_KEY_ORDER = ['settings', 'aside']
+const HASH_KEY_ORDER = [...MODAL_KEYS, 'aside']
 
 // Parse a multi-key hash fragment into an ordered key→raw-value Map. Grammar:
 // `#k1=v1&k2=v2`; each pair split on the FIRST `=` (a value may contain `=`/`/`).
@@ -99,15 +105,30 @@ function asideValue(aside) {
   return null
 }
 
-// Parse the hash into the independent Modal slot (`overlay`/`overlayValue`, a
-// `settings` key validated to a Section) and the `aside` rail occupant.
+// Parse the hash into the independent Modal slot (`overlay`/`overlayValue` — the
+// first MODAL_KEYS key present) and the `aside` rail occupant. A hand-typed hash
+// naming two modals resolves to the first in precedence order rather than opening
+// both. Each modal reads its own value:
+//   • settings=<section>  — the open Section; a bogus/absent one falls back to General.
+//   • poweredby[=<section>] — the Section to RETURN to. The map is reachable from
+//     Settings and from the Inspector; carrying the origin in the URL is what lets
+//     the map show a "Back to Settings" button only when there's something to go
+//     back to, and survive a refresh while it does. Absent/bogus → no return target.
 function parseHash(hash) {
   const keys = parseHashKeys(hash)
-  const overlay = keys.has('settings') ? 'settings' : null
-  const section = keys.get('settings')
+  const overlay = MODAL_KEYS.find((k) => keys.has(k)) || null
+  if (overlay === 'settings') {
+    const section = keys.get('settings')
+    return {
+      overlay,
+      overlayValue: SECTIONS.has(section) ? section : SETTINGS_PAGE.GENERAL,
+      aside: parseAside(keys.get('aside')),
+    }
+  }
+  const from = keys.get(overlay)
   return {
     overlay,
-    overlayValue: overlay ? (SECTIONS.has(section) ? section : SETTINGS_PAGE.GENERAL) : null,
+    overlayValue: overlay && SECTIONS.has(from) ? from : null,
     aside: parseAside(keys.get('aside')),
   }
 }
@@ -193,6 +214,9 @@ export function resolve(current, intent) {
     }
     case 'openOverlay':
     case 'replaceOverlay':
+      // The Modal slot holds one occupant: evict any other modal before moving in,
+      // so opening "Powered by AG2" from Settings swaps rather than stacks.
+      for (const k of MODAL_KEYS) if (k !== intent.name) keys.delete(k)
       keys.set(intent.name, intent.value == null ? '' : intent.value)
       return current.pathname + buildHash(keys)
     case 'closeOverlay':

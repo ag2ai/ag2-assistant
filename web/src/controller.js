@@ -2,7 +2,8 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable } from 'svelte/store'
-import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch } from './store.js'
+import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel } from './store.js'
+import { NO_CHAT_MODEL, openedChat, sentFirstMessage } from './lib/chatModel.js'
 import { StreamClient } from './transport/stream.js'
 import { VoiceController } from './transport/voice.js'
 import { api } from './transport/api.js'
@@ -51,6 +52,9 @@ export function openThread(kind, id) {
   const chat = kind === 'run' ? 'task-run:' + id : id
   thread.set({ id, kind, chat, items: [], busy: false })
   inspectorEvents.set([])       // fresh inspector buffer per thread
+  // Reset synchronously, so an unsent model choice can never leak from the chat we
+  // just left onto this one. The composer's switcher fills it from the server.
+  chatModel.set(openedChat(chat))
 
   client = new StreamClient(chat, {
     // Each (re)connect re-replays the full history: buffer it afresh so a reconnect
@@ -98,11 +102,20 @@ export function openThread(kind, id) {
 export function send(text, attachments = []) {
   if (!client || (!text.trim() && !attachments.length)) return
   thread.update((t) => ({ ...t, busy: true }))
-  client.send(text, attachments)
+  const t = get(thread)
+  // A model chosen before this chat existed rides the message that creates it; empty
+  // for every other turn, whose override the server already resolves (ADR 0025).
+  let model = ''
+  const cm = get(chatModel)
+  if (cm.chatId === t.chat) {
+    const next = sentFirstMessage(cm)
+    chatModel.set(next.state)
+    model = next.model
+  }
+  client.send(text, attachments, model)
   // Surface a brand-new chat in the drawer immediately — the chats list is
   // only persisted server-side once the first turn completes (which can take a
   // while). The drawer poll merges this until the server reports it for real.
-  const t = get(thread)
   if (t.kind === 'chat' && text.trim()) {
     chats.update((list) =>
       list.some((s) => s.chat_id === t.chat)
@@ -151,6 +164,7 @@ export function closeThread() {
 function resetProfileState() {
   closeThread()                                        // WS + panel timer + voice
   thread.set({ id: null, kind: 'chat', items: [], busy: false })
+  chatModel.set(NO_CHAT_MODEL)
   chats.set([])
   tasks.set([])
   runInfo.set(null)

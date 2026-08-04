@@ -125,6 +125,19 @@ export const api = {
   // Test an UNSAVED editor draft (nothing persisted; a blank api_key falls back to
   // the stored key when cfg.id is set).
   testLlmConfigDraft: (cfg) => j('POST', G('/llm-configs/test'), cfg),
+  // A provider's model catalog for the Model field's combobox, in the same
+  // {models, current, reason} envelope codingModels() returns. The configuration is
+  // named by non-secret fields only — this route accepts no key material, because a
+  // pasted key goes to the provider that owns it and never to us (ADR 0024).
+  /** @returns {Promise<Catalog>} */
+  llmCatalog: ({ type, base_url = '', host = '', secret_id = '' }, refresh = false) => {
+    const q = new URLSearchParams({ type })
+    if (base_url) q.set('base_url', base_url)
+    if (host) q.set('host', host)
+    if (secret_id) q.set('secret_id', secret_id)
+    if (refresh) q.set('refresh', '1')
+    return j('GET', G(`/llm-configs/models?${q}`))
+  },
   // Named LIVE (voice) configurations — the spoken counterpart of the LLM configs,
   // same install-wide list + active shape. liveConfigs() → {configs:[entry +
   // {key:{set,hint}, key_source, shared_key, active}], active:id|null, providers:
@@ -165,16 +178,48 @@ export const api = {
     j('GET', G(`/coding/${agent}/models${refresh ? '?refresh=1' : ''}`)),
   codexSubmit: (state, code) => j('POST', G('/codex/submit'), { state, code }),
   codexLogout: () => j('POST', G('/codex/logout')),
-  // Messaging channels are install-level: a platform binds to exactly one profile
-  // (or is disabled). Both routes are GLOBAL. channels() → {telegram|discord|slack:
-  // {profile:pid|null, token_present, active, error}}. channelBind returns the one
-  // updated entry {platform: {…}}. The binding persists even if start fails
-  // (active:false + error).
-  channels: () => j('GET', G('/channels')),
-  channelBind: (platform, profile) => j('POST', G('/channels'), { platform, profile }),
-  // Save/clear channel bot token(s), like setKey — tokens is {ENV_NAME: value|''}
-  // (empty clears). Returns the one updated entry {platform: {…}}. Values never echoed.
-  channelTokens: (platform, tokens) => j('POST', G('/channels/token'), { platform, tokens }),
+  // ---- Connections (GLOBAL, install-level): each {id, platform, name,
+  // tokens:{ENV:{set,hint}}, default_profile, active, error, paired_accounts}. ----
+  connections: () => j('GET', G('/connections')),
+  // Create and start one; `tokens` is {ENV_NAME: value}, a blank name takes the
+  // platform's next default. One that fails to start returns 200 with active:false.
+  createConnection: (platform, name, tokens) =>
+    j('POST', G('/connections'), { platform, name, tokens }),
+  renameConnection: (cid, name) => j('POST', G('/connections/' + encodeURIComponent(cid)), { name }),
+  // Replace every token and restart on them, keeping the connection's id. One that will
+  // not start is rolled back and 400s with the reason.
+  replaceConnectionTokens: (cid, tokens) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/token'), { tokens }),
+  // Stop it and forget it, with its tokens, Peers, paired accounts, pairing code,
+  // default-profile entry and exposure records → {ok:true}.
+  deleteConnection: (cid) => j('DELETE', G('/connections/' + encodeURIComponent(cid))),
+  // Where this connection's conversations land by default (profile:null clears it) → the
+  // updated entry. A profile withdrawn from every surface is refused with 400.
+  connectionDefault: (cid, profile) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/default'), { profile }),
+  // → {surfaces:[{kind, id}], exposure:{pid:{surface_id: bool}}, default_profile}, in
+  // registry order. Default-allow: a profile nobody withdrew reads true everywhere.
+  connectionExposure: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/exposure')),
+  // Expose or withdraw one profile on one surface → that same view; withdrawing the
+  // default's last surface clears the default, so re-render from the response.
+  setConnectionExposure: (cid, profile, surface, exposed) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/exposure'), { profile, surface, exposed }),
+  // Paired accounts, a grant to this one connection (ADR 0021). Every route below returns
+  // {accounts:[{key, account_id, handle, pending}], code:{code, expires_at}|null}.
+  connectionPairing: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/pairing')),
+  connectionPair: (cid, value) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/pairing'), { value }),
+  connectionUnpair: (cid, key) =>
+    j('DELETE', G('/connections/' + encodeURIComponent(cid) + '/pairing/' + encodeURIComponent(key))),
+  connectionPairingCode: (cid) =>
+    j('POST', G('/connections/' + encodeURIComponent(cid) + '/pairing/code')),
+  // Group chats on this connection → {groups:[{chat_id, profile}], profiles:[{id, name}]},
+  // the profiles being those reachable on THIS connection's group surface.
+  connectionGroups: (cid) => j('GET', G('/connections/' + encodeURIComponent(cid) + '/groups')),
+  connectionGroupProfile: (cid, chatId, profile) =>
+    j('POST',
+      G('/connections/' + encodeURIComponent(cid) + '/groups/' + encodeURIComponent(chatId) + '/profile'),
+      { profile }),
   // Universal "who the user is" memory — a single install-wide doc shared by every
   // profile (identity facts). GLOBAL routes; the per-profile persona memory is
   // getMemory/setMemory below.
@@ -250,7 +295,11 @@ export const api = {
   health: () => j('GET', P('/health')),
   chats: () => j('GET', P('/chats')).then((d) => d.chats || []),
   deleteChat: (id) => j('DELETE', P('/chats/' + encodeURIComponent(id))),
-  // Partial chat-metadata update: {title?, starred?} (absent = unchanged).
+  // One chat: {chat_id, messages, model (its Chat override, '' = inherits),
+  // effective_model}. An unknown chat answers with an empty transcript.
+  chat: (id) => j('GET', P('/chats/' + encodeURIComponent(id))),
+  // Partial chat-metadata update: {title?, starred?, model?} (absent = unchanged;
+  // model '' clears the Chat override back to inheriting).
   updateChat: (id, patch) => j('PATCH', P('/chats/' + encodeURIComponent(id)), patch),
   // ---- Tasks: config CRUD; runs are chats on stream task-run:{id} ----
   tasks: () => j('GET', P('/tasks')).then((d) => d.tasks || []),
@@ -285,7 +334,8 @@ export const api = {
   // Per-profile model Active override (ADR 0015): point THIS profile's Active Text /
   // Live model at a shared install-wide config id; an empty string clears the override
   // (→ back to the install-wide Active). Distinct from the install-wide useLlmConfig /
-  // useLiveConfig the composer switcher and Models page call. → {ok, llm_override|
+  // useLiveConfig the Models page calls, and from the per-Chat override the composer's
+  // switcher sets with updateChat (ADR 0025). → {ok, llm_override|
   // live_override: id|null}. The effective + override ids are reported by settings().
   setLlmOverride: (configId = '') => j('POST', P('/settings/llm-override'), { config_id: configId }),
   setLiveOverride: (configId = '') => j('POST', P('/settings/live-override'), { config_id: configId }),

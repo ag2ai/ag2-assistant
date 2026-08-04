@@ -6,8 +6,8 @@ event log). Two families here:
 
 **Stuck-turn (event-driven):**
 
-- `LoopDetector` (AG2 built-in): the same tool called repeatedly with *identical*
-  arguments — a tight retry loop.
+- `NativeToolLoopDetector` (AG2's `LoopDetector`, narrowed to our own tools): the
+  same tool called repeatedly with *identical* arguments — a tight retry loop.
 - `ToolChurnObserver`: a turn that makes *many* tool calls without producing an
   answer — the flailing case (e.g. 20+ varied searches) the LoopDetector misses
   because the arguments differ each time.
@@ -33,6 +33,7 @@ from ag2.annotations import Context
 from ag2.context import ConversationContext
 from ag2.events import (
     BaseEvent,
+    BuiltinToolCallEvent,
     ModelResponse,
     ObserverAlert,
     Severity,
@@ -52,6 +53,36 @@ _CHURN_THRESHOLD = 20
 # Default silence thresholds (seconds). Overridable per-instance / via config.
 _SILENCE_ALERT_S = 300.0
 _SILENCE_HALT_S = 900.0
+
+
+class NativeToolLoopDetector(LoopDetector):
+    """`LoopDetector`, narrowed to tools *this* agent calls.
+
+    AG2's detector keys a call on `(name, arguments)` and warns on three
+    identical ones in a row. That identity only holds for our own tools, where
+    `arguments` is the real JSON payload. ACP forwards the *inner* CLI agent's
+    tool calls onto the same stream as `BuiltinToolCallEvent`s, mapped from the
+    protocol's `tool_call` update as `(title, rawInput)` — and `rawInput` is
+    optional in the ACP schema while `title` is only a human-readable label. An
+    agent that sends `title="Terminal"` with no `rawInput` collapses every shell
+    command onto the key `("Terminal", "{}")`, so three *unrelated* commands read
+    as a loop.
+
+    Repairing the identity isn't an option: the only reliably unique field is
+    `toolCallId`, which is fresh per call and would disable the detector. So we
+    skip delegated calls entirely — a wedged ACP session is the coding
+    provider's own timeouts to catch (see `coding/acp_provider.py`), not ours.
+
+    `ToolChurnObserver` deliberately still counts these: its threshold is a
+    volume of calls, not their identity, so a delegation that burns 20+ tool
+    calls without answering is worth flagging however it was spawned.
+    """
+
+    async def process(self, events: list[BaseEvent], ctx: Context) -> ObserverAlert | None:
+        own = [e for e in events if not isinstance(e, BuiltinToolCallEvent)]
+        if not own:
+            return None
+        return await super().process(own, ctx)
 
 
 class ToolChurnObserver(BaseObserver):
@@ -221,7 +252,7 @@ def build_observers(
     event-driven stuck-turn guards.
     """
     return [
-        LoopDetector(),
+        NativeToolLoopDetector(),
         ToolChurnObserver(),
         SilenceWatchdog(alert_s=silence_alert_s, halt_s=silence_halt_s),
     ]

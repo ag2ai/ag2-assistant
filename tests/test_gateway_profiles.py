@@ -174,6 +174,24 @@ def test_update_unknown_profile_404(paths):
         assert client.post("/api/profiles/ghost", json={"name": "x"}).status_code == 404
 
 
+# --- a profile carries no channel state: exposure is the Connection's (ADR 0022) ---
+
+
+def test_a_profile_view_says_nothing_about_channels(paths):
+    """Exposure lives on the Connection — see GET /api/connections/{cid}/exposure —
+    so there is nowhere on a profile to read or set it."""
+    with TestClient(_app(paths)) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+
+        created = client.get("/api/profiles").json()["profiles"][0]
+
+        assert set(created) == {"id", "name", "accent", "workspace", "created"}
+        r = client.post(
+            "/api/profiles/work/exposure", json={"surface": "telegram:group", "exposed": False}
+        )
+        assert r.status_code == 404
+
+
 # --- archive over HTTP: guardrails, success, then 410 ---
 
 

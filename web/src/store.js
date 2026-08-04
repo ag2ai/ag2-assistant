@@ -1,12 +1,14 @@
 import { writable } from 'svelte/store'
 import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.js'
+import { NO_CHAT_MODEL } from './lib/chatModel.js'
 // SETTINGS_PAGE — the valid Settings Section ids — lives in the pure route core
 // (lib/route.js validates the `#settings=<section>` hash against it). Re-export it
 // here so callers keep importing it from the store (SETTINGS_PAGE.MODELS, …).
 export { SETTINGS_PAGE } from './lib/route.js'
-// settingsOpen and ag2View (whether the AG2 Inspector occupies the rail) are derived
-// from the route; they live in router.js to avoid a module-init cycle, re-exported here.
-export { settingsOpen, ag2View } from './router.js'
+// settingsOpen, poweredByOpen and ag2View (whether the AG2 Inspector occupies the
+// rail) are derived from the route; they live in router.js to avoid a module-init
+// cycle, re-exported here.
+export { settingsOpen, poweredByOpen, ag2View } from './router.js'
 import { go } from './router.js'
 
 // Multi-profile registry (§5.2). `list` mirrors GET /api/profiles; `activeId`
@@ -23,6 +25,11 @@ export const profileEpoch = writable(0)
 // The active thread: a projection of one AG2 stream. `items` are folded from
 // `{type,data}` events (see project.js). `kind` is 'chat' or 'task'.
 export const thread = writable({ id: null, kind: 'chat', items: [], busy: false })
+
+// The open thread's Text-model selection — what the composer's switcher shows and
+// sets (ADR 0025). Reset by controller.openThread, filled from GET /chats/{id} by the
+// switcher, consumed by controller.send. Shape + rules: lib/chatModel.js.
+export const chatModel = writable(NO_CHAT_MODEL)
 
 // Drawer: unified history of chats + tasks, plus the user-writable Files tree.
 export const chats = writable([])
@@ -109,8 +116,10 @@ export function revealFolder(path) {
 // impossible to mistype (no more 'model' vs 'models' drift). Settings binds each id
 // to a label + component. (SETTINGS_PAGE is re-exported from lib/route.js above.)
 
-// "Powered by AG2" architecture-map modal open/closed.
-export const poweredByOpen = writable(false)
+// (poweredByOpen is re-exported from router.js at the top of this file — like
+// settingsOpen it's derived from the route, so the "Powered by AG2" map lives at
+// `#poweredby` and Back dismisses it. Open it with router.openOverlay('poweredby');
+// close it with router.closeOverlay().)
 
 // App version, seeded from the GET /api/profiles boot payload. Shown in the
 // "Powered by AG2" modal footer. Empty until boot completes.

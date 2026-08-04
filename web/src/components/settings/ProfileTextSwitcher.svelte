@@ -1,6 +1,7 @@
 <script>
   // Per-profile Text model switcher (ADR 0015): sets this profile's Active Text override
-  // via api.setLlmOverride (not the install-wide useLlmConfig the composer calls). Reuses
+  // via api.setLlmOverride (not the install-wide useLlmConfig, which only Settings →
+  // Models calls, and not the per-Chat override the composer sets — ADR 0025). Reuses
   // ModelSwitcherView over the shared `llmConfigs` store for the list + env-pin/empty
   // states; the current selection + inherited-vs-overridden come from the settings
   // payload (ctx.s.llm_active / .llm_override), reloaded by ctx.run after every change.
@@ -8,7 +9,8 @@
   import { api } from '../../transport/api.js'
   import { SETTINGS_PAGE } from '../../store.js'
   import { replaceOverlay } from '../../router.js'
-  import { LOGO, TYPE_LABEL, isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
+  import { TYPE_LABEL } from '../../lib/providerLabels.js'
   import { getSettings } from './context.svelte.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
@@ -28,7 +30,7 @@
 <ModelSwitcherView
   {configs} {activeId} {envOverride} busy={ctx.busy} down {inherited}
   title="Text model for this profile — takes effect next message"
-  logoFor={(c) => LOGO[c.type]}
+  brandFor={(c) => c.type}
   labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
   defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active model' }}

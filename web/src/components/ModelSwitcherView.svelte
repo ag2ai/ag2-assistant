@@ -1,11 +1,12 @@
 <script>
   // Presentational model switcher — the button + popover menu shared by the composer's
-  // install-wide switcher (composer/ModelSwitcher) and the per-profile Text/Live
+  // per-Chat switcher (composer/ModelSwitcher, ADR 0025) and the per-profile Text/Live
   // switchers in Settings → Profiles (ADR 0015). It owns ONLY the open/close + render;
   // every data source and mutation is injected, so the same look/interaction drives
-  // either "set install-wide Active" or "set this profile's Active override". Styles are
-  // the global .modelsw-* classes in app.css.
+  // either "set this Chat's override" or "set this profile's Active override". Styles
+  // are the global .modelsw-* classes in app.css.
   import Icon from './Icon.svelte'
+  import BrandMark from './BrandMark.svelte'
 
   let {
     configs = [],
@@ -15,11 +16,14 @@
     disabled = false,
     title = '',
     placeholder = 'Choose a model',
-    logoFor,                // (c) => logo src
+    brandFor,               // (c) => brand key, for lib/brandMarks — text configs key
+                            // off `type`, voice ones off `provider`
     labelFor,               // (c) => sub-line text
     usable = () => true,
     down = false,           // open the menu downward (header-mounted) vs up (composer)
-    inherited = false,      // the active selection is inherited (no per-profile override)
+    inherited = false,      // the active selection is inherited (no override of its own)
+    closedBadges = true,    // draw the "inherited" suffix and the readiness dot on the
+                            // closed button; the composer draws the model alone (ADR 0025)
     defaultEntry = null,    // { label, sub } → show a "use install default" item, else null
     emptyLabel = 'No models configured',
     onEmpty,                // () => void (empty-state click)
@@ -43,6 +47,11 @@
   }
 </script>
 
+<script module>
+  // The size every .modelsw-* row draws its brand mark at, here and on the task page.
+  export const MARK_SIZE = 14
+</script>
+
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') open = false }} />
 
 <div class="modelsw">
@@ -56,10 +65,12 @@
     <div class="modelsw-wrap">
       <button class="modelsw-btn" disabled={busy || disabled} onclick={() => (open = !open)} {title}>
         {#if activeConfig}
-          <img class="modelsw-logo" src={logoFor(activeConfig)} alt="" />
+          <BrandMark brand={brandFor(activeConfig)} size={MARK_SIZE} />
           <span class="modelsw-name">{activeConfig.name}</span>
-          {#if inherited}<span class="modelsw-tag">inherited</span>{/if}
-          <span class="modelsw-dot" class:warn={!usable(activeConfig)}></span>
+          {#if closedBadges}
+            {#if inherited}<span class="modelsw-tag">inherited</span>{/if}
+            <span class="modelsw-dot" class:warn={!usable(activeConfig)}></span>
+          {/if}
         {:else}
           <span class="modelsw-name muted">{placeholder}</span>
         {/if}
@@ -85,7 +96,7 @@
               title={usable(c) ? '' : 'Not ready — add a key or sign in via Settings'}
               onclick={() => choose(c)}
             >
-              <img class="modelsw-logo" src={logoFor(c)} alt="" />
+              <BrandMark brand={brandFor(c)} size={MARK_SIZE} />
               <span class="modelsw-itemmeta">
                 <span class="modelsw-name">
                   {c.name}{#if !inherited && c.id === activeId}<Icon name="check" size={12} />{/if}

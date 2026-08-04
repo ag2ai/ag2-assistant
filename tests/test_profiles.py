@@ -203,7 +203,7 @@ def test_load_registry_missing_file_is_empty(registry):
         "active_default": None,
         "onboarded": False,
         "profiles": [],
-        "channels": {"telegram": None, "discord": None, "slack": None},
+        "connection_defaults": {},
     }
 
 
@@ -255,3 +255,78 @@ def test_with_profile_deep_copy_isolates_nested_models(paths, registry):
     derived = base.with_profile(meta)
     derived.llm.model = "changed"
     assert base.llm.model != "changed"  # deep copy, not shared reference
+
+
+# --- channel exposure (default-allow; a record only ever withdraws) ---
+# Surfaces are a Connection's — ``<cid>`` or ``<cid>:dm`` / ``<cid>:group`` — and the
+# registry stores whatever string it is handed. See connections.surfaces().
+
+
+def test_a_new_profile_is_withdrawn_from_nothing(registry):
+    meta = registry.create_profile("Work", TEAL)
+    assert meta.withdrawn == []
+    assert registry.withdrawn_from("cn_1:dm") == set()
+
+
+def test_withdrawing_records_only_that_surface(registry):
+    registry.create_profile("Work", TEAL)
+    registry.set_exposure("work", "cn_1:group", False)
+
+    assert registry.get_profile("work").withdrawn == ["cn_1:group"]
+    # a Connection's direct messages are a surface of their own and stay reachable
+    assert registry.withdrawn_from("cn_1:group") == {"work"}
+    assert registry.withdrawn_from("cn_1:dm") == set()
+
+
+def test_a_withdrawal_on_one_connection_leaves_another_untouched(registry):
+    registry.create_profile("Work", TEAL)
+    registry.set_exposure("work", "cn_1:dm", False)
+    assert registry.withdrawn_from("cn_2:dm") == set()
+
+
+def test_exposing_drops_the_record_rather_than_storing_an_allow(registry):
+    registry.create_profile("Work", TEAL)
+    registry.set_exposure("work", "cn_1", False)
+    registry.set_exposure("work", "cn_1", True)
+    assert registry.get_profile("work").withdrawn == []
+
+
+def test_withdrawing_twice_is_recorded_once(registry):
+    registry.create_profile("Work", TEAL)
+    registry.set_exposure("work", "cn_1", False)
+    registry.set_exposure("work", "cn_1", False)
+    assert registry.get_profile("work").withdrawn == ["cn_1"]
+
+
+def test_an_unknown_profile_raises(registry):
+    registry.create_profile("Work", TEAL)
+    with pytest.raises(ValueError):
+        registry.set_exposure("nope", "cn_1", False)
+
+
+# --- migration: withdrawals recorded against a platform, before Connections ---
+
+
+def test_adopting_exposure_moves_a_platform_withdrawal_onto_the_connections_surface(registry):
+    registry.create_profile("Work", TEAL)
+    registry.set_exposure("work", "telegram:group", False)
+    registry.adopt_exposure({"telegram": "cn_1"})
+    assert registry.get_profile("work").withdrawn == ["cn_1:group"]
+
+
+def test_adopting_exposure_drops_the_platform_keyed_surface(registry):
+    """The fixed platform vocabulary is gone from stored data, not merely shadowed."""
+    registry.create_profile("Work", TEAL)
+    registry.set_exposure("work", "discord", False)
+    registry.adopt_exposure({"discord": "cn_1"})
+    assert registry.withdrawn_from("discord") == set()
+    assert registry.withdrawn_from("cn_1") == {"work"}
+
+
+def test_adopting_exposure_leaves_a_connections_own_surfaces_alone(registry):
+    """Re-running adoption is a no-op — it must not eat live Connection withdrawals."""
+    registry.create_profile("Work", TEAL)
+    registry.set_exposure("work", "cn_2:dm", False)
+    registry.adopt_exposure({"telegram": "cn_1"})
+    registry.adopt_exposure({"telegram": "cn_1"})
+    assert registry.get_profile("work").withdrawn == ["cn_2:dm"]

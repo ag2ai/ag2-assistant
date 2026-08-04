@@ -81,6 +81,21 @@ async def test_run_executes_as_chat_turn_with_prior_context(paths, tmp_path):
     assert [r["id"] for r in detail["runs"]] == [run2.id, run.id]
 
 
+async def test_run_turn_names_the_task_model_to_the_gateway(paths, tmp_path):
+    """The run's own turn passes the task's model explicitly — the wiring that keeps a
+    task's automated work on the model it was configured with, above any Chat override
+    on the run's thread (ADR 0025)."""
+    from assistant.llm_configs import LlmConfigStore
+
+    cfg = LlmConfigStore(paths).save_config({"name": "B", "type": "gemini", "model": "model-b"})
+    gw = FakeGateway()
+    svc = await _svc(paths, tmp_path, gw)
+    t = await svc.create_task(name="Digest", prompt="collect news", model=cfg["id"])
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert gw.sent[0]["model"] == cfg["id"]
+
+
 async def test_run_turn_does_not_mint_chat_grant(paths, tmp_path):
     """A run no longer mints a chat-scoped folder grant on its own stream — folder
     access is task-scoped now (task-run streams derive the task_id), so a run leaves

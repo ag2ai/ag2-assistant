@@ -1,11 +1,10 @@
 // Shared vocabulary for the install-wide named LIVE (voice) configurations — the
-// spoken counterpart of lib/llm.js. One source of truth for the provider logos, the
-// human label, and the "can this run right now?" predicate. Consumed by Settings →
-// Models → Live (VoiceSection). Mutate via the API, then loadLiveConfigs() to refresh.
+// spoken counterpart of lib/llm.js. One source of truth for the "can this run right
+// now?" predicate. Consumed by Settings → Models → Live (VoiceSection). Mutate via
+// the API, then loadLiveConfigs() to refresh. Provider labels live in
+// lib/providerLabels.js, marks in lib/brandMarks.js.
 import { writable } from 'svelte/store'
 import { api } from '../transport/api.js'
-import openaiLogo from '../assets/openai.svg'
-import geminiLogo from '../assets/gemini.svg'
 
 // { configs, active, providers, loaded }. `providers` is the server catalog
 // ([{name, default_model, default_voice}]) that seeds the add-form + templates.
@@ -20,12 +19,6 @@ export async function loadLiveConfigs() {
     loaded: true,
   })
 }
-
-// provider -> logo (only realtime-capable providers exist here: gemini, openai).
-export const LOGO = { gemini: geminiLogo, openai: openaiLogo }
-
-// provider -> the label the UI shows for it.
-export const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI' }
 
 // Whether a config can actually open a voice session right now — mirrors the server's
 // live_configs.usable(): 'none' key_source (no own key and no shared provider key) is

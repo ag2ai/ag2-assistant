@@ -16,8 +16,9 @@ from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from slack_bolt.app.async_app import AsyncApp
 
 from assistant.attachments import build_input
-from assistant.channels.base import Channel, InboundMessage, should_respond
+from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import markdown_to_slack, split_for_limit
+from assistant.channels.router import ChannelRouter, spoken_text
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 
@@ -25,6 +26,11 @@ SLACK_LIMIT = 3500
 _ASK_TIMEOUT = 300.0
 _ACTION_RE = re.compile(r"ag2assistant_opt_\d+")
 _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+
+def _has_files(event: dict) -> bool:
+    """Whether a Slack event carried an upload."""
+    return bool(event.get("files"))
 
 
 async def _download_attachments(event: dict, bot_token: str) -> list:
@@ -100,8 +106,14 @@ class SlackChannel(Channel):
     platform = "slack"
 
     def __init__(
-        self, bot_token: str = "", app_token: str = "", *, message_limit: int = SLACK_LIMIT
+        self,
+        bot_token: str = "",
+        app_token: str = "",
+        connection: str = "",
+        *,
+        message_limit: int = SLACK_LIMIT,
     ) -> None:
+        self.connection = connection
         self._bot_token = bot_token
         self._app_token = app_token
         self._message_limit = message_limit
@@ -112,15 +124,15 @@ class SlackChannel(Channel):
             )
         self._app = None
         self._handler = None
-        self._gateway = None
+        self._router: ChannelRouter | None = None
         self._bot_user_id: str | None = None
         self._pending = PendingAsks()
 
     def _asker_for(self, channel_id: str) -> Asker:
         return SlackAsker(self._app.client, channel_id, self._pending)
 
-    async def start(self, gateway) -> None:
-        self._gateway = gateway
+    async def start(self, router: ChannelRouter) -> None:
+        self._router = router
         self._app = AsyncApp(token=self._bot_token)
         self._app.event("app_mention")(self._handle_app_mention)
         self._app.event("message")(self._handle_message)
@@ -149,15 +161,18 @@ class SlackChannel(Channel):
 
     def _mention_inbound(self, event: dict) -> InboundMessage | None:
         text = re.sub(rf"<@{self._bot_user_id}>", "", event.get("text", "")).strip()
-        if not text and not event.get("files"):
+        has_attachment = _has_files(event)
+        if not text and not has_attachment:
             return None
         return InboundMessage(
             text=text,
             sender_id=event.get("user", "unknown"),
             chat_id=event.get("channel", ""),
             platform=self.platform,
+            connection=self.connection,
             is_direct=False,
             mentioned=True,
+            has_attachment=has_attachment,
             raw=event,
         )
 
@@ -177,8 +192,10 @@ class SlackChannel(Channel):
             sender_id=event.get("user", "unknown"),
             chat_id=event.get("channel", ""),
             platform=self.platform,
+            connection=self.connection,
             is_direct=True,
             mentioned=False,
+            has_attachment=_has_files(event),
             raw=event,
         )
 
@@ -220,7 +237,7 @@ class SlackChannel(Channel):
         return False
 
     async def _respond(self, inbound: InboundMessage | None, say, client, event) -> None:
-        if inbound is None or not should_respond(inbound):
+        if inbound is None or not self._router.accepts(inbound):
             return
 
         # 👀 on the user's message while we work; removed once we've replied.
@@ -235,19 +252,16 @@ class SlackChannel(Channel):
                 pass  # missing reactions:write or already reacted — non-fatal
 
         attachments = await _download_attachments(event, self._bot_token)
-        text = inbound.text or ("Here is a file I'm sharing with you." if attachments else "")
-        try:
-            reply = await self._gateway.send_message(
-                text,
-                chat_id=inbound.stable_id(),
-                asker=self._asker_for(channel) if channel else None,
-                attachments=attachments,
-            )
-        except Exception as exc:  # surface failures to the user
-            reply = f"Sorry, something went wrong: {exc}"
+        outcome = await self._router.handle(
+            inbound,
+            asker=self._asker_for(channel) if channel else None,
+            attachments=attachments,
+        )
 
-        for chunk in split_for_limit(self.format_outbound(reply), self._message_limit):
-            await say(chunk)
+        spoken = spoken_text(outcome)
+        if spoken is not None:
+            for chunk in split_for_limit(self.format_outbound(spoken), self._message_limit):
+                await say(chunk)
 
         if reacted:
             try:

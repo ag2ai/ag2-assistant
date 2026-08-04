@@ -1,466 +1,1398 @@
-"""Phase 3B: install-level channel bindings API + hot start/stop/rebind.
+"""Install-level Connections: the API, boot, and the per-Connection default profile.
 
-A channel (telegram/discord/slack) is an install-level resource assigned to
-exactly one profile or disabled. The binding lives in the global registry, so
-two-profiles-enable conflicts are structurally impossible. Endpoints:
-GET /api/channels (state) and POST /api/channels (bind/rebind/disable).
+A Connection is one configured instance of a platform (telegram/discord/slack). It
+starts for the whole install as soon as it holds its token(s) — it is never owned by
+a profile (ADR 0022). What the registry holds is a per-Connection *default profile*:
+where that Connection's conversations land when nothing else has been chosen.
 
-Tokens are real entries in the install's secret store and channels come from an
-injected factory, so nothing here patches the environment or the channels module.
+GET /api/connections lists them — migrated from an install's existing bot tokens on
+first read — and the rest of the family creates, renames, re-tokens and deletes one,
+sets its default profile, and governs its exposure, pairing and group pins.
 """
+
+import json
+import time
 
 from fastapi.testclient import TestClient
 
+from assistant.connections import ConnectionStore
 from assistant.gateway.app import create_app
+from assistant.pairing import PairingStore
+from assistant.peers import PeerStore
 from assistant.profiles import ProfileRegistry
-from assistant.secrets import SecretStore
-from tests.support.apps import make_manager
+from tests.support.apps import api, make_manager, no_loopback_code_reader
+from tests.support.fakes import FakeChannel
 
 
-def _client(paths, *, channel_factory=None, made=None):
-    """A started app over ``paths`` whose channels come from an injected factory."""
-    manager = make_manager(paths, channel_factory=channel_factory, made=made)
-    return TestClient(create_app(manager))
+def _client(paths, *, env=None, channel_factory=None, **kw):
+    """A TestClient over an app whose install layout is ``paths``. ``env`` is the ambient
+    environment the install migrates its first Connections from (empty by default), and
+    every channel is a ``FakeChannel`` unless the caller injects its own factory."""
+    manager = make_manager(paths, env=env or {}, channel_factory=channel_factory)
+    return TestClient(create_app(manager, code_reader=no_loopback_code_reader, **kw))
 
 
-def _bindings(paths) -> dict:
-    return ProfileRegistry(paths).channel_bindings()
+def _only_connection(paths, platform: str = "telegram") -> str:
+    """The id of the platform's single Connection — what the manager keys by now."""
+    return ConnectionStore(paths).connections_for(platform)[0].id
 
 
-# --- GET /api/channels: shape, zero-profile install all-null ---
+def _live(paths, manager, platform: str = "telegram"):
+    """The live adapter of the platform's single Connection."""
+    return manager.channels[_only_connection(paths, platform)]
 
 
-def test_get_channels_zero_profile_all_null(paths):
-    with _client(paths) as client:
-        chans = client.get("/api/channels").json()
-        assert set(chans) == {"telegram", "discord", "slack"}
-        for entry in chans.values():
-            assert entry == {
-                "profile": None,
-                "token_present": False,
-                "active": False,
-                "error": None,
-            }
+def _default_gateway(paths, manager, platform: str = "telegram"):
+    """Where a conversation on the platform's Connection lands when the Peer has chosen
+    nothing — i.e. what that Connection's default profile resolves to right now."""
+    pid = manager.default_profile(_only_connection(paths, platform))
+    return manager.gateway_for_profile(pid) if pid else None
 
 
-def test_get_channels_reflects_token_present(paths):
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok")
-    with _client(paths) as client:
-        chans = client.get("/api/channels").json()
-        assert chans["telegram"]["token_present"] is True
-        assert chans["discord"]["token_present"] is False
+# --- boot: a token is all a Channel needs; no profile owns it ---
 
 
-# --- POST /api/channels: bind + start ---
+def test_a_configured_channel_starts_at_install_level(paths):
+    """No binding, no profile — a token is enough for the adapter to come up, and it
+    lives on the manager rather than inside any runtime."""
+
+    meta = ProfileRegistry(paths).create_profile("Work", "#109e91")
+    ProfileRegistry(paths).profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+
+    with _client(paths, env={"DISCORD_BOT_TOKEN": "tok"}) as client:
+        manager = client.app.state.profiles
+        assert _live(paths, manager, "discord").started is True
+        assert _live(paths, manager, "discord").router is manager.router
+        assert client.get("/api/connections").json()["connections"][0]["active"] is True
+        # the runtime knows nothing about it
+        assert not hasattr(manager.get(meta.id), "channels")
 
 
-def test_post_binds_and_starts(paths):
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok")
-    with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        assert r.json() == {
-            "telegram": {
-                "profile": "work",
-                "token_present": True,
-                "active": True,
-                "error": None,
-            }
-        }
-        # persisted in the registry + live on the runtime
-        assert _bindings(paths)["telegram"] == "work"
-        runtime = client.app.state.profiles.get("work")
-        assert "telegram" in runtime.channels
-        assert runtime.channels["telegram"].started is True
-        # reflected in GET
-        assert client.get("/api/channels").json()["telegram"]["profile"] == "work"
+def test_a_channel_starts_with_no_profiles_at_all(paths):
+    """A fresh install with a token configured: the Channel is live and simply has
+    nowhere to route yet."""
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
+        manager = client.app.state.profiles
+        assert _live(paths, manager).started is True
+        assert _default_gateway(paths, manager) is None
 
 
-def test_bound_channel_is_built_with_the_stored_token(paths):
-    """The token reaches the channel as an explicit constructor kwarg — the adapter
-    never has to read the process environment."""
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok-from-store")
-    made = []
-    with _client(paths, made=made) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-    assert [c.platform for c in made] == ["telegram"]
-    assert made[0].tokens == {"token": "tok-from-store"}
-
-
-def test_post_unknown_platform_400(paths):
-    with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "irc", "profile": "work"})
-        assert r.status_code == 400
-        assert "irc" in r.json()["error"]
-
-
-def test_post_unknown_profile_400(paths):
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok")
-    with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "ghost"})
-        assert r.status_code == 400
-        assert "ghost" in r.json()["error"]
-
-
-def test_post_archived_profile_400(paths):
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok")
-    with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-        # archive personal (non-default needs no replacement)
-        assert client.request("DELETE", "/api/profiles/personal").status_code == 200
-        assert ProfileRegistry(paths).get_profile("personal").archived is True
-
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "personal"})
-        assert r.status_code == 400
-        assert "personal" in r.json()["error"]
-
-
-# --- rebind: moves the live channel from A's runtime to B's ---
-
-
-def test_rebind_moves_live_channel(paths):
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok")
-    with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-
-        # bind to work
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        work_rt = client.app.state.profiles.get("work")
-        personal_rt = client.app.state.profiles.get("personal")
-        assert "telegram" in work_rt.channels
-        work_chan = work_rt.channels["telegram"]
-
-        # rebind to personal → work loses it (stopped), personal gains a fresh one
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "personal"})
-        assert r.json()["telegram"]["profile"] == "personal"
-        assert r.json()["telegram"]["active"] is True
-        assert "telegram" not in work_rt.channels
-        assert work_chan.stopped is True
-        assert "telegram" in personal_rt.channels
-        assert personal_rt.channels["telegram"].started is True
-        assert _bindings(paths)["telegram"] == "personal"
-
-
-# --- disable: profile null stops the channel ---
-
-
-def test_disable_stops_channel(paths):
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok")
-    with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        work_rt = client.app.state.profiles.get("work")
-        chan = work_rt.channels["telegram"]
-
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": None})
-        assert r.json() == {
-            "telegram": {
-                "profile": None,
-                "token_present": True,
-                "active": False,
-                "error": None,
-            }
-        }
-        assert "telegram" not in work_rt.channels
-        assert chan.stopped is True
-        assert _bindings(paths)["telegram"] is None
-
-
-# --- bad-token start failure: binding persisted, inactive, error surfaced ---
-
-
-def test_bad_token_start_failure_binding_persisted(paths):
-    """A real channel's start() raises on a bad token/network. The binding must persist
-    (registry reflects intent), active:false, and the error surfaces in GET /api/channels
-    — never a 500, never a boot crash."""
-
-    class BoomChannel:
-        platform = "telegram"
-
-        async def start(self, gateway):
-            raise RuntimeError("Unauthorized: invalid token")
-
-        async def stop(self):
-            pass
-
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "bad")
-    with _client(paths, channel_factory=lambda platform, **kw: BoomChannel()) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        entry = r.json()["telegram"]
-        assert entry["profile"] == "work"  # binding persisted
-        assert entry["active"] is False
-        assert "could not start 'telegram'" in entry["error"]
-        # binding really is in the registry
-        assert _bindings(paths)["telegram"] == "work"
-        # surfaced in GET /api/channels too
-        got = client.get("/api/channels").json()["telegram"]
-        assert got["profile"] == "work"
-        assert got["active"] is False
-        assert "could not start 'telegram'" in got["error"]
-
-
-def test_start_failure_error_never_echoes_token(paths):
-    """Platform libraries embed the raw token in some error messages (Telegram:
-    "The token <value> was rejected"). The recorded/returned error must be scrubbed."""
-
-    class EchoBoomChannel:
-        platform = "telegram"
-
-        def __init__(self, token):
-            self._token = token
-
-        async def start(self, gateway):
-            raise RuntimeError(f"The token `{self._token}` was rejected")
-
-        async def stop(self):
-            pass
-
-    secret = "8123456:very-secret-token-value"
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", secret)
-    with _client(paths, channel_factory=lambda platform, **kw: EchoBoomChannel(**kw)) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        assert secret not in r.text
-        assert "•••" in r.json()["telegram"]["error"]
-        assert secret not in client.get("/api/channels").text
-
-
-def test_missing_token_bind_persisted_inactive(paths):
-    """Binding a platform whose token is absent persists the binding but stays
-    inactive with a 'no token configured' reason."""
-
-    with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.status_code == 200
-        entry = r.json()["telegram"]
-        assert entry["profile"] == "work"
-        assert entry["active"] is False
-        assert entry["token_present"] is False
-        assert "no token configured for telegram" in entry["error"]
-        assert _bindings(paths)["telegram"] == "work"
-
-
-# --- boot: a bound channel starts at boot ---
-
-
-def test_bound_channel_starts_on_boot(paths):
-    SecretStore(paths).set_channel_token("DISCORD_BOT_TOKEN", "tok")
-
-    # Pre-create a profile + registry binding BEFORE the app boots.
-    registry = ProfileRegistry(paths)
-    meta = registry.create_profile("Work", "#109e91")
-    registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    registry.bind_channel("discord", meta.id)
-
-    with _client(paths) as client:
-        runtime = client.app.state.profiles.get(meta.id)
-        assert "discord" in runtime.channels
-        assert runtime.channels["discord"].started is True
-        assert client.get("/api/channels").json()["discord"]["active"] is True
-
-
-def test_bound_channel_start_failure_does_not_crash_boot(paths):
-    """A bound channel whose start() raises must still boot the runtime; the failure is
-    recorded on manager.channel_errors and surfaced, not fatal."""
+def test_channel_start_failure_does_not_crash_boot(paths):
+    """A channel whose start() raises must still leave the server booted; the failure
+    is recorded on manager.channel_errors and surfaced, not fatal."""
 
     class BoomChannel:
         platform = "discord"
 
-        async def start(self, gateway):
+        async def start(self, router):
             raise RuntimeError("connect failed")
 
         async def stop(self):
             pass
 
-    SecretStore(paths).set_channel_token("DISCORD_BOT_TOKEN", "bad")
-    registry = ProfileRegistry(paths)
-    meta = registry.create_profile("Work", "#109e91")
-    registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    registry.bind_channel("discord", meta.id)
+    meta = ProfileRegistry(paths).create_profile("Work", "#109e91")
+    ProfileRegistry(paths).profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
 
-    with _client(paths, channel_factory=lambda platform, **kw: BoomChannel()) as client:
-        runtime = client.app.state.profiles.get(meta.id)  # booted despite failure
-        assert "discord" not in runtime.channels
-        assert "could not start 'discord'" in client.app.state.profiles.channel_errors["discord"]
-        got = client.get("/api/channels").json()["discord"]
-        assert got["profile"] == meta.id
+    with _client(
+        paths,
+        env={"DISCORD_BOT_TOKEN": "bad"},
+        channel_factory=lambda platform, **kw: BoomChannel(),
+    ) as client:
+        manager = client.app.state.profiles
+        assert manager.get(meta.id) is not None  # booted despite the failure
+        assert manager.channels == {}
+        cid = _only_connection(paths, "discord")
+        assert "could not start 'discord'" in manager.channel_errors[cid]
+        got = client.get("/api/connections").json()["connections"][0]
         assert got["active"] is False
         assert "could not start 'discord'" in got["error"]
 
 
-# --- archive: a bound-profile archive clears the binding + stops the channel ---
+# --- the default profile: set, changed live, and cleared when it goes away ---
 
 
-def test_archive_owner_clears_binding_and_stops(paths):
-    SecretStore(paths).set_channel_token("TELEGRAM_BOT_TOKEN", "tok")
-
-    with _client(paths) as client:
+def test_changing_the_default_needs_no_restart(paths):
+    """The router resolves the profile per message, so a new default takes effect on
+    the next message with the same live adapter — and clearing it stops nothing."""
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        manager = client.app.state.profiles
+        cid = _only_connection(paths)
 
-        # work owns telegram
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        work_rt = client.app.state.profiles.get("work")
-        chan = work_rt.channels["telegram"]
-        assert _bindings(paths)["telegram"] == "work"
+        client.post(f"/api/connections/{cid}/default", json={"profile": "work"})
+        adapter = _live(paths, manager)
+        assert _default_gateway(paths, manager) is manager.get("work").gateway
 
-        # archive work (naming personal as the replacement default)
+        r = client.post(f"/api/connections/{cid}/default", json={"profile": "personal"})
+        assert r.json()["default_profile"] == "personal"
+        assert _live(paths, manager) is adapter  # same live adapter
+        assert adapter.stopped is False
+        assert _default_gateway(paths, manager) is manager.get("personal").gateway
+
+        r = client.post(f"/api/connections/{cid}/default", json={"profile": None})
+        assert r.json()["default_profile"] is None
+        assert _live(paths, manager).stopped is False
+        assert _default_gateway(paths, manager) is None
+        assert ProfileRegistry(paths).connection_defaults() == {}
+
+
+def test_archiving_the_default_profile_leaves_the_channel_live_and_unrouted(paths):
+    """Archiving is not a reason to disconnect an install-level Connection: it stays up,
+    its default is cleared, and messages have nowhere to land until a new one is set."""
+
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
+        cid = _only_connection(paths)
+        client.post(f"/api/connections/{cid}/default", json={"profile": "work"})
+        manager = client.app.state.profiles
+        adapter = _live(paths, manager)
+
         r = client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})
         assert r.status_code == 200
-        # binding cleared, channel stopped
-        assert _bindings(paths)["telegram"] is None
-        assert chan.stopped is True
-        assert client.get("/api/channels").json()["telegram"] == {
-            "profile": None,
-            "token_present": True,
-            "active": False,
-            "error": None,
+        assert ProfileRegistry(paths).connection_defaults() == {}
+        assert adapter.stopped is False
+        entry = client.get("/api/connections").json()["connections"][0]
+        assert (entry["default_profile"], entry["active"], entry["error"]) == (None, True, None)
+        assert _default_gateway(paths, manager) is None
+
+        # personal can take over
+        r = client.post(f"/api/connections/{cid}/default", json={"profile": "personal"})
+        assert r.json()["default_profile"] == "personal"
+        assert _default_gateway(paths, manager) is manager.get("personal").gateway
+
+
+def test_deleting_a_profile_clears_it_as_a_default(paths):
+    """Belt-and-braces on the registry itself: archiving clears the default, but a
+    delete must never leave a Channel defaulting to an id that no longer exists."""
+
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    connection = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "tok"}
+    )
+    ProfileRegistry(paths).set_connection_default(connection.id, "work")
+    ProfileRegistry(paths).delete_profile("work")
+
+    assert ProfileRegistry(paths).get_profile("work") is None
+    assert ProfileRegistry(paths).connection_defaults() == {}
+
+
+# --- the mirror: a browser turn reaches the Peer attached to that Chat (ADR 0020) ---
+
+
+def test_a_browser_turn_is_pushed_to_the_peer_attached_to_that_chat(paths):
+    """End to end through the real wiring: the profile's gateway hands the completed
+    turn to the install's router, which pushes it through the live adapter."""
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        manager = client.app.state.profiles
+        cid = _only_connection(paths)
+        PairingStore(paths).add_account(cid, "42", "telegram")
+        PeerStore(paths).attach(cid, "42", "web-1", platform="telegram", sender="42")
+
+        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
+        assert r.status_code == 200
+
+        assert _live(paths, manager).sent == [("42", "You: hello\n\nMe: echo[1]: hello")]
+
+
+def test_a_chat_no_peer_is_attached_to_is_pushed_nowhere(paths):
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
+        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+        manager = client.app.state.profiles
+
+        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
+        assert r.status_code == 200
+
+        assert _live(paths, manager).sent == []
+
+
+def _two_profiles(client) -> None:
+    client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
+    client.post("/api/profiles", json={"name": "Home", "accent": "#c2410c"})
+
+
+# --- Connections: the install's configured platform instances (GET /api/connections) ---
+
+
+def test_connections_empty_on_an_install_with_no_tokens(paths):
+    with _client(paths) as client:
+        assert client.get("/api/connections").json() == {"connections": []}
+
+
+def test_connections_migrated_from_seeded_tokens(paths):
+    """An install that already had bot tokens comes up with one Connection per
+    configured platform, named after the platform, without anyone touching Settings."""
+    with _client(
+        paths, env={"TELEGRAM_BOT_TOKEN": "tok", "SLACK_BOT_TOKEN": "bot", "SLACK_APP_TOKEN": "app"}
+    ) as client:
+        got = client.get("/api/connections").json()["connections"]
+        assert [(c["platform"], c["name"]) for c in got] == [
+            ("telegram", "Telegram"),
+            ("slack", "Slack"),
+        ]
+        ids = [c["id"] for c in got]
+        assert all(ids) and len(set(ids)) == 2
+
+
+def test_a_platform_missing_one_of_its_tokens_is_not_migrated(paths):
+    """Slack needs both tokens; a half-configured platform gets no Connection."""
+    with _client(paths, env={"SLACK_BOT_TOKEN": "bot"}) as client:
+        assert client.get("/api/connections").json() == {"connections": []}
+
+
+def test_connection_migration_is_idempotent(paths):
+    """A second load neither duplicates nor renames — including across a restart and
+    after the user has renamed the migrated Connection."""
+    with _client(paths, env={"DISCORD_BOT_TOKEN": "tok"}) as client:
+        first = client.get("/api/connections").json()["connections"]
+        assert client.get("/api/connections").json()["connections"] == first
+    ConnectionStore(paths).rename_connection(first[0]["id"], "Side project")
+    with _client(paths, env={"DISCORD_BOT_TOKEN": "tok"}) as client:
+        again = client.get("/api/connections").json()["connections"]
+        assert [c["id"] for c in again] == [c["id"] for c in first]
+        assert again[0]["name"] == "Side project"
+
+
+def test_a_malformed_registry_file_lists_no_connections(paths):
+    paths.root.mkdir(parents=True, exist_ok=True)
+    (paths.root / "connections.json").write_text("{not json")
+    with _client(paths) as client:
+        r = client.get("/api/connections")
+        assert r.status_code == 200
+        assert r.json() == {"connections": []}
+
+
+def test_a_malformed_registry_does_not_re_migrate_a_seeded_install(paths):
+    """Re-running the migration would mint fresh ids while the Peers, roster and defaults
+    still carry the old ones — a permanently orphaned install. A corrupt file is empty."""
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        first = client.get("/api/connections").json()["connections"][0]["id"]
+    PairingStore(paths).add_account(first, "42", "telegram")
+    (paths.root / "connections.json").write_text("{not json")
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        assert client.get("/api/connections").json() == {"connections": []}
+    assert PairingStore(paths).is_paired(first, "42") is True
+
+
+def test_an_interrupted_migration_finishes_on_the_next_boot(paths):
+    """A crash after the ids were written but before the state was stamped: the next load
+    adopts onto those same ids rather than minting new ones."""
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    ProfileRegistry(paths).set_exposure("work", "telegram:group", False)
+    _pre_connection_install(paths, "work")
+    paths.root.mkdir(parents=True, exist_ok=True)
+    (paths.root / "connections.json").write_text(
+        json.dumps(
+            {
+                "connections": [{"id": "cn_half", "platform": "telegram", "name": "Telegram"}],
+                "adopted": False,
+            }
+        )
+    )
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        got = client.get("/api/connections").json()["connections"]
+        assert [c["id"] for c in got] == ["cn_half"]
+        assert got[0]["default_profile"] == "work"
+        assert client.get("/api/connections/cn_half/exposure").json()["exposure"]["work"] == {
+            "cn_half:dm": True,
+            "cn_half:group": False,
+        }
+    assert PeerStore(paths).get_peer("cn_half", "42").profile == "work"
+    assert PairingStore(paths).is_paired("cn_half", "42") is True
+    assert ConnectionStore(paths).tokens_for("cn_half") == {"TELEGRAM_BOT_TOKEN": "seed-tok"}
+
+
+def test_a_finished_migration_is_not_re_adopted(paths):
+    """The done-marker survives a restart: a second boot changes nothing."""
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        cid = client.get("/api/connections").json()["connections"][0]["id"]
+    ConnectionStore(paths).set_tokens(cid, {"TELEGRAM_BOT_TOKEN": "rotated"})
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        assert [c["id"] for c in client.get("/api/connections").json()["connections"]] == [cid]
+    assert ConnectionStore(paths).tokens_for(cid) == {"TELEGRAM_BOT_TOKEN": "rotated"}
+
+
+def test_default_naming_numbers_the_later_connections_of_a_platform(paths):
+    ConnectionStore(paths).create_connection("telegram")
+    ConnectionStore(paths).create_connection("telegram")
+    ConnectionStore(paths).create_connection("discord")
+    with _client(paths) as client:
+        got = client.get("/api/connections").json()["connections"]
+        assert [c["name"] for c in got] == ["Telegram", "Telegram 2", "Discord"]
+
+
+def test_the_connection_listing_never_echoes_a_token(paths):
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "super-secret-bot-token"}) as client:
+        r = client.get("/api/connections")
+        assert "super-secret-bot-token" not in r.text
+        entry = r.json()["connections"][0]
+        assert set(entry) == {
+            "id",
+            "platform",
+            "name",
+            "tokens",
+            "default_profile",
+            "active",
+            "error",
+            "paired_accounts",
+        }
+        assert entry["tokens"] == {"TELEGRAM_BOT_TOKEN": {"set": True, "hint": "…oken"}}
+
+
+# --- a Connection's token(s): its own, handed to its adapter explicitly ---
+
+
+def test_migration_carries_the_platform_token_onto_its_connection(paths):
+    """An install whose token was only ever an env var comes up with that token held
+    by the Connection, and its adapter constructed from there."""
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        manager = client.app.state.profiles
+        assert _live(paths, manager).tokens == {"token": "seed-tok"}
+        entry = client.get("/api/connections").json()["connections"][0]
+        assert entry["tokens"]["TELEGRAM_BOT_TOKEN"]["set"] is True
+
+
+def test_slack_gets_both_of_its_tokens_by_constructor_name(paths):
+    with _client(
+        paths, env={"SLACK_BOT_TOKEN": "xoxb-seed", "SLACK_APP_TOKEN": "xapp-seed"}
+    ) as client:
+        assert _live(paths, client.app.state.profiles, "slack").tokens == {
+            "bot_token": "xoxb-seed",
+            "app_token": "xapp-seed",
         }
 
-        # personal can now bind
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "personal"})
-        assert r.json()["telegram"]["active"] is True
+
+def test_a_connections_token_beats_a_stray_environment_value(paths):
+    """The env is a migration seed only: an adapter is constructed from what its
+    Connection holds, never from a value left in the process."""
+    ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "connection-tok"}
+    )
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "stray-env-tok"}) as client:
+        assert _live(paths, client.app.state.profiles).tokens == {"token": "connection-tok"}
 
 
-# --- POST /api/channels/token: secrets-backed tokens, live apply ---
+def test_two_connections_of_a_platform_hold_two_different_tokens(paths):
+    work = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    play = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"}
+    )
+    with _client(paths) as client:
+        r = client.get("/api/connections")
+        held = {c["id"]: c["tokens"]["TELEGRAM_BOT_TOKEN"] for c in r.json()["connections"]}
+        assert held[work.id] == {"set": True, "hint": "…work"}
+        assert held[play.id] == {"set": True, "hint": "…play"}
+        assert "1111-work" not in r.text and "2222-play" not in r.text
 
 
-def test_post_token_saves_flips_present_and_starts(paths):
-    """Saving a token for a BOUND platform: token_present flips true, the channel
-    starts live on the bound runtime, and the value is never echoed."""
+def test_a_connection_missing_one_of_its_tokens_reports_it_unset(paths):
+    """Slack needs two; a Connection holding one reads as half-configured rather than
+    claiming its token is set."""
+    ConnectionStore(paths).create_connection("slack", tokens={"SLACK_BOT_TOKEN": "xoxb-half"})
+    with _client(paths) as client:
+        entry = client.get("/api/connections").json()["connections"][0]
+        assert entry["platform"] == "slack"
+        assert entry["tokens"] == {
+            "SLACK_BOT_TOKEN": {"set": True, "hint": "…half"},
+            "SLACK_APP_TOKEN": {"set": False, "hint": ""},
+        }
 
+
+def test_a_start_failure_never_echoes_the_connections_token(paths):
+    """The scrubbing follows the token to its new home: with nothing in the env, an
+    adapter that quotes the token it was handed is still masked."""
+
+    class EchoBoomChannel:
+        platform = "telegram"
+
+        def __init__(self, token: str, connection: str = "") -> None:
+            self._token = token
+
+        async def start(self, router):
+            raise RuntimeError(f"The token `{self._token}` was rejected")
+
+        async def stop(self):
+            pass
+
+    secret = "8123456:connection-only-token"
+    ConnectionStore(paths).create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": secret})
+
+    with _client(paths, channel_factory=lambda platform, **kw: EchoBoomChannel(**kw)) as client:
+        got = client.get("/api/connections")
+        assert secret not in got.text
+        assert "•••" in got.json()["connections"][0]["error"]
+
+
+# --- lifecycle per Connection: two bots of one platform, live side by side ---
+
+
+def test_two_connections_of_one_platform_are_both_live(paths):
+    """The manager holds one adapter per Connection, each built from its own token and
+    told which Connection it is."""
+    work = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    play = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"}
+    )
+    with _client(paths) as client:
+        manager = client.app.state.profiles
+        assert set(manager.channels) == {work.id, play.id}
+        assert manager.channels[work.id].tokens == {"token": "1111-work"}
+        assert manager.channels[play.id].tokens == {"token": "2222-play"}
+        assert manager.channels[play.id].connection == play.id
+        listed = client.get("/api/connections").json()["connections"]
+        assert [c["active"] for c in listed] == [True, True]
+
+
+def test_one_connection_failing_to_start_leaves_the_others_running(paths):
+    """A bad token takes down its own Connection and records its own reason; the
+    sibling bot of the same platform keeps answering."""
+
+    class Fussy(FakeChannel):
+        async def start(self, router):
+            if self.tokens["token"] == "bad-token":
+                raise RuntimeError("connect failed")
+            await FakeChannel.start(self, router)
+
+    store = ConnectionStore(paths)
+    good = store.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "good-token"})
+    bad = store.create_connection("telegram", tokens={"TELEGRAM_BOT_TOKEN": "bad-token"})
+
+    with _client(paths, channel_factory=lambda platform, **kw: Fussy(platform, **kw)) as client:
+        manager = client.app.state.profiles
+        assert list(manager.channels) == [good.id]
+        assert "could not start 'telegram'" in manager.channel_errors[bad.id]
+        assert good.id not in manager.channel_errors
+
+
+def test_stopping_one_connection_leaves_its_sibling_live(paths):
+    work = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    play = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"}
+    )
+    with _client(paths) as client:
+        manager = client.app.state.profiles
+        stopped = manager.channels[work.id]
+
+        assert client.portal.call(manager.stop_channel, work.id) is True
+
+        assert stopped.stopped is True
+        assert list(manager.channels) == [play.id]
+        listed = {
+            c["id"]: c["active"] for c in client.get("/api/connections").json()["connections"]
+        }
+        assert listed == {work.id: False, play.id: True}
+
+
+def test_restarting_a_connection_rebuilds_only_that_adapter(paths):
+    work = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    play = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"}
+    )
+    with _client(paths) as client:
+        manager = client.app.state.profiles
+        before = manager.channels[work.id]
+        untouched = manager.channels[play.id]
+
+        assert client.portal.call(manager.restart_channel, work.id) == (True, None)
+
+        assert before.stopped is True
+        assert manager.channels[work.id] is not before
+        assert manager.channels[play.id] is untouched
+
+
+def test_an_unknown_connection_cannot_be_started_or_restarted(paths):
+    with _client(paths) as client:
+        manager = client.app.state.profiles
+        for call in (manager.start_channel, manager.restart_channel):
+            try:
+                client.portal.call(call, "cn-ghost")
+            except ValueError as exc:
+                assert "cn-ghost" in str(exc)
+            else:
+                raise AssertionError("an unknown connection must be refused")
+
+
+def test_a_connection_with_no_token_stays_down_with_its_own_reason(paths):
+    """A Connection created before its token was filled in records why it is inactive
+    without disturbing the one that is live."""
+    live = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    empty = ConnectionStore(paths).create_connection("telegram")
+    with _client(paths) as client:
+        manager = client.app.state.profiles
+        assert list(manager.channels) == [live.id]
+        assert manager.channel_errors[empty.id] == "no token configured for telegram"
+
+
+def test_a_browser_turn_reaches_the_peer_on_its_own_connection(paths):
+    """The push side is keyed the same way: a turn mirrored to a Peer of the second
+    Telegram bot goes out through that bot's adapter alone."""
+    work = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    play = ConnectionStore(paths).create_connection(
+        "telegram", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"}
+    )
     with _client(paths) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        # bind first (no token yet → inactive, waiting)
-        r = client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        assert r.json()["telegram"]["active"] is False
-        assert r.json()["telegram"]["token_present"] is False
+        manager = client.app.state.profiles
+        PairingStore(paths).add_account(play.id, "42", "telegram")
+        PeerStore(paths).attach(play.id, "42", "web-1", platform="telegram", sender="42")
 
-        # now supply the token via the secrets endpoint
-        r = client.post(
-            "/api/channels/token",
-            json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "live-secret-tok"}},
-        )
+        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
         assert r.status_code == 200
-        entry = r.json()["telegram"]
-        assert entry["profile"] == "work"
-        assert entry["token_present"] is True
+
+        assert manager.channels[work.id].sent == []
+        assert manager.channels[play.id].sent == [("42", "You: hello\n\nMe: echo[1]: hello")]
+
+
+# --- the default Profile is the Connection's own ---
+
+
+def _two_telegram_bots(paths):
+    """Two Telegram Connections, the shape every per-Connection assertion needs."""
+    work = ConnectionStore(paths).create_connection(
+        "telegram", "Work bot", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    play = ConnectionStore(paths).create_connection(
+        "telegram", "Play bot", tokens={"TELEGRAM_BOT_TOKEN": "2222-play"}
+    )
+    return work, play
+
+
+def test_each_connection_carries_its_own_default_profile(paths):
+    """Two bots of one platform land their conversations in two different Profiles."""
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+
+        assert (
+            client.post(f"/api/connections/{work.id}/default", json={"profile": "work"}).json()[
+                "default_profile"
+            ]
+            == "work"
+        )
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+
+        listed = {
+            c["id"]: c["default_profile"]
+            for c in client.get("/api/connections").json()["connections"]
+        }
+        assert listed == {work.id: "work", play.id: "home"}
+        assert manager.default_profile(work.id) == "work"
+        assert manager.default_profile(play.id) == "home"
+
+
+def test_clearing_one_connections_default_leaves_its_siblings_alone(paths):
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "work"})
+
+        r = client.post(f"/api/connections/{work.id}/default", json={"profile": None})
+
+        assert r.json()["default_profile"] is None
+        assert ProfileRegistry(paths).connection_defaults() == {play.id: "work"}
+
+
+def test_archiving_a_profile_clears_it_as_every_connections_default(paths):
+    """A Profile that has gone stops being anyone's default — on both bots at once."""
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+
+        assert client.request("DELETE", "/api/profiles/home").status_code == 200
+
+        assert ProfileRegistry(paths).connection_defaults() == {}
+        listed = client.get("/api/connections").json()["connections"]
+        assert [c["default_profile"] for c in listed] == [None, None]
+
+
+def test_a_default_on_an_unknown_connection_404s(paths):
+    with _client(paths) as client:
+        _two_profiles(client)
+        r = client.post("/api/connections/cn-ghost/default", json={"profile": "work"})
+        assert r.status_code == 404
+        assert "cn-ghost" in r.json()["error"]
+
+
+def test_a_connections_default_refuses_an_unknown_or_archived_profile(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        assert client.request("DELETE", "/api/profiles/home").status_code == 200
+
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/default", json={"profile": "ghost"}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(f"/api/connections/{work.id}/default", json={"profile": "home"}).status_code
+            == 400
+        )
+        assert ProfileRegistry(paths).connection_defaults() == {}
+
+
+# --- Profile exposure is the Connection's own, and cannot contradict its default ---
+
+
+def _surface(cid: str, kind: str = "dm") -> str:
+    """One surface id of a Telegram Connection — its two are switched independently."""
+    return f"{cid}:{kind}"
+
+
+def _withdraw(client, cid: str, pid: str, kind: str = "dm", exposed: bool = False):
+    return client.post(
+        f"/api/connections/{cid}/exposure",
+        json={"profile": pid, "surface": _surface(cid, kind), "exposed": exposed},
+    )
+
+
+def test_exposure_is_default_allow_on_every_surface_of_a_connection(paths):
+    """A Profile nobody has withdrawn is reachable through every Connection, without
+    anyone visiting Settings."""
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+
+        view = client.get(f"/api/connections/{work.id}/exposure").json()
+
+        assert view["surfaces"] == [
+            {"kind": "dm", "id": _surface(work.id, "dm")},
+            {"kind": "group", "id": _surface(work.id, "group")},
+        ]
+        assert view["exposure"] == {
+            pid: {_surface(work.id, "dm"): True, _surface(work.id, "group"): True}
+            for pid in ("work", "home")
+        }
+        assert view["default_profile"] is None
+
+
+def test_a_single_surface_platform_exposes_one_surface_named_after_its_connection(paths):
+    discord = ConnectionStore(paths).create_connection(
+        "discord", tokens={"DISCORD_BOT_TOKEN": "tok"}
+    )
+    with _client(paths) as client:
+        _two_profiles(client)
+
+        view = client.get(f"/api/connections/{discord.id}/exposure").json()
+
+        assert view["surfaces"] == [{"kind": "all", "id": discord.id}]
+        assert view["exposure"] == {"work": {discord.id: True}, "home": {discord.id: True}}
+
+
+def test_withdrawing_a_profile_from_one_connection_leaves_the_other_reachable(paths):
+    """The point of the whole change: with two Telegram bots, a Profile answers on the
+    one it is exposed to and on no other."""
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+
+        for kind in ("dm", "group"):
+            assert _withdraw(client, work.id, "home", kind).status_code == 200
+
+        assert client.get(f"/api/connections/{play.id}/exposure").json()["exposure"]["home"] == {
+            _surface(play.id, "dm"): True,
+            _surface(play.id, "group"): True,
+        }
+        reachable = [p.id for p in manager.available_profiles(_surface(work.id, "dm"))]
+        assert reachable == ["work"]
+        assert [p.id for p in manager.available_profiles(_surface(play.id, "dm"))] == [
+            "work",
+            "home",
+        ]
+
+
+def test_a_connections_direct_messages_and_groups_are_withdrawn_independently(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+
+        view = _withdraw(client, work.id, "home", "group").json()
+
+        assert view["exposure"]["home"] == {
+            _surface(work.id, "dm"): True,
+            _surface(work.id, "group"): False,
+        }
+
+
+def test_exposing_again_drops_the_withdrawal(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        _withdraw(client, work.id, "home", "dm")
+
+        view = _withdraw(client, work.id, "home", "dm", exposed=True).json()
+
+        assert view["exposure"]["home"][_surface(work.id, "dm")] is True
+
+
+def test_a_profile_withdrawn_from_every_surface_cannot_be_made_the_default(paths):
+    """Enforced here and not only in the browser: the API is reachable directly."""
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        for kind in ("dm", "group"):
+            _withdraw(client, work.id, "home", kind)
+
+        r = client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+
+        assert r.status_code == 400
+        assert "home" in r.json()["error"]
+        assert ProfileRegistry(paths).connection_defaults() == {}
+
+
+def test_a_profile_withdrawn_from_one_surface_is_still_eligible_as_the_default(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        _withdraw(client, work.id, "home", "group")
+
+        r = client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+
+        assert r.status_code == 200
+        assert r.json()["default_profile"] == "home"
+
+
+def test_withdrawing_the_default_from_its_last_surface_clears_the_default(paths):
+    """The table can never show a Connection pointing where it cannot reach."""
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "home"})
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+        _withdraw(client, work.id, "home", "dm")
+
+        view = _withdraw(client, work.id, "home", "group").json()
+
+        assert view["default_profile"] is None
+        assert ProfileRegistry(paths).connection_defaults() == {play.id: "home"}
+
+
+def test_withdrawing_a_profile_that_is_not_the_default_leaves_the_default_alone(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+
+        for kind in ("dm", "group"):
+            view = _withdraw(client, work.id, "home", kind).json()
+
+        assert view["default_profile"] == "work"
+
+
+def test_exposure_refuses_an_unknown_connection_profile_or_surface(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+
+        assert client.get("/api/connections/cn-ghost/exposure").status_code == 404
+        assert (
+            client.post(
+                "/api/connections/cn-ghost/exposure",
+                json={"profile": "work", "surface": "cn-ghost:dm", "exposed": False},
+            ).status_code
+            == 404
+        )
+        assert _withdraw(client, work.id, "ghost").status_code == 400
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/exposure",
+                json={"profile": "work", "surface": "telegram:dm", "exposed": False},
+            ).status_code
+            == 400
+        )
+
+
+# --- migration: an install that had a default Profile and Peers before Connections ---
+
+
+def _pre_connection_install(paths, default_pid: str) -> None:
+    """Rewrite the registries the way an install from before Connections existed holds
+    them: a platform-keyed default profile, and a Peer named by platform alone."""
+    registry = json.loads((paths.profiles_json).read_text())
+    registry.pop("connection_defaults", None)
+    registry["channels"] = {"telegram": default_pid, "discord": None, "slack": None}
+    (paths.profiles_json).write_text(json.dumps(registry))
+    (paths.root / "peers.json").write_text(
+        json.dumps({"peers": [{"platform": "telegram", "chat_id": "42", "profile": default_pid}]})
+    )
+    (paths.root / "pairing.json").write_text(
+        json.dumps(
+            {
+                "accounts": [{"platform": "telegram", "account_id": "42", "handle": None}],
+                "codes": [
+                    {"platform": "telegram", "code": "AAAA-1111", "expires_at": time.time() + 600}
+                ],
+            }
+        )
+    )
+
+
+def test_migration_carries_the_platform_default_onto_its_connection(paths):
+    """An upgraded install keeps routing where it did, with nobody visiting Settings."""
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    _pre_connection_install(paths, "work")
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        entry = client.get("/api/connections").json()["connections"][0]
+        assert entry["default_profile"] == "work"
+        assert client.app.state.profiles.default_profile(entry["id"]) == "work"
+
+
+def test_migration_carries_existing_peers_onto_the_migrated_connection(paths):
+    """The conversation continues in place: its Peer is now the Connection's."""
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    _pre_connection_install(paths, "work")
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        cid = client.get("/api/connections").json()["connections"][0]["id"]
+        assert PeerStore(paths).get_peer(cid, "42").profile == "work"
+
+
+def test_migration_carries_the_paired_accounts_and_live_code_onto_the_connection(paths):
+    """Nobody who could reach the assistant before the upgrade loses access to it."""
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    _pre_connection_install(paths, "work")
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        roster = client.get(f"/api/connections/{_only_connection(paths)}/pairing").json()
+        assert [a["account_id"] for a in roster["accounts"]] == ["42"]
+        assert roster["code"]["code"] == "AAAA-1111"
+        assert PairingStore(paths).is_paired(_only_connection(paths), "42") is True
+
+
+def test_migration_carries_platform_withdrawals_onto_the_connections_surfaces(paths):
+    """A Profile withheld from Telegram groups before the upgrade stays withheld from
+    the migrated bot's group surface, and keeps its direct messages."""
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    ProfileRegistry(paths).set_exposure("work", "telegram:group", False)
+    _pre_connection_install(paths, "work")
+    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
+        cid = client.get("/api/connections").json()["connections"][0]["id"]
+
+        exposure = client.get(f"/api/connections/{cid}/exposure").json()["exposure"]
+
+        assert exposure["work"] == {f"{cid}:dm": True, f"{cid}:group": False}
+
+
+# --- the Connection lifecycle over HTTP: create, rename, replace token, delete ---
+
+
+def _boom_channels(bad: str):
+    """A channel factory building FakeChannels, except on ``bad`` — whose start()
+    raises, the way a rejected token does."""
+
+    class BoomChannel:
+        def __init__(self, platform: str) -> None:
+            self.platform = platform
+
+        async def start(self, router):
+            raise RuntimeError("Unauthorized")
+
+        async def stop(self):
+            pass
+
+    def build(platform: str, connection: str = "", **tokens: str):
+        if bad in tokens.values():
+            return BoomChannel(platform)
+        return FakeChannel(platform, connection, **tokens)
+
+    return build
+
+
+def _create(client, platform: str = "telegram", name: str = "Work bot", **tokens: str):
+    return client.post(
+        "/api/connections", json={"platform": platform, "name": name, "tokens": tokens}
+    )
+
+
+def test_creating_a_connection_starts_it_immediately(paths):
+    """A platform, a name and a token are all it takes: the adapter is live and the
+    entry comes back from the same call."""
+    with _client(paths) as client:
+        r = _create(client, TELEGRAM_BOT_TOKEN="1111-work")
+
+        assert r.status_code == 200
+        entry = r.json()
+        assert entry["platform"] == "telegram"
+        assert entry["name"] == "Work bot"
         assert entry["active"] is True
         assert entry["error"] is None
-        # value never echoed anywhere in the response
-        assert "live-secret-tok" not in r.text
-        # started live on the bound runtime
-        runtime = client.app.state.profiles.get("work")
-        assert runtime.channels["telegram"].started is True
-        # persisted to the secrets store
-        assert SecretStore(paths).channel_token_status({})["TELEGRAM_BOT_TOKEN"] is True
-        assert _bindings(paths)["telegram"] == "work"
+        manager = client.app.state.profiles
+        assert manager.channels[entry["id"]].tokens == {"token": "1111-work"}
+        assert [c["id"] for c in client.get("/api/connections").json()["connections"]] == [
+            entry["id"]
+        ]
 
 
-def test_post_token_clear_stops_channel(paths):
-    """Clearing the token for a live bound platform stops it and returns to waiting."""
+def test_creating_a_second_connection_of_a_platform_leaves_the_first_running(paths):
     with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels", json={"platform": "telegram", "profile": "work"})
-        client.post(
-            "/api/channels/token",
-            json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": "tok"}},
-        )
-        runtime = client.app.state.profiles.get("work")
-        chan = runtime.channels["telegram"]
+        manager = client.app.state.profiles
+        first = _create(client, name="Work bot", TELEGRAM_BOT_TOKEN="1111-work").json()
 
-        # clear it
-        r = client.post(
-            "/api/channels/token",
-            json={"platform": "telegram", "tokens": {"TELEGRAM_BOT_TOKEN": ""}},
-        )
-        entry = r.json()["telegram"]
-        assert entry["token_present"] is False
-        assert entry["active"] is False
-        assert entry["profile"] == "work"  # binding intact — just waiting for a token
-        assert "telegram" not in runtime.channels
-        assert chan.stopped is True
+        second = _create(client, name="Play bot", TELEGRAM_BOT_TOKEN="2222-play").json()
+
+        assert second["id"] != first["id"]
+        assert manager.channels[first["id"]].started is True
+        assert manager.channels[first["id"]].stopped is False
+        assert manager.channels[second["id"]].tokens == {"token": "2222-play"}
 
 
-def test_post_token_slack_requires_both(paths):
-    """Slack needs BOTH tokens: with only one present it is not token_present and does
-    not start."""
+def test_creating_without_every_token_the_platform_needs_is_refused(paths):
+    """Slack takes two tokens; one of them is not a Connection, it is a typo."""
     with _client(paths) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/channels", json={"platform": "slack", "profile": "work"})
+        r = _create(client, "slack", "Team", SLACK_BOT_TOKEN="xoxb")
 
-        # only the bot token
-        r = client.post(
-            "/api/channels/token",
-            json={"platform": "slack", "tokens": {"SLACK_BOT_TOKEN": "b-tok"}},
-        )
-        entry = r.json()["slack"]
-        assert entry["token_present"] is False
-        assert entry["active"] is False
-        runtime = client.app.state.profiles.get("work")
-        assert "slack" not in runtime.channels
-
-        # add the app token → now both present → starts
-        r = client.post(
-            "/api/channels/token",
-            json={"platform": "slack", "tokens": {"SLACK_APP_TOKEN": "a-tok"}},
-        )
-        entry = r.json()["slack"]
-        assert entry["token_present"] is True
-        assert entry["active"] is True
-        assert "slack" in runtime.channels
-
-
-def test_post_token_unknown_platform_400(paths):
-    with _client(paths) as client:
-        r = client.post(
-            "/api/channels/token",
-            json={"platform": "irc", "tokens": {"IRC_TOKEN": "x"}},
-        )
         assert r.status_code == 400
-        assert "irc" in r.json()["error"]
+        assert "SLACK_APP_TOKEN" in r.json()["error"]
+        assert client.get("/api/connections").json()["connections"] == []
 
 
-def test_post_token_invalid_env_for_platform_400(paths):
-    """An env name not valid for the platform → 400, nothing saved."""
-
+def test_creating_with_a_blank_token_or_an_unknown_platform_is_refused(paths):
     with _client(paths) as client:
-        r = client.post(
-            "/api/channels/token",
-            json={"platform": "telegram", "tokens": {"SLACK_BOT_TOKEN": "wrong"}},
-        )
-        assert r.status_code == 400
-        assert "SLACK_BOT_TOKEN" in r.json()["error"]
-        # nothing persisted
-        assert SecretStore(paths).channel_token_status({})["SLACK_BOT_TOKEN"] is False
+        assert _create(client, TELEGRAM_BOT_TOKEN="   ").status_code == 400
+        assert _create(client, "matrix", "Bot", TELEGRAM_BOT_TOKEN="tok").status_code == 400
+        assert client.get("/api/connections").json()["connections"] == []
 
 
-def test_post_token_unbound_platform_saves_without_start(paths):
-    """Saving a token for an UNBOUND platform persists it + flips token_present, but
-    starts nothing (no owning profile). Value never echoed."""
+def test_a_connection_that_fails_to_start_is_recorded_and_reports_why(paths):
+    """A bad token is not a failed request: the Connection exists, inactive, with the
+    reason attached — exactly as a failed boot behaves."""
+    with _client(paths, channel_factory=_boom_channels("rejected")) as client:
+        r = _create(client, TELEGRAM_BOT_TOKEN="rejected")
 
-    made = []
-    with _client(paths, made=made) as client:
-        r = client.post(
-            "/api/channels/token",
-            json={"platform": "discord", "tokens": {"DISCORD_BOT_TOKEN": "hidden-tok"}},
-        )
         assert r.status_code == 200
-        entry = r.json()["discord"]
-        assert entry["profile"] is None
-        assert entry["token_present"] is True
+        entry = r.json()
         assert entry["active"] is False
-        assert "hidden-tok" not in r.text
-        assert SecretStore(paths).channel_token_status({})["DISCORD_BOT_TOKEN"] is True
-    assert made == []  # nothing was ever constructed
+        assert "could not start 'telegram'" in entry["error"]
+        listed = client.get("/api/connections").json()["connections"]
+        assert [c["id"] for c in listed] == [entry["id"]]
+
+
+def test_a_connection_can_be_renamed(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        r = client.post(f"/api/connections/{work.id}", json={"name": "Support bot"})
+
+        assert r.status_code == 200
+        assert r.json()["name"] == "Support bot"
+        assert ConnectionStore(paths).get_connection(work.id).name == "Support bot"
+        assert client.post(f"/api/connections/{work.id}", json={"name": " "}).status_code == 400
+        assert client.post("/api/connections/cn-ghost", json={"name": "x"}).status_code == 404
+
+
+def test_replacing_a_token_restarts_the_connection_and_keeps_its_identity(paths):
+    """A rotated token is the same bot: its paired accounts, group pins, exposure and
+    default Profile all stay attached."""
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        client.post(f"/api/connections/{work.id}/pairing", json={"value": "42"})
+        PeerStore(paths).select_profile(
+            work.id, "-100", "work", platform="telegram", surface="group"
+        )
+        _withdraw(client, work.id, "home", "group")
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+        was = manager.channels[work.id]
+
+        r = client.post(
+            f"/api/connections/{work.id}/token", json={"tokens": {"TELEGRAM_BOT_TOKEN": "3333-new"}}
+        )
+
+        assert r.status_code == 200
+        assert r.json()["active"] is True
+        assert was.stopped is True
+        assert manager.channels[work.id] is not was
+        assert manager.channels[work.id].tokens == {"token": "3333-new"}
+        assert ConnectionStore(paths).tokens_for(work.id) == {"TELEGRAM_BOT_TOKEN": "3333-new"}
+        assert [a.account_id for a in PairingStore(paths).list_accounts(work.id)] == ["42"]
+        assert PeerStore(paths).get_peer(work.id, "-100").profile == "work"
+        assert ProfileRegistry(paths).connection_defaults()[work.id] == "work"
+        exposure = client.get(f"/api/connections/{work.id}/exposure").json()["exposure"]
+        assert exposure["home"] == {_surface(work.id): True, _surface(work.id, "group"): False}
+
+
+def test_a_failed_token_replacement_leaves_the_previous_token_live(paths):
+    """A typo must not strand a working bot: the old token is restored and the adapter
+    comes back up on it."""
+    work = ConnectionStore(paths).create_connection(
+        "telegram", "Work bot", tokens={"TELEGRAM_BOT_TOKEN": "1111-work"}
+    )
+    with _client(paths, channel_factory=_boom_channels("typo")) as client:
+        manager = client.app.state.profiles
+
+        r = client.post(
+            f"/api/connections/{work.id}/token", json={"tokens": {"TELEGRAM_BOT_TOKEN": "typo"}}
+        )
+
+        assert r.status_code == 400
+        assert "could not start 'telegram'" in r.json()["error"]
+        assert ConnectionStore(paths).tokens_for(work.id) == {"TELEGRAM_BOT_TOKEN": "1111-work"}
+        assert manager.channels[work.id].tokens == {"token": "1111-work"}
+        listed = client.get("/api/connections").json()["connections"][0]
+        assert listed["active"] is True
+        assert listed["error"] is None
+
+
+def test_replacing_a_token_refuses_an_incomplete_or_unknown_body(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        assert (
+            client.post(f"/api/connections/{work.id}/token", json={"tokens": {}}).status_code == 400
+        )
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/token", json={"tokens": {"DISCORD_BOT_TOKEN": "x"}}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                "/api/connections/cn-ghost/token",
+                json={"tokens": {"TELEGRAM_BOT_TOKEN": "x"}},
+            ).status_code
+            == 404
+        )
+        assert ConnectionStore(paths).tokens_for(work.id) == {"TELEGRAM_BOT_TOKEN": "1111-work"}
+
+
+def test_deleting_a_connection_stops_it_and_takes_its_dependent_state_with_it(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        client.post(f"/api/connections/{work.id}/pairing", json={"value": "42"})
+        client.post(f"/api/connections/{work.id}/pairing/code")
+        PeerStore(paths).select_profile(
+            work.id, "-100", "work", platform="telegram", surface="group"
+        )
+        _withdraw(client, work.id, "home", "group")
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+        live = manager.channels[work.id]
+
+        r = client.delete(f"/api/connections/{work.id}")
+
+        assert r.status_code == 200
+        assert live.stopped is True
+        assert work.id not in manager.channels
+        assert ConnectionStore(paths).get_connection(work.id) is None
+        assert PairingStore(paths).list_accounts(work.id) == []
+        assert PairingStore(paths).live_code(work.id) is None
+        assert PeerStore(paths).get_peer(work.id, "-100") is None
+        assert work.id not in ProfileRegistry(paths).connection_defaults()
+        assert ProfileRegistry(paths).get_profile("home").withdrawn == []
+        assert ConnectionStore(paths).tokens_for(work.id) == {}
+        assert client.delete(f"/api/connections/{work.id}").status_code == 404
+
+
+def test_deleting_one_connection_leaves_the_other_of_its_platform_untouched(paths):
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        client.post(f"/api/connections/{play.id}/pairing", json={"value": "77"})
+        PeerStore(paths).select_profile(
+            play.id, "-200", "home", platform="telegram", surface="group"
+        )
+        _withdraw(client, play.id, "home", "group")
+        client.post(f"/api/connections/{play.id}/default", json={"profile": "home"})
+
+        client.delete(f"/api/connections/{work.id}")
+
+        assert manager.channels[play.id].stopped is False
+        assert ConnectionStore(paths).tokens_for(play.id) == {"TELEGRAM_BOT_TOKEN": "2222-play"}
+        assert [a.account_id for a in PairingStore(paths).list_accounts(play.id)] == ["77"]
+        assert PeerStore(paths).get_peer(play.id, "-200").profile == "home"
+        assert ProfileRegistry(paths).connection_defaults() == {play.id: "home"}
+        exposure = client.get(f"/api/connections/{play.id}/exposure").json()["exposure"]
+        assert exposure["home"][_surface(play.id, "group")] is False
+
+
+def test_the_list_entry_carries_what_a_settings_row_needs(paths):
+    """One call renders the row: identity, token-set flag, liveness, reason and reach —
+    and never a token value."""
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        client.post(f"/api/connections/{work.id}/pairing", json={"value": "42"})
+        client.post(f"/api/connections/{work.id}/default", json={"profile": "work"})
+
+        entry = client.get("/api/connections").json()["connections"][0]
+
+        assert entry == {
+            "id": work.id,
+            "platform": "telegram",
+            "name": "Work bot",
+            "tokens": {"TELEGRAM_BOT_TOKEN": {"set": True, "hint": "…work"}},
+            "default_profile": "work",
+            "active": True,
+            "error": None,
+            "paired_accounts": 1,
+        }
+        assert "1111-work" not in json.dumps(entry)
+
+
+# --- Group Peers per Connection (GET/POST /api/connections/{cid}/groups*) ---
+
+
+def test_a_connection_lists_only_its_own_groups(paths):
+    """A group belongs to the bot it is talking to, not to the platform."""
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        PeerStore(paths).select_profile(
+            work.id, "-100", "work", platform="telegram", surface="group"
+        )
+        PeerStore(paths).select_profile(
+            play.id, "-200", "home", platform="telegram", surface="group"
+        )
+        PeerStore(paths).select_profile(
+            work.id, "42", "work", platform="telegram"
+        )  # a DM, not a group
+
+        assert client.get(f"/api/connections/{work.id}/groups").json()["groups"] == [
+            {"chat_id": "-100", "profile": "work"}
+        ]
+        assert client.get(f"/api/connections/{play.id}/groups").json()["groups"] == [
+            {"chat_id": "-200", "profile": "home"}
+        ]
+
+
+def test_a_profile_withdrawn_from_this_connections_groups_is_not_offered(paths):
+    """What the picker offers is what this Connection can reach — so a group pinned
+    outside that set reads as unreachable rather than looking fine."""
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        client.post(
+            f"/api/connections/{work.id}/exposure",
+            json={"profile": "home", "surface": f"{work.id}:group", "exposed": False},
+        )
+
+        assert [
+            p["id"] for p in client.get(f"/api/connections/{work.id}/groups").json()["profiles"]
+        ] == ["work"]
+        # The other bot is untouched.
+        assert [
+            p["id"] for p in client.get(f"/api/connections/{play.id}/groups").json()["profiles"]
+        ] == [
+            "work",
+            "home",
+        ]
+
+
+def test_a_profile_whose_runtime_is_down_is_still_reachable_through_groups(paths):
+    """Reachability is exposure, not liveness — a group pinned to a profile that simply
+    has no runtime up must not read as unreachable, or it would be flagged forever."""
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        manager = client.app.state.profiles
+        manager._runtimes.pop("home", None)
+        PeerStore(paths).select_profile(
+            work.id, "-100", "home", platform="telegram", surface="group"
+        )
+
+        view = client.get(f"/api/connections/{work.id}/groups").json()
+        assert [p["id"] for p in view["profiles"]] == ["work", "home"]
+        assert (
+            client.post(
+                f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"}
+            ).status_code
+            == 200
+        )
+
+
+def test_re_pointing_a_group_on_its_connection_moves_it(paths):
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        PeerStore(paths).select_profile(
+            work.id, "-100", "work", platform="telegram", surface="group"
+        )
+        PeerStore(paths).attach(work.id, "-100", "tg-1", platform="telegram", surface="group")
+
+        r = client.post(f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 200
+        assert r.json()["groups"] == [{"chat_id": "-100", "profile": "home"}]
+        assert PeerStore(paths).get_peer(work.id, "-100").profile == "home"
+        # Moving a group leaves its Chat behind, as any profile switch does.
+        assert PeerStore(paths).get_peer(work.id, "-100").chat is None
+        # Nothing was created on the other bot.
+        assert client.get(f"/api/connections/{play.id}/groups").json()["groups"] == []
+
+
+def test_a_group_cannot_be_pointed_at_a_profile_this_connection_cannot_reach(paths):
+    work, _ = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        PeerStore(paths).select_profile(
+            work.id, "-100", "work", platform="telegram", surface="group"
+        )
+        client.post(
+            f"/api/connections/{work.id}/exposure",
+            json={"profile": "home", "surface": f"{work.id}:group", "exposed": False},
+        )
+
+        r = client.post(f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 400
+        assert PeerStore(paths).get_peer(work.id, "-100").profile == "work"
+
+
+def test_re_pointing_a_group_of_another_connection_404s(paths):
+    """A chat id is not unique across bots; the group has to be one of this one's."""
+    work, play = _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        PeerStore(paths).select_profile(
+            play.id, "-100", "work", platform="telegram", surface="group"
+        )
+
+        r = client.post(f"/api/connections/{work.id}/groups/-100/profile", json={"profile": "home"})
+        assert r.status_code == 404
+        assert PeerStore(paths).get_peer(play.id, "-100").profile == "work"
+
+
+def test_connection_group_routes_404_on_an_unknown_connection(paths):
+    _two_telegram_bots(paths)
+    with _client(paths) as client:
+        _two_profiles(client)
+        assert client.get("/api/connections/nope/groups").status_code == 404
+        assert (
+            client.post(
+                "/api/connections/nope/groups/-100/profile", json={"profile": "work"}
+            ).status_code
+            == 404
+        )
+
+
+# --- end to end: an install upgraded from the platform-keyed form needs no reconnect ---
+
+
+def _old_install(paths) -> None:
+    """Every registry the way a pre-Connection install holds it: a platform-keyed
+    default Profile, a withdrawn platform surface, a DM Peer attached to a Chat, a
+    group Peer pinned to a Profile, a paired account and a live pairing code."""
+    registry = json.loads((paths.profiles_json).read_text())
+    registry.pop("connection_defaults", None)
+    registry["channels"] = {"telegram": "work", "discord": "home", "slack": None}
+    for entry in registry["profiles"]:
+        if entry["id"] == "home":
+            entry["withdrawn"] = ["telegram:group"]
+    (paths.profiles_json).write_text(json.dumps(registry))
+    (paths.root / "peers.json").write_text(
+        json.dumps(
+            {
+                "peers": [
+                    {
+                        "platform": "telegram",
+                        "chat_id": "42",
+                        "surface": "dm",
+                        "profile": "work",
+                        "chat": "web-1",
+                        "chats": ["web-1"],
+                    },
+                    {
+                        "platform": "telegram",
+                        "chat_id": "-100",
+                        "surface": "group",
+                        "profile": "home",
+                    },
+                ]
+            }
+        )
+    )
+    (paths.root / "pairing.json").write_text(
+        json.dumps(
+            {
+                "accounts": [{"platform": "telegram", "account_id": "42", "handle": None}],
+                "codes": [
+                    {"platform": "telegram", "code": "AAAA-1111", "expires_at": time.time() + 600}
+                ],
+            }
+        )
+    )
+
+
+def _assert_upgraded(paths, client) -> str:
+    """Everything the old install held, read back off the migrated Connection."""
+    listed = client.get("/api/connections").json()["connections"]
+    by_platform = {c["platform"]: c for c in listed}
+    assert set(by_platform) == {"telegram", "discord"}
+    telegram = by_platform["telegram"]
+    cid = telegram["id"]
+
+    # it is live, on the token it was seeded from, and lands where it always did
+    assert telegram["active"] is True
+    assert telegram["error"] is None
+    assert telegram["default_profile"] == "work"
+    assert by_platform["discord"]["default_profile"] == "home"
+    assert telegram["tokens"]["TELEGRAM_BOT_TOKEN"]["set"] is True
+    assert "seed-tok" not in json.dumps(listed)
+
+    # the paired account and its live code came across — nobody has to pair again
+    assert telegram["paired_accounts"] == 1
+    roster = client.get(f"/api/connections/{cid}/pairing").json()
+    assert [a["account_id"] for a in roster["accounts"]] == ["42"]
+    assert roster["code"]["code"] == "AAAA-1111"
+    assert PairingStore(paths).is_paired(cid, "42") is True
+
+    # the conversations continue in place, group pin included
+    assert PeerStore(paths).get_peer(cid, "42").profile == "work"
+    assert PeerStore(paths).get_peer(cid, "42").chat == "web-1"
+    assert client.get(f"/api/connections/{cid}/groups").json()["groups"] == [
+        {"chat_id": "-100", "profile": "home"}
+    ]
+
+    # the withdrawal followed the surface it was recorded on
+    exposure = client.get(f"/api/connections/{cid}/exposure").json()["exposure"]
+    assert exposure["home"] == {f"{cid}:dm": True, f"{cid}:group": False}
+    assert exposure["work"] == {f"{cid}:dm": True, f"{cid}:group": True}
+    return cid
+
+
+def test_an_upgraded_install_keeps_everything_and_still_routes(paths):
+    """The whole point of the migration: an install that was configured entirely by
+    platform comes up on Connections with its default Profiles, paired accounts, live
+    code, Peers, group pins and withdrawals intact, and answers without a reconnect."""
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    ProfileRegistry(paths).create_profile("Home", "#c2410c")
+    _old_install(paths)
+
+    with _client(
+        paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok", "DISCORD_BOT_TOKEN": "seed-discord"}
+    ) as client:
+        cid = _assert_upgraded(paths, client)
+        manager = client.app.state.profiles
+
+        # it still routes: the Connection's default resolves, the group's profile is
+        # only offered where it is exposed, and a turn reaches the migrated Peer.
+        assert manager.default_profile(cid) == "work"
+        assert [p.id for p in manager.available_profiles(f"{cid}:group")] == ["work"]
+        assert sorted(p.id for p in manager.available_profiles(f"{cid}:dm")) == ["home", "work"]
+        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
+        assert r.status_code == 200
+        assert manager.channels[cid].sent == [("42", "You: hello\n\nMe: echo[1]: hello")]
+
+    # a second boot re-reads the migrated registry and changes nothing
+    with _client(
+        paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok", "DISCORD_BOT_TOKEN": "seed-discord"}
+    ) as client:
+        assert _assert_upgraded(paths, client) == cid

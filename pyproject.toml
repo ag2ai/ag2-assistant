@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ag2-assistant"
-version = "0.5.2"  # single source of truth (mirrors ag2's own pyproject); assistant.version reads it back from installed metadata
+version = "0.5.3"  # single source of truth (mirrors ag2's own pyproject); assistant.version reads it back from installed metadata
 description = "AG2 Assistant — a personal AI assistant powered by AG2's framework"
 readme = "README.md"
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ dependencies = [
     # Dev installs, CI and the Docker image all resolve this through uv.lock, so they
     # run the same AG2 the published wheel asks for. ddgs powers the native
     # DuckDuckSearchTool, openai the OpenAI voice provider.
-    "ag2[gemini,ddgs,openai,acp]>=1.0.0",
+    "ag2[gemini,ddgs,openai,acp]>=1.0.1",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
@@ -43,8 +43,8 @@ dev = [
 ]
 # Provider client libraries not in the base install.
 # Opt-in: `pip install "ag2-assistant[ollama]"`.
-anthropic = ["ag2[anthropic]>=1.0.0"]
-ollama = ["ag2[ollama]>=1.0.0"]
+anthropic = ["ag2[anthropic]>=1.0.1"]
+ollama = ["ag2[ollama]>=1.0.1"]
 # Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",

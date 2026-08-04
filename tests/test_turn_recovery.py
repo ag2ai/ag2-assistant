@@ -16,6 +16,7 @@ function call …". The fixes under test:
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from ag2.events import (
@@ -250,10 +251,10 @@ async def test_channel_asker_reports_pending_prompt():
 
     class _Bot:
         async def send_message(self, *a, **k):
-            return None
+            return SimpleNamespace(message_id=1)
 
     pending = PendingAsks()
-    asker = TelegramAsker(_Bot(), "42", pending)
+    asker = TelegramAsker(_Bot(), "42", pending, {})
     assert asker.has_pending() is False
 
     task = asyncio.create_task(asker.ask(Question(text="allow?")))

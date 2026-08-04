@@ -26,10 +26,23 @@ Route map:
     GET  /api/profiles                       -> {profiles, archived, active_default, onboarded} (§3.5 contract)
     POST /api/profiles                       -> create {name, accent}; boots live
     POST /api/profiles/{pid}                 -> rename / accent (display-only)
+    POST /api/profiles/{pid}/exposure        -> {surface, exposed}; withdraw a profile from a surface
     POST /api/profiles/{pid}/restore         -> un-archive + boot live (ADR 0003)
     DELETE /api/profiles/{pid}               -> archive (guardrails §4.9); ?purge=true hard-deletes an archived profile
-    GET  /api/channels                       -> {platform: {profile, token_present, active, error}} (install-level)
-    POST /api/channels                       -> bind {platform, profile:pid|null}; hot-applies; returns updated entry
+    GET  /api/connections                    -> {connections: [{id, platform, name, tokens, default_profile, active, error, paired_accounts}]}
+    POST /api/connections                    -> {platform, name, tokens} create + start; returns the new entry
+    POST /api/connections/{cid}              -> {name}; rename a Connection
+    POST /api/connections/{cid}/token        -> {tokens}; replace token(s) + restart, rolled back on failure
+    DELETE /api/connections/{cid}            -> stop + forget it and its Peers, pairing, default and exposure
+    POST /api/connections/{cid}/default      -> set {profile:pid|null} for one Connection; returns updated entry
+    GET  /api/connections/{cid}/exposure     -> {surfaces, exposure: {pid: {surface: bool}}, default_profile}
+    POST /api/connections/{cid}/exposure     -> {profile, surface, exposed}; withdraw a profile from one surface
+    GET  /api/connections/{cid}/pairing      -> {accounts, code} — who may reach this one Connection
+    POST /api/connections/{cid}/pairing      -> {value}; pair by numeric id or @handle
+    DELETE /api/connections/{cid}/pairing/{key} -> withdraw one entry from this Connection
+    POST /api/connections/{cid}/pairing/code -> mint this Connection's one live code
+    GET  /api/connections/{cid}/groups       -> this Connection's group Peers + the profiles they may be pinned to
+    POST /api/connections/{cid}/groups/{chat_id}/profile -> re-point one group (ADR 0022)
     GET  /api/google/*                       -> account-level OAuth (shared like keys)
     GET  /api/fs/list                        -> generic folder browser (pickers)
     GET  /hitl/{req_id}, POST .../answer     -> styled HITL pages over a cross-profile dispatcher
@@ -112,6 +125,7 @@ from assistant import (
     __version__,
     live_configs,
     llm_configs,
+    provider_catalog,
     voice_providers,
 )
 from assistant import feedback as feedback_learner
@@ -128,8 +142,9 @@ from assistant.codex_auth import (
     generate_pkce,
 )
 from assistant.coding.detect import parse_bridge
-from assistant.coding.model_catalog import ModelCatalog, as_view
+from assistant.coding.model_catalog import CatalogModel, ModelCatalog, as_view
 from assistant.config import Config
+from assistant.connections import Connection, ConnectionStore, surface_key, surfaces
 from assistant.events import (
     A2UIActionSubmitted,
     A2UISurfaceDataUpdated,
@@ -140,7 +155,6 @@ from assistant.events import (
 from assistant.filesearch import list_folder_dir, search_corpus
 from assistant.folders import READ_WRITE, DuplicatePath, FolderStore
 from assistant.gateway.profile_manager import (
-    _CHANNEL_TOKENS,
     ArchivedProfile,
     ProfileManager,
     ProfileRuntime,
@@ -155,9 +169,11 @@ from assistant.llm_configs import LlmConfigStore
 from assistant.memory import read_profile, read_universal, write_profile, write_universal
 from assistant.observability import log_suppressed
 from assistant.onboarding import identity_document
+from assistant.pairing import PairedAccount, PairingStore
+from assistant.peers import Peer, PeerStore
 from assistant.permissions import PermissionStore, command_rule, shell_prefix
 from assistant.profiles import ProfileRegistry
-from assistant.secrets import KEY_ENV, DuplicateValue, SecretStore
+from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV, DuplicateValue, SecretStore
 from assistant.settings import profile_settings
 from assistant.skills import (
     DISABLE_OWN,
@@ -210,6 +226,15 @@ _WS_PROFILE_ARCHIVED = 4001  # runtime archived while this socket was open (§4.
 # overrides it. The real value only bounds a genuinely wedged provider call.
 _LLM_TEST_TIMEOUT_S = 30.0
 
+# Query names GET /api/llm-configs/models refuses outright rather than ignores, so
+# routing a pasted key through it fails loudly (ADR 0024).
+_CATALOG_KEY_PARAMS = ("api_key", "apikey", "key", "secret", "token", "password")
+
+
+def _truthy(value: str) -> bool:
+    """A query flag the way FastAPI reads a bool one: 1/true/yes/on, case-blind."""
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
 
 async def _live_key_probe(provider: str, api_key: str) -> None:
     """Production live-config key probe: the provider's own cheap check. Raises on
@@ -257,6 +282,8 @@ class MessageRequest(BaseModel):
     text: str
     chat_id: str = "default"
     platform: str | None = None
+    # No model field: a choice made before the Chat existed rides the WebSocket frame,
+    # and a Channel resolves its own Pending override in the router (ADR 0025).
 
 
 class MessageResponse(BaseModel):
@@ -265,10 +292,12 @@ class MessageResponse(BaseModel):
 
 
 class ChatPatch(BaseModel):
-    """Partial chat-metadata update: rename and/or star. Absent field = unchanged."""
+    """Partial chat-metadata update: rename, star, and/or set the Chat override.
+    Absent field = unchanged; ``model=""`` clears the override back to inheriting."""
 
     title: str | None = None
     starred: bool | None = None
+    model: str | None = None
 
 
 class CredentialsUpload(BaseModel):
@@ -548,14 +577,36 @@ class VoiceProviderRequest(BaseModel):
     provider: str
 
 
-class ChannelBindRequest(BaseModel):
+class ConnectionCreateRequest(BaseModel):
     platform: str
-    profile: str | None = None  # pid to bind to, or null to disable
+    name: str = ""  # blank takes the platform's next free default name
+    tokens: dict[str, str] = Field(default_factory=dict)  # {ENV_NAME: value}
 
 
-class ChannelTokenRequest(BaseModel):
-    platform: str
-    tokens: dict[str, str] = Field(default_factory=dict)  # {ENV_NAME: value_or_empty}
+class ConnectionRenameRequest(BaseModel):
+    name: str
+
+
+class ConnectionTokenRequest(BaseModel):
+    tokens: dict[str, str] = Field(default_factory=dict)  # every env the platform needs
+
+
+class ConnectionDefaultRequest(BaseModel):
+    profile: str | None = None  # pid conversations land in by default, or null for none
+
+
+class ConnectionExposureRequest(BaseModel):
+    profile: str
+    surface: str  # one of the Connection's own surface ids
+    exposed: bool
+
+
+class PairAccountRequest(BaseModel):
+    value: str  # a numeric account id (authoritative) or a handle (an invitation)
+
+
+class GroupProfileRequest(BaseModel):
+    profile: str  # the pid to re-point a group Peer at; never null — a group is pinned
 
 
 class MemoryRequest(BaseModel):
@@ -728,6 +779,7 @@ def create_app(
     google: GoogleAuth | None = None,
     llm_probe: Callable = model_config,
     llm_probe_timeout_s: float = _LLM_TEST_TIMEOUT_S,
+    llm_catalog_probe: Callable = provider_catalog.probe_provider_models,
     live_probe: Callable = _live_key_probe,
     skills_client: SkillsClient | None = None,
 ) -> FastAPI:
@@ -745,7 +797,9 @@ def create_app(
     default runs a real loopback listener, so it is injected rather than reached for.
     ``codex_client`` is the HTTP client that flow's token exchange goes out on,
     ``google`` is the Google integration the /api/google/* routes drive, and
-    ``live_probe`` is the voice-provider key probe behind the live-config "Test".
+    ``live_probe`` is the voice-provider key probe behind the live-config "Test",
+    ``llm_catalog_probe`` the provider model-list probe behind the Model field's
+    combobox (one async callable over a resolved provider identity).
     ``skills_client`` is the skills.sh registry client the search/install routes use
     (omitted: ag2's own, going to the live registry).
     """
@@ -757,6 +811,9 @@ def create_app(
     secret_store = SecretStore(paths)
     llm_store = LlmConfigStore(paths)
     live_store = LiveConfigStore(paths)
+    connection_store = ConnectionStore(paths, manager.env)
+    pairing_store = PairingStore(paths)
+    peer_store = PeerStore(paths)
     codex = CodexAuth(paths, client=codex_client)
     google = google if google is not None else GoogleAuth(paths)
     allowed_origins = _allowed_origins(manager.env)
@@ -1090,6 +1147,13 @@ def create_app(
         """A throwaway Config carrying just the entry's derived provider/model/options,
         for the dry-construct + test round-trip. Streaming off (a one-shot probe)."""
         probe = Config.for_paths(paths)
+        # for_paths defaults every non-path field, so the host facts that reach a
+        # real turn via apply_env_overrides are absent here. The ACP builders read
+        # the bridge off the Config (acp_provider._build), so without this a Docker
+        # probe spawns the adapter locally — inside an image that has none — and
+        # reports a bare "[Errno 2]" instead of testing the host CLI at all.
+        probe.acp_bridge = manager.config.acp_bridge
+        probe.acp_bridge_token = manager.config.acp_bridge_token
         probe.llm.streaming = False
         probe.llm.provider = llm_configs.PROVIDER_OF[entry["type"]]
         probe.llm.model = entry["model"]
@@ -1113,6 +1177,51 @@ def create_app(
             # reads this for types no config uses yet.
             "provider_deps": {t: llm_configs.deps_status(t) for t in llm_configs.TYPES},
         }
+
+    @app.get("/api/llm-configs/models")
+    async def llm_config_models(request: Request) -> Response:
+        """A provider's model catalog in the ACP route's ``{models, current, reason}``
+        envelope, named by type, endpoint and ``secret_id`` — no key material (ADR
+        0024). ``?refresh=1`` forbids the HTTP cache; there is no other."""
+        params = request.query_params
+        if any(name in params for name in _CATALOG_KEY_PARAMS):
+            return JSONResponse(
+                {"ok": False, "error": "this route accepts no key material"}, status_code=400
+            )
+        ctype = params.get("type", "")
+        if ctype in provider_catalog.NEVER_PROBEABLE:
+            # Answered rather than probed: no key exists to probe with.
+            return JSONResponse(as_view([], "", provider_catalog.NOT_PROBEABLE))
+        if ctype not in provider_catalog.GATEWAY_PROBEABLE:
+            return JSONResponse(
+                {"ok": False, "error": f"no provider catalog for: {ctype}"}, status_code=404
+            )
+        env = secret_env()
+        base_url = params.get("base_url", "")
+        api_key = secret_store.secret_value(params.get("secret_id", ""))
+        if not api_key and not base_url:
+            # The install-wide key the request itself would fall back to — but never
+            # to a custom endpoint, which _config_kwargs also refuses to hand it to.
+            api_key = env.get(KEY_ENV.get(llm_configs.PROVIDER_OF.get(ctype, ""), ""), "")
+        target = provider_catalog.CatalogTarget(
+            type=ctype,
+            base_url=base_url,
+            # Same host the turn would use: the entry's, else the install's.
+            host=params.get("host", "") or env.get(OLLAMA_BASE_ENV, ""),
+            api_key=api_key,
+        )
+        reason = ""
+        models: list[str] = []
+        try:
+            models = await llm_catalog_probe(target)
+        except provider_catalog.CatalogUnavailable as exc:
+            reason = exc.reason
+        except Exception:
+            # A probe that blew up is an endpoint we could not read, not a 500.
+            reason = provider_catalog.UNREACHABLE
+        rows = [CatalogModel(id=m, name=m, description="") for m in models]
+        cache = "no-store" if _truthy(params.get("refresh", "")) else "private, max-age=30"
+        return JSONResponse(as_view(rows, "", reason), headers={"Cache-Control": cache})
 
     async def _save_llm_config(req: LlmConfigRequest, cid: str | None):
         """Shared create/update: dry-construct the derived model_config BEFORE
@@ -1853,7 +1962,7 @@ def create_app(
         """The §3.5 contract, present in every state: unarchived profiles, the
         server-side active default, and the install-level onboarded flag. Empty list +
         null + false on fresh install. Channel bindings are install-level now — see
-        GET /api/channels."""
+        GET /api/connections."""
         reg = registry.load_registry()
         allp = registry.list_profiles(include_archived=True)
         return {
@@ -1939,70 +2048,262 @@ def create_app(
             return JSONResponse({"error": f"could not restore profile: {exc}"}, status_code=500)
         return {"profile": _profile_view(runtime.meta)}
 
-    # ---- Channels (global, install-level: platform → one profile or disabled) ----
+    # ---- Connections (global, install-level; never owned by a profile — ADR 0022) ----
 
-    def _channel_entry(platform: str, pid: str | None) -> dict:
-        """The install-level state of one platform: which profile owns it (or null),
-        whether its token env is present, whether it is live on that runtime, and the
-        last start error (or null)."""
-        active = False
-        if pid is not None:
-            runtime = manager.runtimes_by_id().get(pid)
-            active = bool(runtime and platform in runtime.channels)
+    def _connection_entry(connection: Connection) -> dict:
+        """One Connection as the API shows it: its identity, token(s) as a set flag and
+        hint, default profile, whether the adapter is live, why not, and its roster size."""
+        cid = connection.id
         return {
-            "profile": pid,
-            "token_present": all(secret_env().get(e) for e in _CHANNEL_TOKENS[platform]),
-            "active": active,
-            "error": manager.channel_errors.get(platform),
+            "id": cid,
+            "platform": connection.platform,
+            "name": connection.name,
+            "tokens": connection_store.token_status(cid),
+            "default_profile": registry.connection_defaults().get(cid),
+            "active": cid in manager.channels,
+            "error": manager.channel_errors.get(cid),
+            # A live Connection with nobody paired answers nobody (ADR 0021) — the count
+            # is what lets Settings say so rather than leave it looking healthy.
+            "paired_accounts": len(pairing_store.list_accounts(cid)),
         }
 
-    @app.get("/api/channels")
-    async def list_channels() -> dict:
-        """Install-level channel bindings: ``{platform: {profile, token_present, active,
-        error}}``. A fresh (zero-profile) install returns all profiles null."""
-        return {
-            platform: _channel_entry(platform, pid)
-            for platform, pid in registry.channel_bindings().items()
-        }
-
-    @app.post("/api/channels")
-    async def bind_channel(req: ChannelBindRequest):
-        """Assign a platform to a profile (or disable it with profile:null) and hot-apply
-        it. Returns the updated platform entry. Unknown platform → 400; unknown/archived
-        pid → 400. The binding persists even if the channel fails to start (bad/missing
-        token): ``active`` reports live state, ``error`` explains any failure."""
-        try:
-            await manager.bind_channel(req.platform, req.profile)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return {req.platform: _channel_entry(req.platform, req.profile)}
-
-    @app.post("/api/channels/token")
-    async def set_channel_token(req: ChannelTokenRequest):
-        """Save/clear channel bot token(s) for a platform (global secrets, like provider
-        keys) and re-apply the channel live. Body: ``{platform, tokens:{ENV_NAME: value}}``
-        — an empty value clears that token. Only env names valid for the platform are
-        accepted; an unknown platform or env name → 400. Saving updates the store, so the
-        bound channel is restarted (stopped, then started if all tokens are now present).
-        Returns the updated GET /api/channels entry. Token values are never echoed."""
-        platform = req.platform
+    def _token_error(platform: str, tokens: dict[str, str]):
+        """Refuse a Connection that could never start: an unknown platform, a token env
+        that is not that platform's, or one of its tokens missing."""
         if platform not in profiles_mod.CHANNEL_PLATFORMS:
             return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
-        valid = set(profiles_mod.CHANNEL_TOKEN_ENVS[platform])
-        unknown = set(req.tokens) - valid
+        envs = profiles_mod.CHANNEL_TOKEN_ENVS[platform]
+        unknown = set(tokens) - set(envs)
         if unknown:
             return JSONResponse(
                 {"error": f"invalid token env(s) for {platform}: {', '.join(sorted(unknown))}"},
                 status_code=400,
             )
-        for env_name, value in req.tokens.items():
-            secret_store.set_channel_token(env_name, value)
-        # Reconcile the live channel with the new tokens if the platform is bound.
-        bound = registry.channel_bindings().get(platform)
-        if bound is not None:
-            with contextlib.suppress(Exception):
-                await manager.restart_channel(platform)
-        return {platform: _channel_entry(platform, bound)}
+        missing = [e for e in envs if not (tokens.get(e) or "").strip()]
+        if missing:
+            return JSONResponse(
+                {"error": f"missing token(s) for {platform}: {', '.join(missing)}"}, status_code=400
+            )
+        return None
+
+    @app.get("/api/connections")
+    async def list_connections() -> dict:
+        """Every configured instance of a platform, in creation order. An install that
+        already had bot tokens is migrated to one Connection per platform on this read.
+        A Connection's token(s) appear only as a set flag and a last-4 hint."""
+        return {"connections": [_connection_entry(c) for c in connection_store.list_connections()]}
+
+    @app.post("/api/connections")
+    async def create_connection(req: ConnectionCreateRequest):
+        """Register a Connection on ``platform`` with its token(s) and start it at once;
+        one that will not start still records its reason. Bad tokens or platform → 400."""
+        if (bad := _token_error(req.platform, req.tokens)) is not None:
+            return bad
+        connection = connection_store.create_connection(req.platform, req.name, tokens=req.tokens)
+        await manager.start_channel(connection.id)
+        return _connection_entry(connection)
+
+    @app.post("/api/connections/{cid}")
+    async def rename_connection(cid: str, req: ConnectionRenameRequest):
+        """Change a Connection's display name; its id, tokens and everything keyed by it
+        are untouched. Unknown Connection → 404, a blank name → 400."""
+        if connection_store.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            connection = connection_store.rename_connection(cid, req.name)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _connection_entry(connection)
+
+    @app.post("/api/connections/{cid}/token")
+    async def replace_connection_token(cid: str, req: ConnectionTokenRequest):
+        """Replace a Connection's token(s) and restart it on them, keeping its identity.
+        A replacement that will not start rolls back → 400; unknown → 404."""
+        connection = connection_store.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        if (bad := _token_error(connection.platform, req.tokens)) is not None:
+            return bad
+        envs = profiles_mod.CHANNEL_TOKEN_ENVS[connection.platform]
+        prior = connection_store.tokens_for(cid)
+        connection_store.set_tokens(cid, req.tokens)
+        active, reason = await manager.restart_channel(cid)
+        if not active:
+            connection_store.set_tokens(cid, {e: prior.get(e, "") for e in envs})
+            await manager.restart_channel(cid)
+            return JSONResponse({"error": reason}, status_code=400)
+        return _connection_entry(connection)
+
+    @app.delete("/api/connections/{cid}")
+    async def delete_connection(cid: str):
+        """Stop a Connection and forget it with its token(s), Peers, paired accounts,
+        pairing code, default-Profile entry and exposure records. Unknown → 404."""
+        if connection_store.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        await manager.stop_channel(cid)
+        manager.channel_errors.pop(cid, None)
+        connection_store.delete_connection(cid)
+        return {"ok": True}
+
+    @app.post("/api/connections/{cid}/default")
+    async def set_connection_default(cid: str, req: ConnectionDefaultRequest):
+        """Set the profile this Connection's conversations land in by default (or clear
+        it with profile:null). Takes effect on the next message — the adapter itself keeps
+        running either way. Unknown Connection → 404; unknown/archived pid → 400."""
+        connection = connection_store.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            connection_store.set_default_profile(cid, req.profile)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _connection_entry(connection)
+
+    def _exposure_view(connection: Connection) -> dict:
+        """Which profiles this Connection can reach, per surface, plus the one its
+        conversations land in by default — one table, since the two are one decision."""
+        return {
+            "surfaces": [
+                {"kind": kind, "id": surface} for kind, surface in surfaces(connection).items()
+            ],
+            "exposure": connection_store.exposure(connection.id),
+            "default_profile": registry.connection_defaults().get(connection.id),
+        }
+
+    @app.get("/api/connections/{cid}/exposure")
+    async def list_connection_exposure(cid: str):
+        """This Connection's surfaces and every profile's reachability on each.
+        Default-allow, so a profile nobody has withdrawn reads true everywhere."""
+        connection = connection_store.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        return _exposure_view(connection)
+
+    @app.post("/api/connections/{cid}/exposure")
+    async def set_connection_exposure(cid: str, req: ConnectionExposureRequest):
+        """Expose or withdraw one profile on one surface of this Connection; withdrawing
+        the default's last surface clears it. Unknown → 404, bad profile/surface → 400."""
+        connection = connection_store.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            connection_store.set_exposure(cid, req.profile, req.surface, req.exposed)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _exposure_view(connection)
+
+    # ---- Paired accounts (per Connection; who may speak to it at all — ADR 0021) ----
+
+    def _account_view(account: PairedAccount) -> dict:
+        """One paired account. ``pending`` is what the UI shows differently: an
+        invitation to a handle, not yet an identity."""
+        return {
+            "key": account.key,
+            "account_id": account.account_id,
+            "handle": account.handle,
+            "pending": account.pending,
+        }
+
+    def _pairing_view(cid: str | None) -> dict:
+        """One Connection's roster and live code. No Connection yet reads as an empty
+        roster — nobody is paired, which is what there is to say."""
+        code = pairing_store.live_code(cid) if cid else None
+        return {
+            "accounts": [_account_view(a) for a in pairing_store.list_accounts(cid)] if cid else [],
+            "code": None if code is None else {"code": code.code, "expires_at": code.expires_at},
+        }
+
+    @app.get("/api/connections/{cid}/pairing")
+    async def list_connection_pairing(cid: str):
+        """Who may reach this one Connection, and its live one-time code (or null).
+        A grant here is no grant on another Connection of the same platform."""
+        if connection_store.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        return _pairing_view(cid)
+
+    @app.post("/api/connections/{cid}/pairing")
+    async def add_connection_pairing(cid: str, req: PairAccountRequest):
+        """Allow an account on this Connection by numeric id or by handle."""
+        connection = connection_store.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        try:
+            pairing_store.add_account(cid, req.value, connection.platform)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return _pairing_view(cid)
+
+    @app.delete("/api/connections/{cid}/pairing/{key:path}")
+    async def revoke_connection_pairing(cid: str, key: str):
+        """Withdraw one entry from this Connection alone. Nothing to withdraw → 404."""
+        if connection_store.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        if not pairing_store.revoke(cid, key):
+            return JSONResponse({"error": f"not paired: {key}"}, status_code=404)
+        return _pairing_view(cid)
+
+    @app.post("/api/connections/{cid}/pairing/code")
+    async def issue_connection_pairing_code(cid: str):
+        """Mint this Connection's one live code, replacing its earlier one and no
+        other's. The code works only on the Connection it was minted for."""
+        if connection_store.get_connection(cid) is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        pairing_store.issue_code(cid)
+        return _pairing_view(cid)["code"]
+
+    # ---- Group Peers (a group's profile is pinned, and re-pointed only here) ----
+
+    def _connection_groups(cid: str) -> list[Peer]:
+        """Every group Peer that arrived on this one Connection."""
+        return [p for p in peer_store.list_peers() if p.connection == cid and p.surface == "group"]
+
+    def _group_surface_profiles(cid: str, platform: str) -> list[profiles_mod.ProfileMeta]:
+        """The unarchived profiles exposed to this Connection's group surface — what a
+        group can be pinned to, whether or not its runtime is up right now."""
+        surface = surface_key(cid, platform, "group")
+        withdrawn = registry.withdrawn_from(surface)
+        return [m for m in registry.list_profiles() if m.id not in withdrawn]
+
+    def _connection_group_view(connection: Connection) -> dict:
+        """This Connection's group Peers with the profile each is pinned to, plus the
+        profiles exposed to this Connection's group surface."""
+        return {
+            "groups": [
+                {"chat_id": p.chat_id, "profile": p.profile}
+                for p in _connection_groups(connection.id)
+            ],
+            "profiles": [
+                {"id": m.id, "name": m.name}
+                for m in _group_surface_profiles(connection.id, connection.platform)
+            ],
+        }
+
+    @app.get("/api/connections/{cid}/groups")
+    async def list_connection_groups(cid: str):
+        """This Connection's group Peers and what each is pinned to. Unknown → 404."""
+        connection = connection_store.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        return _connection_group_view(connection)
+
+    @app.post("/api/connections/{cid}/groups/{chat_id}/profile")
+    async def set_connection_group_profile(cid: str, chat_id: str, req: GroupProfileRequest):
+        """Re-point one of this Connection's groups at a profile exposed to its group
+        surface. Unknown Connection or group → 404; an unreachable profile → 400."""
+        connection = connection_store.get_connection(cid)
+        if connection is None:
+            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
+        surface = surface_key(cid, connection.platform, "group")
+        if req.profile not in {m.id for m in _group_surface_profiles(cid, connection.platform)}:
+            return JSONResponse(
+                {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400
+            )
+        if not any(p.chat_id == chat_id for p in _connection_groups(cid)):
+            return JSONResponse({"error": f"no group peer: {chat_id}"}, status_code=404)
+        peer_store.select_profile(
+            cid, chat_id, req.profile, platform=connection.platform, surface="group"
+        )
+        return _connection_group_view(connection)
 
     # ---- Google OAuth (global, account-level) ----
 
@@ -2231,10 +2532,13 @@ def create_app(
 
     @p.get("/chats/{chat_id}")
     async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """The display transcript for a chat, for the UI to restore."""
+        """The display transcript for a chat, plus its Chat override and the model it
+        would run on right now (so the composer's switcher needs no second call)."""
         return {
             "chat_id": chat_id,
             "messages": await runtime.gateway.transcript(chat_id),
+            "model": await runtime.gateway.chat_model(chat_id),
+            "effective_model": await runtime.gateway.effective_model(chat_id),
         }
 
     @p.delete("/chats/{chat_id}")
@@ -2249,10 +2553,13 @@ def create_app(
     async def update_chat(
         chat_id: str, patch: ChatPatch, runtime: ProfileRuntime = Depends(get_runtime)
     ) -> dict:
-        """Rename and/or star a chat. 400 on an empty patch, 404 on unknown chat."""
-        if patch.title is None and patch.starred is None:
+        """Rename, star, and/or set the Chat override. 400 on an empty patch, 404 on
+        unknown chat."""
+        if patch.title is None and patch.starred is None and patch.model is None:
             return JSONResponse({"error": "empty patch"}, status_code=400)
-        ok = await runtime.gateway.update_chat(chat_id, title=patch.title, starred=patch.starred)
+        ok = await runtime.gateway.update_chat(
+            chat_id, title=patch.title, starred=patch.starred, model=patch.model
+        )
         if not ok:
             return Response(status_code=404)
         return {"ok": True}
@@ -2474,8 +2781,7 @@ def create_app(
         # each header switcher can render the current choice + mark it
         # inherited-vs-overridden without a second fetch. A dangling override reads as
         # no override → the install-wide Active (matching the resolution layer).
-        llm_ovr = settings.get_llm_override()
-        llm_ovr = llm_ovr if (llm_ovr and llm_store.get_config(llm_ovr)) else None
+        llm_ovr = llm_store.resolved_override(settings.get_llm_override()) or None
         live_ovr = settings.get_live_override()
         live_ovr = live_ovr if (live_ovr and live_store.get_config(live_ovr)) else None
         return {
@@ -2489,7 +2795,7 @@ def create_app(
             # Per-profile Text/Live Active override + effective Active (drives the
             # Profiles-header switchers). override=None → inherits the install-wide.
             "llm_override": llm_ovr,
-            "llm_active": llm_ovr or llm_store.active_id(),
+            "llm_active": llm_store.effective_active_id(llm_ovr) or None,
             "live_override": live_ovr,
             "live_active": live_ovr or live_store.active_id(),
             "codex": codex.status(),  # ChatGPT-subscription sign-in state
@@ -2572,20 +2878,20 @@ def create_app(
             }
         )
 
-        # Messaging channels bound to THIS profile (start-time active/error).
-        items = []
-        for platform, bound_pid in registry.channel_bindings().items():
-            if bound_pid != runtime.pid:
-                continue
-            entry = _channel_entry(platform, bound_pid)
-            items.append(
-                {
-                    "platform": platform,
-                    "active": entry["active"],
-                    "error": entry["error"],
-                    "token_present": entry["token_present"],
-                }
-            )
+        # Connections DEFAULTING to this profile — the ones whose conversations land
+        # here (start-time active/error). Connections themselves are install-level.
+        defaults = registry.connection_defaults()
+        items = [
+            {
+                "connection": c.id,
+                "name": c.name,
+                "platform": c.platform,
+                "active": c.id in manager.channels,
+                "error": manager.channel_errors.get(c.id),
+            }
+            for c in connection_store.list_connections()
+            if defaults.get(c.id) == runtime.pid
+        ]
         ch_error = any(it["error"] for it in items)
         checks.append(
             {
@@ -2596,12 +2902,12 @@ def create_app(
                 # generic "error" — the panel shows this, so it must say what to fix.
                 "detail": (
                     ", ".join(
-                        (it["error"] or f"{it['platform']} active")
+                        (it["error"] or f"{it['name']} active")
                         if (it["error"] or it["active"])
-                        else f"{it['platform']} idle"
+                        else f"{it['name']} idle"
                         for it in items
                     )
-                    or "none bound"
+                    or "none default here"
                 ),
                 "items": items,
             }
@@ -3455,7 +3761,16 @@ def create_app(
                         await websocket.send_json({"type": "queued", "text": text, "chat": chat_id})
                 else:
                     asyncio.create_task(
-                        bridge.run_turn(text, asker=asker, attachments=attachments, surface=surface)
+                        bridge.run_turn(
+                            text,
+                            asker=asker,
+                            attachments=attachments,
+                            surface=surface,
+                            attachment_names=tuple(name for _, name in saved),
+                            # The composer's switcher is live before the chat exists;
+                            # its choice rides the first frame (ADR 0025).
+                            chat_model=str(data.get("model") or ""),
+                        )
                     )
         except WebSocketDisconnect:
             return

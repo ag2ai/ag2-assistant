@@ -61,7 +61,11 @@ export class StreamClient {
   }
   // A turn sent while one is already running is fed to it server-side (the agent
   // picks it up at its next step) — same frame either way.
-  send(text, attachments) { this._send({ text, attachments }) }
+  // `model` is a Text model chosen before this chat existed, adopted as the Chat
+  // override by the message that creates it; omitted once it exists (ADR 0025).
+  send(text, attachments, model = '') {
+    this._send(model ? { text, attachments, model } : { text, attachments })
+  }
   cancel() { this._send({ type: 'cancel' }) }
   answer(id, answer) { this._send({ type: 'answer', id, answer }) }
   feedback(payload) { this._send({ type: 'feedback', ...payload }) }

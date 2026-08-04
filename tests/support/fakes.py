@@ -84,6 +84,31 @@ class FakeAgent(FakeRunMixin):
         return FakeReply(f"echo[{self._counts[sid]}]: {msg[0]}")
 
 
+class ModelNamingAgent(FakeRunMixin):
+    """A fake agent that answers with the model its config was built from, so a turn's
+    reply names the model configuration the turn actually resolved to."""
+
+    def __init__(self, config):
+        self.config = config
+        self.tools = []
+
+    async def ask(self, *msg, stream=None, **kwargs) -> FakeReply:
+        return FakeReply(self.config.llm.model)
+
+
+def model_naming_agent_factory(unusable=()):
+    """A ``create_agent``-shaped factory handing out ``ModelNamingAgent``s. Any model
+    named in ``unusable`` raises at build time — a configuration that exists but cannot
+    run (no key, not signed in), which fails the turn rather than being rescued."""
+
+    def factory(config, **kwargs):
+        if config.llm.model in unusable:
+            raise RuntimeError(f"{config.llm.model} cannot run")
+        return ModelNamingAgent(config)
+
+    return factory
+
+
 class SkillCatalogAgent(FakeAgent):
     """A fake agent carrying the skill catalog its prompt would have been built with.
 
@@ -128,17 +153,21 @@ def failing_agent_factory(fail_for):
 
 
 class FakeChannel:
-    """Stand-in Channel: records start/stop/notify without touching a network."""
+    """Stand-in Channel: records the Connection and token(s) it was built with, plus
+    start/stop/notify, without touching a network."""
 
-    def __init__(self, platform: str, **tokens):
+    def __init__(self, platform: str, connection: str = "", **tokens):
         self.platform = platform
+        self.connection = connection
         self.tokens = tokens
         self.started = False
         self.stopped = False
+        self.router = None
         self.sent: list[tuple[str, str]] = []
 
-    async def start(self, gateway) -> None:
+    async def start(self, router) -> None:
         self.started = True
+        self.router = router
 
     async def stop(self) -> None:
         self.stopped = True
@@ -185,8 +214,8 @@ def fake_channel_factory(made=None):
     """A ``get_channel``-shaped factory handing out ``FakeChannel``s. Pass a list to
     collect every channel it builds."""
 
-    def factory(platform, **tokens):
-        channel = FakeChannel(platform, **tokens)
+    def factory(platform, connection="", **tokens):
+        channel = FakeChannel(platform, connection=connection, **tokens)
         if made is not None:
             made.append(channel)
         return channel
@@ -199,14 +228,26 @@ def _canned(**fields):
     return type("Out", (), fields)()
 
 
-def fake_title_factory(title="Fake Title"):
-    """A titler factory whose one-shot agent always answers ``title``."""
-    return lambda config: FakeStructuredAgent(_canned(title=title))
+def fake_title_factory(title="Fake Title", built=None):
+    """A titler factory whose one-shot agent always answers ``title``. Pass ``built`` to
+    collect the config each titler was built from — which model named the chat."""
+
+    def factory(config):
+        if built is not None:
+            built.append(config)
+        return FakeStructuredAgent(_canned(title=title))
+
+    return factory
 
 
-def fake_summary_factory(summary="Fake summary.", name="Fake Task", description=""):
+def fake_summary_factory(summary="Fake summary.", name="Fake Task", description="", built=None):
     """A distiller factory for run summaries AND task auto-naming (one fake answers
-    both schemas — each reader picks the field it needs)."""
-    return lambda config: FakeStructuredAgent(
-        _canned(summary=summary, name=name, description=description)
-    )
+    both schemas — each reader picks the field it needs). Pass ``built`` to collect the
+    config each distiller was built from — which model summarised the run."""
+
+    def factory(config):
+        if built is not None:
+            built.append(config)
+        return FakeStructuredAgent(_canned(summary=summary, name=name, description=description))
+
+    return factory

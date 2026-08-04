@@ -73,14 +73,17 @@
 
   // "+" chip → profile-creation modal (§5.4). Reuses ProfileForm (same form as
   // onboarding). Preset accents already claimed by existing profiles are hidden
-  // (a custom colour is always available). On success → full-page navigate to
-  // /app/{pid}/ (App.svelte's boot adopts it and applies its accent).
+  // (a custom colour is always available). On success → switch to the new profile
+  // in place (switchProfile adopts its accent and lands on its home).
   let createOpen = $state(false)
   const claimedAccents = $derived(list.map((p) => p.accent))
   async function createProfile({ name, accent }) {
     const res = await api.createProfile(name, accent) // throws → inline
     // Add to the live list before switching so switchProfile finds its accent/chip.
     profiles.update((r) => ({ ...r, list: [...(r.list || []), res.profile] }))
+    // switchProfile lands in place (no reload), so nothing unmounts this modal for
+    // us — close it here, or the form sits on its "Creating…" busy state forever.
+    createOpen = false
     switchProfile(res.profile.id)
   }
 
@@ -440,8 +443,13 @@
     <div class="modal profcreate">
       <h2>New profile</h2>
       <p class="pc-lead">A colour-coded, isolated workspace — its own chats, tasks, memory, and files.</p>
-      <ProfileForm claimed={claimedAccents} submitLabel="Create profile" busyLabel="Creating…" onSubmit={createProfile} />
-      <button class="modal-close" onclick={() => (createOpen = false)}>Cancel</button>
+      <ProfileForm
+        claimed={claimedAccents}
+        submitLabel="Create profile"
+        busyLabel="Creating…"
+        onSubmit={createProfile}
+        onCancel={() => (createOpen = false)}
+      />
     </div>
   {/if}
 

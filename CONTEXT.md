@@ -263,6 +263,9 @@ voice sessions are different, protocol-level concepts that keep the word),
 conversation
 _Note_: a Chat opened in the main pane is a **Thread** (the chat-or-task union) —
 "thread" names that union, never the persisted Chat entity itself.
+_Note_: a Chat is not owned by the surface that started it. The browser and a
+**Peer** reach the same Chats, and a Peer may attach to a Chat begun in the browser
+(ADR 0020). What a Chat can never do is cross Profiles.
 
 **Starred**:
 A user-set flag on a listed **Chat** or **Task** that lifts it into a "Starred"
@@ -274,6 +277,122 @@ item's content, last-update time, scheduling, or runs. For a Task the pin also
 outranks the needs-input float — a starred task that needs input stays in the
 Starred section, its row's status icon still signalling the request.
 _Avoid_: pinned, favorite
+
+## Connections
+
+**Connection**:
+One configured instance of a messaging platform — Telegram, Discord or Slack — with
+its own name, token(s), **Connection default profile**, **Paired accounts**, group
+pins and **Channel exposure**. The unit of configuration, and the key everything
+platform-side is stored under. A platform can be connected as many times as the user
+wants: two Telegram bots are two independent Connections. Install-wide and never
+owned by a Profile (ADR 0022). The **platform** survives as a field on it, saying
+which adapter to construct and which surfaces exist.
+_Avoid_: channel (the retired one-per-platform sense), integration (that is the
+Settings section listing Connections), bot (that is the platform-side account),
+binding (the retired one-platform-one-Profile link)
+
+**Connection default profile**:
+The Profile a **Connection**'s conversations land in when nothing else has been
+chosen — one per Connection, set install-wide. A fallback, not an owner: it never
+decides whether the Connection connects (its token does), changing it needs no
+restart, and a **Peer** that has chosen its own **Peer profile** ignores it entirely.
+A Connection with no default answers that it has nowhere to go rather than guessing,
+and a Profile withdrawn from every one of its surfaces cannot be it.
+_Avoid_: binding, assignment, owning profile, active default (that is the WebUI's
+fallback Profile, an unrelated install-level setting)
+
+**Peer**:
+One conversation on the platform side — a direct message or a group — identified by
+its **Connection** and that platform's own chat id. Keyed by the Connection, not the
+platform: on Telegram a direct message's chat id is the user's own id, identical
+across two bots, so two Connections would otherwise share one conversation. This is what
+a Connection actually talks to, and what holds everything persisting between messages:
+its **Peer profile**, its **Peer sender**, and the **Chat** it is currently attached to.
+A Peer starts many Chats over time and keeps owning the ones it leaves — that is how a
+**Task** started in a conversation delivers its outcome back there.
+_Avoid_: session (the retired chat-sense name — see **Chat**), chat (that is the
+persisted entity a Peer attaches to), user (a Peer is a conversation; several people
+speak in a group Peer), conversation
+
+**Peer profile**:
+The Profile a **Peer** currently speaks to — persistent, platform-side, surviving
+restarts. Chosen per Peer and never inherited from another Peer. Changing it always
+moves the Peer to a fresh **Chat**, because a Chat cannot cross Profiles. A group Peer's
+is *pinned*: chosen once when the bot first speaks there and re-pointed only from the
+WebUI, since a group is read by everyone in it and by nobody's choice but the install's.
+_Avoid_: active profile (**Active** names the model selection, and the WebUI's
+"active Profile" is whichever Profile the open client is viewing — both are unrelated
+senses), current profile, bound profile
+
+**Attached** (Peer → Chat):
+The link from a **Peer** to the one **Chat** it is speaking in. At most one Chat per
+Peer. Attaching is pure navigation — it neither creates nor destroys a Chat, and the
+Chat it leaves stays exactly as it was, reachable again later and from the browser
+throughout.
+_Avoid_: open (that is the browser's **Thread**), selected, bound, current
+
+**Pending override** (Peer):
+A **Chat override** chosen by a **Peer** that is not **Attached** to anything yet —
+the model its next message's Chat will be born with, held on the Peer until that Chat
+exists and consumed the moment it does. Dropped when the Peer detaches again or
+switches **Profile**, and by **Attaching** to any Chat — a held choice belongs to a Peer
+that is in none, so it never outlives that state. `/status` names one while it is held,
+so state that durable is never invisible. It exists only because a Channel has no client
+to remember an unsent choice in; the WebUI holds the same intent in the open page and
+loses it on a reload (ADR 0025).
+_Avoid_: default model (the install-wide **Active** is that), queued override, draft
+
+**Channel exposure**:
+The set of surfaces a Profile is reachable from. Surfaces belong to a **Connection**,
+not to a platform — one per Connection, except on Telegram where direct messages and
+groups are withdrawable independently — so with two Telegram bots a Profile can
+answer on one and not the other. Default-allow: absence of a record means reachable,
+so a record exists only ever to withdraw. A Profile withdrawn from a surface cannot
+be chosen there and none of its **Chats** are offered there. Set from inside the
+Connection, read Connection-major: one row per Profile, a switch per surface.
+_Avoid_: grant (Folders are default-deny + opt-in; exposure is the exact opposite),
+permission (that is the commands policy), suppression (the per-profile skill override
+— same shape, different subject)
+
+**Paired account**:
+A platform account allowed to speak to one **Connection** — being paired to the work
+Telegram bot grants nothing on the personal one. Identity is the platform's
+numeric user id. A handle (`@username`) is only an *invitation*: it pins to a numeric
+id the first time that handle speaks, and is matched by id ever after — so releasing
+or changing a handle neither breaks the pairing nor opens it to whoever takes the
+handle next. An unpaired account gets no answer and learns nothing about the install
+(ADR 0021).
+_Avoid_: user (**Profile**'s _Avoid_ already reserves the word), member, allowlist
+entry
+
+**Peer sender**:
+The platform account a **Peer** is judged by — the last one it served, and the account a
+push into that conversation is gated on being a **Paired account** of the Connection. In a
+direct message it is the person; in a group it is whoever spoke last, and a Peer holding
+none is closed to a push until a message stamps one (ADR 0022).
+_Avoid_: owner (a Peer has none — a group Peer belongs to no one account), author,
+last speaker (an unpaired one is turned away before it can stamp anything), sender_id
+(that is the inbound message's field, from which this is taken)
+
+**Mirror**:
+What an **Attached** Peer receives from its Chat: every completed message in that
+Chat, whoever wrote it and from whichever surface — so a conversation held in the
+browser reads back on the platform, and the reverse. Completed messages and the
+agent's questions only; the intermediate work of a turn is not mirrored. A Peer
+mirrors exactly the Chat it is attached to and stops the instant it attaches
+elsewhere (ADR 0020).
+_Avoid_: sync, broadcast, echo, notification (a task outcome pushed to a Peer is a
+separate, unattached-delivery concept)
+
+**Tool trace**:
+The list of tools a **Peer**'s own turn called, shown in the conversation as that turn
+runs and left behind as its record. Live while the turn is in flight, bounded in
+length, and kept when the turn is stopped or fails. Distinct from the **Mirror**, which
+carries a Chat's *completed* messages to an Attached Peer and never its intermediate
+work.
+_Avoid_: log, chips (the browser's rendering of the same events), progress (that names
+the delivery callback, not the thing shown)
 
 ## Folders
 
@@ -335,6 +454,25 @@ the Text section of Settings → Models; exactly one is Active install-wide.
 _Avoid_: LLM config (the `llm_configs` store/implementation name), model (bare —
 ambiguous with a Live model)
 
+**Custom endpoint** (Text model):
+A **Text model** that names its own endpoint rather than reaching its vendor's. Naming
+an endpoint is the whole of the distinction — there is no separate flag, and no
+recorded memory of the **Template** it came from. A Custom endpoint is the only kind
+of Text model that may choose its **API interface**; every other Text model reaches
+one vendor over one settled surface. Ollama is *not* a Custom endpoint: its local
+address is a different field and admits no interface choice.
+_Avoid_: compatible model, custom provider, self-hosted (an endpoint may be a cloud
+proxy), BYO endpoint
+
+**API interface**:
+The wire a **Custom endpoint** is spoken over — OpenAI · Responses, OpenAI · Chat
+Completions, or Anthropic. An attribute of a Text model, offered only once that model
+names an endpoint and hidden entirely otherwise: the vendor-reaching Text models each
+have exactly one surface and so present no choice. Naming an endpoint reveals the
+choice; withdrawing the endpoint settles it back to the vendor's own surface.
+_Avoid_: type (the stored field's name, which also carries the vendor), protocol, API
+version, provider (the vendor is a separate axis and is never chosen here)
+
 **Live model**:
 A named configuration for realtime voice — a Voice provider, a realtime model, an
 optional referenced Secret, and a chosen Voice. The spoken counterpart of a Text model.
@@ -357,24 +495,82 @@ _Avoid_: provider (bare — a Text model has a provider too)
 **Active** (model):
 The single Text model and single Live model currently in effect. The install-wide
 Active is the default; a **Profile** may override *which* shared model is Active for
-it (a per-profile **Active override**), and the effective Active is the profile
-override when set, else the install-wide Active, else the environment fallback (an
-env pin still wins last and is unswitchable). The models themselves stay a single
-shared install-wide list (ADR 0004) — only the *selection* is per-profile. Switching
-persists and takes effect on the next message (Text) or next voice session (Live),
-never retroactively on one in flight.
+it (a per-profile **Active override**), and a **Chat** may override it again for
+itself alone (a **Chat override**, Text only). The effective Active is the Chat
+override when set, else the profile override, else the install-wide Active, else the
+environment fallback (an env pin still wins last and is unswitchable); inside a Task
+**Run**'s thread the **Task**'s own model sits between the Chat override and the
+profile override for a reply you type there, and above the Chat override for the Run's
+own turn, which names it outright. The models themselves stay a single shared
+install-wide list (ADR 0004) — only the *selection* is per-profile and per-chat.
+Switching persists and takes effect on the next message (Text) or next voice session
+(Live), never retroactively on one in flight.
 _Avoid_: default, current, selected (a Secret's Default is the unrelated fallback
 concept)
 
 **Active override** (per-profile model):
 A Profile's optional choice of which shared **Text model** and which shared **Live
 model** is **Active** for it, overriding the install-wide Active for that Profile
-only. Set from two model switchers in the header of Settings → **Profiles** (Text
-reuses the composer's switcher; Live is a parallel one), each offering "use install
-default" to clear the override. Stored in the Profile's config overlay, never forking
-the shared model list (ADR 0015 · ADR 0004 amendment).
+only. Set from two model switchers in the header of Settings → **Profiles**, each
+offering "use install default" to clear the override. Stored in the Profile's config
+overlay, never forking the shared model list (ADR 0015 · ADR 0004 amendment).
 _Avoid_: profile model (there is no per-profile model, only a per-profile selection),
 default
+
+**Chat override** (per-chat model):
+A **Chat**'s optional choice of which shared **Text model** is **Active** for it,
+overriding the profile's selection for that Chat only. Absent means the Chat inherits
+whatever is Active at the moment it speaks, so an un-overridden Chat follows a later
+profile or install-wide switch; setting one detaches that Chat from the drift.
+Text only — the spoken **Live model** has no per-chat counterpart. An override naming
+a model that has since been deleted degrades to the layer directly beneath it — inside
+a **Run**'s thread, the **Task**'s model — and never straight to the profile's
+selection; one naming a model that exists but cannot run is not rescued at all. Set
+from the composer's model switcher (which offers "use default" to clear) and, from a
+**Channel**, by `/model`; `/status` reads it back, marking an inherited model as a
+default. Inside a **Run**'s thread it governs the replies you type
+there and not the Run's own turn, which keeps running on the **Task**'s model. The
+cheap-model background work a Chat provokes — its generated title, a Run's summary —
+deliberately ignores the Chat override and stays on the profile's own cheap model
+(ADR 0025).
+_Avoid_: chat model, pin (an env pin is the unrelated unswitchable fallback), thread
+model
+
+**Template** (model):
+A prefilled starting point for creating a **Text model** — a vendor, a type, and
+default field values, offered as a grid of cards when adding a model. Picking one
+opens the model editor prefilled; a Template is never saved, never listed, and has no
+lifecycle of its own — it exists only in the moment of creation. Templates are
+presented in groups under one rule: those needing no API key group together and come
+first, everything else groups by vendor. A Template's group and its **Credential
+source** both follow from its type, never from the Template itself. A Template that
+seeds an endpoint creates a **Custom endpoint**, whose **API interface** is then the
+user's to change; every other Template's surface is settled at the moment it is
+picked and is never presented again.
+_Avoid_: preset, starter, example (a Template is prefill, not a sample), provider (a
+Template names one but is not one)
+
+**Model catalog**:
+The models an *authority* says it offers, read live and never stored. Two kinds of
+authority answer: an ACP adapter, asked for the catalog behind a CLI-login **Text
+model**, and a provider endpoint, asked for the catalog behind a keyed one. A catalog
+is the sole authority on which model names *exist*; when it cannot be read, the reason
+is named rather than hidden, and **Known models** stands in. Which side reads it
+follows the credential: the gateway asks with a saved **Secret** or with no key at
+all, and the browser asks the provider directly with a key that has only been pasted
+(ADR 0025).
+_Avoid_: model list (bare — collides with the list of saved Text models), available
+models, inventory
+
+**Known models**:
+What this install knows *about* model names — a label, a price, and a context window
+per name, shipped with the app. Known models is emphatically not a statement that a
+name exists: it adorns the names a **Model catalog** returns, stands in (marked as
+unverified) when no catalog can be read, and supplies the names offered before any key
+is available. A name a catalog returns but Known models has never heard of is offered
+plainly; its missing price is the honest signal that it is newer than the app.
+_Avoid_: catalog (that is the live authority), default models, supported models (a
+Known model may not exist; an existing model may be unknown)
 
 ## Secrets
 
@@ -404,8 +600,22 @@ is the models' concept)
 The link from one Text or Live model to the Secret it authenticates with. Distinct
 from a **File reference** (an `@`-pointer to a file) — this is the model→Secret
 sense of the word, and stays qualified as "Referenced (secret)". Optional —
-an empty reference means fallback (Default, then environment). Deleting a Secret is
+an empty reference means fallback (Default, then environment), or, for a model whose
+**Credential source** is a subscription or a CLI login, no Secret at any point.
+Deleting a Secret is
 always allowed; models referencing it degrade to fallback and their health/key-source
 labelling reports it honestly. In the model form, pasting a raw key mints a new
 Secret on the spot with an auto-generated name, renameable later.
 _Avoid_: attached, bound, owned (a Secret is never owned by one model)
+
+**Credential source**:
+Where a **Text model**'s credentials actually come from when a call is made — a
+**Referenced** Secret, a provider **Default**, the environment, an OAuth subscription
+sign-in, a CLI login the user already holds, or nothing at all (a local or
+custom-endpoint model needing no key). Exactly one applies to any model at any moment,
+and the model's key labelling names it honestly rather than merely reporting whether a
+Secret exists. Distinguishes the two credential paths that bypass Secrets entirely:
+a subscription model authenticates with an OAuth sign-in, and a CLI-login model
+borrows the session of a provider's own command-line tool.
+_Avoid_: key source (the implementation's field name), auth, key (bare), credential
+(the Secret entry already claims this word)
