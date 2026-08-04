@@ -1,14 +1,15 @@
-<script>
+<script lang="ts">
   // Compact header over a run's chat thread: which task, when, current status,
   // with a Stop for live runs and a link back to the task page.
-  import { runInfo } from '../../store.js'
-  import { api } from '../../transport/api.js'
-  import { go } from '../../router.js'
+  import { runInfo } from '../../store.ts'
+  import { api } from '../../transport/api/index.ts'
+  import { go } from '../../router.ts'
+  import type { RunStatus } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
-  import { fmtStamp } from '../../lib/time.js'
+  import { fmtStamp } from '../../lib/time.ts'
 
-  const TERMINAL = ['completed', 'failed', 'cancelled']
-  const WORD = { completed: '✓ completed', failed: '✗ failed', cancelled: 'cancelled',
+  const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled']
+  const WORD: Record<RunStatus, string> = { completed: '✓ completed', failed: '✗ failed', cancelled: 'cancelled',
                  running: 'running…', needs_input: 'needs your input' }
 </script>
 

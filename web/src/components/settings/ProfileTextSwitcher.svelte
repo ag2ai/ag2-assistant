@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Per-profile Text model switcher (ADR 0015): sets this profile's Active Text override
   // via api.setLlmOverride (not the install-wide useLlmConfig, which only Settings →
   // Models calls, and not the per-Chat override the composer sets — ADR 0025). Reuses
@@ -6,13 +6,14 @@
   // states; the current selection + inherited-vs-overridden come from the settings
   // payload (ctx.s.llm_active / .llm_override), reloaded by ctx.run after every change.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
-  import { SETTINGS_PAGE } from '../../store.js'
-  import { replaceOverlay } from '../../router.js'
-  import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
-  import { TYPE_LABEL } from '../../lib/providerLabels.js'
-  import { getSettings } from './context.svelte.js'
+  import { api } from '../../transport/api/index.ts'
+  import { SETTINGS_PAGE } from '../../store.ts'
+  import { replaceOverlay } from '../../router.ts'
+  import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
+  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
+  import { getSettings } from './context.svelte.ts'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
+  import type { LlmConfig } from '../../schemas/index.ts'
 
   const ctx = getSettings()
   onMount(() => { loadLlmConfigs().catch(() => {}) })
@@ -23,7 +24,7 @@
   const inherited = $derived(!ctx.s?.llm_override)          // no per-profile override → inheriting
 
   const gotoModels = () => replaceOverlay('settings', SETTINGS_PAGE.MODELS)
-  const choose = (c) => ctx.run(() => api.setLlmOverride(c.id))
+  const choose = (c: LlmConfig) => ctx.run(() => api.setLlmOverride(c.id))
   const useDefault = () => ctx.run(() => api.setLlmOverride(''))
 </script>
 

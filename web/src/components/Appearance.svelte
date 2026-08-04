@@ -1,25 +1,25 @@
-<script>
+<script lang="ts">
   // Theme (light/dark/auto) controls. Shared by Settings and the onboarding
-  // "Personalize" step so the two stay in sync — both drive the same shared theme switcher (palette.js)
+  // "Personalize" step so the two stay in sync — both drive the same shared theme switcher (palette.ts)
   // theme switcher (persisted to localStorage + applied on <html>).
   //
   // §5.3: the accent *palette* is no longer set here. Palette is the profile's
   // identity colour, chosen at profile creation/edit and applied from the
   // registry on boot (App.svelte) — one control, not two competing ones. This
   // component now owns only the global day/night preference.
-  import { getTheme, setTheme } from '../design/palette.js'
+  import { getTheme, setTheme, type ThemeMode } from '../design/palette.ts'
   import Icon from './Icon.svelte'
 
-  let theme = $state(getTheme())
-  const THEMES = [
+  let theme: ThemeMode = $state(getTheme())
+  const THEMES: { id: ThemeMode; label: string; icon: string }[] = [
     { id: 'light', label: 'Light', icon: 'sun' },
     { id: 'dark', label: 'Dark', icon: 'moon' },
     { id: 'auto', label: 'Auto', icon: 'contrast' },
   ]
-  function pickTheme(id) { theme = id; setTheme(id) }
+  function pickTheme(id: ThemeMode) { theme = id; setTheme(id) }
   // Reflect changes made elsewhere (e.g. the header theme toggle).
   $effect(() => {
-    const onT = (e) => { theme = e.detail.theme }
+    const onT = (e: DocumentEventMap['ag2-theme-change']) => { theme = e.detail.theme }
     document.addEventListener('ag2-theme-change', onT)
     return () => document.removeEventListener('ag2-theme-change', onT)
   })

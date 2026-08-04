@@ -1,19 +1,21 @@
-<script>
+<script lang="ts">
   // The docked preview rail: renders the route's `aside` file (or the path-less
   // transient `viewer` body) beside the conversation in the grid's right column.
   // html/image/pdf render natively; md/code/text in-app; unknown types → download.
   import { onMount, onDestroy } from 'svelte'
-  import { route, closeAside } from '../router.js'
-  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, openThreadRow } from '../store.js'
-  import { threadScope } from '../lib/threadScope.js'
-  import { api } from '../transport/api.js'
+  import { route, closeAside } from '../router.ts'
+  import { viewer, previewWidth, previewExpanded, resetPreviewView, revealFile, openThreadRow } from '../store.ts'
+  import { threadScope } from '../lib/threadScope.ts'
+  import { api } from '../transport/api/index.ts'
   import Markdown from './Markdown.svelte'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'
-  import { viewerKind, mentionsLabel, mentionRowTitle, mentionRowIcon } from '../lib/preview.js'
-  import { saveErrorMessage, isConflict } from '../lib/fileEdit.js'
-  import { setUnsavedGuard } from '../lib/unsavedGuard.js'
-  import { isFolderPath, folderAffordances } from '../lib/folderFiles.js'
+  import { viewerKind, mentionsLabel, mentionRowTitle, mentionRowIcon } from '../lib/preview.ts'
+  import { saveErrorMessage, isConflict } from '../lib/fileEdit.ts'
+  import { setUnsavedGuard } from '../lib/unsavedGuard.ts'
+  import { isFolderPath, folderAffordances } from '../lib/folderFiles.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { MentionRow } from '../schemas/index.ts'
 
   // A URL-addressed file wins; a path-less transient body is the fallback when no
   // file is addressed. The rail shows exactly one of them.
@@ -28,6 +30,7 @@
   // Grant resolution (ADR 0013); a Files-space (relative) path ignores it, per rawQuery.
   const chatId = $derived($threadScope)
   const url = $derived(path ? api.fileUrl(path, false, chatId) : '')
+  const downloadUrl = $derived(path ? api.fileUrl(path, true, chatId) : '')
   const native = $derived(kind === 'html' || kind === 'pdf' || kind === 'image')
   // Offer a copy button for text-backed kinds and html (copy the source), and for
   // images (copy the pixels). markdown additionally gets a Preview/Edit switcher.
@@ -35,7 +38,7 @@
   // The served file's resolved Grant mode (`X-File-Mode`), captured from the markdown
   // load: null until it arrives, then read | read_write. A Files-space file reads back
   // read_write; a Folder file carries its Thread-scoped Grant mode (ticket 04).
-  let fileMode = $state(null)
+  let fileMode = $state<string | null>(null)
   // In-place editing (ADR 0011) is offered for path-backed markdown only: the
   // transient body has nowhere to save, and other kinds don't opt in yet. A Folder
   // (absolute) file additionally needs a read_write Grant — a read-only Folder file
@@ -59,7 +62,7 @@
   // the editor's working copy (also what Preview renders); `etag` its version token.
   let text = $state('')
   let draft = $state('')
-  let etag = $state(null)
+  let etag = $state<string | null>(null)
   let err = $state('')
   let mode = $state('preview')   // markdown only: 'preview' render vs. 'edit' source
   // The unknown/"download" kind gets an on-demand raw view: 'preview' shows the
@@ -90,7 +93,7 @@
   // mentions THIS file. Loaded on-demand for path-backed previews only (the transient
   // body has no file to trace); the header affordance self-hides when the list is
   // empty. `mentionsOpen` toggles the anchored popover.
-  let mentions = $state([])
+  let mentions = $state<MentionRow[]>([])
   let mentionsOpen = $state(false)
   $effect(() => {
     const p = path, cid = chatId
@@ -98,17 +101,18 @@
     if (!p) return                        // transient/path-less body: nothing to trace
     let stale = false                     // a late load for a since-changed file must not land
     api.fileMentions(p, cid)
-      .then((r) => { if (!stale) mentions = r.threads || [] })
+      .then((r) => { if (!stale) mentions = r.threads })
       .catch(() => { if (!stale) mentions = [] })   // best-effort backlink: a failure just hides it
     return () => { stale = true }
   })
   function toggleMentions() { mentionsOpen = !mentionsOpen }
-  function openMention(row) { openThreadRow(row); mentionsOpen = false }  // navigate; keep the preview open
+  function openMention(row: MentionRow) { openThreadRow(row); mentionsOpen = false }  // navigate; keep the preview open
   // Dismiss the popover on outside-click / Esc, mirroring FilesTree's menu.
-  function onDocPointer(e) {
-    if (mentionsOpen && !e.target.closest('.vmentions-pop') && !e.target.closest('.vmentions')) mentionsOpen = false
+  function onDocPointer(e: PointerEvent) {
+    const t = e.target instanceof Element ? e.target : null
+    if (mentionsOpen && !t?.closest('.vmentions-pop') && !t?.closest('.vmentions')) mentionsOpen = false
   }
-  function onDocKey(e) { if (e.key === 'Escape') mentionsOpen = false }
+  function onDocKey(e: KeyboardEvent) { if (e.key === 'Escape') mentionsOpen = false }
   onMount(() => {
     document.addEventListener('pointerdown', onDocPointer, true)
     document.addEventListener('keydown', onDocKey)
@@ -131,11 +135,11 @@
     else if (p && k === 'markdown') {
       api.fileTextWithEtag(p, cid)
         .then(({ text: t, etag: e, mode: m }) => { if (!stale) { text = t; draft = t; etag = e; fileMode = m } })
-        .catch((e) => { if (!stale) err = String(e.message || e) })
+        .catch((e) => { if (!stale) err = errText(e) })
     } else if (p && (k === 'code' || k === 'text')) {
       api.fileText(p, cid)
         .then((t) => { if (!stale) { text = t; draft = t } })
-        .catch((e) => { if (!stale) err = String(e.message || e) })
+        .catch((e) => { if (!stale) err = errText(e) })
     }
     return () => { stale = true }
   })
@@ -148,11 +152,12 @@
     if (rawLoaded) return
     rawLoaded = true
     const p = path, cid = chatId
+    if (!p) return
     try {
       const t = await api.fileText(p, cid)
       if (p === path) rawText = t
     } catch (e) {
-      if (p === path) rawErr = String(e.message || e)
+      if (p === path) rawErr = errText(e)
     }
   }
 
@@ -168,7 +173,7 @@
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': imagePng() })])
       } else if (kind === 'html') {
         // html renders natively (iframe), so its source isn't held in `draft` — fetch it.
-        await navigator.clipboard.writeText(await api.fileText(path, chatId))
+        await navigator.clipboard.writeText(path ? await api.fileText(path, chatId) : '')
       } else {
         await navigator.clipboard.writeText(draft || '')
       }
@@ -179,9 +184,10 @@
 
   // Write the draft against `baseTag` (the open-time etag, or null to force past a
   // conflict); on success adopt it + the returned etag, a `409` raises the prompt.
-  async function persist(baseTag) {
+  async function persist(baseTag: string | null) {
     if (saving) return
     const p = path               // the file this write targets; a mid-flight switch drops the result
+    if (!p) return
     saving = true
     saveErr = ''
     const pending = draft
@@ -219,6 +225,7 @@
   async function reloadFromDisk() {
     if (saving) return
     const p = path               // a mid-flight switch drops the reloaded content
+    if (!p) return
     saving = true
     saveErr = ''
     try {
@@ -240,7 +247,7 @@
   }
 
   // ⌘/Ctrl-S saves from anywhere while a markdown file is open in the rail.
-  function onKeydown(e) {
+  function onKeydown(e: KeyboardEvent) {
     if (!editable) return
     if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
       e.preventDefault()
@@ -249,7 +256,7 @@
   }
 
   // Refresh / tab-close with unsaved edits triggers the browser's native leave prompt.
-  function onBeforeUnload(e) {
+  function onBeforeUnload(e: BeforeUnloadEvent) {
     if (!dirty) return
     e.preventDefault()
     e.returnValue = ''
@@ -257,15 +264,18 @@
 
   // Draw the current image onto a canvas and export a PNG blob. The image is
   // same-origin (/api/files/raw), so the canvas stays untainted and exportable.
-  async function imagePng() {
+  async function imagePng(): Promise<Blob> {
     const img = new Image()
     img.src = url
     await img.decode()
     const canvas = document.createElement('canvas')
     canvas.width = img.naturalWidth
     canvas.height = img.naturalHeight
-    canvas.getContext('2d').drawImage(img, 0, 0)
-    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('canvas 2d context unavailable')
+    ctx.drawImage(img, 0, 0)
+    return await new Promise((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas export failed'))), 'image/png'))
   }
 </script>
 
@@ -273,7 +283,7 @@
 
 <!-- Shared "file is gone" panel: any kind whose bytes fail to load draws the path
      instead of a broken glyph / raw stack trace. `detail` carries the technical error. -->
-{#snippet missing(icon, msg, detail)}
+{#snippet missing(icon: string, msg: string, detail?: string)}
   <div class="vmissing" role="alert">
     <Icon name={icon} size={28} />
     <p class="vmissing-msg">{msg}</p>
@@ -365,7 +375,7 @@
             onclick={() => previewExpanded.update((v) => !v)}>
       <Icon name={$previewExpanded ? 'minimize-2' : 'maximize-2'} size={15} />
     </button>
-    {#if path}<a class="dl" href={api.fileUrl(path, true, chatId)} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></a>{/if}
+    {#if path}<a class="dl" href={downloadUrl} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></a>{/if}
     <button class="rail-x" aria-label="Close" onclick={close}>×</button>
   </div>
   <div class="vbody" class:native class:editing={editable && mode === 'edit'}>
@@ -419,7 +429,7 @@
       {:else}
         <p class="muted">
           No preview for this file type — <button type="button" class="vlink" onclick={showRaw}>view it as raw text</button>
-          or <a class="dl" href={api.fileUrl(path, true, chatId)}>download it</a>.
+          or <a class="dl" href={downloadUrl}>download it</a>.
         </p>
       {/if}
     {:else if editable && mode === 'edit'}

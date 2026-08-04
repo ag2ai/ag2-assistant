@@ -1,9 +1,9 @@
-<script>
+<script lang="ts">
   // Minimal transient toast for profile-recovery (§4.9). Fixed bottom-centre,
   // token-styled, no queue — shows the single `notice` store value when set.
   // Kept deliberately tiny: it flashes for ~1.5s before the client re-resolves
   // to a valid profile (a full-page nav clears it).
-  import { notice } from '../store.js'
+  import { notice } from '../store.ts'
   import Icon from './Icon.svelte'
 </script>
 

@@ -1,9 +1,9 @@
-<script>
+<script lang="ts">
   // The architecture map: which AG2 primitives power this assistant, and
   // (honestly) what's the app layer built on top.
-  import { appVersion, ag2Version } from '../store.js'
-  import { route, closeOverlay, replaceOverlay } from '../router.js'
-  import { PRIMITIVES, SUBSYSTEMS, AG2_DOCS } from '../lib/ag2map.js'
+  import { appVersion, ag2Version } from '../store.ts'
+  import { route, closeOverlay, replaceOverlay } from '../router.ts'
+  import { PRIMITIVES, SUBSYSTEMS, AG2_DOCS } from '../lib/ag2map.ts'
   import Icon from './Icon.svelte'
 
   // The map is URL-addressed (`#poweredby`), so × / Esc / browser Back all funnel
@@ -20,13 +20,16 @@
 
   const ag2 = PRIMITIVES.filter((p) => p.layer === 'ag2')
   const app = PRIMITIVES.filter((p) => p.layer === 'app')
-  const dot = (sub) => (SUBSYSTEMS[sub] || {}).color || 'var(--line)'
+  // App-layer rows carry no subsystem, and an unknown one keeps the neutral line.
+  const dot = (sub: string | undefined) => (sub ? SUBSYSTEMS[sub]?.color : '') || 'var(--line)'
 
-  const onKey = (e) => { if (e.key === 'Escape') close() }
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
 </script>
 
 <svelte:window onkeydown={onKey} />
-<div class="modal-backdrop" onclick={close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the
+     a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop" role="presentation" onclick={close}></div>
 <div class="modal poweredby">
   <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <!-- Window chrome lives in the head: Back at the top-left, × at the top-right

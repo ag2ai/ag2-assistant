@@ -1,21 +1,24 @@
-<script>
+<script lang="ts">
   // "The Day" — editorial broadsheet rendering of an AgendaCard A2UI surface:
   // one day's calendar as a ruled timeline. All-day items ride as chips under the
   // masthead; the single next-up event gets the accent treatment. Data comes from
   // the calendar tools (source-agnostic: the card renders whatever fed it).
   // Event/join links are agent-produced URLs → gated through safeUrl (http(s) only).
-  import { safeUrl } from '../../lib/url.js'
+  import { safeUrl } from '../../lib/url.ts'
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, AgendaEvent } from '../../lib/a2ui.ts'
 
-  let { data = {} } = $props()
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
 
-  const title = $derived(data.title || 'Agenda')
-  const events = $derived((Array.isArray(data.events) ? data.events : []).filter(Boolean))
+  const title = $derived(str(data.title) || 'Agenda')
+  const events = $derived(rows<AgendaEvent>(data.events))
   const allDay = $derived(events.filter((e) => e.allDay))
   const timed = $derived(events.filter((e) => !e.allDay))
-  const note = $derived(data.note || '')
+  const note = $derived(str(data.note))
 
   const date = $derived(
-    data.date ||
+    str(data.date) ||
       new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
   )
 </script>

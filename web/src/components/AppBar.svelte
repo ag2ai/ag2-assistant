@@ -1,17 +1,25 @@
-<script>
+<script lang="ts">
   // The shared top app bar (.mhead). Every main-column page renders one so the
   // header — back button, title/subtitle, and the SystemHealth / ThemeToggle / AG2
   // right-side actions — reads identically across chat, run, task and placeholders.
   // Styling lives globally in app.css (.mhead …); this component owns only markup.
-  import { ag2View } from '../store.js'
-  import { toggleAsideInspector } from '../router.js'
+  import type { Snippet } from 'svelte'
+  import { ag2View } from '../store.ts'
+  import { toggleAsideInspector } from '../router.ts'
   import Icon from './Icon.svelte'
   import ThemeToggle from './ThemeToggle.svelte'
   import SystemHealth from './SystemHealth.svelte'
 
   // back: optional { label, onClick } for the left chevron button.
   // children: optional snippet rendered between the titles and the actions (e.g. a status badge).
-  let { back = null, title = '', subtitle = '', children } = $props()
+  type Props = {
+    back?: { label: string; onClick: () => void } | null
+    title?: string
+    subtitle?: string
+    children?: Snippet
+  }
+
+  let { back = null, title = '', subtitle = '', children }: Props = $props()
 </script>
 
 <div class="mhead">

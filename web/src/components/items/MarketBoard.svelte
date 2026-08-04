@@ -1,44 +1,48 @@
-<script>
+<script lang="ts">
   // "The Exchange" — editorial broadsheet rendering of a MarketBoard A2UI surface.
   // Shares the day/night editorial language with NewsWire/WeatherCard
   // (tokens/editorial.css, theme-aware via [data-theme]). First quote = the lead;
   // the rest form a ruled movers table. Vermilion = down, editorial green = up.
-  let { data = {} } = $props()
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, MarketQuote } from '../../lib/a2ui.ts'
 
-  const quotes = $derived((Array.isArray(data.quotes) ? data.quotes : []).filter(Boolean))
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
+
+  const quotes = $derived(rows<MarketQuote>(data.quotes))
   const lead = $derived(quotes[0] || null)
   const rest = $derived(quotes.slice(1))
-  const title = $derived(data.title || 'Markets')
+  const title = $derived(str(data.title) || 'Markets')
 
   // Market status is shown ONLY when the tool could prove it (all exchanges agree).
-  const STATUS = { open: 'Market open', closed: 'Market closed', pre: 'Pre-market', after: 'After hours' }
-  const statusLabel = $derived(STATUS[data.status] || '')
+  const STATUS: Record<string, string | undefined> = { open: 'Market open', closed: 'Market closed', pre: 'Pre-market', after: 'After hours' }
+  const statusLabel = $derived(STATUS[str(data.status)] || '')
 
   const edition = $derived(
     new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
   const asOf = $derived.by(() => {
     if (!data.asOf) return ''
-    const d = new Date(data.asOf)
-    return isNaN(d) ? '' : d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
+    const d = new Date(str(data.asOf))
+    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
   })
 
-  const up = (q) => Number(q?.changePercent ?? q?.change ?? 0) >= 0
-  const arrow = (q) => (up(q) ? '▲' : '▼')
-  const sign = (n) => (Number(n) >= 0 ? '+' : '')
-  const fmt = (n) =>
+  const up = (q: MarketQuote) => Number(q?.changePercent ?? q?.change ?? 0) >= 0
+  const arrow = (q: MarketQuote) => (up(q) ? '▲' : '▼')
+  const sign = (n: unknown) => (Number(n) >= 0 ? '+' : '')
+  const fmt = (n: unknown) =>
     typeof n === 'number'
       ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : (n ?? '')
-  const pct = (q) => `${sign(q.changePercent)}${Number(q.changePercent).toFixed(2)}%`
+  const pct = (q: MarketQuote) => `${sign(q.changePercent)}${Number(q.changePercent).toFixed(2)}%`
 
   // spark is a normalised 0..100 series; map to an SVG line + area within w×h.
-  function sparkLine(spark, w, h) {
+  function sparkLine(spark: unknown, w: number, h: number) {
     const vs = (Array.isArray(spark) ? spark : []).map(Number)
     if (vs.length < 2) return null
     const pad = 3
-    const x = (i) => pad + (i / (vs.length - 1)) * (w - pad * 2)
-    const y = (v) => pad + (1 - Math.max(0, Math.min(100, v)) / 100) * (h - pad * 2)
+    const x = (i: number) => pad + (i / (vs.length - 1)) * (w - pad * 2)
+    const y = (v: number) => pad + (1 - Math.max(0, Math.min(100, v)) / 100) * (h - pad * 2)
     const pts = vs.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`)
     return {
       line: `M${pts.join(' L')}`,

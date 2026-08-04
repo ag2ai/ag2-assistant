@@ -1,17 +1,19 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { inquiries, soundOnInput, profileEpoch } from '../store.js'
-  import { api } from '../transport/api.js'
-  import { go, route } from '../router.js'
-  import { chime } from '../lib/chime.js'
+  import { inquiries, soundOnInput, profileEpoch } from '../store.ts'
+  import type { InquiryRow } from '../store.ts'
+  import { api } from '../transport/api/index.ts'
+  import { go, route } from '../router.ts'
+  import { chime } from '../lib/chime.ts'
+  import type { HitlQuestion, Inquiry } from '../schemas/index.ts'
 
-  let drafts = $state({})
-  let seen = new Set()   // inquiry ids already surfaced — chime only on genuinely new ones
+  let drafts = $state<Record<string, string>>({})
+  let seen = new Set<string>()   // inquiry keys already surfaced — chime only on genuinely new ones
   let first = true
 
   // The stream the open page renders inline: a run thread → "task-run:<id>"
-  // (mirrors controller.js's openThread chat mapping), a chat page → the chat
+  // (mirrors controller.ts's openThread chat mapping), a chat page → the chat
   // id. A task page (route.name === 'task') is config + a run list, not a
   // chat — it has no inline stream, so it maps to null (nothing to dedupe
   // against; its inquiries stay in the strip).
@@ -38,13 +40,13 @@
       // Two sources merged into one strip: durable task inquiries, and chat-turn
       // permission prompts (run_code/shell/file) which live in the HitlServer.
       const [inq, hitl] = await Promise.all([
-        api.inquiries().catch(() => []),
-        api.hitlPending().catch(() => []),
+        api.inquiries().catch((): Inquiry[] => []),
+        api.hitlPending().catch((): HitlQuestion[] => []),
       ])
       if (get(profileEpoch) !== epoch) return   // switched mid-flight — this is the old profile's data
-      const next = [
-        ...inq.map((q) => ({ ...q, _src: 'inquiry', _key: 'inq:' + q.id })),
-        ...hitl.map((q) => ({ ...q, _src: 'hitl', _key: 'hitl:' + q.id })),
+      const next: InquiryRow[] = [
+        ...inq.map((q): InquiryRow => ({ ...q, _src: 'inquiry', _key: 'inq:' + q.id })),
+        ...hitl.map((q): InquiryRow => ({ ...q, _src: 'hitl', _key: 'hitl:' + q.id })),
       ]
       const fresh = !first && next.some((q) => !seen.has(q._key))
       seen = new Set(next.map((q) => q._key))
@@ -55,7 +57,7 @@
   }
   onMount(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t) })
 
-  async function answer(q, text) {
+  async function answer(q: InquiryRow, text: string | undefined) {
     if (!text || !text.trim()) return
     try {
       if (q._src === 'hitl') await api.answerHitl(q.id, text.trim())
@@ -73,7 +75,9 @@
       <div class="qcard">
         <div class="qk">
           {q.kind === 'permission' ? 'Permission' : 'Question'}
-          {#if q.task_title}· <a onclick={() => q.root_id && go('/t/' + q.root_id)}>{q.task_title}</a>{/if}
+          <!-- The owning task is an inquiry-only trait: a HitlServer prompt belongs to
+               the turn in front of you, not to a durable task. -->
+          {#if q._src === 'inquiry' && q.task_title}· <button class="tasklink" onclick={() => q.root_id && go('/t/' + q.root_id)}>{q.task_title}</button>{/if}
         </div>
         <div class="qt">{q.text}</div>
         {#if q.detail}<div class="qd">{q.detail}</div>{/if}

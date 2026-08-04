@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The ChoiceCard — inline rendering of a durable HITL inquiry on the thread.
   // Not an A2UI surface: the question IS the inquiry (restart-proof, answerable
   // from any channel); this card is just its projection, styled to sit alongside
@@ -6,13 +6,17 @@
   // stays available. A retired card keeps the chosen chip highlighted (if answered)
   // and says HOW it resolved — answered / expired / cancelled — with its buttons
   // disabled, so a timed-out or task-ended prompt never leaves dead live controls.
-  import { answer } from '../../controller.js'
-  import { runInfo } from '../../store.js'
+  import { answer } from '../../controller.ts'
+  import { runInfo } from '../../store.ts'
+  import type { ThreadItem } from '../../schemas/events.ts'
+
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
-  let { item } = $props()
+
+  type Props = { item: Extract<ThreadItem, { kind: 'inquiry' }> }
+  let { item }: Props = $props()
   let text = $state('')
   let showDetail = $state(false)
-  function pick(opt) { answer(item.inquiryId, opt) }
+  function pick(opt: string) { answer(item.inquiryId, opt) }
   function submit() { if (text.trim()) { answer(item.inquiryId, text.trim()); text = '' } }
 
   // A card is retired once its inquiry resolves OR its owning task reaches a
@@ -22,21 +26,25 @@
   let retired = $derived(!!item.resolved || onTerminalTask)
   // How it resolved: explicit resolution wins; a real answer implies "answered";
   // otherwise a retired-by-terminal-task prompt was simply never answered.
-  let state = $derived(
+  // Named `resolution`, not `state`: `$state` is a rune, so a `state` binding reads
+  // as a store subscription in a typed component.
+  let resolution = $derived(
     item.resolution || (item.resolved ? 'answered' : retired ? 'unanswered' : null)
   )
-  const LABEL = {
+  // An unrecognised backend resolution has no label — the header then renders empty,
+  // exactly as before typing.
+  const LABEL: Record<string, string | undefined> = {
     answered: 'You answered',
     expired: 'Expired · not answered in time',
     cancelled: 'Cancelled · task ended',
     unanswered: 'Not answered',
   }
   let header = $derived(
-    state ? LABEL[state]
+    resolution ? LABEL[resolution]
       : item.qkind === 'permission' ? 'Permission · needs your call'
       : 'Needs your answer'
   )
-  let answered = $derived(state === 'answered' && !!item.answer)
+  let answered = $derived(resolution === 'answered' && !!item.answer)
 </script>
 
 <div class="choice" class:resolved={retired} class:unanswered={retired && !answered}>
@@ -66,7 +74,7 @@
         >{o}</button>
       {/each}
     </div>
-    {#if answered && !item.options.includes(item.answer)}
+    {#if answered && !item.options.includes(item.answer ?? '')}
       <div class="cans">→ {item.answer}</div>
     {/if}
   {:else if answered}

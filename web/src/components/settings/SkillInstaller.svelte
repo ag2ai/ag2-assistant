@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Install control shared by both Skills surfaces (ADR 0017). The SURFACE carries the
   // target: the parent passes an `installer` of already-scoped calls (Global from the
   // Application page, active Profile from the Profiles zone), so this component never
@@ -9,40 +9,57 @@
   // Git/upload are one-time snapshots (no update action — that's delete + re-install).
   // On any successful install it calls onInstalled() so the parent refreshes its list.
   import Icon from '../Icon.svelte'
-  let { installer, onInstalled } = $props()
+  import { errText } from '../../lib/errors.ts'
+  import type { DiscoveredSkill, SkillDiscovered, SkillSearchHit } from '../../schemas/index.ts'
+  import type { SkillInstallBody } from '../../transport/api/skills.ts'
+
+  // The parent's already-scoped calls: Global from the Application page, the active
+  // Profile from the Profiles zone.
+  type Installer = {
+    search: (query: string) => Promise<{ results: SkillSearchHit[] }>
+    install: (body: SkillInstallBody) => Promise<unknown>
+    discover: (gitUrl: string) => Promise<SkillDiscovered>
+    discoverUpload: (file: File) => Promise<SkillDiscovered>
+    installUpload: (file: File, names: string[]) => Promise<unknown>
+  }
+
+  type Props = { installer: Installer; onInstalled?: () => void }
+  let { installer, onInstalled }: Props = $props()
+
+  type Mode = 'registry' | 'git' | 'upload'
 
   // Collapsed by default behind an "Add skill" affordance (like Add model / Add secret);
   // the whole picker only unfolds on demand so it doesn't crowd the skills list.
   let open = $state(false)
-  let mode = $state('registry') // 'registry' | 'git' | 'upload'
+  let mode = $state<Mode>('registry')
   let busy = $state(false)
   let err = $state('')
 
   // registry
   let query = $state('')
-  let results = $state([])
+  let results = $state<SkillSearchHit[]>([])
   // git / upload discover→pick
   let gitUrl = $state('')
-  let file = $state(null)
-  let found = $state([])          // [{name, description}]
-  let picked = $state(new Set())  // selected names
+  let file = $state<File | null>(null)
+  let found = $state<DiscoveredSkill[]>([])
+  let picked = $state<Set<string>>(new Set())  // selected names
 
   const reset = () => { results = []; found = []; picked = new Set(); err = '' }
-  const setMode = (m) => { mode = m; reset() }
+  const setMode = (m: Mode) => { mode = m; reset() }
   // Collapse back to the "Add skill" button, clearing any in-progress picker state.
   const close = () => { open = false; mode = 'registry'; query = ''; gitUrl = ''; file = null; reset() }
 
-  async function guard(fn) {
+  async function guard<T>(fn: () => Promise<T>): Promise<T | null> {
     err = ''; busy = true
     try { return await fn() }
-    catch (e) { err = String(e.message || e); return null }
+    catch (e) { err = errText(e); return null }
     finally { busy = false }
   }
 
   const search = () =>
     guard(async () => { results = (await installer.search(query)).results || [] })
 
-  const installOne = (r) =>
+  const installOne = (r: SkillSearchHit) =>
     guard(async () => {
       await installer.install({ install_id: r.install_id })
       onInstalled?.()
@@ -50,14 +67,16 @@
 
   const discover = () =>
     guard(async () => {
-      const res = mode === 'git'
-        ? await installer.discover(gitUrl)
-        : await installer.discoverUpload(file)
+      // Upload mode without a file can't happen — the Install button is disabled.
+      let res: SkillDiscovered | null = null
+      if (mode === 'git') res = await installer.discover(gitUrl)
+      else if (file) res = await installer.discoverUpload(file)
+      if (!res) return
       found = res.skills || []
       picked = new Set(found.map((s) => s.name)) // default: all selected
     })
 
-  const toggle = (name) => {
+  const toggle = (name: string) => {
     const next = new Set(picked)
     next.has(name) ? next.delete(name) : next.add(name)
     picked = next
@@ -67,12 +86,15 @@
     guard(async () => {
       const names = [...picked]
       if (mode === 'git') await installer.install({ git_url: gitUrl, names })
-      else await installer.installUpload(file, names)
+      else if (file) await installer.installUpload(file, names)
+      else return
       reset(); gitUrl = ''; file = null
       onInstalled?.()
     })
 
-  const onFile = (e) => { file = e.target.files?.[0] || null; found = []; picked = new Set() }
+  const onFile = (e: Event & { currentTarget: HTMLInputElement }) => {
+    file = e.currentTarget.files?.[0] || null; found = []; picked = new Set()
+  }
 </script>
 
 {#if !open}

@@ -1,10 +1,12 @@
-<script>
+<script lang="ts">
   // Reusable markdown renderer (deliverable assets, the full-view viewer, …).
   // Same sanitise + task-id linkify path AgentMessage uses; re-runs on text change.
-  import { renderMarkdown, linkifyDom, bindImages } from '../lib/markdown.js'
-  import { go, openAsideFile } from '../router.js'
-  let { text } = $props()
-  let el
+  import { renderMarkdown, linkifyDom, bindImages } from '../lib/markdown.ts'
+  import { go, openAsideFile } from '../router.ts'
+
+  type Props = { text: string | null | undefined }
+  let { text }: Props = $props()
+  let el: HTMLDivElement | undefined = $state()
   $effect(() => {
     if (!el) return
     el.innerHTML = renderMarkdown(text)

@@ -1,4 +1,9 @@
-<script>
+<script module lang="ts">
+  // What the form hands its parent on submit — the three consumers share it.
+  export type ProfileDraft = { name: string; accent: string }
+</script>
+
+<script lang="ts">
   // Reusable profile form (§5.5): name + palette swatches. One form, three consumers
   // so they can't drift:
   //   (a) the onboarding multi-profile loop (§5.5) — also the zero-profile bootstrap
@@ -13,9 +18,26 @@
   // shown inline. This lets each consumer choose what "submit" means (create,
   // create-then-continue, etc.). `accent` is an opaque #rrggbb hex (ADR 0002): a
   // preset swatch or any colour from the custom picker.
-  import { PALETTES } from '../design/palette.js'
+  import { untrack } from 'svelte'
+  import { PALETTES } from '../design/palette.ts'
+  import { errText } from '../lib/errors.ts'
   import Icon from './Icon.svelte'
 
+  type Props = {
+    claimed?: string[]
+    keepAccents?: string[]
+    initialName?: string
+    initialAccent?: string | null
+    submitLabel?: string
+    busyLabel?: string
+    onSubmit: (draft: ProfileDraft) => Promise<void>
+    // Optional dismiss. When given, Cancel renders in the SAME action row as the
+    // submit button — consumers that bolt their own Cancel underneath the form
+    // end up with the two buttons stacked on separate lines.
+    onCancel?: (() => void) | null
+    cancelLabel?: string
+    autofocus?: boolean
+  }
   let {
     // Preset hexes already taken by other profiles — hidden from the swatches when
     // creating (plan §5.4/§5.5). `keepAccents` re-admits hexes (e.g. the profile's
@@ -36,15 +58,17 @@
     onCancel = null,
     cancelLabel = 'Cancel',
     autofocus = true,
-  } = $props()
+  }: Props = $props()
 
   // Available preset swatches: all presets minus claimed, plus any explicitly kept.
   const available = $derived(
     PALETTES.filter((p) => !claimed.includes(p.hex) || keepAccents.includes(p.hex))
   )
 
-  let name = $state(initialName)
-  let accent = $state(initialAccent || (available[0] && available[0].hex) || PALETTES[0].hex)
+  // Seeded once on mount: a later prop change must not clobber what the user typed.
+  // The $effect below is what re-picks an accent when the current one gets claimed.
+  let name = $state(untrack(() => initialName))
+  let accent = $state(untrack(() => initialAccent || (available[0] && available[0].hex) || PALETTES[0].hex))
   let busy = $state(false)
   let error = $state('')
 
@@ -61,8 +85,8 @@
     }
   })
 
-  function pickCustom(e) {
-    const v = (e.target.value || '').toLowerCase()
+  function pickCustom(e: Event & { currentTarget: HTMLInputElement }) {
+    const v = e.currentTarget.value.toLowerCase()
     if (/^#[0-9a-f]{6}$/.test(v)) accent = v
   }
 
@@ -75,7 +99,7 @@
       // On success the parent typically navigates/closes; leave busy true so the
       // button doesn't flash back to idle mid-transition.
     } catch (e) {
-      error = (e && e.message) || 'Could not save profile'
+      error = errText(e, 'Could not save profile')
       busy = false
     }
   }

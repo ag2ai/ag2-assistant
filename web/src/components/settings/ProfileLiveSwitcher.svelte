@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Per-profile Live (voice) model switcher (ticket 07, ADR 0015): the parallel of the
   // Text switcher for realtime voice. The composer has no Live switcher to reuse, so
   // this drives the SAME shared presentation (ModelSwitcherView) over the shared
@@ -6,13 +6,14 @@
   // takes effect on the NEXT voice session (voice reads the effective config fresh at
   // connect — no runtime reload).
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
-  import { SETTINGS_PAGE } from '../../store.js'
-  import { replaceOverlay } from '../../router.js'
-  import { isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.js'
-  import { PROVIDER_LABEL } from '../../lib/providerLabels.js'
-  import { getSettings } from './context.svelte.js'
+  import { api } from '../../transport/api/index.ts'
+  import { SETTINGS_PAGE } from '../../store.ts'
+  import { replaceOverlay } from '../../router.ts'
+  import { isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.ts'
+  import { PROVIDER_LABEL } from '../../lib/providerLabels.ts'
+  import { getSettings } from './context.svelte.ts'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
+  import type { LiveConfig } from '../../schemas/index.ts'
 
   const ctx = getSettings()
   onMount(() => { loadLiveConfigs().catch(() => {}) })
@@ -22,7 +23,7 @@
   const inherited = $derived(!ctx.s?.live_override)
 
   const gotoModels = () => replaceOverlay('settings', SETTINGS_PAGE.MODELS)
-  const choose = (c) => ctx.run(() => api.setLiveOverride(c.id))
+  const choose = (c: LiveConfig) => ctx.run(() => api.setLiveOverride(c.id))
   const useDefault = () => ctx.run(() => api.setLiveOverride(''))
 </script>
 

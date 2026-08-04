@@ -1,12 +1,17 @@
-<script>
-  import { openAsideFile } from '../../router.js'
-  import { api } from '../../transport/api.js'
+<script lang="ts">
+  import { openAsideFile } from '../../router.ts'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
+  import type { ThreadItem, ToolCard } from '../../schemas/events.ts'
 
-  let { item } = $props()
-  let gone = $state(new Set()) // card ids whose file is no longer available
+  // Only file cards carry a path — the handlers below run behind that branch.
+  type FileCard = Extract<ToolCard, { kind: 'file' }>
 
-  function markGone(c) {
+  type Props = { item: Extract<ThreadItem, { kind: 'tools' }> }
+  let { item }: Props = $props()
+  let gone = $state(new Set<number>()) // card ids whose file is no longer available
+
+  function markGone(c: FileCard) {
     const n = new Set(gone)
     n.add(c.id)
     gone = n
@@ -16,7 +21,7 @@
   // writes (directly addressable) or task-relative for subagent writes. If a direct
   // hit fails, consult the live file list — a suffix match means it still exists
   // under a task folder; no match means it was deleted from the Files browser.
-  async function livePath(c) {
+  async function livePath(c: FileCard) {
     try {
       const { files } = await api.files()
       const hit = files.find((f) => f.path === c.path) || files.find((f) => f.path.endsWith('/' + c.path))
@@ -26,7 +31,7 @@
     }
   }
 
-  async function openFile(c) {
+  async function openFile(c: FileCard) {
     // Resolve the live workspace path (also catches deletion + task-relative paths);
     // the Viewer then renders by file type (html/image/pdf/markdown/code/…).
     const p = await livePath(c)
@@ -34,8 +39,8 @@
     else markGone(c)
   }
 
-  async function downloadFile(c) {
-    let path = c.path
+  async function downloadFile(c: FileCard) {
+    let path: string | null = c.path
     let r = await fetch(api.fileUrl(path, true)).catch(() => null)
     if (!r || !r.ok) {
       path = await livePath(c)

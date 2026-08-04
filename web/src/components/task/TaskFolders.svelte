@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Folder access for ONE task — mirrors ChatFolders, one level up: the task's
   // own folders (task-scope Grants) + profile folders with a per-TASK override
   // (Read / Read+write / Off writes a task-scope Grant; Off blocks the folder
@@ -7,44 +7,50 @@
   // with Delete + Move to profile behind a kebab. The shared snapshot means edits
   // here refresh the composer chips + Settings + TaskPage live.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
-  import { profiles } from '../../store.js'
-  import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.js'
-  import { getActiveProfileId } from '../../lib/profile.js'
+  import { api } from '../../transport/api/index.ts'
+  import { profiles } from '../../store.ts'
+  import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
+  import { getActiveProfileId } from '../../lib/profile.ts'
+  import { errText } from '../../lib/errors.ts'
+  import { ApiError } from '../../transport/http.ts'
+  import { FolderConflict, type Folder, type FsRoots, type GrantMode, type Mode } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
   import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
 
-  let { taskId } = $props()
+  type Props = { taskId: string }
+  let { taskId }: Props = $props()
 
   let busy = $state(false)
   let err = $state('')
   let note = $state('')
   let menuFor = $state('')     // id of the task folder whose overflow menu is open
   let pickerOpen = $state(false)
-  let roots = $state({})
-  const pid = $derived($profiles.activeId || getActiveProfileId())
+  let roots = $state<Partial<FsRoots>>({})
+  const pid = $derived($profiles.activeId || getActiveProfileId() || '')
   const folders = $derived($foldersStore.folders)
 
   onMount(() => {
     if (!$foldersStore.loaded) loadFolders()
-    api.settings().then((s) => { roots = s.fs || {} }).catch(() => {})
+    api.settings().then((s) => { roots = s.fs }).catch(() => {})
   })
-  async function run(fn) {
+  // Every mutator answers with the whole {folders} snapshot, which goes straight
+  // to the shared store.
+  async function run(fn: () => Promise<{ folders: Folder[] }>) {
     err = ''; busy = true
-    try { applyFolders(await fn()) } catch (e) { err = String(e.message || e) }
+    try { applyFolders(await fn()) } catch (e) { err = errText(e) }
     busy = false
   }
 
-  const tGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.task_id === taskId && !g.chat_id)
-  const profileGrant = (f) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
+  const tGrant = (f: Folder) => f.grants.find((g) => g.profile === pid && g.task_id === taskId && !g.chat_id)
+  const profileGrant = (f: Folder) => f.grants.find((g) => g.profile === pid && !g.chat_id && !g.task_id)
   const profileFolders = $derived(folders.filter((f) => profileGrant(f)))
   const taskFolders = $derived(folders.filter((f) => tGrant(f) && !profileGrant(f)))
-  const effMode = (f) => { const t = tGrant(f); return t ? t.mode : profileGrant(f)?.mode }
+  const effMode = (f: Folder): GrantMode | undefined => { const t = tGrant(f); return t ? t.mode : profileGrant(f)?.mode }
 
   // Task-only folders: null mode = revoke this task's grant.
-  function setTaskMode(f, mode) {
+  function setTaskMode(f: Folder, mode: Mode | null) {
     const cur = tGrant(f)
     if (!mode) { if (cur) run(() => api.revokeGrant(f.id, pid, '', taskId)); return }
     if (cur?.mode === mode) return
@@ -52,8 +58,8 @@
   }
   // Profile folders: write a task-scoped OVERRIDE (this task only). null/'none'
   // blocks; setting it back to the profile mode drops the override.
-  function setTaskOverride(f, mode) {
-    const target = mode || 'none'
+  function setTaskOverride(f: Folder, mode: Mode | null) {
+    const target: GrantMode = mode || 'none'
     if (effMode(f) === target) return
     const cur = tGrant(f)
     if (target === profileGrant(f)?.mode) { if (cur) run(() => api.revokeGrant(f.id, pid, '', taskId)); return }
@@ -61,10 +67,10 @@
   }
   // Promote a task-only folder to the profile (reachable from every chat): mint a
   // profile-scope grant at the same mode, then drop the now-redundant task grant.
-  function moveToProfile(f) {
+  function moveToProfile(f: Folder) {
     const cur = tGrant(f)
     if (!cur) return
-    const mode = cur.mode === 'read_write' ? 'read_write' : 'read'
+    const mode: Mode = cur.mode === 'read_write' ? 'read_write' : 'read'
     run(async () => {
       await api.setGrant(f.id, pid, mode)          // profile scope (no chat/task)
       return api.revokeGrant(f.id, pid, '', taskId)
@@ -73,17 +79,20 @@
 
   // Pick a path → mint (or reuse on 409) the Folder → grant this task read, unless
   // the profile already covers it (then just say so).
-  const addFolder = (path) => {
+  const addFolder = (path: string) => {
     note = ''
     run(async () => {
-      let snap, folder
+      let snap: { folders: Folder[] }
+      let folder: Folder | undefined
       try {
         snap = await api.createFolder(path)
-        folder = (snap.folders || []).find((f) => f.path === path)
+        folder = snap.folders.find((f) => f.path === path)
       } catch (e) {
-        if (e.status === 409 && e.body?.existing?.id) {
+        // 409 = the path is already registered; the body points at that Folder.
+        const clash = e instanceof ApiError && e.status === 409 ? FolderConflict.safeParse(e.body) : null
+        if (clash?.success) {
           snap = await api.folders()
-          folder = (snap.folders || []).find((f) => f.id === e.body.existing.id)
+          folder = snap.folders.find((f) => f.id === clash.data.existing.id)
         } else throw e
       }
       if (!folder) throw new Error('Could not resolve that folder')
@@ -121,7 +130,9 @@
           <span class="cfmenuwrap">
             <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
-              <div class="cfscrim" onclick={() => (menuFor = '')}></div>
+              <!-- Scrim: closing on an outside click duplicates the kebab toggle,
+                   so it stays out of the a11y tree. -->
+              <div class="cfscrim" role="presentation" onclick={() => (menuFor = '')}></div>
               <div class="cfmenu">
                 <button onclick={() => { menuFor = ''; moveToProfile(f) }}><Icon name="users" size={14} /> Move to profile</button>
                 <button class="danger" onclick={() => { menuFor = ''; setTaskMode(f, null) }}><Icon name="trash" size={14} /> Delete</button>

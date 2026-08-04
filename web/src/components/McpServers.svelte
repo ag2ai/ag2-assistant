@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → "MCP servers" section. Three ways in, easiest first:
   //   1. Quick add — curated catalog entries, one click (plus env/folder inputs
   //      where a server needs them).
@@ -10,26 +10,33 @@
   // Self-contained like Channels.svelte: owns its list state; the add/delete
   // endpoints return the updated mcp_servers list so no full settings reload.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
-  import { parseMcpPaste, MCP_CATALOG, catalogServer } from '../lib/mcp.js'
+  import { api } from '../transport/api/index.ts'
+  import { parseMcpPaste, MCP_CATALOG, catalogServer, type CatalogEntry, type McpServerDraft } from '../lib/mcp.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { McpServerRequest } from '../transport/api/settings.ts'
+  import type { McpServer } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
 
-  let servers = $state([])
-  let health = $state({})     // name -> {ok, tools[]|error} | {checking: true}
+  // One open shape rather than a union of the three probe states: the markup reads
+  // health[name], and element access with a computed key never narrows a union.
+  type McpProbe = { checking?: boolean; ok?: boolean; tools?: string[]; error?: string }
+
+  let servers: McpServer[] = $state([])
+  let health: Record<string, McpProbe | undefined> = $state({})
   let busy = $state(false)
   let err = $state('')
 
   // Smart paste
   let paste = $state('')
-  let pasteEl = $state(null)
-  let drafts = $state([])     // parsed, user-editable entries awaiting confirm
+  let pasteEl: HTMLTextAreaElement | undefined = $state()
+  let drafts: McpServerDraft[] = $state([])   // parsed, user-editable entries awaiting confirm
   let parseErr = $state('')
 
   // Quick-add catalog: entry id currently expanded for inputs + its values
   let openEntry = $state('')
-  let entryValues = $state({})
+  let entryValues: Record<string, string> = $state({})
 
-  // Manual form (the old path, now the fallback)
+  // Manual form (the old path, now the fallback) — raw text the server splits.
   let showManual = $state(false)
   let manual = $state({ name: '', command: '', args: '', cwd: '', allowed_tools: '', blocked_tools: '', env: '' })
 
@@ -38,48 +45,48 @@
   onMount(async () => {
     try {
       const s = await api.settings()
-      servers = s.mcp_servers || []
-    } catch (e) { err = String(e.message || e) }
+      servers = s.mcp_servers
+    } catch (e) { err = errText(e) }
   })
 
-  async function check(name) {
+  async function check(name: string) {
     health = { ...health, [name]: { checking: true } }
     try {
       health = { ...health, [name]: await api.healthMcpServer(name) }
     } catch (e) {
-      health = { ...health, [name]: { ok: false, error: String(e.message || e) } }
+      health = { ...health, [name]: { ok: false, error: errText(e) } }
     }
   }
 
   // Add one server payload, refresh the list from the response, health-check it.
-  async function add(server) {
+  async function add(server: McpServerRequest) {
     err = ''; busy = true
     try {
       const res = await api.addMcpServer(server)
-      servers = res.mcp_servers || servers
+      servers = res.mcp_servers
       busy = false
       await check(server.name)
       return true
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
       busy = false
       return false
     }
   }
 
-  async function remove(name) {
+  async function remove(name: string) {
     err = ''; busy = true
     try {
       const res = await api.deleteMcpServer(name)
-      servers = res.mcp_servers || servers.filter((s) => s.name !== name)
+      servers = res.mcp_servers
       const { [name]: _gone, ...rest } = health
       health = rest
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 
   // --- smart paste ---
-  function onPaste(el) {
+  function onPaste(el: HTMLTextAreaElement) {
     paste = el.value
     // Grow the box to fit the pasted config (CSS caps it, then it scrolls) —
     // the native resize handle is disabled since drag-resize paints over the
@@ -99,15 +106,15 @@
   }
 
   // --- quick-add catalog ---
-  function clickEntry(entry) {
+  function clickEntry(entry: CatalogEntry) {
     if (names.has(entry.id) || busy) return
     if (!entry.inputs.length) { addEntry(entry); return }
     openEntry = openEntry === entry.id ? '' : entry.id
     entryValues = {}
   }
-  const entryReady = (entry) =>
-    entry.inputs.every((i) => !i.required || String(entryValues[i.key] || '').trim())
-  async function addEntry(entry) {
+  const entryReady = (entry: CatalogEntry) =>
+    entry.inputs.every((i) => !i.required || (entryValues[i.key] || '').trim())
+  async function addEntry(entry: CatalogEntry) {
     if (await add(catalogServer(entry, entryValues))) { openEntry = ''; entryValues = {} }
   }
 
@@ -119,7 +126,7 @@
     }
   }
 
-  const cmdline = (s) => [s.command, ...(s.args || [])].join(' ')
+  const cmdline = (s: { command: string; args: string[] }) => [s.command, ...s.args].join(' ')
 </script>
 
 {#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
@@ -128,17 +135,18 @@
   <p class="muted" style="font-size:13px">No MCP servers configured — add one below to give the assistant new tools.</p>
 {/if}
 {#each servers as server (server.name)}
+  {@const h = health[server.name]}
   <div class="mcprow">
     <div class="mcpmeta">
       <strong>{server.name}</strong>
       <span>{cmdline(server)}</span>
-      {#if server.env_keys?.length}<span>env: {server.env_keys.join(', ')}</span>{/if}
-      {#if health[server.name]}
-        {#if health[server.name].checking}
+      {#if server.env_keys.length}<span>env: {server.env_keys.join(', ')}</span>{/if}
+      {#if h}
+        {#if h.checking}
           <span>checking…</span>
         {:else}
-          <span class:mcpbad={!health[server.name].ok}>
-            {health[server.name].ok ? `healthy · ${(health[server.name].tools || []).length} tools` : health[server.name].error}
+          <span class:mcpbad={!h.ok}>
+            {h.ok ? `healthy · ${(h.tools || []).length} tools` : h.error}
           </span>
         {/if}
       {/if}
@@ -191,7 +199,7 @@
   class="mcppaste"
   placeholder={'Or paste an MCP config — the {"mcpServers": …} JSON from a server\'s README, or a command line like: npx -y @modelcontextprotocol/server-github'}
   value={paste}
-  oninput={(e) => onPaste(e.target)}
+  oninput={(e) => onPaste(e.currentTarget)}
 ></textarea>
 {#if parseErr}
   <p class="muted" style="font-size:12px;color:var(--danger);margin:0">{parseErr}</p>

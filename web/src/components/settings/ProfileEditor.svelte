@@ -1,12 +1,12 @@
-<script>
+<script lang="ts">
   // Profile editor (ADR 0015, redesign §2 + §9): the second level of Settings → Profiles.
   // Reached by clicking a card in the catalogue. A profile is now a first-class entity with
   // its own header (accent, name, Active badge, back to the catalogue) and a horizontal tab
   // bar — General, Focus areas, Model, Folders, Skills, Memory — each a surface scoped to
   // the ACTIVE profile (the catalogue switches to the clicked profile before opening this).
   // Channel exposure is not here: it is set per connection, in Settings → Integrations.
-  import { profiles } from '../../store.js'
-  import { getActiveProfileId } from '../../lib/profile.js'
+  import { profiles } from '../../store.ts'
+  import { getActiveProfileId } from '../../lib/profile.ts'
   import Icon from '../Icon.svelte'
   import ProfileGeneralSection from './ProfileGeneralSection.svelte'
   import FocusAreasSection from './FocusAreasSection.svelte'
@@ -15,7 +15,8 @@
   import ProfileSkillsSection from './ProfileSkillsSection.svelte'
   import ProfileMemorySection from './ProfileMemorySection.svelte'
 
-  let { onBack } = $props()
+  type Props = { onBack: () => void }
+  let { onBack }: Props = $props()
 
   const list = $derived($profiles.list || [])
   const activeId = $derived($profiles.activeId || getActiveProfileId())

@@ -1,10 +1,11 @@
-<script>
-  // AG2 Assistant — BrandMark: a third party's official logo, from lib/brandMarks.js.
+<script lang="ts">
+  // AG2 Assistant — BrandMark: a third party's official logo, from lib/brandMarks.ts.
   // Decoration, so hidden from screen readers; an unknown key draws nothing.
-  import { brandMark } from '../lib/brandMarks.js'
+  import { brandMark } from '../lib/brandMarks.ts'
 
   // brand: a platform id ('telegram', 'github', …) or an LLM/voice provider type.
-  let { brand, size = 20 } = $props()
+  type Props = { brand: string; size?: number }
+  let { brand, size = 20 }: Props = $props()
 
   const mark = $derived(brandMark(brand))
 
@@ -12,7 +13,7 @@
   const gradientId = `brandmark-gradient-${++seq}`
 </script>
 
-<script module>
+<script lang="ts" module>
   let seq = 0
 </script>
 
@@ -24,12 +25,12 @@
     aria-hidden="true"
   >
     {#if mark.kind === 'multi'}
-      {#each mark.parts as part}<path d={part.path} fill={part.fill} />{/each}
+      {#each mark.parts || [] as part}<path d={part.path} fill={part.fill} />{/each}
     {:else if mark.kind === 'gradient'}
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-          {#each mark.stops as stop, i}
-            <stop offset={i / Math.max(1, mark.stops.length - 1)} stop-color={stop} />
+          {#each mark.stops || [] as stop, i}
+            <stop offset={i / Math.max(1, (mark.stops || []).length - 1)} stop-color={stop} />
           {/each}
         </linearGradient>
       </defs>

@@ -1,15 +1,21 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte'
-  import { thread, SETTINGS_PAGE, profiles, runInfo } from '../store.js'
-  import { openOverlay } from '../router.js'
-  import { send, stop, startVoice, stopVoice, voice } from '../controller.js'
-  import { liveConfigs, loadLiveConfigs } from '../lib/live.js'
-  import { llmConfigs } from '../lib/llm.js'
-  import { api } from '../transport/api.js'
-  import { getActiveProfileId } from '../lib/profile.js'
-  import { chatChips, inheritedCount, addPlan } from '../lib/chatFolders.js'
-  import { makePick, triggerAt, applyPick, composeMessage, highlightSegments } from '../lib/fileRefs.js'
-  import { foldersStore, loadFolders, applyFolders } from '../lib/folders.js'
+  import { thread, SETTINGS_PAGE, profiles, runInfo } from '../store.ts'
+  import { openOverlay } from '../router.ts'
+  import { send, stop, startVoice, stopVoice, voice } from '../controller.ts'
+  import { liveConfigs, loadLiveConfigs } from '../lib/live.ts'
+  import { llmConfigs } from '../lib/llm.ts'
+  import { api } from '../transport/api/index.ts'
+  import { getActiveProfileId } from '../lib/profile.ts'
+  import { chatChips, inheritedCount, addPlan } from '../lib/chatFolders.ts'
+  import { makePick, triggerAt, applyPick, composeMessage, highlightSegments } from '../lib/fileRefs.ts'
+  import { foldersStore, loadFolders, applyFolders } from '../lib/folders.ts'
+  import { errText } from '../lib/errors.ts'
+  import { ApiError } from '../transport/http.ts'
+  import { FolderConflict } from '../schemas/index.ts'
+  import type { AttachmentPayload, Folder, FsRoots, SearchHit } from '../schemas/index.ts'
+  import type { FolderChip } from '../lib/chatFolders.ts'
+  import type { FileRef } from '../lib/fileRefs.ts'
   import Icon from './Icon.svelte'
   import ModelSwitcher from './composer/ModelSwitcher.svelte'
   import FolderPicker from './FolderPicker.svelte'
@@ -26,12 +32,12 @@
     if (!$foldersStore.loaded) loadFolders()
     // fs roots for the folder picker — install-wide, so the active profile's
     // settings answer works. Best-effort; the picker degrades to no root shortcuts.
-    api.settings().then((s) => { fsRoots = s.fs || {} }).catch(() => {})
+    api.settings().then((s) => { fsRoots = s.fs }).catch(() => {})
   })
 
   // Per-chat Folder access (CONTEXT.md "Grant"): only the chat-scoped layer shows
   // as removable chips; profile/task reach shows as a "+N inherited folder" note.
-  const pid = $derived($profiles.activeId || getActiveProfileId())
+  const pid = $derived($profiles.activeId || getActiveProfileId() || '')
   const chatId = $derived($thread.chat)
   // Тред рана несёт таску: её task-scope папки наследуются в этот чат (см. spec
   // 2026-07-20). runInfo грузится опросом — до первого ответа taskId пуст, и
@@ -44,7 +50,7 @@
   const showFolders = $derived(($thread.kind === 'chat' || $thread.kind === 'run') && !!chatId)
 
   const folders = $derived($foldersStore.folders)   // shared snapshot {id,name,path,exists,grants[]}
-  let fsRoots = $state({})
+  let fsRoots = $state<Partial<FsRoots>>({})
   let picking = $state(false)       // FolderPicker modal open
   let foldersModal = $state(false)  // ChatFolders (mode pills) modal open
   let folderBusy = $state(false)
@@ -55,9 +61,9 @@
   const extraCount = $derived(showFolders ? inheritedCount(folders, pid, chatId, taskId) : 0)
 
   // Busy/error wrapper for a folder op; leaves `folders` to the op itself.
-  async function folderOp(fn) {
+  async function folderOp(fn: () => Promise<void>) {
     folderErr = ''; folderNote = ''; folderBusy = true
-    try { await fn() } catch (e) { folderErr = String(e.message || e) }
+    try { await fn() } catch (e) { folderErr = errText(e) }
     folderBusy = false
   }
   // No per-chat reload: the shared snapshot holds every chat's grants, so the
@@ -67,15 +73,18 @@
 
   // Pick a path → mint (or reuse on 409) the Folder → grant this chat read, unless
   // a profile Grant already covers it (then just say so).
-  const addFolder = (path) => folderOp(async () => {
-    let snap, folder
+  const addFolder = (path: string) => folderOp(async () => {
+    let snap: { folders: Folder[] }
+    let folder: Folder | undefined
     try {
       snap = await api.createFolder(path)
-      folder = (snap.folders || []).find((f) => f.path === path)
+      folder = snap.folders.find((f) => f.path === path)
     } catch (e) {
-      if (e.status === 409 && e.body?.existing?.id) {
+      // 409 = the path is already registered; the body points at that Folder.
+      const clash = e instanceof ApiError && e.status === 409 ? FolderConflict.safeParse(e.body) : null
+      if (clash?.success) {
         snap = await api.folders()
-        folder = (snap.folders || []).find((f) => f.id === e.body.existing.id)
+        folder = snap.folders.find((f) => f.id === clash.data.existing.id)
       } else throw e
     }
     if (!folder) throw new Error('Could not resolve that folder')
@@ -88,7 +97,7 @@
     picking = false
   })
 
-  const removeChip = (f) => folderOp(async () => {
+  const removeChip = (f: FolderChip) => folderOp(async () => {
     applyFolders(await api.revokeGrant(f.id, pid, chatId))
   })
 
@@ -105,30 +114,33 @@
   )
 
   let text = $state('')
-  let pending = $state([])  // {name, payload:{name,mime,data(b64)}}
+  let pending = $state<{ name: string; payload: AttachmentPayload }[]>([])
   let dragging = $state(false)  // an OS-file drag is hovering the composer
-  let ta, fileInput, hl
+  let ta: HTMLTextAreaElement | undefined
+  let fileInput: HTMLInputElement | undefined
+  let hl: HTMLDivElement | undefined
 
-  // Cosmetic highlight backdrop: a mirror of the text sitting behind the (transparent)
-  // textarea, with each surviving `@label` wrapped in a <mark>. Metrics match .cinput
-  // exactly so the marks land under their labels; scroll is kept in lockstep below.
-  const hlSegs = $derived(highlightSegments(text, refs))
   function syncScroll() { if (hl && ta) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft } }
 
   // ---- `@` File references (ADR 0012): an ordered picks list (source of truth),
   // a type-to-filter picker over /files/search, and a `Referenced files:` block
   // appended on send. The inline `@label` is cosmetic; deleting it drops the pick
   // (reconciled in composeMessage). Structurally parallel to `pending`. ----
-  let refs = $state([])         // ordered File-reference picks
-  let atOpen = $state(false)    // picker visible
-  let atQuery = $state('')      // the text typed after the active `@`
-  let atStart = $state(-1)      // index of the active `@` in `text`
-  let atResults = $state([])    // current search results
-  let atIndex = $state(0)       // highlighted result
-  let atSeq = 0                 // debounce + stale-response guard
-  let atTimer
-  let atList = $state()         // the picker's scroll container
-  let atRows = []               // per-row elements, for scroll-into-view on nav
+  let refs = $state<FileRef[]>([])          // ordered File-reference picks
+  let atOpen = $state(false)                // picker visible
+  let atQuery = $state('')                  // the text typed after the active `@`
+  let atStart = $state(-1)                  // index of the active `@` in `text`
+  let atResults = $state<SearchHit[]>([])   // current search results
+  let atIndex = $state(0)                   // highlighted result
+  let atSeq = 0                             // debounce + stale-response guard
+  let atTimer: ReturnType<typeof setTimeout> | undefined
+  let atList = $state<HTMLDivElement | undefined>()   // the picker's scroll container
+  let atRows: HTMLButtonElement[] = []      // per-row elements, for scroll-into-view on nav
+
+  // Cosmetic highlight backdrop: a mirror of the text sitting behind the (transparent)
+  // textarea, with each surviving `@label` wrapped in a <mark>. Metrics match .cinput
+  // exactly so the marks land under their labels; scroll is kept in lockstep by syncScroll.
+  const hlSegs = $derived(highlightSegments(text, refs))
 
   // Keep the highlighted row visible as the selection moves — `nearest` only scrolls
   // when the row is actually out of view, so an in-view move never jumps the list.
@@ -154,18 +166,18 @@
     atStart = trig.start; atQuery = trig.query; atOpen = true
     if (changed) runAtSearch(trig.query)
   }
-  function runAtSearch(q) {
+  function runAtSearch(q: string) {
     clearTimeout(atTimer)
     const seq = ++atSeq
     atTimer = setTimeout(async () => {
       try {
         const res = await api.searchFiles(q, chatId)
         if (seq !== atSeq) return           // a newer keystroke won
-        atResults = res.results || []; atIndex = 0
+        atResults = res.results; atIndex = 0
       } catch { if (seq === atSeq) atResults = [] }
     }, 120)
   }
-  function choosePick(result) {
+  function choosePick(result: SearchHit | undefined) {
     if (!result) return
     const caret = ta ? ta.selectionStart : text.length
     const p = makePick(result)
@@ -187,11 +199,11 @@
     text = ''; pending = []; refs = []; closeAt()
     if (ta) ta.style.height = 'auto'
   }
-  function key(e) {
+  function key(e: KeyboardEvent) {
     // The picker owns navigation keys while it's open over a non-empty result set.
     if (atOpen && atResults.length) {
       const last = atResults.length - 1
-      const jump = (i) => { e.preventDefault(); atIndex = Math.max(0, Math.min(last, i)); atScroll() }
+      const jump = (i: number) => { e.preventDefault(); atIndex = Math.max(0, Math.min(last, i)); atScroll() }
       if (e.key === 'ArrowDown') { e.preventDefault(); atIndex = (atIndex + 1) % atResults.length; atScroll(); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); atIndex = (atIndex - 1 + atResults.length) % atResults.length; atScroll(); return }
       if (e.key === 'PageDown') { jump(atIndex + atPage()); return }
@@ -220,7 +232,7 @@
     $voice.active ? stopVoice() : startVoice()
   }
 
-  function toB64(file) {
+  function toB64(file: File): Promise<string> {
     return new Promise((res, rej) => {
       const r = new FileReader()
       r.onload = () => res(String(r.result).split(',')[1] || '')
@@ -231,25 +243,26 @@
 
   // Give a nameless clipboard/dropped file a MIME-derived extension so the chip
   // reads sensibly and the backend routes it by extension.
-  const MIME_EXT = {
+  const MIME_EXT: Record<string, string | undefined> = {
     'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp',
     'application/pdf': 'pdf', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'video/mp4': 'mp4',
     'video/webm': 'webm', 'text/plain': 'txt',
   }
   let pasteSeq = 0  // per-load counter so multiple pasted screenshots don't collide
-  function extFor(mime) {
-    if (MIME_EXT[mime]) return MIME_EXT[mime]
+  function extFor(mime: string) {
+    const known = MIME_EXT[mime]
+    if (known) return known
     const sub = String(mime || '').split('/')[1] || ''
     return sub.replace(/[^a-z0-9].*$/i, '') || 'bin'  // "image/svg+xml" -> "svg"
   }
-  function nameFor(f) {
+  function nameFor(f: File) {
     if (f.name && /\.[^.]+$/.test(f.name)) return f.name  // real file: has an extension
     return `pasted-${++pasteSeq}.${extFor(f.type)}`
   }
 
   // Shared attachment pipeline for every entry point (picker, paste, drop): encode
   // each file and add it to the pending row as a transient message Attachment.
-  async function addFiles(files) {
+  async function addFiles(files: Iterable<File>) {
     for (const f of files) {
       const data = await toB64(f)
       const name = nameFor(f)
@@ -257,18 +270,18 @@
     }
   }
 
-  async function pick(e) {
-    await addFiles(e.target.files)
+  async function pick(e: Event & { currentTarget: HTMLInputElement }) {
+    await addFiles(e.currentTarget.files || [])
     if (fileInput) fileInput.value = ''
   }
 
   // Clipboard with ≥1 file → attachment paste (suppress the text rep); no file →
   // let the normal text paste run.
-  function paste(e) {
+  function paste(e: ClipboardEvent) {
     const files = [...(e.clipboardData?.items || [])]
       .filter((it) => it.kind === 'file')
       .map((it) => it.getAsFile())
-      .filter(Boolean)
+      .filter((f): f is File => f !== null)
     if (!files.length) return
     e.preventDefault()
     addFiles(files)
@@ -276,20 +289,21 @@
 
   // Drop OS files onto the composer → message Attachment (FilesTree's drop uploads
   // to the workspace instead). Internal row drags carry no files and are ignored.
-  function dragover(e) {
+  function dragover(e: DragEvent) {
     if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); dragging = true }
   }
-  function dragleave(e) {
-    if (!e.currentTarget.contains(e.relatedTarget)) dragging = false
+  function dragleave(e: DragEvent & { currentTarget: HTMLElement }) {
+    const to = e.relatedTarget
+    if (!(to instanceof Node) || !e.currentTarget.contains(to)) dragging = false
   }
-  function drop(e) {
+  function drop(e: DragEvent) {
     const files = e.dataTransfer?.files
     if (!files || !files.length) return
     e.preventDefault()
     dragging = false
     addFiles(files)
   }
-  const removeFile = (i) => { pending = pending.filter((_, j) => j !== i) }
+  const removeFile = (i: number) => { pending = pending.filter((_, j) => j !== i) }
 </script>
 
 <div class="composer">
@@ -366,7 +380,7 @@
       ></textarea>
     </div>
     <div class="cbar">
-      <button class="cbtn" onclick={() => fileInput.click()} title="Attach files" aria-label="Attach files"><Icon name="plus" size={18} /></button>
+      <button class="cbtn" onclick={() => fileInput?.click()} title="Attach files" aria-label="Attach files"><Icon name="plus" size={18} /></button>
       {#if showFolders}
         <!-- Add a Folder to this chat: a persistent read Grant, not a transient
              message attachment like the + above. -->
@@ -409,7 +423,9 @@
 </div>
 
 {#if picking}
-  <div class="modal-backdrop over" onclick={() => (picking = false)}></div>
+  <!-- Backdrop: click-to-dismiss duplicates the Cancel button, so it stays out of
+       the a11y tree rather than becoming a second focusable control. -->
+  <div class="modal-backdrop over" role="presentation" onclick={() => (picking = false)}></div>
   <div class="modal over">
     <h2>Add a folder to this chat</h2>
     <p class="muted cfhint">Gives this conversation <b>read</b> access to a folder outside the workspace. Change the mode or remove it anytime from the chip.</p>

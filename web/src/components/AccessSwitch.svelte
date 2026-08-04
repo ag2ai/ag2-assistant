@@ -1,15 +1,22 @@
-<script>
+<script lang="ts">
   // A 3-position access toggle (Read · Read+write · Off) + a state label, shared
   // by the ChatFolders modal and Settings → Folders. Clicking advances the knob
   // to the next stop; dots mark the other two. Muted like the user message
   // bubble (soft tinted fill + hairline border); the label carries the semantic.
-  //   mode: 'read' | 'read_write' | 'none'/null/undefined(off)
-  //   onchange(nextMode): fired with the next mode on click — 'read' | 'read_write' | null(off)
-  let { mode, disabled = false, onchange } = $props()
+  import type { GrantMode, Mode } from '../schemas/index.ts'
 
-  const modeLabel = (m) => (m === 'read_write' ? 'Read + write' : m === 'read' ? 'Read' : 'Off')
-  const posOf = (m) => (m === 'read_write' ? 1 : m === 'read' ? 0 : 2)      // Read · Read+write · Off
-  const nextMode = (m) => (m === 'read' ? 'read_write' : m === 'read_write' ? null : 'read') // cycle
+  // `mode` accepts 'none'/null/undefined as the off position; `onchange` reports
+  // the next stop, with null standing for off (the caller revokes the grant).
+  type Props = {
+    mode?: GrantMode | null
+    disabled?: boolean
+    onchange?: (next: Mode | null) => void
+  }
+  let { mode, disabled = false, onchange }: Props = $props()
+
+  const modeLabel = (m: Props['mode']) => (m === 'read_write' ? 'Read + write' : m === 'read' ? 'Read' : 'Off')
+  const posOf = (m: Props['mode']) => (m === 'read_write' ? 1 : m === 'read' ? 0 : 2)      // Read · Read+write · Off
+  const nextMode = (m: Props['mode']): Mode | null => (m === 'read' ? 'read_write' : m === 'read_write' ? null : 'read') // cycle
   const pos = $derived(posOf(mode))
 </script>
 

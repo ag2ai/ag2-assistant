@@ -1,34 +1,28 @@
-<script>
-  import { viewer, thread, runInfo } from '../../store.js'
-  import { openAsideFile } from '../../router.js'
-  import { api } from '../../transport/api.js'
+<script lang="ts">
+  import { viewer, thread, runInfo } from '../../store.ts'
+  import { openAsideFile } from '../../router.ts'
   import Icon from '../Icon.svelte'
-  import { fmtStamp } from '../../lib/time.js'
-  import { requestContext } from '../../lib/feedback.js'
+  import { fmtStamp } from '../../lib/time.ts'
+  import { requestContext } from '../../lib/feedback.ts'
   import Feedback from './Feedback.svelte'
-  let { item } = $props()
+  import type { ThreadItem } from '../../schemas/events.ts'
+
+  type Props = { item: Extract<ThreadItem, { kind: 'deliverable' }> }
+  let { item }: Props = $props()
   const request = $derived(requestContext($thread.items, item, $runInfo))
   // The preview is a flattened 240-char teaser (newlines already collapsed at the
   // source), so block markdown can't render — strip the markers for a clean one-liner.
-  const teaser = (item.preview || '').replace(/[#*`>_~]/g, '').replace(/\s+/g, ' ').trim()
+  const teaser = $derived((item.preview || '').replace(/[#*`>_~]/g, '').replace(/\s+/g, ' ').trim())
 
-  // Path-less fallback: no persisted file to click, so fetch the full asset text
-  // into the transient viewer store. (With a path, the filename link opens the rail.)
-  async function openFull() {
-    let text = item.preview || ''
-    try {
-      const t = await api.task(item.taskId)
-      const ds = t.deliverables || []
-      const d = ds.find((x) => x.description === item.description && x.asset)
-        || ds.find((x) => x.asset)
-      if (d && d.asset) text = d.asset
-    } catch { /* fall back to the teaser */ }
-    $viewer = { title: item.description, text }
+  // Path-less fallback: no persisted file to click, so show the preview in the
+  // transient viewer store. (With a path, the filename link opens the rail.)
+  function openFull() {
+    $viewer = { title: item.description ?? '', text: item.preview ?? '' }
   }
 
   // The deliverable's persisted workspace file — opens in the rail by file type.
   const fileName = $derived((item.path || '').split('/').pop())
-  const openFile = () => openAsideFile(item.path)
+  const openFile = () => { if (item.path) openAsideFile(item.path) }
 </script>
 
 <div class="deliv">

@@ -1,30 +1,31 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { chats, tasks, profiles, profileEpoch, pendingTaskEdit } from '../store.js'
-  import { route, go, goTab, newChatId, openOverlay } from '../router.js'
-  import { api } from '../transport/api.js'
-  import { switchProfile } from '../controller.js'
+  import { chats, tasks, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
+  import { route, go, goTab, newChatId, openOverlay } from '../router.ts'
+  import { api } from '../transport/api/index.ts'
+  import { switchProfile } from '../controller.ts'
   import Icon from './Icon.svelte'
   import RailResizer from './RailResizer.svelte'
-  import { drawerWidth } from '../store.js'
-  import { clampDrawerWidth } from '../lib/railWidth.js'
-  import ProfileForm from './ProfileForm.svelte'
+  import { drawerWidth } from '../store.ts'
+  import { clampDrawerWidth } from '../lib/railWidth.ts'
+  import ProfileForm, { type ProfileDraft } from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
   import FilesTree from './FilesTree.svelte'
-  import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.js'
+  import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.ts'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
-  import { inkOn } from '../design/palette.js'
+  import { inkOn } from '../design/palette.ts'
+  import type { ChatRow, Profile, RunStatus, StatusRow, Task, UsageRollup, UsageTotals } from '../schemas/index.ts'
 
   // Compact form of a cron description for the narrow schedule tag: abbreviate
   // day names and collapse "Every hour, between X and Y" → "Hourly X–Y"
   // ("Every hour, between 04:00 and 14:59, Monday through Friday" →
   // "Hourly 04:00–14:59, Mon–Fri"). Full text stays in the tooltip alongside
   // the raw cron.
-  const DAY_ABBR = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun' }
-  const shortSched = (desc) => (desc || '')
-    .replace(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/g, (d) => DAY_ABBR[d])
+  const DAY_ABBR: Record<string, string | undefined> = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun' }
+  const shortSched = (desc: string | null | undefined) => (desc || '')
+    .replace(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/g, (d) => DAY_ABBR[d] || d)
     .replace(/\bEvery hour, between (\S+) and (\S+)/, 'Hourly $1–$2')
     .replace(/\b[Bb]etween (\S+) and (\S+)/, '$1–$2')
     .replace(/ through /g, '–')
@@ -34,21 +35,21 @@
   // (full-page nav — App.svelte's boot makes the URL pid the persisted choice and
   // applies its accent). >4 profiles collapse the overflow into a small anchored
   // picker. Each profile's accent is a #rrggbb hex applied directly.
-  const list = $derived($profiles.list || [])
+  const list = $derived($profiles.list)
   // ⌘1..9 shortcut hint for a chip's tooltip (§5.4): the profile's 1-based index in
   // registry order, shown only for the first 9 (the shortcut range). ⌘ on mac, Ctrl
   // elsewhere. The keydown handler itself lives once in App.svelte.
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '')
-  const shortcutHint = (pid) => {
+  const shortcutHint = (pid: string) => {
     const i = list.findIndex((p) => p.id === pid)
     return i >= 0 && i < 9 ? ` — ${isMac ? '⌘' : 'Ctrl+'}${i + 1}` : ''
   }
-  const chipTitle = (p) => p.name + shortcutHint(p.id)
+  const chipTitle = (p: Profile) => p.name + shortcutHint(p.id)
   const active = $derived(list.find((p) => p.id === $profiles.activeId))
-  const initial = (p) => (p?.name || '?').trim().charAt(0).toUpperCase() || '?'
+  const initial = (p: Profile | undefined) => (p?.name || '?').trim().charAt(0).toUpperCase() || '?'
 
   // In-place switch (no reload → no blink). switchProfile no-ops on the active one.
-  const switchTo = (pid) => switchProfile(pid)
+  const switchTo = (pid: string) => switchProfile(pid)
 
   // Chips shown inline vs. collapsed. ≤4 profiles: all inline, no menu. >4: show
   // the first few inline and fold the rest into a "+N" overflow picker (which also
@@ -59,12 +60,13 @@
 
   let pickerOpen = $state(false)
   // Close the picker on click-outside / Escape.
-  function onDocPointer(e) {
-    if (pickerOpen && !e.target.closest('.profchips')) pickerOpen = false
-    if (menuChat && !e.target.closest('.chatmenu') && !e.target.closest('.rowkebab')) menuChat = ''
-    if (menuTask && !e.target.closest('.taskmenu') && !e.target.closest('.rowkebab')) menuTask = ''
+  function onDocPointer(e: PointerEvent) {
+    const t = e.target instanceof Element ? e.target : null
+    if (pickerOpen && !t?.closest('.profchips')) pickerOpen = false
+    if (menuChat && !t?.closest('.chatmenu') && !t?.closest('.rowkebab')) menuChat = ''
+    if (menuTask && !t?.closest('.taskmenu') && !t?.closest('.rowkebab')) menuTask = ''
   }
-  function onDocKey(e) {
+  function onDocKey(e: KeyboardEvent) {
     if (createOpen && e.key === 'Escape') { createOpen = false; return }
     if (pickerOpen && e.key === 'Escape') pickerOpen = false
     if (menuChat && e.key === 'Escape') menuChat = ''
@@ -77,10 +79,10 @@
   // in place (switchProfile adopts its accent and lands on its home).
   let createOpen = $state(false)
   const claimedAccents = $derived(list.map((p) => p.accent))
-  async function createProfile({ name, accent }) {
+  async function createProfile({ name, accent }: ProfileDraft) {
     const res = await api.createProfile(name, accent) // throws → inline
     // Add to the live list before switching so switchProfile finds its accent/chip.
-    profiles.update((r) => ({ ...r, list: [...(r.list || []), res.profile] }))
+    profiles.update((r) => ({ ...r, list: [...r.list, res.profile] }))
     // switchProfile lands in place (no reload), so nothing unmounts this modal for
     // us — close it here, or the form sits on its "Creating…" busy state forever.
     createOpen = false
@@ -90,14 +92,14 @@
   // False until the active profile's first refresh lands — the list shows a loader
   // instead of the "no conversations" empty state. Reset on every profile switch.
   let loaded = $state(false)
-  let usageAll = $state(null) // install-wide roll-up {profiles:[{pid,name,...}], total}
+  let usageAll = $state<UsageRollup | null>(null) // install-wide roll-up
   // The active profile's own totals, derived from the roll-up (one request, not two).
   const usage = $derived((usageAll?.profiles || []).find((p) => p.pid === $profiles.activeId) || null)
-  let statusById = $state({}) // pid -> {busy, running_tasks, unseen_done} from GET /api/status
+  let statusById = $state<Record<string, StatusRow | undefined>>({}) // pid -> row from GET /api/status
   // A chip's dot: true when that profile has finished tasks the user hasn't opened
   // yet (rolls up the nav's per-row unread marker to the profile). Clears on the
   // next 5s poll once the run is opened (api.runSeen).
-  const hasUnseen = (pid) => (statusById[pid]?.unseen_done || 0) > 0
+  const hasUnseen = (pid: string) => (statusById[pid]?.unseen_done || 0) > 0
 
   async function refresh() {
     // Drop chats/tasks writes if a profile switch lands mid-poll (epoch moved).
@@ -121,15 +123,15 @@
     // /api/status is global (all profiles) — index it by pid for the chips.
     try {
       const rows = await api.status()
-      statusById = Object.fromEntries((rows || []).map((r) => [r.pid, r]))
+      statusById = Object.fromEntries(rows.map((r) => [r.pid, r]))
     } catch {}
   }
 
-  const fmtTok = (n) =>
+  const fmtTok = (n: number) =>
     !n ? '0' : n < 1000 ? String(Math.round(n)) : `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
   // "12.3k tok · ~$0.0456" for a usage-shaped {total, cost, priced}. Cost is an
   // estimate (~) and only shown when the contributing model(s) had known pricing.
-  const fmtUsage = (u) => {
+  const fmtUsage = (u: UsageTotals) => {
     const tok = `${fmtTok(u.total)} tok`
     return u.priced ? `${tok} · ~$${u.cost.toFixed(u.cost < 1 ? 3 : 2)}` : tok
   }
@@ -150,8 +152,8 @@
       + (usage.priced ? ` · ~$${(usage.cost || 0).toFixed(4)} (estimate)` : ' · cost: no price set')
       + (models ? `\nmodels: ${models}` : '')
     // Per-profile breakdown line ("Work: … · Personal: …") when more than one exists.
-    if (multiProfile) {
-      const breakdown = (usageAll.profiles || [])
+    if (multiProfile && usageAll) {
+      const breakdown = usageAll.profiles
         .filter((p) => p.total)
         .map((p) => `${p.name}: ${fmtUsage(p)}`)
         .join(' · ')
@@ -199,7 +201,7 @@
   // under date-group headers ("Recent"/"Yesterday"/date). Both are keyed by
   // taskRecencyAt (last run's time, else creation) — the task analogue of a chat's
   // last-message `updated` — newest-first; a starred task shows ONLY in Starred.
-  const byRecent = (a, b) => new Date(taskRecencyAt(b)) - new Date(taskRecencyAt(a))
+  const byRecent = (a: Task, b: Task) => +new Date(taskRecencyAt(b)) - +new Date(taskRecencyAt(a))
   const starredTasks = $derived($tasks.filter((t) => t.starred).sort(byRecent))
   const taskRows = $derived(
     dayRows(
@@ -208,16 +210,25 @@
     )
   )
 
-  const openChat = (id) => go('/c/' + id)
-  const openTask = (id) => go('/t/' + id)
+  const openChat = (id: string) => go('/c/' + id)
+  const openTask = (id: string) => go('/t/' + id)
   const newChat = () => go('/c/' + newChatId())
+
+  // Keyboard twin of a row's click. Only the row itself acts: Enter/Space landing
+  // on a nested button or rename input belongs to that control, not the row.
+  function rowKey(e: KeyboardEvent, run: () => void) {
+    if (e.target !== e.currentTarget) return
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    run()
+  }
 
   // Chat delete: a hover-revealed trash on the row swaps to an inline "Delete? yes/no"
   // confirm (mirrors the Files modal). Permanent — the backend drops the transcript
   // AND the full event log. If the open chat is the one deleted, hop to a fresh chat.
   let confirmChat = $state('') // chat_id awaiting delete confirmation
   let busyChat = $state('') // chat_id currently being deleted
-  async function delChat(id) {
+  async function delChat(id: string) {
     busyChat = id
     try {
       await api.deleteChat(id)
@@ -234,7 +245,7 @@
   let menuChat = $state('') // chat_id whose menu is open
   let foldersChat = $state('') // chat_id whose Folder-access modal is open
   let menuPos = $state({ x: 0, y: 0 })
-  function toggleMenu(e, s) {
+  function toggleMenu(e: MouseEvent & { currentTarget: HTMLElement }, s: ChatRow) {
     e.stopPropagation()
     if (menuChat === s.chat_id) { menuChat = ''; return }
     const r = e.currentTarget.getBoundingClientRect()
@@ -242,7 +253,7 @@
     menuChat = s.chat_id
   }
 
-  async function toggleStar(s) {
+  async function toggleStar(s: ChatRow) {
     menuChat = ''
     const next = !s.starred
     $chats = $chats.map((c) => (c.chat_id === s.chat_id ? { ...c, starred: next } : c))
@@ -255,12 +266,12 @@
   // cancels, empty commit = cancel. A user title is authoritative server-side.
   let renameChat = $state('') // chat_id being renamed
   let renameText = $state('')
-  function startRename(s) {
+  function startRename(s: ChatRow) {
     menuChat = ''
     renameChat = s.chat_id
     renameText = s.title || s.preview || ''
   }
-  async function commitRename(s) {
+  async function commitRename(s: ChatRow) {
     if (renameChat !== s.chat_id) return // Escape already cancelled; ignore the blur
     renameChat = ''
     const t = renameText.trim()
@@ -271,7 +282,7 @@
       $chats = $chats.map((c) => (c.chat_id === s.chat_id ? { ...c, title: prev } : c))
     }
   }
-  function focusSelect(node) { node.focus(); node.select() }
+  function focusSelect(node: HTMLInputElement) { node.focus(); node.select() }
 
   // ── Task row actions (Rename / Enable-Disable / Edit / Delete) ──────────────
   // Same idioms as the chat row above, one level over: a hover-revealed kebab opens
@@ -284,7 +295,7 @@
   let confirmTask = $state('')    // task id awaiting delete confirmation
   let busyTask = $state('')       // task id currently being deleted
 
-  function toggleTaskMenu(e, t) {
+  function toggleTaskMenu(e: MouseEvent & { currentTarget: HTMLElement }, t: Task) {
     e.stopPropagation()
     menuChat = ''
     if (menuTask === t.id) { menuTask = ''; return }
@@ -294,7 +305,7 @@
   }
 
   // Enable/Disable = flip the task's paused flag (the same toggle as TaskPage).
-  async function toggleTaskPause(t) {
+  async function toggleTaskPause(t: Task) {
     menuTask = ''
     const next = !t.paused
     $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: next } : x))
@@ -304,7 +315,7 @@
   }
 
   // Star/Unstar = flip the task's starred flag (mirrors chats' toggleStar).
-  async function toggleTaskStar(t) {
+  async function toggleTaskStar(t: Task) {
     menuTask = ''
     const next = !t.starred
     $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, starred: next } : x))
@@ -314,18 +325,18 @@
   }
 
   // Full edit: hand off to TaskPage's inline edit state via the one-shot pendingTaskEdit signal.
-  function editTask(t) {
+  function editTask(t: Task) {
     menuTask = ''
     pendingTaskEdit.set(t.id)
     openTask(t.id)
   }
 
-  function startTaskRename(t) {
+  function startTaskRename(t: Task) {
     menuTask = ''
     renameTask = t.id
     renameTaskText = t.name || ''
   }
-  async function commitTaskRename(t) {
+  async function commitTaskRename(t: Task) {
     if (renameTask !== t.id) return // Escape already cancelled; ignore the blur
     renameTask = ''
     const name = renameTaskText.trim()
@@ -337,7 +348,7 @@
     }
   }
 
-  async function delTask(id) {
+  async function delTask(id: string) {
     busyTask = id
     try {
       await api.deleteTask(id)
@@ -352,14 +363,14 @@
   // .statusicon CSS classes; replaces the old emoji/unicode glyphs. Keys are
   // Run statuses (RunStatus.ALL: running/needs_input/completed/failed/cancelled) —
   // a task row's `last_run.status` is looked up here for its status icon.
-  const STATUS = {
+  const STATUS: Record<RunStatus, { icon: string; label: string }> = {
     running: { icon: 'spinner', label: 'running' },
     needs_input: { icon: 'help-circle', label: 'needs input' },
     completed: { icon: 'check', label: 'completed' },
     failed: { icon: 'x', label: 'failed' },
     cancelled: { icon: 'slash', label: 'cancelled' },
   }
-  const stat = (s) => STATUS[s] || { icon: 'clock', label: s || '' }
+  const stat = (s: RunStatus | undefined) => (s && STATUS[s]) || { icon: 'clock', label: s || '' }
 
 </script>
 
@@ -439,7 +450,9 @@
   {/if}
 
   {#if createOpen}
-    <div class="modal-backdrop" onclick={() => (createOpen = false)}></div>
+    <!-- Backdrop: click-to-dismiss duplicates the Cancel button, so it stays out
+         of the a11y tree rather than becoming a second focusable control. -->
+    <div class="modal-backdrop" role="presentation" onclick={() => (createOpen = false)}></div>
     <div class="modal profcreate">
       <h2>New profile</h2>
       <p class="pc-lead">A colour-coded, isolated workspace — its own chats, tasks, memory, and files.</p>
@@ -463,11 +476,13 @@
     <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => go('/files')}><Icon name="folder" size={14} /> Files</button>
   </div>
 
-  {#snippet chatRow(s)}
-    <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id} onclick={() => openChat(s.chat_id)}>
+  {#snippet chatRow(s: ChatRow)}
+    <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id}
+         role="button" tabindex="0"
+         onclick={() => openChat(s.chat_id)} onkeydown={(e) => rowKey(e, () => openChat(s.chat_id))}>
       {#if renameChat === s.chat_id}
         <input class="renamein" value={renameText} use:focusSelect
-          oninput={(e) => (renameText = e.target.value)}
+          oninput={(e) => (renameText = e.currentTarget.value)}
           onclick={(e) => e.stopPropagation()}
           onkeydown={(e) => { if (e.key === 'Enter') commitRename(s); else if (e.key === 'Escape') renameChat = '' }}
           onblur={() => commitRename(s)} />
@@ -475,7 +490,8 @@
         <div class="clabel" title={s.preview || ''}>{s.title || s.preview || s.chat_id}</div>
       {/if}
       {#if confirmChat === s.chat_id}
-        <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+        <!-- Layout wrapper only: the click handler shields the row underneath. -->
+        <span class="rowconfirm" role="presentation" onclick={(e) => e.stopPropagation()}>
           <span class="confirm">Delete?</span>
           <button class="linkbtn danger" disabled={busyChat === s.chat_id}
             onclick={(e) => { e.stopPropagation(); delChat(s.chat_id) }}>{busyChat === s.chat_id ? '…' : 'yes'}</button>
@@ -486,6 +502,9 @@
         <button class="rowkebab" title="Chat actions" aria-haspopup="menu" aria-expanded={menuChat === s.chat_id}
           onclick={(e) => toggleMenu(e, s)}><Icon name="ellipsis-vertical" size={14} /></button>
         {#if menuChat === s.chat_id}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- The handler only shields the row underneath; it is not an action, so
+               there is nothing for a keyboard twin to do. -->
           <div class="chatmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
             onclick={(e) => e.stopPropagation()}>
             <button class="cmitem" role="menuitem" onclick={() => toggleStar(s)}>
@@ -508,10 +527,11 @@
     </div>
   {/snippet}
 
-  {#snippet taskRow(t)}
+  {#snippet taskRow(t: Task)}
     {@const nextIn = !t.paused && t.next_run_at ? fmtNextIn(t.next_run_at) : ''}
     <div class="drow ttask" class:on={$route.name === 'task' && $route.id === t.id}
-         class:unseen={t.unread > 0} onclick={() => openTask(t.id)}>
+         class:unseen={t.unread > 0} role="button" tabindex="0"
+         onclick={() => openTask(t.id)} onkeydown={(e) => rowKey(e, () => openTask(t.id))}>
       <div class="tline1">
         {#if t.paused}<span class="statusicon" title="Paused"><Icon name="pause" size={14} /></span>
         {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
@@ -519,7 +539,7 @@
         {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
         {#if renameTask === t.id}
           <input class="renamein" value={renameTaskText} use:focusSelect
-            oninput={(e) => (renameTaskText = e.target.value)}
+            oninput={(e) => (renameTaskText = e.currentTarget.value)}
             onclick={(e) => e.stopPropagation()}
             onkeydown={(e) => { if (e.key === 'Enter') commitTaskRename(t); else if (e.key === 'Escape') renameTask = '' }}
             onblur={() => commitTaskRename(t)} />
@@ -535,7 +555,8 @@
           {/if}
         {/if}
         {#if confirmTask === t.id}
-          <span class="rowconfirm" onclick={(e) => e.stopPropagation()}>
+          <!-- Layout wrapper only: the click handler shields the row underneath. -->
+        <span class="rowconfirm" role="presentation" onclick={(e) => e.stopPropagation()}>
             <span class="confirm">Delete?</span>
             <button class="linkbtn danger" disabled={busyTask === t.id}
               onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : 'yes'}</button>
@@ -545,6 +566,9 @@
           <button class="rowkebab" title="Task actions" aria-haspopup="menu" aria-expanded={menuTask === t.id}
             onclick={(e) => toggleTaskMenu(e, t)}><Icon name="ellipsis-vertical" size={14} /></button>
           {#if menuTask === t.id}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- The handler only shields the row underneath; it is not an action, so
+                 there is nothing for a keyboard twin to do. -->
             <div class="chatmenu taskmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
               onclick={(e) => e.stopPropagation()}>
               <button class="cmitem" role="menuitem" onclick={() => toggleTaskStar(t)}>

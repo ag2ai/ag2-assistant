@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // First-run welcome: a warm multi-step flow. Now install-level (§5.5): one flow
   // can create SEVERAL profiles. Steps: Welcome (name) → Connect (global provider
   // keys + model, SKIPPABLE — Settings → Models is the same flow, and an install may
@@ -19,31 +19,54 @@
   //     state (App.svelte boot === 'create'); the Profiles step must create ≥1
   //     profile before Continue, and on finish we navigate into the first one.
   import { onMount, onDestroy } from 'svelte'
-  import { onboardingOpen, profile, profiles } from '../store.js'
-  import { api } from '../transport/api.js'
-  import { setActiveProfileId } from '../lib/profile.js'
-  import { setAccent } from '../design/palette.js'
-  import { FOCUS, focusLabel } from '../lib/focuses.js'
-  import { TYPE_LABEL } from '../lib/providerLabels.js'
-  import { featuredModelsFor } from '../lib/knownModels.js'
+  import { onboardingOpen, profile, profiles } from '../store.ts'
+  import { api } from '../transport/api/index.ts'
+  import { setActiveProfileId } from '../lib/profile.ts'
+  import { setAccent } from '../design/palette.ts'
+  import { FOCUS, focusLabel } from '../lib/focuses.ts'
+  import { TYPE_LABEL } from '../lib/providerLabels.ts'
+  import { featuredModelsFor } from '../lib/knownModels.ts'
   import {
     CLI_TYPE,
     agentAvailability,
     canUseCliLogin,
     cliDefaultLabel,
     cliNote,
-  } from '../lib/cliLogin.js'
-  import { effortLabel, groupModels, joinModelId, splitModelId } from '../lib/codexModels.js'
+  } from '../lib/cliLogin.ts'
+  import { effortLabel, groupModels, joinModelId, splitModelId } from '../lib/codexModels.ts'
+  import { ApiError } from '../transport/http.ts'
+  import { FolderConflict, type CodexStatus, type CodingCatalog, type FsRoots, type Profile } from '../schemas/index.ts'
+  import type { AgentsRead } from '../lib/cliLogin.ts'
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
   import FolderPicker from './FolderPicker.svelte'
-  import ProfileForm from './ProfileForm.svelte'
+  import ProfileForm, { type ProfileDraft } from './ProfileForm.svelte'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
 
   // fresh — true when this is the zero-profile bootstrap (rendered by App instead
-  //   of the overlay). onComplete(firstPid?) — App adopts profiles + navigates.
-  let { fresh = false, onComplete = null } = $props()
+  //   of the overlay). onComplete(firstPid) — App adopts profiles + navigates.
+  type Props = {
+    fresh?: boolean
+    onComplete?: ((firstPid: string | null) => void) | null
+  }
+  let { fresh = false, onComplete = null }: Props = $props()
+
+  // The three providers whose keys this flow can write.
+  type KeyProvider = 'gemini' | 'openai' | 'anthropic'
+  // One selectable model. `auth` marks the ChatGPT-subscription entry.
+  type ModelChoice = { label: string; provider: string; model: string; auth?: string }
+  // One Connect tab. The three arms are mutually exclusive in practice, but the
+  // markup indexes them by a computed tab id, which no union would narrow.
+  type ConnectTab = {
+    id: string
+    label: string
+    hint: string
+    keyId?: KeyProvider
+    models?: ModelChoice[]
+    oauth?: boolean
+    cli?: string
+  }
 
   const STEPS = ['Welcome', 'About you', 'Connect', 'Profiles', 'Set up', 'Ready']
   const CONNECT_STEP = 2
@@ -54,20 +77,22 @@
     { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
     { icon: 'brain', title: 'Remembers what matters', desc: 'Builds a private memory of your preferences so it gets more helpful over time.' },
   ]
-  // Selectable models come from lib/knownModels.js — the featured entries per provider,
+  // Selectable models come from lib/knownModels.ts — the featured entries per provider,
   // in table order. A pill names its vendor too, because three tabs' models share
   // `modelLabel`, which is what finish() maps back to provider/model.
-  const VENDOR = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic' }
-  const modelsFor = (provider) =>
+  const VENDOR: Record<KeyProvider, string> = {
+    gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic',
+  }
+  const modelsFor = (provider: KeyProvider): ModelChoice[] =>
     featuredModelsFor(provider).map((m) => ({ label: `${VENDOR[provider]} · ${m.label}`, provider, model: m.id }))
-  const MODELS = [...modelsFor('gemini'), ...modelsFor('openai'), ...modelsFor('anthropic')]
+  const MODELS: ModelChoice[] = [...modelsFor('gemini'), ...modelsFor('openai'), ...modelsFor('anthropic')]
   // Connect step is organised as provider tabs. Each key-based tab owns one API-key
   // field (keyed into `keys`) plus its provider's models; the OAuth tab hosts the
   // ChatGPT subscription sign-in instead, and the two `cli` tabs the ACP CLI logins
   // (no key at all — auth is that CLI's own on-disk login). The ACTIVE tab drives
   // which config gets created and activated on finish (see `chosenConfig`); within a
   // tab the user picks among its models.
-  const TABS = [
+  const TABS: ConnectTab[] = [
     { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: 'recommended', models: modelsFor('gemini') },
     { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: 'optional', models: modelsFor('openai') },
     { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
@@ -80,13 +105,13 @@
   ]
 
   let step = $state(0)
-  let keys = $state({ gemini: '', openai: '', anthropic: '' })
+  let keys: Record<KeyProvider, string> = $state({ gemini: '', openai: '', anthropic: '' })
   let activeTab = $state(TABS[0].id)
   let modelLabel = $state(MODELS[0].label)
   const currentTab = $derived(TABS.find((t) => t.id === activeTab) || TABS[0])
   // The active tab drives which model gets activated. Key tabs carry their single
   // model; the OAuth tab's model is the subscription one, but only once signed in.
-  function selectTab(id) {
+  function selectTab(id: string) {
     activeTab = id
     const t = TABS.find((x) => x.id === id)
     if (t?.oauth) { if (codex?.signed_in) modelLabel = SUB_MODEL.label }
@@ -98,22 +123,23 @@
   // (POST /api/identity at flow completion). All optional; name comes from Welcome.
   let identity = $state({ location: '', hours: '', style: '' })
   let busy = $state(false)
-  let fsRoots = $state({})
+  // Empty until the Set up step loads them from any profile's settings.
+  let fsRoots = $state<Partial<FsRoots>>({})
 
   // ChatGPT-subscription sign-in (optional alternative to an API key). Unofficial —
   // see the Codex modal. Loaded on mount; the connect flow mirrors Codex.svelte.
-  const SUB_MODEL = {
+  const SUB_MODEL: ModelChoice = {
     label: 'OpenAI · gpt-5.6-terra (ChatGPT subscription)',
     provider: 'openai',
     model: 'gpt-5.6-terra',
     auth: 'subscription',
   }
-  let codex = $state(null)
+  let codex = $state<CodexStatus | null>(null)
   let codexConnecting = $state(false)
   let codexState = $state('')
   let codexCode = $state('')
   let codexShowManual = $state(false)
-  let codexPoll = null
+  let codexPoll: ReturnType<typeof setInterval> | null = null
   const allModels = $derived(codex?.signed_in ? [...MODELS, SUB_MODEL] : MODELS)
 
   // ---- CLI logins (Claude Code / Codex over ACP) --------------------------------
@@ -123,9 +149,10 @@
   // in flight, else {models, current, reason} — the same shape and the same reason
   // vocabulary Settings → Models uses. All the decisions made on these two reads
   // live in lib/cliLogin.js.
-  let agents = $state(null)
-  let catalogs = $state({})
-  let cliModel = $state({ claude: '', codex: '' }) // '' = the CLI's own model
+  let agents = $state<AgentsRead | null>(null)
+  let catalogs = $state<Record<string, CodingCatalog | 'loading' | undefined>>({})
+  // Keyed by agent name, so the tab's own `cli` id can index it.
+  let cliModel: Record<string, string> = $state({ claude: '', codex: '' }) // '' = the CLI's own model
   const cliAvail = $derived(currentTab.cli ? agentAvailability(agents, currentTab.cli) : null)
   const cliCatalog = $derived(currentTab.cli ? catalogs[currentTab.cli] : undefined)
   const cliLoading = $derived(!!currentTab.cli && (!cliAvail?.loaded || cliCatalog === 'loading'))
@@ -134,16 +161,16 @@
   const cliReady = $derived(!!currentTab.cli && canUseCliLogin(cliAvail, cliCatalog))
   const cliHint = $derived(currentTab.cli ? cliNote(currentTab.cli, cliAvail, cliCatalog) : '')
 
-  function fetchCatalog(agent, refresh = false) {
+  function fetchCatalog(agent: string, refresh = false) {
     catalogs[agent] = 'loading'
     api.codingModels(agent, refresh)
-      .then((r) => { catalogs[agent] = { models: r.models || [], current: r.current || '', reason: r.reason || '' } })
+      .then((r) => { catalogs[agent] = { models: r.models, current: r.current, reason: r.reason } })
       .catch(() => { catalogs[agent] = { models: [], current: '', reason: 'probe_failed' } })
   }
   // "Re-check" after installing the adapter or logging the CLI in: both reads are
   // stale then, and the availability read is what decides whether a probe is even
   // possible — so re-read it first, then probe past the TTL cache.
-  async function recheckCli(agent) {
+  async function recheckCli(agent: string) {
     try { agents = await api.codingAgents() } catch {}
     const a = agentAvailability(agents, agent)
     if (a.available && a.mode === 'local') fetchCatalog(agent, true)
@@ -165,7 +192,7 @@
   const codexGroups = $derived(currentTab.cli === 'codex' ? groupModels(cliModels) : [])
   const codexPick = $derived(splitModelId(cliModel.codex))
   const codexEfforts = $derived(codexGroups.find((g) => g.family === codexPick.family)?.efforts || [])
-  function pickCodexFamily(family) {
+  function pickCodexFamily(family: string) {
     // Keep the effort when the new family offers it, else fall back to its default.
     const efforts = codexGroups.find((g) => g.family === family)?.efforts || []
     const keep = efforts.some((e) => e.value === codexPick.effort) ? codexPick.effort : ''
@@ -180,15 +207,16 @@
 
   async function connectCodex() {
     try {
+      // The route always answers {ok, auth_url, state}; a failure throws instead.
       const r = await api.codexLoginUrl()
-      if (!r.ok || !r.auth_url) return
       codexState = r.state
       window.open(r.auth_url, '_blank')
       codexConnecting = true
       codexPoll = setInterval(async () => {
         const s = await api.codexStatus()
         if (s.signed_in) {
-          clearInterval(codexPoll); codexPoll = null; codexConnecting = false; codex = s
+          if (codexPoll) clearInterval(codexPoll)
+          codexPoll = null; codexConnecting = false; codex = s
           modelLabel = SUB_MODEL.label // pick it automatically once signed in
         }
       }, 2000)
@@ -210,7 +238,7 @@
   // (re-run mode); fresh install starts empty. Preset accents already used are
   // removed from the ProfileForm swatches (§5.5) — a custom colour is always
   // available, so the form is never gated shut.
-  let created = $state([...($profiles.list || [])])
+  let created = $state<Profile[]>([...$profiles.list])
   let showForm = $state(true)
   const claimedAccents = $derived(created.map((p) => p.accent))
 
@@ -219,33 +247,35 @@
   // Ready summary and to seed the picker when revisiting. Both saves target THAT
   // profile's pid via api.forProfile(pid) — never the active one.
   let setupIdx = $state(0)
-  let chosen = $state({}) // pid -> { folder: '', focuses: [] }
+  // pid -> what that profile's setup page chose.
+  type SetupChoice = { folder: string; focuses: string[] }
+  let chosen = $state<Record<string, SetupChoice | undefined>>({})
   let folder = $state('') // folder chosen on the current setup page
-  let focuses = $state([]) // focuses chosen on the current setup page
+  let focuses = $state<string[]>([]) // focuses chosen on the current setup page
   const setupProfile = $derived(created[setupIdx] || null)
 
   // Load the fs roots (for the folder picker) once — they're install-wide, so any
   // profile's GET settings works. Fetched when we first reach the Set up step.
-  async function loadFsRoots(pid) {
+  async function loadFsRoots(pid: string | undefined) {
     if (Object.keys(fsRoots).length || !pid) return
     try {
       const s = await api.forProfile(pid).settings()
-      fsRoots = s.fs || {}
+      fsRoots = s.fs
     } catch {}
   }
 
   // Enter the setup page for profile `i`: hydrate the pickers from anything already
   // chosen for it (so Back doesn't lose work) and ensure fs roots are loaded.
-  function enterSetup(i) {
+  function enterSetup(i: number) {
     setupIdx = i
     const p = created[i]
-    const prior = (p && chosen[p.id]) || {}
-    folder = prior.folder || ''
-    focuses = prior.focuses ? [...prior.focuses] : []
+    const prior = p ? chosen[p.id] : undefined
+    folder = prior?.folder || ''
+    focuses = prior?.focuses ? [...prior.focuses] : []
     loadFsRoots(p?.id)
   }
 
-  const toggleFocus = (id) =>
+  const toggleFocus = (id: string) =>
     (focuses = focuses.includes(id) ? focuses.filter((x) => x !== id) : [...focuses, id])
 
   const hasKey = $derived(!!(keys.gemini.trim() || keys.openai.trim() || keys.anthropic.trim()))
@@ -288,9 +318,12 @@
           // Register the picked directory as an install-wide Folder (or adopt the
           // existing one on a 409 path collision) and grant THIS profile read.
           try {
-            let view
+            let view = null
             try { view = (await api.createFolder(folder)).folder } catch (e) {
-              view = e.status === 409 ? e.body?.existing : null
+              // 409 = the path is already registered; the body points at that Folder.
+              const clash = e instanceof ApiError && e.status === 409 ? FolderConflict.safeParse(e.body) : null
+              if (!clash?.success) throw e
+              view = clash.data.existing
             }
             if (view) await api.setGrant(view.id, p.id, 'read')
           } catch {}
@@ -307,7 +340,7 @@
   // Create one profile live (POST /api/profiles boots the runtime). On the first
   // one we also adopt it as the active profile so it's the one App boots into, and
   // reflect its accent immediately.
-  async function createProfile({ name: pname, accent }) {
+  async function createProfile({ name: pname, accent }: ProfileDraft) {
     const res = await api.createProfile(pname, accent) // throws → inline error
     const p = res.profile
     const first = created.length === 0
@@ -526,6 +559,7 @@
                   </div>
                 {/if}
               {:else if currentTab.cli}
+                {@const cliName = currentTab.cli}
                 <!-- CLI login over ACP: no key field and no endpoint — auth is that
                      CLI's own on-disk login. What has to be true is that its ACP
                      adapter answers; the model list comes from the adapter itself. -->
@@ -540,7 +574,7 @@
                     <div class="onb-input" style="cursor:default">
                       <Icon name="check" size={15} />
                       <span style="flex:1;font-size:var(--text-sm)">
-                        {cliAvail.mode === 'bridge'
+                        {cliAvail?.mode === 'bridge'
                           ? 'Reachable through the host ACP bridge'
                           : 'Adapter answered — running on your CLI login'}
                       </span>
@@ -548,7 +582,7 @@
                   {/if}
                   {#if cliHint}<p class="hint" class:warn={!cliReady}>{cliHint}</p>{/if}
                   {#if !cliLoading}
-                    <button class="onb-btn ghost" style="align-self:flex-start;padding:0" onclick={() => recheckCli(currentTab.cli)}>
+                    <button class="onb-btn ghost" style="align-self:flex-start;padding:0" onclick={() => recheckCli(cliName)}>
                       Re-check
                     </button>
                   {/if}
@@ -586,18 +620,19 @@
                     </div>
                   {/if}
                 {/if}
-              {:else}
+              {:else if currentTab.keyId}
+                {@const keyId = currentTab.keyId}
                 <div class="onb-field">
                   <div class="onb-flabel"><span>{currentTab.label} API key</span><span class="hint">{currentTab.hint}</span></div>
                   <div class="onb-input">
                     <Icon name="settings" size={15} />
-                    <input type="password" placeholder="paste key…" bind:value={keys[currentTab.keyId]} />
+                    <input type="password" placeholder="paste key…" bind:value={keys[keyId]} />
                   </div>
                 </div>
                 <div class="onb-field">
                   <div class="onb-flabel"><span>Assistant model</span></div>
                   <div class="onb-pills">
-                    {#each currentTab.models as m}
+                    {#each currentTab.models ?? [] as m}
                       <button class="onb-pill" class:on={modelLabel === m.label} onclick={() => (modelLabel = m.label)}>{m.label}</button>
                     {/each}
                   </div>
@@ -673,13 +708,13 @@
             <!-- Per-profile summary: name, accent dot, folder-or-—, focuses-or-—. -->
             <div class="onb-summary">
               {#each created as p (p.id)}
-                {@const c = chosen[p.id] || {}}
+                {@const c = chosen[p.id]}
                 <div class="onb-profrow">
                   <span class="onb-profdot" style="--dot:{p.accent}"></span>
                   <span class="onb-profname">{p.name}</span>
                   <span class="onb-profmeta">
-                    <span class="onb-profmetaitem"><Icon name="folder" size={13} /> {c.folder || '—'}</span>
-                    <span class="onb-profmetaitem cap"><Icon name="sparkles" size={13} /> {c.focuses?.length ? c.focuses.map(focusLabel).join(', ') : '—'}</span>
+                    <span class="onb-profmetaitem"><Icon name="folder" size={13} /> {c?.folder || '—'}</span>
+                    <span class="onb-profmetaitem cap"><Icon name="sparkles" size={13} /> {c?.focuses.length ? c.focuses.map(focusLabel).join(', ') : '—'}</span>
                   </span>
                 </div>
               {/each}
@@ -870,7 +905,6 @@
   .onb-sumicon { color: var(--accent); display: inline-flex; }
   .onb-sumkey { width: 64px; flex: none; font-size: var(--text-sm); color: var(--text-muted); }
   .onb-sumval { flex: 1; font-size: var(--text-sm); color: var(--text); }
-  .onb-sumval.cap { text-transform: capitalize; }
 
   /* Per-profile setup header + the per-profile Ready summary rows */
   /* Connect is skippable — say so next to the heading, in the same quiet pill the

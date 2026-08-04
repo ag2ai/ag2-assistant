@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Integrations (install-wide, ADR 0022): the list of Connections this
   // install has, and the grid of what it can add — deliberately the same two-part
   // shape as Settings → Models.
@@ -12,9 +12,9 @@
   // connect flow, GitHub's writes the one shared registry key, and both are offered
   // in the Add grid only while unconnected.
   import { onMount } from 'svelte'
-  import { profiles } from '../../store.js'
-  import { getSettings } from './context.svelte.js'
-  import { api } from '../../transport/api.js'
+  import { profiles } from '../../store.ts'
+  import { getSettings } from './context.svelte.ts'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import ConnectForm from './ConnectForm.svelte'
   import ConnectionDetail from './ConnectionDetail.svelte'
@@ -23,15 +23,20 @@
   import IntegrationMark from './IntegrationMark.svelte'
   import {
     CATALOG, byId, platformLabel, connectionStatus, googleStatus, githubStatus,
-  } from '../../lib/integrations.js'
+  } from '../../lib/integrations.ts'
+  import type { Integration } from '../../lib/integrations.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type { Connection, Profile } from '../../schemas/index.ts'
 
   const ctx = getSettings()
 
-  let list = $state([])          // GET /api/connections → [entry, …], creation order
+  let list = $state<Connection[]>([])   // GET /api/connections, creation order
   let err = $state('')
   let loaded = $state(false)
-  let openKey = $state(null)     // connection id, 'google' or 'github' — null = list
-  let connecting = $state(null)  // CATALOG entry being connected — null = not connecting
+  // connection id, 'google' or 'github' — null = the list
+  let openKey = $state<string | null>(null)
+  // CATALOG entry being connected — null = not connecting
+  let connecting = $state<Integration | null>(null)
   let adding = $state(false)     // the card grid
   let clearingGithub = $state(false)
 
@@ -39,14 +44,15 @@
 
   async function load() {
     try {
-      list = (await api.connections()).connections || []
+      list = await api.connections()
       err = ''
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     loaded = true
   }
 
-  const profById = $derived(Object.fromEntries(($profiles.list || []).map((p) => [p.id, p])))
-  const count = (platform) => list.filter((c) => c.platform === platform).length
+  const profById: Record<string, Profile | undefined> =
+    $derived(Object.fromEntries($profiles.list.map((p) => [p.id, p])))
+  const count = (platform: string) => list.filter((c) => c.platform === platform).length
   const open = $derived(list.find((c) => c.id === openKey) || null)
   const googleOn = $derived(!!ctx.google?.signed_in)
   const githubOn = $derived(!!ctx.s?.keys?.github?.set)
@@ -56,7 +62,7 @@
   const addable = $derived(CATALOG.filter((e) => e.multiple
     || (e.kind === 'google' ? !googleOn : !githubOn)))
 
-  function pick(entry) {
+  function pick(entry: Integration) {
     adding = false
     // Google has no token to type — its own flow owns sign-in.
     if (entry.kind === 'google') { ctx.openGoogle(); return }
@@ -66,7 +72,8 @@
   // Throws on failure; ConnectForm shows the message and stays open. A connection
   // that is created but will not start comes back 200 with its reason — the new
   // settings pane opens on it and the status line says so.
-  async function connect(name, tokens) {
+  async function connect(name: string, tokens: Record<string, string>) {
+    if (!connecting) return
     if (connecting.kind === 'github') {
       await api.setKey('github', tokens.token)
       await ctx.load()
@@ -112,7 +119,7 @@
   <IntegrationHeader platform="google" label="Google" status={googleStatus(ctx.google)} />
   <div class="setgroup">Account</div>
   <p class="setsub">
-    {byId.google.setup} Gmail, Calendar and Drive tools appear once you are signed in.
+    {byId.google?.setup} Gmail, Calendar and Drive tools appear once you are signed in.
     Managing it opens the Google flow — Settings closes behind it.
   </p>
   <div class="keyrow">
@@ -122,13 +129,13 @@
   <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
   <IntegrationHeader platform="github" label="GitHub" status={githubStatus(ctx.s?.keys)} />
   <div class="setgroup">Token</div>
-  <p class="setsub">{byId.github.blurb} {byId.github.setup}</p>
+  <p class="setsub">{byId.github?.blurb} {byId.github?.setup}</p>
   {#if ctx.err}<p class="cnerr">{ctx.err}</p>{/if}
   <div class="keyrow">
     <span class="kp">Token</span>
     <input
       type="password" aria-label="GitHub token"
-      placeholder={githubOn ? '•••• ' + ctx.s.keys.github.hint : 'paste token'}
+      placeholder={githubOn ? '•••• ' + (ctx.s?.keys.github?.hint || '') : 'paste token'}
       bind:value={ctx.drafts.github}
     />
     <button class="open primary" disabled={ctx.busy} onclick={saveGithub}>Save</button>
@@ -168,7 +175,7 @@
           <!-- The platform is only worth saying once it stops being the row's identity. -->
           {#if count(c.platform) > 1}<span class="cntag">{platformLabel(c.platform)}</span>{/if}
         </span>
-        <IntegrationStatus status={connectionStatus(c, profById[c.default_profile]?.name)} />
+        <IntegrationStatus status={connectionStatus(c, c.default_profile ? profById[c.default_profile]?.name : '')} />
       </span>
       <Icon name="chevron-right" size={15} />
     </button>

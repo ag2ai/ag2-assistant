@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The composer's model switcher: it sets the open Chat's override (PATCH /chats/{id}
   // {model}), never the install-wide Active, which Settings → Models owns (ADR 0025).
   //
@@ -8,15 +8,15 @@
   // On a Chat that does not exist yet the choice is held in `chatModel.pending` and
   // rides the first message. The switcher stays inert until the read says which it is.
   //
-  // The model LIST comes from the shared `llmConfigs` store (lib/llm.js, ADR 0004), so
+  // The model LIST comes from the shared `llmConfigs` store (lib/llm.ts, ADR 0004), so
   // Settings edits show up live. Presentation is the shared ModelSwitcherView.
   import { onMount } from 'svelte'
-  import { api } from '../../transport/api.js'
-  import { SETTINGS_PAGE, chatModel } from '../../store.js'
-  import { openOverlay } from '../../router.js'
-  import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.js'
-  import { chooseModel, loadedChat, switcherSelection } from '../../lib/chatModel.js'
-  import { TYPE_LABEL } from '../../lib/providerLabels.js'
+  import { api } from '../../transport/api/index.ts'
+  import { SETTINGS_PAGE, chatModel } from '../../store.ts'
+  import { openOverlay } from '../../router.ts'
+  import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
+  import { chooseModel, loadedChat, switcherSelection } from '../../lib/chatModel.ts'
+  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
   let busy = $state(false)
@@ -35,10 +35,10 @@
   // is a PATCH or a model riding the first message (ADR 0025).
   const loading = $derived($chatModel.exists === null)
 
-  async function load(id) {
+  async function load(id: string) {
     try {
       const body = await api.chat(id)
-      let patch = null
+      let patch: string | null = null
       chatModel.update((s) => {
         const next = loadedChat(s, id, body)
         patch = next.patch
@@ -61,7 +61,7 @@
     if (id) load(id)
   })
 
-  async function choose(id) {
+  async function choose(id: string) {
     const state = $chatModel
     if (busy || !state.chatId) return
     const next = chooseModel(state, id)

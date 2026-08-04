@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Folder access for ONE chat (CONTEXT.md "Grant") — everything here affects
   // this conversation only, never other chats. Chat folders (this chat's own
   // Grants) get a 2-position iOS switch (Read / Read+write); Delete + Move to
@@ -10,44 +10,48 @@
   // already reach this chat are listed; new ones added from composer. `taskId`
   // is only ever set for a run's thread — plain chats get no Task folders section.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
-  import { profiles } from '../store.js'
-  import { foldersStore, loadFolders, applyFolders } from '../lib/folders.js'
-  import { getActiveProfileId } from '../lib/profile.js'
+  import { api } from '../transport/api/index.ts'
+  import { profiles } from '../store.ts'
+  import { foldersStore, loadFolders, applyFolders } from '../lib/folders.ts'
+  import { getActiveProfileId } from '../lib/profile.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { Folder, GrantMode, Mode } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
   import AccessSwitch from './AccessSwitch.svelte'
   import WriteSwitch from './WriteSwitch.svelte'
 
-  let { chatId, taskId = '', onClose } = $props()
+  type Props = { chatId: string; taskId?: string; onClose: () => void }
+  let { chatId, taskId = '', onClose }: Props = $props()
 
   let busy = $state(false)
   let err = $state('')
   let menuFor = $state('')   // id of the chat folder whose overflow menu is open
-  const pid = $derived($profiles.activeId || getActiveProfileId())
+  const pid = $derived($profiles.activeId || getActiveProfileId() || '')
   // Shared snapshot: mutations here also refresh the composer chips + Settings live.
   const folders = $derived($foldersStore.folders)
 
   onMount(() => { if (!$foldersStore.loaded) loadFolders() })
-  async function run(fn) {
+  // Every mutator answers with the whole {folders} snapshot for the shared store.
+  async function run(fn: () => Promise<{ folders: Folder[] }>) {
     err = ''; busy = true
-    try { applyFolders(await fn()) } catch (e) { err = String(e.message || e) }
+    try { applyFolders(await fn()) } catch (e) { err = errText(e) }
     busy = false
   }
 
-  const chatGrant = (f) => (f.grants || []).find((g) => g.profile === pid && g.chat_id === chatId)
-  const profileGrant = (f) => (f.grants || []).find((g) => g.profile === pid && !g.chat_id && !g.task_id)
-  const tGrant = (f) => (taskId ? (f.grants || []).find((g) => g.profile === pid && g.task_id === taskId && !g.chat_id) : null)
+  const chatGrant = (f: Folder) => f.grants.find((g) => g.profile === pid && g.chat_id === chatId)
+  const profileGrant = (f: Folder) => f.grants.find((g) => g.profile === pid && !g.chat_id && !g.task_id)
+  const tGrant = (f: Folder) => (taskId ? f.grants.find((g) => g.profile === pid && g.task_id === taskId && !g.chat_id) : null)
   // Наследуемая база чата: task-грант переопределяет профильный (chat > task > profile).
-  const inheritedMode = (f) => tGrant(f)?.mode ?? profileGrant(f)?.mode
+  const inheritedMode = (f: Folder): GrantMode | undefined => tGrant(f)?.mode ?? profileGrant(f)?.mode
   // Profile/task folders may carry a per-chat override; chat folders are chat-only additions.
   const taskFolders = $derived(taskId ? folders.filter((f) => tGrant(f)) : [])
   const profileFolders = $derived(folders.filter((f) => profileGrant(f) && !tGrant(f)))
   const chatFolders = $derived(folders.filter((f) => chatGrant(f) && !profileGrant(f) && !tGrant(f)))
   // Effective access for THIS chat: a chat grant (incl. 'none' = off) overrides the inherited (task/profile) grant.
-  const effMode = (f) => { const c = chatGrant(f); return c ? c.mode : inheritedMode(f) }
+  const effMode = (f: Folder): GrantMode | undefined => { const c = chatGrant(f); return c ? c.mode : inheritedMode(f) }
 
   // Chat-only folders: null mode = revoke this chat's grant.
-  function setChatMode(f, mode) {
+  function setChatMode(f: Folder, mode: Mode | null) {
     const cur = chatGrant(f)
     if (!mode) { if (cur) run(() => api.revokeGrant(f.id, pid, chatId)); return }
     if (cur?.mode === mode) return
@@ -55,10 +59,10 @@
   }
   // Promote a chat-only folder to the profile (reachable from every chat): mint a
   // profile-scope grant at the same mode, then drop the now-redundant chat grant.
-  function moveToProfile(f) {
+  function moveToProfile(f: Folder) {
     const cur = chatGrant(f)
     if (!cur) return
-    const mode = cur.mode === 'read_write' ? 'read_write' : 'read'
+    const mode: Mode = cur.mode === 'read_write' ? 'read_write' : 'read'
     run(async () => {
       await api.setGrant(f.id, pid, mode)          // profile scope (no chatId)
       return api.revokeGrant(f.id, pid, chatId)    // returns the merged snapshot
@@ -66,10 +70,10 @@
   }
   // Move a chat-only folder up to the task scope: every run under this task inherits
   // it, not just this chat. Mints a task-scope grant, then drops the redundant chat one.
-  function moveToTask(f) {
+  function moveToTask(f: Folder) {
     const cur = chatGrant(f)
     if (!cur || !taskId) return
-    const mode = cur.mode === 'read_write' ? 'read_write' : 'read'
+    const mode: Mode = cur.mode === 'read_write' ? 'read_write' : 'read'
     run(async () => {
       await api.setGrant(f.id, pid, mode, '', taskId)   // task scope
       return api.revokeGrant(f.id, pid, chatId)
@@ -77,8 +81,8 @@
   }
   // Profile/task folders: write a chat-scoped OVERRIDE (this chat only). null/'none'
   // blocks; setting it back to the inherited (task, else profile) mode drops the override.
-  function setChatOverride(f, mode) {
-    const target = mode || 'none'
+  function setChatOverride(f: Folder, mode: Mode | null) {
+    const target: GrantMode = mode || 'none'
     if (effMode(f) === target) return
     const cur = chatGrant(f)
     if (target === inheritedMode(f)) { if (cur) run(() => api.revokeGrant(f.id, pid, chatId)); return }
@@ -86,7 +90,9 @@
   }
 </script>
 
-<div class="modal-backdrop over" onclick={onClose}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the
+     a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop over" role="presentation" onclick={onClose}></div>
 <div class="modal over">
   <button class="modal-x" aria-label="Close" onclick={onClose}>×</button>
   <h2>Folder access — this chat</h2>
@@ -107,7 +113,9 @@
           <span class="cfmenuwrap">
             <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
-              <div class="cfscrim" onclick={() => (menuFor = '')}></div>
+              <!-- Scrim: closing on an outside click duplicates the kebab toggle,
+                   so it stays out of the a11y tree. -->
+              <div class="cfscrim" role="presentation" onclick={() => (menuFor = '')}></div>
               <div class="cfmenu">
                 {#if taskId}
                   <button onclick={() => { menuFor = ''; moveToTask(f) }}><Icon name="list" size={14} /> Move to task</button>

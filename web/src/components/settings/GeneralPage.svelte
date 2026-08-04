@@ -1,15 +1,15 @@
-<script>
+<script lang="ts">
   // Settings → General (per-device): Appearance, Animations, Notifications, Re-run setup.
-  import { getSettings } from './context.svelte.js'
-  import { soundOnInput, animations } from '../../store.js'
-  import { chime } from '../../lib/chime.js'
+  import { getSettings } from './context.svelte.ts'
+  import { soundOnInput, animations, type AnimationQuality } from '../../store.ts'
+  import { chime } from '../../lib/chime.ts'
   import Icon from '../Icon.svelte'
   import Appearance from '../Appearance.svelte'
 
   const ctx = getSettings()
 
   // App-wide animation tiers (per-device; see store.animations)
-  const FX_MODES = [
+  const FX_MODES: { id: AnimationQuality; label: string; hint: string }[] = [
     { id: 'off', label: 'Off', hint: 'static content' },
     { id: 'basic', label: 'Basic', hint: 'light animation' },
     { id: 'high', label: 'High', hint: 'full 3D scenes' },
@@ -31,7 +31,7 @@
 
 <div class="setgroup">Notifications</div>
 <label class="setcheck">
-  <input type="checkbox" bind:checked={$soundOnInput} onchange={(e) => e.target.checked && chime()} />
+  <input type="checkbox" bind:checked={$soundOnInput} onchange={(e) => e.currentTarget.checked && chime()} />
   Play a sound when the assistant needs my input
 </label>
 

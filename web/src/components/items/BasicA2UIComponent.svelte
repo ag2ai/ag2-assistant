@@ -1,76 +1,94 @@
-<script>
+<script lang="ts">
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import { a2uiValue } from '../../lib/a2ui.js'
+  import { a2uiValue, bindingPath, rows } from '../../lib/a2ui.ts'
+  import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption, NewsStory, WeatherRow } from '../../lib/a2ui.ts'
 
-  let { component, components = [], data = {}, onDataChange = () => {}, onAction = () => {}, depth = 0 } = $props()
+  type Props = {
+    component: A2UIComponent
+    components?: A2UIComponent[]
+    data?: A2UIData
+    onDataChange?: (path: string, value: unknown) => void
+    onAction?: (action: A2UIAction) => void
+    depth?: number
+  }
+  let {
+    component,
+    components = [],
+    data = {},
+    onDataChange = () => {},
+    onAction = () => {},
+    depth = 0,
+  }: Props = $props()
   // The component graph is agent-produced and children are resolved by id from a
   // flat list, so a cyclic (A→B→A) or self-referential graph would recurse without
   // bound and blow the stack. Cap the render depth — real layouts are shallow.
   const MAX_DEPTH = 24
-  const type = $derived(((component && component.component) || 'Text').toLowerCase())
-  const byId = $derived(new Map((components || []).filter((c) => c && c.id).map((c) => [c.id, c])))
+  const type = $derived((component.component || 'Text').toLowerCase())
+  const byId = $derived(new Map(components.filter((c) => c && c.id).map((c) => [c.id, c])))
 
-  function list(value) {
-    return Array.isArray(value) ? value.filter(Boolean) : []
+  function list<T>(value: unknown): T[] {
+    return rows<T>(value)
   }
 
-  function childIds(value) {
-    return Array.isArray(value) ? value.filter((id) => typeof id === 'string') : []
+  function childIds(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
   }
 
-  function child(id) {
-    return byId.get(id)
+  function child(id: unknown): A2UIComponent | undefined {
+    return typeof id === 'string' ? byId.get(id) : undefined
   }
 
-  function storySummary(story) {
+  function storySummary(story: NewsStory): string {
     return story.summary || story.detail || story.text || ''
   }
 
-  const checkboxValue = $derived(!!a2uiValue(component?.value, data))
-  const checkboxPath = $derived(
-    component?.value && typeof component.value === 'object' ? component.value.path : ''
-  )
+  const checkboxValue = $derived(!!a2uiValue(component.value, data))
+  const checkboxPath = $derived(bindingPath(component.value))
 
-  function toggleCheckbox(event) {
+  function toggleCheckbox(event: Event & { currentTarget: HTMLInputElement }) {
     if (checkboxPath) onDataChange(checkboxPath, event.currentTarget.checked)
   }
 
-  const valuePath = $derived(
-    component?.value && typeof component.value === 'object' ? component.value.path : ''
-  )
-  const inputValue = $derived(a2uiValue(component?.value, data) ?? '')
+  const valuePath = $derived(bindingPath(component.value))
+  const inputValue = $derived(a2uiValue(component.value, data) ?? '')
+  // A bound value reaches an <input> as its text; only choicepicker reads the array.
+  const inputText = $derived(Array.isArray(inputValue) ? '' : String(inputValue ?? ''))
   const sliderStep = $derived(
-    component?.steps ? (Number(component.max) - Number(component.min || 0)) / Number(component.steps) : undefined
+    component.steps ? (Number(component.max) - Number(component.min || 0)) / Number(component.steps) : undefined
   )
-  const iconName = $derived(({ accountCircle: 'users', add: 'plus', arrowBack: 'chevron-left', arrowForward: 'chevron-right', attachFile: 'paperclip', calendarToday: 'clock', close: 'x', delete: 'trash', event: 'clock', favorite: 'thumbs-up', folder: 'folder', play: 'send', refresh: 'rotate-cw', send: 'send', settings: 'settings', stop: 'square', warning: 'alert-triangle' })[a2uiValue(component?.name, data)] || a2uiValue(component?.name, data))
-  const videoUrl = $derived(a2uiValue(component?.url, data) || '')
+  // A missing bound stays absent so the attribute is omitted rather than NaN.
+  const numOr = (v: unknown): number | undefined => (v == null || v === '' ? undefined : Number(v))
+  const ICONS: Record<string, string | undefined> = { accountCircle: 'users', add: 'plus', arrowBack: 'chevron-left', arrowForward: 'chevron-right', attachFile: 'paperclip', calendarToday: 'clock', close: 'x', delete: 'trash', event: 'clock', favorite: 'thumbs-up', folder: 'folder', play: 'send', refresh: 'rotate-cw', send: 'send', settings: 'settings', stop: 'square', warning: 'alert-triangle' }
+  const iconKey = $derived(String(a2uiValue(component.name, data) ?? ''))
+  const iconName = $derived(ICONS[iconKey] || iconKey)
+  const videoUrl = $derived(String(a2uiValue(component.url, data) ?? ''))
   const youtubeEmbed = $derived(youtubeUrl(videoUrl))
 
-  function setValue(event) {
+  function setValue(event: Event & { currentTarget: HTMLInputElement | HTMLTextAreaElement }) {
     if (valuePath) onDataChange(valuePath, event.currentTarget.value)
   }
 
-  function setNumber(event) {
+  function setNumber(event: Event & { currentTarget: HTMLInputElement }) {
     if (valuePath) onDataChange(valuePath, Number(event.currentTarget.value))
   }
 
-  function setDateTime(event) {
+  function setDateTime(event: Event & { currentTarget: HTMLInputElement }) {
     if (!valuePath) return
     const value = event.currentTarget.value
     onDataChange(valuePath, component.enableDate && component.enableTime && value ? new Date(value).toISOString() : value)
   }
 
-  function toggleChoice(option, selected) {
+  function toggleChoice(option: unknown, selected: boolean) {
     if (!valuePath) return
-    const current = Array.isArray(inputValue) ? inputValue : []
+    const current: unknown[] = Array.isArray(inputValue) ? inputValue : []
     const next = component.variant === 'multipleSelection'
       ? (selected ? [...new Set([...current, option])] : current.filter((value) => value !== option))
       : [option]
     onDataChange(valuePath, next)
   }
 
-  function youtubeUrl(url) {
+  function youtubeUrl(url: string) {
     try {
       const parsed = new URL(url)
       const hostname = parsed.hostname.replace(/^www\./, '').toLowerCase()
@@ -84,17 +102,18 @@
     } catch { return '' }
   }
 
-  function actionContext(value) {
+  function actionContext(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(actionContext)
     if (value && typeof value === 'object') {
-      if (typeof value.path === 'string' && Object.keys(value).length === 1) return a2uiValue(value, data)
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, actionContext(item)]))
+      const record = value as Record<string, unknown>
+      if (typeof record.path === 'string' && Object.keys(record).length === 1) return a2uiValue(record, data)
+      return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, actionContext(item)]))
     }
     return value
   }
 
   function clickButton() {
-    const event = component?.action?.event
+    const event = component.action?.event
     if (!event?.name) return
     onAction({ name: event.name, sourceComponentId: component.id, context: actionContext(event.context || {}) })
   }
@@ -105,24 +124,28 @@
 {:else if type === 'column'}
   <div class="a2ui-basic-col">
     {#each childIds(component.children) as id}
-      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
+      {@const kid = child(id)}
+      {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
     {/each}
   </div>
 {:else if type === 'row'}
   <div class="a2ui-basic-row">
     {#each childIds(component.children) as id}
-      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
+      {@const kid = child(id)}
+      {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
     {/each}
   </div>
 {:else if type === 'list'}
   <div class="a2ui-list">
     {#each childIds(component.children) as id}
-      {#if child(id)}<BasicA2UIComponent component={child(id)} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
+      {@const kid = child(id)}
+      {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
     {/each}
   </div>
 {:else if type === 'card'}
+  {@const kid = child(component.child)}
   <div class="a2ui-basic-card">
-    {#if child(component.child)}<BasicA2UIComponent component={child(component.child)} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
+    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'text'}
   <div class:a2ui-main={component.variant && component.variant !== 'body'} class="a2ui-text">{a2uiValue(component.text, data) || ''}</div>
@@ -142,29 +165,33 @@
        max-height), so the box rarely matches the image's intrinsic ratio — `fill` then
        stretches it. `contain` letterboxes against the tile's background instead, which
        is what that background colour is there for. Matches A2UI/BoxFit's own default. -->
-  <img class="a2ui-image {component.variant || ''}" src={a2uiValue(component.url, data)} alt={a2uiValue(component.description, data) || ''} style:object-fit={component.fit === 'scaleDown' ? 'scale-down' : component.fit || 'contain'} />
+  <img class="a2ui-image {component.variant || ''}" src={String(a2uiValue(component.url, data) ?? '')} alt={String(a2uiValue(component.description, data) ?? '')} style:object-fit={component.fit === 'scaleDown' ? 'scale-down' : component.fit || 'contain'} />
 {:else if type === 'icon'}
   <span class="a2ui-icon" title={String(a2uiValue(component.name, data) || '')}><Icon name={iconName} size={22} /></span>
 {:else if type === 'video'}
   {#if youtubeEmbed}
     <iframe class="a2ui-video" src={youtubeEmbed} title="Video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
   {:else}
-    <video class="a2ui-video" controls src={videoUrl} poster={a2uiValue(component.posterUrl, data) || undefined}></video>
+    <!-- A2UI carries no caption track, so the element declares an empty one
+         rather than claiming captions it does not have. -->
+    <video class="a2ui-video" controls src={videoUrl} poster={String(a2uiValue(component.posterUrl, data) ?? '') || undefined}>
+      <track kind="captions" />
+    </video>
   {/if}
 {:else if type === 'textfield'}
   <label class="a2ui-field">
     <span>{a2uiValue(component.label, data) || ''}</span>
     {#if component.variant === 'longText'}
-      <textarea value={inputValue} placeholder={a2uiValue(component.placeholder, data) || ''} oninput={setValue}></textarea>
+      <textarea value={inputText} placeholder={String(a2uiValue(component.placeholder, data) ?? '')} oninput={setValue}></textarea>
     {:else}
-      <input type={component.variant === 'number' ? 'number' : component.variant === 'obscured' ? 'password' : 'text'} value={inputValue} placeholder={a2uiValue(component.placeholder, data) || ''} oninput={setValue} />
+      <input type={component.variant === 'number' ? 'number' : component.variant === 'obscured' ? 'password' : 'text'} value={inputText} placeholder={String(a2uiValue(component.placeholder, data) ?? '')} oninput={setValue} />
     {/if}
   </label>
 {:else if type === 'choicepicker'}
   <fieldset class="a2ui-choice">
     {#if component.label}<legend>{a2uiValue(component.label, data)}</legend>{/if}
     <div class:chips={component.displayStyle === 'chips'}>
-      {#each list(component.options) as option}
+      {#each list<A2UIOption>(component.options) as option}
         {@const selected = Array.isArray(inputValue) && inputValue.includes(option.value)}
         <label>
           <input type={component.variant === 'multipleSelection' ? 'checkbox' : 'radio'} name={component.id} checked={selected} onchange={(event) => toggleChoice(option.value, event.currentTarget.checked)} />
@@ -176,13 +203,13 @@
 {:else if type === 'slider'}
   <label class="a2ui-field a2ui-slider">
     {#if component.label}<span>{a2uiValue(component.label, data)}</span>{/if}
-    <input type="range" min={component.min || 0} max={component.max} step={sliderStep} value={inputValue} oninput={setNumber} />
-    <output>{inputValue}</output>
+    <input type="range" min={numOr(component.min) ?? 0} max={numOr(component.max)} step={sliderStep} value={inputText} oninput={setNumber} />
+    <output>{inputText}</output>
   </label>
 {:else if type === 'datetimeinput'}
   <label class="a2ui-field">
     {#if component.label}<span>{a2uiValue(component.label, data)}</span>{/if}
-    <input type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputValue ? String(inputValue).slice(0, 16) : inputValue} min={a2uiValue(component.min, data) || undefined} max={a2uiValue(component.max, data) || undefined} onchange={setDateTime} />
+    <input type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputText ? inputText.slice(0, 16) : inputText} min={String(a2uiValue(component.min, data) ?? '') || undefined} max={String(a2uiValue(component.max, data) ?? '') || undefined} onchange={setDateTime} />
   </label>
 {:else if type === 'weatherpanel'}
   <div class="a2ui-basic-card">
@@ -194,7 +221,7 @@
       <span class="a2ui-weather-glyph"><Icon name="sun" size={22} /></span>
     </div>
     <div class="a2ui-grid">
-      {#each list(component.rows) as row}
+      {#each list<WeatherRow>(component.rows) as row}
         <div class="a2ui-cell">
           <div class="a2ui-label">{row.label}</div>
           <div>{row.value}</div>
@@ -206,7 +233,7 @@
   <div class="a2ui-basic-card">
     <div class="a2ui-main">{component.topic || 'Latest news'}</div>
     <div class="a2ui-list">
-      {#each list(component.stories) as story}
+      {#each list<NewsStory>(component.stories) as story}
         <div class="a2ui-story">
           <span><Icon name="globe" size={13} /></span>
           <div>

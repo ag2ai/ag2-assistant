@@ -1,23 +1,32 @@
-<script>
+<script lang="ts">
   // The one place a token is ever typed: picking a card from the Add grid opens this,
   // and connecting lands in the new connection's settings. A name is asked for only
   // where a platform can be connected more than once ("Telegram" tells you nothing
   // when there are three of them); Connect stays refused until every token is filled.
-  import { nextConnectionName } from '../../lib/integrations.js'
+  import { nextConnectionName } from '../../lib/integrations.ts'
+  import type { Integration } from '../../lib/integrations.ts'
   import IntegrationMark from './IntegrationMark.svelte'
+  import { errText } from '../../lib/errors.ts'
+  import type { Connection } from '../../schemas/index.ts'
 
   // entry: a CATALOG entry. connections: the current list, for the default name and
   // the "already connected" count. onConnect(name, tokens) does the write and may
   // throw — its message is shown here rather than swallowed.
-  let { entry, connections = [], onConnect, onCancel } = $props()
+  type Props = {
+    entry: Integration
+    connections?: Connection[]
+    onConnect: (name: string, tokens: Record<string, string>) => Promise<void>
+    onCancel: () => void
+  }
+  let { entry, connections = [], onConnect, onCancel }: Props = $props()
 
   const existing = $derived(connections.filter((c) => c.platform === entry.id).length)
 
   // The name the server would pick for a blank one, shown before it is created and
   // replaced the moment the user types over it.
-  let typed = $state(null)
+  let typed = $state<string | null>(null)
   const name = $derived(typed ?? nextConnectionName(connections, entry))
-  let tokens = $state({})
+  let tokens = $state<Record<string, string>>({})
   let busy = $state(false)
   let err = $state('')
 
@@ -31,7 +40,7 @@
         entry.fields.map((f) => [f.env, (tokens[f.env] || '').trim()]),
       ))
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
       busy = false
     }
   }
@@ -51,7 +60,7 @@
       <span class="kp">Name</span>
       <input
         value={name} placeholder={entry.label} disabled={busy} aria-label="Connection name"
-        oninput={(e) => (typed = e.target.value)}
+        oninput={(e) => (typed = e.currentTarget.value)}
         onkeydown={(e) => { if (e.key === 'Enter') connect() }}
       />
     </div>

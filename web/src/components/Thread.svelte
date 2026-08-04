@@ -1,28 +1,28 @@
-<script>
-  import { thread, runInfo, profile, profiles } from '../store.js'
-  import { llmConfigs } from '../lib/llm.js'
-  import { go, newChatId } from '../router.js'
+<script lang="ts">
+  import { thread, runInfo, profile, profiles } from '../store.ts'
+  import { llmConfigs } from '../lib/llm.ts'
+  import { go, newChatId } from '../router.ts'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
   import Thinking from './items/Thinking.svelte'
   import RunBanner from './task/RunBanner.svelte'
   import Icon from './Icon.svelte'
   import AppBar from './AppBar.svelte'
-  import { dayRows } from '../lib/time.js'
+  import { dayRows } from '../lib/time.ts'
 
-  let scroller
+  let scroller: HTMLDivElement | undefined
   const tail = $derived($thread.items[$thread.items.length - 1])
 
   // Header subtitle: "Workspace • Active model". Reads the same shared stores the
   // Drawer chips and the composer's ModelSwitcher use (llmConfigs is loaded by the
   // composer on mount), so a profile/model switch updates the header live.
-  const activeProfile = $derived(($profiles.list || []).find((p) => p.id === $profiles.activeId))
+  const activeProfile = $derived($profiles.list.find((p) => p.id === $profiles.activeId))
   const activeModel = $derived($llmConfigs.configs.find((c) => c.id === $llmConfigs.active))
   const subtitle = $derived([activeProfile?.name, activeModel?.name].filter(Boolean).join(' • '))
 
   // Interleave day breakpoints: each row carries `sep`, the divider label to show
   // above the first item of a new calendar day (null otherwise). Items carry `at`
-  // (the source event's created_at, Unix seconds — see project.js). See dayRows.
+  // (the source event's created_at, Unix seconds — see project.ts). See dayRows.
   const rows = $derived(dayRows($thread.items))
   const showThinking = $derived($thread.busy && !(tail && tail.kind === 'agent' && tail.streaming))
 
@@ -45,9 +45,9 @@
     const dist = (el.scrollHeight - el.clientHeight) - start
     if (dist <= 4) { el.scrollTop = el.scrollHeight; pinned = true; return }
     const dur = Math.min(600, 240 + dist * 0.3) // ms — longer for farther, capped
-    const ease = (p) => 1 - Math.pow(1 - p, 3)   // easeOutCubic
-    let t0 = null
-    function step(ts) {
+    const ease = (p: number) => 1 - Math.pow(1 - p, 3)   // easeOutCubic
+    let t0: number | null = null
+    function step(ts: number) {
       if (t0 === null) t0 = ts
       const p = Math.min(1, (ts - t0) / dur)
       el.scrollTop = start + dist * ease(p)
@@ -66,7 +66,7 @@
   let composerH = $state(160)
   const scrolldownBottom = $derived(Math.round(composerH - COMPOSER_PAD_TOP + SCROLLDOWN_GAP))
   $effect(() => {
-    const el = scroller?.parentElement?.querySelector('.composer')
+    const el = scroller?.parentElement?.querySelector<HTMLElement>('.composer')
     if (!el) return
     const ro = new ResizeObserver(() => { composerH = el.offsetHeight })
     ro.observe(el)
@@ -74,7 +74,7 @@
   })
 
   // Opening another thread starts pinned again, whatever the last one was left at.
-  let shown = null
+  let shown: string | null = null
   $effect(() => {
     if ($thread.id !== shown) {
       shown = $thread.id
@@ -84,7 +84,7 @@
 
   // Sending re-pins: you asked for the reply, so follow it. (`sent` is a plain let,
   // not $state — this effect must not invalidate itself.)
-  let sent = null
+  let sent: number | null = null
   $effect(() => {
     if (tail && tail.kind === 'user' && tail.id !== sent) {
       sent = tail.id

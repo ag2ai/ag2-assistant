@@ -1,12 +1,12 @@
-<script>
+<script lang="ts">
   // Settings → Advanced: shared identity ("Who you are"), turn budget, and the AG2
   // architecture map + live-view toggle. The identity doc is install-wide
   // (globalMemory/setGlobalMemory), so it lives here rather than the per-profile
   // Profile Memory tab (ADR 0015), edited inline.
-  import { getSettings } from './context.svelte.js'
-  import { ag2View } from '../../store.js'
-  import { toggleAsideInspector } from '../../router.js'
-  import { api } from '../../transport/api.js'
+  import { getSettings } from './context.svelte.ts'
+  import { ag2View } from '../../store.ts'
+  import { toggleAsideInspector } from '../../router.ts'
+  import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import MemoryDocEditor from './MemoryDocEditor.svelte'
 

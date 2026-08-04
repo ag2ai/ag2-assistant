@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The header of one integration's settings: its mark, its name — renamed in place
   // through the pencil when `onRename` is given — an optional platform tag, and the
   // same status line the list row shows. Shared by every detail pane (channel
@@ -6,17 +6,26 @@
   import Icon from '../Icon.svelte'
   import IntegrationStatus from './IntegrationStatus.svelte'
   import IntegrationMark from './IntegrationMark.svelte'
+  import type { IntegrationStatus as Status } from '../../lib/integrations.ts'
 
   // onRename: async (name) => boolean — true when the rename was accepted. Absent
   // for the single-instance integrations, which have no name of their own.
   // platform: the CATALOG id whose mark is drawn — the platform's, not the
   // connection's, so two differently-named Telegram bots still read as Telegram.
-  let { label, platform, tag = '', status, onRename = null, busy = false } = $props()
+  type Props = {
+    label: string
+    platform: string
+    tag?: string
+    status: Status
+    onRename?: ((name: string) => Promise<boolean>) | null
+    busy?: boolean
+  }
+  let { label, platform, tag = '', status, onRename = null, busy = false }: Props = $props()
 
   let renaming = $state(false)
   let draft = $state('')
 
-  function focusSelect(node) { node.focus(); node.select() }
+  function focusSelect(node: HTMLInputElement) { node.focus(); node.select() }
 
   function start() {
     draft = label
@@ -26,7 +35,7 @@
   async function commit() {
     const name = draft.trim()
     if (!name || name === label) { renaming = false; return }
-    if (await onRename(name)) renaming = false
+    if (await onRename?.(name)) renaming = false
   }
 </script>
 

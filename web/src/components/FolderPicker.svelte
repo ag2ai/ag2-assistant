@@ -1,29 +1,41 @@
-<script>
+<script lang="ts">
   // Server-driven folder browser — the gateway lists subdirectories (a browser can't hand
   // a local server a native picker's path). Navigate into folders, go up, jump to a root.
   // Two commit modes: pass `onUse` for a single primary button that applies the folder you're
   // viewing in one click (Settings); otherwise `selected` (bindable) is set on confirm and the
   // host owns the commit (Onboarding's stepped flow). `busy` shows a saving state for onUse.
   import { onMount } from 'svelte'
-  import { api } from '../transport/api.js'
-  import { invalidFolderName } from '../lib/folderName.js'
+  import { api } from '../transport/api/index.ts'
+  import { invalidFolderName } from '../lib/folderName.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { FsRoots } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
 
-  let { roots = {}, start = '', selected = $bindable(''), onUse = null, busy = false } = $props()
+  // `roots` arrives from a settings load, so a host that has not loaded yet passes
+  // a partial (or nothing at all).
+  type Props = {
+    roots?: Partial<FsRoots>
+    start?: string
+    selected?: string
+    onUse?: ((path: string) => void) | null
+    busy?: boolean
+  }
+
+  let { roots = {}, start = '', selected = $bindable(''), onUse = null, busy = false }: Props = $props()
 
   let current = $state('')
-  let dirs = $state([])
-  let parent = $state(null)
+  let dirs = $state<{ name: string; path: string }[]>([])
+  let parent = $state<string | null>(null)
   let loading = $state(false)
   let error = $state('')
 
-  async function load(path) {
+  async function load(path: string | null | undefined) {
     loading = true; error = ''
     try {
       const r = await api.listDirs(path || '')
       if (r.ok) { current = r.path; dirs = r.dirs; parent = r.parent }
       else { error = r.error || 'Could not open that folder' }
-    } catch (e) { error = String(e.message || e) }
+    } catch (e) { error = errText(e) }
     loading = false
   }
   onMount(() => load(start || roots.cwd || roots.home || ''))
@@ -39,7 +51,7 @@
 
   function startCreate() { creating = true; newName = ''; createErr = '' }
   function cancelCreate() { creating = false; newName = ''; createErr = '' }
-  function focusRow(node) { node.focus() }
+  function focusRow(node: HTMLInputElement) { node.focus() }
 
   async function commitCreate(fromBlur = false) {
     if (!creating) return    // Enter already handled it — ignore the blur that follows unmount
@@ -61,7 +73,7 @@
     } catch (e) {
       // The server owns the last word on names (it can see the filesystem) — surface its
       // message verbatim and reopen the field with the text intact so it can be edited.
-      createErr = String(e.message || e)
+      createErr = errText(e)
       creating = true
     }
     saving = false

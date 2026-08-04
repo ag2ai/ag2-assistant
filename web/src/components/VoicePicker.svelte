@@ -1,20 +1,23 @@
-<script>
+<script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { voicePickerOpen, voicePickerConfig } from '../store.js'
-  import { api } from '../transport/api.js'
-  import { loadLiveConfigs } from '../lib/live.js'
+  import { voicePickerOpen, voicePickerConfig } from '../store.ts'
+  import { api } from '../transport/api/index.ts'
+  import { loadLiveConfigs } from '../lib/live.ts'
+  import type { VoiceCatalog } from '../schemas/index.ts'
+
+  type Voice = VoiceCatalog['voices'][number]
 
   // Which live config (if any) this picker targets — captured once at mount so the
   // scope is stable while open. null → the profile's legacy voice setting.
   const configId = $voicePickerConfig
 
-  let voices = $state([])
-  let current = $state('')
+  let voices: Voice[] = $state([])
+  let current: string | null = $state('')
   let provider = $state('')
   let playing = $state('')   // name currently previewing
-  let audio = null
+  let audio: HTMLAudioElement | null = null
 
-  const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI' }
+  const PROVIDER_LABEL: Record<string, string | undefined> = { gemini: 'Gemini', openai: 'OpenAI' }
 
   async function load() {
     try { const d = await api.voices(configId); voices = d.voices; current = d.current; provider = d.provider || '' } catch {}
@@ -23,8 +26,8 @@
   function _stopAudio() { if (audio) { audio.pause(); URL.revokeObjectURL(audio.src); audio = null } }
   onDestroy(_stopAudio)
 
-  function _play(src, name) {
-    return new Promise((resolve, reject) => {
+  function _play(src: string, name: string) {
+    return new Promise<void>((resolve, reject) => {
       _stopAudio()
       audio = new Audio(src)
       audio.onended = () => { if (playing === name) playing = '' }
@@ -33,7 +36,7 @@
     })
   }
 
-  async function choose(v) {
+  async function choose(v: Voice) {
     current = v.name
     // persist (applies next voice session); scoped to this config when set, so the
     // Live list's voice chip updates — refresh the shared store on success.
@@ -55,7 +58,9 @@
 </script>
 
 <!-- Scoped to a config → stack OVER Settings (.over) rather than replace it. -->
-<div class="modal-backdrop" class:over={!!configId} onclick={close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the
+     a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop" class:over={!!configId} role="presentation" onclick={close}></div>
 <div class="modal voicepick" class:over={!!configId}>
   <button class="modal-x" aria-label="Close" onclick={close}>×</button>
   <h2>Voice{provider ? ' — ' + (PROVIDER_LABEL[provider] || provider) : ''}</h2>

@@ -1,11 +1,11 @@
-<script>
+<script lang="ts">
   // Settings — thin shell. Owns the modal chrome, the sidebar nav, and the page
   // switch; all section markup lives in the six settings/*Page.svelte components,
-  // which share one reactive $state context (settings/context.svelte.js).
-  import { profiles, profileEpoch, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.js'
-  import { route, replaceOverlay } from '../router.js'
-  import { getActiveProfileId } from '../lib/profile.js'
-  import { createSettingsContext } from './settings/context.svelte.js'
+  // which share one reactive $state context (settings/context.svelte.ts).
+  import { profiles, profileEpoch, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.ts'
+  import { route, replaceOverlay } from '../router.ts'
+  import { getActiveProfileId } from '../lib/profile.ts'
+  import { createSettingsContext } from './settings/context.svelte.ts'
   import GeneralPage from './settings/GeneralPage.svelte'
   import ProfilesPage from './settings/ProfilesPage.svelte'
   import ModelsPage from './settings/ModelsPage.svelte'
@@ -33,7 +33,7 @@
   // of truth); validate against PAGES, fallback General. A Section click REPLACEs the
   // hash (no per-click history spam) → route updates → this re-derives.
   const page = $derived(PAGES.some((p) => p.id === $route.overlayValue) ? $route.overlayValue : SETTINGS_PAGE.GENERAL)
-  function select(id) { replaceOverlay('settings', id) }
+  function select(id: string) { replaceOverlay('settings', id) }
 
   // Svelte 5 renders a capitalized component-valued variable directly as <Active />.
   const Active = $derived((PAGES.find((p) => p.id === page) || PAGES[0]).comp)
@@ -53,13 +53,15 @@
   // through ctx.close → closeOverlay, stripping the hash). Guarded so Esc dismisses a
   // child modal stacked OVER Settings (the voice picker / Codex sign-in) first, not
   // the Settings shell underneath it.
-  function onKey(e) {
+  function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && !$voicePickerOpen && !$codexOpen) ctx.close()
   }
 </script>
 
 <svelte:window onkeydown={onKey} />
-<div class="modal-backdrop" onclick={ctx.close}></div>
+<!-- Backdrop: click-to-dismiss duplicates the × button and Escape, so it stays
+     out of the a11y tree rather than becoming a second focusable control. -->
+<div class="modal-backdrop" role="presentation" onclick={ctx.close}></div>
 <div class="modal settings">
   <button class="modal-x" aria-label="Close" onclick={ctx.close}>×</button>
   <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>

@@ -1,11 +1,13 @@
-<script>
+<script lang="ts">
   // One connection's settings: the header (mark, name renamed in place, status) and,
   // at the bottom, the Connection section — replace token and disconnect, each folded
   // behind its own button and each confirming or cancelling in place, no modals.
   // The Profiles table and the Paired accounts / Groups sections slot in between.
-  import { profiles } from '../../store.js'
-  import { api } from '../../transport/api.js'
-  import { byId, platformLabel, connectionStatus } from '../../lib/integrations.js'
+  import { profiles } from '../../store.ts'
+  import { api } from '../../transport/api/index.ts'
+  import { byId, platformLabel, connectionStatus } from '../../lib/integrations.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type { Connection, Profile } from '../../schemas/index.ts'
   import IntegrationHeader from './IntegrationHeader.svelte'
   import ConnectionProfiles from './ConnectionProfiles.svelte'
   import ConnectionPairing from './ConnectionPairing.svelte'
@@ -14,34 +16,42 @@
   // connection: one entry from GET /api/connections. tag: the platform label, shown
   // only when the platform has more than one connection. reload: re-fetch the list
   // (this pane always renders the list's copy). onDisconnected: back to the list.
-  let { connection, tag = '', reload, onDisconnected } = $props()
+  type Props = {
+    connection: Connection
+    tag?: string
+    reload: () => Promise<void>
+    onDisconnected: () => void
+  }
+  let { connection, tag = '', reload, onDisconnected }: Props = $props()
 
   const entry = $derived(byId[connection.platform])
-  const profById = $derived(Object.fromEntries(($profiles.list || []).map((p) => [p.id, p])))
-  const status = $derived(
-    connectionStatus(connection, profById[connection.default_profile]?.name),
-  )
+  const profById: Record<string, Profile | undefined> =
+    $derived(Object.fromEntries($profiles.list.map((p) => [p.id, p])))
+  const status = $derived(connectionStatus(
+    connection,
+    connection.default_profile ? profById[connection.default_profile]?.name : '',
+  ))
 
   let busy = $state(false)
   let err = $state('')
   let note = $state('')
   let replacing = $state(false)
   let confirmOff = $state(false)
-  let drafts = $state({})
+  let drafts = $state<Record<string, string>>({})
 
   // Empty for a platform this build does not know, so the pane still opens on its
   // name and status and the disconnect button stays reachable.
   const fields = $derived(entry?.fields || [])
   const ready = $derived(fields.length > 0 && fields.every((f) => (drafts[f.env] || '').trim()))
 
-  async function rename(name) {
+  async function rename(name: string): Promise<boolean> {
     err = ''; busy = true
     let ok = false
     try {
       await api.renameConnection(connection.id, name)
       await reload()
       ok = true
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
     return ok
   }
@@ -60,7 +70,7 @@
     } catch (e) {
       // A refused replacement is rolled back server-side: the previous token is
       // restored and the old bot stays live, so only the message changes here.
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = false
   }
@@ -71,7 +81,7 @@
       await api.deleteConnection(connection.id)
       await reload()
       onDisconnected()
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
   }
 

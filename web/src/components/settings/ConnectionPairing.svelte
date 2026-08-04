@@ -1,25 +1,31 @@
-<script>
+<script lang="ts">
   // Who this connection answers. An account not paired to it is served nothing at all
   // (ADR 0021), and the grant is to this connection alone — being paired to the work
   // bot is no access to the personal one. A live connection with an empty roster looks
   // healthy and answers nobody, so an empty roster says so.
   import Icon from '../Icon.svelte'
-  import { api } from '../../transport/api.js'
-  import { byId } from '../../lib/integrations.js'
+  import { api } from '../../transport/api/index.ts'
+  import { byId } from '../../lib/integrations.ts'
+  import { errText } from '../../lib/errors.ts'
+  import type {
+    Connection, ConnectionPairing, PairedAccount, PairingCode,
+  } from '../../schemas/index.ts'
 
   // connection: one entry from GET /api/connections. reload: re-fetch the list — the
   // header's status line is derived from the paired-account count, so anything that
   // changes the roster calls it.
-  let { connection, reload } = $props()
+  type Props = { connection: Connection; reload: () => Promise<void> }
+  let { connection, reload }: Props = $props()
 
   // The server's view: {accounts:[{key, account_id, handle, pending}],
   // code:{code, expires_at}|null}. Every route below returns it whole.
-  let view = $state(null)
+  let view = $state<ConnectionPairing | null>(null)
   let busy = $state(false)
   let err = $state('')
   let adding = $state(false) // the pairing form, folded until asked for
   let draft = $state('')
-  let revoking = $state(null) // the account key awaiting confirmation on its own row
+  // the account key awaiting confirmation on its own row
+  let revoking = $state<string | null>(null)
 
   const entry = $derived(byId[connection.platform])
 
@@ -32,12 +38,12 @@
     revoking = null
     api.connectionPairing(id)
       .then((v) => { if (id === cid) view = v })
-      .catch((e) => { err = String(e.message || e) })
+      .catch((e) => { err = errText(e) })
   })
 
   // Every mutation returns the whole view, so each is "run it, keep what came back".
   // `refresh` reloads the list for the ones that move the paired-account count.
-  async function run(fn, refresh = true) {
+  async function run(fn: () => Promise<ConnectionPairing>, refresh = true) {
     if (busy) return false
     err = ''; busy = true
     let ok = false
@@ -45,7 +51,7 @@
       view = await fn()
       if (refresh) await reload()
       ok = true
-    } catch (e) { err = String(e.message || e) }
+    } catch (e) { err = errText(e) }
     busy = false
     return ok
   }
@@ -59,7 +65,7 @@
     }
   }
 
-  async function revoke(key) {
+  async function revoke(key: string) {
     if (await run(() => api.connectionUnpair(cid, key))) revoking = null
   }
 
@@ -68,10 +74,10 @@
 
   // A pinned account by its id and the handle it came in under; a pending invitation
   // by the handle it awaits.
-  const label = (a) =>
+  const label = (a: PairedAccount) =>
     a.pending ? `@${a.handle}` : a.handle ? `${a.account_id} (@${a.handle})` : a.account_id
 
-  function expiry(code) {
+  function expiry(code: PairingCode) {
     const mins = Math.max(0, Math.round((code.expires_at * 1000 - Date.now()) / 60000))
     return mins ? `expires in ${mins} min` : 'expiring now'
   }
@@ -135,7 +141,7 @@
   {#if adding}
     <div class="keyrow">
       <input
-        placeholder={entry.handles ? 'numeric account id, or @handle' : 'numeric account id'}
+        placeholder={entry?.handles ? 'numeric account id, or @handle' : 'numeric account id'}
         aria-label="Pair an account" disabled={busy} bind:value={draft}
         onkeydown={(e) => {
           if (e.key === 'Enter') pair()

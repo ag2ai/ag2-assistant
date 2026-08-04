@@ -1,24 +1,34 @@
-<script>
+<script lang="ts">
   // The Model field: a text box that also offers real model names, each adorned with
   // price and context, in a role="listbox" popup like the composer's `@` picker.
-  // Which names, in what order, is lib/modelSuggest.js — what is typed always wins.
-  import { suggestModels } from '../../lib/modelSuggest.js'
+  // Which names, in what order, is lib/modelSuggest.ts — what is typed always wins.
+  import { suggestModels } from '../../lib/modelSuggest.ts'
+  import type { ModelSuggestion } from '../../lib/modelSuggest.ts'
 
   // `catalog` is the live Model catalog, null when none could be read; `loading`
   // says a probe is in flight, and the field stays typeable throughout.
   // onFirstFocus fires once, so an untouched field costs no request.
+  type Props = {
+    value?: string
+    type: string
+    id?: string
+    placeholder?: string
+    catalog?: readonly string[] | null
+    loading?: boolean
+    onFirstFocus?: (() => void) | null
+  }
   let {
     value = $bindable(''), type, id = 'lf-model', placeholder = '',
     catalog = null, loading = false, onFirstFocus = null,
-  } = $props()
+  }: Props = $props()
 
   let open = $state(false)
   let index = $state(0)
-  let rows = $state([])
+  let rows = $state<HTMLElement[]>([])
   let focused = false
 
   const results = $derived(suggestModels({ type, query: value, catalog }))
-  const optionId = (i) => `${id}-opt-${i}`
+  const optionId = (i: number) => `${id}-opt-${i}`
 
   // The active row resets whenever the results move under it.
   $effect(() => {
@@ -26,16 +36,16 @@
     index = 0
   })
 
-  function scrollTo(i) {
+  function scrollTo(i: number) {
     rows[i]?.scrollIntoView({ block: 'nearest' })
   }
 
-  function choose(row) {
+  function choose(row: ModelSuggestion) {
     value = row.id
     open = false
   }
 
-  function key(e) {
+  function key(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       // Closes the list and leaves the typed text exactly as it is.
       if (open) { e.preventDefault(); e.stopPropagation(); open = false }

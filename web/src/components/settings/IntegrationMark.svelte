@@ -1,12 +1,13 @@
-<script>
+<script lang="ts">
   // One platform's mark, wherever Settings → Integrations names a platform. An
   // unrecognised platform falls back to a square carrying the name's first letter.
   import BrandMark from '../BrandMark.svelte'
-  import { brandMark } from '../../lib/brandMarks.js'
+  import { brandMark } from '../../lib/brandMarks.ts'
 
   // platform: a CATALOG id. name: the Connection's own name, only read when the
   // platform is unrecognised. sm: the smaller size the Add grid draws marks at.
-  let { platform, name = '', sm = false } = $props()
+  type Props = { platform: string; name?: string; sm?: boolean }
+  let { platform, name = '', sm = false }: Props = $props()
 
   const known = $derived(brandMark(platform) !== null)
 </script>

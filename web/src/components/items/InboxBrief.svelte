@@ -1,16 +1,19 @@
-<script>
+<script lang="ts">
   // "The Post" — editorial broadsheet rendering of an InboxBrief A2UI surface:
   // an inbox digest as ruled correspondence rows. Unread mail gets the accent
   // dot + bold sender; mail that clearly asks for something carries a
   // "Reply?" flag. Subjects link to the thread in Gmail — agent-produced URLs,
   // so they pass through the safeUrl scheme guard.
-  import { safeUrl } from '../../lib/url.js'
+  import { safeUrl } from '../../lib/url.ts'
+  import { rows, str } from '../../lib/a2ui.ts'
+  import type { A2UIData, InboxThread } from '../../lib/a2ui.ts'
 
-  let { data = {} } = $props()
+  type Props = { data?: A2UIData }
+  let { data = {} }: Props = $props()
 
-  const title = $derived(data.title || 'Inbox')
-  const threads = $derived((Array.isArray(data.threads) ? data.threads : []).filter(Boolean))
-  const summary = $derived(data.summary || '')
+  const title = $derived(str(data.title) || 'Inbox')
+  const threads = $derived(rows<InboxThread>(data.threads))
+  const summary = $derived(str(data.summary))
   const unreadCount = $derived(threads.filter((t) => t.unread).length)
 
   const edition = $derived(

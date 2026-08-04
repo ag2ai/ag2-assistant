@@ -1,14 +1,16 @@
-<script>
+<script lang="ts">
   // An image the agent generated/edited — shown inline as a thumbnail; click for the
   // full-size preview. The bytes live in the workspace (served via /api/files/raw).
-  import { thread, runInfo } from '../../store.js'
-  import { openAsideFile } from '../../router.js'
-  import { api } from '../../transport/api.js'
-  import { requestContext } from '../../lib/feedback.js'
+  import { thread, runInfo } from '../../store.ts'
+  import { openAsideFile } from '../../router.ts'
+  import { api } from '../../transport/api/index.ts'
+  import { requestContext } from '../../lib/feedback.ts'
   import Feedback from './Feedback.svelte'
   import Icon from '../Icon.svelte'
+  import type { ThreadItem } from '../../schemas/events.ts'
 
-  let { item } = $props()
+  type Props = { item: Extract<ThreadItem, { kind: 'genimage' }> }
+  let { item }: Props = $props()
   const open = () => openAsideFile(item.path)
   const request = $derived(requestContext($thread.items, item, $runInfo))
   // A thumbnail that fails to load (file moved/deleted) falls back to a chip so
@@ -22,8 +24,12 @@
       <Icon name="image-off" size={14} /> {item.path}
     </button>
   {:else}
-    <img class="thumb" src={api.fileUrl(item.path)} alt={item.prompt || 'generated image'}
-         title={item.prompt || ''} onclick={open} onerror={() => (broken = true)} />
+    <!-- The thumbnail opens the file, so the click target is a button; the img is
+         decoration inside it and keeps no listener of its own. -->
+    <button class="thumbbtn" onclick={open} title={item.prompt || ''} aria-label="Open generated image">
+      <img class="thumb" src={api.fileUrl(item.path)} alt={item.prompt || 'generated image'}
+           onerror={() => (broken = true)} />
+    </button>
   {/if}
   {#if item.path}
     <div class="itemfb"><Feedback targetKind="image" targetId={item.path} content={'Generated image — prompt: ' + (item.prompt || '')} {request} current={item.feedback} /></div>
