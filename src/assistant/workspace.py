@@ -45,7 +45,6 @@ SKIP_DIRS = frozenset(
         "build",
         ".next",
         ".idea",
-        ".claude",
     }
 )
 
