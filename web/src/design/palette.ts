@@ -23,6 +23,15 @@ const ROOT = document.documentElement
 const KEY = 'ag2-accent'
 const THEME_KEY = 'ag2-theme'
 
+// The two CustomEvents this module dispatches, declared where they are fired so
+// every listener reads `e.detail` typed instead of casting the Event.
+declare global {
+  interface DocumentEventMap {
+    'ag2-accent-change': CustomEvent<{ accent: string }>
+    'ag2-theme-change': CustomEvent<{ theme: ThemeMode }>
+  }
+}
+
 // The frontend's preset catalogue. `hex` is each preset's --p-500 (the applied
 // accent); the full hand-tuned ramp lives in design/tokens/palettes.css.
 export type Palette = { id: string; label: string; hex: string }

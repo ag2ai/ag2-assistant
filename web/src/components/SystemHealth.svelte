@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The system-health status dot (main top-right, in the thread header cluster).
   // A little circle that reflects overall health at a glance — green/amber/red —
   // and opens a panel listing each subsystem's state. Self-contained like
@@ -11,15 +11,20 @@
   // it shows its last error with a Recheck button that re-probes just that one.
   import { onMount } from 'svelte'
   import { api } from '../transport/api/index.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { HealthState, ProfileHealth } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
 
-  let data = $state(null)          // {overall, checks:[…]} from the cheap poll
+  // One open shape rather than a union of the three probe states: the markup reads
+  // mcp[name], and element access with a computed key never narrows a union.
+  type McpProbe = { checking?: boolean; ok?: boolean; tools?: string[]; error?: string }
+
+  let data = $state<ProfileHealth | null>(null)   // from the cheap poll
   let open = $state(false)
-  let root = $state(null)          // popover container (click-outside)
-  // name -> {checking:true} | {ok:true, tools:[]} | {ok:false, error} — cached
-  // across opens so healthy servers aren't re-probed needlessly and down ones stay
-  // put until an explicit Recheck.
-  let mcp = $state({})
+  let root: HTMLDivElement | undefined = $state() // popover container (click-outside)
+  // name -> probe state — cached across opens so healthy servers aren't re-probed
+  // needlessly and down ones stay put until an explicit Recheck.
+  let mcp: Record<string, McpProbe | undefined> = $state({})
 
   // The MCP check block, if any (its .servers drive the per-server list).
   const mcpCheck = $derived((data?.checks || []).find((c) => c.id === 'mcp'))
@@ -27,7 +32,7 @@
   // Worst of the cheap overall and any probed-down MCP server. A down MCP server
   // escalates the dot to amber (MCP is auxiliary — never red); before any probe it
   // doesn't affect the dot at all.
-  const RANK = { ok: 0, off: 0, warn: 1, down: 2 }
+  const RANK: Record<HealthState, number> = { ok: 0, off: 0, warn: 1, down: 2 }
   const effective = $derived.by(() => {
     let s = data?.overall || 'ok'
     // Only count MCP results for servers that STILL exist. The `mcp` probe cache
@@ -39,7 +44,7 @@
     return s
   })
 
-  const TIP = {
+  const TIP: Record<string, string | undefined> = {
     ok: 'All systems healthy',
     warn: 'Needs attention — click for details',
     down: 'Problem — click for details',
@@ -55,12 +60,12 @@
     const servers = mcpCheck?.servers || []
     for (const s of servers) {
       if (s.enabled === false) continue
-      if (mcp[s.name] && mcp[s.name].ok === false) continue // known-down: don't re-spawn
+      if (mcp[s.name]?.ok === false) continue // known-down: don't re-spawn
       probe(s.name)
     }
   }
 
-  async function probe(name) {
+  async function probe(name: string) {
     // Mutate the key in place, NOT `mcp = {...mcp, [name]: v}`. Probes run
     // concurrently (a fast ENOENT server + a slow one that spawns a process), and a
     // whole-object read-modify-write lets the slower probe's write clobber the
@@ -70,7 +75,7 @@
     try {
       mcp[name] = await api.healthMcpServer(name)
     } catch (e) {
-      mcp[name] = { ok: false, error: String(e.message || e) }
+      mcp[name] = { ok: false, error: errText(e) }
     }
   }
 
@@ -79,10 +84,10 @@
     if (open) checkMcp()
   }
 
-  function onDocPointer(e) {
-    if (open && root && !root.contains(e.target)) open = false
+  function onDocPointer(e: PointerEvent) {
+    if (open && root && e.target instanceof Node && !root.contains(e.target)) open = false
   }
-  function onDocKey(e) {
+  function onDocKey(e: KeyboardEvent) {
     if (open && e.key === 'Escape') open = false
   }
 

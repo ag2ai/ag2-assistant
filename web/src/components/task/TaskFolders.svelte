@@ -126,7 +126,7 @@
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
         <div class="cfctl">
-          <WriteSwitch mode={tg?.mode} disabled={busy} onchange={(m: Mode) => setTaskMode(f, m)} />
+          <WriteSwitch mode={tg?.mode} disabled={busy} onchange={(m) => setTaskMode(f, m)} />
           <span class="cfmenuwrap">
             <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
@@ -150,7 +150,7 @@
       <div class="cfrow">
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
-        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(m: Mode | null) => setTaskOverride(f, m)} />
+        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(m) => setTaskOverride(f, m)} />
       </div>
     {/each}
   {/if}

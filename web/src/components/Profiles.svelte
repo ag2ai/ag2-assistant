@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Profiles roster (§5.4). A row list of unarchived profiles — the profile
   // MANAGEMENT head of the Profiles zone. A row is the entry point to that profile's
   // editor: clicking it (or its "Edit" link) fires onSelect(p); the parent (ProfilesPage)
@@ -12,21 +12,25 @@
   import { api } from '../transport/api/index.ts'
   import { switchProfile, closeThread } from '../controller.ts'
   import { getActiveProfileId } from '../lib/profile.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { Profile } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
-  import ProfileForm from './ProfileForm.svelte'
+  import ProfileForm, { type ProfileDraft } from './ProfileForm.svelte'
 
-  let { onSelect } = $props()
+  type Props = { onSelect?: (p: Profile) => void }
+  let { onSelect }: Props = $props()
 
-  const list = $derived($profiles.list || [])
+  const list = $derived($profiles.list)
   const activeId = $derived($profiles.activeId || getActiveProfileId())
   // active_default from the registry (mirrored on the store when we refetch).
-  let activeDefault = $state(null)
+  let activeDefault = $state<string | null>(null)
 
   let busy = $state(false)
   let err = $state('')
 
-  // Archive confirm state: {pid, name, isActive, isActiveDefault} + chosen replacement default.
-  let confirmArchive = $state(null)
+  // The profile an archive confirm is about, plus the chosen replacement default.
+  type ArchiveTarget = { pid: string; name: string; isActive: boolean; isActiveDefault: boolean }
+  let confirmArchive = $state<ArchiveTarget | null>(null)
   let replacement = $state('')
 
   // Create a new profile inline, without leaving Settings (reuses ProfileForm). Preset
@@ -34,27 +38,28 @@
   // profile joins the live list; we deliberately DON'T navigate to it, so the user stays here.
   let creating = $state(false)
   const claimedAccents = $derived(list.map((p) => p.accent))
-  async function doCreate({ name, accent }) {
+  async function doCreate({ name, accent }: ProfileDraft) {
     await api.createProfile(name, accent) // throws → ProfileForm shows inline error
     creating = false
     await refetch()
   }
 
   // Archived profiles (ADR 0003): the collapsed "Archived" section.
-  let archived = $state([])
+  let archived = $state<Profile[]>([])
   let showArchived = $state(false)
-  // Delete confirm: {pid, name}. Type-to-confirm — the button stays disabled until
+  // Delete confirm target. Type-to-confirm — the button stays disabled until
   // `deleteText` matches the profile name exactly.
-  let confirmDelete = $state(null)
+  let confirmDelete = $state<{ pid: string; name: string } | null>(null)
   let deleteText = $state('')
 
   async function refetch() {
     try {
       const reg = await api.profiles()
-      const newList = reg.profiles || []
+      const newList = reg.profiles
       activeDefault = reg.active_default
-      archived = reg.archived || []
-      if (confirmDelete && !archived.some((a) => a.id === confirmDelete.pid)) {
+      archived = reg.archived
+      const pending = confirmDelete
+      if (pending && !archived.some((a) => a.id === pending.pid)) {
         confirmDelete = null
         deleteText = ''
       }
@@ -62,7 +67,7 @@
     } catch {}
   }
 
-  function askArchive(p) {
+  function askArchive(p: Profile) {
     err = ''
     const isActiveDefault = p.id === activeDefault
     const others = list.filter((x) => x.id !== p.id)
@@ -86,32 +91,32 @@
       confirmArchive = null
       await refetch()
     } catch (e) {
-      err = (e && e.message) || 'Could not archive profile'
+      err = errText(e, 'Could not archive profile')
     } finally {
       busy = false
     }
   }
 
-  async function doRestore(p) {
+  async function doRestore(p: Profile) {
     if (busy) return
     busy = true; err = ''
     try {
       await api.restoreProfile(p.id)
       await refetch()
     } catch (e) {
-      err = (e && e.message) || 'Could not restore profile'
+      err = errText(e, 'Could not restore profile')
     }
     busy = false
   }
 
   // Scope the accent tokens to a profile's OWN colour so its archived row + confirm follow
   // that profile, not the globally active accent.
-  function accentVars(hex) {
+  function accentVars(hex: string) {
     const ring = `color-mix(in srgb, ${hex} 40%, transparent)`
     return `--accent:${hex};--accent-ring:${ring};--focus-ring:0 0 0 3px ${ring};`
   }
 
-  function askDelete(p) {
+  function askDelete(p: Profile) {
     err = ''
     deleteText = ''
     confirmDelete = { pid: p.id, name: p.name }
@@ -126,17 +131,17 @@
       deleteText = ''
       await refetch()
     } catch (e) {
-      err = (e && e.message) || 'Could not delete profile'
+      err = errText(e, 'Could not delete profile')
     }
     busy = false
   }
 
   // Row click just toggles the ACTIVE profile in place (like the Drawer chips / ⌘1..9);
   // no-ops on the active one. Opening the configuration is a separate, explicit action.
-  function switchTo(p) { switchProfile(p.id) }
+  function switchTo(p: Profile) { switchProfile(p.id) }
   // The explicit "Configure" button — opens this profile's editor (the parent switches to
   // it first if it isn't active, since the config zone is scoped to the active profile).
-  function activate(p) { onSelect?.(p) }
+  function activate(p: Profile) { onSelect?.(p) }
 
   // Prime activeDefault on mount (cheap; the list itself comes from the store).
   refetch()
@@ -189,6 +194,7 @@
   {/if}
 
   {#if confirmArchive}
+    {@const target = confirmArchive}
     <div class="pconfirm">
       <div class="pconfirmhead"><Icon name="archive" size={15} /> Archive “{confirmArchive.name}”?</div>
       <p class="phint">The profile stops running and is hidden. Its folder stays on disk.</p>
@@ -196,7 +202,7 @@
         <div class="pfield">
           <label for="pf-repl">Make this the new default</label>
           <select id="pf-repl" bind:value={replacement}>
-            {#each list.filter((x) => x.id !== confirmArchive.pid) as o (o.id)}
+            {#each list.filter((x) => x.id !== target.pid) as o (o.id)}
               <option value={o.id}>{o.name}</option>
             {/each}
           </select>

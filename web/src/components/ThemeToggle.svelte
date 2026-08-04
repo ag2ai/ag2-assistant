@@ -1,19 +1,19 @@
-<script>
-  // Compact theme cycle: light → dark → auto. Reads/writes the shared theme switcher (palette.js)
+<script lang="ts">
+  // Compact theme cycle: light → dark → auto. Reads/writes the shared theme switcher (palette.ts)
   // switcher (persists to localStorage + applies [data-theme] on <html>).
-  import { getTheme, setTheme } from '../design/palette.ts'
+  import { getTheme, setTheme, type ThemeMode } from '../design/palette.ts'
   import Icon from './Icon.svelte'
 
-  let mode = $state(getTheme())
-  const ICONS = { light: 'sun', dark: 'moon', auto: 'contrast' }
-  const ORDER = ['light', 'dark', 'auto']
+  let mode: ThemeMode = $state(getTheme())
+  const ICONS: Record<ThemeMode, string> = { light: 'sun', dark: 'moon', auto: 'contrast' }
+  const ORDER: ThemeMode[] = ['light', 'dark', 'auto']
   function cycle() {
     mode = ORDER[(ORDER.indexOf(mode) + 1) % ORDER.length]
     setTheme(mode)
   }
   // Stay in sync when the theme is changed elsewhere (e.g. Settings / onboarding).
   $effect(() => {
-    const on = (e) => { mode = e.detail.theme }
+    const on = (e: DocumentEventMap['ag2-theme-change']) => { mode = e.detail.theme }
     document.addEventListener('ag2-theme-change', on)
     return () => document.removeEventListener('ag2-theme-change', on)
   })

@@ -30,8 +30,8 @@
   {configs} {activeId} busy={ctx.busy} down {inherited}
   title="Voice model for this profile — takes effect next voice session"
   placeholder="Choose a voice model"
-  logoFor={(c: LiveConfig) => LOGO[c.provider]}
-  labelFor={(c: LiveConfig) => `${PROVIDER_LABEL[c.provider]} · ${c.model}${c.voice ? ` · ${c.voice}` : ''}`}
+  logoFor={(c) => LOGO[c.provider]}
+  labelFor={(c) => `${PROVIDER_LABEL[c.provider]} · ${c.model}${c.voice ? ` · ${c.voice}` : ''}`}
   usable={isUsable}
   defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active voice' }}
   emptyLabel="Configure a voice model →"

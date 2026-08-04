@@ -90,7 +90,7 @@
       <span class="permval" title={f.path}>{f.path}{#if !f.exists} · <span class="missing">path not found</span>{/if}</span>
     </span>
     <div class="accctl">
-      <WriteSwitch mode={g?.mode} disabled={busy} onchange={(m: Mode) => setMode(f, m)} />
+      <WriteSwitch mode={g?.mode} disabled={busy} onchange={(m) => setMode(f, m)} />
       <button class="iconbtn" title="Delete folder" aria-label="Delete folder" disabled={busy} onclick={() => removeFolder(f)}><Icon name="trash" size={14} /></button>
     </div>
   </div>

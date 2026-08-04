@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings → Tools & Permissions → "Permissions". Persistent, install-wide grants
   // the assistant honours without re-prompting. One group:
   //   • Command grants — rule strings: a bare tool name ("gmail_send") allows every call
@@ -12,9 +12,14 @@
   // no follow-up GET needed.
   import { onMount } from 'svelte'
   import { api } from '../transport/api/index.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { PermissionMutated, PermissionSnapshot } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
 
-  let perms = $state({ commands: [] })
+  // A command grant, split the way the backend's parse_command_rule splits it.
+  type Rule = { tool: string; prefix: string | null }
+
+  let perms: PermissionSnapshot = $state({ commands: [] })
   let busy = $state(false)
   let err = $state('')
 
@@ -25,37 +30,37 @@
   // shape as the backend parse_command_rule. The server re-validates and builds the
   // canonical rule string, so this is only for the dedupe guard + the POST body.
   const RULE_RE = /^([\w.-]+)\(([^()\s][^()]*) \*\)$/
-  function splitRule(raw) {
-    const v = String(raw || '').trim()
+  function splitRule(raw: string): Rule | null {
+    const v = raw.trim()
     if (!v) return null
     const m = v.match(RULE_RE)
     if (m) return { tool: m[1], prefix: m[2] }
     if (/^[\w.-]+$/.test(v)) return { tool: v, prefix: null }
     return null
   }
-  const ruleOf = (p) => (p.prefix ? `${p.tool}(${p.prefix} *)` : p.tool)
+  const ruleOf = (p: Rule) => (p.prefix ? `${p.tool}(${p.prefix} *)` : p.tool)
   // Add is enabled only for a well-formed rule that isn't already granted (dedupe).
   const cmdReady = $derived.by(() => {
     const p = splitRule(cmd)
     return !!p && !perms.commands.includes(ruleOf(p))
   })
 
-  const apply = (r) => {
-    perms = { commands: r.commands || [] }
+  const apply = (r: PermissionSnapshot) => {
+    perms = { commands: r.commands }
   }
 
   onMount(async () => {
-    try { apply(await api.permissions()) } catch (e) { err = String(e.message || e) }
+    try { apply(await api.permissions()) } catch (e) { err = errText(e) }
   })
 
   // Run a mutator, replace perms from its full-snapshot response.
-  async function run(fn) {
+  async function run(fn: () => Promise<PermissionMutated>) {
     err = ''; busy = true
-    try { apply(await fn()) } catch (e) { err = String(e.message || e) }
+    try { apply(await fn()) } catch (e) { err = errText(e) }
     busy = false
   }
 
-  const revokeCommand = (rule) => run(() => api.revokeCommand(rule))
+  const revokeCommand = (rule: string) => run(() => api.revokeCommand(rule))
   function addCommand() {
     const p = splitRule(cmd)
     if (!p || !cmdReady) return

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The architecture map: which AG2 primitives power this assistant, and
   // (honestly) what's the app layer built on top.
   import { poweredByOpen, appVersion, ag2Version } from '../store.ts'
@@ -7,7 +7,8 @@
   const close = () => ($poweredByOpen = false)
   const ag2 = PRIMITIVES.filter((p) => p.layer === 'ag2')
   const app = PRIMITIVES.filter((p) => p.layer === 'app')
-  const dot = (sub) => (SUBSYSTEMS[sub] || {}).color || 'var(--line)'
+  // App-layer rows carry no subsystem, and an unknown one keeps the neutral line.
+  const dot = (sub: string | undefined) => (sub ? SUBSYSTEMS[sub]?.color : '') || 'var(--line)'
 </script>
 
 <!-- Backdrop: click-to-dismiss duplicates the × button, so it stays out of the

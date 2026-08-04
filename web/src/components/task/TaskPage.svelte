@@ -16,7 +16,7 @@
   import type { FolderGrantIntent, FolderGrantState, GrantOp, ScheduleValue, TaskFolderMode } from '../../lib/taskEdit.ts'
   import { errText } from '../../lib/errors.ts'
   import { ApiError } from '../../transport/http.ts'
-  import { FolderConflict, type Folder, type FsRoots, type GrantMode, type Mode, type RunStatus, type Task, type TaskWithRuns } from '../../schemas/index.ts'
+  import { FolderConflict, type Folder, type FsRoots, type GrantMode, type RunStatus, type Task, type TaskWithRuns } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
   import AppBar from '../AppBar.svelte'
   import AccessSwitch from '../AccessSwitch.svelte'
@@ -513,7 +513,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                        2-position Read/Read+write toggle + an explicit Delete, not the
                        3-position switch profile folders use. Mirrors TaskFolders. -->
                   <div class="fctl">
-                    <WriteSwitch mode={f.mode} onchange={(m: Mode) => setFolderMode(f, m)} />
+                    <WriteSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
                     <button class="iconbtn" title="Remove folder" aria-label="Remove folder" onclick={() => setFolderMode(f, null)}><Icon name="trash" size={14} /></button>
                   </div>
                 </div>
@@ -525,7 +525,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                 <div class="frow">
                   <span class="fico"><Icon name="folder" size={14} /></span>
                   <span class="fname" title={f.path}>{f.name}</span>
-                  <AccessSwitch mode={f.mode} onchange={(m: Mode | null) => setFolderMode(f, m)} />
+                  <AccessSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
                 </div>
               {/each}
             {/if}

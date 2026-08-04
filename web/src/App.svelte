@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte'
   import { route, go, newChatId, redirectToProfile, closeAside } from './router.ts'
   import { openThread, closeThread, switchProfile } from './controller.ts'
@@ -7,6 +7,7 @@
   import { api } from './transport/api/index.ts'
   import { setActiveProfileId, storedProfileId } from './lib/profile.ts'
   import { setAccent } from './design/palette.ts'
+  import type { Profile } from './schemas/index.ts'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
   import Thread from './components/Thread.svelte'
@@ -26,7 +27,7 @@ import AppBar from './components/AppBar.svelte'
   // profile. 'loading' → fetching /api/profiles; 'create' → zero profiles, run the
   // fresh-install onboarding flow (which contains the profile-creation loop, §5.5);
   // 'ready' → active pid resolved, run the app.
-  let boot = $state('loading')
+  let boot = $state<'loading' | 'create' | 'ready'>('loading')
 
   // The install-level onboarding flag from the registry (§4.2). Drives whether the
   // welcome/onboarding overlay opens once a profile already exists.
@@ -57,10 +58,10 @@ import AppBar from './components/AppBar.svelte'
     if ($route.aside?.kind !== 'file') resetPreviewView()
     try {
       const reg = await api.profiles()
-      const list = reg.profiles || []
-      registryOnboarded = !!reg.onboarded
-      $appVersion = reg.version || ''
-      $ag2Version = reg.ag2_version || ''
+      const list = reg.profiles
+      registryOnboarded = reg.onboarded
+      $appVersion = reg.version
+      $ag2Version = reg.ag2_version
       $profiles = { list, activeId: null }
       if (!list.length) { boot = 'create'; return }
       resolveActive(list, reg.active_default)
@@ -71,7 +72,7 @@ import AppBar from './components/AppBar.svelte'
     }
   })
 
-  function resolveActive(list, activeDefault) {
+  function resolveActive(list: Profile[], activeDefault: string | null) {
     const ids = new Set(list.map((p) => p.id))
     // Precedence: a VALID URL pid wins (deep links / refreshes land in the
     // profile the URL names, and it becomes the new persisted choice) → else
@@ -105,8 +106,8 @@ import AppBar from './components/AppBar.svelte'
   // Fresh-install onboarding finished (§5.5): it created ≥1 profile live and set
   // the install-level onboarded flag itself. The `profiles` store was populated by
   // the flow as each profile was created; adopt the first and boot into it.
-  function onFreshOnboarded(firstPid) {
-    const list = $profiles.list || []
+  function onFreshOnboarded(firstPid: string | null) {
+    const list = $profiles.list
     const pid = firstPid || (list[0] && list[0].id)
     if (!pid) { boot = 'loading'; return } // nothing created — shouldn't happen
     setActiveProfileId(pid)
@@ -125,7 +126,7 @@ import AppBar from './components/AppBar.svelte'
     if (registryOnboarded) return
     try {
       const s = await api.settings()
-      const anyKey = ['gemini', 'openai', 'anthropic'].some((p) => s.keys?.[p]?.set)
+      const anyKey = ['gemini', 'openai', 'anthropic'].some((p) => s.keys[p]?.set)
       if (!anyKey) $onboardingOpen = true
     } catch {}
   }
@@ -145,14 +146,15 @@ import AppBar from './components/AppBar.svelte'
     const el = document.activeElement
     if (!el) return false
     const tag = el.tagName
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+      || (el instanceof HTMLElement && el.isContentEditable)
   }
-  function onProfileShortcut(e) {
+  function onProfileShortcut(e: KeyboardEvent) {
     // Cmd on mac, Ctrl elsewhere; require exactly that modifier (no Shift/Alt).
     if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
     if (e.key < '1' || e.key > '9') return
     if (boot !== 'ready' || anyModalOpen() || editableFocused()) return
-    const list = $profiles.list || []
+    const list = $profiles.list
     const target = list[Number(e.key) - 1]
     if (!target) return
     e.preventDefault()
@@ -164,7 +166,7 @@ import AppBar from './components/AppBar.svelte'
   // profile shortcuts, since the rail is shell navigation living at this level.
   // A URL-addressed file strips the aside key (via closeAside → confirmDiscard guard);
   // a path-less transient body just clears its store.
-  function onEscape(e) {
+  function onEscape(e: KeyboardEvent) {
     if (e.key !== 'Escape' || !railOpen || anyModalOpen() || editableFocused()) return
     e.preventDefault()
     if (railFile) closeAside()
@@ -189,8 +191,10 @@ import AppBar from './components/AppBar.svelte'
     const key = r.name + ':' + (r.id || '')
     if (key === last) return
     last = key
-    if (r.name === 'run') openThread('run', r.id)
-    else if (r.name === 'chat') openThread('chat', r.id)
+    // A 'run'/'chat' route always carries an id (the path regex requires it), so a
+    // missing one means the URL isn't a thread — it falls through to the fresh chat.
+    if (r.name === 'run' && r.id) openThread('run', r.id)
+    else if (r.name === 'chat' && r.id) openThread('chat', r.id)
     else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files') closeThread()
     else { closeThread(); go('/c/' + newChatId()) } // home → a fresh chat
   })

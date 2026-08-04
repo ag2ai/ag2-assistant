@@ -43,8 +43,8 @@
 <ModelSwitcherView
   {configs} activeId={active} {envOverride} {busy}
   title="Model for your next message"
-  logoFor={(c: LlmConfig) => LOGO[c.type]}
-  labelFor={(c: LlmConfig) => `${TYPE_LABEL[c.type]} · ${c.model}`}
+  logoFor={(c) => LOGO[c.type]}
+  labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
   emptyLabel="No models configured — add one in Settings"
   onEmpty={openSettings}

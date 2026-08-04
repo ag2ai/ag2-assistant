@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // A 2-position iOS switch (Read / Read+write) + a state label — the write
   // sibling of AccessSwitch (which is the 3-position Read · Read+write · Off
   // knob). Shared by the ChatFolders / TaskFolders editors and Settings →
@@ -6,9 +6,16 @@
   // not a switch position. Muted like AccessSwitch (soft tinted fill + hairline
   // inset border, so the knob geometry is untouched); the label carries the
   // semantic, the track just hints at it (off = Read, green; on = Read+write, warn).
-  //   mode: 'read' | 'read_write'
-  //   onchange(nextMode): fired on click with the opposite mode — 'read' | 'read_write'
-  let { mode, disabled = false, onchange } = $props()
+  import type { GrantMode, Mode } from '../schemas/index.ts'
+
+  // `mode` takes a grant's mode as stored ('none' renders as Read); `onchange`
+  // fires with the opposite of the two write positions.
+  type Props = {
+    mode?: GrantMode | null
+    disabled?: boolean
+    onchange?: (next: Mode) => void
+  }
+  let { mode, disabled = false, onchange }: Props = $props()
   const rw = $derived(mode === 'read_write')
 </script>
 

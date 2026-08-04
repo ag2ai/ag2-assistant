@@ -19,8 +19,9 @@ import {
   VoiceSelected,
 } from '../../schemas/index.ts'
 
-// MCPServerRequest — the list fields also accept a raw string the server splits.
-export type McpServerDraft = {
+// MCPServerRequest — the list fields also accept a raw string the server splits,
+// which is what the manual add form posts (lib/mcp.ts owns the parsed shape).
+export type McpServerRequest = {
   name: string
   command: string
   args?: string[] | string
@@ -38,7 +39,7 @@ export const settingsApi = {
 
   // The voice catalogue + selection. A live-config id scopes it to that config's
   // provider/voice; else the profile's legacy voice-provider setting.
-  voices: (configId?: string) =>
+  voices: (configId?: string | null) =>
     get(
       P('/voice/voices' + (configId ? '?config_id=' + encodeURIComponent(configId) : '')),
       VoiceCatalog,
@@ -62,7 +63,7 @@ export const settingsApi = {
 
   setVoiceProvider: (provider: string) => post(P('/settings/voice_provider'), { provider }, Ok),
 
-  addMcpServer: (server: McpServerDraft) => post(P('/settings/mcp'), server, McpServerSaved),
+  addMcpServer: (server: McpServerRequest) => post(P('/settings/mcp'), server, McpServerSaved),
   deleteMcpServer: (name: string) =>
     del(P(`/settings/mcp/${encodeURIComponent(name)}`), McpServersSnapshot),
   healthMcpServer: (name: string) =>
@@ -73,11 +74,11 @@ export const settingsApi = {
 
   usage: () => get(P('/usage'), Usage),
 
-  selectVoice: (voice: string, configId?: string) =>
+  selectVoice: (voice: string, configId?: string | null) =>
     post(P('/voice/select'), { voice, config_id: configId || null }, VoiceSelected),
 
   // Synthesises a sample clip — audio bytes, so no JSON envelope to validate.
-  previewVoice: async (voice: string, configId?: string): Promise<Blob> => {
+  previewVoice: async (voice: string, configId?: string | null): Promise<Blob> => {
     const r = await fetch(P('/voice/preview'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

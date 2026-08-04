@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // "Sign in with ChatGPT" — authenticate against your OpenAI Codex / ChatGPT
   // subscription so an `openai_subscription` LLM config can run without an API key.
   // UNOFFICIAL: OpenAI does not officially support this, and your account could be
@@ -11,22 +11,24 @@
   import { onDestroy, tick } from 'svelte'
   import { codexOpen } from '../store.ts'
   import { api } from '../transport/api/index.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { CodexStatus } from '../schemas/index.ts'
 
-  let st = $state(null) // /api/codex/status
+  let st = $state<CodexStatus | null>(null) // /api/codex/status
   let connecting = $state(false)
   let pendingState = $state('') // OAuth flow state (for the headless paste path)
   let manualCode = $state('')
   let showManual = $state(false)
-  let codeInput = $state(null)
+  let codeInput: HTMLInputElement | undefined = $state()
   let err = $state('')
   let busy = $state(false)
-  let poll = null
+  let poll: ReturnType<typeof setInterval> | null = null
 
   async function refresh() {
     try {
       st = await api.codexStatus()
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
   }
   refresh()
@@ -37,11 +39,9 @@
   async function connect() {
     err = ''
     try {
+      // The route always answers {ok, auth_url, state}; a failure is a non-2xx,
+      // which throws with the backend's message.
       const r = await api.codexLoginUrl()
-      if (!r.ok || !r.auth_url) {
-        err = r.error || 'Could not start sign-in'
-        return
-      }
       pendingState = r.state
       window.open(r.auth_url, '_blank')
       connecting = true
@@ -51,14 +51,14 @@
       poll = setInterval(async () => {
         const s = await api.codexStatus()
         if (s.signed_in) {
-          clearInterval(poll)
+          if (poll) clearInterval(poll)
           poll = null
           connecting = false
           st = s
         }
       }, 2000)
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
   }
 
@@ -73,12 +73,8 @@
     err = ''
     busy = true
     try {
-      const r = await api.codexSubmit(pendingState, manualCode.trim())
-      if (r && r.ok === false) {
-        err = r.error || 'Could not complete sign-in'
-        busy = false
-        return
-      }
+      // A rejected code answers 400, so the throw below carries its message.
+      await api.codexSubmit(pendingState, manualCode.trim())
       manualCode = ''
       showManual = false
       connecting = false
@@ -88,7 +84,7 @@
       }
       await refresh()
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = false
   }
@@ -100,7 +96,7 @@
       await api.codexLogout()
       await refresh()
     } catch (e) {
-      err = String(e.message || e)
+      err = errText(e)
     }
     busy = false
   }

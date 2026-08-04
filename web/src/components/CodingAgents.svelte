@@ -1,18 +1,20 @@
-<script>
+<script lang="ts">
   // Read-only status of the host CLI coding agents (Claude Code / Codex / OpenCode)
   // the assistant can drive over ACP. Self-contained like McpServers/SystemHealth:
   // owns its own fetch. Editing (bridge address/token) is done via ENV/compose in
   // v1 — this card only reports what the running process sees.
   import { onMount } from 'svelte'
   import { api } from '../transport/api/index.ts'
+  import { errText } from '../lib/errors.ts'
+  import type { CodingAgents } from '../schemas/index.ts'
 
-  let data = $state(null)     // {mode, bridge, connected, agents, error?}
+  let data: CodingAgents | null = $state(null)
   let err = $state('')
 
   async function load() {
     err = ''
     try { data = await api.codingAgents() }
-    catch (e) { err = String(e?.message || e) }
+    catch (e) { err = errText(e) }
   }
   onMount(load)
 </script>

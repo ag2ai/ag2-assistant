@@ -9,7 +9,7 @@
   import RailResizer from './RailResizer.svelte'
   import { drawerWidth } from '../store.ts'
   import { clampDrawerWidth } from '../lib/railWidth.ts'
-  import ProfileForm from './ProfileForm.svelte'
+  import ProfileForm, { type ProfileDraft } from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
   import FilesTree from './FilesTree.svelte'
   import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.ts'
@@ -79,7 +79,7 @@
   // /app/{pid}/ (App.svelte's boot adopts it and applies its accent).
   let createOpen = $state(false)
   const claimedAccents = $derived(list.map((p) => p.accent))
-  async function createProfile({ name, accent }: { name: string; accent: string }) {
+  async function createProfile({ name, accent }: ProfileDraft) {
     const res = await api.createProfile(name, accent) // throws → inline
     // Add to the live list before switching so switchProfile finds its accent/chip.
     profiles.update((r) => ({ ...r, list: [...r.list, res.profile] }))

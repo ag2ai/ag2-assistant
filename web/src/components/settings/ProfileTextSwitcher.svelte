@@ -29,8 +29,8 @@
 <ModelSwitcherView
   {configs} {activeId} {envOverride} busy={ctx.busy} down {inherited}
   title="Text model for this profile — takes effect next message"
-  logoFor={(c: LlmConfig) => LOGO[c.type]}
-  labelFor={(c: LlmConfig) => `${TYPE_LABEL[c.type]} · ${c.model}`}
+  logoFor={(c) => LOGO[c.type]}
+  labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
   defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active model' }}
   emptyLabel="No models configured"

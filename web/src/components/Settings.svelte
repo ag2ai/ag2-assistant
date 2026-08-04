@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Settings — thin shell. Owns the modal chrome, the sidebar nav, and the page
   // switch; all section markup lives in the six settings/*Page.svelte components,
   // which share one reactive $state context (settings/context.svelte.ts).
@@ -33,7 +33,7 @@
   // of truth); validate against PAGES, fallback General. A Section click REPLACEs the
   // hash (no per-click history spam) → route updates → this re-derives.
   const page = $derived(PAGES.some((p) => p.id === $route.overlayValue) ? $route.overlayValue : SETTINGS_PAGE.GENERAL)
-  function select(id) { replaceOverlay('settings', id) }
+  function select(id: string) { replaceOverlay('settings', id) }
 
   // Svelte 5 renders a capitalized component-valued variable directly as <Active />.
   const Active = $derived((PAGES.find((p) => p.id === page) || PAGES[0]).comp)
@@ -53,7 +53,7 @@
   // through ctx.close → closeOverlay, stripping the hash). Guarded so Esc dismisses a
   // child modal stacked OVER Settings (the voice picker / Codex sign-in) first, not
   // the Settings shell underneath it.
-  function onKey(e) {
+  function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && !$voicePickerOpen && !$codexOpen) ctx.close()
   }
 </script>
