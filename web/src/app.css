@@ -89,9 +89,11 @@
 /* A clickable card brightens its border on hover (the .mcpcatcard / .settingsbtn
    treatment) rather than filling — the surface stays put as you aim at it. */
 .settings .llmrow.clickable:hover, .settings .cnrow:hover,
-.settings .mcpcatcard:hover:not(:disabled) {
+.settings .mcpcatcard:hover:not(:disabled), .settings .skcard.clickable:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
 }
+.settings .skcard.clickable { cursor: pointer; }
+.settings .skcard.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; color: var(--ink); padding: 11px 13px; }
 .settings .setrow .sk { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; flex: none; }
 .settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

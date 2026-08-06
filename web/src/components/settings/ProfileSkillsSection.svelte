@@ -25,7 +25,11 @@
 
   let skills = $state<ProfileSkill[]>([])
   let loading = $state(true)
-  let busy = $state(false)
+  // The skill currently being written, '' when idle. Scoped to one name rather than a
+  // global flag: a global one greys out every card's switch while any single card is
+  // in flight, which reads as the whole list blinking.
+  let busyName = $state('')
+  const busy = $derived(busyName !== '')
   let err = $state('')
   // Two-step delete, own (Profile) skills only — arms on first click, deletes on confirm.
   let confirming = $state('')
@@ -38,18 +42,20 @@
   // Re-load when the active profile changes (the tab always configures the active one).
   $effect(() => { $profileEpoch; load() })
 
-  async function run(fn: () => Promise<{ skills: ProfileSkill[] }>) {
-    err = ''; busy = true
+  async function run(name: string, fn: () => Promise<{ skills: ProfileSkill[] }>) {
+    err = ''; busyName = name
     try { skills = (await fn()).skills } catch (e) { err = errText(e) }
-    busy = false
+    busyName = ''
   }
 
   // Inherited (bundled/global): Suppress ⇄ un-suppress for this profile only.
-  const toggleSuppress = (s: ProfileSkill) => run(() => api.suppressSkill(s.name, !s.suppressed))
+  const toggleSuppress = (s: ProfileSkill) => run(s.name, () => api.suppressSkill(s.name, !s.suppressed))
   // Profile-owned: Enable/Disable for this profile (its own state).
-  const toggleOwn = (s: ProfileSkill) => run(() => api.setProfileSkillState(s.name, !s.available))
+  const toggleOwn = (s: ProfileSkill) => run(s.name, () => api.setProfileSkillState(s.name, !s.available))
   // Profile-owned: delete from disk (this profile only). Clears confirm on success.
-  const del = (s: ProfileSkill) => run(() => api.deleteProfileSkill(s.name)).then(() => (confirming = ''))
+  const del = (s: ProfileSkill) => run(s.name, () => api.deleteProfileSkill(s.name)).then(() => (confirming = ''))
+  // Clicking the card flips whichever switch that card shows.
+  const toggleCard = (s: ProfileSkill) => (s.origin === 'profile' ? toggleOwn(s) : toggleSuppress(s))
 
   // Two sections, profile-owned first: skills this profile installed itself, then the
   // Global/Bundled skills it inherits from the app. Same source list, split by origin.
@@ -60,7 +66,18 @@
 <!-- One .skcard per skill (idiom in app.css, shared with the install-wide page): name
      and description, the .setswitch, then provenance + Delete on the meta line. -->
 {#snippet skillRow(s: ProfileSkill)}
-  <div class="skcard" class:off={!s.available}>
+  <!-- Click anywhere on the card to flip its switch. Not when it's armed for delete,
+       and not when the skill is off app-wide — that card has no switch to flip. -->
+  {@const rowBusy = busyName === s.name}
+  {@const canToggle = !rowBusy && confirming !== s.name && s.enabled}
+  <div
+    class="skcard" class:off={!s.available} class:clickable={canToggle}
+    role="button" aria-disabled={!canToggle} tabindex={canToggle ? 0 : -1}
+    aria-label="{s.available ? 'Turn off' : 'Turn on'} {s.name} for this profile"
+    title={canToggle ? (s.available ? 'Click to turn off for this profile' : 'Click to turn on for this profile') : ''}
+    onclick={() => { if (canToggle && !busy) toggleCard(s) }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle && !busy) { e.preventDefault(); toggleCard(s) } }}
+  >
     <div class="sktop">
       <div class="skmain">
         <span class="skname">{s.name}</span>
@@ -73,19 +90,19 @@
         {:else if s.origin === 'profile'}
           <button class="setswitch" class:on={s.available} role="switch" aria-checked={s.available}
             title={s.available ? 'On for this profile' : 'Off for this profile'}
-            disabled={busy} onclick={() => toggleOwn(s)} aria-label="{s.name} enabled"></button>
+            disabled={rowBusy} onclick={(e) => { e.stopPropagation(); toggleOwn(s) }} aria-label="{s.name} enabled"></button>
         {:else}
           <button class="setswitch" class:on={!s.suppressed} role="switch" aria-checked={!s.suppressed}
             title={s.suppressed ? 'Off for this profile' : 'On for this profile'}
-            disabled={busy} onclick={() => toggleSuppress(s)} aria-label="{s.name} enabled for this profile"></button>
+            disabled={rowBusy} onclick={(e) => { e.stopPropagation(); toggleSuppress(s) }} aria-label="{s.name} enabled for this profile"></button>
         {/if}
       </div>
     </div>
     <div class="skmeta">
       {#if confirming === s.name}
         <span class="skconfirm">Delete {s.name}?</span>
-        <button class="linkbtn danger skmetabtn" disabled={busy} onclick={() => del(s)}>Confirm</button>
-        <button class="linkbtn" disabled={busy} onclick={() => (confirming = '')}>Cancel</button>
+        <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); del(s) }}>Confirm</button>
+        <button class="linkbtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
       {:else}
         <!-- Where the skill comes from, and so whose it is to change. -->
         <span class="skdot" class:third={s.origin !== 'bundled'}></span>
@@ -93,7 +110,7 @@
           : s.origin === 'profile' ? 'This profile · installed here'
           : 'Installed · global'}
         {#if s.origin === 'profile'}
-          <button class="linkbtn quiet skmetabtn" disabled={busy} onclick={() => (confirming = s.name)}>Delete</button>
+          <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); confirming = s.name }}>Delete</button>
         {/if}
       {/if}
     </div>

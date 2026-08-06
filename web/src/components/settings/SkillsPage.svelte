@@ -23,7 +23,11 @@
   }
 
   let skills = $state<Skill[]>([])
-  let busy = $state(false)
+  // The skill currently being written, '' when idle. Scoped to one name rather than a
+  // global flag: a global one greys out every card's switch while any single card is
+  // in flight, which reads as the whole list blinking.
+  let busyName = $state('')
+  const busy = $derived(busyName !== '')
   let err = $state('')
   // Two-step delete: first click arms the row (name), second confirms. Global only —
   // Bundled skills are read-only and never show a Delete control.
@@ -49,17 +53,17 @@
   onMount(load)
 
   const toggle = async (s: Skill) => {
-    err = ''; busy = true
+    err = ''; busyName = s.name
     try { skills = (await api.setSkillState(s.name, !s.enabled)).skills }
     catch (e) { err = errText(e) }
-    busy = false
+    busyName = ''
   }
 
   const del = async (s: Skill) => {
-    err = ''; busy = true
+    err = ''; busyName = s.name
     try { skills = (await api.deleteSkill(s.name)).skills; confirming = '' }
     catch (e) { err = errText(e) }
-    busy = false
+    busyName = ''
   }
 
   // Render in the frozen `order`; toggles mutate `skills` (state/dimming) but not the
@@ -87,8 +91,24 @@
       <p class="muted">No skills installed.</p>
     {/if}
 
+    <!-- Click anywhere on the card to flip its switch — the whole card is the target,
+         not just the 34px toggle. Not while it's armed for delete: a stray click there
+         shouldn't toggle a skill you're about to remove. The action buttons
+         stopPropagation so they never toggle on the way past. -->
     {#each ordered as s (s.name)}
-      <div class="skcard" class:off={!s.enabled}>
+      <!-- canToggle drives the card's own affordance, so it depends only on THIS row —
+           a write elsewhere must not restyle every other card. The handlers additionally
+           gate on the global `busy` so two writes can't race. -->
+      {@const rowBusy = busyName === s.name}
+      {@const canToggle = !rowBusy && confirming !== s.name}
+      <div
+        class="skcard" class:off={!s.enabled} class:clickable={canToggle}
+        role="button" aria-disabled={!canToggle} tabindex={canToggle ? 0 : -1}
+        aria-label="{s.enabled ? 'Turn off' : 'Turn on'} {s.name}"
+        title={canToggle ? (s.enabled ? 'Click to turn off' : 'Click to turn on') : ''}
+        onclick={() => { if (canToggle && !busy) toggle(s) }}
+        onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle && !busy) { e.preventDefault(); toggle(s) } }}
+      >
         <div class="sktop">
           <div class="skmain">
             <span class="skname">{s.name}</span>
@@ -97,19 +117,19 @@
           <div class="skctl">
             <button class="setswitch" class:on={s.enabled} role="switch" aria-checked={s.enabled}
               title={s.enabled ? 'On — available everywhere' : 'Off — dropped from every profile'}
-              disabled={busy} onclick={() => toggle(s)} aria-label="{s.name} enabled"></button>
+              disabled={rowBusy} onclick={(e) => { e.stopPropagation(); toggle(s) }} aria-label="{s.name} enabled"></button>
           </div>
         </div>
         <div class="skmeta">
           {#if confirming === s.name}
             <span class="skconfirm">Delete {s.name}?</span>
-            <button class="linkbtn danger skmetabtn" disabled={busy} onclick={() => del(s)}>Confirm</button>
-            <button class="linkbtn" disabled={busy} onclick={() => (confirming = '')}>Cancel</button>
+            <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); del(s) }}>Confirm</button>
+            <button class="linkbtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
           {:else}
             <span class="skdot" class:third={s.origin !== 'bundled'}></span>
             {s.origin === 'bundled' ? 'First-party · ships with the app' : 'Installed · global'}
             {#if s.origin !== 'bundled'}
-              <button class="linkbtn quiet skmetabtn" disabled={busy} onclick={() => (confirming = s.name)}>Delete</button>
+              <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); confirming = s.name }}>Delete</button>
             {/if}
           {/if}
         </div>
