@@ -76,6 +76,41 @@
 .settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 11px 13px; }
 .settings .setrow .sk { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; flex: none; }
 .settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ── Skill card ──────────────────────────────────────────────────────────────
+   The row idiom for both Skills surfaces (install-wide page + per-profile tab):
+   name, full-wrapping description and toggle on top, provenance and Delete on a
+   footer meta line. Hairlines are horizontal only; the toggle is held by space. */
+.settings .sklist { display: flex; flex-direction: column; gap: 8px; }
+.settings .skcard { border: 1px solid var(--line); border-radius: 12px; background: var(--bg); padding: 12px 14px; }
+/* An off skill dims in place; its switch and its delete confirm stay full-strength,
+   so both remain obvious targets. */
+.settings .skcard.off { background: none; }
+.settings .skcard.off .skmain, .settings .skcard.off .skmeta { opacity: .5; }
+.settings .skcard.off .skmeta:has(.skconfirm) { opacity: 1; }
+.settings .sktop { display: flex; align-items: center; gap: 14px; }
+.settings .skmain { flex: 1; min-width: 0; }
+.settings .skname { font-size: 14px; font-weight: var(--fw-semibold); color: var(--ink); }
+.settings .skdesc { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
+.settings .skctl { flex: none; display: flex; align-items: center; gap: 8px; }
+/* Provenance reads as quiet footer metadata: a dot plus one line. Muted dot =
+   bundled/first-party; accent dot = something the user added themselves. */
+.settings .skmeta { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-muted); margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.settings .skdot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.settings .skdot.third { background: var(--accent); }
+/* Delete sits at the far right of the meta line; the two-step confirm replaces
+   that line in place. */
+.settings .skmetabtn { margin-left: auto; }
+.settings .skconfirm { color: var(--danger); }
+/* Add skill stays in flow (one SkillInstaller instance, so the picker keeps its
+   form state) and is pinned onto the header line only while collapsed. */
+.settings .skzone { position: relative; }
+.settings .skadd:not(:has(.ski)) { position: absolute; top: -6px; right: 0; }
+/* Room for the pinned button, which is taller than the title line it sits on. */
+.settings .skzone .setgroup { padding-bottom: 12px; }
+/* Add skill keeps the shared .addbtn ghost styling (Add model, Add secret, …); only
+   its flow margin is dropped, since the header line positions it. */
+.settings .skadd .addbtn { margin-top: 0; }
+.settings .skadd .ski { margin: 0 0 8px; border-radius: 12px; }
 /* Paged Settings: fixed-size modal, sidebar nav on the left, scrolling page on the
    right. .setscroll keeps its flex-column (page children — incl. .mcppaste — rely
    on it) but now flexes to fill .setbody instead of capping at 64vh. */
