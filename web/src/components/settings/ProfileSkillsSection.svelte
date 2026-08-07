@@ -9,7 +9,6 @@
   // active profile on each switch (profileEpoch), like the Memory tab.
   import { profileEpoch } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
-  import Icon from '../Icon.svelte'
   import SkillInstaller from './SkillInstaller.svelte'
   import { errText } from '../../lib/errors.ts'
   import type { ProfileSkill } from '../../schemas/index.ts'
@@ -26,7 +25,10 @@
 
   let skills = $state<ProfileSkill[]>([])
   let loading = $state(true)
-  let busy = $state(false)
+  // The skill currently being written, '' when idle. Scoped to one name rather than a
+  // global flag: a global one greys out every card's switch while any single card is
+  // in flight, which reads as the whole list blinking.
+  let busyName = $state('')
   let err = $state('')
   // Two-step delete, own (Profile) skills only — arms on first click, deletes on confirm.
   let confirming = $state('')
@@ -39,18 +41,20 @@
   // Re-load when the active profile changes (the tab always configures the active one).
   $effect(() => { $profileEpoch; load() })
 
-  async function run(fn: () => Promise<{ skills: ProfileSkill[] }>) {
-    err = ''; busy = true
+  async function run(name: string, fn: () => Promise<{ skills: ProfileSkill[] }>) {
+    err = ''; busyName = name
     try { skills = (await fn()).skills } catch (e) { err = errText(e) }
-    busy = false
+    busyName = ''
   }
 
   // Inherited (bundled/global): Suppress ⇄ un-suppress for this profile only.
-  const toggleSuppress = (s: ProfileSkill) => run(() => api.suppressSkill(s.name, !s.suppressed))
+  const toggleSuppress = (s: ProfileSkill) => run(s.name, () => api.suppressSkill(s.name, !s.suppressed))
   // Profile-owned: Enable/Disable for this profile (its own state).
-  const toggleOwn = (s: ProfileSkill) => run(() => api.setProfileSkillState(s.name, !s.available))
+  const toggleOwn = (s: ProfileSkill) => run(s.name, () => api.setProfileSkillState(s.name, !s.available))
   // Profile-owned: delete from disk (this profile only). Clears confirm on success.
-  const del = (s: ProfileSkill) => run(() => api.deleteProfileSkill(s.name)).then(() => (confirming = ''))
+  const del = (s: ProfileSkill) => run(s.name, () => api.deleteProfileSkill(s.name)).then(() => (confirming = ''))
+  // Clicking the card flips whichever switch that card shows.
+  const toggleCard = (s: ProfileSkill) => (s.origin === 'profile' ? toggleOwn(s) : toggleSuppress(s))
 
   // Two sections, profile-owned first: skills this profile installed itself, then the
   // Global/Bundled skills it inherits from the app. Same source list, split by origin.
@@ -58,35 +62,63 @@
   const inherited = $derived(skills.filter((s) => s.origin !== 'profile'))
 </script>
 
-<!-- One row, shared by both sections (SkillsPage.svelte's .setrowwrap idiom): a
-     .setrow (name + description) plus its controls as siblings. The On/Off state is
-     the shared .setswitch (accent when on); Delete stays an inline linkbtn confirm. -->
+<!-- Name + description, shared by the switch and off-app-wide variants of .sktop. -->
+{#snippet skillMain(s: ProfileSkill)}
+  <div class="skmain">
+    <span class="skname" id="psk-{s.name}">{s.name}</span>
+    <p class="skdesc" id="pskd-{s.name}">{s.description}</p>
+  </div>
+{/snippet}
+
+<!-- One .skcard per skill (idiom in app.css, shared with the install-wide page): name
+     and description, the .setswitch, then provenance + Delete on the meta line. -->
 {#snippet skillRow(s: ProfileSkill)}
-  <div class="setrowwrap" class:off={!s.available}>
-    <div class="setrow">
-      <span class="sk">
-        {s.name}
-        {#if s.origin === 'bundled'}<span class="setwide" title="First-party skill shipped with AG2 Assistant">first-party</span>{/if}
-      </span>
-      <span class="sv">{s.description}</span>
-    </div>
-    {#if confirming === s.name}
-      <span class="skconfirm">Delete?</span>
-      <button class="linkbtn danger" disabled={busy} onclick={() => del(s)}>Confirm</button>
-      <button class="linkbtn" disabled={busy} onclick={() => (confirming = '')}>Cancel</button>
-    {:else if !s.enabled}
-      <!-- Off install-wide (Application → Skills): unavailable here, not this profile's to change. -->
-      <span class="skblocked" title="Disabled for the whole app in Application → Skills">off app-wide</span>
-    {:else if s.origin === 'profile'}
-      <button class="setswitch" class:on={s.available} role="switch" aria-checked={s.available}
-        title={s.available ? 'On for this profile' : 'Off for this profile'}
-        disabled={busy} onclick={() => toggleOwn(s)} aria-label="{s.name} enabled"></button>
-      <button class="iconbtn" title="Delete skill" aria-label="Delete skill" disabled={busy} onclick={() => (confirming = s.name)}><Icon name="trash" size={14} /></button>
+  <!-- .sktop IS the switch, so the whole line is the target rather than the 34px toggle.
+       A skill that's off app-wide gets no widget at all — there's nothing here to flip. -->
+  {@const rowBusy = busyName === s.name}
+  {@const canToggle = !rowBusy && confirming !== s.name && s.enabled}
+  {@const on = s.origin === 'profile' ? s.available : !s.suppressed}
+  <div class="skcard" class:off={!s.available}>
+    {#if s.enabled}
+      <div
+        class="sktop" class:clickable={canToggle}
+        role="switch" aria-checked={on} aria-disabled={!canToggle}
+        tabindex={canToggle ? 0 : -1}
+        aria-labelledby="psk-{s.name}" aria-describedby="pskd-{s.name}"
+        title={canToggle ? (on ? 'Click to turn off for this profile' : 'Click to turn on for this profile') : ''}
+        onclick={() => { if (canToggle) toggleCard(s) }}
+        onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle) { e.preventDefault(); toggleCard(s) } }}
+      >
+        {@render skillMain(s)}
+        <div class="skctl">
+          <span class="setswitch" class:on class:busy={rowBusy} aria-hidden="true"></span>
+        </div>
+      </div>
     {:else}
-      <button class="setswitch" class:on={!s.suppressed} role="switch" aria-checked={!s.suppressed}
-        title={s.suppressed ? 'Off for this profile' : 'On for this profile'}
-        disabled={busy} onclick={() => toggleSuppress(s)} aria-label="{s.name} enabled for this profile"></button>
+      <!-- Off install-wide: not this profile's to change, so no switch and no widget. -->
+      <div class="sktop">
+        {@render skillMain(s)}
+        <div class="skctl">
+          <span class="skblocked" title="Disabled for the whole app in Application → Skills">off app-wide</span>
+        </div>
+      </div>
     {/if}
+    <div class="skmeta">
+      {#if confirming === s.name}
+        <span class="skconfirm">Delete {s.name}?</span>
+        <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={() => del(s)}>Confirm</button>
+        <button class="linkbtn" disabled={rowBusy} onclick={() => (confirming = '')}>Cancel</button>
+      {:else}
+        <!-- Where the skill comes from, and so whose it is to change. -->
+        <span class="skdot" class:third={s.origin !== 'bundled'}></span>
+        {s.origin === 'bundled' ? 'First-party · ships with the app'
+          : s.origin === 'profile' ? 'This profile · installed here'
+          : 'Installed · global'}
+        {#if s.origin === 'profile'}
+          <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={() => (confirming = s.name)}>Delete</button>
+        {/if}
+      {/if}
+    </div>
   </div>
 {/snippet}
 
@@ -97,20 +129,27 @@
 {#if loading}
   <p class="muted skempty">Loading…</p>
 {:else}
-  <div class="setgroup">This profile</div>
-  <p class="setsub">Skills installed directly into this profile. Turn one off or delete it — only this profile is affected.</p>
-  <!-- Install lands in THIS profile, so the "Add skill" affordance lives inside its section. -->
-  <SkillInstaller {installer} onInstalled={load} />
-  {#if own.length === 0}
-    <p class="muted skempty">No skills installed in this profile yet.</p>
-  {:else}
-    {#each own as s (s.name)}{@render skillRow(s)}{/each}
-  {/if}
+  <!-- Install lands in THIS profile, so Add skill belongs to this section's header
+       line; .skzone/.skadd pin it there while collapsed (idiom in app.css). -->
+  <div class="skzone">
+    <div class="setgroup">This profile</div>
+    <p class="setsub">Skills installed directly into this profile. Turn one off or delete it — only this profile is affected.</p>
+    <div class="skadd"><SkillInstaller {installer} onInstalled={load} /></div>
+    <div class="sklist">
+      {#if own.length === 0}
+        <p class="muted skempty">No skills installed in this profile yet.</p>
+      {:else}
+        {#each own as s (s.name)}{@render skillRow(s)}{/each}
+      {/if}
+    </div>
+  </div>
 
   {#if inherited.length > 0}
     <div class="setgroup">Global &amp; bundled</div>
     <p class="setsub">Shared skills inherited from the app. Turn one off to drop it from just this profile.</p>
-    {#each inherited as s (s.name)}{@render skillRow(s)}{/each}
+    <div class="sklist">
+      {#each inherited as s (s.name)}{@render skillRow(s)}{/each}
+    </div>
   {/if}
 {/if}
 
@@ -118,11 +157,7 @@
   .skhint { font-size: 12px; margin: 2px 0 10px; }
   .skerr { color: var(--danger); font-size: 13px; margin: 0 0 8px; }
   .skempty { font-size: 13px; margin: 0 0 8px; }
-  /* Stack the shared rows (SkillsPage does this via .setscroll's flex gap; here
-     the tab body has no such gap, so space the wrappers directly). Dim a row that
-     is off for this profile — the one state the install-wide page doesn't have. */
-  .setrowwrap { margin-bottom: 8px; }
-  .setrowwrap.off { opacity: .55; }
+  /* Stands in for the switch on a skill that's off install-wide — the one state the
+     install-wide page can't have. Card/list/Add-skill idioms live in app.css. */
   .skblocked { flex: none; font-size: 12px; color: var(--text-muted); font-style: italic; }
-  .skconfirm { flex: none; font-size: 12px; color: var(--danger); }
 </style>

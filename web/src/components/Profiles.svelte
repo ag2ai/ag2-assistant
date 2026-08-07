@@ -285,7 +285,7 @@
 
   .peditor {
     display: flex; flex-direction: column; gap: 12px;
-    padding: 12px; margin: 0 0 6px;
+    padding: 12px; margin: 12px 0 6px;
     background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm);
   }
   .pfield { display: flex; flex-direction: column; gap: 5px; }

@@ -34,6 +34,7 @@ ruff check .                       # lint
 ruff format .                      # auto-format (use --check to verify only)
 pytest -m "not integration" -q     # unit tests — no API key needed
 npm --prefix web run check         # typecheck the SPA (svelte-check, strict)
+npm --prefix web test              # SPA unit tests (node:test over web/src/**/*.test.ts)
 npm --prefix web run build         # rebuild the SPA bundle if you touched web/
 ```
 

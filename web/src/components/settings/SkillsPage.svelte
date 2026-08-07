@@ -9,7 +9,6 @@
   // payload, so it loads its own data via api.skills() rather than the shared ctx.
   import { onMount } from 'svelte'
   import { api } from '../../transport/api/index.ts'
-  import Icon from '../Icon.svelte'
   import SkillInstaller from './SkillInstaller.svelte'
   import { errText } from '../../lib/errors.ts'
   import type { Skill } from '../../schemas/index.ts'
@@ -24,7 +23,10 @@
   }
 
   let skills = $state<Skill[]>([])
-  let busy = $state(false)
+  // The skill currently being written, '' when idle. Scoped to one name rather than a
+  // global flag: a global one greys out every card's switch while any single card is
+  // in flight, which reads as the whole list blinking.
+  let busyName = $state('')
   let err = $state('')
   // Two-step delete: first click arms the row (name), second confirms. Global only —
   // Bundled skills are read-only and never show a Delete control.
@@ -50,17 +52,17 @@
   onMount(load)
 
   const toggle = async (s: Skill) => {
-    err = ''; busy = true
+    err = ''; busyName = s.name
     try { skills = (await api.setSkillState(s.name, !s.enabled)).skills }
     catch (e) { err = errText(e) }
-    busy = false
+    busyName = ''
   }
 
   const del = async (s: Skill) => {
-    err = ''; busy = true
+    err = ''; busyName = s.name
     try { skills = (await api.deleteSkill(s.name)).skills; confirming = '' }
     catch (e) { err = errText(e) }
-    busy = false
+    busyName = ''
   }
 
   // Render in the frozen `order`; toggles mutate `skills` (state/dimming) but not the
@@ -72,48 +74,63 @@
   })
 </script>
 
-<div class="setgroup">Skills <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
-<p class="setsub">Turn a skill off to drop it from the agent's toolkit everywhere, without deleting it. Bundled skills ship with the app and can't be removed.</p>
+<div class="skzone">
+  <div class="setgroup">Skills <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
+  <p class="setsub">Turn a skill off to drop it from the agent's toolkit everywhere, without deleting it. Bundled skills ship with the app and can't be removed.</p>
 
-<SkillInstaller {installer} onInstalled={load} />
+  {#if err}<p class="muted" style="color:var(--danger)">{err}</p>{/if}
 
-{#if err}<p class="muted" style="color:var(--danger)">{err}</p>{/if}
+  <!-- Sits here in the DOM; the .skzone/.skadd idiom in app.css pins it onto the
+       header line while collapsed and drops it back here when it expands. -->
+  <div class="skadd"><SkillInstaller {installer} onInstalled={load} /></div>
 
-{#if skills.length === 0}
-  <p class="muted">No skills installed.</p>
-{:else}
-  <!-- One .setrowwrap PER skill: it's a horizontal wrapper (a .setrow + its action
-       buttons as siblings), not a vertical list container — the rows stack because each
-       wrapper is its own block. Putting the whole {#each} in one .setrowwrap laid every
-       skill out side-by-side (flex:1) and clipped them. -->
-  {#each ordered as s (s.name)}
-    <div class="setrowwrap" class:off={!s.enabled}>
-      <div class="setrow">
-        <span class="sk">
-          {s.name}
-          {#if s.origin === 'bundled'}<span class="setwide" title="First-party skill shipped with AG2 Assistant">first-party</span>{/if}
-        </span>
-        <span class="sv">{s.description}</span>
+  <!-- One .skcard per skill (idiom in app.css, shared with the per-profile tab). -->
+  <div class="sklist">
+    {#if skills.length === 0}
+      <p class="muted">No skills installed.</p>
+    {/if}
+
+    <!-- .sktop IS the switch: name, description and the pill are one widget, so the whole
+         line is the target rather than the 34px toggle. The pill is decorative; the meta
+         line's buttons sit outside the widget, so no interactive element is nested in it. -->
+    {#each ordered as s (s.name)}
+      <!-- canToggle depends only on THIS row — a write elsewhere must not restyle every
+           other card. Armed for delete counts as off: a stray click shouldn't toggle a
+           skill you're about to remove. -->
+      {@const rowBusy = busyName === s.name}
+      {@const canToggle = !rowBusy && confirming !== s.name}
+      <div class="skcard" class:off={!s.enabled}>
+        <div
+          class="sktop" class:clickable={canToggle}
+          role="switch" aria-checked={s.enabled} aria-disabled={!canToggle}
+          tabindex={canToggle ? 0 : -1}
+          aria-labelledby="sk-{s.name}" aria-describedby="skd-{s.name}"
+          title={canToggle ? (s.enabled ? 'Click to turn off' : 'Click to turn on') : ''}
+          onclick={() => { if (canToggle) toggle(s) }}
+          onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle) { e.preventDefault(); toggle(s) } }}
+        >
+          <div class="skmain">
+            <span class="skname" id="sk-{s.name}">{s.name}</span>
+            <p class="skdesc" id="skd-{s.name}">{s.description}</p>
+          </div>
+          <div class="skctl">
+            <span class="setswitch" class:on={s.enabled} class:busy={rowBusy} aria-hidden="true"></span>
+          </div>
+        </div>
+        <div class="skmeta">
+          {#if confirming === s.name}
+            <span class="skconfirm">Delete {s.name}?</span>
+            <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={() => del(s)}>Confirm</button>
+            <button class="linkbtn" disabled={rowBusy} onclick={() => (confirming = '')}>Cancel</button>
+          {:else}
+            <span class="skdot" class:third={s.origin !== 'bundled'}></span>
+            {s.origin === 'bundled' ? 'First-party · ships with the app' : 'Installed · global'}
+            {#if s.origin !== 'bundled'}
+              <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={() => (confirming = s.name)}>Delete</button>
+            {/if}
+          {/if}
+        </div>
       </div>
-      {#if confirming === s.name}
-        <span class="skconfirm">Delete {s.name}?</span>
-        <button class="linkbtn danger" disabled={busy} onclick={() => del(s)}>Confirm</button>
-        <button class="linkbtn" disabled={busy} onclick={() => (confirming = '')}>Cancel</button>
-      {:else}
-        <button class="setswitch" class:on={s.enabled} role="switch" aria-checked={s.enabled}
-          title={s.enabled ? 'On — available everywhere' : 'Off — dropped from every profile'}
-          disabled={busy} onclick={() => toggle(s)} aria-label="{s.name} enabled"></button>
-        {#if s.origin !== 'bundled'}
-          <button class="iconbtn" title="Delete skill" aria-label="Delete skill" disabled={busy} onclick={() => (confirming = s.name)}><Icon name="trash" size={14} /></button>
-        {/if}
-      {/if}
-    </div>
-  {/each}
-{/if}
-
-<style>
-  .skconfirm { font-size: 12px; color: var(--danger); }
-  /* Off skills read as disabled — dimmed in place (same idiom as the profile tab).
-     The switch itself stays full-strength so it's still an obvious re-enable target. */
-  .setrowwrap.off .setrow { opacity: .5; }
-</style>
+    {/each}
+  </div>
+</div>

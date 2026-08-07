@@ -73,9 +73,70 @@
    never trailing "text →" affordances inside the box — see AGENTS.md). */
 .settings .setrowwrap { display: flex; align-items: center; gap: 8px; }
 .settings .setrowwrap .setrow { flex: 1; min-width: 0; }
-.settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 11px 13px; }
+/* ── The Settings card surface ───────────────────────────────────────────────
+   One border, radius and fill for every card-row idiom in Settings, so Skills,
+   Models, Tools and the generic rows read as one system. Cards are flush with
+   the modal — no fill of their own, the hairline alone carries the edge. Only
+   padding and layout vary per idiom. `background: none` is load-bearing, not a
+   default: several of these render as <button>, which the UA otherwise fills
+   with ButtonFace grey.
+   Not for .prow (Profiles): that's a borderless selection list, not a card. */
+.settings .setrow, .settings .skcard, .settings .llmrow,
+.settings .mcprow, .settings .cnrow, .settings .mcpcatcard {
+  border: 1px solid var(--line); border-radius: var(--radius-md); background: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+/* A clickable card brightens its border on hover (the .mcpcatcard / .settingsbtn
+   treatment) rather than filling — the surface stays put as you aim at it. */
+.settings .llmrow.clickable:hover, .settings .cnrow:hover,
+.settings .mcpcatcard:hover:not(:disabled), .settings .skcard:has(.sktop.clickable:hover) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+/* The switch is .sktop, so the card carries its hover and focus ring for it. */
+.settings .skcard:has(.sktop:focus-visible) { box-shadow: var(--focus-ring); }
+.settings .sktop:focus-visible { outline: none; }
+.settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; color: var(--ink); padding: 11px 13px; }
 .settings .setrow .sk { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; flex: none; }
 .settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ── Skill card ──────────────────────────────────────────────────────────────
+   The row idiom for both Skills surfaces (install-wide page + per-profile tab):
+   name, full-wrapping description and toggle on top, provenance and Delete on a
+   footer meta line. Hairlines are horizontal only; the toggle is held by space. */
+.settings .sklist { display: flex; flex-direction: column; gap: 8px; }
+.settings .skcard { padding: 12px 14px; }
+/* An off skill dims in place; its switch and its delete confirm stay full-strength,
+   so both remain obvious targets. */
+.settings .skcard.off .skmain, .settings .skcard.off .skmeta { opacity: .5; }
+.settings .skcard.off .skmeta:has(.skconfirm) { opacity: 1; }
+/* .sktop is the row's role="switch"; the .setswitch inside it is decorative, so it
+   takes the row's cursor and dims in place while that row's write is in flight. */
+.settings .sktop { display: flex; align-items: center; gap: 14px; }
+.settings .sktop.clickable { cursor: pointer; }
+.settings .skctl .setswitch { cursor: inherit; }
+.settings .skctl .setswitch.busy { opacity: .5; }
+.settings .skmain { flex: 1; min-width: 0; }
+.settings .skname { font-size: 14px; font-weight: var(--fw-semibold); color: var(--ink); }
+.settings .skdesc { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
+.settings .skctl { flex: none; display: flex; align-items: center; gap: 8px; }
+/* Provenance reads as quiet footer metadata: a dot plus one line. Muted dot =
+   bundled/first-party; accent dot = something the user added themselves. */
+.settings .skmeta { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-muted); margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.settings .skdot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.settings .skdot.third { background: var(--accent); }
+/* Delete sits at the far right of the meta line; the two-step confirm replaces
+   that line in place. */
+.settings .skmetabtn { margin-left: auto; }
+.settings .skconfirm { color: var(--danger); }
+/* Add skill stays in flow (one SkillInstaller instance, so the picker keeps its
+   form state) and is pinned onto the header line only while collapsed. */
+.settings .skzone { position: relative; }
+.settings .skadd:not(:has(.ski)) { position: absolute; top: -6px; right: 0; }
+/* Room for the pinned button, which is taller than the title line it sits on. */
+.settings .skzone .setgroup { padding-bottom: 12px; }
+/* Add skill keeps the shared .addbtn ghost styling (Add model, Add secret, …); only
+   its flow margin is dropped, since the header line positions it. */
+.settings .skadd .addbtn { margin-top: 0; }
+.settings .skadd .ski { margin: 0 0 8px; border-radius: 12px; }
 /* Paged Settings: fixed-size modal, sidebar nav on the left, scrolling page on the
    right. .setscroll keeps its flex-column (page children — incl. .mcppaste — rely
    on it) but now flexes to fill .setbody instead of capping at 64vh. */
@@ -223,7 +284,7 @@
 .settings .linkbtn.advset:hover { color: var(--accent); }
 .settings .setcheck { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; padding: 2px 0; }
 .settings .setcheck input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
-.settings .mcprow { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.settings .mcprow { display: flex; gap: 8px; align-items: center; padding: 9px 10px; }
 .settings .mcpmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
 .settings .mcpmeta strong { color: var(--ink); font-size: 13px; }
 .settings .mcpmeta span { overflow-wrap: anywhere; }
@@ -234,8 +295,9 @@
 .settings .mcpform button { justify-self: start; }
 /* Quick-add catalog: card per curated server; added ones show a check and go inert. */
 .settings .mcpcat { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.settings .mcpcatcard { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; cursor: pointer; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 8px 11px; font: inherit; transition: border-color var(--dur-fast) var(--ease-out); }
-.settings .mcpcatcard:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+/* Keeps a 1.5px border where the other cards use 1px: this one is selectable, and
+   the weight is what carries its .openinputs selected state. */
+.settings .mcpcatcard { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; cursor: pointer; border-width: 1.5px; color: var(--ink); padding: 8px 11px; font: inherit; }
 .settings .mcpcatcard.openinputs { border-color: var(--accent); }
 .settings .mcpcatcard.added { opacity: .55; cursor: default; }
 .settings .mcpcatcard.added .mcpcathead { color: var(--accent); }
@@ -247,14 +309,14 @@
 .settings .mcpcatchip { font-size: 10px; font-weight: var(--fw-medium); letter-spacing: .3px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 6px; white-space: nowrap; }
 /* Air between one template group's grid and the next group's heading. */
 .settings .mcpcat + .setsec { margin-top: 14px; }
-.settings .mcpinputs { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.settings .mcpinputs { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 9px 10px; }
 .settings .mcpinputs .kp { width: auto; min-width: 78px; }
 /* Smart paste box + parsed-draft preview rows */
 /* No native resize handle — the box auto-grows to its content (JS) instead.
    flex: none matters: as a .setscroll flex item the default flex-shrink would
    squash any explicit height straight back to min-height. */
 .settings .mcppaste { flex: none; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-family: var(--mono); font-size: 12px; min-height: 58px; max-height: 240px; overflow-y: auto; resize: none; background: var(--bg); color: var(--ink); }
-.settings .mcpdraft { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--accent); border-radius: 10px; padding: 9px 10px; }
+.settings .mcpdraft { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--accent); border-radius: var(--radius-md); padding: 9px 10px; }
 .settings .mcpdraft .kp { width: auto; min-width: 60px; }
 .settings .mcpdraft .mcpenvkey { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
 .settings .mcpcmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
@@ -265,13 +327,12 @@
    status) and the inline form add new classes, in the existing naming style. */
 /* Env-override banner: the active config is shadowed by env vars until they unset. */
 .settings .llmenv { font-size: 12.5px; color: var(--ink); background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 11px; }
-.settings .llmrow { display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.settings .llmrow { display: flex; gap: 10px; align-items: center; padding: 9px 10px; }
 /* Selection/highlight pattern mirrors the composer ModelSwitcher menu (.modelsw-item):
    soft accent-tint fill for the active row, neutral --code fill on click-to-activate
    hover, --focus-ring for keyboard focus. */
 .settings .llmrow.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .settings .llmrow.clickable { cursor: pointer; }
-.settings .llmrow.clickable:hover { background: var(--code); }
 .settings .llmrow.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .settings .llmmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .settings .llmname { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
@@ -301,8 +362,7 @@
    A connection row is the .llmrow card shape as a whole-row button, led by the
    platform's official brand mark. The Add grid reuses .mcpcat / .mcpcatcard from
    MCP and Models. */
-.settings .cnrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; margin-bottom: 6px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
-.settings .cnrow:hover { background: var(--code); }
+.settings .cnrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 9px 10px; margin-bottom: 6px; color: var(--ink); font: inherit; cursor: pointer; }
 .settings .cnrow:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 /* The letter square standing in for an unrecognised platform, sized to the brand
    mark it substitutes for. */
