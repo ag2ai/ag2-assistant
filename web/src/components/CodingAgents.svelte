@@ -69,18 +69,19 @@
 
 <style>
   .ca-status { display: flex; align-items: center; gap: 0.5em; margin: 0.4em 0; font-size: 0.92em; }
-  .ca-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted, #999); flex: none; }
-  .ca-dot.on { background: #29a745; }
-  .ca-dot.off { background: #d9534f; }
+  .ca-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-faint); flex: none; }
+  .ca-dot.on { background: var(--success); }
+  .ca-dot.off { background: var(--danger); }
   .ca-list { list-style: none; margin: 0.4em 0; padding: 0; display: flex; flex-direction: column; gap: 0.25em; }
   .ca-list li { display: flex; align-items: center; justify-content: space-between; gap: 1em;
-    padding: 0.4em 0.6em; border: 1px solid var(--border, #e3e3e3); border-radius: 8px; }
-  .ca-id { opacity: 0.6; font-weight: 400; }
+    padding: 0.4em 0.6em; border: 1px solid var(--line); border-radius: 8px; }
+  .ca-id { color: var(--text-faint); font-weight: 400; }
   .ca-badge { font-size: 0.78em; padding: 0.1em 0.55em; border-radius: 999px;
-    background: var(--muted-bg, #eee); color: var(--muted, #777); white-space: nowrap; }
-  .ca-badge.ok { background: rgba(41,167,69,0.15); color: #1e7e34; }
-  .ca-empty { justify-content: flex-start; opacity: 0.7; }
-  .ca-note { font-size: 0.82em; opacity: 0.75; margin: 0.4em 0; line-height: 1.4; }
-  .ca-bad { opacity: 1; color: #b3402f; }
-  code { font-size: 0.9em; padding: 0.05em 0.35em; border-radius: 5px; background: var(--muted-bg, #f0f0f0); }
+    background: var(--surface-sunk); color: var(--text-muted); white-space: nowrap; }
+  .ca-badge.ok { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+  .ca-empty { justify-content: flex-start; color: var(--text-muted); }
+  .ca-note { font-size: 0.82em; color: var(--text-muted); margin: 0.4em 0; line-height: 1.4; }
+  .ca-bad { color: var(--danger); }
+  code { font-size: 0.9em; padding: 0.05em 0.35em; border-radius: 5px;
+    background: var(--surface-sunk); color: var(--text); }
 </style>
