@@ -683,9 +683,8 @@ import WriteSwitch from '../WriteSwitch.svelte'
      canonical rules (app.css) — .open is scoped to .taskpage there, .iconbtn is a
      bare global. Nothing to reproduce here. */
 
-  /* Run rows: same bordered-card row vocabulary as Settings' .llmrow / .mcprow
-     (border + radius-sm + hover fill), with the .drow.unseen accent-tint treatment
-     for runs the user hasn't opened yet. */
+  /* Run rows: a bordered card that fills and brightens its border on hover, with the
+     .drow.unseen accent-tint treatment for runs the user hasn't opened yet. */
   .runslist { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .runrow {
     display: flex; gap: 10px; align-items: center; width: 100%; text-align: left;

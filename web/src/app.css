@@ -89,11 +89,12 @@
 /* A clickable card brightens its border on hover (the .mcpcatcard / .settingsbtn
    treatment) rather than filling — the surface stays put as you aim at it. */
 .settings .llmrow.clickable:hover, .settings .cnrow:hover,
-.settings .mcpcatcard:hover:not(:disabled), .settings .skcard.clickable:hover {
+.settings .mcpcatcard:hover:not(:disabled), .settings .skcard:has(.sktop.clickable:hover) {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
 }
-.settings .skcard.clickable { cursor: pointer; }
-.settings .skcard.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* The switch is .sktop, so the card carries its hover and focus ring for it. */
+.settings .skcard:has(.sktop:focus-visible) { box-shadow: var(--focus-ring); }
+.settings .sktop:focus-visible { outline: none; }
 .settings .setrow { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; color: var(--ink); padding: 11px 13px; }
 .settings .setrow .sk { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; flex: none; }
 .settings .setrow .sv { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -107,7 +108,12 @@
    so both remain obvious targets. */
 .settings .skcard.off .skmain, .settings .skcard.off .skmeta { opacity: .5; }
 .settings .skcard.off .skmeta:has(.skconfirm) { opacity: 1; }
+/* .sktop is the row's role="switch"; the .setswitch inside it is decorative, so it
+   takes the row's cursor and dims in place while that row's write is in flight. */
 .settings .sktop { display: flex; align-items: center; gap: 14px; }
+.settings .sktop.clickable { cursor: pointer; }
+.settings .skctl .setswitch { cursor: inherit; }
+.settings .skctl .setswitch.busy { opacity: .5; }
 .settings .skmain { flex: 1; min-width: 0; }
 .settings .skname { font-size: 14px; font-weight: var(--fw-semibold); color: var(--ink); }
 .settings .skdesc { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
