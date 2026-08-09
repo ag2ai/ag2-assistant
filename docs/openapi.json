@@ -794,6 +794,70 @@
         "title": "ErrorBody",
         "type": "object"
       },
+      "FileRowOut": {
+        "description": "One file in the Files space, workspace-relative (workspace.py list_files).\n``dir`` is the empty string at the root, not ``\".\"``.",
+        "properties": {
+          "dir": {
+            "title": "Dir",
+            "type": "string"
+          },
+          "modified": {
+            "title": "Modified",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "dir",
+          "size",
+          "modified"
+        ],
+        "title": "FileRowOut",
+        "type": "object"
+      },
+      "FilesListingResponse": {
+        "description": "The whole Files space. ``dirs`` is a flat list of workspace-relative\ndirectory paths, listed separately from the files so the tree can show the\nempty Directories a files-only listing omits.",
+        "properties": {
+          "dirs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dirs",
+            "type": "array"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/FileRowOut"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root",
+          "files",
+          "dirs"
+        ],
+        "title": "FilesListingResponse",
+        "type": "object"
+      },
       "FocusesRequest": {
         "properties": {
           "focuses": {
@@ -806,6 +870,24 @@
           }
         },
         "title": "FocusesRequest",
+        "type": "object"
+      },
+      "FolderConflictResponse": {
+        "description": "409 on create/update: the resolved path is already registered, and the body\npoints at the Folder holding it so the client can offer that one instead of\nreporting a dead end. No ``ok`` key here \u2014 this is an error body that carries\none extra field, not a success envelope.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "existing": {
+            "$ref": "#/components/schemas/FolderOut"
+          }
+        },
+        "required": [
+          "error",
+          "existing"
+        ],
+        "title": "FolderConflictResponse",
         "type": "object"
       },
       "FolderCreateRequest": {
@@ -824,6 +906,49 @@
           "path"
         ],
         "title": "FolderCreateRequest",
+        "type": "object"
+      },
+      "FolderDirOut": {
+        "description": "One subdirectory inside a granted Folder \u2014 absolute ``path``, because a\nFolder lives outside the Root and has no relative form to be resolved against.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "FolderDirOut",
+        "type": "object"
+      },
+      "FolderFileOut": {
+        "description": "One file inside a granted Folder. No ``modified``: the Folder listing is a\nlazy one-level expand, and the tree shows neither a date nor a sort by it.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "size"
+        ],
+        "title": "FolderFileOut",
         "type": "object"
       },
       "FolderGrantDeleteRequest": {
@@ -875,6 +1000,204 @@
           "mode"
         ],
         "title": "FolderGrantRequest",
+        "type": "object"
+      },
+      "FolderListResponse": {
+        "description": "GET /api/folders.",
+        "properties": {
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/FolderOut"
+            },
+            "title": "Folders",
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders"
+        ],
+        "title": "FolderListResponse",
+        "type": "object"
+      },
+      "FolderListingResponse": {
+        "description": "ONE Directory level inside a granted Folder. ``mode`` is THIS level's\nresolved Grant mode rather than its root's, so the tree derives each nested\nDirectory's write affordances from the Grant that actually covers it.",
+        "properties": {
+          "dirs": {
+            "items": {
+              "$ref": "#/components/schemas/FolderDirOut"
+            },
+            "title": "Dirs",
+            "type": "array"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/FolderFileOut"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "read",
+              "read_write"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "dirs",
+          "files",
+          "mode"
+        ],
+        "title": "FolderListingResponse",
+        "type": "object"
+      },
+      "FolderMutatedResponse": {
+        "description": "DELETE /api/folders/{fid} and both Grant routes: the snapshot only, because\nthe row the call touched may no longer exist (a Folder left with no grants is\ngarbage-collected inside revoke_grant).",
+        "properties": {
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/FolderOut"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "folders"
+        ],
+        "title": "FolderMutatedResponse",
+        "type": "object"
+      },
+      "FolderOut": {
+        "description": "One registered Folder. ``exists`` is checked per read rather than stored: a\nFolder whose directory was moved or unmounted stays registered and repointable,\nbadged instead of erased (FolderStore._view).",
+        "properties": {
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/GrantOut"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "path",
+          "exists",
+          "grants"
+        ],
+        "title": "FolderOut",
+        "type": "object"
+      },
+      "FolderRootOut": {
+        "description": "One Folder root browsable in the open Thread. ``mode`` is the EFFECTIVE mode\nresolved for this profile\u222atask\u222achat, so ``none`` cannot appear; a missing path\nrides along with ``exists: false`` rather than being dropped (ADR 0013).",
+        "properties": {
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "read",
+              "read_write"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "path",
+          "mode",
+          "exists"
+        ],
+        "title": "FolderRootOut",
+        "type": "object"
+      },
+      "FolderRootsResponse": {
+        "description": "GET /api/p/{pid}/folders/roots \u2014 the tree's Thread-scoped Folder section.",
+        "properties": {
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/FolderRootOut"
+            },
+            "title": "Roots",
+            "type": "array"
+          }
+        },
+        "required": [
+          "roots"
+        ],
+        "title": "FolderRootsResponse",
+        "type": "object"
+      },
+      "FolderSavedResponse": {
+        "description": "POST /api/folders and POST /api/folders/{fid} \u2014 the changed Folder plus the\nsnapshot around it.",
+        "properties": {
+          "folder": {
+            "$ref": "#/components/schemas/FolderOut"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/FolderOut"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "folder",
+          "folders"
+        ],
+        "title": "FolderSavedResponse",
         "type": "object"
       },
       "FolderUpdateRequest": {
@@ -1143,6 +1466,40 @@
           "install_hint"
         ],
         "title": "GoogleStatusResponse",
+        "type": "object"
+      },
+      "GrantOut": {
+        "description": "One stored Grant: (profile, task, chat) \u2192 mode. Empty ``chat_id`` and\n``task_id`` together mean profile scope. ``none`` is override-only \u2014 a chat- or\ntask-scoped block over an inherited Folder \u2014 so it appears here but never as an\neffective mode (assistant/folders.py:37).",
+        "properties": {
+          "chat_id": {
+            "title": "Chat Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "read",
+              "read_write",
+              "none"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "chat_id",
+          "task_id",
+          "mode"
+        ],
+        "title": "GrantOut",
         "type": "object"
       },
       "GroupProfileOut": {
@@ -2199,6 +2556,112 @@
         "title": "MemoryRequest",
         "type": "object"
       },
+      "MentionChatOut": {
+        "description": "A plain Chat thread that mentions the previewed file.",
+        "properties": {
+          "kind": {
+            "const": "chat",
+            "title": "Kind",
+            "type": "string"
+          },
+          "stream_id": {
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "kind",
+          "title",
+          "updated"
+        ],
+        "title": "MentionChatOut",
+        "type": "object"
+      },
+      "MentionRunOut": {
+        "description": "A Task Run thread that mentions it, enriched with its parent Task so the\npopover row can say which Task the run belongs to.",
+        "properties": {
+          "kind": {
+            "const": "run",
+            "title": "Kind",
+            "type": "string"
+          },
+          "run_started_at": {
+            "title": "Run Started At",
+            "type": "string"
+          },
+          "stream_id": {
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "task_name": {
+            "title": "Task Name",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id",
+          "kind",
+          "title",
+          "updated",
+          "task_id",
+          "task_name",
+          "run_started_at"
+        ],
+        "title": "MentionRunOut",
+        "type": "object"
+      },
+      "MentionsResponse": {
+        "description": "GET /api/p/{pid}/files/mentions \u2014 the \"Mentioned in N threads\" backlink\n(ADR 0014), newest-first.",
+        "properties": {
+          "threads": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "chat": "#/components/schemas/MentionChatOut",
+                  "run": "#/components/schemas/MentionRunOut"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/MentionChatOut"
+                },
+                {
+                  "$ref": "#/components/schemas/MentionRunOut"
+                }
+              ]
+            },
+            "title": "Threads",
+            "type": "array"
+          }
+        },
+        "required": [
+          "threads"
+        ],
+        "title": "MentionsResponse",
+        "type": "object"
+      },
       "MessageRequest": {
         "properties": {
           "chat_id": {
@@ -2264,6 +2727,26 @@
           "path"
         ],
         "title": "MkdirRequest",
+        "type": "object"
+      },
+      "MkdirResultResponse": {
+        "description": "POST /api/p/{pid}/files/mkdir.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "path"
+        ],
+        "title": "MkdirResultResponse",
         "type": "object"
       },
       "ModelOverrideRequest": {
@@ -2953,6 +3436,56 @@
           "kind"
         ],
         "title": "ScheduleOut",
+        "type": "object"
+      },
+      "SearchHitOut": {
+        "description": "One @-picker hit (filesearch.py _candidate). ``path`` is ABSOLUTE either way\n\u2014 the agent's read_file opens it directly \u2014 and ``dir`` is a display label\nrooted at the Folder's basename, not a resolvable path.",
+        "properties": {
+          "dir": {
+            "title": "Dir",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "file",
+              "directory"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "dir",
+          "kind"
+        ],
+        "title": "SearchHitOut",
+        "type": "object"
+      },
+      "SearchResultsResponse": {
+        "description": "GET /api/p/{pid}/files/search \u2014 bounded and ranked; a blank or no-match\nquery is an empty list, not an error.",
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHitOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "SearchResultsResponse",
         "type": "object"
       },
       "SecretCreateRequest": {
@@ -3745,6 +4278,29 @@
         "title": "TranscriptResponse",
         "type": "object"
       },
+      "UploadResultResponse": {
+        "description": "POST /api/p/{pid}/files/upload \u2014 the saved names, which are the names the\nclient sent only when nothing clashed: an upload auto-suffixes rather than\noverwrite (ADR 0007), so the client has to read them back from here.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "saved": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Saved",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "saved"
+        ],
+        "title": "UploadResultResponse",
+        "type": "object"
+      },
       "UsageResponse": {
         "description": "GET /api/p/{pid}/usage \u2014 today() plus the date it covers.",
         "properties": {
@@ -3939,6 +4495,26 @@
           "voice"
         ],
         "title": "VoiceRequest",
+        "type": "object"
+      },
+      "WriteResultResponse": {
+        "description": "PUT /api/p/{pid}/files/raw \u2014 the new content token an in-place write\nproduces (ADR 0011). It rides the ETag header too; this is the body form, and\nthe client prefers it because a proxy may strip the header.",
+        "properties": {
+          "etag": {
+            "title": "Etag",
+            "type": "string"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "etag"
+        ],
+        "title": "WriteResultResponse",
         "type": "object"
       },
       "_Answer": {
@@ -5877,9 +6453,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Folders Api Folders Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FolderListResponse"
                 }
               }
             },
@@ -5965,7 +6539,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FolderSavedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5994,7 +6570,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
+                  "$ref": "#/components/schemas/FolderConflictResponse"
                 }
               }
             },
@@ -6053,7 +6629,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FolderMutatedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6149,7 +6727,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FolderSavedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6178,7 +6758,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
+                  "$ref": "#/components/schemas/FolderConflictResponse"
                 }
               }
             },
@@ -6247,7 +6827,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FolderMutatedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6343,7 +6925,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FolderMutatedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -9230,7 +9814,17 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/FilesListingResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FolderListingResponse"
+                    }
+                  ],
+                  "title": "Response List Workspace Files Api P  Pid  Files Get"
+                }
               }
             },
             "description": "Successful Response"
@@ -9339,9 +9933,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response File Mentions Api P  Pid  Files Mentions Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MentionsResponse"
                 }
               }
             },
@@ -9440,7 +10032,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MkdirResultResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -9454,6 +10048,16 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -9538,7 +10142,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -9552,6 +10158,16 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -9645,7 +10261,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -9659,6 +10277,16 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -9714,7 +10342,7 @@
         "summary": "Delete Workspace File"
       },
       "get": {
-        "description": "Serve one file (view inline or download). A RELATIVE ``path`` is a\nFiles-space file, sandboxed to the workspace root (ADR 0007). An ABSOLUTE\n``path`` is a Folder file (a file inside a granted Folder outside the Root):\nauthorized through the one resolver (``read`` suffices), scoped to the open\nThread's ``chat_id`` (ADR 0006/0013). Either way carries an ``ETag``\ncontent-version token (ADR 0011) an in-place ``PUT`` echoes back as\n``If-Match``. A denied/missing path is a 404 \u2014 the same shape either branch.\nThe response also carries ``X-File-Mode`` (``read``|``read_write``) \u2014 the\neffective Grant mode \u2014 so the client gates its edit/rename/delete affordances\noff the same server truth a mutation is enforced against (ticket 04).",
+        "description": "Serve one file (view inline or download). A RELATIVE ``path`` is a\nFiles-space file, sandboxed to the workspace root (ADR 0007). An ABSOLUTE\n``path`` is a Folder file (a file inside a granted Folder outside the Root):\nauthorized through the one resolver (``read`` suffices), scoped to the open\nThread's ``chat_id`` (ADR 0006/0013). Either way carries an ``ETag``\ncontent-version token (ADR 0011) an in-place ``PUT`` echoes back as\n``If-Match``. A denied/missing path is a 404 \u2014 the same shape either branch.\nThe response also carries ``X-File-Mode`` (``read``|``read_write``) \u2014 the\neffective Grant mode \u2014 so the client gates its edit/rename/delete affordances\noff the same server truth a mutation is enforced against (ticket 04).\n\n``response_model=None``: the body is the file's bytes, which OpenAPI cannot\ndescribe as a JSON schema.",
         "operationId": "api_p__pid__files_raw_get",
         "parameters": [
           {
@@ -9865,7 +10493,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -9879,6 +10509,16 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -9909,6 +10549,16 @@
               }
             },
             "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
           },
           "422": {
             "content": {
@@ -9974,9 +10624,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Search Workspace Files Api P  Pid  Files Search Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SearchResultsResponse"
                 }
               }
             },
@@ -10075,7 +10723,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResultResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -10089,6 +10739,16 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -10174,9 +10834,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Folder Roots Api P  Pid  Folders Roots Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FolderRootsResponse"
                 }
               }
             },

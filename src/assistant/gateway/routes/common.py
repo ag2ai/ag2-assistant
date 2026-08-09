@@ -25,6 +25,24 @@ async def reload_all(manager: ProfileManager) -> None:
             await manager.reload(runtime.pid)
 
 
+async def scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:
+    """The task whose Folder Grants the ``chat_id`` scope token names: ``task:{id}`` (an
+    open Task page) directly, ``task-run:{run_id}`` (a run thread) via ``get_run``, else
+    ``""`` (a real chat id or none) — ADR 0006/0013.
+
+    Shared because the Thread scope is decoded identically wherever a Grant is
+    resolved: by every ``/files/*`` route and by ``/folders/roots``, which are two
+    domains and so two modules.
+    """
+    if chat_id.startswith("task:"):
+        return chat_id.removeprefix("task:")
+    if chat_id.startswith("task-run:"):
+        with contextlib.suppress(Exception):
+            run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
+            return (run or {}).get("task_id") or ""
+    return ""
+
+
 def chat_asker(runtime: ProfileRuntime, chat_id: str):
     """Durable, inline HITL for a chat turn: the agent's question persists as an
     Inquiry and surfaces inline on this chat's stream (InquiryRaised),

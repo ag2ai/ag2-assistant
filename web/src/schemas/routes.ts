@@ -15,6 +15,15 @@ import {
   PairingCodeIssued,
 } from './connection.ts'
 import {
+  FilesResponse,
+  Mentions,
+  MkdirResult,
+  SearchResults,
+  UploadResult,
+  WriteResult,
+} from './file.ts'
+import { FolderList, FolderMutated, FolderRoots, FolderSaved } from './folder.ts'
+import {
   LiveConfigList,
   LiveConfigSaved,
   LlmConfigList,
@@ -137,6 +146,27 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/connections/{cid}/pairing/code': PairingCodeIssued,
   'GET /api/connections/{cid}/groups': ConnectionGroups,
   'POST /api/connections/{cid}/groups/{chat_id}/profile': ConnectionGroups,
+  'GET /api/folders': FolderList,
+  // Create and update echo the changed Folder next to the snapshot; delete and the
+  // grant routes echo the snapshot alone, because the row they touched may be gone
+  // (a Folder left with no grants is garbage-collected on revoke).
+  'POST /api/folders': FolderSaved,
+  'POST /api/folders/{fid}': FolderSaved,
+  'DELETE /api/folders/{fid}': FolderMutated,
+  'POST /api/folders/{fid}/grants': FolderMutated,
+  'DELETE /api/folders/{fid}/grants': FolderMutated,
+  'GET /api/p/{pid}/folders/roots': FolderRoots,
+  // One route, two bodies — the branch is whether the requested path is absolute,
+  // so the union IS the contract. Branch order is load-bearing: the gate pairs the
+  // anyOf members by index.
+  'GET /api/p/{pid}/files': FilesResponse,
+  'GET /api/p/{pid}/files/search': SearchResults,
+  'GET /api/p/{pid}/files/mentions': Mentions,
+  'POST /api/p/{pid}/files/upload': UploadResult,
+  'POST /api/p/{pid}/files/mkdir': MkdirResult,
+  'POST /api/p/{pid}/files/move': Ok,
+  'PUT /api/p/{pid}/files/raw': WriteResult,
+  'DELETE /api/p/{pid}/files/raw': Ok,
 }
 
 // No schema by design — the reason is the point of the entry.
@@ -166,22 +196,6 @@ export const UNMAPPED: Record<string, string> = {
 
 // Shrinks to {} as phases land; the value names the phase that will take it.
 export const PENDING: Record<string, string> = {
-  // --- phase 5: files, folders ---
-  'GET /api/folders': 'phase 5',
-  'POST /api/folders': 'phase 5',
-  'POST /api/folders/{fid}': 'phase 5',
-  'DELETE /api/folders/{fid}': 'phase 5',
-  'POST /api/folders/{fid}/grants': 'phase 5',
-  'DELETE /api/folders/{fid}/grants': 'phase 5',
-  'GET /api/p/{pid}/folders/roots': 'phase 5',
-  'GET /api/p/{pid}/files': 'phase 5',
-  'GET /api/p/{pid}/files/search': 'phase 5',
-  'GET /api/p/{pid}/files/mentions': 'phase 5',
-  'POST /api/p/{pid}/files/upload': 'phase 5',
-  'POST /api/p/{pid}/files/mkdir': 'phase 5',
-  'POST /api/p/{pid}/files/move': 'phase 5',
-  'PUT /api/p/{pid}/files/raw': 'phase 5',
-  'DELETE /api/p/{pid}/files/raw': 'phase 5',
   // --- phase 6: skills, permissions ---
   'GET /api/skills': 'phase 6',
   'POST /api/skills/{name}/state': 'phase 6',
