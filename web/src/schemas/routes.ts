@@ -7,6 +7,14 @@
 import type { z } from 'zod'
 import { ChatList, MessageReply, Transcript } from './chat.ts'
 import {
+  Connection,
+  ConnectionExposure,
+  ConnectionGroups,
+  ConnectionList,
+  ConnectionPairing,
+  PairingCodeIssued,
+} from './connection.ts'
+import {
   LiveConfigList,
   LiveConfigSaved,
   LlmConfigList,
@@ -16,6 +24,7 @@ import {
 } from './llm.ts'
 import { TaskRules } from './permission.ts'
 import { Ok } from './primitives.ts'
+import { ProfileEnvelope, ProfileList } from './profile.ts'
 import { SecretList, SecretSaved } from './secret.ts'
 import { MemoryDoc, ProfileHealth } from './settings.ts'
 import {
@@ -106,6 +115,28 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/codex/login_url': CodexLoginUrl,
   'POST /api/codex/submit': Ok,
   'POST /api/codex/logout': Ok,
+  'GET /api/profiles': ProfileList,
+  'POST /api/profiles': ProfileEnvelope,
+  'POST /api/profiles/{pid}': ProfileEnvelope,
+  'DELETE /api/profiles/{pid}': Ok,
+  'POST /api/profiles/{pid}/restore': ProfileEnvelope,
+  'GET /api/connections': ConnectionList,
+  // The three writes below answer with the one Connection they changed, not the
+  // list — Settings re-renders that row from the response.
+  'POST /api/connections': Connection,
+  'POST /api/connections/{cid}': Connection,
+  'POST /api/connections/{cid}/token': Connection,
+  'DELETE /api/connections/{cid}': Ok,
+  'POST /api/connections/{cid}/default': Connection,
+  'GET /api/connections/{cid}/exposure': ConnectionExposure,
+  'POST /api/connections/{cid}/exposure': ConnectionExposure,
+  'GET /api/connections/{cid}/pairing': ConnectionPairing,
+  'POST /api/connections/{cid}/pairing': ConnectionPairing,
+  'DELETE /api/connections/{cid}/pairing/{key}': ConnectionPairing,
+  // Alone among the pairing routes: the minted code, not the roster around it.
+  'POST /api/connections/{cid}/pairing/code': PairingCodeIssued,
+  'GET /api/connections/{cid}/groups': ConnectionGroups,
+  'POST /api/connections/{cid}/groups/{chat_id}/profile': ConnectionGroups,
 }
 
 // No schema by design — the reason is the point of the entry.
@@ -135,26 +166,6 @@ export const UNMAPPED: Record<string, string> = {
 
 // Shrinks to {} as phases land; the value names the phase that will take it.
 export const PENDING: Record<string, string> = {
-  // --- phase 4: connections, profiles ---
-  'GET /api/profiles': 'phase 4',
-  'POST /api/profiles': 'phase 4',
-  'POST /api/profiles/{pid}': 'phase 4',
-  'DELETE /api/profiles/{pid}': 'phase 4',
-  'POST /api/profiles/{pid}/restore': 'phase 4',
-  'GET /api/connections': 'phase 4',
-  'POST /api/connections': 'phase 4',
-  'POST /api/connections/{cid}': 'phase 4',
-  'POST /api/connections/{cid}/token': 'phase 4',
-  'DELETE /api/connections/{cid}': 'phase 4',
-  'POST /api/connections/{cid}/default': 'phase 4',
-  'GET /api/connections/{cid}/exposure': 'phase 4',
-  'POST /api/connections/{cid}/exposure': 'phase 4',
-  'GET /api/connections/{cid}/pairing': 'phase 4',
-  'POST /api/connections/{cid}/pairing': 'phase 4',
-  'DELETE /api/connections/{cid}/pairing/{key}': 'phase 4',
-  'POST /api/connections/{cid}/pairing/code': 'phase 4',
-  'GET /api/connections/{cid}/groups': 'phase 4',
-  'POST /api/connections/{cid}/groups/{chat_id}/profile': 'phase 4',
   // --- phase 5: files, folders ---
   'GET /api/folders': 'phase 5',
   'POST /api/folders': 'phase 5',

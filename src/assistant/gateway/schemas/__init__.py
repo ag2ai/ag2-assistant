@@ -22,6 +22,20 @@ from .chat import (
     TranscriptMessageOut,
     TranscriptResponse,
 )
+from .connection import (
+    ConnectionExposureResponse,
+    ConnectionGroupOut,
+    ConnectionGroupsResponse,
+    ConnectionListResponse,
+    ConnectionOut,
+    ConnectionPairingResponse,
+    ConnectionSurfaceOut,
+    GroupProfileOut,
+    PairedAccountOut,
+    PairingCodeIssuedResponse,
+    PairingCodeOut,
+    TokenStatusOut,
+)
 from .llm import (
     DepsStatusOut,
     KeySourceOut,
@@ -39,6 +53,7 @@ from .llm import (
 )
 from .permission import TaskRulesResponse
 from .primitives import ERROR_RESPONSES, ErrorBody, Ok, SecretRefOut, SharedKeyOut
+from .profile import ProfileEnvelopeResponse, ProfileListResponse, ProfileOut
 from .secret import SecretListResponse, SecretOut, SecretSavedResponse
 from .settings import (
     HealthChannelOut,
@@ -97,6 +112,13 @@ __all__ = [
     "CodingAgentOut",
     "CodingAgentsResponse",
     "CodingCatalogResponse",
+    "ConnectionExposureResponse",
+    "ConnectionGroupOut",
+    "ConnectionGroupsResponse",
+    "ConnectionListResponse",
+    "ConnectionOut",
+    "ConnectionPairingResponse",
+    "ConnectionSurfaceOut",
     "DepsStatusOut",
     "ERROR_RESPONSES",
     "ErrorBody",
@@ -109,6 +131,7 @@ __all__ = [
     "GoogleLoginUrlErrorOut",
     "GoogleLoginUrlOkOut",
     "GoogleStatusResponse",
+    "GroupProfileOut",
     "HealthChannelOut",
     "HealthCheckOut",
     "HealthMcpServerOut",
@@ -131,8 +154,14 @@ __all__ = [
     "MessageResponse",
     "NewTaskEnvelopeResponse",
     "Ok",
+    "PairedAccountOut",
+    "PairingCodeIssuedResponse",
+    "PairingCodeOut",
     "PingResultResponse",
+    "ProfileEnvelopeResponse",
     "ProfileHealthResponse",
+    "ProfileListResponse",
+    "ProfileOut",
     "ProviderCatalogResponse",
     "RunDetailEnvelopeResponse",
     "RunDetailOut",
@@ -151,6 +180,7 @@ __all__ = [
     "TaskOut",
     "TaskRulesResponse",
     "TaskWithRunsOut",
+    "TokenStatusOut",
     "TranscriptMessageOut",
     "TranscriptResponse",
     "UsageResponse",

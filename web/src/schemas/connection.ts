@@ -11,7 +11,7 @@ export const TokenStatus = z.object({
 })
 export type TokenStatus = z.infer<typeof TokenStatus>
 
-// app.py _connection_entry. `paired_accounts` is a count, not a roster: a live
+// gateway/routes/connection.py _connection_entry. `paired_accounts` is a count, not a roster: a live
 // Connection with nobody paired answers nobody (ADR 0021), and that is what says so.
 export const Connection = z.object({
   id: z.string(),
@@ -36,7 +36,7 @@ export const ConnectionSurface = z.object({
 })
 export type ConnectionSurface = z.infer<typeof ConnectionSurface>
 
-// app.py _exposure_view. `exposure` is {pid: {surface_id: reachable}} and is
+// gateway/routes/connection.py _exposure_view. `exposure` is {pid: {surface_id: reachable}} and is
 // default-allow, so a profile nobody withdrew reads true everywhere.
 export const ConnectionExposure = z.object({
   surfaces: z.array(ConnectionSurface),
@@ -45,7 +45,7 @@ export const ConnectionExposure = z.object({
 })
 export type ConnectionExposure = z.infer<typeof ConnectionExposure>
 
-// app.py _account_view. `pending` marks an invitation to a handle — not yet an
+// gateway/routes/connection.py _account_view. `pending` marks an invitation to a handle — not yet an
 // identity, so it has nobody behind it until someone presents it.
 export const PairedAccount = z.object({
   key: z.string(),
@@ -79,7 +79,7 @@ export const ConnectionGroup = z.object({
 })
 export type ConnectionGroup = z.infer<typeof ConnectionGroup>
 
-// app.py _connection_group_view — `profiles` are those exposed to THIS Connection's
+// gateway/routes/connection.py _connection_group_view — `profiles` are those exposed to THIS Connection's
 // group surface, which is what a group may be re-pointed at (ADR 0022).
 export const ConnectionGroups = z.object({
   groups: z.array(ConnectionGroup),

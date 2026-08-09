@@ -118,13 +118,11 @@ from fastapi.responses import (
 from pydantic import BaseModel, Field
 
 from assistant import (
-    AG2_VERSION,
     __version__,
     provider_catalog,
     voice_providers,
 )
 from assistant import feedback as feedback_learner
-from assistant import profiles as profiles_mod
 from assistant.a2ui import A2UI_SERVER_ACTIONS
 from assistant.agent import build_skills_runtime, bundled_skills_dir, model_config
 from assistant.attachments import build_input
@@ -134,7 +132,7 @@ from assistant.codex_auth import (
 )
 from assistant.coding.detect import parse_bridge
 from assistant.coding.model_catalog import ModelCatalog
-from assistant.connections import Connection, ConnectionStore, surface_key, surfaces
+from assistant.connections import ConnectionStore
 from assistant.events import (
     A2UIActionSubmitted,
     A2UISurfaceDataUpdated,
@@ -150,7 +148,17 @@ from assistant.gateway.profile_manager import (
     ProfileRuntime,
     UnknownProfile,
 )
-from assistant.gateway.routes import chat, llm, permission, secret, settings, system, task
+from assistant.gateway.routes import (
+    chat,
+    connection,
+    llm,
+    permission,
+    profile,
+    secret,
+    settings,
+    system,
+    task,
+)
 from assistant.gateway.routes.common import chat_asker, reload_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.routes.permission import PermissionCommandDeleteRequest
@@ -162,8 +170,8 @@ from assistant.integrations.google_auth import GoogleAuth
 from assistant.live_configs import LiveConfigStore
 from assistant.llm_configs import LlmConfigStore
 from assistant.observability import log_suppressed
-from assistant.pairing import PairedAccount, PairingStore
-from assistant.peers import Peer, PeerStore
+from assistant.pairing import PairingStore
+from assistant.peers import PeerStore
 from assistant.permissions import PermissionStore, command_rule, shell_prefix
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import SecretStore
@@ -421,52 +429,6 @@ class MCPServerRequest(BaseModel):
 
 class VoiceProviderRequest(BaseModel):
     provider: str
-
-
-class ConnectionCreateRequest(BaseModel):
-    platform: str
-    name: str = ""  # blank takes the platform's next free default name
-    tokens: dict[str, str] = Field(default_factory=dict)  # {ENV_NAME: value}
-
-
-class ConnectionRenameRequest(BaseModel):
-    name: str
-
-
-class ConnectionTokenRequest(BaseModel):
-    tokens: dict[str, str] = Field(default_factory=dict)  # every env the platform needs
-
-
-class ConnectionDefaultRequest(BaseModel):
-    profile: str | None = None  # pid conversations land in by default, or null for none
-
-
-class ConnectionExposureRequest(BaseModel):
-    profile: str
-    surface: str  # one of the Connection's own surface ids
-    exposed: bool
-
-
-class PairAccountRequest(BaseModel):
-    value: str  # a numeric account id (authoritative) or a handle (an invitation)
-
-
-class GroupProfileRequest(BaseModel):
-    profile: str  # the pid to re-point a group Peer at; never null — a group is pinned
-
-
-class ProfileCreateRequest(BaseModel):
-    name: str
-    accent: str
-
-
-class ProfileUpdateRequest(BaseModel):
-    name: str | None = None
-    accent: str | None = None
-
-
-class ProfileArchiveRequest(BaseModel):
-    new_default: str | None = None
 
 
 class FolderCreateRequest(BaseModel):
@@ -1129,364 +1091,11 @@ def create_app(
         await reload_all(manager)
         return {"ok": True, **result, **_skills_snapshot()}
 
-    # ---- Profile management (global) ----
-
-    def _profile_view(meta) -> dict:
-        return {
-            "id": meta.id,
-            "name": meta.name,
-            "accent": meta.accent,
-            "workspace": str(paths.profile_dir(meta.id) / "workspace"),
-            "created": meta.created,
-        }
-
-    @app.get("/api/profiles")
-    async def list_profiles() -> dict:
-        """The §3.5 contract, present in every state: unarchived profiles, the
-        server-side active default, and the install-level onboarded flag. Empty list +
-        null + false on fresh install. Channel bindings are install-level now — see
-        GET /api/connections."""
-        reg = registry.load_registry()
-        allp = registry.list_profiles(include_archived=True)
-        return {
-            "profiles": [_profile_view(m) for m in allp if not m.archived],
-            # Archived profiles for the Settings "Archived" section (ADR 0003): restore
-            # or permanently delete them. Empty on a fresh install / when none archived.
-            "archived": [_profile_view(m) for m in allp if m.archived],
-            "active_default": reg.get("active_default"),
-            "onboarded": bool(reg.get("onboarded")),
-            # Versions ride the boot payload so the UI needn't make a second request.
-            "version": __version__,
-            "ag2_version": AG2_VERSION,
-        }
-
-    @app.post("/api/profiles")
-    async def create_profile(req: ProfileCreateRequest):
-        """Create a profile (dir + registry) and boot its runtime live (§3.5)."""
-        try:
-            runtime = await manager.create(req.name, req.accent)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return {"profile": _profile_view(runtime.meta)}
-
-    @app.post("/api/profiles/{pid}")
-    async def update_profile(pid: str, req: ProfileUpdateRequest):
-        """Rename and/or set accent (both display-only, registry-level). Unknown pid →
-        404, invalid value → 400."""
-        if registry.get_profile(pid) is None:
-            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
-        try:
-            if req.name is not None:
-                registry.rename_profile(pid, req.name)
-            if req.accent is not None:
-                registry.set_accent(pid, req.accent)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return {"profile": _profile_view(registry.get_profile(pid))}
-
-    @app.delete("/api/profiles/{pid}")
-    async def archive_or_purge_profile(
-        pid: str, purge: bool = False, req: ProfileArchiveRequest | None = None
-    ):
-        """Soft-archive by default; hard-delete when ``?purge=true`` (ADR 0003).
-
-        Archive: §4.9 guardrails — ValueError (guardrail) → 400, unknown → 404, already
-        archived → 410. new_default may come in the body.
-
-        Purge (``?purge=true``): permanently erase an ALREADY-archived profile. Unknown →
-        404; a live (not-yet-archived) profile → 409 (archive-first). The explicit flag
-        makes the soft→hard escalation deliberate."""
-        if purge:
-            try:
-                await manager.purge(pid)
-            except UnknownProfile:
-                return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
-            except ValueError as exc:
-                return JSONResponse({"error": str(exc)}, status_code=409)
-            return {"ok": True}
-
-        new_default = req.new_default if req is not None else None
-        try:
-            await manager.archive(pid, new_default=new_default)
-        except UnknownProfile:
-            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
-        except ArchivedProfile:
-            return JSONResponse({"error": f"profile archived: {pid}"}, status_code=410)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return {"ok": True}
-
-    @app.post("/api/profiles/{pid}/restore")
-    async def restore_profile(pid: str):
-        """Un-archive a profile and boot it live (ADR 0003). Unknown → 404; a live
-        (non-archived) profile → 409; a boot failure rolls the archive flag back and
-        surfaces 500."""
-        try:
-            runtime = await manager.restore(pid)
-        except UnknownProfile:
-            return JSONResponse({"error": f"unknown profile: {pid}"}, status_code=404)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        except Exception as exc:  # boot failed; manager already rolled back to archived
-            return JSONResponse({"error": f"could not restore profile: {exc}"}, status_code=500)
-        return {"profile": _profile_view(runtime.meta)}
-
-    # ---- Connections (global, install-level; never owned by a profile — ADR 0022) ----
-
-    def _connection_entry(connection: Connection) -> dict:
-        """One Connection as the API shows it: its identity, token(s) as a set flag and
-        hint, default profile, whether the adapter is live, why not, and its roster size."""
-        cid = connection.id
-        return {
-            "id": cid,
-            "platform": connection.platform,
-            "name": connection.name,
-            "tokens": connection_store.token_status(cid),
-            "default_profile": registry.connection_defaults().get(cid),
-            "active": cid in manager.channels,
-            "error": manager.channel_errors.get(cid),
-            # A live Connection with nobody paired answers nobody (ADR 0021) — the count
-            # is what lets Settings say so rather than leave it looking healthy.
-            "paired_accounts": len(pairing_store.list_accounts(cid)),
-        }
-
-    def _token_error(platform: str, tokens: dict[str, str]):
-        """Refuse a Connection that could never start: an unknown platform, a token env
-        that is not that platform's, or one of its tokens missing."""
-        if platform not in profiles_mod.CHANNEL_PLATFORMS:
-            return JSONResponse({"error": f"unknown channel platform: {platform}"}, status_code=400)
-        envs = profiles_mod.CHANNEL_TOKEN_ENVS[platform]
-        unknown = set(tokens) - set(envs)
-        if unknown:
-            return JSONResponse(
-                {"error": f"invalid token env(s) for {platform}: {', '.join(sorted(unknown))}"},
-                status_code=400,
-            )
-        missing = [e for e in envs if not (tokens.get(e) or "").strip()]
-        if missing:
-            return JSONResponse(
-                {"error": f"missing token(s) for {platform}: {', '.join(missing)}"}, status_code=400
-            )
-        return None
-
-    @app.get("/api/connections")
-    async def list_connections() -> dict:
-        """Every configured instance of a platform, in creation order. An install that
-        already had bot tokens is migrated to one Connection per platform on this read.
-        A Connection's token(s) appear only as a set flag and a last-4 hint."""
-        return {"connections": [_connection_entry(c) for c in connection_store.list_connections()]}
-
-    @app.post("/api/connections")
-    async def create_connection(req: ConnectionCreateRequest):
-        """Register a Connection on ``platform`` with its token(s) and start it at once;
-        one that will not start still records its reason. Bad tokens or platform → 400."""
-        if (bad := _token_error(req.platform, req.tokens)) is not None:
-            return bad
-        connection = connection_store.create_connection(req.platform, req.name, tokens=req.tokens)
-        await manager.start_channel(connection.id)
-        return _connection_entry(connection)
-
-    @app.post("/api/connections/{cid}")
-    async def rename_connection(cid: str, req: ConnectionRenameRequest):
-        """Change a Connection's display name; its id, tokens and everything keyed by it
-        are untouched. Unknown Connection → 404, a blank name → 400."""
-        if connection_store.get_connection(cid) is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        try:
-            connection = connection_store.rename_connection(cid, req.name)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return _connection_entry(connection)
-
-    @app.post("/api/connections/{cid}/token")
-    async def replace_connection_token(cid: str, req: ConnectionTokenRequest):
-        """Replace a Connection's token(s) and restart it on them, keeping its identity.
-        A replacement that will not start rolls back → 400; unknown → 404."""
-        connection = connection_store.get_connection(cid)
-        if connection is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        if (bad := _token_error(connection.platform, req.tokens)) is not None:
-            return bad
-        envs = profiles_mod.CHANNEL_TOKEN_ENVS[connection.platform]
-        prior = connection_store.tokens_for(cid)
-        connection_store.set_tokens(cid, req.tokens)
-        active, reason = await manager.restart_channel(cid)
-        if not active:
-            connection_store.set_tokens(cid, {e: prior.get(e, "") for e in envs})
-            await manager.restart_channel(cid)
-            return JSONResponse({"error": reason}, status_code=400)
-        return _connection_entry(connection)
-
-    @app.delete("/api/connections/{cid}")
-    async def delete_connection(cid: str):
-        """Stop a Connection and forget it with its token(s), Peers, paired accounts,
-        pairing code, default-Profile entry and exposure records. Unknown → 404."""
-        if connection_store.get_connection(cid) is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        await manager.stop_channel(cid)
-        manager.channel_errors.pop(cid, None)
-        connection_store.delete_connection(cid)
-        return {"ok": True}
-
-    @app.post("/api/connections/{cid}/default")
-    async def set_connection_default(cid: str, req: ConnectionDefaultRequest):
-        """Set the profile this Connection's conversations land in by default (or clear
-        it with profile:null). Takes effect on the next message — the adapter itself keeps
-        running either way. Unknown Connection → 404; unknown/archived pid → 400."""
-        connection = connection_store.get_connection(cid)
-        if connection is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        try:
-            connection_store.set_default_profile(cid, req.profile)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return _connection_entry(connection)
-
-    def _exposure_view(connection: Connection) -> dict:
-        """Which profiles this Connection can reach, per surface, plus the one its
-        conversations land in by default — one table, since the two are one decision."""
-        return {
-            "surfaces": [
-                {"kind": kind, "id": surface} for kind, surface in surfaces(connection).items()
-            ],
-            "exposure": connection_store.exposure(connection.id),
-            "default_profile": registry.connection_defaults().get(connection.id),
-        }
-
-    @app.get("/api/connections/{cid}/exposure")
-    async def list_connection_exposure(cid: str):
-        """This Connection's surfaces and every profile's reachability on each.
-        Default-allow, so a profile nobody has withdrawn reads true everywhere."""
-        connection = connection_store.get_connection(cid)
-        if connection is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        return _exposure_view(connection)
-
-    @app.post("/api/connections/{cid}/exposure")
-    async def set_connection_exposure(cid: str, req: ConnectionExposureRequest):
-        """Expose or withdraw one profile on one surface of this Connection; withdrawing
-        the default's last surface clears it. Unknown → 404, bad profile/surface → 400."""
-        connection = connection_store.get_connection(cid)
-        if connection is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        try:
-            connection_store.set_exposure(cid, req.profile, req.surface, req.exposed)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return _exposure_view(connection)
-
-    # ---- Paired accounts (per Connection; who may speak to it at all — ADR 0021) ----
-
-    def _account_view(account: PairedAccount) -> dict:
-        """One paired account. ``pending`` is what the UI shows differently: an
-        invitation to a handle, not yet an identity."""
-        return {
-            "key": account.key,
-            "account_id": account.account_id,
-            "handle": account.handle,
-            "pending": account.pending,
-        }
-
-    def _pairing_view(cid: str | None) -> dict:
-        """One Connection's roster and live code. No Connection yet reads as an empty
-        roster — nobody is paired, which is what there is to say."""
-        code = pairing_store.live_code(cid) if cid else None
-        return {
-            "accounts": [_account_view(a) for a in pairing_store.list_accounts(cid)] if cid else [],
-            "code": None if code is None else {"code": code.code, "expires_at": code.expires_at},
-        }
-
-    @app.get("/api/connections/{cid}/pairing")
-    async def list_connection_pairing(cid: str):
-        """Who may reach this one Connection, and its live one-time code (or null).
-        A grant here is no grant on another Connection of the same platform."""
-        if connection_store.get_connection(cid) is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        return _pairing_view(cid)
-
-    @app.post("/api/connections/{cid}/pairing")
-    async def add_connection_pairing(cid: str, req: PairAccountRequest):
-        """Allow an account on this Connection by numeric id or by handle."""
-        connection = connection_store.get_connection(cid)
-        if connection is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        try:
-            pairing_store.add_account(cid, req.value, connection.platform)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return _pairing_view(cid)
-
-    @app.delete("/api/connections/{cid}/pairing/{key:path}")
-    async def revoke_connection_pairing(cid: str, key: str):
-        """Withdraw one entry from this Connection alone. Nothing to withdraw → 404."""
-        if connection_store.get_connection(cid) is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        if not pairing_store.revoke(cid, key):
-            return JSONResponse({"error": f"not paired: {key}"}, status_code=404)
-        return _pairing_view(cid)
-
-    @app.post("/api/connections/{cid}/pairing/code")
-    async def issue_connection_pairing_code(cid: str):
-        """Mint this Connection's one live code, replacing its earlier one and no
-        other's. The code works only on the Connection it was minted for."""
-        if connection_store.get_connection(cid) is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        pairing_store.issue_code(cid)
-        return _pairing_view(cid)["code"]
-
-    # ---- Group Peers (a group's profile is pinned, and re-pointed only here) ----
-
-    def _connection_groups(cid: str) -> list[Peer]:
-        """Every group Peer that arrived on this one Connection."""
-        return [p for p in peer_store.list_peers() if p.connection == cid and p.surface == "group"]
-
-    def _group_surface_profiles(cid: str, platform: str) -> list[profiles_mod.ProfileMeta]:
-        """The unarchived profiles exposed to this Connection's group surface — what a
-        group can be pinned to, whether or not its runtime is up right now."""
-        surface = surface_key(cid, platform, "group")
-        withdrawn = registry.withdrawn_from(surface)
-        return [m for m in registry.list_profiles() if m.id not in withdrawn]
-
-    def _connection_group_view(connection: Connection) -> dict:
-        """This Connection's group Peers with the profile each is pinned to, plus the
-        profiles exposed to this Connection's group surface."""
-        return {
-            "groups": [
-                {"chat_id": p.chat_id, "profile": p.profile}
-                for p in _connection_groups(connection.id)
-            ],
-            "profiles": [
-                {"id": m.id, "name": m.name}
-                for m in _group_surface_profiles(connection.id, connection.platform)
-            ],
-        }
-
-    @app.get("/api/connections/{cid}/groups")
-    async def list_connection_groups(cid: str):
-        """This Connection's group Peers and what each is pinned to. Unknown → 404."""
-        connection = connection_store.get_connection(cid)
-        if connection is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        return _connection_group_view(connection)
-
-    @app.post("/api/connections/{cid}/groups/{chat_id}/profile")
-    async def set_connection_group_profile(cid: str, chat_id: str, req: GroupProfileRequest):
-        """Re-point one of this Connection's groups at a profile exposed to its group
-        surface. Unknown Connection or group → 404; an unreachable profile → 400."""
-        connection = connection_store.get_connection(cid)
-        if connection is None:
-            return JSONResponse({"error": f"unknown connection: {cid}"}, status_code=404)
-        surface = surface_key(cid, connection.platform, "group")
-        if req.profile not in {m.id for m in _group_surface_profiles(cid, connection.platform)}:
-            return JSONResponse(
-                {"error": f"profile not reachable from {surface}: {req.profile}"}, status_code=400
-            )
-        if not any(p.chat_id == chat_id for p in _connection_groups(cid)):
-            return JSONResponse({"error": f"no group peer: {chat_id}"}, status_code=404)
-        peer_store.select_profile(
-            cid, chat_id, req.profile, platform=connection.platform, surface="group"
-        )
-        return _connection_group_view(connection)
+    # Profiles (the registry every client boots from) and Connections (an instance
+    # of a messaging platform with its exposure, pairing and group tables) are both
+    # install-level, and live in gateway/routes/profile.py and connection.py.
+    app.include_router(profile.build_router(deps))
+    app.include_router(connection.build_router(deps))
 
     # ------------------------------------------------------------------ #
     #  Profile-scoped router (/api/p/{pid})                              #

@@ -496,6 +496,208 @@
         "title": "ConnectionExposureRequest",
         "type": "object"
       },
+      "ConnectionExposureResponse": {
+        "description": "GET and POST /api/connections/{cid}/exposure.\n\n``exposure`` is {pid: {surface_id: reachable}} and is default-allow, so a\nprofile nobody withdrew reads true on every surface. ``default_profile`` rides\nalong because withdrawing the default's last surface clears it \u2014 one request\nchanges both, so one body carries both.",
+        "properties": {
+          "default_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Profile"
+          },
+          "exposure": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            "title": "Exposure",
+            "type": "object"
+          },
+          "surfaces": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionSurfaceOut"
+            },
+            "title": "Surfaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "surfaces",
+          "exposure",
+          "default_profile"
+        ],
+        "title": "ConnectionExposureResponse",
+        "type": "object"
+      },
+      "ConnectionGroupOut": {
+        "description": "One group Peer of this Connection and the profile it is pinned to (null\nwhile it has none).",
+        "properties": {
+          "chat_id": {
+            "title": "Chat Id",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "chat_id",
+          "profile"
+        ],
+        "title": "ConnectionGroupOut",
+        "type": "object"
+      },
+      "ConnectionGroupsResponse": {
+        "description": "GET and POST /api/connections/{cid}/groups*.\n\n``profiles`` are those exposed to THIS Connection's group surface, which is\nexactly what a group may be re-pointed at (ADR 0022) \u2014 so the picker's options\narrive with the groups rather than being intersected client-side.",
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGroupOut"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/GroupProfileOut"
+            },
+            "title": "Profiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups",
+          "profiles"
+        ],
+        "title": "ConnectionGroupsResponse",
+        "type": "object"
+      },
+      "ConnectionListResponse": {
+        "description": "GET /api/connections.",
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionOut"
+            },
+            "title": "Connections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "ConnectionListResponse",
+        "type": "object"
+      },
+      "ConnectionOut": {
+        "description": "One Connection as the API shows it.\n\n``tokens`` is keyed by env-var name because a platform may need more than one\n(Zulip needs three), so which of them is missing is what the form has to say.\n``paired_accounts`` is a count and not a roster: a live Connection with nobody\npaired answers nobody (ADR 0021), and the count is what lets Settings say so\nrather than leave it looking healthy. ``error`` is why the adapter is not\nlive, null while it is.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "default_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Profile"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "paired_accounts": {
+            "title": "Paired Accounts",
+            "type": "integer"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "tokens": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TokenStatusOut"
+            },
+            "title": "Tokens",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "platform",
+          "name",
+          "tokens",
+          "default_profile",
+          "active",
+          "error",
+          "paired_accounts"
+        ],
+        "title": "ConnectionOut",
+        "type": "object"
+      },
+      "ConnectionPairingResponse": {
+        "description": "GET /api/connections/{cid}/pairing and the two writes that answer with the\nwhole roster. ``code`` is null whenever there is no unexpired one.",
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/PairedAccountOut"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PairingCodeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "accounts",
+          "code"
+        ],
+        "title": "ConnectionPairingResponse",
+        "type": "object"
+      },
       "ConnectionRenameRequest": {
         "properties": {
           "name": {
@@ -507,6 +709,25 @@
           "name"
         ],
         "title": "ConnectionRenameRequest",
+        "type": "object"
+      },
+      "ConnectionSurfaceOut": {
+        "description": "One addressable surface of a Connection (assistant/connections.py surfaces()):\n``dm`` plus ``group`` where the two are switched independently, a single ``all``\nwhere they are not.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "ConnectionSurfaceOut",
         "type": "object"
       },
       "ConnectionTokenRequest": {
@@ -922,6 +1143,25 @@
           "install_hint"
         ],
         "title": "GoogleStatusResponse",
+        "type": "object"
+      },
+      "GroupProfileOut": {
+        "description": "A profile a group may be re-pointed at \u2014 id and display name only; the\npicker needs nothing else.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "GroupProfileOut",
         "type": "object"
       },
       "GroupProfileRequest": {
@@ -2112,6 +2352,68 @@
         "title": "PairAccountRequest",
         "type": "object"
       },
+      "PairedAccountOut": {
+        "description": "One account allowed to reach a Connection. ``pending`` marks an invitation\nto a handle \u2014 nobody stands behind it until someone presents it, which is why\n``account_id`` is null there.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "account_id",
+          "handle",
+          "pending"
+        ],
+        "title": "PairedAccountOut",
+        "type": "object"
+      },
+      "PairingCodeOut": {
+        "description": "A one-time pairing code and the moment it stops working (a POSIX timestamp,\nwritten as ``time.time()``).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "number"
+          }
+        },
+        "required": [
+          "code",
+          "expires_at"
+        ],
+        "title": "PairingCodeOut",
+        "type": "object"
+      },
       "PermissionCommandAddRequest": {
         "properties": {
           "prefix": {
@@ -2209,6 +2511,19 @@
         "title": "ProfileCreateRequest",
         "type": "object"
       },
+      "ProfileEnvelopeResponse": {
+        "description": "POST /api/profiles, POST /api/profiles/{pid} and .../restore.\n\nAn envelope rather than a bare ProfileOut, matching what the front end parses\n(`ProfileEnvelope`): a write answers with the profile it wrote, and the key\nleaves room to say more about the write later without breaking the shape.",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/ProfileOut"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "title": "ProfileEnvelopeResponse",
+        "type": "object"
+      },
       "ProfileHealthResponse": {
         "description": "GET /api/p/{pid}/health \u2014 `overall` rolls up the core signals only.",
         "properties": {
@@ -2235,6 +2550,92 @@
           "checks"
         ],
         "title": "ProfileHealthResponse",
+        "type": "object"
+      },
+      "ProfileListResponse": {
+        "description": "GET /api/profiles \u2014 the \u00a73.5 boot contract, answered in every state.\n\n``archived`` is a second list rather than a flag on ``profiles`` because the\nSettings \"Archived\" section is a different surface (ADR 0003): the two are\nnever rendered together. Both are empty on a fresh install, where\n``active_default`` is null and ``onboarded`` false.\n\nThe two versions ride this payload so a booting client needs no second\nrequest; nothing else answers them.",
+        "properties": {
+          "active_default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Default"
+          },
+          "ag2_version": {
+            "title": "Ag2 Version",
+            "type": "string"
+          },
+          "archived": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileOut"
+            },
+            "title": "Archived",
+            "type": "array"
+          },
+          "onboarded": {
+            "title": "Onboarded",
+            "type": "boolean"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileOut"
+            },
+            "title": "Profiles",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profiles",
+          "archived",
+          "active_default",
+          "onboarded",
+          "version",
+          "ag2_version"
+        ],
+        "title": "ProfileListResponse",
+        "type": "object"
+      },
+      "ProfileOut": {
+        "description": "One registry entry as the API shows it.\n\n``workspace`` is derived, not stored: the registry keeps ids and display\nfields, and the path is computed from the install layout on each read.\n``created`` is an ISO-8601 UTC string, not a timestamp.",
+        "properties": {
+          "accent": {
+            "title": "Accent",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "workspace": {
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "accent",
+          "workspace",
+          "created"
+        ],
+        "title": "ProfileOut",
         "type": "object"
       },
       "ProfileUpdateRequest": {
@@ -3270,6 +3671,25 @@
         "title": "TaskWithRunsOut",
         "type": "object"
       },
+      "TokenStatusOut": {
+        "description": "One token env's presence and last-4 hint \u2014 never the value itself.",
+        "properties": {
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "set": {
+            "title": "Set",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "set",
+          "hint"
+        ],
+        "title": "TokenStatusOut",
+        "type": "object"
+      },
       "TranscriptMessageOut": {
         "description": "One display turn: gateway/core.py writes {role, text} pairs.",
         "properties": {
@@ -4131,9 +4551,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Connections Api Connections Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ConnectionListResponse"
                 }
               }
             },
@@ -4219,7 +4637,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -4307,7 +4727,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -4403,7 +4825,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -4501,7 +4925,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -4589,7 +5015,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionExposureResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4685,7 +5113,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionExposureResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4773,7 +5203,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionGroupsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4880,7 +5312,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionGroupsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4968,7 +5402,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionPairingResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5064,7 +5500,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionPairingResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5152,7 +5590,17 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PairingCodeOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Issue Connection Pairing Code Api Connections  Cid  Pairing Code Post"
+                }
               }
             },
             "description": "Successful Response"
@@ -5249,7 +5697,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionPairingResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5347,7 +5797,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -14137,9 +14589,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Profiles Api Profiles Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileListResponse"
                 }
               }
             },
@@ -14225,7 +14675,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -14340,7 +14792,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -14436,7 +14890,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -14524,7 +14980,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"

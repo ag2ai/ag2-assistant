@@ -43,6 +43,14 @@ function stripNull(schema: JsonSchema): JsonSchema {
   return { anyOf: real }
 }
 
+// Strip nullability, then deref AGAIN: the lone survivor of an anyOf is often a
+// $ref, and pydantic renders `Model | None` exactly that way. Dereferencing only
+// before the strip would leave that ref unresolved, and a body of one nullable
+// model would read as describing no fields at all.
+function resolve(schema: JsonSchema, defs: Record<string, JsonSchema>): JsonSchema {
+  return deref(stripNull(deref(schema, defs)), defs)
+}
+
 function valuesOf(schema: JsonSchema): string[] | null {
   if (Array.isArray(schema.enum)) return schema.enum.map(String).sort()
   if ('const' in schema) return [String(schema.const)]
@@ -55,7 +63,7 @@ export function flatten(
   prefix = '',
   out = new Map<string, FieldInfo>(),
 ): Map<string, FieldInfo> {
-  const node = stripNull(deref(schema, defs))
+  const node = resolve(schema, defs)
 
   const branches = node.anyOf ?? node.oneOf
   if (Array.isArray(branches)) {
@@ -73,7 +81,7 @@ export function flatten(
     const required = new Set((node.required as string[] | undefined) ?? [])
     for (const [key, raw] of Object.entries(props)) {
       const path = prefix ? `${prefix}.${key}` : key
-      const child = stripNull(deref(raw, defs))
+      const child = resolve(raw, defs)
       out.set(path, { required: required.has(key), values: valuesOf(child) })
       flatten(child, defs, path, out)
     }
