@@ -108,6 +108,26 @@ async def test_recall_indexes_prior_runs_with_ids(paths, tmp_path):
     assert 'read_run("<run id>")' in surface
 
 
+async def test_recall_lists_newest_first(paths, tmp_path):
+    """Same order as list_runs and the task page's run list, so what the user sees is
+    what the run is given."""
+    from assistant.tasks.model import RunStatus
+
+    gw = FakeGateway()
+    svc = await _svc(paths, tmp_path, gw)
+    t = await svc.create_task(name="Digest", prompt="collect news", recall_depth=-1)
+    ids = []
+    for i in range(3):
+        r = await svc._store.create_run(t["id"])
+        await svc._store.set_run_status(r.id, RunStatus.COMPLETED, summary=f"outcome {i}")
+        ids.append(r.id)
+
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    surface = gw.sent[0]["surface"]
+    assert [surface.index(i) for i in ids] == sorted((surface.index(i) for i in ids), reverse=True)
+
+
 async def test_recall_keeps_a_settled_run_that_has_no_summary(paths, tmp_path):
     """A failed run occupies a slot and points at itself rather than vanishing: it may
     have committed work before it settled (ADR 0018), and skipping it would also slide
@@ -155,7 +175,7 @@ async def test_recall_budget_drops_oldest_and_says_how_many(paths, tmp_path):
         ts._RECALL_BUDGET = monkey
     surface = gw.sent[0]["surface"]
     assert ids[-1] in surface and ids[0] not in surface  # newest kept, oldest dropped
-    assert "older omitted — get_task lists every run" in surface
+    assert "older runs — get_task lists every one" in surface
 
 
 async def test_recall_depth_is_validated(paths, tmp_path):

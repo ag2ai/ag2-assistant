@@ -55,9 +55,9 @@ async def test_runs_lifecycle_and_summaries(tmp_path):
     await st.set_run_status(r2.id, RunStatus.COMPLETED, summary="second")
     r3 = await st.create_run(t.id, trigger="schedule")  # current, excluded via before=
     assert [r.id for r in await st.list_runs(t.id)] == [r3.id, r2.id, r1.id]
-    # oldest-first, so a prompt reads them chronologically
+    # newest-first, matching list_runs and the run list on the task page
     recent = await st.recent_runs(t.id, n=2, before=r3.id)
-    assert [r.summary for r in recent] == ["did the thing", "second"]
+    assert [r.summary for r in recent] == ["second", "did the thing"]
     await st.delete_run(r3.id)
     assert await st.get_run(r3.id) is None
 
@@ -76,8 +76,8 @@ async def test_recent_runs_depth_and_settled_only(tmp_path):
     live = await st.create_run(t.id)  # still RUNNING
 
     assert await st.recent_runs(t.id, n=0) == []
-    assert [r.id for r in await st.recent_runs(t.id, n=-1)] == [ok1.id, bad.id, ok2.id]
-    assert [r.id for r in await st.recent_runs(t.id, n=2)] == [bad.id, ok2.id]
+    assert [r.id for r in await st.recent_runs(t.id, n=-1)] == [ok2.id, bad.id, ok1.id]
+    assert [r.id for r in await st.recent_runs(t.id, n=2)] == [ok2.id, bad.id]
     assert live.id not in [r.id for r in await st.recent_runs(t.id, n=-1)]
     # n beyond the run count is not an error
     assert len(await st.recent_runs(t.id, n=99)) == 3

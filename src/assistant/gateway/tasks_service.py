@@ -53,23 +53,26 @@ def _recall_row(run: Run) -> str:
 
 
 def _recall_lines(prior: list[Run]) -> list[str]:
-    """The prior-run index, oldest-first. Over budget the oldest entries drop and the
-    header says how many, so a truncated index never reads as a complete one."""
+    """The prior-run index, newest-first like the task page's run list. Over budget the
+    tail drops and says how many, so a truncated index never reads as a complete one."""
     if not prior:
         return []
-    rows = [_recall_row(r) for r in prior]
     kept: list[str] = []
     used = 0
-    for row in reversed(rows):  # newest first: the budget bites the oldest
+    for run in prior:
+        row = _recall_row(run)
         if used + len(row) > _RECALL_BUDGET:
             break
         kept.append(row)
         used += len(row)
-    kept.reverse()
-    omitted = len(rows) - len(kept)
-    head = "Earlier runs of this task (most recent last"
-    head += f"; {omitted} older omitted — get_task lists every run):" if omitted else "):"
-    return [head, *kept, 'read_run("<run id>") opens any of them in full.']
+    omitted = len(prior) - len(kept)
+    tail = [f"…and {omitted} older runs — get_task lists every one."] if omitted else []
+    return [
+        "Earlier runs of this task (most recent first):",
+        *kept,
+        *tail,
+        'read_run("<run id>") opens any of them in full.',
+    ]
 
 
 def _validate_recall(depth: int) -> None:

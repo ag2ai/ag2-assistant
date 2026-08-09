@@ -237,8 +237,8 @@ class TaskStore:
     async def recent_runs(
         self, task_id: str, n: int = RECALL_NONE, before: str | None = None
     ) -> list[Run]:
-        """The task's most recent settled runs, oldest-first so they read
-        chronologically in a prompt. ``n`` is a count, ``RECALL_ALL`` for every one,
+        """The task's most recent settled runs, newest-first like ``list_runs`` and the
+        run list on the task page. ``n`` is a count, ``RECALL_ALL`` for every one,
         ``RECALL_NONE`` for none; ``before`` excludes the currently-executing run.
 
         Failed and cancelled runs are kept: they carry no summary but may have
@@ -254,7 +254,7 @@ class TaskStore:
             out.append(r)
             if n != RECALL_ALL and len(out) >= n:
                 break
-        return list(reversed(out))
+        return out
 
     # ---- shared readers ----
 
