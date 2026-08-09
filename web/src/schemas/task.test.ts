@@ -31,6 +31,12 @@ test('Run accepts a run still in flight, with no end stamp or summary', () => {
   assert.equal(parsed.ended_at, null)
 })
 
+test('Task reads a missing recall_depth as no recall', () => {
+  // A server predating the field sends no key; "Last undefined runs" is not a state.
+  const { recall_depth, ...without } = task
+  assert.equal(Task.parse(without).recall_depth, 0)
+})
+
 test('Task accepts a null model, null next_run_at and a null last_run', () => {
   const parsed = Task.parse({ ...task, model: null, next_run_at: null, last_run: null })
   assert.equal(parsed.last_run, null)

@@ -354,7 +354,9 @@ import WriteSwitch from '../WriteSwitch.svelte'
   }
 
   // Read-only prose for recall_depth, mirroring how Repeats reads schedule_desc.
-  const recallLabel = (d: number) => (d === 0 ? '—' : d < 0 ? 'All previous runs' : `Last ${d} runs`)
+  // Anything that isn't a positive count reads as no recall — including the undefined
+  // a server predating the field sends.
+  const recallLabel = (d: number) => (!d ? '—' : d < 0 ? 'All previous runs' : `Last ${d} runs`)
 
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
   const STAT_ICON: Record<RunStatus, string> = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }

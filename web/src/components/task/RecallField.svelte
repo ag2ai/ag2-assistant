@@ -13,7 +13,9 @@
     { id: 'all', label: 'All previous runs' },
   ]
 
-  const detect = (d: number): Choice => (d === 0 ? 'none' : d < 0 ? 'all' : 'last')
+  // Anything that isn't a positive count is no recall, so a missing depth opens the
+  // form on "No recall" rather than silently saving a count the user never chose.
+  const detect = (d: number): Choice => (!d ? 'none' : d < 0 ? 'all' : 'last')
 
   let choice = $state(detect(depth))
   let n = $state(depth > 0 ? depth : 5) // the count "Last N runs" starts from
