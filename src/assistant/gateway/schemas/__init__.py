@@ -15,6 +15,14 @@ what its own schema omits, and on the per-phase body tests — not on letting
 undeclared keys through.
 """
 
+from .chat import (
+    ChatListResponse,
+    ChatRowOut,
+    MessageResponse,
+    TranscriptMessageOut,
+    TranscriptResponse,
+)
+from .permission import TaskRulesResponse
 from .primitives import ERROR_RESPONSES, ErrorBody, Ok
 from .settings import (
     HealthChannelOut,
@@ -41,10 +49,27 @@ from .system import (
     UsageRowOut,
     UsageTotalsOut,
 )
+from .task import (
+    InquiryListResponse,
+    InquiryOut,
+    NewTaskEnvelopeResponse,
+    RunDetailEnvelopeResponse,
+    RunDetailOut,
+    RunListResponse,
+    RunOut,
+    RunStatusOut,
+    ScheduleOut,
+    TaskEnvelopeResponse,
+    TaskListResponse,
+    TaskOut,
+    TaskWithRunsOut,
+)
 
 __all__ = [
     "ERROR_RESPONSES",
     "CatalogModelOut",
+    "ChatListResponse",
+    "ChatRowOut",
     "CodingAgentOut",
     "CodingAgentsResponse",
     "CodingCatalogResponse",
@@ -59,10 +84,27 @@ __all__ = [
     "HealthResponse",
     "HealthStateOut",
     "IdentitySeededResponse",
+    "InquiryListResponse",
+    "InquiryOut",
     "MemoryDocResponse",
+    "MessageResponse",
+    "NewTaskEnvelopeResponse",
     "Ok",
     "ProfileHealthResponse",
+    "RunDetailEnvelopeResponse",
+    "RunDetailOut",
+    "RunListResponse",
+    "RunOut",
+    "RunStatusOut",
+    "ScheduleOut",
     "StatusRowOut",
+    "TaskEnvelopeResponse",
+    "TaskListResponse",
+    "TaskOut",
+    "TaskRulesResponse",
+    "TaskWithRunsOut",
+    "TranscriptMessageOut",
+    "TranscriptResponse",
     "UsageResponse",
     "UsageRollupResponse",
     "UsageRowOut",

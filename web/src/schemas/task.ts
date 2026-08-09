@@ -23,11 +23,20 @@ export const Run = z.object({
 })
 export type Run = z.infer<typeof Run>
 
-// assistant/tasks/model.py ScheduleKind, normalised to {kind, at, cron}. The
-// service validates the payload; the client only reads `kind`, so the rest stays
-// loose rather than a union that would reject a shape the backend later grows.
+// assistant/tasks/model.py ScheduleKind, normalised to {kind, at, cron}.
 // Never null: model.py:87 defaults it and normalize_schedule(None) yields manual.
-export const Schedule = z.looseObject({ kind: z.enum(['manual', 'once', 'cron']) })
+//
+// All three fields are declared because ScheduleField.svelte reads `at` and
+// `cron`, and the gateway's model is the contract — a field it does not declare
+// never reaches the client. Both are `.nullish()`: store.py create_task accepts a
+// schedule dict unnormalised (`schedule or manual_schedule()`), so a persisted row
+// can be missing a key normalize_schedule would have filled. Still a looseObject,
+// so a shape the backend later grows is rendered rather than rejected.
+export const Schedule = z.looseObject({
+  kind: z.enum(['manual', 'once', 'cron']),
+  at: z.string().nullish(),
+  cron: z.string().nullish(),
+})
 export type Schedule = z.infer<typeof Schedule>
 
 export const Task = z.object({

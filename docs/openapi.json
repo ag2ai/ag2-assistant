@@ -131,6 +131,23 @@
         "title": "CatalogModelOut",
         "type": "object"
       },
+      "ChatListResponse": {
+        "description": "GET /api/p/{pid}/chats \u2014 newest first.",
+        "properties": {
+          "chats": {
+            "items": {
+              "$ref": "#/components/schemas/ChatRowOut"
+            },
+            "title": "Chats",
+            "type": "array"
+          }
+        },
+        "required": [
+          "chats"
+        ],
+        "title": "ChatListResponse",
+        "type": "object"
+      },
       "ChatPatch": {
         "description": "Partial chat-metadata update: rename, star, and/or set the Chat override.\nAbsent field = unchanged; ``model=\"\"`` clears the override back to inheriting.",
         "properties": {
@@ -169,6 +186,45 @@
           }
         },
         "title": "ChatPatch",
+        "type": "object"
+      },
+      "ChatRowOut": {
+        "description": "One drawer row. core.py list_chats normalises every field, so none is\noptional: a missing title becomes \"\", an absent star becomes False.",
+        "properties": {
+          "chat_id": {
+            "title": "Chat Id",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "starred": {
+            "title": "Starred",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "turns": {
+            "title": "Turns",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat_id",
+          "updated",
+          "title",
+          "starred",
+          "preview",
+          "turns"
+        ],
+        "title": "ChatRowOut",
         "type": "object"
       },
       "CodexCodeRequest": {
@@ -931,6 +987,104 @@
         "title": "IdentitySeededResponse",
         "type": "object"
       },
+      "InquiryListResponse": {
+        "description": "GET /api/p/{pid}/inquiries/pending.",
+        "properties": {
+          "pending": {
+            "items": {
+              "$ref": "#/components/schemas/InquiryOut"
+            },
+            "title": "Pending",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pending"
+        ],
+        "title": "InquiryListResponse",
+        "type": "object"
+      },
+      "InquiryOut": {
+        "description": "One open HITL inquiry. The last three fields resolve the asking run back\nto its task so the strip can label and link the source.",
+        "properties": {
+          "chat": {
+            "title": "Chat",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "root_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "task_title": {
+            "title": "Task Title",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "chat",
+          "kind",
+          "text",
+          "detail",
+          "options",
+          "created_at",
+          "root_id",
+          "task_title",
+          "run_id"
+        ],
+        "title": "InquiryOut",
+        "type": "object"
+      },
       "KeyRequest": {
         "properties": {
           "provider": {
@@ -1231,6 +1385,7 @@
         "type": "object"
       },
       "MessageResponse": {
+        "description": "POST /api/p/{pid}/message \u2014 the assistant's reply and the chat it landed in.",
         "properties": {
           "chat_id": {
             "title": "Chat Id",
@@ -1300,6 +1455,19 @@
           "to"
         ],
         "title": "MoveRequest",
+        "type": "object"
+      },
+      "NewTaskEnvelopeResponse": {
+        "description": "POST /api/p/{pid}/tasks \u2014 create_task answers with a freshly built row,\nwhich has no ``runs`` key yet.",
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/TaskOut"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "title": "NewTaskEnvelopeResponse",
         "type": "object"
       },
       "Ok": {
@@ -1481,6 +1649,246 @@
           "reply_timeout_s"
         ],
         "title": "ReplyTimeoutRequest",
+        "type": "object"
+      },
+      "RunDetailEnvelopeResponse": {
+        "description": "GET /api/p/{pid}/runs/{run_id} and POST /api/p/{pid}/tasks/{id}/run.",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/RunDetailOut"
+          }
+        },
+        "required": [
+          "run"
+        ],
+        "title": "RunDetailEnvelopeResponse",
+        "type": "object"
+      },
+      "RunDetailOut": {
+        "description": "tasks_service.get_run stamps the owning task's name onto the run view \u2014\nthe run header reads it.",
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "seen": {
+            "title": "Seen",
+            "type": "boolean"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "needs_input",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "task_name": {
+            "title": "Task Name",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "status",
+          "trigger",
+          "started_at",
+          "ended_at",
+          "summary",
+          "error",
+          "seen",
+          "task_name"
+        ],
+        "title": "RunDetailOut",
+        "type": "object"
+      },
+      "RunListResponse": {
+        "description": "GET /api/p/{pid}/tasks/{task_id}/runs \u2014 the history without task_name,\nsince the caller already knows the task.",
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunOut"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "RunListResponse",
+        "type": "object"
+      },
+      "RunOut": {
+        "description": "One run, as tasks_service._run_view builds it.\n\n``trigger`` is a bare str, not the Literal tasks/model.py pins it to: run\nrecords outlive the version that wrote them, and no view reads the field, so\nan older value must be rendered rather than rejected.",
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "seen": {
+            "title": "Seen",
+            "type": "boolean"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "needs_input",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "status",
+          "trigger",
+          "started_at",
+          "ended_at",
+          "summary",
+          "error",
+          "seen"
+        ],
+        "title": "RunOut",
+        "type": "object"
+      },
+      "ScheduleOut": {
+        "description": "A task's schedule, canonicalised to {kind, at, cron} by\ntasks/model.py normalize_schedule.\n\n``at`` and ``cron`` carry defaults rather than being required-nullable\nbecause tasks/store.py create_task accepts a schedule dict unnormalised\n(``schedule or manual_schedule()``), so a persisted row can be missing a key\nthat normalize_schedule would have filled. Both are declared: the schedule\neditor reads them (components/task/ScheduleField.svelte), and a model that\ndid not declare them would silently drop them from the response.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "cron": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cron"
+          },
+          "kind": {
+            "enum": [
+              "manual",
+              "once",
+              "cron"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ScheduleOut",
         "type": "object"
       },
       "SecretCreateRequest": {
@@ -1728,6 +2136,139 @@
         "title": "TaskCreate",
         "type": "object"
       },
+      "TaskEnvelopeResponse": {
+        "description": "GET and PATCH /api/p/{pid}/tasks/{task_id} \u2014 both answer through\nget_task, so both carry the run history.",
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/TaskWithRunsOut"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "title": "TaskEnvelopeResponse",
+        "type": "object"
+      },
+      "TaskListResponse": {
+        "description": "GET /api/p/{pid}/tasks \u2014 needs-input first, then newest.",
+        "properties": {
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskOut"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "title": "TaskListResponse",
+        "type": "object"
+      },
+      "TaskOut": {
+        "description": "One task row for the drawer \u2014 tasks_service._task_row.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "needs_input": {
+            "title": "Needs Input",
+            "type": "boolean"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/ScheduleOut"
+          },
+          "schedule_desc": {
+            "title": "Schedule Desc",
+            "type": "string"
+          },
+          "starred": {
+            "title": "Starred",
+            "type": "boolean"
+          },
+          "unread": {
+            "title": "Unread",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prompt",
+          "model",
+          "description",
+          "schedule",
+          "schedule_desc",
+          "paused",
+          "starred",
+          "next_run_at",
+          "created_at",
+          "updated_at",
+          "last_run",
+          "unread",
+          "needs_input"
+        ],
+        "title": "TaskOut",
+        "type": "object"
+      },
       "TaskPatch": {
         "properties": {
           "description": {
@@ -1810,6 +2351,189 @@
           }
         },
         "title": "TaskPatch",
+        "type": "object"
+      },
+      "TaskRulesResponse": {
+        "description": "GET /api/p/{pid}/tasks/{task_id}/permissions \u2014 this task's own rules\nonly, never a union with the install-wide set.",
+        "properties": {
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules"
+        ],
+        "title": "TaskRulesResponse",
+        "type": "object"
+      },
+      "TaskWithRunsOut": {
+        "description": "The same row plus its run history, as get_task returns it.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "needs_input": {
+            "title": "Needs Input",
+            "type": "boolean"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunOut"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/ScheduleOut"
+          },
+          "schedule_desc": {
+            "title": "Schedule Desc",
+            "type": "string"
+          },
+          "starred": {
+            "title": "Starred",
+            "type": "boolean"
+          },
+          "unread": {
+            "title": "Unread",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prompt",
+          "model",
+          "description",
+          "schedule",
+          "schedule_desc",
+          "paused",
+          "starred",
+          "next_run_at",
+          "created_at",
+          "updated_at",
+          "last_run",
+          "unread",
+          "needs_input",
+          "runs"
+        ],
+        "title": "TaskWithRunsOut",
+        "type": "object"
+      },
+      "TranscriptMessageOut": {
+        "description": "One display turn: gateway/core.py writes {role, text} pairs.",
+        "properties": {
+          "role": {
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "text"
+        ],
+        "title": "TranscriptMessageOut",
+        "type": "object"
+      },
+      "TranscriptResponse": {
+        "description": "GET /api/p/{pid}/chats/{chat_id}.\n\nCarries the Chat's own model override ('' = it inherits) alongside the model\na message sent right now would run on, so the composer's switcher needs no\nsecond call (ADR 0025).",
+        "properties": {
+          "chat_id": {
+            "title": "Chat Id",
+            "type": "string"
+          },
+          "effective_model": {
+            "title": "Effective Model",
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptMessageOut"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat_id",
+          "messages",
+          "model",
+          "effective_model"
+        ],
+        "title": "TranscriptResponse",
         "type": "object"
       },
       "UsageResponse": {
@@ -6831,9 +7555,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Chats Api P  Pid  Chats Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ChatListResponse"
                 }
               }
             },
@@ -6932,9 +7654,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Chat Api P  Pid  Chats  Chat Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -7031,9 +7751,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Chat Transcript Api P  Pid  Chats  Chat Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TranscriptResponse"
                 }
               }
             },
@@ -7140,9 +7858,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Chat Api P  Pid  Chats  Chat Id  Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -8485,9 +9201,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Inquiries Pending Api P  Pid  Inquiries Pending Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InquiryListResponse"
                 }
               }
             },
@@ -8594,7 +9308,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -8976,7 +9692,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -9074,9 +9792,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Run Seen Api P  Pid  Runs  Run Id  Seen Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -9175,9 +9891,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Stop Run Api P  Pid  Runs  Run Id  Stop Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -11079,9 +11793,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Tasks Api P  Pid  Tasks Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TaskListResponse"
                 }
               }
             },
@@ -11178,7 +11890,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NewTaskEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11275,7 +11989,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -11369,7 +12085,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11474,7 +12192,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11581,7 +12301,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -11676,7 +12398,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRulesResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11773,7 +12497,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailEnvelopeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11870,7 +12596,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RunListResponse"
+                }
               }
             },
             "description": "Successful Response"

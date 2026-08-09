@@ -160,12 +160,14 @@ from assistant.gateway.profile_manager import (
     ProfileRuntime,
     UnknownProfile,
 )
-from assistant.gateway.routes import settings, system
+from assistant.gateway.routes import chat, permission, settings, system, task
+from assistant.gateway.routes.common import chat_asker
 from assistant.gateway.routes.deps import GatewayDeps
+from assistant.gateway.routes.permission import PermissionCommandDeleteRequest
 from assistant.gateway.schemas import ERROR_RESPONSES
 from assistant.gateway.stream_bridge import StreamBridge
 from assistant.gateway.wire import to_wire
-from assistant.hitl import DurableAsker, GatewayAsker, NullAsker, add_hitl_routes
+from assistant.hitl import add_hitl_routes
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.live_configs import LiveConfigStore
 from assistant.llm_configs import LlmConfigStore
@@ -193,7 +195,6 @@ from assistant.skills_install import (
     registry_search,
 )
 from assistant.structured import aclose_config
-from assistant.tasks import TaskStoreCorruptionError
 from assistant.tools.mcp import build_mcp_tools, describe_mcp_error
 from assistant.voice import synthesize_preview
 from assistant.workspace import (
@@ -277,28 +278,6 @@ _SURFACES = {
 }
 
 
-class MessageRequest(BaseModel):
-    text: str
-    chat_id: str = "default"
-    platform: str | None = None
-    # No model field: a choice made before the Chat existed rides the WebSocket frame,
-    # and a Channel resolves its own Pending override in the router (ADR 0025).
-
-
-class MessageResponse(BaseModel):
-    reply: str
-    chat_id: str
-
-
-class ChatPatch(BaseModel):
-    """Partial chat-metadata update: rename, star, and/or set the Chat override.
-    Absent field = unchanged; ``model=""`` clears the override back to inheriting."""
-
-    title: str | None = None
-    starred: bool | None = None
-    model: str | None = None
-
-
 class CredentialsUpload(BaseModel):
     content: str  # raw OAuth client JSON
 
@@ -336,25 +315,6 @@ def _unquote_etag(value: str | None) -> str | None:
     if value.startswith("W/"):
         value = value[2:]
     return value.strip('"')
-
-
-class TaskCreate(BaseModel):
-    # Empty name triggers the service's cheap-model auto-naming from the prompt.
-    name: str = ""
-    prompt: str
-    model: str | None = None
-    schedule: dict | None = None
-    description: str = ""
-
-
-class TaskPatch(BaseModel):
-    name: str | None = None
-    prompt: str | None = None
-    model: str | None = None  # "" clears back to the profile default
-    schedule: dict | None = None
-    paused: bool | None = None
-    starred: bool | None = None
-    description: str | None = None
 
 
 async def _scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:
@@ -449,10 +409,6 @@ def _resolve_file_path(
         return None, None
     rp = Path(path).expanduser().resolve()
     return (rp, mode) if rp.is_file() else (None, None)
-
-
-class AnswerRequest(BaseModel):
-    answer: str
 
 
 class FocusesRequest(BaseModel):
@@ -662,10 +618,6 @@ class PermissionCommandAddRequest(BaseModel):
     prefix: str | None = None  # shell command prefix (e.g. "git"), or null for whole-tool
 
 
-class PermissionCommandDeleteRequest(BaseModel):
-    rule: str  # canonical rule string, e.g. "run_shell_command(git *)" or "run_code"
-
-
 class _HitlDispatcher:
     """Global HITL registry facade over every runtime's per-profile HITL registry.
 
@@ -702,17 +654,6 @@ def _runtime_settings(runtime: ProfileRuntime):
     """This profile's Settings, resolved from the runtime's derived config."""
     cfg = runtime.config
     return profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
-
-
-def _chat_asker(runtime: ProfileRuntime, chat_id: str):
-    """Durable, inline HITL for a chat turn: the agent's question persists as an
-    Inquiry and surfaces inline on this chat's stream (InquiryRaised),
-    answerable from the thread or the strip. Falls back to the transient HITL
-    registry if the inquiry store isn't available."""
-    inquiries = getattr(runtime.tasks, "inquiries", None) if runtime.tasks is not None else None
-    if inquiries is None:
-        return GatewayAsker(runtime.hitl)
-    return DurableAsker(NullAsker(), inquiries, chat=chat_id)
 
 
 def create_app(
@@ -2323,192 +2264,13 @@ def create_app(
         )
     )
 
-    # ---- Chats ----
-
-    @p.get("/chats")
-    async def chats(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """List persisted, resumable conversations (newest first)."""
-        return {"chats": await runtime.gateway.list_chats()}
-
-    @p.get("/chats/{chat_id}")
-    async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """The display transcript for a chat, plus its Chat override and the model it
-        would run on right now (so the composer's switcher needs no second call)."""
-        return {
-            "chat_id": chat_id,
-            "messages": await runtime.gateway.transcript(chat_id),
-            "model": await runtime.gateway.chat_model(chat_id),
-            "effective_model": await runtime.gateway.effective_model(chat_id),
-        }
-
-    @p.delete("/chats/{chat_id}")
-    async def delete_chat(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Permanently delete a chat (transcript + full event log). Irreversible."""
-        removed = await runtime.gateway.delete_chat(chat_id)
-        if not removed:
-            return Response(status_code=404)
-        return {"ok": True}
-
-    @p.patch("/chats/{chat_id}")
-    async def update_chat(
-        chat_id: str, patch: ChatPatch, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Rename, star, and/or set the Chat override. 400 on an empty patch, 404 on
-        unknown chat."""
-        if patch.title is None and patch.starred is None and patch.model is None:
-            return JSONResponse({"error": "empty patch"}, status_code=400)
-        ok = await runtime.gateway.update_chat(
-            chat_id, title=patch.title, starred=patch.starred, model=patch.model
-        )
-        if not ok:
-            return Response(status_code=404)
-        return {"ok": True}
-
-    # ---- Message ----
-
-    @p.post("/message", response_model=MessageResponse)
-    async def message(
-        req: MessageRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> MessageResponse:
-        # Durable, inline HITL bound to this chat (answerable from the
-        # thread or the strip); the request blocks until answered (or times out).
-        asker = _chat_asker(runtime, req.chat_id)
-        reply = await runtime.gateway.send_message(req.text, chat_id=req.chat_id, asker=asker)
-        return MessageResponse(reply=reply, chat_id=req.chat_id)
-
-    # ---- Tasks (config) + Runs (each run is a chat on stream task-run:<id>) ----
-
-    @p.get("/tasks")
-    async def list_tasks(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Task rows for the drawer (needs-input first, then newest)."""
-        return {"tasks": await runtime.tasks.list_tasks()}
-
-    @p.post("/tasks")
-    async def create_task(req: TaskCreate, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Create a task; empty ``name`` auto-generates one from the prompt
-        (service-side). 422 with {error} on a bad schedule/model."""
-        try:
-            task = await runtime.tasks.create_task(
-                name=req.name,
-                prompt=req.prompt,
-                model=req.model,
-                schedule=req.schedule,
-                description=req.description,
-            )
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=422)
-        return {"task": task}
-
-    @p.get("/tasks/{task_id}")
-    async def get_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        try:
-            task = await runtime.tasks.get_task(task_id)
-        except TaskStoreCorruptionError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=500)
-        if task is None:
-            return Response(status_code=404)
-        return {"task": task}
-
-    @p.patch("/tasks/{task_id}")
-    async def update_task(
-        task_id: str, req: TaskPatch, runtime: ProfileRuntime = Depends(get_runtime)
-    ):
-        """Edit any subset of task fields; model='' clears to the profile default."""
-        patch = {k: v for k, v in req.model_dump().items() if v is not None}
-        if req.model == "":  # explicit clear back to the profile default
-            patch["model"] = None
-        if not patch and req.model != "":
-            return JSONResponse({"error": "empty patch"}, status_code=400)
-        try:
-            task = await runtime.tasks.update_task(task_id, **patch)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=422)
-        if task is None:
-            return Response(status_code=404)
-        return {"task": task}
-
-    @p.delete("/tasks/{task_id}")
-    async def delete_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Delete the task, its runs, and their chat streams. Irreversible."""
-        if not await runtime.tasks.delete_task(task_id):
-            return Response(status_code=404)
-        return {"ok": True}
-
-    @p.post("/tasks/{task_id}/run")
-    async def run_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Run now — start a run immediately; the schedule is unchanged."""
-        run = await runtime.tasks.start_run(task_id, trigger="manual")
-        if run is None:
-            return Response(status_code=404)
-        return {"run": await runtime.tasks.get_run(run.id)}
-
-    @p.get("/tasks/{task_id}/runs")
-    async def list_runs(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """The task's run history (newest first), as on the task page."""
-        task = await runtime.tasks.get_task(task_id)
-        if task is None:
-            return Response(status_code=404)
-        return {"runs": task["runs"]}
-
-    @p.get("/tasks/{task_id}/permissions")
-    async def task_permissions(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """This task's own granted command rules — never the global set (mirrors
-        ``GET /api/permissions``, scoped via ``task_id``). 404 on an unknown task."""
-        if await runtime.tasks.get_task(task_id) is None:
-            return Response(status_code=404)
-        return {"rules": runtime.gateway.permissions.granted_commands(task_id=task_id)}
-
-    @p.delete("/tasks/{task_id}/permissions")
-    async def revoke_task_permission(
-        task_id: str,
-        req: PermissionCommandDeleteRequest,
-        runtime: ProfileRuntime = Depends(get_runtime),
-    ):
-        """Revoke one of this task's own command rules by its canonical string
-        (mirrors ``DELETE /api/permissions/commands``, scoped via ``task_id``).
-        404 on an unknown task; an absent/already-revoked rule is a plain
-        ``{"ok": false}`` — the task-scoped set is small enough that a client
-        double-revoking isn't an error worth a 404."""
-        if await runtime.tasks.get_task(task_id) is None:
-            return Response(status_code=404)
-        ok = runtime.gateway.permissions.revoke_command(req.rule, task_id=task_id)
-        return {"ok": ok}
-
-    @p.get("/runs/{run_id}")
-    async def get_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """One run's durable header (status/summary/task name) for the run page."""
-        run = await runtime.tasks.get_run(run_id)
-        if run is None:
-            return Response(status_code=404)
-        return {"run": run}
-
-    @p.post("/runs/{run_id}/stop")
-    async def stop_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Stop a live run; whatever it already produced stays in its thread."""
-        return {"ok": await runtime.tasks.stop_run(run_id)}
-
-    @p.post("/runs/{run_id}/seen")
-    async def run_seen(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Mark a finished run opened (clears its unread highlight)."""
-        return {"ok": await runtime.tasks.mark_run_seen(run_id)}
-
-    @p.get("/inquiries/pending")
-    async def inquiries_pending(
-        task_id: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Open HITL inquiries (clarifications / approvals) awaiting an answer."""
-        return {"pending": await runtime.tasks.pending_inquiries(task_id)}
-
-    @p.post("/inquiries/{inquiry_id}/answer")
-    async def answer_inquiry(
-        inquiry_id: str,
-        req: AnswerRequest,
-        runtime: ProfileRuntime = Depends(get_runtime),
-    ):
-        ok = await runtime.tasks.answer_inquiry(inquiry_id, req.answer)
-        if not ok:
-            return Response(status_code=404)
-        return {"ok": True}
+    # The moved /api/p/{pid} domains. All four paths families here are literal or
+    # unambiguously distinct, so including them ahead of the rest of `p` shadows
+    # nothing; the task-scoped permission pair sits in its own module because a
+    # module follows its zod twin (TaskRules is declared in permission.ts).
+    p.include_router(chat.build_profile_router(deps, get_runtime))
+    p.include_router(task.build_profile_router(deps, get_runtime))
+    p.include_router(permission.build_profile_router(deps, get_runtime))
 
     # ---- HITL pending (this profile's registry) ----
 
@@ -3274,7 +3036,7 @@ def create_app(
                         asyncio.create_task(
                             bridge.run_turn(
                                 action_text,
-                                asker=_chat_asker(runtime, chat_id),
+                                asker=chat_asker(runtime, chat_id),
                                 surface=default_surface,
                             )
                         )
@@ -3374,7 +3136,7 @@ def create_app(
                     text = "Here is a file I'm sharing with you."
                 if not text:
                     continue
-                asker = _chat_asker(runtime, chat_id)
+                asker = chat_asker(runtime, chat_id)
                 surface = default_surface
                 # Persist uploads into the workspace and tell the agent their paths (via
                 # surface, so the transcript stays clean) — enables editing/reading them.

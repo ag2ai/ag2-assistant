@@ -23,6 +23,7 @@ from assistant import channels, profiles
 from assistant.config import Config, load_config, resolve_config
 from assistant.connections import ConnectionStore
 from assistant.gateway.core import Gateway, build_gateway
+from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import HitlServer
 from assistant.observability import log_suppressed, profile_logger, setup_logging
 from assistant.paths import Paths
@@ -125,7 +126,7 @@ class ProfileRuntime:
         self._summary_factory = summary_factory
         self._config: Config | None = None
         self.gateway: Gateway | None = None
-        self.tasks = None
+        self.tasks: TaskService | None = None
         # ``(platform, chat_id, text)`` push for task-run outcomes. Channels are
         # install-level, so this reaches out to whoever owns them (the manager).
         self._notifier = notifier

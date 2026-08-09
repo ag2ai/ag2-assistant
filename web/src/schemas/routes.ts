@@ -5,8 +5,18 @@
 // Every JSON route belongs to exactly ONE bucket; routes.test.ts fails otherwise,
 // so a new route cannot be added without a decision about its schema.
 import type { z } from 'zod'
+import { ChatList, MessageReply, Transcript } from './chat.ts'
+import { TaskRules } from './permission.ts'
 import { Ok } from './primitives.ts'
 import { MemoryDoc, ProfileHealth } from './settings.ts'
+import {
+  InquiryList,
+  NewTaskEnvelope,
+  RunDetailEnvelope,
+  RunList,
+  TaskEnvelope,
+  TaskList,
+} from './task.ts'
 import {
   CodingAgents,
   CodingCatalog,
@@ -35,6 +45,25 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/p/{pid}/memory': Ok,
   'POST /api/identity': IdentitySeeded,
   'POST /api/onboarded': Ok,
+  'GET /api/p/{pid}/chats': ChatList,
+  'GET /api/p/{pid}/chats/{chat_id}': Transcript,
+  'PATCH /api/p/{pid}/chats/{chat_id}': Ok,
+  'DELETE /api/p/{pid}/chats/{chat_id}': Ok,
+  'POST /api/p/{pid}/message': MessageReply,
+  'GET /api/p/{pid}/tasks': TaskList,
+  'POST /api/p/{pid}/tasks': NewTaskEnvelope,
+  'GET /api/p/{pid}/tasks/{task_id}': TaskEnvelope,
+  'PATCH /api/p/{pid}/tasks/{task_id}': TaskEnvelope,
+  'DELETE /api/p/{pid}/tasks/{task_id}': Ok,
+  'POST /api/p/{pid}/tasks/{task_id}/run': RunDetailEnvelope,
+  'GET /api/p/{pid}/tasks/{task_id}/runs': RunList,
+  'GET /api/p/{pid}/tasks/{task_id}/permissions': TaskRules,
+  'DELETE /api/p/{pid}/tasks/{task_id}/permissions': Ok,
+  'GET /api/p/{pid}/runs/{run_id}': RunDetailEnvelope,
+  'POST /api/p/{pid}/runs/{run_id}/stop': Ok,
+  'POST /api/p/{pid}/runs/{run_id}/seen': Ok,
+  'GET /api/p/{pid}/inquiries/pending': InquiryList,
+  'POST /api/p/{pid}/inquiries/{inquiry_id}/answer': Ok,
 }
 
 // No schema by design — the reason is the point of the entry.
@@ -64,26 +93,6 @@ export const UNMAPPED: Record<string, string> = {
 
 // Shrinks to {} as phases land; the value names the phase that will take it.
 export const PENDING: Record<string, string> = {
-  // --- phase 2: tasks, runs, chats, inquiries, message ---
-  'GET /api/p/{pid}/chats': 'phase 2',
-  'GET /api/p/{pid}/chats/{chat_id}': 'phase 2',
-  'PATCH /api/p/{pid}/chats/{chat_id}': 'phase 2',
-  'DELETE /api/p/{pid}/chats/{chat_id}': 'phase 2',
-  'POST /api/p/{pid}/message': 'phase 2',
-  'GET /api/p/{pid}/tasks': 'phase 2',
-  'POST /api/p/{pid}/tasks': 'phase 2',
-  'GET /api/p/{pid}/tasks/{task_id}': 'phase 2',
-  'PATCH /api/p/{pid}/tasks/{task_id}': 'phase 2',
-  'DELETE /api/p/{pid}/tasks/{task_id}': 'phase 2',
-  'POST /api/p/{pid}/tasks/{task_id}/run': 'phase 2',
-  'GET /api/p/{pid}/tasks/{task_id}/runs': 'phase 2',
-  'GET /api/p/{pid}/tasks/{task_id}/permissions': 'phase 2',
-  'DELETE /api/p/{pid}/tasks/{task_id}/permissions': 'phase 2',
-  'GET /api/p/{pid}/runs/{run_id}': 'phase 2',
-  'POST /api/p/{pid}/runs/{run_id}/stop': 'phase 2',
-  'POST /api/p/{pid}/runs/{run_id}/seen': 'phase 2',
-  'GET /api/p/{pid}/inquiries/pending': 'phase 2',
-  'POST /api/p/{pid}/inquiries/{inquiry_id}/answer': 'phase 2',
   // --- phase 3: llm-configs, live-configs, secrets, google, codex ---
   'GET /api/llm-configs': 'phase 3',
   'GET /api/llm-configs/models': 'phase 3',
