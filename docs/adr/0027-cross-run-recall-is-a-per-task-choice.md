@@ -52,9 +52,9 @@ record's `summary` stays `""`, and the reader then excluded it twice more — on
 
 That contradicts ADR 0018, *a failed turn keeps its work*: a run that dies keeps
 everything it committed first — files written, mail sent, tasks created. Hiding those
-runs meant the next run could not be told to avoid work that had demonstrably already
-happened. It also, quietly, slid the window further into the past: one failure and a
-three-slot index reaches back a fourth run.
+runs left the next run with a record that was quietly wrong about its own past. It
+also slid the window further back: one failure and a three-slot index reaches a fourth
+run deep.
 
 So every settled run is listed. One with no summary names its state and carries the
 call that opens it:
@@ -66,6 +66,26 @@ call that opens it:
 The run id repeats deliberately: the line is the call, ready to make. The `error`
 string is deliberately absent — provider failures are multi-line JSON blobs that say
 nothing about the user's work, which is the same call ADR 0018 makes for the chat note.
+
+## The index states facts; the task's prompt owns the intent
+
+The old block ended `do not repeat them`, and the first cut of this one kept the habit
+(`Do not repeat work these runs did`). That is the system deciding, for every task at
+once, what looking back is *for*. Avoidance is only one answer: a task that continues
+yesterday's draft, updates a running tally, or extends a series wants the opposite, and
+was being told not to.
+
+It is also redundant exactly where it seemed to help. The task that motivated this ADR
+already says, in its own prompt, "a topic different to previous ones" — the user had
+expressed the intent, and the surface was restating it. Where the user has *not*
+expressed it, inventing one on their behalf is worse than silence.
+
+So the index reports and stops: what the earlier runs were, and that `read_run` opens
+one. Whether to avoid them, build on them, or ignore them is the task prompt's to say —
+that prompt is the user's, and it is the only place this intent belongs. The same rule
+governs the tool descriptions the agent reads when it creates a task from a chat: they
+say to set the depth when the prompt *refers to* earlier runs, not when the agent
+guesses a purpose.
 
 Because the render now depends on status, the filter moved out of the store: it returns
 every settled run and `_run_surface` decides how each one reads. Prompt shaping is not

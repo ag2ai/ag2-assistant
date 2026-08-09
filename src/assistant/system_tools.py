@@ -150,9 +150,8 @@ def build_system_tools(
             int,
             Field(
                 description="How many earlier runs each run may see: 0 none, -1 all, or a "
-                "count. Set it when a run needs to know what earlier ones did — to avoid "
-                "repeating them, or to carry work forward — and leave 0 when only the "
-                "present matters."
+                "count. Set it when the prompt above refers to what earlier runs did; the "
+                "prompt decides what the run then does with them."
             ),
         ] = 0,
     ) -> str:
@@ -197,8 +196,8 @@ def build_system_tools(
             str,
             Field(
                 description="How many earlier runs each run may see: '0' none, '-1' all, "
-                "or a count. Empty = keep. Set it when a run needs to know what earlier "
-                "ones did, whether to avoid repeating them or to carry work forward."
+                "or a count. Empty = keep. Set it when the task's prompt refers to what "
+                "earlier runs did; the prompt decides what the run then does with them."
             ),
         ] = "",
     ) -> str:
@@ -352,8 +351,8 @@ def build_system_tools(
             """Read a task run's transcript in full — what that run actually did and
             produced, beyond the one-line summary get_task shows.
 
-            Use it when a run's summary is too coarse to act on, and to find out what a
-            failed or cancelled run managed to do before it stopped.
+            A failed or cancelled run has no summary at all; its transcript is the only
+            record of what it got done before it stopped.
             """
             msgs = await chats.transcript(f"task-run:{run_id}")
             if not msgs:
