@@ -780,6 +780,25 @@
         "title": "DepsStatusOut",
         "type": "object"
       },
+      "DiscoveredSkillOut": {
+        "description": "A SKILL.md found in a source but not installed: the checklist row a user\nticks before the install call.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "title": "DiscoveredSkillOut",
+        "type": "object"
+      },
       "ErrorBody": {
         "description": "Every error body in app.py has this shape: 105 of them return {\"error\": str}.",
         "properties": {
@@ -2934,6 +2953,46 @@
         "title": "PermissionCommandDeleteRequest",
         "type": "object"
       },
+      "PermissionMutatedResponse": {
+        "description": "POST/DELETE /api/permissions/commands \u2014 the refreshed snapshot beside\n``ok``, so the settings list re-renders from the answer. The task-scoped\nrevoke answers a bare ``{ok}`` instead and uses ``Ok``: there the caller\nalready holds the one list it touched.",
+        "properties": {
+          "commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "commands"
+        ],
+        "title": "PermissionMutatedResponse",
+        "type": "object"
+      },
+      "PermissionSnapshotResponse": {
+        "description": "GET /api/permissions \u2014 every install-wide command rule, canonical form.",
+        "properties": {
+          "commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Commands",
+            "type": "array"
+          }
+        },
+        "required": [
+          "commands"
+        ],
+        "title": "PermissionSnapshotResponse",
+        "type": "object"
+      },
       "PingResultResponse": {
         "description": "Both Test buttons on success. A failure is a 502 built by hand, so the\n``ok: false`` branch never rides this model.",
         "properties": {
@@ -3119,6 +3178,121 @@
           "created"
         ],
         "title": "ProfileOut",
+        "type": "object"
+      },
+      "ProfileSkillInstalledResponse": {
+        "description": "The profile's two install routes: same envelope over the profile's own\nprojection, because only this profile reloaded.",
+        "properties": {
+          "installed": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredSkillOut"
+            },
+            "title": "Installed",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileSkillOut"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "installed",
+          "skills"
+        ],
+        "title": "ProfileSkillInstalledResponse",
+        "type": "object"
+      },
+      "ProfileSkillListResponse": {
+        "description": "GET /api/p/{pid}/skills \u2014 inherited Bundled/Global skills (Suppressible\nhere) plus the profile's own skills (Enable/Disable here).",
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileSkillOut"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "skills"
+        ],
+        "title": "ProfileSkillListResponse",
+        "type": "object"
+      },
+      "ProfileSkillMutatedResponse": {
+        "description": "The profile's four state routes (suppress, un-suppress, state, delete):\nthe same echo over the profile's own projection.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileSkillOut"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "skills"
+        ],
+        "title": "ProfileSkillMutatedResponse",
+        "type": "object"
+      },
+      "ProfileSkillOut": {
+        "description": "The same row as seen from one profile, plus its per-profile resolution.\n\n``suppressed`` is this profile's own off-record \u2014 a Suppression of an\ninherited shared skill, or a Profile skill's own Disable. ``available`` is\nthe resolved answer both fields feed (``SkillStateStore.is_available``), so a\nskill Disabled install-wide reads unavailable here even when this profile\nnever suppressed it.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "bundled",
+              "global",
+              "profile"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "suppressed": {
+            "title": "Suppressed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "origin",
+          "enabled",
+          "suppressed",
+          "available"
+        ],
+        "title": "ProfileSkillOut",
         "type": "object"
       },
       "ProfileUpdateRequest": {
@@ -3711,6 +3885,23 @@
         "title": "SkillDiscoverRequest",
         "type": "object"
       },
+      "SkillDiscoveredResponse": {
+        "description": "The four discover routes (git or upload, install-wide or profile). The\nscan never touches disk state, so both surfaces answer the same shape.",
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredSkillOut"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "skills"
+        ],
+        "title": "SkillDiscoveredResponse",
+        "type": "object"
+      },
       "SkillInstallRequest": {
         "properties": {
           "git_url": {
@@ -3753,6 +3944,140 @@
         "title": "SkillInstallRequest",
         "type": "object"
       },
+      "SkillInstalledResponse": {
+        "description": "POST /api/skills/install and /install-upload \u2014 what landed, plus the\nrefreshed install-wide projection. ``installed`` carries rows rather than\nnames because both ``registry_install`` and ``install_from_source`` yield\n``{name, description}``.",
+        "properties": {
+          "installed": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredSkillOut"
+            },
+            "title": "Installed",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillOut"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "installed",
+          "skills"
+        ],
+        "title": "SkillInstalledResponse",
+        "type": "object"
+      },
+      "SkillListResponse": {
+        "description": "GET /api/skills \u2014 the install-wide projection behind Application \u2192 Skills.",
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillOut"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "skills"
+        ],
+        "title": "SkillListResponse",
+        "type": "object"
+      },
+      "SkillMutatedResponse": {
+        "description": "POST /api/skills/{name}/state and DELETE /api/skills/{name} \u2014 the refreshed\ninstall-wide projection, so the page re-renders from the answer instead of\nre-fetching.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillOut"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "skills"
+        ],
+        "title": "SkillMutatedResponse",
+        "type": "object"
+      },
+      "SkillOut": {
+        "description": "One install-wide skill row: Bundled or Global, with its install-wide\nEnabled state. A Profile skill never appears here \u2014 it lives in one profile\nand only the profile projection sees it.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "bundled",
+              "global",
+              "profile"
+            ],
+            "title": "Origin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "origin",
+          "enabled"
+        ],
+        "title": "SkillOut",
+        "type": "object"
+      },
+      "SkillSearchHitOut": {
+        "description": "One skills.sh registry hit. ``install_id`` is what the install route wants\nback \u2014 the name alone doesn't address a registry entry.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "install_id": {
+            "title": "Install Id",
+            "type": "string"
+          },
+          "installs": {
+            "title": "Installs",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "install_id",
+          "description",
+          "installs"
+        ],
+        "title": "SkillSearchHitOut",
+        "type": "object"
+      },
       "SkillSearchRequest": {
         "properties": {
           "limit": {
@@ -3769,6 +4094,23 @@
           "query"
         ],
         "title": "SkillSearchRequest",
+        "type": "object"
+      },
+      "SkillSearchResultsResponse": {
+        "description": "POST /api/skills/search \u2014 target-agnostic, both surfaces search through it.",
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSearchHitOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "SkillSearchResultsResponse",
         "type": "object"
       },
       "SkillStateRequest": {
@@ -12803,9 +13145,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Profile Skills Api P  Pid  Skills Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSkillListResponse"
                 }
               }
             },
@@ -12905,9 +13245,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Discover Profile Skills Api P  Pid  Skills Discover Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillDiscoveredResponse"
                 }
               }
             },
@@ -13006,9 +13344,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Discover Profile Skills Upload Api P  Pid  Skills Discover Upload Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillDiscoveredResponse"
                 }
               }
             },
@@ -13108,9 +13444,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Install Profile Skill Api P  Pid  Skills Install Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSkillInstalledResponse"
                 }
               }
             },
@@ -13210,9 +13544,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Install Profile Skill Upload Api P  Pid  Skills Install Upload Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSkillInstalledResponse"
                 }
               }
             },
@@ -13311,9 +13643,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Profile Skill Api P  Pid  Skills  Name  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSkillMutatedResponse"
                 }
               }
             },
@@ -13422,9 +13752,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set Profile Skill State Api P  Pid  Skills  Name  State Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSkillMutatedResponse"
                 }
               }
             },
@@ -13523,9 +13851,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Unsuppress Skill Api P  Pid  Skills  Name  Suppress Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSkillMutatedResponse"
                 }
               }
             },
@@ -13622,9 +13948,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Suppress Skill Api P  Pid  Skills  Name  Suppress Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSkillMutatedResponse"
                 }
               }
             },
@@ -14994,9 +15318,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Permissions Api Permissions Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PermissionSnapshotResponse"
                 }
               }
             },
@@ -15084,7 +15406,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionMutatedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -15169,7 +15493,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionMutatedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16161,9 +16487,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Skills Api Skills Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillListResponse"
                 }
               }
             },
@@ -16251,7 +16575,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDiscoveredResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16338,7 +16664,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDiscoveredResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16425,7 +16753,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillInstalledResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16512,7 +16842,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillInstalledResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16599,7 +16931,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSearchResultsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16687,7 +17021,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillMutatedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16785,7 +17121,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillMutatedResponse"
+                }
               }
             },
             "description": "Successful Response"

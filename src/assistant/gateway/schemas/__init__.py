@@ -78,7 +78,11 @@ from .llm import (
     PingResultResponse,
     ProviderCatalogResponse,
 )
-from .permission import TaskRulesResponse
+from .permission import (
+    PermissionMutatedResponse,
+    PermissionSnapshotResponse,
+    TaskRulesResponse,
+)
 from .primitives import ERROR_RESPONSES, ErrorBody, Ok, SecretRefOut, SharedKeyOut
 from .profile import ProfileEnvelopeResponse, ProfileListResponse, ProfileOut
 from .secret import SecretListResponse, SecretOut, SecretSavedResponse
@@ -87,6 +91,20 @@ from .settings import (
     HealthCheckOut,
     HealthMcpServerOut,
     ProfileHealthResponse,
+)
+from .skill import (
+    DiscoveredSkillOut,
+    ProfileSkillInstalledResponse,
+    ProfileSkillListResponse,
+    ProfileSkillMutatedResponse,
+    ProfileSkillOut,
+    SkillDiscoveredResponse,
+    SkillInstalledResponse,
+    SkillListResponse,
+    SkillMutatedResponse,
+    SkillOut,
+    SkillSearchHitOut,
+    SkillSearchResultsResponse,
 )
 from .system import (
     CatalogModelOut,
@@ -147,6 +165,7 @@ __all__ = [
     "ConnectionPairingResponse",
     "ConnectionSurfaceOut",
     "DepsStatusOut",
+    "DiscoveredSkillOut",
     "ERROR_RESPONSES",
     "ErrorBody",
     "FileRowOut",
@@ -203,11 +222,17 @@ __all__ = [
     "PairedAccountOut",
     "PairingCodeIssuedResponse",
     "PairingCodeOut",
+    "PermissionMutatedResponse",
+    "PermissionSnapshotResponse",
     "PingResultResponse",
     "ProfileEnvelopeResponse",
     "ProfileHealthResponse",
     "ProfileListResponse",
     "ProfileOut",
+    "ProfileSkillInstalledResponse",
+    "ProfileSkillListResponse",
+    "ProfileSkillMutatedResponse",
+    "ProfileSkillOut",
     "ProviderCatalogResponse",
     "RunDetailEnvelopeResponse",
     "RunDetailOut",
@@ -222,6 +247,13 @@ __all__ = [
     "SecretRefOut",
     "SecretSavedResponse",
     "SharedKeyOut",
+    "SkillDiscoveredResponse",
+    "SkillInstalledResponse",
+    "SkillListResponse",
+    "SkillMutatedResponse",
+    "SkillOut",
+    "SkillSearchHitOut",
+    "SkillSearchResultsResponse",
     "StatusRowOut",
     "TaskEnvelopeResponse",
     "TaskListResponse",

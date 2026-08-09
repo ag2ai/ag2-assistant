@@ -31,11 +31,21 @@ import {
   PingResult,
   ProviderCatalog,
 } from './llm.ts'
-import { TaskRules } from './permission.ts'
+import { PermissionMutated, PermissionSnapshot, TaskRules } from './permission.ts'
 import { Ok } from './primitives.ts'
 import { ProfileEnvelope, ProfileList } from './profile.ts'
 import { SecretList, SecretSaved } from './secret.ts'
 import { MemoryDoc, ProfileHealth } from './settings.ts'
+import {
+  ProfileSkillInstalled,
+  ProfileSkillList,
+  ProfileSkillMutated,
+  SkillDiscovered,
+  SkillInstalled,
+  SkillList,
+  SkillMutated,
+  SkillSearchResults,
+} from './skill.ts'
 import {
   InquiryList,
   NewTaskEnvelope,
@@ -167,6 +177,36 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/p/{pid}/files/move': Ok,
   'PUT /api/p/{pid}/files/raw': WriteResult,
   'DELETE /api/p/{pid}/files/raw': Ok,
+  // Skills come in two scopes of one domain: an /api/skills* write lands in the
+  // Global layer and fans a reload out to every profile, its /api/p/{pid} mirror
+  // lands in that profile alone. That is why the rows differ — only a profile can
+  // resolve `suppressed` and `available`, so the install-wide surface never
+  // pretends to.
+  'GET /api/skills': SkillList,
+  'POST /api/skills/{name}/state': SkillMutated,
+  'DELETE /api/skills/{name}': SkillMutated,
+  // Search and discover touch no state, so both scopes answer the same shape;
+  // search is target-agnostic and has no profile mirror at all.
+  'POST /api/skills/search': SkillSearchResults,
+  'POST /api/skills/discover': SkillDiscovered,
+  'POST /api/skills/discover-upload': SkillDiscovered,
+  'POST /api/skills/install': SkillInstalled,
+  'POST /api/skills/install-upload': SkillInstalled,
+  'GET /api/p/{pid}/skills': ProfileSkillList,
+  'POST /api/p/{pid}/skills/{name}/state': ProfileSkillMutated,
+  'DELETE /api/p/{pid}/skills/{name}': ProfileSkillMutated,
+  'POST /api/p/{pid}/skills/{name}/suppress': ProfileSkillMutated,
+  'DELETE /api/p/{pid}/skills/{name}/suppress': ProfileSkillMutated,
+  'POST /api/p/{pid}/skills/install': ProfileSkillInstalled,
+  'POST /api/p/{pid}/skills/install-upload': ProfileSkillInstalled,
+  'POST /api/p/{pid}/skills/discover': SkillDiscovered,
+  'POST /api/p/{pid}/skills/discover-upload': SkillDiscovered,
+  'GET /api/permissions': PermissionSnapshot,
+  // The install-wide writes echo the refreshed snapshot; the task-scoped revoke
+  // answers a bare {ok} (see the TaskRules row above) because its caller already
+  // holds the one list it touched.
+  'POST /api/permissions/commands': PermissionMutated,
+  'DELETE /api/permissions/commands': PermissionMutated,
 }
 
 // No schema by design — the reason is the point of the entry.
@@ -196,27 +236,6 @@ export const UNMAPPED: Record<string, string> = {
 
 // Shrinks to {} as phases land; the value names the phase that will take it.
 export const PENDING: Record<string, string> = {
-  // --- phase 6: skills, permissions ---
-  'GET /api/skills': 'phase 6',
-  'POST /api/skills/{name}/state': 'phase 6',
-  'DELETE /api/skills/{name}': 'phase 6',
-  'POST /api/skills/search': 'phase 6',
-  'POST /api/skills/discover': 'phase 6',
-  'POST /api/skills/discover-upload': 'phase 6',
-  'POST /api/skills/install': 'phase 6',
-  'POST /api/skills/install-upload': 'phase 6',
-  'GET /api/p/{pid}/skills': 'phase 6',
-  'POST /api/p/{pid}/skills/{name}/state': 'phase 6',
-  'DELETE /api/p/{pid}/skills/{name}': 'phase 6',
-  'POST /api/p/{pid}/skills/{name}/suppress': 'phase 6',
-  'DELETE /api/p/{pid}/skills/{name}/suppress': 'phase 6',
-  'POST /api/p/{pid}/skills/install': 'phase 6',
-  'POST /api/p/{pid}/skills/install-upload': 'phase 6',
-  'POST /api/p/{pid}/skills/discover': 'phase 6',
-  'POST /api/p/{pid}/skills/discover-upload': 'phase 6',
-  'GET /api/permissions': 'phase 6',
-  'POST /api/permissions/commands': 'phase 6',
-  'DELETE /api/permissions/commands': 'phase 6',
   // --- phase 7: settings, voice, hitl ---
   'GET /api/p/{pid}/settings': 'phase 7',
   'POST /api/p/{pid}/settings/mcp': 'phase 7',
