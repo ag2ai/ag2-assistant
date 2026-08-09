@@ -618,11 +618,13 @@ produced), or keep chatting in it after it finishes.
 
 **Earlier runs** decides what each run knows about the ones before it: *Don't
 look back* (the default — right for a task about the present, like today's
-weather), *Last N runs*, or *All previous runs* (right for a task that must
-never repeat itself, like a daily lesson on a new topic). When it looks back, a
-run is handed each earlier run's one-line outcome and can open any of them in
-full; a run that failed is listed too, since it may have got work done before it
-stopped.
+weather), *Last N runs*, or *All previous runs*. Reach for it when a run needs
+to know what earlier ones did — to avoid covering the same ground (a daily
+lesson on a new topic each time), or to carry work forward (a running tally, a
+draft in progress). A looking-back run is handed each earlier run's one-line
+outcome and can open any of them in full; a run that failed is listed too, since
+it may have got work done before it stopped. What the run *does* with them is
+for the task's own instructions to say.
 
 The task page is inline-editable — change the name, prompt, model, schedule, or
 what it looks back at, and save, no separate settings screen — with every run listed underneath it,

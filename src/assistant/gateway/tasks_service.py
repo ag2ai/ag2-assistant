@@ -69,11 +69,7 @@ def _recall_lines(prior: list[Run]) -> list[str]:
     omitted = len(rows) - len(kept)
     head = "Earlier runs of this task (most recent last"
     head += f"; {omitted} older omitted — get_task lists every run):" if omitted else "):"
-    return [
-        head,
-        *kept,
-        'Do not repeat work these runs did; read_run("<run id>") opens any of them in full.',
-    ]
+    return [head, *kept, 'read_run("<run id>") opens any of them in full.']
 
 
 def _validate_recall(depth: int) -> None:
@@ -87,9 +83,10 @@ def _validate_recall(depth: int) -> None:
 
 
 def _run_surface(task: Task, prior: list[Run], folder_lines: list[str]) -> str:
-    """Surface paragraph for a run's turn: unattended-execution framing + the
-    outcomes of recent runs so a recurring task doesn't repeat itself + the task's
-    own working folders (resolved from live task-scope grants)."""
+    """Surface paragraph for a run's turn: unattended-execution framing + the index of
+    earlier runs the task asked for + the task's own working folders (resolved from
+    live task-scope grants). What to do with the earlier runs is the task's prompt to
+    say, not this."""
     lines = [
         f'You are executing the background task "{task.name}" (task id {task.id}) as an '
         "unattended scheduled run.",

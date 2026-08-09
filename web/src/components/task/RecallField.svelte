@@ -37,7 +37,7 @@
   {#if choice === 'none'}
     Each run starts fresh, with no knowledge of earlier runs.
   {:else}
-    Each run sees what earlier runs produced, so it can avoid repeating them.
+    Each run is given a one-line summary of earlier runs, and can open any of them in full.
   {/if}
 </p>
 

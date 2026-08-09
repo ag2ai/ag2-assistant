@@ -150,8 +150,9 @@ def build_system_tools(
             int,
             Field(
                 description="How many earlier runs each run may see: 0 none, -1 all, or a "
-                "count. Use -1 when the task must not repeat itself across runs (e.g. 'a "
-                "different topic each time'); leave 0 when only the present matters."
+                "count. Set it when a run needs to know what earlier ones did — to avoid "
+                "repeating them, or to carry work forward — and leave 0 when only the "
+                "present matters."
             ),
         ] = 0,
     ) -> str:
@@ -196,7 +197,8 @@ def build_system_tools(
             str,
             Field(
                 description="How many earlier runs each run may see: '0' none, '-1' all, "
-                "or a count. Empty = keep. Use '-1' when the task must not repeat itself."
+                "or a count. Empty = keep. Set it when a run needs to know what earlier "
+                "ones did, whether to avoid repeating them or to carry work forward."
             ),
         ] = "",
     ) -> str:
