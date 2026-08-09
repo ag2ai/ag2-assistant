@@ -8,7 +8,7 @@
   let { depth = $bindable() }: Props = $props()
 
   const CHOICES: { id: Choice; label: string }[] = [
-    { id: 'none', label: "Don't look back" },
+    { id: 'none', label: "No recall" },
     { id: 'last', label: 'Last N runs' },
     { id: 'all', label: 'All previous runs' },
   ]

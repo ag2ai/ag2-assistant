@@ -579,7 +579,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
             <p class="tpmeta">{task.schedule_desc}</p>
           {/if}
 
-          <h2>Earlier runs</h2>
+          <h2>Recall earlier runs</h2>
           {#if inEdit}
             <RecallField bind:depth={erecall} />
           {:else if task}

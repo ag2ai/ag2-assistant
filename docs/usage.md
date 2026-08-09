@@ -616,8 +616,8 @@ Every **run** of a task is a real chat, on its own stream
 mid-run to steer it, hit **Stop** to end it early (keeping whatever it already
 produced), or keep chatting in it after it finishes.
 
-**Earlier runs** decides what each run knows about the ones before it: *Don't
-look back* (the default — right for a task about the present, like today's
+**Recall earlier runs** decides what each run knows about the ones before it:
+*No recall* (the default — right for a task about the present, like today's
 weather), *Last N runs*, or *All previous runs*. Reach for it when a run needs
 to know what earlier ones did — to avoid covering the same ground (a daily
 lesson on a new topic each time), or to carry work forward (a running tally, a
