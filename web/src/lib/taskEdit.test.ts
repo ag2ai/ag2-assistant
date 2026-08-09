@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { folderGrantDiff, scheduleValue, taskEditPatch } from './taskEdit.ts'
+import { folderGrantDiff, recallCount, scheduleValue, taskEditPatch } from './taskEdit.ts'
 import type { FolderGrantIntent, FolderGrantState } from './taskEdit.ts'
 
 // folderGrantDiff — current/intended entries are keyed by folder identity and carry
@@ -178,6 +178,23 @@ test('taskEditPatch: model null normalises to "" (profile default)', () => {
 test('taskEditPatch: a schedule change is carried whole', () => {
   const schedule = { kind: 'manual', at: null, cron: null }
   assert.deepEqual(taskEditPatch(base, { ...base, schedule }), { schedule })
+})
+
+test('recallCount: anything that is not a whole count lands on 1', () => {
+  // The box is rewritten to this, so it can never show a value Save would not send.
+  assert.equal(recallCount(-100), 1)
+  assert.equal(recallCount(0), 1)
+  assert.equal(recallCount(''), 1)
+  assert.equal(recallCount(null), 1)
+  assert.equal(recallCount(undefined), 1)
+  assert.equal(recallCount(NaN), 1)
+  assert.equal(recallCount(2.7), 2)
+})
+
+test('recallCount: a legal count is left alone', () => {
+  assert.equal(recallCount(1), 1)
+  assert.equal(recallCount(20), 20)
+  assert.equal(recallCount('7'), 7)
 })
 
 test('taskEditPatch: recall_depth carries every value, including 0', () => {

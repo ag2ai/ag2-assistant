@@ -2,6 +2,8 @@
   // Maps the three UI options ⇄ the stored recall_depth number (0 none, -1 all,
   // else a count). The count input shows only for "Last N runs".
 
+  import { recallCount } from '../../lib/taskEdit.ts'
+
   type Choice = 'none' | 'last' | 'all'
   type Props = { depth: number }
 
@@ -23,7 +25,7 @@
   function apply() {
     if (choice === 'none') depth = 0
     else if (choice === 'all') depth = -1
-    else depth = Math.max(1, Math.floor(n || 1))
+    else depth = n = recallCount(n) // write back, so the box shows what Save sends
   }
 </script>
 

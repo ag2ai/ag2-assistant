@@ -128,6 +128,15 @@ export function scheduleValue(s: ScheduleRef): ScheduleValue {
   }
 }
 
+// A "Last N runs" count the field can actually save: a whole number of runs, at least
+// one. Anything else — a negative, a blank box, a fraction — lands on the nearest
+// legal count, and the input is rewritten to it so the box never shows a value
+// different from the one Save would send.
+export function recallCount(raw: number | string | null | undefined): number {
+  const n = Math.floor(Number(raw))
+  return Number.isFinite(n) && n >= 1 ? n : 1
+}
+
 // The editable fields, on both the server copy and the buffer.
 export type TaskEditFields = {
   name?: string | null
