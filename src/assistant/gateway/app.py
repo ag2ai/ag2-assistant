@@ -160,6 +160,22 @@ from assistant.gateway.profile_manager import (
     ProfileRuntime,
     UnknownProfile,
 )
+from assistant.gateway.schemas import (
+    ERROR_RESPONSES,
+    CodingAgentsResponse,
+    CodingCatalogResponse,
+    FsListingErrorOut,
+    FsListingOkOut,
+    FsMkdirResponse,
+    HealthResponse,
+    IdentitySeededResponse,
+    MemoryDocResponse,
+    Ok,
+    ProfileHealthResponse,
+    StatusRowOut,
+    UsageResponse,
+    UsageRollupResponse,
+)
 from assistant.gateway.stream_bridge import StreamBridge
 from assistant.gateway.wire import to_wire
 from assistant.hitl import DurableAsker, GatewayAsker, NullAsker, add_hitl_routes
@@ -839,7 +855,14 @@ def create_app(
         finally:
             await manager.close()
 
-    app = FastAPI(title="AG2 Assistant Gateway", version=__version__, lifespan=lifespan)
+    app = FastAPI(
+        title="AG2 Assistant Gateway",
+        version=__version__,
+        lifespan=lifespan,
+        # Every error body in app.py is {"error": str}; documenting the codes once
+        # here (and once on the profile router) covers all 130 JSON routes.
+        responses=ERROR_RESPONSES,
+    )
     app.state.profiles = manager
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
     app.state.codex_flows = {}  # state token -> PKCE verifier (ChatGPT-subscription login)
@@ -907,8 +930,8 @@ def create_app(
         # browsers that request /favicon.ico directly get the light AG2 mark
         return FileResponse(_STATIC_DIR / "faviconlight.svg", media_type="image/svg+xml")
 
-    @app.get("/api/health")
-    async def health() -> dict:
+    @app.get("/api/health", response_model_exclude_unset=True)
+    async def health() -> HealthResponse:
         """Process-level status: the first running runtime's gateway status, or a
         zero-profile stub (fresh install, §3.5)."""
         runtime = next(manager.runtimes(), None)
@@ -916,8 +939,8 @@ def create_app(
             return {"status": "ok", "profiles": 0}
         return runtime.gateway.status()
 
-    @app.get("/api/coding/agents")
-    async def coding_agents() -> dict:
+    @app.get("/api/coding/agents", response_model_exclude_unset=True)
+    async def coding_agents() -> CodingAgentsResponse:
         """Read-only status of CLI coding agents (for the Settings "Coding agents"
         card). In Docker with ``AG2ASSISTANT_ACP_BRIDGE`` set, reports the host
         bridge and the agents it exposes; otherwise the locally-installed agents.
@@ -949,8 +972,8 @@ def create_app(
         agents = [{"name": a.name, "label": a.label, "available": a.available} for a in inventory]
         return {"mode": "bridge", "bridge": target, "connected": True, "agents": agents}
 
-    @app.get("/api/usage")
-    async def usage() -> dict:
+    @app.get("/api/usage", response_model_exclude_unset=True)
+    async def usage() -> UsageRollupResponse:
         """Install-wide token/cost roll-up across ALL running profiles (for the HUD's
         "all profiles" total). ``profiles`` is one ``usage_today()`` snapshot per
         running runtime (with its ``pid``/``name``); ``total`` sums the numeric fields.
@@ -980,8 +1003,8 @@ def create_app(
         total["priced"] = bool(any_profile and all_priced)
         return {"profiles": rows, "total": total}
 
-    @app.get("/api/status")
-    async def status() -> list[dict]:
+    @app.get("/api/status", response_model_exclude_unset=True)
+    async def status() -> list[StatusRowOut]:
         """Per-profile activity for badges: busy = agent alive, running_tasks = count
         of RUNNING tasks, unseen_done = finished-but-not-yet-opened root tasks (the
         chip's unread-results dot). Aggregated over the running runtimes."""
@@ -1516,8 +1539,8 @@ def create_app(
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         return await _ping_live(entry)
 
-    @app.post("/api/onboarded")
-    async def set_onboarded(req: OnboardedRequest) -> dict:
+    @app.post("/api/onboarded", response_model_exclude_unset=True)
+    async def set_onboarded(req: OnboardedRequest) -> Ok:
         """Mark first-run onboarding completed/dismissed (install-level, in the registry)."""
         registry.set_onboarded(req.value)
         return {"ok": True}
@@ -1529,21 +1552,21 @@ def create_app(
         reads (``root_dir/user.db``). Profile-agnostic, so resolved from the root config."""
         return paths.root / "user.db"
 
-    @app.get("/api/memory")
-    async def get_universal_memory() -> dict:
+    @app.get("/api/memory", response_model_exclude_unset=True)
+    async def get_universal_memory() -> MemoryDocResponse:
         """Read the shared universal "who the user is" document (identity facts injected
         into EVERY profile's context). Mirrors the per-profile GET /api/p/{pid}/memory."""
         return {"text": await read_universal(_user_store_path())}
 
-    @app.post("/api/memory")
-    async def set_universal_memory(req: MemoryRequest) -> dict:
+    @app.post("/api/memory", response_model_exclude_unset=True)
+    async def set_universal_memory(req: MemoryRequest) -> Ok:
         """Replace the shared universal document (a user edit from any profile's Settings →
         Memory). Read fresh per turn, so all profiles' agents pick it up next turn."""
         await write_universal(req.text, _user_store_path())
         return {"ok": True}
 
-    @app.post("/api/identity")
-    async def seed_identity(req: IdentityRequest) -> dict:
+    @app.post("/api/identity", response_model_exclude_unset=True)
+    async def seed_identity(req: IdentityRequest) -> IdentitySeededResponse:
         """Seed the universal "who the user is" doc from web-onboarding identity answers
         (name/location/hours/style, all optional). Formats them with the SAME
         `identity_document` helper the CLI interview uses, so both surfaces produce an
@@ -2398,7 +2421,7 @@ def create_app(
     async def codex_status() -> dict:
         return codex.status()
 
-    @app.get("/api/coding/{agent}/models")
+    @app.get("/api/coding/{agent}/models", response_model=CodingCatalogResponse)
     async def coding_models(agent: str, refresh: bool = False) -> Response:
         """An ACP adapter's model catalog (agent: "claude" | "codex"), for the
         Settings model picker: ``{models, current, reason}``. Lazy + guarded — a
@@ -2468,8 +2491,8 @@ def create_app(
         await _reload_all_runtimes()
         return {"ok": ok}
 
-    @app.get("/api/fs/list")
-    async def fs_list(path: str = "") -> dict:
+    @app.get("/api/fs/list", response_model_exclude_unset=True)
+    async def fs_list(path: str = "") -> FsListingOkOut | FsListingErrorOut:
         """List immediate subdirectories of a host path — drives the folder picker. The
         gateway is local + single-user and `_origin_guard` blocks cross-origin, so this is
         safe; dotfolders are hidden. Empty path starts at home."""
@@ -2478,8 +2501,8 @@ def create_app(
             return {"ok": False, "error": "not a readable directory"}
         return {"ok": True, **result}
 
-    @app.post("/api/fs/mkdir")
-    async def fs_mkdir(req: FsMkdirRequest):
+    @app.post("/api/fs/mkdir", response_model_exclude_unset=True)
+    async def fs_mkdir(req: FsMkdirRequest) -> FsMkdirResponse:
         """Create ONE subfolder inside the host directory the picker is viewing, so a
         working folder can be made without leaving the app. Same trust model as
         `fs_list` above (local + single-user, `_origin_guard` blocks cross-origin).
@@ -2505,7 +2528,7 @@ def create_app(
     #  Profile-scoped router (/api/p/{pid})                              #
     # ------------------------------------------------------------------ #
 
-    p = APIRouter(prefix="/api/p/{pid}")
+    p = APIRouter(prefix="/api/p/{pid}", responses=ERROR_RESPONSES)
 
     def _available_providers() -> dict:
         """Which providers have a usable key right now — key-only. This is what the
@@ -2810,8 +2833,10 @@ def create_app(
             },
         }
 
-    @p.get("/health")
-    async def profile_health(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+    @p.get("/health", response_model_exclude_unset=True)
+    async def profile_health(
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ) -> ProfileHealthResponse:
         """Cheap, at-a-glance health of this profile's subsystems — the source for
         the UI's status dot. Presence/liveness signals ONLY: no MCP subprocess
         spawns, no provider pings, so it's cheap enough to poll on a short cycle.
@@ -3213,14 +3238,14 @@ def create_app(
     # ---- Memory: view + edit THIS profile's persona memory (profile.db) ----
     # (The shared universal "who the user is" doc is the global GET/POST /api/memory.)
 
-    @p.get("/memory")
-    async def get_memory(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+    @p.get("/memory", response_model_exclude_unset=True)
+    async def get_memory(
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ) -> MemoryDocResponse:
         return {"text": await read_profile(runtime.config.data_dir / "profile.db")}
 
-    @p.post("/memory")
-    async def set_memory(
-        req: MemoryRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
+    @p.post("/memory", response_model_exclude_unset=True)
+    async def set_memory(req: MemoryRequest, runtime: ProfileRuntime = Depends(get_runtime)) -> Ok:
         await write_profile(req.text, runtime.config.data_dir / "profile.db")
         return {"ok": True}
 
@@ -3544,8 +3569,8 @@ def create_app(
             return JSONResponse({"error": "file not found"}, status_code=404)
         return {"ok": True}
 
-    @p.get("/usage")
-    async def usage_today(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
+    @p.get("/usage", response_model_exclude_unset=True)
+    async def usage_today(runtime: ProfileRuntime = Depends(get_runtime)) -> UsageResponse:
         """Today's token + estimated-cost totals (cost & activity HUD)."""
         return runtime.gateway.usage_today()
 

@@ -123,8 +123,22 @@ cannot drift apart. Every response goes through `transport/validate.ts::parse()`
 in dev a mismatch throws `SchemaError`, in prod it logs `[schema] …` and passes
 the data through. Request bodies are typed but not validated at runtime.
 
-When you change a response body in `gateway/`, update the matching schema in
-`web/src/schemas/` in the same change — nothing generates them from OpenAPI.
+The gateway declares the same shapes as Pydantic response models in
+`src/assistant/gateway/schemas/` (one module per domain, mirroring
+`web/src/schemas/` file for file), and `docs/openapi.json` is the committed
+artifact tying the two together. For a route listed in `ROUTES`
+(`web/src/schemas/routes.ts`), CI fails if the zod schema and the gateway
+disagree on field names, requiredness or enum members — so you cannot forget.
+
+When you change a response body in `gateway/`:
+
+1. update the Pydantic model in `gateway/schemas/`;
+2. run `python3 scripts/dump_openapi.py` and commit `docs/openapi.json`;
+3. update the zod schema in `web/src/schemas/` — for a route still in `PENDING`
+   nothing checks this yet, so it is still on you.
+
+Every route sits in exactly one bucket of `routes.ts` (`ROUTES`, `UNMAPPED` or
+`PENDING`); adding a route without deciding which is a test failure.
 
 ## Testing
 
