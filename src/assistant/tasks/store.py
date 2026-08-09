@@ -14,7 +14,16 @@ from ag2.knowledge import SqliteKnowledgeStore
 
 from assistant.storage import SerialStore as _SerialStore
 from assistant.storage import new_id, now_iso
-from assistant.tasks.model import Run, RunStatus, RunTrigger, Task, manual_schedule
+from assistant.tasks.model import (
+    RECALL_ALL,
+    RECALL_NONE,
+    Run,
+    RunStatus,
+    RunTrigger,
+    ScheduleKind,
+    Task,
+    manual_schedule,
+)
 from assistant.tasks.scheduling import compute_next_run
 
 _TASKS = "/tasks/"
@@ -60,6 +69,7 @@ class TaskStore:
         origin_channel: str | None = None,
         origin_chat: str | None = None,
         description: str = "",
+        recall_depth: int = 0,
     ) -> Task:
         sched = schedule or manual_schedule()
         task = Task(
@@ -71,6 +81,7 @@ class TaskStore:
             origin_channel=origin_channel,
             origin_chat=origin_chat,
             description=description,
+            recall_depth=recall_depth,
             next_run_at=compute_next_run(sched, _now_dt()),
             created_at=now_iso(),
             updated_at=now_iso(),
@@ -116,6 +127,32 @@ class TaskStore:
             # than mint a PROFILE-scope grant (privilege widening) with task_id="".
             if wd and task_id:
                 moved.append((task_id, wd, access or "read"))
+        return moved
+
+    async def backfill_recall(self, cron_depth: int) -> int:
+        """One-time migration (ADR 0027): stamp ``recall_depth`` onto records written
+        before the field existed, giving recurring tasks ``cron_depth`` so the
+        look-back they had until now survives the upgrade. Returns how many records
+        moved.
+
+        Idempotent through the key's absence — a record written since carries the key
+        already, so a user who later chooses 0 is never overwritten.
+        """
+        moved = 0
+        for entry in await self._store.list(_TASKS):
+            if not entry.endswith(".json"):
+                continue
+            path = _TASKS + entry
+            try:
+                data = json.loads(await self._store.read(path))
+            except Exception:
+                continue  # corrupt records are _read_all's problem, not the migration's
+            if "recall_depth" in data:
+                continue
+            cron = (data.get("schedule") or {}).get("kind") == ScheduleKind.CRON
+            data["recall_depth"] = cron_depth if cron else RECALL_NONE
+            await self._store.write(path, json.dumps(data))
+            moved += 1
         return moved
 
     async def rekey_origin_channels(self, by_platform: dict[str, str]) -> int:
@@ -197,18 +234,25 @@ class TaskStore:
         await self.save_run(run)
         return run
 
-    async def last_summaries(
-        self, task_id: str, n: int = 3, before: str | None = None
-    ) -> list[str]:
-        """Non-empty summaries of the task's most recent completed runs
-        (oldest-first, so they read chronologically in a prompt). ``before``
-        excludes the currently-executing run."""
-        out: list[str] = []
+    async def recent_runs(
+        self, task_id: str, n: int = RECALL_NONE, before: str | None = None
+    ) -> list[Run]:
+        """The task's most recent settled runs, oldest-first so they read
+        chronologically in a prompt. ``n`` is a count, ``RECALL_ALL`` for every one,
+        ``RECALL_NONE`` for none; ``before`` excludes the currently-executing run.
+
+        Failed and cancelled runs are kept: they carry no summary but may have
+        committed work before settling (ADR 0018), which the caller renders as a
+        pointer rather than dropping.
+        """
+        if n == RECALL_NONE:
+            return []
+        out: list[Run] = []
         for r in await self.list_runs(task_id):  # newest first
-            if r.id == before or r.status != RunStatus.COMPLETED or not r.summary:
+            if r.id == before or r.status not in RunStatus.TERMINAL:
                 continue
-            out.append(r.summary)
-            if len(out) >= n:
+            out.append(r)
+            if n != RECALL_ALL and len(out) >= n:
                 break
         return list(reversed(out))
 

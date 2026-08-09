@@ -63,6 +63,12 @@ def _schedule_arg(kind: str, at: str, cron: str) -> dict:
     return {"kind": kind, "at": (at or "").strip() or None, "cron": (cron or "").strip() or None}
 
 
+def _recall_label(depth: int) -> str:
+    if depth == 0:
+        return "none"
+    return "all previous runs" if depth < 0 else f"last {depth}"
+
+
 def _task_line(t: dict) -> str:
     state = "paused" if t["paused"] else (t["schedule_desc"] or "manual")
     last = f" · last run: {t['last_run']['status']}" if t.get("last_run") else ""
@@ -106,9 +112,12 @@ def build_system_tools(
         ]
         if t.get("description"):
             lines.append(f"desc: {t['description']}")
+        lines.append(f"earlier runs seen per run: {_recall_label(t.get('recall_depth', 0))}")
         for r in t["runs"][:10]:
             done = r["ended_at"] or ""
-            lines.append(f"  run {r['id']} · {r['status']} · {done} · {r['summary'] or r['error']}")
+            lines.append(f"  {r['id']} · {r['status']} · {done} · {r['summary'] or r['error']}")
+        if t["runs"]:
+            lines.append('Open any run in full with read_run("<run id>").')
         return "\n".join(lines)
 
     @tool
@@ -137,6 +146,14 @@ def build_system_tools(
         description: Annotated[
             str, Field(description="Optional task description; empty = none.")
         ] = "",
+        recall_depth: Annotated[
+            int,
+            Field(
+                description="How many earlier runs each run may see: 0 none, -1 all, or a "
+                "count. Use -1 when the task must not repeat itself across runs (e.g. 'a "
+                "different topic each time'); leave 0 when only the present matters."
+            ),
+        ] = 0,
     ) -> str:
         """Create a task. Ask the user anything unclear BEFORE calling this —
         the prompt is what runs unattended, so it must be self-contained. A task's
@@ -151,6 +168,7 @@ def build_system_tools(
                 origin_channel=connection,
                 origin_chat=chat,
                 description=description or None,
+                recall_depth=recall_depth,
             )
         except ValueError as exc:
             return str(exc)  # correctable: retry with a valid schedule/model
@@ -174,6 +192,13 @@ def build_system_tools(
             str, Field(description="'true' to pause, 'false' to resume; empty = keep.")
         ] = "",
         description: Annotated[str, Field(description="New description; empty = keep.")] = "",
+        recall_depth: Annotated[
+            str,
+            Field(
+                description="How many earlier runs each run may see: '0' none, '-1' all, "
+                "or a count. Empty = keep. Use '-1' when the task must not repeat itself."
+            ),
+        ] = "",
     ) -> str:
         """Edit any field of a task. Empty args keep the current value. A task's
         working folders are managed in the task's Folders UI, not through this tool."""
@@ -190,6 +215,11 @@ def build_system_tools(
             patch["paused"] = paused.strip().lower() == "true"
         if description:
             patch["description"] = description
+        if recall_depth.strip():
+            try:
+                patch["recall_depth"] = int(recall_depth.strip())
+            except ValueError:
+                return f"recall_depth must be a whole number, not {recall_depth!r}."
         if not patch:
             return "Nothing to change — pass at least one field."
         try:
@@ -313,6 +343,21 @@ def build_system_tools(
                 )
             return body
 
-        out += [list_chats, read_chat]
+        @tool
+        async def read_run(
+            run_id: Annotated[str, Field(description="The run id (run-…).")],
+        ) -> str:
+            """Read a task run's transcript in full — what that run actually did and
+            produced, beyond the one-line summary get_task shows.
+
+            Use it when a run's summary is too coarse to act on, and to find out what a
+            failed or cancelled run managed to do before it stopped.
+            """
+            msgs = await chats.transcript(f"task-run:{run_id}")
+            if not msgs:
+                return "No such run (or it produced nothing)."
+            return "\n".join(f"{m['role']}: {m['text']}" for m in msgs)
+
+        out += [list_chats, read_chat, read_run]
 
     return out

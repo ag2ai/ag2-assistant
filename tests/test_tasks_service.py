@@ -63,7 +63,7 @@ async def test_create_validates_schedule_and_model(paths, tmp_path):
     assert t["schedule_desc"] == "manual" and t["last_run"] is None
 
 
-async def test_run_executes_as_chat_turn_with_prior_context(paths, tmp_path):
+async def test_run_executes_as_chat_turn(paths, tmp_path):
     gw = FakeGateway()
     svc = await _svc(paths, tmp_path, gw)
     t = await svc.create_task(name="Digest", prompt="collect news")
@@ -73,12 +73,98 @@ async def test_run_executes_as_chat_turn_with_prior_context(paths, tmp_path):
     assert gw.sent[0]["text"] == "collect news"
     view = await svc.get_run(run.id)
     assert view["status"] == "completed" and view["summary"] == "one-liner"
-    # second run sees the first run's outcome in its surface
     run2 = await svc.start_run(t["id"])
     await asyncio.wait_for(svc._jobs_done(), 5)
-    assert "one-liner" in gw.sent[1]["surface"]
     detail = await svc.get_task(t["id"])
     assert [r["id"] for r in detail["runs"]] == [run2.id, run.id]
+
+
+async def test_recall_off_by_default_carries_no_prior_runs(paths, tmp_path):
+    """The default task looks back at nothing — a run about the present moment
+    (weather) is not handed yesterday's outcome (ADR 0027)."""
+    gw = FakeGateway()
+    svc = await _svc(paths, tmp_path, gw)
+    t = await svc.create_task(name="Weather", prompt="today's forecast")
+    assert t["recall_depth"] == 0
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    assert "one-liner" not in gw.sent[1]["surface"]
+    assert "Earlier runs" not in gw.sent[1]["surface"]
+
+
+async def test_recall_indexes_prior_runs_with_ids(paths, tmp_path):
+    gw = FakeGateway()
+    svc = await _svc(paths, tmp_path, gw)
+    t = await svc.create_task(name="Digest", prompt="collect news", recall_depth=-1)
+    run = await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    surface = gw.sent[1]["surface"]
+    assert "Earlier runs of this task" in surface
+    assert f"- {run.id}" in surface and "one-liner" in surface
+    assert 'read_run("<run id>")' in surface
+
+
+async def test_recall_keeps_a_settled_run_that_has_no_summary(paths, tmp_path):
+    """A failed run occupies a slot and points at itself rather than vanishing: it may
+    have committed work before it settled (ADR 0018), and skipping it would also slide
+    the window further into the past. Its error text stays out of the prompt."""
+    from assistant.tasks.model import RunStatus
+
+    gw = FakeGateway()
+    svc = await _svc(paths, tmp_path, gw)
+    t = await svc.create_task(name="Digest", prompt="collect news", recall_depth=2)
+    dead = await svc._store.create_run(t["id"])
+    await svc._store.set_run_status(dead.id, RunStatus.FAILED, error="400 Bad Request {json}")
+    good = await svc._store.create_run(t["id"])
+    await svc._store.set_run_status(good.id, RunStatus.COMPLETED, summary="wrote the digest")
+
+    await svc.start_run(t["id"])
+    await asyncio.wait_for(svc._jobs_done(), 5)
+    surface = gw.sent[0]["surface"]
+    assert f"- {dead.id} (" in surface and f'failed, use read_run("{dead.id}") to check.' in surface
+    assert "400 Bad Request" not in surface
+    # depth 2 spends a slot on the failure instead of reaching past it
+    assert "wrote the digest" in surface
+
+
+async def test_recall_budget_drops_oldest_and_says_how_many(paths, tmp_path):
+    from assistant.gateway import tasks_service as ts
+    from assistant.tasks.model import RunStatus
+
+    gw = FakeGateway()
+    svc = await _svc(paths, tmp_path, gw)
+    t = await svc.create_task(name="Digest", prompt="collect news", recall_depth=-1)
+    ids = []
+    for i in range(6):
+        r = await svc._store.create_run(t["id"])
+        await svc._store.set_run_status(
+            r.id, RunStatus.COMPLETED, summary=f"outcome {i} " + "x" * 80
+        )
+        ids.append(r.id)
+
+    monkey = ts._RECALL_BUDGET
+    ts._RECALL_BUDGET = 300  # room for a couple of rows, not six
+    try:
+        await svc.start_run(t["id"])
+        await asyncio.wait_for(svc._jobs_done(), 5)
+    finally:
+        ts._RECALL_BUDGET = monkey
+    surface = gw.sent[0]["surface"]
+    assert ids[-1] in surface and ids[0] not in surface  # newest kept, oldest dropped
+    assert "older omitted — get_task lists every run" in surface
+
+
+async def test_recall_depth_is_validated(paths, tmp_path):
+    svc = await _svc(paths, tmp_path, FakeGateway())
+    with pytest.raises(ValueError):
+        await svc.create_task(name="x", prompt="p", recall_depth=-2)
+    t = await svc.create_task(name="x", prompt="p")
+    with pytest.raises(ValueError):
+        await svc.update_task(t["id"], recall_depth=-5)
 
 
 async def test_run_turn_names_the_task_model_to_the_gateway(paths, tmp_path):

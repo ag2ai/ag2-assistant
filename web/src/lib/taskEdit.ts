@@ -135,6 +135,7 @@ export type TaskEditFields = {
   prompt?: string | null
   model?: string | null
   schedule?: ScheduleRef
+  recall_depth?: number | null
 }
 
 export type TaskEditPatch = {
@@ -143,6 +144,7 @@ export type TaskEditPatch = {
   prompt?: string
   model?: string
   schedule?: ScheduleRef
+  recall_depth?: number
 }
 
 // Minimal PATCH body for an edit Save: only fields that actually changed. A blank name
@@ -164,6 +166,11 @@ export function taskEditPatch(initial: TaskEditFields | null | undefined, buffer
   if (model !== (initial?.model ?? '')) patch.model = model
 
   if (!scheduleEqual(initial?.schedule, buffer.schedule)) patch.schedule = buffer.schedule
+
+  // 0 is a real value (look back at nothing), so compare against the default rather
+  // than treating a falsy buffer as unset.
+  const recall = buffer.recall_depth ?? 0
+  if (recall !== (initial?.recall_depth ?? 0)) patch.recall_depth = recall
 
   return patch
 }

@@ -55,9 +55,59 @@ async def test_runs_lifecycle_and_summaries(tmp_path):
     await st.set_run_status(r2.id, RunStatus.COMPLETED, summary="second")
     r3 = await st.create_run(t.id, trigger="schedule")  # current, excluded via before=
     assert [r.id for r in await st.list_runs(t.id)] == [r3.id, r2.id, r1.id]
-    assert await st.last_summaries(t.id, n=2, before=r3.id) == ["did the thing", "second"]
+    # oldest-first, so a prompt reads them chronologically
+    recent = await st.recent_runs(t.id, n=2, before=r3.id)
+    assert [r.summary for r in recent] == ["did the thing", "second"]
     await st.delete_run(r3.id)
     assert await st.get_run(r3.id) is None
+
+
+async def test_recent_runs_depth_and_settled_only(tmp_path):
+    """0 none · -1 all · n last-n, and a failed run is kept (it may have committed
+    work before settling, ADR 0027) while a still-running one is not."""
+    st = _store(tmp_path)
+    t = await st.create_task("T", "p")
+    ok1 = await st.create_run(t.id)
+    await st.set_run_status(ok1.id, RunStatus.COMPLETED, summary="first")
+    bad = await st.create_run(t.id)
+    await st.set_run_status(bad.id, RunStatus.FAILED, error="boom")
+    ok2 = await st.create_run(t.id)
+    await st.set_run_status(ok2.id, RunStatus.COMPLETED, summary="third")
+    live = await st.create_run(t.id)  # still RUNNING
+
+    assert await st.recent_runs(t.id, n=0) == []
+    assert [r.id for r in await st.recent_runs(t.id, n=-1)] == [ok1.id, bad.id, ok2.id]
+    assert [r.id for r in await st.recent_runs(t.id, n=2)] == [bad.id, ok2.id]
+    assert live.id not in [r.id for r in await st.recent_runs(t.id, n=-1)]
+    # n beyond the run count is not an error
+    assert len(await st.recent_runs(t.id, n=99)) == 3
+
+
+async def test_backfill_recall_stamps_cron_tasks_once(tmp_path):
+    """Records written before the field existed inherit the look-back they had;
+    re-running never overwrites a value the user has since chosen."""
+    import json
+
+    from assistant.tasks.store import _TASKS
+
+    st = _store(tmp_path)
+    cron = await st.create_task(
+        "C", "p", schedule={"kind": "cron", "at": None, "cron": "0 9 * * *"}
+    )
+    manual = await st.create_task("M", "p")
+    for tid in (cron.id, manual.id):  # strip the key, as a pre-0027 record has it
+        path = f"{_TASKS}{tid}.json"
+        data = json.loads(await st._store.read(path))
+        data.pop("recall_depth")
+        await st._store.write(path, json.dumps(data))
+
+    assert await st.backfill_recall(3) == 2
+    assert (await st.get_task(cron.id)).recall_depth == 3
+    assert (await st.get_task(manual.id)).recall_depth == 0
+
+    await st.update_task(cron.id, recall_depth=0)  # the user turns it off
+    assert await st.backfill_recall(3) == 0  # idempotent: no second stamp
+    assert (await st.get_task(cron.id)).recall_depth == 0
 
 
 def test_strip_workdirs_pops_legacy_fields_and_reports_them(tmp_path):

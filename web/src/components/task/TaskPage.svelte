@@ -26,6 +26,7 @@
 import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
   import ScheduleField from './ScheduleField.svelte'
+  import RecallField from './RecallField.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.ts'
 
   const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled']
@@ -52,6 +53,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
   let eprompt = $state('')
   let emodel = $state<string | null>(null)
   let eschedule = $state<ScheduleValue>({ kind: 'manual', at: null, cron: null })
+  let erecall = $state(0)
   let efolders = $state<FolderRow[]>([])   // intended folder set
   let pickerOpen = $state(false)
   let modelOpen = $state(false)   // model-override popover (edit mode)
@@ -205,6 +207,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
     eprompt = t?.prompt || ''
     emodel = t?.model ?? null
     eschedule = t ? scheduleValue($state.snapshot(t.schedule)) : { kind: 'manual', at: null, cron: null }
+    erecall = t?.recall_depth ?? 0
     efolders = t ? currentFolderState().map((g) => ({ ...g, mode: g.taskMode ?? g.profileMode })) : createFolderSeed()
     pickerOpen = false
     modelOpen = false
@@ -292,13 +295,14 @@ import WriteSwitch from '../WriteSwitch.svelte'
           prompt: eprompt.trim(),
           model: emodel ?? '',
           schedule: $state.snapshot(eschedule),
+          recall_depth: erecall,
         })
         patchTaskInStore(created)
         try { await applyFolderOps(folderGrantDiff([], $state.snapshot(efolders)), created.id) } catch { /* task saved */ }
         go('/t/' + created.id)
       } else {
         // Edit: build a minimal PATCH of changed task fields, then reconcile folders.
-        const patch = taskEditPatch(cur, { name: ename, description: edesc, prompt: eprompt, model: emodel, schedule: $state.snapshot(eschedule) })
+        const patch = taskEditPatch(cur, { name: ename, description: edesc, prompt: eprompt, model: emodel, schedule: $state.snapshot(eschedule), recall_depth: erecall })
         const updated = Object.keys(patch).length ? await api.updateTask(cur.id, patch) : cur
         task = updated
         patchTaskInStore(updated)
@@ -348,6 +352,9 @@ import WriteSwitch from '../WriteSwitch.svelte'
     try { await api.deleteTaskPermission(cur.id, rule); perms = await api.taskPermissions(cur.id) }
     catch (e) { error = errText(e, 'revoke failed') }
   }
+
+  // Read-only prose for recall_depth, mirroring how Repeats reads schedule_desc.
+  const recallLabel = (d: number) => (d === 0 ? '—' : d < 0 ? 'All previous runs' : `Last ${d} runs`)
 
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
   const STAT_ICON: Record<RunStatus, string> = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
@@ -570,6 +577,13 @@ import WriteSwitch from '../WriteSwitch.svelte'
             <ScheduleField bind:schedule={eschedule} />
           {:else if task}
             <p class="tpmeta">{task.schedule_desc}</p>
+          {/if}
+
+          <h2>Earlier runs</h2>
+          {#if inEdit}
+            <RecallField bind:depth={erecall} />
+          {:else if task}
+            <p class="tpmeta">{recallLabel(task.recall_depth)}</p>
           {/if}
 
           {#if !isNew}

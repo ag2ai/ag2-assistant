@@ -21,6 +21,8 @@ from assistant.config import Config, load_config
 from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
 from assistant.tasks.model import (
+    RECALL_ALL,
+    RECALL_NONE,
     Run,
     RunStatus,
     RunTrigger,
@@ -32,8 +34,59 @@ from assistant.tasks.model import (
 from assistant.tasks.scheduling import compute_next_run, parse_dt, schedule_text
 from assistant.tasks.summary import default_summarizer, suggest_task_meta, summarize_run
 
+# Chars of prior-run index a surface carries before the oldest entries are dropped.
+# ~125 summaries: six months of a weekday task.
+_RECALL_BUDGET = 16_000
 
-def _run_surface(task: Task, prior: list[str], folder_lines: list[str]) -> str:
+# What a pre-ADR-0027 recurring task inherits: the depth it ran on until now.
+_MIGRATED_RECALL = 3
+
+
+def _recall_row(run: Run) -> str:
+    """One index line. A run with no summary — failed, cancelled, or a summariser
+    that returned "" — names its state and the call that opens it, since it may have
+    committed work before settling (ADR 0018)."""
+    when = (run.ended_at or run.started_at or "")[:10]
+    if run.summary:
+        return f"- {run.id} ({when}) · {run.summary}"
+    return f'- {run.id} ({when}) · {run.status}, use read_run("{run.id}") to check.'
+
+
+def _recall_lines(prior: list[Run]) -> list[str]:
+    """The prior-run index, oldest-first. Over budget the oldest entries drop and the
+    header says how many, so a truncated index never reads as a complete one."""
+    if not prior:
+        return []
+    rows = [_recall_row(r) for r in prior]
+    kept: list[str] = []
+    used = 0
+    for row in reversed(rows):  # newest first: the budget bites the oldest
+        if used + len(row) > _RECALL_BUDGET:
+            break
+        kept.append(row)
+        used += len(row)
+    kept.reverse()
+    omitted = len(rows) - len(kept)
+    head = "Earlier runs of this task (most recent last"
+    head += f"; {omitted} older omitted — get_task lists every run):" if omitted else "):"
+    return [
+        head,
+        *kept,
+        'Do not repeat work these runs did; read_run("<run id>") opens any of them in full.',
+    ]
+
+
+def _validate_recall(depth: int) -> None:
+    """``recall_depth`` is a run count, ``RECALL_ALL`` for every one. No upper bound —
+    the surface budget caps what a large value actually renders."""
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < RECALL_ALL:
+        raise ValueError(
+            f"recall_depth must be a whole number of runs, {RECALL_ALL} for all "
+            f"or {RECALL_NONE} for none, not {depth!r}"
+        )
+
+
+def _run_surface(task: Task, prior: list[Run], folder_lines: list[str]) -> str:
     """Surface paragraph for a run's turn: unattended-execution framing + the
     outcomes of recent runs so a recurring task doesn't repeat itself + the task's
     own working folders (resolved from live task-scope grants)."""
@@ -45,9 +98,7 @@ def _run_surface(task: Task, prior: list[str], folder_lines: list[str]) -> str:
         "No one is watching live: prefer acting over asking; raise a question only if "
         "truly blocked.",
     ]
-    if prior:
-        lines.append("Outcomes of this task's most recent runs (do not repeat them):")
-        lines += [f"- {s}" for s in prior]
+    lines += _recall_lines(prior)
     lines += folder_lines
     return "\n".join(lines)
 
@@ -101,6 +152,7 @@ def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> 
         "schedule_desc": schedule_text(t.schedule),
         "paused": t.paused,
         "starred": t.starred,
+        "recall_depth": t.recall_depth,
         "next_run_at": t.next_run_at,
         "created_at": t.created_at,
         "updated_at": t.updated_at,
@@ -187,6 +239,7 @@ class TaskService:
             self._inquiries = InquiryStore(path=d / "inquiries.db", on_change=self._on_inquiry)
         await self._migrate_workdirs()
         await self._migrate_origin_connections()
+        await self._migrate_recall()
         if scheduler and self._scheduler is None:
             from assistant.scheduler_lock import SchedulerLock
             from assistant.tasks import Scheduler
@@ -198,6 +251,17 @@ class TaskService:
                     self._store, self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+
+    async def _migrate_recall(self) -> None:
+        """Pre-ADR-0027 tasks had an unconditional 3-run look-back; give the recurring
+        ones ``_MIGRATED_RECALL`` so the upgrade changes nothing for them. Best-effort:
+        a failure here costs look-back, never data."""
+        try:
+            await self._store.backfill_recall(_MIGRATED_RECALL)
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("task recall backfill", exc)
 
     async def _migrate_origin_connections(self) -> None:
         """A task queued before Connections existed points at a platform name; move it
@@ -277,6 +341,7 @@ class TaskService:
         origin_channel: str | None = None,
         origin_chat: str | None = None,
         description: str = "",
+        recall_depth: int = RECALL_NONE,
     ) -> dict:
         """Create a task. Raises ValueError on a bad schedule/model (callers map it
         to HTTP 422 or a correctable tool reply). An empty ``name`` triggers
@@ -284,6 +349,7 @@ class TaskService:
         prompt. A task's working folders are managed separately as task-scope
         Folder Grants (Folders UI), not stored on the task."""
         self._validate_model(model)
+        _validate_recall(recall_depth)
         name = (name or "").strip()
         description = (description or "").strip()
         if not name:
@@ -300,6 +366,7 @@ class TaskService:
             origin_channel=origin_channel,
             origin_chat=origin_chat,
             description=description,
+            recall_depth=recall_depth,
         )
         return _task_row(task, None, 0, False)
 
@@ -308,6 +375,8 @@ class TaskService:
             patch["schedule"] = normalize_schedule(patch["schedule"])
         if "model" in patch:
             self._validate_model(patch["model"])
+        if "recall_depth" in patch:
+            _validate_recall(patch["recall_depth"])
         if "name" in patch:
             patch["name"] = (patch["name"] or "").strip()
         if "description" in patch:
@@ -449,7 +518,7 @@ class TaskService:
             channel=task.origin_channel or "web",
             chat=run.stream_id,
         )
-        prior = await self._store.last_summaries(task.id, n=3, before=run_id)
+        prior = await self._store.recent_runs(task.id, n=task.recall_depth, before=run_id)
         folder_lines: list[str] = []
         if self._gateway is not None:
             with contextlib.suppress(Exception):

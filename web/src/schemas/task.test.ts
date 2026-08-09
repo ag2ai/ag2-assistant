@@ -11,7 +11,7 @@ const run = {
 const task = {
   id: 't1', name: 'Daily digest', prompt: 'summarise', model: null, description: '',
   schedule: { kind: 'cron', at: null, cron: '0 9 * * *' }, schedule_desc: 'every day at 9',
-  paused: false, starred: false, next_run_at: null,
+  paused: false, starred: false, recall_depth: 0, next_run_at: null,
   created_at: '2026-08-01T09:00:00+03:00', updated_at: '2026-08-01T09:00:00+03:00',
   last_run: run, unread: 0, needs_input: false,
 }

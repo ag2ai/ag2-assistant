@@ -40,6 +40,8 @@ export const Task = z.object({
   schedule_desc: z.string(),
   paused: z.boolean(),
   starred: z.boolean(),
+  // Earlier runs each run may see: 0 none, -1 all, else a count.
+  recall_depth: z.number(),
   next_run_at: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),

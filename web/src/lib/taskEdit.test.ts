@@ -180,6 +180,19 @@ test('taskEditPatch: a schedule change is carried whole', () => {
   assert.deepEqual(taskEditPatch(base, { ...base, schedule }), { schedule })
 })
 
+test('taskEditPatch: recall_depth carries every value, including 0', () => {
+  // 0 means "look back at nothing" — a real choice, so turning it off must PATCH.
+  assert.deepEqual(taskEditPatch({ ...base, recall_depth: -1 }, { ...base, recall_depth: 0 }), { recall_depth: 0 })
+  assert.deepEqual(taskEditPatch(base, { ...base, recall_depth: -1 }), { recall_depth: -1 })
+  assert.deepEqual(taskEditPatch(base, { ...base, recall_depth: 5 }), { recall_depth: 5 })
+})
+
+test('taskEditPatch: an unchanged recall_depth is not carried', () => {
+  assert.deepEqual(taskEditPatch({ ...base, recall_depth: 5 }, { ...base, recall_depth: 5 }), {})
+  // absent on both sides reads as the 0 default, not as a change
+  assert.deepEqual(taskEditPatch(base, { ...base }), {})
+})
+
 test('taskEditPatch: schedule equal by value → not carried', () => {
   assert.deepEqual(taskEditPatch(base, { ...base, schedule: { kind: 'cron', at: null, cron: '0 3 * * *' } }), {})
 })
