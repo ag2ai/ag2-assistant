@@ -357,6 +357,7 @@ class TaskCreate(BaseModel):
     model: str | None = None
     schedule: dict | None = None
     description: str = ""
+    recall_depth: int = 0
 
 
 class TaskPatch(BaseModel):
@@ -367,6 +368,7 @@ class TaskPatch(BaseModel):
     paused: bool | None = None
     starred: bool | None = None
     description: str | None = None
+    recall_depth: int | None = None  # 0 = none, -1 = all
 
 
 async def _scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:
@@ -2594,6 +2596,7 @@ def create_app(
                 model=req.model,
                 schedule=req.schedule,
                 description=req.description,
+                recall_depth=req.recall_depth,
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)

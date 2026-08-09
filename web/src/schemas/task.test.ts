@@ -11,7 +11,7 @@ const run = {
 const task = {
   id: 't1', name: 'Daily digest', prompt: 'summarise', model: null, description: '',
   schedule: { kind: 'cron', at: null, cron: '0 9 * * *' }, schedule_desc: 'every day at 9',
-  paused: false, starred: false, next_run_at: null,
+  paused: false, starred: false, recall_depth: 0, next_run_at: null,
   created_at: '2026-08-01T09:00:00+03:00', updated_at: '2026-08-01T09:00:00+03:00',
   last_run: run, unread: 0, needs_input: false,
 }
@@ -29,6 +29,12 @@ test('Run rejects an unknown status', () => {
 test('Run accepts a run still in flight, with no end stamp or summary', () => {
   const parsed = Run.parse({ ...run, status: 'running', ended_at: null, summary: null })
   assert.equal(parsed.ended_at, null)
+})
+
+test('Task reads a missing recall_depth as no recall', () => {
+  // A server predating the field sends no key; "Last undefined runs" is not a state.
+  const { recall_depth, ...without } = task
+  assert.equal(Task.parse(without).recall_depth, 0)
 })
 
 test('Task accepts a null model, null next_run_at and a null last_run', () => {

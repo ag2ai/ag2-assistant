@@ -128,6 +128,15 @@ export function scheduleValue(s: ScheduleRef): ScheduleValue {
   }
 }
 
+// A "Last N runs" count the field can actually save: a whole number of runs, at least
+// one. Anything else — a negative, a blank box, a fraction — lands on the nearest
+// legal count, and the input is rewritten to it so the box never shows a value
+// different from the one Save would send.
+export function recallCount(raw: number | string | null | undefined): number {
+  const n = Math.floor(Number(raw))
+  return Number.isFinite(n) && n >= 1 ? n : 1
+}
+
 // The editable fields, on both the server copy and the buffer.
 export type TaskEditFields = {
   name?: string | null
@@ -135,6 +144,7 @@ export type TaskEditFields = {
   prompt?: string | null
   model?: string | null
   schedule?: ScheduleRef
+  recall_depth?: number | null
 }
 
 export type TaskEditPatch = {
@@ -143,6 +153,7 @@ export type TaskEditPatch = {
   prompt?: string
   model?: string
   schedule?: ScheduleRef
+  recall_depth?: number
 }
 
 // Minimal PATCH body for an edit Save: only fields that actually changed. A blank name
@@ -164,6 +175,11 @@ export function taskEditPatch(initial: TaskEditFields | null | undefined, buffer
   if (model !== (initial?.model ?? '')) patch.model = model
 
   if (!scheduleEqual(initial?.schedule, buffer.schedule)) patch.schedule = buffer.schedule
+
+  // 0 is a real value (look back at nothing), so compare against the default rather
+  // than treating a falsy buffer as unset.
+  const recall = buffer.recall_depth ?? 0
+  if (recall !== (initial?.recall_depth ?? 0)) patch.recall_depth = recall
 
   return patch
 }
