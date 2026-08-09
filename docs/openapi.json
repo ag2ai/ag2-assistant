@@ -246,6 +246,81 @@
         "title": "CodexCodeRequest",
         "type": "object"
       },
+      "CodexLoginUrlResponse": {
+        "description": "POST /api/codex/login_url \u2014 the consent URL plus the flow ``state`` the\nheadless /submit fallback needs to quote back.",
+        "properties": {
+          "auth_url": {
+            "title": "Auth Url",
+            "type": "string"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "auth_url",
+          "state"
+        ],
+        "title": "CodexLoginUrlResponse",
+        "type": "object"
+      },
+      "CodexStatusResponse": {
+        "description": "GET /api/codex/status \u2014 codex_auth.status().\n\nEvery field but ``signed_in`` is None when signed out, and ``expires_at`` is\nalso None for a reused codex-cli session, whose expiry we do not read.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "signed_in": {
+            "title": "Signed In",
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "required": [
+          "signed_in",
+          "source",
+          "account_id",
+          "expires_at"
+        ],
+        "title": "CodexStatusResponse",
+        "type": "object"
+      },
       "CodingAgentOut": {
         "properties": {
           "available": {
@@ -458,6 +533,30 @@
           "content"
         ],
         "title": "CredentialsUpload",
+        "type": "object"
+      },
+      "DepsStatusOut": {
+        "description": "Optional provider-library state for a config type (llm_configs.deps_status).",
+        "properties": {
+          "extra": {
+            "title": "Extra",
+            "type": "string"
+          },
+          "install": {
+            "title": "Install",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "extra",
+          "install"
+        ],
+        "title": "DepsStatusOut",
         "type": "object"
       },
       "ErrorBody": {
@@ -700,6 +799,129 @@
           "path"
         ],
         "title": "FsMkdirResponse",
+        "type": "object"
+      },
+      "GoogleCredentialsErrorOut": {
+        "description": "POST /api/google/credentials answers 200 with ok:false on a bad client\nJSON \u2014 the upload form shows the parser's message inline rather than\ntreating it as a transport failure. Member ORDER mirrors OkOrError in\nweb/src/schemas/system.ts: the gate matches anyOf branches by index.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "ok": {
+            "const": false,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ],
+        "title": "GoogleCredentialsErrorOut",
+        "type": "object"
+      },
+      "GoogleCredentialsOkOut": {
+        "description": "POST /api/google/credentials, client JSON accepted.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "GoogleCredentialsOkOut",
+        "type": "object"
+      },
+      "GoogleLoginUrlErrorOut": {
+        "description": "No OAuth client configured, or the flow could not be built. Google answers\n200 either way, so the failure branch rides the same body.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "ok": {
+            "const": false,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ],
+        "title": "GoogleLoginUrlErrorOut",
+        "type": "object"
+      },
+      "GoogleLoginUrlOkOut": {
+        "description": "POST /api/google/login_url, consent URL built.",
+        "properties": {
+          "auth_url": {
+            "title": "Auth Url",
+            "type": "string"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "auth_url"
+        ],
+        "title": "GoogleLoginUrlOkOut",
+        "type": "object"
+      },
+      "GoogleStatusResponse": {
+        "description": "GET /api/google/status.\n\n``libs_available`` is separate from ``signed_in`` on purpose: a token saved\nwithout the optional [google] extra looks connected but can do nothing, and\n``install_hint`` then carries the remedy (it is None when the libs are there).",
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "install_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Install Hint"
+          },
+          "libs_available": {
+            "title": "Libs Available",
+            "type": "boolean"
+          },
+          "signed_in": {
+            "title": "Signed In",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "signed_in",
+          "email",
+          "libs_available",
+          "install_hint"
+        ],
+        "title": "GoogleStatusResponse",
         "type": "object"
       },
       "GroupProfileRequest": {
@@ -1103,6 +1325,117 @@
         "title": "KeyRequest",
         "type": "object"
       },
+      "LiveConfigListResponse": {
+        "description": "GET /api/live-configs.",
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "configs": {
+            "items": {
+              "$ref": "#/components/schemas/LiveConfigOut"
+            },
+            "title": "Configs",
+            "type": "array"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/LiveProviderOut"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "configs",
+          "active",
+          "providers"
+        ],
+        "title": "LiveConfigListResponse",
+        "type": "object"
+      },
+      "LiveConfigOut": {
+        "description": "One named live (voice) configuration as the API exposes it.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key_source": {
+            "enum": [
+              "secret",
+              "shared",
+              "none"
+            ],
+            "title": "Key Source",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecretRefOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "secret_id": {
+            "title": "Secret Id",
+            "type": "string"
+          },
+          "secret_missing": {
+            "title": "Secret Missing",
+            "type": "boolean"
+          },
+          "shared_key": {
+            "$ref": "#/components/schemas/SharedKeyOut"
+          },
+          "voice": {
+            "title": "Voice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider",
+          "model",
+          "voice",
+          "secret_id",
+          "secret",
+          "secret_missing",
+          "key_source",
+          "shared_key",
+          "active"
+        ],
+        "title": "LiveConfigOut",
+        "type": "object"
+      },
       "LiveConfigRequest": {
         "description": "Create/update body for a named live (voice) configuration. A config's key is\nits ``secret_id`` reference (a Secret in the secrets store). ``api_key`` is\nDRAFT-TEST ONLY (a typed value is used directly, never persisted). ``id`` is\nonly read by the draft-test endpoint. ``voice`` is optional on save (defaults\nto the provider's default voice; usually changed via the voice picker, not\nthis body).",
         "properties": {
@@ -1162,6 +1495,217 @@
           "provider"
         ],
         "title": "LiveConfigRequest",
+        "type": "object"
+      },
+      "LiveConfigSavedResponse": {
+        "description": "POST /api/live-configs and POST /api/live-configs/{cid}.",
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "config": {
+            "$ref": "#/components/schemas/LiveConfigOut"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "config",
+          "active"
+        ],
+        "title": "LiveConfigSavedResponse",
+        "type": "object"
+      },
+      "LiveProviderOut": {
+        "description": "A voice provider's defaults, which seed the add-form and the templates.",
+        "properties": {
+          "default_model": {
+            "title": "Default Model",
+            "type": "string"
+          },
+          "default_voice": {
+            "title": "Default Voice",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "default_model",
+          "default_voice"
+        ],
+        "title": "LiveProviderOut",
+        "type": "object"
+      },
+      "LlmConfigListResponse": {
+        "description": "GET /api/llm-configs. ``provider_deps`` covers every known type, not just\nthe configured ones \u2014 the \"Add model\" template grid reads it for types no\nconfig uses yet.",
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "configs": {
+            "items": {
+              "$ref": "#/components/schemas/LlmConfigOut"
+            },
+            "title": "Configs",
+            "type": "array"
+          },
+          "env_override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LlmEnvOverrideOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_deps": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DepsStatusOut"
+            },
+            "title": "Provider Deps",
+            "type": "object"
+          }
+        },
+        "required": [
+          "configs",
+          "active",
+          "env_override",
+          "provider_deps"
+        ],
+        "title": "LlmConfigListResponse",
+        "type": "object"
+      },
+      "LlmConfigOut": {
+        "description": "One named LLM configuration as the API exposes it.\n\n``signed_in`` is added only for ``type == \"openai_subscription\"`` \u2014 the live\nChatGPT sign-in state the chip needs without a second fetch \u2014 so it carries a\ndefault and every route returning this model excludes unset fields.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "deps": {
+            "$ref": "#/components/schemas/DepsStatusOut"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "images": {
+            "title": "Images",
+            "type": "boolean"
+          },
+          "key_source": {
+            "enum": [
+              "secret",
+              "shared",
+              "not_needed",
+              "none",
+              "subscription",
+              "cli_login"
+            ],
+            "title": "Key Source",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecretRefOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "secret_id": {
+            "title": "Secret Id",
+            "type": "string"
+          },
+          "secret_missing": {
+            "title": "Secret Missing",
+            "type": "boolean"
+          },
+          "shared_key": {
+            "$ref": "#/components/schemas/SharedKeyOut"
+          },
+          "signed_in": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signed In"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "model",
+          "base_url",
+          "host",
+          "options",
+          "secret_id",
+          "secret",
+          "secret_missing",
+          "key_source",
+          "images",
+          "deps",
+          "shared_key",
+          "active"
+        ],
+        "title": "LlmConfigOut",
         "type": "object"
       },
       "LlmConfigRequest": {
@@ -1233,6 +1777,66 @@
           "model"
         ],
         "title": "LlmConfigRequest",
+        "type": "object"
+      },
+      "LlmConfigSavedResponse": {
+        "description": "POST /api/llm-configs and POST /api/llm-configs/{cid}.",
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "config": {
+            "$ref": "#/components/schemas/LlmConfigOut"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "config",
+          "active"
+        ],
+        "title": "LlmConfigSavedResponse",
+        "type": "object"
+      },
+      "LlmEnvOverrideOut": {
+        "description": "The env pin banner payload: whichever of AG2ASSISTANT_LLM_PROVIDER /\nAG2ASSISTANT_MODEL is set. Each key is present only when its variable is,\nwhich is why both carry a default rather than being nullable-required.",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "title": "LlmEnvOverrideOut",
         "type": "object"
       },
       "MCPServerRequest": {
@@ -1545,6 +2149,31 @@
         "title": "PermissionCommandDeleteRequest",
         "type": "object"
       },
+      "PingResultResponse": {
+        "description": "Both Test buttons on success. A failure is a 502 built by hand, so the\n``ok: false`` branch never rides this model.",
+        "properties": {
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "reply": {
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "reply",
+          "latency_ms"
+        ],
+        "title": "PingResultResponse",
+        "type": "object"
+      },
       "ProfileArchiveRequest": {
         "properties": {
           "new_default": {
@@ -1634,6 +2263,40 @@
           }
         },
         "title": "ProfileUpdateRequest",
+        "type": "object"
+      },
+      "ProviderCatalogResponse": {
+        "description": "GET /api/llm-configs/models \u2014 a provider's model catalog in the same\n``{models, current, reason}`` envelope the ACP route uses, with\nprovider_catalog.py's own reasons. ``current`` is always empty here: a\nprovider names no model of its own.",
+        "properties": {
+          "current": {
+            "title": "Current",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogModelOut"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "reason": {
+            "enum": [
+              "",
+              "unauthorized",
+              "unreachable",
+              "no_list_endpoint",
+              "not_probeable"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "models",
+          "current",
+          "reason"
+        ],
+        "title": "ProviderCatalogResponse",
         "type": "object"
       },
       "ReplyTimeoutRequest": {
@@ -1920,6 +2583,108 @@
         "title": "SecretCreateRequest",
         "type": "object"
       },
+      "SecretListResponse": {
+        "description": "GET /api/secrets.",
+        "properties": {
+          "secrets": {
+            "items": {
+              "$ref": "#/components/schemas/SecretOut"
+            },
+            "title": "Secrets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "secrets"
+        ],
+        "title": "SecretListResponse",
+        "type": "object"
+      },
+      "SecretOut": {
+        "description": "One Secret's safe view.\n\n``used_by`` is filled in only by ``GET /api/secrets``, which cross-references\nthe LLM and live config stores to drive the \"used by N models\" delete\nconfirm. The save routes answer with the store's bare view and say nothing\nabout references, so the field carries a default and those routes are\ndeclared ``response_model_exclude_unset=True`` \u2014 shipping ``[]`` there would\nclaim \"nothing uses this\", which a rename or a rotate has not established.",
+        "properties": {
+          "default": {
+            "title": "Default",
+            "type": "boolean"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "used_by": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Used By",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider",
+          "default",
+          "hint"
+        ],
+        "title": "SecretOut",
+        "type": "object"
+      },
+      "SecretRefOut": {
+        "description": "The trimmed Secret view embedded in an LLM or live config.\n\nDeliberately narrower than the Secret's own view: a config row names the key\nit points at, it does not restate the Secret's provider tag or Default flag.",
+        "properties": {
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "hint"
+        ],
+        "title": "SecretRefOut",
+        "type": "object"
+      },
+      "SecretSavedResponse": {
+        "description": "POST /api/secrets and POST /api/secrets/{sid}.\n\n``ok`` is a Literal because the failure shapes (409 duplicate, 404 unknown,\n400 bad input) are non-2xx bodies built by hand, not this model.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/SecretOut"
+          }
+        },
+        "required": [
+          "ok",
+          "secret"
+        ],
+        "title": "SecretSavedResponse",
+        "type": "object"
+      },
       "SecretUpdateRequest": {
         "description": "Partial update for a Secret \u2014 None leaves a field unchanged. Rotating\n``value`` re-keys every model referencing this Secret.",
         "properties": {
@@ -1969,6 +2734,30 @@
           }
         },
         "title": "SecretUpdateRequest",
+        "type": "object"
+      },
+      "SharedKeyOut": {
+        "description": "The provider-wide env key summary both config views carry: which variable\nholds the fallback key, whether it is set, and its last-4 hint.",
+        "properties": {
+          "env": {
+            "title": "Env",
+            "type": "string"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "set": {
+            "title": "Set",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "env",
+          "set",
+          "hint"
+        ],
+        "title": "SharedKeyOut",
         "type": "object"
       },
       "SkillDiscoverRequest": {
@@ -2839,9 +3628,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Codex Login Url Api Codex Login Url Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CodexLoginUrlResponse"
                 }
               }
             },
@@ -2919,9 +3706,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Codex Logout Api Codex Logout Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -2999,9 +3784,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Codex Status Api Codex Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CodexStatusResponse"
                 }
               }
             },
@@ -3090,9 +3873,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Codex Submit Api Codex Submit Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -5496,9 +6277,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Google Credentials Api Google Credentials Post",
-                  "type": "object"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/GoogleCredentialsOkOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GoogleCredentialsErrorOut"
+                    }
+                  ],
+                  "title": "Response Google Credentials Api Google Credentials Post"
                 }
               }
             },
@@ -5577,9 +6364,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Google Login Url Api Google Login Url Post",
-                  "type": "object"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/GoogleLoginUrlOkOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GoogleLoginUrlErrorOut"
+                    }
+                  ],
+                  "title": "Response Google Login Url Api Google Login Url Post"
                 }
               }
             },
@@ -5657,9 +6450,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Google Logout Api Google Logout Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -5737,9 +6528,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Google Status Api Google Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GoogleStatusResponse"
                 }
               }
             },
@@ -5986,9 +6775,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Live Configs Api Live Configs Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LiveConfigListResponse"
                 }
               }
             },
@@ -6074,7 +6861,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LiveConfigSavedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6161,7 +6950,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PingResultResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6249,7 +7040,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -6345,7 +7138,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LiveConfigSavedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6433,7 +7228,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PingResultResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6521,7 +7318,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -6599,9 +7398,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Llm Configs Api Llm Configs Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LlmConfigListResponse"
                 }
               }
             },
@@ -6687,7 +7484,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LlmConfigSavedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6764,7 +7563,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCatalogResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6851,7 +7652,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PingResultResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6939,7 +7742,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -7035,7 +7840,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LlmConfigSavedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -7123,7 +7930,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PingResultResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -7211,7 +8020,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -13791,9 +14602,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Secrets Api Api Secrets Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SecretListResponse"
                 }
               }
             },
@@ -13879,7 +14688,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SecretSavedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -13967,9 +14778,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set Secrets Key Api Secrets Key Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -14058,7 +14867,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
               }
             },
             "description": "Successful Response"
@@ -14154,7 +14965,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SecretSavedResponse"
+                }
               }
             },
             "description": "Successful Response"

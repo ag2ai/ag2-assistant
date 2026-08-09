@@ -6,8 +6,17 @@
 // so a new route cannot be added without a decision about its schema.
 import type { z } from 'zod'
 import { ChatList, MessageReply, Transcript } from './chat.ts'
+import {
+  LiveConfigList,
+  LiveConfigSaved,
+  LlmConfigList,
+  LlmConfigSaved,
+  PingResult,
+  ProviderCatalog,
+} from './llm.ts'
 import { TaskRules } from './permission.ts'
 import { Ok } from './primitives.ts'
+import { SecretList, SecretSaved } from './secret.ts'
 import { MemoryDoc, ProfileHealth } from './settings.ts'
 import {
   InquiryList,
@@ -18,12 +27,17 @@ import {
   TaskList,
 } from './task.ts'
 import {
+  CodexLoginUrl,
+  CodexStatus,
   CodingAgents,
   CodingCatalog,
   FsListing,
   FsMkdirResult,
+  GoogleLoginUrl,
+  GoogleStatus,
   Health,
   IdentitySeeded,
+  OkOrError,
   StatusList,
   Usage,
   UsageRollup,
@@ -64,6 +78,34 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/p/{pid}/runs/{run_id}/seen': Ok,
   'GET /api/p/{pid}/inquiries/pending': InquiryList,
   'POST /api/p/{pid}/inquiries/{inquiry_id}/answer': Ok,
+  'GET /api/llm-configs': LlmConfigList,
+  'GET /api/llm-configs/models': ProviderCatalog,
+  'POST /api/llm-configs': LlmConfigSaved,
+  'POST /api/llm-configs/test': PingResult,
+  'POST /api/llm-configs/{cid}': LlmConfigSaved,
+  'DELETE /api/llm-configs/{cid}': Ok,
+  'POST /api/llm-configs/{cid}/use': Ok,
+  'POST /api/llm-configs/{cid}/test': PingResult,
+  'GET /api/live-configs': LiveConfigList,
+  'POST /api/live-configs': LiveConfigSaved,
+  'POST /api/live-configs/test': PingResult,
+  'POST /api/live-configs/{cid}': LiveConfigSaved,
+  'DELETE /api/live-configs/{cid}': Ok,
+  'POST /api/live-configs/{cid}/use': Ok,
+  'POST /api/live-configs/{cid}/test': PingResult,
+  'GET /api/secrets': SecretList,
+  'POST /api/secrets': SecretSaved,
+  'POST /api/secrets/key': Ok,
+  'POST /api/secrets/{sid}': SecretSaved,
+  'DELETE /api/secrets/{sid}': Ok,
+  'GET /api/google/status': GoogleStatus,
+  'POST /api/google/credentials': OkOrError,
+  'POST /api/google/login_url': GoogleLoginUrl,
+  'POST /api/google/logout': Ok,
+  'GET /api/codex/status': CodexStatus,
+  'POST /api/codex/login_url': CodexLoginUrl,
+  'POST /api/codex/submit': Ok,
+  'POST /api/codex/logout': Ok,
 }
 
 // No schema by design — the reason is the point of the entry.
@@ -93,35 +135,6 @@ export const UNMAPPED: Record<string, string> = {
 
 // Shrinks to {} as phases land; the value names the phase that will take it.
 export const PENDING: Record<string, string> = {
-  // --- phase 3: llm-configs, live-configs, secrets, google, codex ---
-  'GET /api/llm-configs': 'phase 3',
-  'GET /api/llm-configs/models': 'phase 3',
-  'POST /api/llm-configs': 'phase 3',
-  'POST /api/llm-configs/test': 'phase 3',
-  'POST /api/llm-configs/{cid}': 'phase 3',
-  'DELETE /api/llm-configs/{cid}': 'phase 3',
-  'POST /api/llm-configs/{cid}/use': 'phase 3',
-  'POST /api/llm-configs/{cid}/test': 'phase 3',
-  'GET /api/live-configs': 'phase 3',
-  'POST /api/live-configs': 'phase 3',
-  'POST /api/live-configs/test': 'phase 3',
-  'POST /api/live-configs/{cid}': 'phase 3',
-  'DELETE /api/live-configs/{cid}': 'phase 3',
-  'POST /api/live-configs/{cid}/use': 'phase 3',
-  'POST /api/live-configs/{cid}/test': 'phase 3',
-  'GET /api/secrets': 'phase 3',
-  'POST /api/secrets': 'phase 3',
-  'POST /api/secrets/key': 'phase 3',
-  'POST /api/secrets/{sid}': 'phase 3',
-  'DELETE /api/secrets/{sid}': 'phase 3',
-  'GET /api/google/status': 'phase 3',
-  'POST /api/google/credentials': 'phase 3',
-  'POST /api/google/login_url': 'phase 3',
-  'POST /api/google/logout': 'phase 3',
-  'GET /api/codex/status': 'phase 3',
-  'POST /api/codex/login_url': 'phase 3',
-  'POST /api/codex/submit': 'phase 3',
-  'POST /api/codex/logout': 'phase 3',
   // --- phase 4: connections, profiles ---
   'GET /api/profiles': 'phase 4',
   'POST /api/profiles': 'phase 4',

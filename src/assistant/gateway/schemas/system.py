@@ -132,6 +132,74 @@ class FsMkdirResponse(BaseModel):
     path: str
 
 
+class GoogleStatusResponse(BaseModel):
+    """GET /api/google/status.
+
+    ``libs_available`` is separate from ``signed_in`` on purpose: a token saved
+    without the optional [google] extra looks connected but can do nothing, and
+    ``install_hint`` then carries the remedy (it is None when the libs are there).
+    """
+
+    configured: bool
+    signed_in: bool
+    email: str | None
+    libs_available: bool
+    install_hint: str | None
+
+
+class GoogleCredentialsOkOut(BaseModel):
+    """POST /api/google/credentials, client JSON accepted."""
+
+    ok: Literal[True]
+
+
+class GoogleCredentialsErrorOut(BaseModel):
+    """POST /api/google/credentials answers 200 with ok:false on a bad client
+    JSON — the upload form shows the parser's message inline rather than
+    treating it as a transport failure. Member ORDER mirrors OkOrError in
+    web/src/schemas/system.ts: the gate matches anyOf branches by index."""
+
+    ok: Literal[False]
+    error: str
+
+
+class GoogleLoginUrlOkOut(BaseModel):
+    """POST /api/google/login_url, consent URL built."""
+
+    ok: Literal[True]
+    auth_url: str
+
+
+class GoogleLoginUrlErrorOut(BaseModel):
+    """No OAuth client configured, or the flow could not be built. Google answers
+    200 either way, so the failure branch rides the same body."""
+
+    ok: Literal[False]
+    error: str
+
+
+class CodexStatusResponse(BaseModel):
+    """GET /api/codex/status — codex_auth.status().
+
+    Every field but ``signed_in`` is None when signed out, and ``expires_at`` is
+    also None for a reused codex-cli session, whose expiry we do not read.
+    """
+
+    signed_in: bool
+    source: str | None
+    account_id: str | None
+    expires_at: float | None
+
+
+class CodexLoginUrlResponse(BaseModel):
+    """POST /api/codex/login_url — the consent URL plus the flow ``state`` the
+    headless /submit fallback needs to quote back."""
+
+    ok: Literal[True]
+    auth_url: str
+    state: str
+
+
 class MemoryDocResponse(BaseModel):
     """GET /api/memory and GET /api/p/{pid}/memory — the raw document text."""
 

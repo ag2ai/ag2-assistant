@@ -1,25 +1,47 @@
 """Install-wide status surfaces: health, usage, activity, coding agents, the
-folder picker, the shared memory document and first-run identity seeding.
+folder picker, the shared memory document, first-run identity seeding, and the
+two account-level OAuth cards (Google and the ChatGPT subscription).
+
+The OAuth pairs live here rather than in a module of their own because a module
+follows its zod twin, and GoogleStatus / CodexStatus / CodexLoginUrl /
+GoogleLoginUrl are all declared in web/src/schemas/system.ts.
 
 Pairs with gateway/schemas/system.py (the response models) and
 web/src/schemas/system.ts (their zod twins) — same file name in all three trees.
 """
 
+import asyncio
+import secrets as _secrets
+from collections.abc import Callable
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
+from assistant.codex_auth import (
+    CodexAuthError,
+    build_authorize_url,
+    extract_auth_code,
+    generate_pkce,
+)
 from assistant.coding.model_catalog import as_view
 from assistant.gateway.profile_manager import ProfileRuntime
+from assistant.gateway.routes.common import reload_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
+    CodexLoginUrlResponse,
+    CodexStatusResponse,
     CodingAgentsResponse,
     CodingCatalogResponse,
     FsListingErrorOut,
     FsListingOkOut,
     FsMkdirResponse,
+    GoogleCredentialsErrorOut,
+    GoogleCredentialsOkOut,
+    GoogleLoginUrlErrorOut,
+    GoogleLoginUrlOkOut,
+    GoogleStatusResponse,
     HealthResponse,
     IdentitySeededResponse,
     MemoryDocResponse,
@@ -62,6 +84,17 @@ class IdentityRequest(BaseModel):
     style: str | None = None
 
 
+class CredentialsUpload(BaseModel):
+    content: str  # raw OAuth client JSON
+
+
+class CodexCodeRequest(BaseModel):
+    """Headless ChatGPT-subscription sign-in: a pasted auth code + its flow state."""
+
+    state: str
+    code: str
+
+
 async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
     """Per-profile activity for the chip badges, from a single store scan (v2:
     a Task is standing config, a Run is one execution — this scans runs, not tasks).
@@ -87,9 +120,14 @@ async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
         return 0, 0
 
 
-def build_router(d: GatewayDeps) -> APIRouter:
+def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRouter:
     """The install-level routes. Registration order below is the order these
-    handlers had in app.py — see the plan's constraint on route order."""
+    handlers had in app.py — see the plan's constraint on route order.
+
+    ``code_reader`` is create_app's, not a store: it is how the ChatGPT sign-in
+    flow waits for the OAuth redirect, and the default runs a real loopback
+    listener, so every test that touches that flow swaps it.
+    """
     r = APIRouter()
 
     @r.get("/api/health", response_model=HealthResponse, response_model_exclude_unset=True)
@@ -287,6 +325,149 @@ def build_router(d: GatewayDeps) -> APIRouter:
             else (400, "invalid path")
         )
         return JSONResponse({"error": msg}, status_code=code)
+
+    # ---- Google OAuth (global, account-level) ----
+
+    @r.get("/api/google/status", response_model=GoogleStatusResponse)
+    async def google_status():
+        libs = d.google.libs_available()
+        return {
+            "configured": d.google.is_configured(),
+            "signed_in": d.google.has_token(),
+            "email": d.google.account_email(),
+            # A token without the optional [google] extra looks connected but can
+            # do nothing — the UI shows the remedy instead of a healthy state.
+            "libs_available": libs,
+            "install_hint": None if libs else d.google.install_hint(),
+        }
+
+    @r.post(
+        "/api/google/credentials",
+        response_model=GoogleCredentialsOkOut | GoogleCredentialsErrorOut,
+    )
+    async def google_credentials(payload: CredentialsUpload):
+        """Save an uploaded OAuth client JSON (so users avoid the filesystem)."""
+        try:
+            d.google.save_credentials_json(payload.content)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    @r.post(
+        "/api/google/login_url",
+        response_model=GoogleLoginUrlOkOut | GoogleLoginUrlErrorOut,
+    )
+    async def google_login_url(request: Request):
+        """Build a Google consent URL whose redirect returns to this gateway.
+
+        The user opens the URL (web button or a channel link). AG2ASSISTANT_PUBLIC_URL
+        overrides the redirect base when the gateway is reachable at a public URL
+        (so the round-trip can complete from another device).
+        """
+        if not d.google.is_configured():
+            return {"ok": False, "error": "No OAuth client configured."}
+        base = d.manager.env.get("AG2ASSISTANT_PUBLIC_URL") or str(request.base_url)
+        redirect_uri = base.rstrip("/") + "/api/google/callback"
+        try:
+            auth_url, state, flow = await asyncio.to_thread(d.google.make_login_flow, redirect_uri)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        request.app.state.google_flows[state] = flow
+        return {"ok": True, "auth_url": auth_url}
+
+    @r.get("/api/google/callback", response_class=HTMLResponse)
+    async def google_callback(request: Request, state: str = "", code: str = "", error: str = ""):
+        def _page(title, msg):
+            return (
+                f"<!doctype html><meta charset=utf-8><title>{title}</title>"
+                "<body style='font-family:system-ui;max-width:520px;margin:14vh auto;"
+                "text-align:center;color:#171717'>"
+                f"<h1 style='color:#f95339'>{title}</h1><p>{msg}</p>"
+                "<p style='color:#737373'>You can close this tab.</p></body>"
+            )
+
+        if error:
+            return HTMLResponse(_page("Cancelled", f"Google returned: {error}"))
+        flow = request.app.state.google_flows.pop(state, None)
+        if flow is None or not code:
+            return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
+        try:
+            email = await asyncio.to_thread(d.google.complete_login, flow, code)
+        except Exception as exc:
+            return HTMLResponse(_page("Sign-in failed", str(exc)))
+        # Google tools are gated on has_token() at agent build time — reference-swap
+        # reload every runtime so Gmail/Calendar/Drive attach on the next turn.
+        await reload_all(d.manager)
+        return HTMLResponse(_page("Connected ✓", f"AG2 Assistant is now connected to {email}."))
+
+    @r.post("/api/google/logout", response_model=Ok)
+    async def google_logout():
+        ok = d.google.logout()
+        # Drop the Google tools from every runtime immediately (same gate, reversed).
+        await reload_all(d.manager)
+        return {"ok": ok}
+
+    # ---- OpenAI ChatGPT-subscription OAuth ("Sign in with ChatGPT") ----
+    # Unofficial / gray-area vs OpenAI ToS — see assistant.codex_auth. The flow is a
+    # loopback (localhost:1455) OAuth; the gateway is local + single-user, so it can
+    # run the callback capture itself. Headless setups paste the code via /submit.
+
+    @r.get("/api/codex/status", response_model=CodexStatusResponse)
+    async def codex_status():
+        return d.codex.status()
+
+    @r.post("/api/codex/login_url", response_model=CodexLoginUrlResponse)
+    async def codex_login_url(request: Request):
+        """Begin a ChatGPT sign-in: return the consent URL for the UI to open, and
+        start a background loopback listener (localhost:1455) that completes the flow
+        when OpenAI redirects back. The UI polls GET /api/codex/status."""
+        verifier, challenge = generate_pkce()
+        state = _secrets.token_urlsafe(24)
+        flows = request.app.state.codex_flows
+        flows[state] = verifier
+        url = build_authorize_url(challenge, state)
+
+        async def _complete() -> None:
+            try:
+                code = await asyncio.to_thread(code_reader, state)
+            except Exception:
+                return  # loopback failed/timed out — leave the flow for /submit (headless)
+            if flows.pop(state, None) is None:
+                return  # already completed via /submit
+            try:
+                await asyncio.to_thread(d.codex.exchange_code, code, verifier)
+            except Exception:
+                return
+            await reload_all(d.manager)
+
+        asyncio.create_task(_complete())
+        return {"ok": True, "auth_url": url, "state": state}
+
+    @r.post("/api/codex/submit", response_model=Ok)
+    async def codex_submit(request: Request, payload: CodexCodeRequest):
+        """Headless fallback: exchange a manually pasted auth code for the flow's
+        pending PKCE verifier. Used when the loopback callback can't reach the box
+        (e.g. Docker/remote) — the user copies the ``code`` from the redirect URL."""
+        verifier = request.app.state.codex_flows.pop(payload.state, None)
+        if verifier is None:
+            return JSONResponse(
+                {"ok": False, "error": "unknown or expired sign-in"}, status_code=400
+            )
+        # Accept either the bare code or the whole redirect URL the user copied out
+        # of the browser's address bar (even off the "connection refused" page).
+        code = extract_auth_code(payload.code)
+        try:
+            await asyncio.to_thread(d.codex.exchange_code, code, verifier)
+        except CodexAuthError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        await reload_all(d.manager)
+        return {"ok": True}
+
+    @r.post("/api/codex/logout", response_model=Ok)
+    async def codex_logout():
+        ok = d.codex.logout()
+        await reload_all(d.manager)
+        return {"ok": ok}
 
     return r
 

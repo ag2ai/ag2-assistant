@@ -217,9 +217,7 @@ def test_revoking_a_rule_a_task_never_had_is_a_plain_false(client_pid):
 def test_the_permission_routes_404_on_an_unknown_task(client_pid):
     client, pid = client_pid
     assert client.get(f"/api/p/{pid}/tasks/nope/permissions").status_code == 404
-    r = client.request(
-        "DELETE", f"/api/p/{pid}/tasks/nope/permissions", json={"rule": "run_code"}
-    )
+    r = client.request("DELETE", f"/api/p/{pid}/tasks/nope/permissions", json={"rule": "run_code"})
     assert r.status_code == 404
 
 

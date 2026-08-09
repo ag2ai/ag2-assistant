@@ -46,7 +46,11 @@ test('each mapped route agrees with its zod schema', () => {
       failures.push(`${route}: the gateway declares no 200 body — is response_model attached?`)
       continue
     }
-    const zodJson = z.toJSONSchema(schema) as JsonSchema
+    // `io: 'input'` because the gateway's body is what this schema PARSES. A field
+    // carrying `.default(...)` is required on the output side (parse always fills
+    // it) but optional on the input side — and optional is the truth about the
+    // wire: `Secret.used_by` is sent by GET /api/secrets and by nothing else.
+    const zodJson = z.toJSONSchema(schema, { io: 'input' }) as JsonSchema
     const issues = diff(flatten(zodJson, defsOf(zodJson)), flatten(body, defs))
     if (issues.length) failures.push(`${route}:\n  ${issues.join('\n  ')}`)
   }

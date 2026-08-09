@@ -15,6 +15,27 @@ class ErrorBody(BaseModel):
     error: str
 
 
+class SecretRefOut(BaseModel):
+    """The trimmed Secret view embedded in an LLM or live config.
+
+    Deliberately narrower than the Secret's own view: a config row names the key
+    it points at, it does not restate the Secret's provider tag or Default flag.
+    """
+
+    id: str
+    name: str
+    hint: str
+
+
+class SharedKeyOut(BaseModel):
+    """The provider-wide env key summary both config views carry: which variable
+    holds the fallback key, whether it is set, and its last-4 hint."""
+
+    env: str
+    set: bool
+    hint: str
+
+
 # Attached once to the app and once to the profile router; FastAPI propagates a
 # router-level ``responses`` to every route beneath it, so these six codes are
 # documented for all 130 JSON routes without per-route repetition.
