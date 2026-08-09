@@ -6,10 +6,10 @@ validated against real responses.
 
 from typing import Literal
 
-from .base import ResponseModel
+from pydantic import BaseModel
 
 
-class HealthResponse(ResponseModel):
+class HealthResponse(BaseModel):
     """GET /api/health and the gateway's own status().
 
     The zero-profile stub answers {status, profiles}; a running install answers
@@ -25,7 +25,7 @@ class HealthResponse(ResponseModel):
     profiles: int | None = None
 
 
-class UsageTotalsOut(ResponseModel):
+class UsageTotalsOut(BaseModel):
     """One day's spend: usage.py _blank minus by_model."""
 
     prompt: float
@@ -49,14 +49,14 @@ class UsageRowOut(UsageResponse):
     name: str
 
 
-class UsageRollupResponse(ResponseModel):
+class UsageRollupResponse(BaseModel):
     """GET /api/usage — the install-wide sum carries neither date nor by_model."""
 
     profiles: list[UsageRowOut]
     total: UsageTotalsOut
 
 
-class StatusRowOut(ResponseModel):
+class StatusRowOut(BaseModel):
     """One row of GET /api/status, which answers a bare array, not an envelope."""
 
     pid: str
@@ -65,13 +65,13 @@ class StatusRowOut(ResponseModel):
     unseen_done: int
 
 
-class CodingAgentOut(ResponseModel):
+class CodingAgentOut(BaseModel):
     name: str
     label: str
     available: bool
 
 
-class CodingAgentsResponse(ResponseModel):
+class CodingAgentsResponse(BaseModel):
     """GET /api/coding/agents — `error` appears only when a bridge lookup failed."""
 
     mode: Literal["local", "bridge"]
@@ -81,7 +81,7 @@ class CodingAgentsResponse(ResponseModel):
     agents: list[CodingAgentOut]
 
 
-class CatalogModelOut(ResponseModel):
+class CatalogModelOut(BaseModel):
     """coding/model_catalog.py as_view."""
 
     id: str
@@ -89,7 +89,7 @@ class CatalogModelOut(ResponseModel):
     description: str
 
 
-class CodingCatalogResponse(ResponseModel):
+class CodingCatalogResponse(BaseModel):
     """GET /api/coding/{agent}/models — `reason` says WHY a catalog came back empty."""
 
     models: list[CatalogModelOut]
@@ -97,12 +97,12 @@ class CodingCatalogResponse(ResponseModel):
     reason: Literal["", "adapter_missing", "bridge", "probe_failed"]
 
 
-class FsDirOut(ResponseModel):
+class FsDirOut(BaseModel):
     name: str
     path: str
 
 
-class FsListingOkOut(ResponseModel):
+class FsListingOkOut(BaseModel):
     """GET /api/fs/list, readable directory."""
 
     ok: Literal[True]
@@ -111,7 +111,7 @@ class FsListingOkOut(ResponseModel):
     dirs: list[FsDirOut]
 
 
-class FsListingErrorOut(ResponseModel):
+class FsListingErrorOut(BaseModel):
     """GET /api/fs/list answers 200 with ok:false when the path is unreadable.
 
     Declared as a separate member rather than optional fields on the success
@@ -125,20 +125,20 @@ class FsListingErrorOut(ResponseModel):
     error: str
 
 
-class FsMkdirResponse(ResponseModel):
+class FsMkdirResponse(BaseModel):
     """POST /api/fs/mkdir — failures are non-2xx JSONResponse, not this body."""
 
     ok: Literal[True]
     path: str
 
 
-class MemoryDocResponse(ResponseModel):
+class MemoryDocResponse(BaseModel):
     """GET /api/memory and GET /api/p/{pid}/memory — the raw document text."""
 
     text: str
 
 
-class IdentitySeededResponse(ResponseModel):
+class IdentitySeededResponse(BaseModel):
     """POST /api/identity — seed-only.
 
     `reason` says why a seed was skipped ("empty" or "exists") and is absent on

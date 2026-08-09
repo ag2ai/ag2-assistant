@@ -65,16 +65,11 @@ test('integer and number are treated as equal', () => {
   assert.deepEqual(diff(flatten(a, {}), flatten(b, {})), [])
 })
 
-test('additionalProperties false vs true is not a difference', () => {
-  // zod closes its objects; pydantic with extra="allow" opens them. Comparing
-  // that would make every single route fail.
+test('zod closing its objects is not a difference', () => {
+  // zod emits additionalProperties: false; pydantic emits no such key at all.
+  // Neither says anything about the FIELDS, which is all the gate compares.
   const zodSide = z.toJSONSchema(z.object({ id: z.string() }))
-  const pydanticSide = {
-    type: 'object',
-    properties: { id: { type: 'string' } },
-    required: ['id'],
-    additionalProperties: true,
-  }
+  const pydanticSide = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] }
   assert.equal(zodSide.additionalProperties, false)
   assert.deepEqual(diff(flatten(zodSide, {}), flatten(pydanticSide, {})), [])
 })

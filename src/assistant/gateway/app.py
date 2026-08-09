@@ -160,31 +160,16 @@ from assistant.gateway.profile_manager import (
     ProfileRuntime,
     UnknownProfile,
 )
-from assistant.gateway.schemas import (
-    ERROR_RESPONSES,
-    CodingAgentsResponse,
-    CodingCatalogResponse,
-    FsListingErrorOut,
-    FsListingOkOut,
-    FsMkdirResponse,
-    HealthResponse,
-    IdentitySeededResponse,
-    MemoryDocResponse,
-    Ok,
-    ProfileHealthResponse,
-    StatusRowOut,
-    UsageResponse,
-    UsageRollupResponse,
-)
+from assistant.gateway.routes import settings, system
+from assistant.gateway.routes.deps import GatewayDeps
+from assistant.gateway.schemas import ERROR_RESPONSES
 from assistant.gateway.stream_bridge import StreamBridge
 from assistant.gateway.wire import to_wire
 from assistant.hitl import DurableAsker, GatewayAsker, NullAsker, add_hitl_routes
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.live_configs import LiveConfigStore
 from assistant.llm_configs import LlmConfigStore
-from assistant.memory import read_profile, read_universal, write_profile, write_universal
 from assistant.observability import log_suppressed
-from assistant.onboarding import identity_document
 from assistant.pairing import PairedAccount, PairingStore
 from assistant.peers import Peer, PeerStore
 from assistant.permissions import PermissionStore, command_rule, shell_prefix
@@ -215,9 +200,7 @@ from assistant.workspace import (
     _MAX_WRITE_BYTES,
     delete,
     etag_for_path,
-    invalid_dir_name,
     list_all_dirs,
-    list_dirs,
     list_files,
     make_dir,
     mention_forms,
@@ -328,17 +311,6 @@ class MkdirRequest(BaseModel):
 
     path: str
     chat_id: str = ""
-
-
-class FsMkdirRequest(BaseModel):
-    """Create one subfolder inside a host directory the folder picker is viewing. Distinct
-    from `MkdirRequest`: that one writes into the Files space / a granted Folder, whereas
-    this runs BEFORE any Grant exists (you're choosing the folder to grant), so it is
-    host-scoped like its sibling `GET /api/fs/list`. `name` is a single component, not a
-    path."""
-
-    path: str
-    name: str
 
 
 class MoveRequest(BaseModel):
@@ -483,10 +455,6 @@ class AnswerRequest(BaseModel):
     answer: str
 
 
-class OnboardedRequest(BaseModel):
-    value: bool = True
-
-
 class FocusesRequest(BaseModel):
     focuses: list[str] = []
 
@@ -625,20 +593,6 @@ class GroupProfileRequest(BaseModel):
     profile: str  # the pid to re-point a group Peer at; never null — a group is pinned
 
 
-class MemoryRequest(BaseModel):
-    text: str
-
-
-class IdentityRequest(BaseModel):
-    """Identity answers collected in web onboarding (all optional). Seed the shared
-    universal "who the user is" doc, replacing the CLI first-chat interview."""
-
-    name: str | None = None
-    location: str | None = None
-    hours: str | None = None
-    style: str | None = None
-
-
 class ProfileCreateRequest(BaseModel):
     name: str
     accent: str
@@ -761,31 +715,6 @@ def _chat_asker(runtime: ProfileRuntime, chat_id: str):
     return DurableAsker(NullAsker(), inquiries, chat=chat_id)
 
 
-async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
-    """Per-profile activity for the chip badges, from a single store scan (v2:
-    a Task is standing config, a Run is one execution — this scans runs, not tasks).
-
-    Returns ``(running, unseen_done)``:
-      * ``running``     — runs not yet in a terminal state (RUNNING or NEEDS_INPUT).
-      * ``unseen_done`` — finished, not-yet-opened runs: the count behind the chip's
-        "unread results" dot. Mirrors the nav's per-row unread marker (``isUnread`` =
-        terminal status && not seen), rolled up to the profile.
-    """
-    tasks = runtime.tasks
-    store = getattr(tasks, "store", None) if tasks is not None else None
-    if store is None:
-        return 0, 0
-    try:
-        from assistant.tasks import RunStatus
-
-        runs = await store.list_runs()
-        running = sum(1 for r in runs if r.status not in RunStatus.TERMINAL)
-        unseen_done = sum(1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None)
-        return running, unseen_done
-    except Exception:
-        return 0, 0
-
-
 def create_app(
     profiles: ProfileManager,
     *,
@@ -840,6 +769,24 @@ def create_app(
     acp_bridge = parse_bridge(manager.config.acp_bridge, manager.config.acp_bridge_token)
     # One catalog per app: it owns its TTL cache, so no state leaks between installs.
     catalog = ModelCatalog(search_path=search_path, bridge=acp_bridge)
+    # Everything above, in one parcel for the route modules under gateway/routes/.
+    deps = GatewayDeps(
+        manager=manager,
+        paths=paths,
+        registry=registry,
+        secret_store=secret_store,
+        llm_store=llm_store,
+        live_store=live_store,
+        connection_store=connection_store,
+        pairing_store=pairing_store,
+        peer_store=peer_store,
+        codex=codex,
+        google=google,
+        catalog=catalog,
+        acp_bridge=acp_bridge,
+        search_path=search_path,
+        allowed_origins=allowed_origins,
+    )
 
     def secret_env() -> dict[str, str]:
         """Provider/channel keys as an actual call would see them: the saved secrets
@@ -930,97 +877,9 @@ def create_app(
         # browsers that request /favicon.ico directly get the light AG2 mark
         return FileResponse(_STATIC_DIR / "faviconlight.svg", media_type="image/svg+xml")
 
-    @app.get("/api/health", response_model_exclude_unset=True)
-    async def health() -> HealthResponse:
-        """Process-level status: the first running runtime's gateway status, or a
-        zero-profile stub (fresh install, §3.5)."""
-        runtime = next(manager.runtimes(), None)
-        if runtime is None or runtime.gateway is None:
-            return {"status": "ok", "profiles": 0}
-        return runtime.gateway.status()
-
-    @app.get("/api/coding/agents", response_model_exclude_unset=True)
-    async def coding_agents() -> CodingAgentsResponse:
-        """Read-only status of CLI coding agents (for the Settings "Coding agents"
-        card). In Docker with ``AG2ASSISTANT_ACP_BRIDGE`` set, reports the host
-        bridge and the agents it exposes; otherwise the locally-installed agents.
-        Never raises — an unreachable bridge is reported as ``connected: false``.
-        """
-        from assistant.coding import detect
-
-        endpoint = acp_bridge
-        if endpoint is None:
-            agents = [
-                {"name": a.name, "label": a.label, "available": a.available}
-                for a in detect.detect_agents(search_path)
-            ]
-            return {"mode": "local", "bridge": None, "connected": True, "agents": agents}
-
-        from assistant.coding.bridge_client import BridgeClient
-
-        target = f"{endpoint.host}:{endpoint.port}"
-        try:
-            inventory = await BridgeClient(endpoint).list_agents()
-        except Exception as exc:  # noqa: BLE001 — surface as a disconnected status
-            return {
-                "mode": "bridge",
-                "bridge": target,
-                "connected": False,
-                "error": str(exc),
-                "agents": [],
-            }
-        agents = [{"name": a.name, "label": a.label, "available": a.available} for a in inventory]
-        return {"mode": "bridge", "bridge": target, "connected": True, "agents": agents}
-
-    @app.get("/api/usage", response_model_exclude_unset=True)
-    async def usage() -> UsageRollupResponse:
-        """Install-wide token/cost roll-up across ALL running profiles (for the HUD's
-        "all profiles" total). ``profiles`` is one ``usage_today()`` snapshot per
-        running runtime (with its ``pid``/``name``); ``total`` sums the numeric fields.
-
-        ``total.priced`` is true only when EVERY contributing profile is priced — an
-        unpriced profile means its tokens carry no cost, so the summed ``cost`` is an
-        underestimate and the flag says so (matching the per-profile flag semantics and
-        the HUD's "no price set" fallback). Archived profiles aren't running, so they're
-        naturally excluded. Zero profiles → empty list + a zeroed total.
-        """
-        rows = []
-        total = {"prompt": 0.0, "completion": 0.0, "total": 0.0, "cost": 0.0}
-        all_priced = True
-        any_profile = False
-        for runtime in manager.runtimes():
-            if runtime.gateway is None:
-                continue
-            any_profile = True
-            today = runtime.gateway.usage_today()
-            rows.append({"pid": runtime.pid, "name": runtime.meta.name, **today})
-            for k in total:
-                total[k] += today.get(k) or 0
-            if not today.get("priced"):
-                all_priced = False
-        # Zero profiles (or none priced) → not priced. With profiles present, priced iff
-        # every one is priced (an unpriced profile makes the summed cost incomplete).
-        total["priced"] = bool(any_profile and all_priced)
-        return {"profiles": rows, "total": total}
-
-    @app.get("/api/status", response_model_exclude_unset=True)
-    async def status() -> list[StatusRowOut]:
-        """Per-profile activity for badges: busy = agent alive, running_tasks = count
-        of RUNNING tasks, unseen_done = finished-but-not-yet-opened root tasks (the
-        chip's unread-results dot). Aggregated over the running runtimes."""
-        out = []
-        for runtime in manager.runtimes():
-            gw_status = runtime.gateway.status() if runtime.gateway is not None else {}
-            running, unseen_done = await _activity(runtime)
-            out.append(
-                {
-                    "pid": runtime.pid,
-                    "busy": gw_status.get("status") == "ok",
-                    "running_tasks": running,
-                    "unseen_done": unseen_done,
-                }
-            )
-        return out
+    # The install-wide status surfaces (health, usage, activity, coding agents,
+    # the folder picker, memory, identity) live in gateway/routes/system.py.
+    app.include_router(system.build_router(deps))
 
     @app.post("/api/secrets/key")
     async def set_secrets_key(req: KeyRequest) -> dict:
@@ -1538,51 +1397,6 @@ def create_app(
         if entry is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         return await _ping_live(entry)
-
-    @app.post("/api/onboarded", response_model_exclude_unset=True)
-    async def set_onboarded(req: OnboardedRequest) -> Ok:
-        """Mark first-run onboarding completed/dismissed (install-level, in the registry)."""
-        registry.set_onboarded(req.value)
-        return {"ok": True}
-
-    # ---- Universal memory: the shared "who the user is" doc (root/user.db) ----
-
-    def _user_store_path() -> Path:
-        """The install-wide universal memory DB — the SAME file every profile's agent
-        reads (``root_dir/user.db``). Profile-agnostic, so resolved from the root config."""
-        return paths.root / "user.db"
-
-    @app.get("/api/memory", response_model_exclude_unset=True)
-    async def get_universal_memory() -> MemoryDocResponse:
-        """Read the shared universal "who the user is" document (identity facts injected
-        into EVERY profile's context). Mirrors the per-profile GET /api/p/{pid}/memory."""
-        return {"text": await read_universal(_user_store_path())}
-
-    @app.post("/api/memory", response_model_exclude_unset=True)
-    async def set_universal_memory(req: MemoryRequest) -> Ok:
-        """Replace the shared universal document (a user edit from any profile's Settings →
-        Memory). Read fresh per turn, so all profiles' agents pick it up next turn."""
-        await write_universal(req.text, _user_store_path())
-        return {"ok": True}
-
-    @app.post("/api/identity", response_model_exclude_unset=True)
-    async def seed_identity(req: IdentityRequest) -> IdentitySeededResponse:
-        """Seed the universal "who the user is" doc from web-onboarding identity answers
-        (name/location/hours/style, all optional). Formats them with the SAME
-        `identity_document` helper the CLI interview uses, so both surfaces produce an
-        identical doc. Onboarding semantics: this only ever *seeds* — if the universal
-        store already holds a doc it is left untouched (returns ``seeded: false``), and
-        if every field is empty nothing is written (also ``seeded: false``). This is why
-        a web-onboarded user's first chat never triggers the in-chat interview: the
-        store is already seeded, so `needs_onboarding` is false."""
-        doc = identity_document(req.model_dump())
-        if not doc:
-            return {"ok": True, "seeded": False, "reason": "empty"}
-        path = _user_store_path()
-        if (await read_universal(path)).strip():
-            return {"ok": True, "seeded": False, "reason": "exists"}
-        await write_universal(doc, path)
-        return {"ok": True, "seeded": True}
 
     # ---- Permissions (global, install-wide: one command store shared by every profile) ----
 
@@ -2421,24 +2235,6 @@ def create_app(
     async def codex_status() -> dict:
         return codex.status()
 
-    @app.get("/api/coding/{agent}/models", response_model=CodingCatalogResponse)
-    async def coding_models(agent: str, refresh: bool = False) -> Response:
-        """An ACP adapter's model catalog (agent: "claude" | "codex"), for the
-        Settings model picker: ``{models, current, reason}``. Lazy + guarded — a
-        missing adapter, bridge mode or a broken probe all read as an empty
-        catalog, but ``reason`` says WHICH, so the form explains itself instead of
-        silently degrading to a free-text field. ``?refresh=1`` skips the TTL cache."""
-        if agent not in ("claude", "codex"):
-            return JSONResponse({"ok": False, "error": f"unknown agent: {agent}"}, status_code=404)
-        reason = catalog.unavailable_reason(agent)
-        if reason:  # nothing to spawn — don't pay for a probe that can't work
-            return JSONResponse(as_view([], "", reason))
-        try:
-            models, current = await catalog.list_models(agent, refresh=refresh)
-        except Exception:
-            return JSONResponse(as_view([], "", "probe_failed"))
-        return JSONResponse(as_view(models, current, "" if models else "probe_failed"))
-
     @app.post("/api/codex/login_url")
     async def codex_login_url() -> dict:
         """Begin a ChatGPT sign-in: return the consent URL for the UI to open, and
@@ -2491,39 +2287,6 @@ def create_app(
         await _reload_all_runtimes()
         return {"ok": ok}
 
-    @app.get("/api/fs/list", response_model_exclude_unset=True)
-    async def fs_list(path: str = "") -> FsListingOkOut | FsListingErrorOut:
-        """List immediate subdirectories of a host path — drives the folder picker. The
-        gateway is local + single-user and `_origin_guard` blocks cross-origin, so this is
-        safe; dotfolders are hidden. Empty path starts at home."""
-        result = list_dirs(path or str(paths.home))
-        if result is None:
-            return {"ok": False, "error": "not a readable directory"}
-        return {"ok": True, **result}
-
-    @app.post("/api/fs/mkdir", response_model_exclude_unset=True)
-    async def fs_mkdir(req: FsMkdirRequest) -> FsMkdirResponse:
-        """Create ONE subfolder inside the host directory the picker is viewing, so a
-        working folder can be made without leaving the app. Same trust model as
-        `fs_list` above (local + single-user, `_origin_guard` blocks cross-origin).
-
-        Returns the new folder's ABSOLUTE path — `make_dir` reports a root-relative one,
-        but the picker navigates by absolute path."""
-        if list_dirs(req.path) is None:
-            return JSONResponse({"error": "not a readable directory"}, status_code=400)
-        if (why := invalid_dir_name(req.name)) is not None:
-            return JSONResponse({"error": why}, status_code=400)
-
-        status, _rel = make_dir(req.path, req.name)
-        if status == "ok":
-            return {"ok": True, "path": str(Path(req.path).expanduser().resolve() / req.name)}
-        code, msg = (
-            (409, "A folder with that name already exists")
-            if status == "exists"
-            else (400, "invalid path")
-        )
-        return JSONResponse({"error": msg}, status_code=code)
-
     # ------------------------------------------------------------------ #
     #  Profile-scoped router (/api/p/{pid})                              #
     # ------------------------------------------------------------------ #
@@ -2545,6 +2308,20 @@ def create_app(
             return type(OllamaConfig).__module__ != "unittest.mock"
         except Exception:
             return False
+
+    # The moved slices of /api/p/{pid}: this profile's memory document and today's
+    # spend, and the health roll-up. Included here, after the collaborators the
+    # settings module borrows — all three paths are literal, so nothing is shadowed.
+    p.include_router(system.build_profile_router(deps, get_runtime))
+    p.include_router(
+        settings.build_profile_router(
+            deps,
+            get_runtime,
+            secret_env=secret_env,
+            available_providers=_available_providers,
+            runtime_settings=_runtime_settings,
+        )
+    )
 
     # ---- Chats ----
 
@@ -2833,145 +2610,6 @@ def create_app(
             },
         }
 
-    @p.get("/health", response_model_exclude_unset=True)
-    async def profile_health(
-        runtime: ProfileRuntime = Depends(get_runtime),
-    ) -> ProfileHealthResponse:
-        """Cheap, at-a-glance health of this profile's subsystems — the source for
-        the UI's status dot. Presence/liveness signals ONLY: no MCP subprocess
-        spawns, no provider pings, so it's cheap enough to poll on a short cycle.
-        MCP servers are listed (config only) and probed on demand by the client via
-        ``/settings/mcp/{name}/health``.
-
-        ``overall`` rolls up the *core* signals: ``down`` if the agent isn't alive or
-        the configured provider has no key (the agent can't run); ``warn`` if a
-        channel bound to this profile failed to start; else ``ok``. Google and the
-        scheduler are informational and never move ``overall``.
-        """
-        checks: list[dict] = []
-
-        # Assistant agent — liveness (agent object built + not closed).
-        gw = runtime.gateway.status() if runtime.gateway is not None else {"status": "stopped"}
-        agent_ok = gw.get("status") == "ok"
-        checks.append(
-            {
-                "id": "agent",
-                "label": "Assistant",
-                "state": "ok" if agent_ok else "down",
-                "detail": f"model {gw.get('model')}" if agent_ok else "not running",
-            }
-        )
-
-        # LLM provider — the active named config must be usable (per-config key, a
-        # base_url compat server, Ollama, or the provider's env key). When the store is
-        # empty we fall back to the flat provider's key check (fresh install / CLI).
-        entry = llm_store.active_config()
-        if entry is not None:
-            key_set = llm_store.usable(
-                entry, secret_env(), search_path=search_path, bridge=acp_bridge
-            )
-            detail = f"{entry['name']} · {entry['model']}"
-        else:
-            provider = runtime.config.llm.provider
-            key_set = _available_providers().get(provider, False)
-            detail = f"{provider} · {'key set' if key_set else 'no key'}"
-        checks.append(
-            {
-                "id": "provider",
-                "label": "LLM key",
-                "state": "ok" if key_set else "down",
-                "detail": detail,
-            }
-        )
-
-        # MCP servers — config only; the client probes each on panel open.
-        mcp_servers = _runtime_settings(runtime).list_mcp_servers()
-        enabled = [s for s in mcp_servers if s.get("enabled", True)]
-        checks.append(
-            {
-                "id": "mcp",
-                "label": "MCP servers",
-                "state": "ok" if enabled else "off",
-                "detail": (
-                    f"{len(enabled)} configured"
-                    if enabled
-                    else ("all disabled" if mcp_servers else "none configured")
-                ),
-                "servers": [
-                    {"name": s["name"], "enabled": s.get("enabled", True)} for s in mcp_servers
-                ],
-            }
-        )
-
-        # Connections DEFAULTING to this profile — the ones whose conversations land
-        # here (start-time active/error). Connections themselves are install-level.
-        defaults = registry.connection_defaults()
-        items = [
-            {
-                "connection": c.id,
-                "name": c.name,
-                "platform": c.platform,
-                "active": c.id in manager.channels,
-                "error": manager.channel_errors.get(c.id),
-            }
-            for c in connection_store.list_connections()
-            if defaults.get(c.id) == runtime.pid
-        ]
-        ch_error = any(it["error"] for it in items)
-        checks.append(
-            {
-                "id": "channels",
-                "label": "Messaging",
-                "state": "off" if not items else ("warn" if ch_error else "ok"),
-                # Surface the ACTUAL failure reason (e.g. "Improper token…"), not a
-                # generic "error" — the panel shows this, so it must say what to fix.
-                "detail": (
-                    ", ".join(
-                        (it["error"] or f"{it['name']} active")
-                        if (it["error"] or it["active"])
-                        else f"{it['name']} idle"
-                        for it in items
-                    )
-                    or "none default here"
-                ),
-                "items": items,
-            }
-        )
-
-        # Google — informational (file-presence: configured / signed in).
-        signed_in = google.has_token()
-        email = google.account_email()
-        checks.append(
-            {
-                "id": "google",
-                "label": "Google",
-                "state": "ok" if signed_in else "off",
-                "detail": (
-                    (f"signed in as {email}" if email else "signed in")
-                    if signed_in
-                    else (
-                        "configured — not signed in" if google.is_configured() else "not connected"
-                    )
-                ),
-            }
-        )
-
-        # Task scheduler — informational; single-leader across processes.
-        sched_running = bool(getattr(runtime.tasks, "scheduler_running", False))
-        checks.append(
-            {
-                "id": "scheduler",
-                "label": "Task scheduler",
-                "state": "ok",
-                "detail": "running" if sched_running else "running in another process",
-            }
-        )
-
-        core_down = any(c["state"] == "down" for c in checks if c["id"] in ("agent", "provider"))
-        core_warn = any(c["state"] == "warn" for c in checks if c["id"] == "channels")
-        overall = "down" if core_down else ("warn" if core_warn else "ok")
-        return {"overall": overall, "checks": checks}
-
     async def _mcp_health(server: dict) -> dict:
         tools = build_mcp_tools([server])
         if not tools:
@@ -3234,20 +2872,6 @@ def create_app(
             return JSONResponse({"error": str(exc)}, status_code=400)
         await manager.reload(runtime.pid)
         return {"ok": True, **result, "skills": _profile_skill_rows(runtime)}
-
-    # ---- Memory: view + edit THIS profile's persona memory (profile.db) ----
-    # (The shared universal "who the user is" doc is the global GET/POST /api/memory.)
-
-    @p.get("/memory", response_model_exclude_unset=True)
-    async def get_memory(
-        runtime: ProfileRuntime = Depends(get_runtime),
-    ) -> MemoryDocResponse:
-        return {"text": await read_profile(runtime.config.data_dir / "profile.db")}
-
-    @p.post("/memory", response_model_exclude_unset=True)
-    async def set_memory(req: MemoryRequest, runtime: ProfileRuntime = Depends(get_runtime)) -> Ok:
-        await write_profile(req.text, runtime.config.data_dir / "profile.db")
-        return {"ok": True}
 
     # ---- Workspace (the agent's working file space) ----
 
@@ -3568,11 +3192,6 @@ def create_app(
         if not delete(base, path):
             return JSONResponse({"error": "file not found"}, status_code=404)
         return {"ok": True}
-
-    @p.get("/usage", response_model_exclude_unset=True)
-    async def usage_today(runtime: ProfileRuntime = Depends(get_runtime)) -> UsageResponse:
-        """Today's token + estimated-cost totals (cost & activity HUD)."""
-        return runtime.gateway.usage_today()
 
     app.include_router(p)
 

@@ -108,7 +108,6 @@
         "type": "object"
       },
       "CatalogModelOut": {
-        "additionalProperties": true,
         "description": "coding/model_catalog.py as_view.",
         "properties": {
           "description": {
@@ -192,7 +191,6 @@
         "type": "object"
       },
       "CodingAgentOut": {
-        "additionalProperties": true,
         "properties": {
           "available": {
             "title": "Available",
@@ -216,7 +214,6 @@
         "type": "object"
       },
       "CodingAgentsResponse": {
-        "additionalProperties": true,
         "description": "GET /api/coding/agents \u2014 `error` appears only when a bridge lookup failed.",
         "properties": {
           "agents": {
@@ -271,7 +268,6 @@
         "type": "object"
       },
       "CodingCatalogResponse": {
-        "additionalProperties": true,
         "description": "GET /api/coding/{agent}/models \u2014 `reason` says WHY a catalog came back empty.",
         "properties": {
           "current": {
@@ -409,7 +405,6 @@
         "type": "object"
       },
       "ErrorBody": {
-        "additionalProperties": true,
         "description": "Every error body in app.py has this shape: 105 of them return {\"error\": str}.",
         "properties": {
           "error": {
@@ -535,7 +530,6 @@
         "type": "object"
       },
       "FsDirOut": {
-        "additionalProperties": true,
         "properties": {
           "name": {
             "title": "Name",
@@ -554,7 +548,6 @@
         "type": "object"
       },
       "FsListingErrorOut": {
-        "additionalProperties": true,
         "description": "GET /api/fs/list answers 200 with ok:false when the path is unreadable.\n\nDeclared as a separate member rather than optional fields on the success\nmodel, so the two shapes stay distinguishable \u2014 the Literal on `ok`\ndiscriminates them, which is what keeps the union from coercing one into the\nother. Member ORDER mirrors FsListing in web/src/schemas/system.ts: the gate\nmatches anyOf branches by index.",
         "properties": {
           "error": {
@@ -575,7 +568,6 @@
         "type": "object"
       },
       "FsListingOkOut": {
-        "additionalProperties": true,
         "description": "GET /api/fs/list, readable directory.",
         "properties": {
           "dirs": {
@@ -635,7 +627,6 @@
         "type": "object"
       },
       "FsMkdirResponse": {
-        "additionalProperties": true,
         "description": "POST /api/fs/mkdir \u2014 failures are non-2xx JSONResponse, not this body.",
         "properties": {
           "ok": {
@@ -669,7 +660,6 @@
         "type": "object"
       },
       "HealthChannelOut": {
-        "additionalProperties": true,
         "description": "One connection that defaults to this profile.\n\nField list read off the handler, not off the zod schema: settings.ts used to\ndeclare a `token_present` the gateway never sent, and to omit the `connection`\nand `name` it does send. The zod side was corrected to match this.",
         "properties": {
           "active": {
@@ -711,7 +701,6 @@
         "type": "object"
       },
       "HealthCheckOut": {
-        "additionalProperties": true,
         "description": "One subsystem row. The mcp and channels rows carry extra detail.",
         "properties": {
           "detail": {
@@ -775,7 +764,6 @@
         "type": "object"
       },
       "HealthMcpServerOut": {
-        "additionalProperties": true,
         "properties": {
           "enabled": {
             "title": "Enabled",
@@ -794,7 +782,6 @@
         "type": "object"
       },
       "HealthResponse": {
-        "additionalProperties": true,
         "description": "GET /api/health and the gateway's own status().\n\nThe zero-profile stub answers {status, profiles}; a running install answers\ngateway/core.py status(). Only `status` is common to both, so everything\nelse carries a default.",
         "properties": {
           "chats": {
@@ -915,7 +902,6 @@
         "type": "object"
       },
       "IdentitySeededResponse": {
-        "additionalProperties": true,
         "description": "POST /api/identity \u2014 seed-only.\n\n`reason` says why a seed was skipped (\"empty\" or \"exists\") and is absent on\nthe branch that actually wrote, hence the default.",
         "properties": {
           "ok": {
@@ -1189,7 +1175,6 @@
         "type": "object"
       },
       "MemoryDocResponse": {
-        "additionalProperties": true,
         "description": "GET /api/memory and GET /api/p/{pid}/memory \u2014 the raw document text.",
         "properties": {
           "text": {
@@ -1318,7 +1303,6 @@
         "type": "object"
       },
       "Ok": {
-        "additionalProperties": true,
         "description": "The bare acknowledgement a mutation route answers with.",
         "properties": {
           "ok": {
@@ -1429,7 +1413,6 @@
         "type": "object"
       },
       "ProfileHealthResponse": {
-        "additionalProperties": true,
         "description": "GET /api/p/{pid}/health \u2014 `overall` rolls up the core signals only.",
         "properties": {
           "checks": {
@@ -1671,7 +1654,6 @@
         "type": "object"
       },
       "StatusRowOut": {
-        "additionalProperties": true,
         "description": "One row of GET /api/status, which answers a bare array, not an envelope.",
         "properties": {
           "busy": {
@@ -1831,7 +1813,6 @@
         "type": "object"
       },
       "UsageResponse": {
-        "additionalProperties": true,
         "description": "GET /api/p/{pid}/usage \u2014 today() plus the date it covers.",
         "properties": {
           "by_model": {
@@ -1879,7 +1860,6 @@
         "type": "object"
       },
       "UsageRollupResponse": {
-        "additionalProperties": true,
         "description": "GET /api/usage \u2014 the install-wide sum carries neither date nor by_model.",
         "properties": {
           "profiles": {
@@ -1901,7 +1881,6 @@
         "type": "object"
       },
       "UsageRowOut": {
-        "additionalProperties": true,
         "description": "One profile's row inside the install-wide roll-up.",
         "properties": {
           "by_model": {
@@ -1959,7 +1938,6 @@
         "type": "object"
       },
       "UsageTotalsOut": {
-        "additionalProperties": true,
         "description": "One day's spend: usage.py _blank minus by_model.",
         "properties": {
           "completion": {

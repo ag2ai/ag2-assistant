@@ -1,15 +1,15 @@
 """Bodies that are not specific to any one domain."""
 
-from .base import ResponseModel
+from pydantic import BaseModel
 
 
-class Ok(ResponseModel):
+class Ok(BaseModel):
     """The bare acknowledgement a mutation route answers with."""
 
     ok: bool
 
 
-class ErrorBody(ResponseModel):
+class ErrorBody(BaseModel):
     """Every error body in app.py has this shape: 105 of them return {"error": str}."""
 
     error: str

@@ -66,29 +66,17 @@ def test_error_codes_are_documented_on_a_global_and_a_scoped_route():
             assert ref.endswith("/ErrorBody"), f"{path} {code} -> {ref}"
 
 
-def test_every_schema_model_inherits_response_model():
-    """A model that inherits BaseModel directly would drop undeclared keys."""
-    offenders = []
-    for name in dir(schemas):
-        obj = getattr(schemas, name)
-        if not isinstance(obj, type) or not issubclass(obj, pydantic.BaseModel):
-            continue
-        if obj is schemas.ResponseModel:
-            continue
-        if not issubclass(obj, schemas.ResponseModel):
-            offenders.append(name)
-    assert offenders == [], f"must inherit ResponseModel: {offenders}"
+def test_a_model_drops_keys_it_does_not_declare():
+    """The whole point of response_model: the model is the contract, so a key it
+    does not declare does not reach the client. Completeness is held up by the
+    zod gate and the per-phase body tests, not by letting extras through."""
 
-
-def test_response_model_allows_undeclared_keys():
-    """extra="allow" is the whole safety story: an incomplete model must not
-    silently strip a key the gateway really sends."""
-
-    class Sample(schemas.ResponseModel):
+    class Sample(pydantic.BaseModel):
         declared: str
 
-    parsed = Sample.model_validate({"declared": "x", "undeclared": 1})
-    assert parsed.model_dump() == {"declared": "x", "undeclared": 1}
+    assert Sample.model_validate({"declared": "x", "undeclared": 1}).model_dump() == {
+        "declared": "x"
+    }
 
 
 def test_error_responses_cover_the_codes_app_py_returns():

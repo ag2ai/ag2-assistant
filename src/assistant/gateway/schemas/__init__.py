@@ -7,9 +7,14 @@ its zod twin, not the rollout phase it landed in.
 Naming: a whole HTTP response body takes the ``Response`` suffix
 (``ProfileListResponse``); an entity nested inside a body takes ``Out``
 (``UsageRowOut``).
+
+Models inherit BaseModel directly: the model IS the contract, so a key it does
+not declare does not reach the client. Completeness rests on the zod gate (a
+field declared in zod and missing here fails CI), on the front end stripping
+what its own schema omits, and on the per-phase body tests — not on letting
+undeclared keys through.
 """
 
-from .base import ResponseModel
 from .primitives import ERROR_RESPONSES, ErrorBody, Ok
 from .settings import (
     HealthChannelOut,
@@ -57,7 +62,6 @@ __all__ = [
     "MemoryDocResponse",
     "Ok",
     "ProfileHealthResponse",
-    "ResponseModel",
     "StatusRowOut",
     "UsageResponse",
     "UsageRollupResponse",
