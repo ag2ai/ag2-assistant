@@ -1,5 +1,7 @@
 """Bodies that are not specific to any one domain."""
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -39,11 +41,18 @@ class SharedKeyOut(BaseModel):
 # Attached once to the app and once to the profile router; FastAPI propagates a
 # router-level ``responses`` to every route beneath it, so these six codes are
 # documented for all 130 JSON routes without per-route repetition.
-ERROR_RESPONSES: dict[int, dict[str, type[ErrorBody]]] = {
-    400: {"model": ErrorBody},
-    404: {"model": ErrorBody},
-    409: {"model": ErrorBody},
-    410: {"model": ErrorBody},
-    422: {"model": ErrorBody},
-    502: {"model": ErrorBody},
+#
+# Every entry spells its ``description`` out. Left off, FastAPI falls back to the
+# interpreter's own reason phrase (``http.HTTPStatus``) — and that table CHANGES
+# between versions: 3.13 renamed 422 to "Unprocessable Content" and 413 to
+# "Content Too Large" after RFC 9110. The artifact would then depend on whichever
+# Python generated it, and CI would read a perfectly current file as stale. The
+# phrases below follow RFC 9110 and belong to this repo, not to the stdlib.
+ERROR_RESPONSES: dict[int, dict[str, Any]] = {
+    400: {"model": ErrorBody, "description": "Bad Request"},
+    404: {"model": ErrorBody, "description": "Not Found"},
+    409: {"model": ErrorBody, "description": "Conflict"},
+    410: {"model": ErrorBody, "description": "Gone"},
+    422: {"model": ErrorBody, "description": "Unprocessable Content"},
+    502: {"model": ErrorBody, "description": "Bad Gateway"},
 }

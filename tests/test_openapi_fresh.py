@@ -82,3 +82,33 @@ def test_a_model_drops_keys_it_does_not_declare():
 def test_error_responses_cover_the_codes_app_py_returns():
     assert set(schemas.ERROR_RESPONSES) == {400, 404, 409, 410, 422, 502}
     assert all(spec["model"] is schemas.ErrorBody for spec in schemas.ERROR_RESPONSES.values())
+
+
+def test_no_response_description_is_left_to_the_interpreter():
+    """Every documented response must state its own ``description``.
+
+    Left off, FastAPI falls back to ``http.HTTPStatus``' reason phrase — and that
+    table changes between Python versions (3.13 renamed 422 to "Unprocessable
+    Content" and 413 to "Content Too Large" after RFC 9110). The artifact would
+    then encode the version that generated it, and CI on another interpreter
+    would read a current file as stale. This is how that happened once.
+    """
+    ours = {
+        "200": "Successful Response",  # FastAPI's own constant, not the stdlib's
+        "400": "Bad Request",
+        "403": "Forbidden",
+        "404": "Not Found",
+        "409": "Conflict",
+        "410": "Gone",
+        "413": "Content Too Large",
+        "422": "Unprocessable Content",
+        "502": "Bad Gateway",
+    }
+    unexpected = {
+        f"{method.upper()} {path} {code} -> {response.get('description')!r}"
+        for path, operations in build_schema()["paths"].items()
+        for method, operation in operations.items()
+        for code, response in operation.get("responses", {}).items()
+        if response.get("description") != ours.get(code)
+    }
+    assert unexpected == set(), f"descriptions not spelled out by this repo: {sorted(unexpected)}"

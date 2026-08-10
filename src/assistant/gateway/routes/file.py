@@ -54,10 +54,12 @@ from assistant.workspace import (
     write_text,
 )
 
-# A `read`-only Folder refuses every mutation below with this body.
-DENIED_RESPONSE = {403: {"model": ErrorBody}}
+# A `read`-only Folder refuses every mutation below with this body. The
+# ``description`` is spelled out for the reason ERROR_RESPONSES gives: the
+# interpreter's reason-phrase table is version-dependent, the artifact is not.
+DENIED_RESPONSE = {403: {"model": ErrorBody, "description": "Forbidden"}}
 # ...and the in-place write additionally caps the body it will buffer.
-TOO_LARGE_RESPONSE = {413: {"model": ErrorBody}}
+TOO_LARGE_RESPONSE = {413: {"model": ErrorBody, "description": "Content Too Large"}}
 
 
 class MkdirRequest(BaseModel):

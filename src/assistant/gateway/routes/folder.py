@@ -30,7 +30,7 @@ from assistant.gateway.schemas import (
 
 # The two writes that can collide on a path answer 409 with the Folder already
 # holding it, so the client can point at that one instead of reporting a dead end.
-CONFLICT_RESPONSE = {409: {"model": FolderConflictResponse}}
+CONFLICT_RESPONSE = {409: {"model": FolderConflictResponse, "description": "Conflict"}}
 
 
 class FolderCreateRequest(BaseModel):
