@@ -37,6 +37,7 @@ class TaskCreate(BaseModel):
     model: str | None = None
     schedule: dict | None = None
     description: str = ""
+    recall_depth: int = 0
 
 
 class TaskPatch(BaseModel):
@@ -47,6 +48,7 @@ class TaskPatch(BaseModel):
     paused: bool | None = None
     starred: bool | None = None
     description: str | None = None
+    recall_depth: int | None = None  # 0 = none, -1 = all
 
 
 class AnswerRequest(BaseModel):
@@ -74,6 +76,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
                 model=req.model,
                 schedule=req.schedule,
                 description=req.description,
+                recall_depth=req.recall_depth,
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)

@@ -68,6 +68,7 @@ def test_a_created_task_carries_every_declared_field_and_no_runs_key(client_pid)
         "schedule_desc",
         "paused",
         "starred",
+        "recall_depth",
         "next_run_at",
         "created_at",
         "updated_at",
@@ -76,6 +77,9 @@ def test_a_created_task_carries_every_declared_field_and_no_runs_key(client_pid)
         "needs_input",
     }
     assert task["last_run"] is None
+    # Declared with a default to match the zod twin's `.default(0)`, but the row
+    # always carries it — the flag that would let it go missing is not set here.
+    assert task["recall_depth"] == 0
 
 
 def test_a_manual_schedule_keeps_its_at_and_cron_keys(client_pid):

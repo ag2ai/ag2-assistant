@@ -60,6 +60,11 @@ class TaskOut(BaseModel):
     schedule_desc: str
     paused: bool
     starred: bool
+    # How many earlier runs each run may see: 0 none, RECALL_ALL (-1) all, else a
+    # count. Defaulted, not required, because the zod twin defaults it too — a
+    # server predating the field reads as no recall rather than as junk, and the
+    # gate compares requiredness on the wire. ``_task_row`` always sends it.
+    recall_depth: int = 0
     next_run_at: str | None
     created_at: str
     updated_at: str

@@ -4703,6 +4703,11 @@
             "title": "Prompt",
             "type": "string"
           },
+          "recall_depth": {
+            "default": 0,
+            "title": "Recall Depth",
+            "type": "integer"
+          },
           "schedule": {
             "anyOf": [
               {
@@ -4815,6 +4820,11 @@
             "title": "Prompt",
             "type": "string"
           },
+          "recall_depth": {
+            "default": 0,
+            "title": "Recall Depth",
+            "type": "integer"
+          },
           "schedule": {
             "$ref": "#/components/schemas/ScheduleOut"
           },
@@ -4911,6 +4921,17 @@
               }
             ],
             "title": "Prompt"
+          },
+          "recall_depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Depth"
           },
           "schedule": {
             "anyOf": [
@@ -5018,6 +5039,11 @@
           "prompt": {
             "title": "Prompt",
             "type": "string"
+          },
+          "recall_depth": {
+            "default": 0,
+            "title": "Recall Depth",
+            "type": "integer"
           },
           "runs": {
             "items": {

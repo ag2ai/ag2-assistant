@@ -117,6 +117,32 @@ def test_patch_task_http_starred_toggles(paths):
         assert r.json()["task"]["starred"] is False
 
 
+def test_patch_task_http_recall_depth_round_trips_including_zero(paths):
+    """0 is a real value, not an absent one — the PATCH filter drops None, so turning
+    look-back off needs no clear-sentinel the way `model` does (ADR 0027)."""
+    client, pid = _client(paths)
+    with client:
+        created = client.post(api(pid, "/tasks"), json={"name": "R", "prompt": "p"}).json()["task"]
+        assert created["recall_depth"] == 0  # default off
+        tid = created["id"]
+        r = client.patch(api(pid, f"/tasks/{tid}"), json={"recall_depth": -1})
+        assert r.status_code == 200, r.text
+        assert r.json()["task"]["recall_depth"] == -1
+        r = client.patch(api(pid, f"/tasks/{tid}"), json={"recall_depth": 0})
+        assert r.status_code == 200, r.text
+        assert r.json()["task"]["recall_depth"] == 0
+        r = client.patch(api(pid, f"/tasks/{tid}"), json={"recall_depth": -2})
+        assert r.status_code == 422, r.text
+
+
+def test_create_task_http_accepts_recall_depth(paths):
+    client, pid = _client(paths)
+    with client:
+        r = client.post(api(pid, "/tasks"), json={"name": "R", "prompt": "p", "recall_depth": -1})
+        assert r.status_code == 200, r.text
+        assert r.json()["task"]["recall_depth"] == -1
+
+
 def test_patch_task_http_bad_schedule_is_422(paths):
     client, pid = _client(paths)
     with client:

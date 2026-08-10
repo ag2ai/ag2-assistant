@@ -20,6 +20,7 @@ export type TaskDraft = {
   model?: string | null
   schedule?: Record<string, unknown> | null
   description?: string
+  recall_depth?: number
 }
 
 // TaskPatch — absent means unchanged; model '' clears back to the profile default.
@@ -31,6 +32,7 @@ export type TaskPatchBody = {
   paused?: boolean
   starred?: boolean
   description?: string
+  recall_depth?: number
 }
 
 export const tasksApi = {

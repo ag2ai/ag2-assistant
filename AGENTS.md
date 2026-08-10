@@ -127,7 +127,7 @@ The gateway declares the same shapes as Pydantic response models in
 `src/assistant/gateway/schemas/`, and `docs/openapi.json` is the committed
 artifact tying the two together. CI fails if a zod schema and the gateway
 disagree on field names, requiredness or enum members — the gate remembers this,
-you don't (ADR 0027). When you change a response body in `gateway/`:
+you don't (ADR 0028). When you change a response body in `gateway/`:
 
 1. update the Pydantic model in `gateway/schemas/`;
 2. run `python3 scripts/dump_openapi.py` and commit `docs/openapi.json`;

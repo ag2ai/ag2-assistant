@@ -79,7 +79,7 @@ wire, and only a runtime comparison against the real response can catch them.
   explicitly *not* rejected — but it needs `response_model` on 117 routes first,
   which is a backend project of its own. Hand-written schemas plus a dev-mode
   throw buy the same protection now without touching the gateway. *That backend
-  project is [ADR 0027](0027-openapi-is-the-machine-checked-contract.md); the
+  project is [ADR 0028](0028-openapi-is-the-machine-checked-contract.md); the
   schemas stay hand-written, and generating from them is now a choice rather
   than a prerequisite.*
 - **Types only, no runtime validation.** Rejected by the evidence above: three of
@@ -110,7 +110,7 @@ wire, and only a runtime comparison against the real response can catch them.
   generates them, and nothing on the backend side fails if you forget. The dev
   throw is the safety net, which means **it only fires if someone opens the page**.
   Recorded in `AGENTS.md`. *Superseded by
-  [ADR 0027](0027-openapi-is-the-machine-checked-contract.md): every JSON route
+  [ADR 0028](0028-openapi-is-the-machine-checked-contract.md): every JSON route
   carries a `response_model` and CI compares each zod schema against
   `docs/openapi.json`, so forgetting now fails the build rather than the page.*
 - **`web/diag.mjs` cannot validate schemas.** It answers routes with stubs, so its

@@ -120,7 +120,7 @@ memory, voice, HITL, and the persistent stores hanging off the event-stream spin
   bundle at `/app`, and runs the FastAPI `lifespan` (start/stop of gateway, task
   service, scheduler). The REST routes themselves live in `gateway/routes/`, one
   module per domain, with their Pydantic response models in `gateway/schemas/`
-  (ADR 0027).
+  (ADR 0028).
 - Helpers: `gateway/stream_bridge.py` (replay-then-subscribe bridge to a client),
   `gateway/wire.py` (`to_wire()`, `is_binary_event()` — audio is binary, not JSON).
 

@@ -614,11 +614,20 @@ ask the agent to do it from any chat or channel (see below).
 Every **run** of a task is a real chat, on its own stream
 (`task-run:{run_id}`): open it to watch the agent work live, send a message
 mid-run to steer it, hit **Stop** to end it early (keeping whatever it already
-produced), or keep chatting in it after it finishes. Recent runs' summaries
-feed into the next run's prompt, so a recurring task doesn't repeat itself.
+produced), or keep chatting in it after it finishes.
 
-The task page is inline-editable — change the name, prompt, model, or schedule
-and save, no separate settings screen — with every run listed underneath it,
+**Recall earlier runs** decides what each run knows about the ones before it:
+*No recall* (the default — right for a task about the present, like today's
+weather), *Last N runs*, or *All previous runs*. Reach for it when a run needs
+to know what earlier ones did — to avoid covering the same ground (a daily
+lesson on a new topic each time), or to carry work forward (a running tally, a
+draft in progress). A looking-back run is handed each earlier run's one-line
+outcome and can open any of them in full; a run that failed is listed too, since
+it may have got work done before it stopped. What the run *does* with them is
+for the task's own instructions to say.
+
+The task page is inline-editable — change the name, prompt, model, schedule, or
+what it looks back at, and save, no separate settings screen — with every run listed underneath it,
 each showing a status and a one-line summary. **Run now** starts a run
 immediately without touching the schedule; **Pause** stops a `once`/`cron` task
 from firing again (a paused task never auto-resumes); **Delete** removes the
