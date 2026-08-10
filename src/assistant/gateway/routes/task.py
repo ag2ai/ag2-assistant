@@ -6,6 +6,9 @@ web/src/schemas/task.ts (their zod twins) — same file name in all three trees.
 
 The two ``/tasks/{task_id}/permissions`` routes are NOT here: their zod twin
 (``TaskRules``) lives in permission.ts, so they sit in routes/permission.py.
+``/hitl/pending`` is here for the same reason in reverse — it reads a registry
+this module otherwise knows nothing about, but ``HitlPending`` is declared in
+task.ts, and the client renders its rows in the same strip as the inquiries.
 """
 
 from fastapi import APIRouter, Depends
@@ -15,6 +18,7 @@ from pydantic import BaseModel
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
+    HitlPendingResponse,
     InquiryListResponse,
     NewTaskEnvelopeResponse,
     Ok,
@@ -161,5 +165,13 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         if not ok:
             return Response(status_code=404)
         return {"ok": True}
+
+    @r.get("/hitl/pending", response_model=HitlPendingResponse)
+    async def hitl_pending(runtime: ProfileRuntime = Depends(get_runtime)):
+        """Open questions in THIS profile's TRANSIENT HITL registry, for a UI client
+        to render. It rides with the tasks module because its zod twin
+        (``HitlPending``) is declared in task.ts — the strip merges these rows with
+        the durable inquiries above and renders one list."""
+        return {"pending": runtime.hitl.pending_list()}
 
     return r

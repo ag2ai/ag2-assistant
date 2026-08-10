@@ -75,8 +75,6 @@ from urllib.parse import urlsplit
 import httpx
 from ag2.a2ui.incoming import A2UIIncomingAction, A2UIIncomingActionResult, parse_incoming_message
 from ag2.a2ui.server_action import build_server_action_context, run_server_action
-from ag2.config import OllamaConfig
-from ag2.context import ConversationContext
 from ag2.events import (
     ModelMessage,
     ModelMessageChunk,
@@ -91,11 +89,9 @@ from ag2.events.voice import (
     TranscriptionChunkEvent,
     TranscriptionCompletedEvent,
 )
-from ag2.stream import MemoryStream
 from ag2.tools.skills.skill_search.client import SkillsClient
 from fastapi import (
     APIRouter,
-    Depends,
     FastAPI,
     HTTPException,
     Request,
@@ -109,7 +105,6 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
-from pydantic import BaseModel, Field
 
 from assistant import (
     __version__,
@@ -168,9 +163,6 @@ from assistant.pairing import PairingStore
 from assistant.peers import PeerStore
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import SecretStore
-from assistant.settings import profile_settings
-from assistant.tools.mcp import build_mcp_tools, describe_mcp_error
-from assistant.voice import synthesize_preview
 from assistant.workspace import write_upload
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -230,74 +222,6 @@ _SURFACES = {
 }
 
 
-class FocusesRequest(BaseModel):
-    focuses: list[str] = []
-
-
-class ModelOverrideRequest(BaseModel):
-    # A selection into the shared install-wide list; empty string clears the override
-    # (→ back to the install-wide Active). Used for both the Text and Live switchers.
-    config_id: str = ""
-
-
-class ReplyTimeoutRequest(BaseModel):
-    reply_timeout_s: float = Field(gt=0, le=3600)
-
-
-class VoiceRequest(BaseModel):
-    voice: str
-    # When set, the voice op targets a named live config (its provider/key, and
-    # select persists onto that config) instead of the profile's legacy voice setting.
-    config_id: str | None = None
-
-
-class MCPServerRequest(BaseModel):
-    name: str
-    command: str
-    args: list[str] | str = Field(default_factory=list)
-    env: dict[str, str] | str | None = None
-    cwd: str | None = None
-    allowed_tools: list[str] | str = Field(default_factory=list)
-    blocked_tools: list[str] | str = Field(default_factory=list)
-    enabled: bool = True
-
-
-class VoiceProviderRequest(BaseModel):
-    provider: str
-
-
-class SkillStateRequest(BaseModel):
-    # Enabled (True) / Disabled (False). Install-wide for a Bundled/Global skill via
-    # /api/skills/{name}/state; per-profile for a Profile skill via /api/p/{pid}/skills/{name}/state.
-    enabled: bool
-
-
-class SkillSearchRequest(BaseModel):
-    query: str
-    limit: int = 10
-
-
-class SkillInstallRequest(BaseModel):
-    # A registry install (ADR 0017 t04) passes ``install_id`` (from a search hit).
-    # A git install (t05) passes ``git_url`` + the chosen ``names``. The target is the
-    # surface, not a field here: the Application route lands Global, the profile route
-    # lands in that profile.
-    install_id: str | None = None
-    git_url: str | None = None
-    names: list[str] | None = None
-
-
-class SkillDiscoverRequest(BaseModel):
-    # Scan a git URL (t05) for every SKILL.md without installing. Upload discovery uses
-    # the multipart route instead (a file can't ride a JSON body).
-    git_url: str | None = None
-
-
-class PermissionCommandAddRequest(BaseModel):
-    tool: str
-    prefix: str | None = None  # shell command prefix (e.g. "git"), or null for whole-tool
-
-
 class _HitlDispatcher:
     """Global HITL registry facade over every runtime's per-profile HITL registry.
 
@@ -328,12 +252,6 @@ class _HitlDispatcher:
             if reg.answer(req_id, answer):
                 return True
         return False
-
-
-def _runtime_settings(runtime: ProfileRuntime):
-    """This profile's Settings, resolved from the runtime's derived config."""
-    cfg = runtime.config
-    return profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
 
 
 def create_app(
@@ -545,271 +463,21 @@ def create_app(
 
     p = APIRouter(prefix="/api/p/{pid}", responses=ERROR_RESPONSES)
 
-    def _available_providers() -> dict:
-        """Which providers have a usable key right now — key-only. This is what the
-        VOICE endpoints need (the realtime APIs always talk to the provider's own
-        endpoint, so a base_url never makes a provider available). Assistant model
-        availability is per-config now and lives in the named LLM configs store."""
-        st = secret_store.status(secret_env())
-        avail = {prov: st[prov]["set"] for prov in ("openai", "gemini", "anthropic")}
-        avail["ollama"] = _ollama_installed()
-        return avail
-
-    def _ollama_installed() -> bool:
-        try:
-            return type(OllamaConfig).__module__ != "unittest.mock"
-        except Exception:
-            return False
-
-    # The moved slices of /api/p/{pid}: this profile's memory document and today's
-    # spend, and the health roll-up. Included here, after the collaborators the
-    # settings module borrows — all three paths are literal, so nothing is shadowed.
+    # This profile's memory document and today's spend, then everything behind the
+    # gear: the settings panel, the health roll-up, the MCP list and the voice
+    # picker. No path family below shadows another — every one is either a literal
+    # or unambiguously distinct — so include order here is documentation, not
+    # dispatch: it follows the order these routes were declared in.
     p.include_router(system.build_profile_router(deps, get_runtime))
-    p.include_router(
-        settings.build_profile_router(
-            deps,
-            get_runtime,
-            secret_env=secret_env,
-            available_providers=_available_providers,
-            runtime_settings=_runtime_settings,
-        )
-    )
+    p.include_router(settings.build_profile_router(deps, get_runtime, secret_env=secret_env))
 
-    # The moved /api/p/{pid} domains. All four paths families here are literal or
-    # unambiguously distinct, so including them ahead of the rest of `p` shadows
-    # nothing; the task-scoped permission pair sits in its own module because a
-    # module follows its zod twin (TaskRules is declared in permission.ts).
+    # Chats and the message turn, tasks with their runs and inquiries (plus the
+    # transient HITL questions, whose zod twin lives in task.ts), and the
+    # task-scoped permission pair — in its own module because a module follows its
+    # zod twin (TaskRules is declared in permission.ts).
     p.include_router(chat.build_profile_router(deps, get_runtime))
     p.include_router(task.build_profile_router(deps, get_runtime))
     p.include_router(permission.build_profile_router(deps, get_runtime))
-
-    # ---- HITL pending (this profile's registry) ----
-
-    @p.get("/hitl/pending")
-    async def hitl_pending(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        """Open HITL questions in THIS profile's registry, for a UI client to render."""
-        return {"pending": runtime.hitl.pending_list()}
-
-    # ---- Voice picker: list voices, select (persist), preview (TTS) ----
-
-    @p.get("/voice/voices")
-    async def voice_voices(
-        config_id: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """The voice catalogue + current selection. Scoped to a named live config when
-        ``config_id`` is given (its provider + persisted voice); otherwise the profile's
-        legacy voice-provider setting."""
-        settings = _runtime_settings(runtime)
-        entry = live_store.get_config(config_id) if config_id else None
-        provider = entry["provider"] if entry else settings.voice_provider()
-        p_v = voice_providers.get(provider)
-        current = entry.get("voice") if entry else settings.get_voice(provider)
-        return {
-            "voices": [{"name": n, "style": s} for n, s in p_v.voices.items()],
-            "current": current,
-            "provider": provider,
-            "input_rate": p_v.input_rate,  # mic capture rate the client should use
-        }
-
-    @p.post("/voice/select")
-    async def voice_select(
-        req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Persist the chosen voice — onto the named live config when ``config_id`` is
-        given, else the profile's legacy per-provider voice setting."""
-        if req.config_id:
-            if not live_store.set_voice(req.config_id, req.voice):
-                return Response(status_code=400)
-        elif not _runtime_settings(runtime).set_voice(req.voice):
-            return Response(status_code=400)
-        return {"ok": True, "voice": req.voice}
-
-    @p.post("/voice/preview")
-    async def voice_preview(req: VoiceRequest, runtime: ProfileRuntime = Depends(get_runtime)):
-        settings = _runtime_settings(runtime)
-        entry = live_store.get_config(req.config_id) if req.config_id else None
-        provider = entry["provider"] if entry else None
-        api_key = live_store.resolve_key(entry, secret_env()) if entry else ""
-        # Validate the voice against the target provider's catalogue.
-        catalog = voice_providers.get(provider or settings.voice_provider()).voices
-        if req.voice not in catalog:
-            return Response(status_code=400)
-        try:
-            wav = await synthesize_preview(
-                runtime.config, settings, req.voice, provider=provider, api_key=api_key
-            )
-        except Exception as exc:
-            return Response(content=str(exc)[:200], status_code=502)
-        return Response(content=wav, media_type="audio/wav")
-
-    # ---- Settings ----
-
-    @p.get("/settings")
-    async def get_settings(runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        cfg = runtime.config
-        settings = _runtime_settings(runtime)
-        keys = secret_store.status(secret_env())
-        # Per-profile model Active override (ADR 0015): report BOTH this profile's
-        # override id (None when inherited or dangling) and the EFFECTIVE Active id, so
-        # each header switcher can render the current choice + mark it
-        # inherited-vs-overridden without a second fetch. A dangling override reads as
-        # no override → the install-wide Active (matching the resolution layer).
-        llm_ovr = llm_store.resolved_override(settings.get_llm_override()) or None
-        live_ovr = settings.get_live_override()
-        live_ovr = live_ovr if (live_ovr and live_store.get_config(live_ovr)) else None
-        return {
-            "keys": keys,  # per-provider {set, hint} — never raw
-            # Voice runs on the provider's own realtime endpoint, so a base_url
-            # never makes it available — keys only.
-            "voice_available": {prov: keys[prov]["set"] for prov in ("gemini", "openai")},
-            # Display-only view of the resolved assistant model (the active named LLM
-            # config, derived onto cfg.llm). Managed via /api/llm-configs, not here.
-            "assistant": {"provider": cfg.llm.provider, "model": cfg.llm.model},
-            # Per-profile Text/Live Active override + effective Active (drives the
-            # Profiles-header switchers). override=None → inherits the install-wide.
-            "llm_override": llm_ovr,
-            "llm_active": llm_store.effective_active_id(llm_ovr) or None,
-            "live_override": live_ovr,
-            "live_active": live_ovr or live_store.active_id(),
-            "codex": codex.status(),  # ChatGPT-subscription sign-in state
-            "voice_provider": settings.voice_provider(),
-            "mcp_servers": settings.list_mcp_servers(),
-            "focuses": settings.get_focuses(),  # per-profile persona focus areas
-            "reply_timeout_s": cfg.gateway.reply_timeout_s,
-            "fs": {  # start roots for the folder picker
-                "home": str(paths.home),
-                "cwd": str(Path.cwd()),
-                "workspace": str(Path(cfg.workspace_dir).expanduser()),
-            },
-        }
-
-    async def _mcp_health(server: dict) -> dict:
-        tools = build_mcp_tools([server])
-        if not tools:
-            return {"ok": False, "error": "MCP server is disabled"}
-        toolkit = tools[0]
-        context = ConversationContext(stream=MemoryStream())
-        try:
-            schemas = await toolkit.schemas(context)
-            error = toolkit.last_error
-        finally:
-            # This throwaway toolkit's persistent session would otherwise hold the
-            # server process alive until idle expiry.
-            await toolkit.aclose()
-        # Discovery reports failures rather than raising: an unreachable server
-        # arrives here as a live toolkit offering zero tools.
-        if error is not None:
-            return {"ok": False, "error": describe_mcp_error(error)[:500]}
-        return {
-            "ok": True,
-            "tools": [
-                getattr(getattr(schema, "function", None), "name", "")
-                for schema in schemas
-                if getattr(getattr(schema, "function", None), "name", "")
-            ],
-        }
-
-    @p.post("/settings/mcp")
-    async def add_mcp_server(
-        req: MCPServerRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        settings = _runtime_settings(runtime)
-        try:
-            server = settings.upsert_mcp_server(req.model_dump())
-        except ValueError as exc:
-            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        await manager.reload(runtime.pid)
-        return {"ok": True, "server": server, "mcp_servers": settings.list_mcp_servers()}
-
-    @p.delete("/settings/mcp/{name}")
-    async def delete_mcp_server(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        settings = _runtime_settings(runtime)
-        if not settings.delete_mcp_server(name):
-            return Response(status_code=404)
-        await manager.reload(runtime.pid)
-        return {"ok": True, "mcp_servers": settings.list_mcp_servers()}
-
-    @p.post("/settings/mcp/{name}/health")
-    async def health_mcp_server(name: str, runtime: ProfileRuntime = Depends(get_runtime)) -> dict:
-        server = next(
-            (
-                s
-                for s in _runtime_settings(runtime).list_mcp_servers(include_env=True)
-                if s["name"] == name
-            ),
-            None,
-        )
-        if server is None:
-            return Response(status_code=404)
-        try:
-            return await _mcp_health(server)
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)[:500]}
-
-    @p.post("/settings/focuses")
-    async def set_focuses(
-        req: FocusesRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Persist this profile's focus areas (a persona attribute injected into the
-        agent's context), then reload so the reference-swapped agent picks up the new
-        context line on its next turn."""
-        settings = _runtime_settings(runtime)
-        focuses = settings.set_focuses(req.focuses)
-        await manager.reload(runtime.pid)  # context change → next turn gets the line
-        return {"ok": True, "focuses": focuses}
-
-    @p.post("/settings/llm-override")
-    async def set_llm_override(
-        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Set (or clear, when ``config_id`` is empty) this profile's Active Text model
-        override — a selection into the shared install-wide ``llm_configs`` list, NOT the
-        install-wide Active (the composer switcher still owns that). Reloads this
-        profile's runtime so its next message uses the new model. Unknown id → 404."""
-        settings = _runtime_settings(runtime)
-        cid = (req.config_id or "").strip()
-        if cid and llm_store.get_config(cid) is None:
-            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        settings.set_llm_override(cid)
-        await manager.reload(runtime.pid)  # next turn's agent is built from the new model
-        return {"ok": True, "llm_override": cid or None}
-
-    @p.post("/settings/live-override")
-    async def set_live_override(
-        req: ModelOverrideRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Set (or clear) this profile's Active Live (voice) model override — a
-        selection into the shared install-wide ``live_configs`` list. Read fresh by the
-        voice session at connect, so it takes effect on the NEXT voice session (no
-        runtime reload needed). Unknown id → 404."""
-        settings = _runtime_settings(runtime)
-        cid = (req.config_id or "").strip()
-        if cid and live_store.get_config(cid) is None:
-            return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        settings.set_live_override(cid)
-        return {"ok": True, "live_override": cid or None}
-
-    @p.post("/settings/reply-timeout")
-    async def set_reply_timeout(
-        req: ReplyTimeoutRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        """Persist this profile's chat-turn timeout and reload its runtime."""
-        timeout = _runtime_settings(runtime).set_reply_timeout(req.reply_timeout_s)
-        await manager.reload(runtime.pid)
-        return {"ok": True, "reply_timeout_s": timeout}
-
-    @p.post("/settings/voice_provider")
-    async def set_settings_voice_provider(
-        req: VoiceProviderRequest, runtime: ProfileRuntime = Depends(get_runtime)
-    ) -> dict:
-        provider = req.provider.lower()
-        if not _available_providers().get(provider):
-            return JSONResponse(
-                {"ok": False, "error": f"Add the {provider} API key first."}, status_code=409
-            )
-        if not _runtime_settings(runtime).set_voice_provider(provider):
-            return Response(status_code=400)
-        return {"ok": True}
 
     # The profile's own Skills slice — Suppression of shared skills, own-skill state,
     # and installs that land in this profile only — rides with the install-wide

@@ -14,6 +14,25 @@
         "title": "AnswerRequest",
         "type": "object"
       },
+      "AssistantModelOut": {
+        "description": "Display-only view of the resolved assistant model. Managed through\n/api/llm-configs \u2014 the settings panel shows it and cannot change it.",
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "AssistantModelOut",
+        "type": "object"
+      },
       "Body_discover_profile_skills_upload_api_p__pid__skills_discover_upload_post": {
         "properties": {
           "file": {
@@ -891,6 +910,29 @@
         "title": "FocusesRequest",
         "type": "object"
       },
+      "FocusesSavedResponse": {
+        "description": "POST /api/p/{pid}/settings/focuses \u2014 the NORMALISED list (lowercased,\ndeduped, slugs the input may not have been), which is why the route echoes it\nrather than answering a bare {ok}.",
+        "properties": {
+          "focuses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Focuses",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "focuses"
+        ],
+        "title": "FocusesSavedResponse",
+        "type": "object"
+      },
       "FolderConflictResponse": {
         "description": "409 on create/update: the resolved path is already registered, and the body\npoints at the Folder holding it so the client can offer that one instead of\nreporting a dead end. No ``ok`` key here \u2014 this is an error body that carries\none extra field, not a success envelope.",
         "properties": {
@@ -1364,6 +1406,30 @@
         "title": "FsMkdirResponse",
         "type": "object"
       },
+      "FsRootsOut": {
+        "description": "The filesystem anchors the folder pickers offer as shortcuts.",
+        "properties": {
+          "cwd": {
+            "title": "Cwd",
+            "type": "string"
+          },
+          "home": {
+            "title": "Home",
+            "type": "string"
+          },
+          "workspace": {
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "home",
+          "cwd",
+          "workspace"
+        ],
+        "title": "FsRootsOut",
+        "type": "object"
+      },
       "GoogleCredentialsErrorOut": {
         "description": "POST /api/google/credentials answers 200 with ok:false on a bad client\nJSON \u2014 the upload form shows the parser's message inline rather than\ntreating it as a transport failure. Member ORDER mirrors OkOrError in\nweb/src/schemas/system.ts: the gate matches anyOf branches by index.",
         "properties": {
@@ -1742,6 +1808,79 @@
           "status"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HitlPendingResponse": {
+        "description": "GET /api/p/{pid}/hitl/pending. The strip merges these with the durable\ninquiries, which is why both bodies key on ``pending``.",
+        "properties": {
+          "pending": {
+            "items": {
+              "$ref": "#/components/schemas/HitlQuestionOut"
+            },
+            "title": "Pending",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pending"
+        ],
+        "title": "HitlPendingResponse",
+        "type": "object"
+      },
+      "HitlQuestionOut": {
+        "description": "One open question in this profile's TRANSIENT HITL registry\n(hitl/desktop.py ``pending_list``) \u2014 a different set from the durable\nInquiries above, and a much thinner row: a transient question has no task or\nrun behind it, only the ``path`` of the styled page that answers it.\n\n``detail`` and ``options`` are nullable because ``hitl/base.py`` Question\ndefaults both to None \u2014 no secondary context, and no fixed choices means a\nfree-text answer. The zod twin declared them plain strings, so every prompt\nwithout a detail failed ``safeParse`` and the strip, which catches that and\nsubstitutes an empty list, showed nothing at all.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "detail",
+          "options",
+          "kind",
+          "path"
+        ],
+        "title": "HitlQuestionOut",
         "type": "object"
       },
       "IdentityRequest": {
@@ -2144,6 +2283,33 @@
         "title": "LiveConfigSavedResponse",
         "type": "object"
       },
+      "LiveOverrideSavedResponse": {
+        "description": "POST /api/p/{pid}/settings/live-override \u2014 the Live (voice) counterpart.",
+        "properties": {
+          "live_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Override"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "live_override"
+        ],
+        "title": "LiveOverrideSavedResponse",
+        "type": "object"
+      },
       "LiveProviderOut": {
         "description": "A voice provider's defaults, which seed the add-form and the templates.",
         "properties": {
@@ -2455,6 +2621,33 @@
         "title": "LlmEnvOverrideOut",
         "type": "object"
       },
+      "LlmOverrideSavedResponse": {
+        "description": "POST /api/p/{pid}/settings/llm-override \u2014 null means the override was\ncleared, and this profile is back to the install-wide Active.",
+        "properties": {
+          "llm_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Override"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "llm_override"
+        ],
+        "title": "LlmOverrideSavedResponse",
+        "type": "object"
+      },
       "MCPServerRequest": {
         "properties": {
           "allowed_tools": {
@@ -2546,6 +2739,167 @@
           "command"
         ],
         "title": "MCPServerRequest",
+        "type": "object"
+      },
+      "McpHealthErrorOut": {
+        "description": "An unreachable or disabled server answers 200 with ok:false \u2014 a probe that\nfails is a fact about the server, not a transport error, and the panel shows\nthe reason inline. Member ORDER mirrors McpHealth in\nweb/src/schemas/settings.ts: the gate matches anyOf branches by index.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "ok": {
+            "const": false,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ],
+        "title": "McpHealthErrorOut",
+        "type": "object"
+      },
+      "McpHealthOkOut": {
+        "description": "POST /api/p/{pid}/settings/mcp/{name}/health, server reachable: the tool\nnames its discovery returned.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "tools"
+        ],
+        "title": "McpHealthOkOut",
+        "type": "object"
+      },
+      "McpServerOut": {
+        "description": "One persisted MCP stdio server, in the PUBLIC projection: settings.py\n``list_mcp_servers`` drops ``env`` and offers its key names instead, so a\nserver's secrets never ride a settings fetch.\n\n``env_keys`` carries a default because its zod twin does, and the gate reads\nzod on the input side \u2014 the wire truth is that a route answering this shape\nis free not to send it. Every route that does send it declares\n``response_model_exclude_unset=True`` so the field is echoed, not invented.",
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Args",
+            "type": "array"
+          },
+          "blocked_tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocked Tools",
+            "type": "array"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwd"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "env_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Keys",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "enabled",
+          "command",
+          "args",
+          "cwd",
+          "allowed_tools",
+          "blocked_tools"
+        ],
+        "title": "McpServerOut",
+        "type": "object"
+      },
+      "McpServerSavedResponse": {
+        "description": "POST /api/p/{pid}/settings/mcp \u2014 the one server that was written, beside\nthe refreshed list. The panel re-renders from the list and highlights the\nrow; a bad config is a 400 {ok:false, error} built by hand, not this body.",
+        "properties": {
+          "mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerOut"
+            },
+            "title": "Mcp Servers",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "server": {
+            "$ref": "#/components/schemas/McpServerOut"
+          }
+        },
+        "required": [
+          "ok",
+          "server",
+          "mcp_servers"
+        ],
+        "title": "McpServerSavedResponse",
+        "type": "object"
+      },
+      "McpServersSnapshotResponse": {
+        "description": "DELETE /api/p/{pid}/settings/mcp/{name} \u2014 the list alone, since the row it\nnames is gone.",
+        "properties": {
+          "mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerOut"
+            },
+            "title": "Mcp Servers",
+            "type": "array"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "mcp_servers"
+        ],
+        "title": "McpServersSnapshotResponse",
         "type": "object"
       },
       "MemoryDocResponse": {
@@ -3180,6 +3534,117 @@
         "title": "ProfileOut",
         "type": "object"
       },
+      "ProfileSettingsResponse": {
+        "description": "GET /api/p/{pid}/settings \u2014 everything the settings panel renders.\n\n``codex`` is the very body GET /api/codex/status answers; both are\n``codex_auth.status()``, so the model is reused rather than restated.\n\nThe two override pairs are the ADR 0015 contract: ``*_override`` is what THIS\nprofile pinned (None when it inherits, and also None when the pin dangles),\n``*_active`` the id that actually resolves. The header switchers need both to\nrender a choice and mark it inherited without a second fetch.",
+        "properties": {
+          "assistant": {
+            "$ref": "#/components/schemas/AssistantModelOut"
+          },
+          "codex": {
+            "$ref": "#/components/schemas/CodexStatusResponse"
+          },
+          "focuses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Focuses",
+            "type": "array"
+          },
+          "fs": {
+            "$ref": "#/components/schemas/FsRootsOut"
+          },
+          "keys": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ProviderKeyOut"
+            },
+            "title": "Keys",
+            "type": "object"
+          },
+          "live_active": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Active"
+          },
+          "live_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Override"
+          },
+          "llm_active": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Active"
+          },
+          "llm_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Override"
+          },
+          "mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerOut"
+            },
+            "title": "Mcp Servers",
+            "type": "array"
+          },
+          "reply_timeout_s": {
+            "title": "Reply Timeout S",
+            "type": "number"
+          },
+          "voice_available": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Voice Available",
+            "type": "object"
+          },
+          "voice_provider": {
+            "title": "Voice Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "keys",
+          "voice_available",
+          "assistant",
+          "llm_override",
+          "llm_active",
+          "live_override",
+          "live_active",
+          "codex",
+          "voice_provider",
+          "mcp_servers",
+          "focuses",
+          "reply_timeout_s",
+          "fs"
+        ],
+        "title": "ProfileSettingsResponse",
+        "type": "object"
+      },
       "ProfileSkillInstalledResponse": {
         "description": "The profile's two install routes: same envelope over the profile's own\nprojection, because only this profile reloaded.",
         "properties": {
@@ -3357,6 +3822,42 @@
         "title": "ProviderCatalogResponse",
         "type": "object"
       },
+      "ProviderKeyOut": {
+        "description": "One provider's key presence, from secrets.py ``status()``: a last-4\n``hint`` for every LLM provider and GitHub, and a ``base_url`` instead for\nOllama, which has no key to hint at. Neither field is on both branches, so\nboth carry defaults and GET /settings excludes what went unset.",
+        "properties": {
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "set": {
+            "title": "Set",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "set"
+        ],
+        "title": "ProviderKeyOut",
+        "type": "object"
+      },
       "ReplyTimeoutRequest": {
         "properties": {
           "reply_timeout_s": {
@@ -3370,6 +3871,26 @@
           "reply_timeout_s"
         ],
         "title": "ReplyTimeoutRequest",
+        "type": "object"
+      },
+      "ReplyTimeoutSavedResponse": {
+        "description": "POST /api/p/{pid}/settings/reply-timeout \u2014 the stored value as a float,\nwhich is what the settings store coerced it to.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "reply_timeout_s": {
+            "title": "Reply Timeout S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ok",
+          "reply_timeout_s"
+        ],
+        "title": "ReplyTimeoutSavedResponse",
         "type": "object"
       },
       "RunDetailEnvelopeResponse": {
@@ -4802,6 +5323,64 @@
         "title": "UsageTotalsOut",
         "type": "object"
       },
+      "VoiceCatalogResponse": {
+        "description": "GET /api/p/{pid}/voice/voices \u2014 the catalogue of the provider in scope\nplus the current selection. ``input_rate`` is the mic capture rate the client\nmust use for this provider, so the picker and the voice socket agree.",
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
+          "input_rate": {
+            "title": "Input Rate",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "voices": {
+            "items": {
+              "$ref": "#/components/schemas/VoiceOut"
+            },
+            "title": "Voices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "voices",
+          "current",
+          "provider",
+          "input_rate"
+        ],
+        "title": "VoiceCatalogResponse",
+        "type": "object"
+      },
+      "VoiceOut": {
+        "description": "One voice in a provider's catalogue: its id and the one-line style blurb\nthe picker shows under it.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "style": {
+            "title": "Style",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "style"
+        ],
+        "title": "VoiceOut",
+        "type": "object"
+      },
       "VoiceProviderRequest": {
         "properties": {
           "provider": {
@@ -4837,6 +5416,26 @@
           "voice"
         ],
         "title": "VoiceRequest",
+        "type": "object"
+      },
+      "VoiceSelectedResponse": {
+        "description": "POST /api/p/{pid}/voice/select \u2014 echoes the persisted voice.",
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "voice": {
+            "title": "Voice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "voice"
+        ],
+        "title": "VoiceSelectedResponse",
         "type": "object"
       },
       "WriteResultResponse": {
@@ -11338,7 +11937,7 @@
     },
     "/api/p/{pid}/hitl/pending": {
       "get": {
-        "description": "Open HITL questions in THIS profile's registry, for a UI client to render.",
+        "description": "Open questions in THIS profile's TRANSIENT HITL registry, for a UI client\nto render. It rides with the tasks module because its zod twin\n(``HitlPending``) is declared in task.ts \u2014 the strip merges these rows with\nthe durable inquiries above and renders one list.",
         "operationId": "api_p__pid__hitl_pending_get",
         "parameters": [
           {
@@ -11356,9 +11955,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Hitl Pending Api P  Pid  Hitl Pending Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HitlPendingResponse"
                 }
               }
             },
@@ -12226,6 +12823,7 @@
     },
     "/api/p/{pid}/settings": {
       "get": {
+        "description": "Everything the settings panel renders, in one fetch.\n\n``exclude_unset`` because a provider's key entry carries either a ``hint``\nor a ``base_url``, never both, and an MCP row's ``env_keys`` is optional on\nthe wire \u2014 shipping the missing half as ``null`` is what the zod twin\nrejects.",
         "operationId": "api_p__pid__settings_get",
         "parameters": [
           {
@@ -12243,9 +12841,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Settings Api P  Pid  Settings Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProfileSettingsResponse"
                 }
               }
             },
@@ -12345,9 +12941,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set Focuses Api P  Pid  Settings Focuses Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FocusesSavedResponse"
                 }
               }
             },
@@ -12447,9 +13041,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set Live Override Api P  Pid  Settings Live Override Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LiveOverrideSavedResponse"
                 }
               }
             },
@@ -12549,9 +13141,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set Llm Override Api P  Pid  Settings Llm Override Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LlmOverrideSavedResponse"
                 }
               }
             },
@@ -12650,9 +13240,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Add Mcp Server Api P  Pid  Settings Mcp Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/McpServerSavedResponse"
                 }
               }
             },
@@ -12750,9 +13338,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Mcp Server Api P  Pid  Settings Mcp  Name  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/McpServersSnapshotResponse"
                 }
               }
             },
@@ -12850,9 +13436,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Mcp Server Api P  Pid  Settings Mcp  Name  Health Post",
-                  "type": "object"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/McpHealthOkOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/McpHealthErrorOut"
+                    }
+                  ],
+                  "title": "Response Health Mcp Server Api P  Pid  Settings Mcp  Name  Health Post"
                 }
               }
             },
@@ -12952,9 +13544,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set Reply Timeout Api P  Pid  Settings Reply Timeout Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReplyTimeoutSavedResponse"
                 }
               }
             },
@@ -13053,9 +13643,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set Settings Voice Provider Api P  Pid  Settings Voice Provider Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Ok"
                 }
               }
             },
@@ -15004,6 +15592,7 @@
     },
     "/api/p/{pid}/voice/preview": {
       "post": {
+        "description": "Synthesise a sample clip of one voice. Answers audio/wav bytes rather\nthan JSON, hence ``response_model=None`` \u2014 the one route in this module\nwith nothing for the contract to describe.",
         "operationId": "api_p__pid__voice_preview_post",
         "parameters": [
           {
@@ -15129,9 +15718,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Voice Select Api P  Pid  Voice Select Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/VoiceSelectedResponse"
                 }
               }
             },
@@ -15237,9 +15824,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Voice Voices Api P  Pid  Voice Voices Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/VoiceCatalogResponse"
                 }
               }
             },

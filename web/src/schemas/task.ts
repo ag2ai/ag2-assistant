@@ -97,12 +97,17 @@ export type Inquiry = z.infer<typeof Inquiry>
 export const InquiryList = z.object({ pending: z.array(Inquiry) })
 export type InquiryList = z.infer<typeof InquiryList>
 
-// hitl/desktop.py pending_list — this profile's own registry.
+// hitl/desktop.py pending_list — this profile's own registry. `detail` and
+// `options` are nullable because hitl/base.py Question defaults both to None (no
+// secondary context; no options means a free-text answer). They were declared
+// plain strings here, which made every prompt without a detail fail safeParse —
+// and the strip catches that and renders an empty list, so transient permission
+// prompts never appeared. The OpenAPI gate now holds both sides to this.
 export const HitlQuestion = z.object({
   id: z.string(),
   text: z.string(),
-  detail: z.string(),
-  options: z.array(z.string()),
+  detail: z.string().nullable(),
+  options: z.array(z.string()).nullable(),
   kind: z.string(),
   path: z.string(),
 })

@@ -35,7 +35,20 @@ import { PermissionMutated, PermissionSnapshot, TaskRules } from './permission.t
 import { Ok } from './primitives.ts'
 import { ProfileEnvelope, ProfileList } from './profile.ts'
 import { SecretList, SecretSaved } from './secret.ts'
-import { MemoryDoc, ProfileHealth } from './settings.ts'
+import {
+  FocusesSaved,
+  LiveOverrideSaved,
+  LlmOverrideSaved,
+  McpHealth,
+  McpServerSaved,
+  McpServersSnapshot,
+  MemoryDoc,
+  ProfileHealth,
+  ProfileSettings,
+  ReplyTimeoutSaved,
+  VoiceCatalog,
+  VoiceSelected,
+} from './settings.ts'
 import {
   ProfileSkillInstalled,
   ProfileSkillList,
@@ -47,6 +60,7 @@ import {
   SkillSearchResults,
 } from './skill.ts'
 import {
+  HitlPending,
   InquiryList,
   NewTaskEnvelope,
   RunDetailEnvelope,
@@ -207,6 +221,27 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   // holds the one list it touched.
   'POST /api/permissions/commands': PermissionMutated,
   'DELETE /api/permissions/commands': PermissionMutated,
+  'GET /api/p/{pid}/settings': ProfileSettings,
+  // Add and delete both answer the refreshed list; add also echoes the row it
+  // wrote, because a manual add normalises what the form posted (args split, env
+  // parsed) and the panel has to show what was actually stored.
+  'POST /api/p/{pid}/settings/mcp': McpServerSaved,
+  'DELETE /api/p/{pid}/settings/mcp/{name}': McpServersSnapshot,
+  // The one probe that spawns a server. An unreachable one is a 200 ok:false —
+  // the failure is a fact about the server, not about the request.
+  'POST /api/p/{pid}/settings/mcp/{name}/health': McpHealth,
+  // Each write echoes the one field it changed: the value the store normalised
+  // (focuses), or null for an override that was cleared.
+  'POST /api/p/{pid}/settings/focuses': FocusesSaved,
+  'POST /api/p/{pid}/settings/llm-override': LlmOverrideSaved,
+  'POST /api/p/{pid}/settings/live-override': LiveOverrideSaved,
+  'POST /api/p/{pid}/settings/reply-timeout': ReplyTimeoutSaved,
+  'POST /api/p/{pid}/settings/voice_provider': Ok,
+  'GET /api/p/{pid}/voice/voices': VoiceCatalog,
+  'POST /api/p/{pid}/voice/select': VoiceSelected,
+  // The transient HITL registry, not the durable inquiries above — a different
+  // set, and a thinner row.
+  'GET /api/p/{pid}/hitl/pending': HitlPending,
 }
 
 // No schema by design — the reason is the point of the entry.
@@ -234,19 +269,8 @@ export const UNMAPPED: Record<string, string> = {
   'POST /hitl/{req_id}/answer': 'the HITL page posts to itself; not part of the SPA contract',
 }
 
-// Shrinks to {} as phases land; the value names the phase that will take it.
-export const PENDING: Record<string, string> = {
-  // --- phase 7: settings, voice, hitl ---
-  'GET /api/p/{pid}/settings': 'phase 7',
-  'POST /api/p/{pid}/settings/mcp': 'phase 7',
-  'DELETE /api/p/{pid}/settings/mcp/{name}': 'phase 7',
-  'POST /api/p/{pid}/settings/mcp/{name}/health': 'phase 7',
-  'POST /api/p/{pid}/settings/focuses': 'phase 7',
-  'POST /api/p/{pid}/settings/llm-override': 'phase 7',
-  'POST /api/p/{pid}/settings/live-override': 'phase 7',
-  'POST /api/p/{pid}/settings/reply-timeout': 'phase 7',
-  'POST /api/p/{pid}/settings/voice_provider': 'phase 7',
-  'GET /api/p/{pid}/voice/voices': 'phase 7',
-  'POST /api/p/{pid}/voice/select': 'phase 7',
-  'GET /api/p/{pid}/hitl/pending': 'phase 7',
-}
+// Empty, and it stays that way: the rollout is done, so a route with no schema
+// is now a route someone forgot rather than one whose phase has not arrived. A
+// new route belongs in ROUTES, or in UNMAPPED with the reason it has no body to
+// describe.
+export const PENDING: Record<string, string> = {}

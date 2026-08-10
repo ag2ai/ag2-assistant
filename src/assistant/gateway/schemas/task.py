@@ -135,3 +135,31 @@ class InquiryListResponse(BaseModel):
     """GET /api/p/{pid}/inquiries/pending."""
 
     pending: list[InquiryOut]
+
+
+class HitlQuestionOut(BaseModel):
+    """One open question in this profile's TRANSIENT HITL registry
+    (hitl/desktop.py ``pending_list``) — a different set from the durable
+    Inquiries above, and a much thinner row: a transient question has no task or
+    run behind it, only the ``path`` of the styled page that answers it.
+
+    ``detail`` and ``options`` are nullable because ``hitl/base.py`` Question
+    defaults both to None — no secondary context, and no fixed choices means a
+    free-text answer. The zod twin declared them plain strings, so every prompt
+    without a detail failed ``safeParse`` and the strip, which catches that and
+    substitutes an empty list, showed nothing at all.
+    """
+
+    id: str
+    text: str
+    detail: str | None
+    options: list[str] | None
+    kind: str
+    path: str
+
+
+class HitlPendingResponse(BaseModel):
+    """GET /api/p/{pid}/hitl/pending. The strip merges these with the durable
+    inquiries, which is why both bodies key on ``pending``."""
+
+    pending: list[HitlQuestionOut]
