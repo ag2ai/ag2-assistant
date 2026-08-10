@@ -98,6 +98,11 @@ jobs:
       - name: Typecheck
         working-directory: web
         run: npm run check
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.28" # matches the pin in Dockerfile
+      - name: Install the package (for the OpenAPI dump)
+        run: uv sync --frozen --no-dev
       - name: Unit tests
         working-directory: web
         run: npm test

@@ -78,7 +78,10 @@ wire, and only a runtime comparison against the real response can catch them.
 - **Generate types from the backend's OpenAPI.** The right long-term answer and
   explicitly *not* rejected — but it needs `response_model` on 117 routes first,
   which is a backend project of its own. Hand-written schemas plus a dev-mode
-  throw buy the same protection now without touching the gateway.
+  throw buy the same protection now without touching the gateway. *That backend
+  project is [ADR 0028](0028-openapi-is-the-machine-checked-contract.md); the
+  schemas stay hand-written, and generating from them is now a choice rather
+  than a prerequisite.*
 - **Types only, no runtime validation.** Rejected by the evidence above: three of
   the four defects were front-end declarations disagreeing with the wire, and a
   compiler that checks the front end against itself is exactly blind to that.
@@ -106,7 +109,11 @@ wire, and only a runtime comparison against the real response can catch them.
   `gateway/` and the matching schema must change in the same commit — nothing
   generates them, and nothing on the backend side fails if you forget. The dev
   throw is the safety net, which means **it only fires if someone opens the page**.
-  Recorded in `AGENTS.md`.
+  Recorded in `AGENTS.md`. *Superseded by
+  [ADR 0028](0028-openapi-is-the-machine-checked-contract.md): every JSON route
+  carries a `response_model` and CI compares each zod schema against
+  the gateway's OpenAPI document, so forgetting now fails the build rather than
+  the page.*
 - **`web/diag.mjs` cannot validate schemas.** It answers routes with stubs, so its
   `[schema]` output is an artifact of the mock. The only real check of a schema
   against the backend is a live browser pass — which is why `AGENTS.md` already

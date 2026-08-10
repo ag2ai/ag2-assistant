@@ -18,7 +18,8 @@ Folders that all cover a path, the most permissive surviving Grant wins.
 One install-wide JSON document (``root_dir/folders.json``) with the same
 concurrency machinery as the permission store: mtime self-refresh (a long-lived
 gateway instance sees CLI/API writes), a cross-process file lock around every
-read-modify-write, and atomic replace on save. A Folder whose path no longer
+read-modify-write, an in-process lock for the threads that share ONE instance,
+and atomic replace on save. A Folder whose path no longer
 exists on disk is a badged, repointable state (``exists: false``), never an
 error. Deleting a Folder is always allowed and drops every Grant to it.
 """
@@ -27,6 +28,7 @@ import contextlib
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from secrets import token_hex
 
@@ -59,45 +61,57 @@ class FolderStore:
         self._folders: list[dict] = []
         self._grants: list[dict] = []
         self._stat: tuple[int, int] | None = None
+        # In-process companion to the file lock — see ``_mutate``.
+        self._guard = threading.RLock()
         self._load()
 
     # --- persistence (same shape as PermissionStore: refresh / lock / atomic) ---
 
     def _load(self) -> None:
-        self._folders, self._grants = [], []
-        self._stat = None
-        if self._path is None:
-            return
-        try:
-            st = self._path.stat()
-        except OSError:
-            return
-        self._stat = (st.st_mtime_ns, st.st_size)
-        try:
-            data = json.loads(self._path.read_text())
-        except Exception:
-            return
-        if not isinstance(data, dict):
-            return
-        raw_folders = data.get("folders")
-        raw_grants = data.get("grants")
-        self._folders = (
-            [f for f in raw_folders if isinstance(f, dict)] if isinstance(raw_folders, list) else []
-        )
-        self._grants = (
-            [g for g in raw_grants if isinstance(g, dict)] if isinstance(raw_grants, list) else []
-        )
+        """Replace the in-memory registry with what the file says — in ONE
+        assignment at the end.
+
+        Reading into locals is the whole point: this instance is shared across
+        threads (the gateway's store is read by a task turn on the asyncio portal
+        thread while the API writes to it from another), so clearing the lists
+        first would let a reader observe an EMPTY registry mid-load and conclude a
+        Folder does not exist. ``_stat`` is still recorded for a file that exists
+        but does not parse, so a corrupt document is not re-read on every check.
+        """
+        folders: list[dict] = []
+        grants: list[dict] = []
+        stat: tuple[int, int] | None = None
+        if self._path is not None:
+            try:
+                st = self._path.stat()
+            except OSError:
+                st = None
+            if st is not None:
+                stat = (st.st_mtime_ns, st.st_size)
+                try:
+                    data = json.loads(self._path.read_text())
+                except Exception:
+                    data = None
+                if isinstance(data, dict):
+                    raw_folders = data.get("folders")
+                    raw_grants = data.get("grants")
+                    if isinstance(raw_folders, list):
+                        folders = [f for f in raw_folders if isinstance(f, dict)]
+                    if isinstance(raw_grants, list):
+                        grants = [g for g in raw_grants if isinstance(g, dict)]
+        self._folders, self._grants, self._stat = folders, grants, stat
 
     def _refresh(self) -> None:
         if self._path is None:
             return
-        try:
-            st = self._path.stat()
-            current: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
-        except OSError:
-            current = None
-        if current != self._stat:
-            self._load()
+        with self._guard:
+            try:
+                st = self._path.stat()
+                current: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                current = None
+            if current != self._stat:
+                self._load()
 
     @contextlib.contextmanager
     def _mutate(self):
@@ -106,7 +120,12 @@ class FolderStore:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = self._path.parent / (self._path.name + ".lock")
-        with open(lock_path, "w") as lock:
+        # ``_guard`` before the file lock, always in that order: the file lock
+        # serialises PROCESSES, the guard serialises this process's threads. Without
+        # it a reader's ``_refresh`` could replace ``_grants`` in the middle of a
+        # read-modify-write here, and ``_save`` would then persist the list the
+        # write never touched.
+        with self._guard, open(lock_path, "w") as lock:
             _lock_exclusive(lock)
             try:
                 self._refresh()

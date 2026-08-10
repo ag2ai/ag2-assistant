@@ -123,8 +123,43 @@ cannot drift apart. Every response goes through `transport/validate.ts::parse()`
 in dev a mismatch throws `SchemaError`, in prod it logs `[schema] …` and passes
 the data through. Request bodies are typed but not validated at runtime.
 
-When you change a response body in `gateway/`, update the matching schema in
-`web/src/schemas/` in the same change — nothing generates them from OpenAPI.
+The gateway declares the same shapes as Pydantic response models in
+`src/assistant/gateway/schemas/`, and the gateway's OpenAPI document ties the two
+together. CI fails if a zod schema and the gateway disagree on field names,
+requiredness or enum members — the gate remembers this, you don't (ADR 0028). So
+when you change a response body in `gateway/`, there are only two steps:
+
+1. update the Pydantic model in `gateway/schemas/`;
+2. update the zod schema in `web/src/schemas/` — CI tells you if you forget.
+
+The document is **generated, never committed**: `npm --prefix web test` builds it
+from the app into `web/.openapi.json` (gitignored) before the gate reads it, so
+there is nothing to refresh and nothing to go stale. To read it yourself, or to
+point a code generator at it: `python3 scripts/dump_openapi.py [--out PATH]`.
+
+## Gateway routes (`gateway/routes/`)
+
+`routes/`, `schemas/` and `web/src/schemas/` mirror each other file for file: a
+route, its response model and its zod twin share a module name, and the twin
+picks the module (`/tasks/{id}/permissions` lives in `permission.py` because
+`TaskRules` is declared in `permission.ts`). `app.py` declares no domain route —
+it holds `GatewayDeps`, the lifespan, the WebSockets, static/SPA and the
+`include_router` calls.
+
+- A module exposes `build_router(deps)` and/or
+  `build_profile_router(deps, get_runtime)`; a `create_app` parameter rather than
+  a store (`llm_probe`, `code_reader`, `secret_env`, …) is passed as a keyword
+  argument to the factory instead of joining `GatewayDeps`.
+- A helper two modules need goes in `routes/common.py`.
+- Every route names its model as `response_model=` in the decorator, never as a
+  return annotation, and sits in exactly one bucket of `routes.ts` (`ROUTES`, or
+  `UNMAPPED` with a reason). The model is the contract: a key it does not declare
+  never reaches the client.
+- Add `response_model_exclude_unset=True` only when the model has a defaulted
+  field — otherwise FastAPI ships it as `null`, which the zod twin rejects.
+- Registration order is load-bearing: a literal path goes before the
+  parameterised one covering it (`/api/llm-configs/test` before `/{cid}`).
+  `tests/test_gateway_routes_wiring.py` is the gate.
 
 ## Testing
 

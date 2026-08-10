@@ -57,7 +57,9 @@ test('ProfileHealth carries the mcp servers and channel items on their rows', ()
       },
       {
         id: 'channels', label: 'Channels', state: 'off', detail: '',
-        items: [{ platform: 'telegram', active: false, error: null, token_present: false }],
+        items: [
+          { connection: 'c1', name: 'Work bot', platform: 'telegram', active: false, error: null },
+        ],
       },
     ],
   })
