@@ -380,6 +380,23 @@ class LlmConfigStore:
             opts["api_key"] = "unused"  # never leak the shared key to a custom endpoint
         return opts
 
+    def derive_onto(self, cfg, entry: dict) -> None:
+        """Write one entry onto the flat ``cfg.llm`` fields, in place.
+
+        The single definition of what a configuration *means* downstream. Both
+        callers route through it — :meth:`apply_active` for the Active config, and
+        the gateway's per-chat model override — so a field added here cannot reach
+        one path and miss the other."""
+        provider = PROVIDER_OF[entry["type"]]
+        cfg.llm.provider = provider
+        cfg.llm.model = entry["model"]
+        cfg.llm.provider_options[provider] = self.entry_options(entry)
+        # OpenAI auth mode is a property of the entry's type. Set on EVERY derive
+        # (not just the subscription branch) so switching back to a normal OpenAI
+        # config resets it to key auth. The AG2ASSISTANT_OPENAI_AUTH_MODE env
+        # override still wins last (applied after apply_active in resolve_config).
+        cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
+
     def apply_active(self, cfg, override_id: str | None = None) -> None:
         """Derive the active configuration onto the flat ``cfg.llm`` fields, in place.
 
@@ -397,15 +414,7 @@ class LlmConfigStore:
         entry = self.get_config(self.effective_active_id(override_id))
         if entry is None:
             return
-        provider = PROVIDER_OF[entry["type"]]
-        cfg.llm.provider = provider
-        cfg.llm.model = entry["model"]
-        cfg.llm.provider_options[provider] = self.entry_options(entry)
-        # OpenAI auth mode is a property of the active entry's type. Set it on EVERY
-        # apply (not just the subscription branch) so switching back to a normal OpenAI
-        # config resets it to key auth. The AG2ASSISTANT_OPENAI_AUTH_MODE env override
-        # still wins last (applied after apply_active in resolve_config).
-        cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
+        self.derive_onto(cfg, entry)
 
     def usable(
         self,

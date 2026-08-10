@@ -56,7 +56,7 @@ from assistant.gateway.repair import repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
 from assistant.gateway.wire import is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
-from assistant.llm_configs import PROVIDER_OF, LlmConfigStore
+from assistant.llm_configs import LlmConfigStore
 from assistant.observability import (
     capture_failure,
     log_suppressed,
@@ -301,11 +301,7 @@ class Gateway:
         if entry is None:
             return self._agent
         cfg = copy.deepcopy(self._config)
-        provider = PROVIDER_OF[entry["type"]]
-        cfg.llm.provider = provider
-        cfg.llm.model = entry["model"]
-        cfg.llm.provider_options[provider] = store.entry_options(entry)
-        cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
+        store.derive_onto(cfg, entry)
         agent = self._make_agent(cfg)
         self._model_agents[llm_config_id] = agent
         return agent
