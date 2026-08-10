@@ -75,7 +75,7 @@ def test_an_empty_search_path_means_no_docker():
 
 def test_build_tools_falls_back_when_docker_is_not_on_the_search_path():
     with pytest.warns(UserWarning, match="Docker sandbox requested"):
-        tools = tools_mod.build_agent_tools(provider="gemini", sandbox="docker")
+        tools = tools_mod.build_agent_tools("gemini", sandbox="docker")
     assert len(tools) == 12  # incl. chat-only ask_user + the two coding-agent tools
     local = [t for t in tools if t.name in ("run_shell_command", "run_code")]
     assert len(local) == 2
@@ -88,7 +88,7 @@ def test_build_tools_offers_sandboxed_and_local_when_docker(paths, tmp_path):
     """With Docker available the agent gets BOTH a sandboxed runner (no approval)
     and a host runner (approval-gated) for code AND shell, and chooses per call."""
     tools = tools_mod.build_agent_tools(
-        provider="gemini",
+        "gemini",
         sandbox="docker",
         capabilities=["code"],
         config=_docker_config(paths, tmp_path),
@@ -120,7 +120,7 @@ def test_build_tools_wires_the_container_backend_with_image_and_network(paths, t
         return made[-1]
 
     tools_mod.build_agent_tools(
-        provider="gemini",
+        "gemini",
         sandbox="docker",
         docker_network="bridge",
         capabilities=["code"],

@@ -42,6 +42,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from secrets import token_hex
 
+from assistant.builtin_tools import builtin_ids_for
 from assistant.config import read_global_config, update_global_section
 from assistant.paths import Paths
 from assistant.secrets import SecretStore
@@ -177,6 +178,37 @@ def deps_status(ctype: str, *, extras: Mapping[str, tuple[str, str]] = PROVIDER_
 
 _SECTION = "llm_configs"
 
+# The one provider tool that used to be wired unconditionally, before the switches
+# existed: build_agent_tools gave every Anthropic agent the native WebFetchTool and
+# everyone else our local function tool. See _clean_entry for how it is carried over.
+_LEGACY_BUILTINS = {"anthropic": {"web_fetch": {}}}
+
+
+def _clean_builtin_tools(raw: dict, ctype: str) -> dict:
+    """The enabled provider tools for one entry: ``{tool id: options}``, filtered
+    to what this type actually offers.
+
+    An **absent** key means the entry predates the feature, and is seeded with
+    whatever that type used to get automatically — so upgrading never silently
+    removes a capability nobody was ever shown a switch for. An explicit ``{}``
+    means the user turned everything off and is left alone; that distinction is
+    the whole reason this reads ``raw`` rather than ``raw.get(..., {})``. The
+    first save writes the seeded value out, after which the entry is ordinary."""
+    stored = raw.get("builtin_tools")
+    if stored is None:
+        return dict(_LEGACY_BUILTINS.get(ctype, {}))
+    if not isinstance(stored, dict):
+        raise ValueError("builtin_tools must be a JSON object")
+    offered = builtin_ids_for(ctype)
+    cleaned = {}
+    for tool_id, options in stored.items():
+        if tool_id not in offered:
+            continue  # a type change, or a hand-edited config.yaml
+        if options is not None and not isinstance(options, dict):
+            raise ValueError(f"builtin_tools[{tool_id!r}] options must be a JSON object")
+        cleaned[str(tool_id)] = dict(options or {})
+    return cleaned
+
 
 def _clean_entry(raw: dict) -> dict:
     """Validate and normalise one entry to its canonical shape, raising ``ValueError``
@@ -216,6 +248,7 @@ def _clean_entry(raw: dict) -> dict:
         "host": "" if strip_endpoint else str(raw.get("host") or "").strip(),
         "secret_id": "" if strip_endpoint else str(raw.get("secret_id") or "").strip(),
         "options": {} if is_subscription else options,
+        "builtin_tools": _clean_builtin_tools(raw, ctype),
     }
     if not entry["id"]:
         entry.pop("id")
@@ -389,8 +422,13 @@ class LlmConfigStore:
         one path and miss the other."""
         provider = PROVIDER_OF[entry["type"]]
         cfg.llm.provider = provider
+        # The type as well as the provider: PROVIDER_OF folds the three OpenAI
+        # types into "openai", which cannot tell openai_responses (has provider
+        # tools) from openai (has none).
+        cfg.llm.config_type = entry["type"]
         cfg.llm.model = entry["model"]
         cfg.llm.provider_options[provider] = self.entry_options(entry)
+        cfg.llm.builtin_tools = dict(entry.get("builtin_tools") or {})
         # OpenAI auth mode is a property of the entry's type. Set on EVERY derive
         # (not just the subscription branch) so switching back to a normal OpenAI
         # config resets it to key auth. The AG2ASSISTANT_OPENAI_AUTH_MODE env

@@ -41,6 +41,9 @@ class LlmConfigOut(BaseModel):
     base_url: str
     host: str
     options: dict[str, Any]
+    # {tool id: options} — the provider-native tools switched on for this config.
+    # Availability is per type; see assistant.builtin_tools.
+    builtin_tools: dict[str, dict[str, Any]]
     secret_id: str
     secret: SecretRefOut | None
     secret_missing: bool
@@ -70,6 +73,9 @@ class LlmConfigListResponse(BaseModel):
     active: str | None
     env_override: LlmEnvOverrideOut | None
     provider_deps: dict[str, DepsStatusOut]
+    # type -> the provider-native tool ids it offers, for every type (same reason
+    # as provider_deps). Ids only — the labels are the web's.
+    builtin_tools_by_type: dict[str, list[str]]
 
 
 class LlmConfigSavedResponse(BaseModel):

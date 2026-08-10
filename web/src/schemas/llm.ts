@@ -24,6 +24,10 @@ export const LlmConfig = z.object({
   base_url: z.string(),
   host: z.string(),
   options: z.record(z.string(), z.unknown()),
+  // Provider-native tools switched on, as {tool id: options}. Options are always
+  // empty today — every field on the registered tools is optional — but the shape
+  // is a map so an option panel can land without changing the contract.
+  builtin_tools: z.record(z.string(), z.record(z.string(), z.unknown())),
   secret_id: z.string(),
   secret: SecretRef.nullable(),
   secret_missing: z.boolean(),
@@ -49,6 +53,10 @@ export const LlmConfigList = z.object({
   active: z.string().nullable(),
   env_override: LlmEnvOverride.nullable(),
   provider_deps: z.record(z.string(), DepsStatus),
+  // type -> the provider-native tool ids that type offers. Ids only; the words
+  // are lib/builtinTools.ts's. Every type, not just the configured ones, so the
+  // form can render a type no config uses yet.
+  builtin_tools_by_type: z.record(z.string(), z.array(z.string())),
 })
 export type LlmConfigList = z.infer<typeof LlmConfigList>
 

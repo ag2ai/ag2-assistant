@@ -4,7 +4,7 @@ import { LiveConfigList, LlmConfig, LlmConfigList, PingResult } from './llm.ts'
 
 const base = {
   id: 'c1', name: 'GPT', type: 'openai', model: 'gpt-5', base_url: '', host: '',
-  options: {}, secret_id: 's1', secret: { id: 's1', name: 'k', hint: '…1234' },
+  options: {}, builtin_tools: {}, secret_id: 's1', secret: { id: 's1', name: 'k', hint: '…1234' },
   secret_missing: false, key_source: 'secret', images: true,
   deps: { ok: true, extra: '', install: '' },
   shared_key: { env: 'OPENAI_API_KEY', set: true, hint: '…9999' },
@@ -38,6 +38,7 @@ test('LlmConfig rejects an unknown key_source', () => {
 test('LlmConfigList allows a null active id and a null env override', () => {
   const parsed = LlmConfigList.parse({
     configs: [base], active: null, env_override: null, provider_deps: {},
+    builtin_tools_by_type: {},
   })
   assert.equal(parsed.active, null)
 })
@@ -46,6 +47,7 @@ test('LlmConfigList carries per-type provider deps for unconfigured types too', 
   const parsed = LlmConfigList.parse({
     configs: [], active: null, env_override: { provider: 'openai' },
     provider_deps: { anthropic: { ok: false, extra: 'anthropic', install: 'pip install x' } },
+    builtin_tools_by_type: {},
   })
   assert.equal(parsed.provider_deps.anthropic.ok, false)
 })
@@ -60,4 +62,18 @@ test('LiveConfigList carries the provider catalog', () => {
 
 test('PingResult carries the measured latency', () => {
   assert.equal(PingResult.parse({ ok: true, reply: 'PONG', latency_ms: 42 }).latency_ms, 42)
+})
+
+test('LlmConfig carries the provider tools switched on', () => {
+  const parsed = LlmConfig.parse({ ...base, builtin_tools: { web_search: {} } })
+  assert.deepEqual(parsed.builtin_tools, { web_search: {} })
+})
+
+test('LlmConfigList carries per-type provider tool availability', () => {
+  const parsed = LlmConfigList.parse({
+    configs: [], active: null, env_override: null, provider_deps: {},
+    builtin_tools_by_type: { gemini: ['web_search'], openai: [] },
+  })
+  assert.deepEqual(parsed.builtin_tools_by_type.gemini, ['web_search'])
+  assert.deepEqual(parsed.builtin_tools_by_type.openai, [])
 })

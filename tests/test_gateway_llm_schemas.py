@@ -30,6 +30,7 @@ LLM_CONFIG_KEYS = {
     "base_url",
     "host",
     "options",
+    "builtin_tools",
     "secret_id",
     "secret",
     "secret_missing",
