@@ -124,14 +124,18 @@ in dev a mismatch throws `SchemaError`, in prod it logs `[schema] …` and passe
 the data through. Request bodies are typed but not validated at runtime.
 
 The gateway declares the same shapes as Pydantic response models in
-`src/assistant/gateway/schemas/`, and `docs/openapi.json` is the committed
-artifact tying the two together. CI fails if a zod schema and the gateway
-disagree on field names, requiredness or enum members — the gate remembers this,
-you don't (ADR 0028). When you change a response body in `gateway/`:
+`src/assistant/gateway/schemas/`, and the gateway's OpenAPI document ties the two
+together. CI fails if a zod schema and the gateway disagree on field names,
+requiredness or enum members — the gate remembers this, you don't (ADR 0028). So
+when you change a response body in `gateway/`, there are only two steps:
 
 1. update the Pydantic model in `gateway/schemas/`;
-2. run `python3 scripts/dump_openapi.py` and commit `docs/openapi.json`;
-3. update the zod schema in `web/src/schemas/` — CI tells you if you forget.
+2. update the zod schema in `web/src/schemas/` — CI tells you if you forget.
+
+The document is **generated, never committed**: `npm --prefix web test` builds it
+from the app into `web/.openapi.json` (gitignored) before the gate reads it, so
+there is nothing to refresh and nothing to go stale. To read it yourself, or to
+point a code generator at it: `python3 scripts/dump_openapi.py [--out PATH]`.
 
 ## Gateway routes (`gateway/routes/`)
 

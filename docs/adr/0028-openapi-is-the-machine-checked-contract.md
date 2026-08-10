@@ -1,11 +1,11 @@
 # OpenAPI is the machine-checked contract between gateway and SPA
 
-`docs/openapi.json` is a committed artifact regenerated from `app.openapi()`, and
-CI fails if it drifts from the app, or if a zod schema in `web/src/schemas/`
-disagrees with the gateway body it claims to describe. Every JSON route the
-gateway serves carries a `response_model`; every one of them sits in exactly one
-bucket of `web/src/schemas/routes.ts`. The pairing that was a maintenance
-obligation in ADR 0026 is now a test.
+CI fails if a zod schema in `web/src/schemas/` disagrees with the gateway body it
+claims to describe. Every JSON route the gateway serves carries a
+`response_model`; every one of them sits in exactly one bucket of
+`web/src/schemas/routes.ts`. The comparison runs against the gateway's OpenAPI
+document, **generated from the app when the gate runs** and never committed. The
+pairing that was a maintenance obligation in ADR 0026 is now a test.
 
 ## Context
 
@@ -46,12 +46,15 @@ done: this makes it possible, and deliberately stops there.
   field.** Without it FastAPI ships an absent optional field as `null`, and a zod
   `.optional()` rejects `null`; with it, the model echoes what the handler sent
   instead of inventing keys.
-- **The gate is a committed artifact, the same idiom as the SPA bundle.**
-  `tests/test_openapi_fresh.py` fails if regenerating `docs/openapi.json` produces
-  a diff; `web/src/schemas/routes.test.ts` (a `node --test` job with no Python)
-  compares each mapped route's 200 body against its zod twin. Python and
-  TypeScript live in different CI jobs and cannot see each other's runtime, so a
-  file in git is the only bridge that also works locally.
+- **The document is generated when the gate runs, not committed.**
+  `npm --prefix web test` builds it from the live app through a `pretest` hook
+  (`scripts/gen_openapi.sh` → `scripts/dump_openapi.py --out web/.openapi.json`,
+  gitignored), then `web/src/schemas/routes.test.ts` compares each mapped route's
+  200 body against its zod twin. The cost is Python in the web CI job — route
+  declarations are all the dump needs, so `uv sync --frozen --no-dev` covers it.
+  The gain is that the gate always reads the CURRENT app: there is no second copy
+  of the truth, so no freshness test, no 500 KB of generated diff per route change,
+  and no way to review a schema against a document someone forgot to regenerate.
 - **Comparison depth is field names, requiredness and enum members** — not full
   JSON Schema equality. zod and pydantic disagree on `title`, `description`,
   `format`, integer-vs-number and the exact shape of nullable; comparing those
@@ -99,10 +102,18 @@ done: this makes it possible, and deliberately stops there.
   type checker to notice the difference. It also stops at the handler boundary —
   `FolderStore.list_folders() -> list[dict]` — so the model would be assembled from
   dicts anyway. A real pass at this is mypy plus typed domain layers, separately.
-- **Ship the artifact through CI instead of git** (`upload-artifact` between jobs).
-  Rejected: `npm test` would then not run locally without a Python dump first, and
-  it contradicts the repo's existing idiom — the SPA bundle is committed for the
-  same reason and guarded by the same kind of job.
+- **Commit the document, the same idiom as the SPA bundle.** The first draft did,
+  guarded by a freshness test. Rejected, and the analogy is what was wrong with it:
+  the bundle is committed because it SHIPS — `static/app/` is served out of the
+  installed package — while nothing ships this document, since FastAPI builds
+  `/docs` from the live app. So the committed copy was pure test input that
+  guaranteed only itself, at 500 KB and 19k lines of generated diff per route
+  change, plus a freshness test that failed on things the app never changed: the
+  reason phrases FastAPI takes from `http.HTTPStatus` were renamed in Python 3.13
+  (RFC 9110), so a document generated on 3.14 read as stale under CI's 3.12.
+- **Pass the document between CI jobs** (`upload-artifact`). Rejected: it makes the
+  web job wait on the whole pytest job for one file, and `npm test` still would not
+  work locally. Generating it in the web job is one `uv sync --frozen --no-dev`.
 - **One big decomposition PR, then the models.** Rejected: a 3000-line move is not
   reviewable, and a mistake in it costs the whole change. Domain-by-domain, each
   phase's move is a separate commit from its contract change, so the move can be
@@ -132,10 +143,15 @@ done: this makes it possible, and deliberately stops there.
   left the surviving `$ref` unresolved, so the body read as "no fields" and passed.
   `resolve()` is now `deref ∘ stripNull ∘ deref`. zod inlines nested objects, so
   the asymmetry never showed from the front-end side.
-- **The obligation from ADR 0026 is discharged.** `AGENTS.md` no longer asks
-  anyone to remember the pairing; it points at the gate. What remains manual is
-  running `python3 scripts/dump_openapi.py` and committing the artifact — and a
-  test fails when you don't.
+- **The obligation from ADR 0026 is discharged, and nothing replaced it.**
+  `AGENTS.md` no longer asks anyone to remember the pairing; it points at the gate.
+  Changing a response body is two steps — the model and the zod twin — with no
+  artifact to regenerate and commit, because `npm test` generates it.
+- **Every response documents its own `description`.** Left to FastAPI it comes from
+  `http.HTTPStatus`, whose reason phrases change between Python versions, so a
+  generated client would name the same status differently depending on the
+  interpreter. `tests/test_openapi_schema.py` holds every documented response to a
+  phrase this repo spells out.
 - **`/docs` describes every response body**, which it previously did for one route.
 - **The error codes are documented once, not 130 times.** `ERROR_RESPONSES` is
   attached to the app and to the `/api/p/{pid}` router; FastAPI propagates a

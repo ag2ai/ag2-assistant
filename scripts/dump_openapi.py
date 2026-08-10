@@ -1,13 +1,24 @@
-"""Regenerate docs/openapi.json — the gateway's committed OpenAPI document.
+"""Generate the gateway's OpenAPI document — the input to the zod gate.
 
-Run after changing any route's response model, then commit the result. CI fails
-if the committed file and the app disagree (tests/test_openapi_fresh.py).
+The file is generated, never committed (ADR 0028): nothing ships it, and `web/`
+regenerates it before `npm test`. Run it by hand to read the document, or to point
+a code generator at it.
 
-    python3 scripts/dump_openapi.py
+    python3 scripts/dump_openapi.py                 # → web/.openapi.json
+    python3 scripts/dump_openapi.py --out /tmp/x.json
 """
 
-from assistant.gateway.openapi_schema import ARTIFACT, write_artifact
+import argparse
+from pathlib import Path
+
+from assistant.gateway.openapi_schema import DEFAULT_OUT, write_schema
 
 if __name__ == "__main__":
-    changed = write_artifact()
-    print(f"{'wrote' if changed else 'unchanged'} {ARTIFACT}")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OUT,
+        help=f"where to write the document (default: {DEFAULT_OUT})",
+    )
+    print(f"wrote {write_schema(parser.parse_args().out)}")

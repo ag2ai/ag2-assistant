@@ -8,6 +8,7 @@
     "build": "npm run check && vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "pretest": "sh ../scripts/gen_openapi.sh",
     "test": "node --test 'src/**/*.test.ts'"
   },
   "devDependencies": {

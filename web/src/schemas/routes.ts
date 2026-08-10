@@ -1,5 +1,5 @@
 // Which zod schema describes which gateway response. The key is the real unit of
-// the contract — "METHOD path" exactly as docs/openapi.json spells it — because
+// the contract — "METHOD path" exactly as the OpenAPI document spells it — because
 // the Pydantic names carry a `Response` suffix and cannot be matched by name.
 //
 // Every JSON route belongs to exactly ONE bucket; routes.test.ts fails otherwise,

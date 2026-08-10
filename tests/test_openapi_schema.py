@@ -1,4 +1,9 @@
-"""The OpenAPI artifact and the structural rules that keep it honest."""
+"""The generated OpenAPI document and the structural rules that keep it honest.
+
+There is no freshness test: the document is generated on demand (``npm test``
+regenerates it before the zod gate reads it), so there is no committed copy that
+could go stale. What is worth testing is the document itself.
+"""
 
 import json
 import os
@@ -8,16 +13,15 @@ import sys
 import pydantic
 
 from assistant.gateway import schemas
-from assistant.gateway.openapi_schema import ARTIFACT, build_schema
+from assistant.gateway.openapi_schema import build_schema, write_schema
 
 
-def test_committed_artifact_matches_the_app():
-    """Same idiom as the SPA bundle: the artifact is committed, and regenerating
-    it must produce no diff. Run `python3 scripts/dump_openapi.py` to refresh."""
-    committed = json.loads(ARTIFACT.read_text())
-    assert committed == build_schema(), (
-        "docs/openapi.json is stale — run 'python3 scripts/dump_openapi.py' and commit it"
-    )
+def test_write_schema_writes_what_build_schema_builds(tmp_path):
+    """The one thing a generator has to get right: what lands on disk is the
+    document, at the path asked for."""
+    out = write_schema(tmp_path / "nested" / "openapi.json")
+    assert out.exists()
+    assert json.loads(out.read_text()) == build_schema()
 
 
 def test_schema_generation_is_deterministic_across_processes():

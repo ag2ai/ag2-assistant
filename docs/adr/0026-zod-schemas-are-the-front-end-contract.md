@@ -112,7 +112,8 @@ wire, and only a runtime comparison against the real response can catch them.
   Recorded in `AGENTS.md`. *Superseded by
   [ADR 0028](0028-openapi-is-the-machine-checked-contract.md): every JSON route
   carries a `response_model` and CI compares each zod schema against
-  `docs/openapi.json`, so forgetting now fails the build rather than the page.*
+  the gateway's OpenAPI document, so forgetting now fails the build rather than
+  the page.*
 - **`web/diag.mjs` cannot validate schemas.** It answers routes with stubs, so its
   `[schema]` output is an artifact of the mock. The only real check of a schema
   against the backend is a live browser pass — which is why `AGENTS.md` already
