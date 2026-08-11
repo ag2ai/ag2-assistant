@@ -5,8 +5,8 @@ When AG2 Assistant has no universal profile yet, it asks a handful of questions
 (name, location, working hours, preferred answer style) through the same pluggable
 HITL `Asker` used everywhere else — so it works identically on the desktop popup or
 in Telegram/Discord/Slack. Its answers are identity facts (true in any persona), so
-they seed the shared universal store (``root_dir/user.db``) plus the
-`AG2ASSISTANT_LOCATION` config — not a per-profile store. The gate is therefore
+they seed the shared universal store (``root_dir/user.db``) plus the install's
+``agent.location`` in config.yaml — not a per-profile store. The gate is therefore
 install-wide: the interview runs ONCE (the first chat in whichever profile), not
 once per profile, since every profile reads the same universal document.
 
@@ -89,29 +89,12 @@ async def needs_onboarding(user_store_path: Path) -> bool:
     return not profile.strip()
 
 
-def _persist_location(location: str, paths: Paths | None, env_path: Path | None) -> None:
-    """Persist the answered location in the install's config.yaml (the durable store
-    every later start reads) and in the project `.env` (the dev-time override)."""
-    if paths is not None:
-        agent_section = dict(read_global_config(paths).get("agent") or {})
-        agent_section["location"] = location
-        update_global_section(paths, "agent", agent_section)
-    env_path = env_path or Path(".env")
-    line = f"AG2ASSISTANT_LOCATION={location}"
-    try:
-        if env_path.exists():
-            lines = env_path.read_text().splitlines()
-            for i, existing in enumerate(lines):
-                if existing.startswith("AG2ASSISTANT_LOCATION="):
-                    lines[i] = line
-                    break
-            else:
-                lines.append(line)
-            env_path.write_text("\n".join(lines) + "\n")
-        else:
-            env_path.write_text(line + "\n")
-    except OSError:
-        pass  # env file is best-effort; config.yaml is the store that matters
+def _persist_location(location: str, paths: Paths) -> None:
+    """Persist the answered location in the install's config.yaml — the one store
+    every later start reads, and the one Settings edits."""
+    agent_section = dict(read_global_config(paths).get("agent") or {})
+    agent_section["location"] = location
+    update_global_section(paths, "agent", agent_section)
 
 
 def identity_document(answers: dict[str, str]) -> str:
@@ -156,15 +139,14 @@ def identity_document(answers: dict[str, str]) -> str:
 async def run_onboarding(
     asker: Asker,
     user_store_path: Path,
-    env_path: Path | None = None,
     *,
-    paths: Paths | None = None,
+    paths: Paths,
 ) -> dict[str, str]:
     """Ask the onboarding questions and seed the UNIVERSAL profile + location config.
 
     Returns the (non-skipped) answers; the caller applies the location to its live
-    ``Config`` (this function never writes to the process environment). Without
-    ``paths`` the location is only written to `.env`.
+    ``Config`` (this function never writes to the process environment, nor to any
+    file that becomes it).
 
     Writes to the shared universal store
     (``config.root_dir / "user.db"``, passed as `user_store_path`) since the answers
@@ -181,7 +163,7 @@ async def run_onboarding(
             answers[step.key] = ans.strip()
 
     if answers.get("location"):
-        _persist_location(answers["location"], paths, env_path)
+        _persist_location(answers["location"], paths)
 
     profile_md = identity_document(answers)
     if profile_md:
