@@ -22,6 +22,7 @@ import contextlib
 import json
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from assistant.hitl.base import Asker, Question
 # Cross-platform exclusive file lock for the mutation critical section (_mutate).
 # POSIX has flock; Windows locks a byte range via msvcrt (LK_LOCK retries for ~10s
 # then raises — loop so contention waits instead of failing a mutation).
-if os.name == "nt":  # pragma: no cover — exercised only on Windows
+if sys.platform == "win32":  # pragma: no cover — exercised only on Windows
     import msvcrt  # local: Windows-only module
 
     def _lock_exclusive(fh) -> None:

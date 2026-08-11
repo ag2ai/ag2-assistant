@@ -24,7 +24,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
 
+from ag2 import Agent
 from ag2.a2ui import A2UIMessageEvent
+from ag2.agent import AgentRun
 from ag2.context import ConversationContext
 from ag2.events import (
     ModelMessageChunk,
@@ -148,7 +150,7 @@ class _ActiveTurn:
     ambient cancellation (WS disconnect, shutdown) it must re-raise.
     """
 
-    run: object
+    run: AgentRun
     task: "asyncio.Task"
     cancelled: bool = False
     reason: str = "Stopped"
@@ -185,19 +187,19 @@ class Gateway:
         # global root config, profile-agnostic).
         self._config_factory = config_factory or load_config
         self._onboarding_done = False
-        self._agent = None
+        self._agent: Agent | None = None
         # Last ChatGPT-subscription access token baked into the agent, so a pre-turn
         # refresh only rebuilds the (cached) agent when the token actually rotated.
         self._codex_token: str | None = None
-        self._permissions = None
-        self._folders = None
-        self._event_store = None
-        self._writer = None
+        self._permissions: PermissionStore | None = None
+        self._folders: FolderStore | None = None
+        self._event_store: SerialStore | None = None
+        self._writer: EventLogWriter | None = None
         # async (chat_id, user_text, reply, origin=…) -> None, called once a turn
         # completes: the router pushes it to the Peer Attached to that chat.
-        self._mirror = None
+        self._mirror: Callable | None = None
         # chat_id -> live Stream; plus which chats we've hydrated from disk
-        self._streams: dict[str, object] = {}
+        self._streams: dict[str, MemoryStream] = {}
         self._loaded: set[str] = set()
         # llm_config_id -> its cached per-model Agent (built lazily in _agent_for;
         # cleared on reload() so a settings/config change doesn't keep serving stale
@@ -919,11 +921,14 @@ class Gateway:
             log_suppressed("transcript stub write", exc, chat_id=chat_id)
 
     async def _append_transcript(self, chat_id, user_text, reply_text) -> None:
+        store = self._event_store
+        if store is None:
+            return
         path = self._transcript_path(chat_id)
         doc = {"chat_id": chat_id, "messages": [], "updated": ""}
-        if await self._event_store.exists(path):
+        if await store.exists(path):
             try:
-                doc = json.loads(await self._event_store.read(path))
+                doc = json.loads(await store.read(path) or "")
             except Exception as exc:
                 log_suppressed("existing transcript read", exc, chat_id=chat_id)
         doc["chat_id"] = chat_id
@@ -941,7 +946,7 @@ class Gateway:
                 {"role": "agent", "text": reply_text},
             ]
         doc["updated"] = datetime.now().astimezone().isoformat()
-        await self._event_store.write(path, json.dumps(doc))
+        await store.write(path, json.dumps(doc))
         # After the FIRST complete exchange, name the chat once (async, non-blocking —
         # like ChatGPT/Claude). A single revision: only when there's no title yet.
         if len(doc["messages"]) == 2 and not doc.get("title"):
@@ -958,7 +963,8 @@ class Gateway:
         except Exception as exc:
             log_suppressed("chat title generation", exc, chat_id=chat_id)
             return
-        if not title:
+        store = self._event_store
+        if not title or store is None:
             return
         path = self._transcript_path(chat_id)
         try:
@@ -966,11 +972,11 @@ class Gateway:
             # chat lock so a late-returning titler can't clobber a concurrent user
             # rename/star landing between our read and write.
             async with self._chat_lock(chat_id):
-                doc = json.loads(await self._event_store.read(path))
+                doc = json.loads(await store.read(path) or "")
                 if doc.get("title"):  # already named (single revision) — leave it
                     return
                 doc["title"] = title
-                await self._event_store.write(path, json.dumps(doc))
+                await store.write(path, json.dumps(doc))
         except Exception as exc:
             log_suppressed("chat title persist", exc, chat_id=chat_id)
 
@@ -983,7 +989,7 @@ class Gateway:
         if not await self._event_store.exists(path):
             return {}
         try:
-            return json.loads(await self._event_store.read(path))
+            return json.loads(await self._event_store.read(path) or "")
         except Exception as exc:
             log_suppressed(what, exc, chat_id=chat_id)
             return {}
@@ -1001,7 +1007,7 @@ class Gateway:
             if not entry.endswith(".json"):
                 continue
             try:
-                doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry))
+                doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry) or "")
             except Exception as exc:
                 log_suppressed("chat listing transcript read", exc, entry=entry)
                 continue
@@ -1058,7 +1064,7 @@ class Gateway:
             if not entry.endswith(".json"):
                 continue
             try:
-                doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry))
+                doc = json.loads(await self._event_store.read(_TRANSCRIPT_PREFIX + entry) or "")
             except Exception as exc:
                 log_suppressed("mentions transcript read", exc, entry=entry)
                 continue
@@ -1106,11 +1112,13 @@ class Gateway:
         parts: list[str] = []
         if doc is not None:
             parts.extend(m.get("text", "") for m in doc.get("messages", []))
-        for path in log_paths:
-            try:
-                parts.append(await self._event_store.read(path))
-            except Exception as exc:
-                log_suppressed("mentions log read", exc, stream_id=sid)
+        store = self._event_store
+        if store is not None:
+            for path in log_paths:
+                try:
+                    parts.append(await store.read(path) or "")
+                except Exception as exc:
+                    log_suppressed("mentions log read", exc, stream_id=sid)
         return "\n".join(p for p in parts if p)
 
     async def _mention_row(self, sid: str, doc: dict | None) -> dict | None:
@@ -1221,7 +1229,7 @@ class Gateway:
                 return False
             # Unlike the passive readers, a corrupt doc here should surface, not
             # silently drop the user's edit (and False would read as "unknown chat").
-            doc = json.loads(await self._event_store.read(path))
+            doc = json.loads(await self._event_store.read(path) or "")
             if title is not None and title.strip():
                 # Auto-titler caps at 80 (_clean_title); 200 gives user renames
                 # headroom while still bounding the doc.
@@ -1340,7 +1348,7 @@ def build_gateway(
     agent_factory: Callable | None = None,
     title_factory: Callable | None = None,
     summary_factory: Callable | None = None,
-) -> "tuple[Gateway, object]":
+) -> "tuple[Gateway, TaskService]":
     """Canonical construction: a Gateway wired to its TaskService, so the universal
     agent gets the task system tools (create/schedule/query). Used by the web app and
     every channel command. Returns ``(gateway, task_service)``; the caller starts both

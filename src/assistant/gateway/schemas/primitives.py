@@ -48,7 +48,7 @@ class SharedKeyOut(BaseModel):
 # "Content Too Large" after RFC 9110. The artifact would then depend on whichever
 # Python generated it, and CI would read a perfectly current file as stale. The
 # phrases below follow RFC 9110 and belong to this repo, not to the stdlib.
-ERROR_RESPONSES: dict[int, dict[str, Any]] = {
+ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorBody, "description": "Bad Request"},
     404: {"model": ErrorBody, "description": "Not Found"},
     409: {"model": ErrorBody, "description": "Conflict"},

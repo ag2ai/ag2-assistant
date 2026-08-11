@@ -68,6 +68,7 @@ import base64
 import contextlib
 import uuid
 from collections.abc import Callable, Mapping
+from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -193,7 +194,9 @@ def _allowed_origins(env: Mapping[str, str]) -> set[str]:
     return {o.strip().rstrip("/") for o in raw.split(",") if o.strip()}
 
 
-def _origin_ok(origin: str | None, host: str | None, allowed: set[str] = frozenset()) -> bool:
+def _origin_ok(
+    origin: str | None, host: str | None, allowed: AbstractSet[str] = frozenset()
+) -> bool:
     """Whether a request may proceed, guarding against cross-origin browser
     access to a locally-bound gateway.
 
@@ -511,6 +514,12 @@ def create_app(
         runtime = await _ws_runtime(websocket, pid)
         if runtime is None:
             return
+        # A runtime only enters the manager once started, so these are set — bound
+        # here so the handler reads the started runtime rather than re-checking.
+        gateway, tasks, config = runtime.gateway, runtime.tasks, runtime.config
+        if gateway is None or tasks is None or config is None:
+            await websocket.close(code=1011, reason="profile-not-running")
+            return
         await websocket.accept()
 
         # Archive → close this socket with 4001 (§4.9). Tolerant: a closed socket
@@ -527,7 +536,7 @@ def create_app(
         # this transport needs no per-task branch here; every turn gets the same
         # surface a normal chat would.
         default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
-        bridge = StreamBridge(runtime.gateway, websocket, chat_id)
+        bridge = StreamBridge(gateway, websocket, chat_id)
 
         try:
             await bridge.open()
@@ -553,14 +562,14 @@ def create_app(
                         # AG2's standard fallback for an undeclared Button action is
                         # an agent turn. Preserve its supplied state first, then give
                         # the agent a concise, structured description of the click.
-                        await runtime.gateway.emit_event(
+                        await gateway.emit_event(
                             chat_id,
                             A2UISurfaceDataUpdated(
                                 click.surface_id,
                                 data=click.context if isinstance(click.context, dict) else {},
                             ),
                         )
-                        await runtime.gateway.emit_event(
+                        await gateway.emit_event(
                             chat_id,
                             A2UIActionSubmitted(click.surface_id, action_name=click.name),
                         )
@@ -592,14 +601,14 @@ def create_app(
                         action,
                         click,
                         version=data.get("message", {}).get("version", "v1.0"),
-                        context=build_server_action_context(runtime.gateway._agent),
+                        context=build_server_action_context(gateway._agent),
                     )
                     for message in messages:
                         update = message.get("updateDataModel")
-                        if update and update.get("surfaceId") == click.surface_id:
+                        if isinstance(update, dict) and update.get("surfaceId") == click.surface_id:
                             value = update.get("value")
                             if update.get("path", "/") == "/" and isinstance(value, dict):
-                                await runtime.gateway.emit_event(
+                                await gateway.emit_event(
                                     chat_id, A2UISurfaceDataUpdated(click.surface_id, data=value)
                                 )
                     continue
@@ -611,14 +620,14 @@ def create_app(
                     # inline answer resolves either kind.
                     if not runtime.hitl.answer(iid, ans):
                         with contextlib.suppress(Exception):
-                            await runtime.tasks.answer_inquiry(iid, ans)
+                            await tasks.answer_inquiry(iid, ans)
                     continue
                 if data.get("type") == "cancel":
                     # Stop the turn running on this chat. The gateway cancels the
                     # task driving AG2's run, which AG2 propagates into the turn; a
                     # TurnCancelled event comes back out through the bridge. A no-op
                     # when nothing is in flight.
-                    await runtime.gateway.cancel_turn(chat_id)
+                    await gateway.cancel_turn(chat_id)
                     continue
                 if data.get("type") == "feedback" and data.get("target_id"):
                     # 👍/👎 + mandatory reason on a generated item. Emit it onto the
@@ -630,7 +639,7 @@ def create_app(
                     content = data.get("content") or ""
                     request = data.get("request") or ""
                     with contextlib.suppress(Exception):
-                        await runtime.gateway.emit_event(
+                        await gateway.emit_event(
                             chat_id,
                             FeedbackGiven(
                                 data["target_id"],
@@ -644,7 +653,7 @@ def create_app(
                     if reason:  # reason is mandatory client-side; only learn when present
                         asyncio.create_task(
                             feedback_learner.learn(
-                                runtime.config,
+                                config,
                                 sentiment=sentiment,
                                 reason=reason,
                                 content=content,
@@ -657,7 +666,7 @@ def create_app(
                     # cleared state persists/replays; no learner — unmarking takes back
                     # only the visible thumb, never the memory it already taught.
                     with contextlib.suppress(Exception):
-                        await runtime.gateway.emit_event(
+                        await gateway.emit_event(
                             chat_id,
                             FeedbackCleared(
                                 data["target_id"],
@@ -676,7 +685,7 @@ def create_app(
                 surface = default_surface
                 # Persist uploads into the workspace and tell the agent their paths (via
                 # surface, so the transcript stays clean) — enables editing/reading them.
-                saved = _persist_uploads(runtime.config.workspace_dir, raw_atts)
+                saved = _persist_uploads(config.workspace_dir, raw_atts)
                 if saved:
                     surface = (surface + "\n\n" if surface else "") + (
                         "The user attached file(s), saved in the workspace at: "
@@ -690,11 +699,11 @@ def create_app(
                     # chat stream so it survives reload.
                     for pth, name in saved:
                         with contextlib.suppress(Exception):
-                            await runtime.gateway.emit_event(chat_id, Attachment(pth, name=name))
+                            await gateway.emit_event(chat_id, Attachment(pth, name=name))
                 # Typed while the agent is still working? Feed the live turn instead of
                 # queueing a second one behind it — AG2 drains the message before the
                 # turn's next model call, so the user steers the work in progress.
-                if await runtime.gateway.feed_message(text, chat_id, attachments):
+                if await gateway.feed_message(text, chat_id, attachments):
                     # The agent won't echo it until it drains the inbox, which can be a
                     # whole tool round away. Ack now so the thread can show it as queued
                     # rather than leaving the user wondering if it landed. Transient: the
@@ -732,6 +741,10 @@ def create_app(
         runtime = await _ws_runtime(websocket, pid)
         if runtime is None:
             return
+        gateway = runtime.gateway  # set for any runtime the manager hands out
+        if gateway is None:
+            await websocket.close(code=1011, reason="profile-not-running")
+            return
         await websocket.accept()
 
         # Archive → close this voice socket with 4001 (§4.9), tolerant of a closed sock.
@@ -753,14 +766,14 @@ def create_app(
         # when the other side starts speaking → alternating ModelRequest/ModelResponse.
         user_buf: list[str] = []
         agent_buf: list[str] = []
-        last_role = {"v": None}  # "user" | "agent"
+        last_role: dict[str, str | None] = {"v": None}  # "user" | "agent"
 
         async def _flush_user():
             text = "".join(user_buf).strip()
             user_buf.clear()
             if persist_chat and text:
                 with contextlib.suppress(Exception):
-                    await runtime.gateway.emit_event(
+                    await gateway.emit_event(
                         persist_chat, ModelRequest(parts=[TextInput(content=text)])
                     )
 
@@ -769,7 +782,7 @@ def create_app(
             agent_buf.clear()
             if persist_chat and text:
                 with contextlib.suppress(Exception):
-                    await runtime.gateway.emit_event(
+                    await gateway.emit_event(
                         persist_chat, ModelResponse(message=ModelMessage(content=text))
                     )
 
@@ -785,7 +798,7 @@ def create_app(
         end_requested = asyncio.Event()
 
         try:
-            agent = await runtime.gateway.build_voice_agent(
+            agent = await gateway.build_voice_agent(
                 voice_id=sid,
                 origin_chat=origin_chat,
                 on_event=forward_event,  # delegated universal-agent events → voice client
@@ -826,7 +839,11 @@ def create_app(
                             await _flush_user()  # user turn ended
                         last_role["v"] = "agent"
                         agent_buf.append(e.content)
-                        frame = {"type": "transcript", "role": "agent", "text": e.content}
+                        frame: dict[str, str | bool] = {
+                            "type": "transcript",
+                            "role": "agent",
+                            "text": e.content,
+                        }
                     else:  # user (chunk or completed)
                         if last_role["v"] == "agent":
                             await _flush_agent()  # agent turn ended

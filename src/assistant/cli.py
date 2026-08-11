@@ -139,7 +139,7 @@ def agent(
         os.environ["AG2ASSISTANT_SANDBOX"] = sandbox
     config = _resolve_profile_config(profile)
 
-    async def run() -> str:
+    async def run() -> str | None:
         asker = None
         if permissions:
             asker = DesktopAsker()

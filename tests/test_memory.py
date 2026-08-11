@@ -63,6 +63,13 @@ def test_build_knowledge_config_cadence(tmp_path):
     assert single.aggregate_trigger.on_end is True
 
 
+def test_build_knowledge_config_needs_somewhere_to_persist():
+    # No store and no store_path leaves nothing to write the profile to; say so
+    # rather than failing deep inside the path handling.
+    with pytest.raises(ValueError):
+        build_knowledge_config(platform="cli")
+
+
 def _knowledge_of(agent):
     """The KnowledgeConfig a built agent actually carries (AG2 keeps it here)."""
     return agent._knowledge_context.config

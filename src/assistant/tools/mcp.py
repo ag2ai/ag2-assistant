@@ -22,6 +22,7 @@ from contextlib import AsyncExitStack, ExitStack
 
 from ag2.annotations import Context
 from ag2.events import ToolCallEvent, ToolErrorEvent, ToolResultEvent
+from ag2.events.conditions import OpCondition, check_eq
 from ag2.middleware import BaseMiddleware, ToolExecution, ToolMiddleware
 from ag2.tools import MCPStdioServerConfig
 from ag2.tools.final.function_tool import FunctionDefinition, FunctionToolSchema
@@ -86,7 +87,7 @@ class _PersistentSession:
     def _touch(self) -> None:
         self._last_used = time.monotonic()
 
-    async def _run(self, resolved, ready: asyncio.Future) -> None:
+    async def _run(self, resolved, ready: asyncio.Future, close: asyncio.Event) -> None:
         try:
             async with self._session_factory(resolved) as session:
                 ready.set_result(session)
@@ -95,7 +96,7 @@ class _PersistentSession:
                     if remaining <= 0:
                         return
                     try:
-                        await asyncio.wait_for(self._close.wait(), remaining)
+                        await asyncio.wait_for(close.wait(), remaining)
                         return
                     except TimeoutError:
                         continue  # a call may have touched us mid-wait — recompute
@@ -105,13 +106,14 @@ class _PersistentSession:
 
     async def _session(self, resolved):
         async with self._lock:
-            if self._task is None or self._task.done():
-                self._close = asyncio.Event()
-                self._ready = asyncio.get_running_loop().create_future()
-                self._touch()
-                self._task = asyncio.create_task(self._run(resolved, self._ready))
-            self._touch()
             ready = self._ready
+            if self._task is None or self._task.done() or ready is None:
+                close = asyncio.Event()
+                ready = asyncio.get_running_loop().create_future()
+                self._close, self._ready = close, ready
+                self._touch()
+                self._task = asyncio.create_task(self._run(resolved, ready, close))
+            self._touch()
         try:
             return await asyncio.shield(ready)
         except Exception:
@@ -144,9 +146,10 @@ class _PersistentSession:
         """Close the session (and its server process) now. Safe to call anytime."""
         async with self._lock:
             task, self._task = self._task, None
-            if task is None or task.done():
+            close = self._close
+            if task is None or task.done() or close is None:
                 return
-            self._close.set()
+            close.set()
         try:
             await asyncio.wait_for(task, 10)
         except (TimeoutError, asyncio.CancelledError):
@@ -336,9 +339,10 @@ class _NamespacedMCPProxyTool(Tool):
             result = await execution(event, context)
             await context.send(result)
 
-        stack.enter_context(
-            context.stream.where(ToolCallEvent.name == self.name).sub_scope(execute)
-        )
+        # The `ToolCallEvent.name == self.name` descriptor form builds this exact
+        # condition, but reads to a type checker as a plain bool comparison.
+        calls_this_tool = OpCondition(check_eq, "name", self.name, ToolCallEvent)
+        stack.enter_context(context.stream.where(calls_this_tool).sub_scope(execute))
 
     async def __call__(
         self, event: ToolCallEvent, context: Context

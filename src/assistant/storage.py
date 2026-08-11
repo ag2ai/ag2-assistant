@@ -10,33 +10,50 @@ import asyncio
 import uuid
 from datetime import datetime
 
+from ag2.knowledge import ChangeCallback, ChangeSubscription, KnowledgeStore
+
 
 class SerialStore:
-    """Serialises all ops on an inner KnowledgeStore with one in-process lock."""
+    """Serialises all ops on an inner KnowledgeStore with one in-process lock.
 
-    def __init__(self, inner) -> None:
+    Covers the whole ``KnowledgeStore`` surface, so no op can reach the inner
+    SQLite store outside the lock."""
+
+    def __init__(self, inner: KnowledgeStore) -> None:
         self._inner = inner
         self._lock = asyncio.Lock()
 
-    async def write(self, path, data):
+    async def write(self, path: str, content: str) -> None:
         async with self._lock:
-            return await self._inner.write(path, data)
+            return await self._inner.write(path, content)
 
-    async def read(self, path):
+    async def read(self, path: str) -> str | None:
         async with self._lock:
             return await self._inner.read(path)
 
-    async def list(self, prefix):
+    async def list(self, path: str = "/") -> list[str]:
         async with self._lock:
-            return await self._inner.list(prefix)
+            return await self._inner.list(path)
 
-    async def exists(self, path):
+    async def exists(self, path: str) -> bool:
         async with self._lock:
             return await self._inner.exists(path)
 
-    async def delete(self, path):
+    async def delete(self, path: str) -> None:
         async with self._lock:
             return await self._inner.delete(path)
+
+    async def append(self, path: str, content: str) -> int:
+        async with self._lock:
+            return await self._inner.append(path, content)
+
+    async def read_range(self, path: str, start: int, end: int | None = None) -> str:
+        async with self._lock:
+            return await self._inner.read_range(path, start, end)
+
+    async def on_change(self, path: str, callback: ChangeCallback) -> ChangeSubscription:
+        async with self._lock:
+            return await self._inner.on_change(path, callback)
 
 
 def now_iso() -> str:

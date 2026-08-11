@@ -14,6 +14,9 @@ and the durable-inquiry lifecycle.
 
 from ag2.events import BaseEvent, Field
 
+# AG2 exports `Field` as a descriptor class, so every field declaration below reads
+# as assigning a `Field` to a `str`/`dict`/`list`. Reads return `Any` at runtime.
+
 
 class AssistantEvent(BaseEvent):
     """Marker base for AG2 Assistant app-level events (no fields of its own)."""
