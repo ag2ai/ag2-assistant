@@ -1063,7 +1063,7 @@ async def test_identity_document_endpoint_parity(paths):
     await onboarding.run_onboarding(
         _Asker(["Ada", "London", "9am–6pm", "Short & direct"]),
         user_store_path=cli_store,
-        env_path=paths.root / ".env",
+        paths=paths,
     )
     cli_doc = await build_profile_store(cli_store).read(PROFILE_PATH)
     assert endpoint_doc == cli_doc
