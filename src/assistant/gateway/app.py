@@ -601,7 +601,7 @@ def create_app(
                         action,
                         click,
                         version=data.get("message", {}).get("version", "v1.0"),
-                        context=build_server_action_context(gateway._agent),
+                        context=build_server_action_context(gateway.require_agent()),
                     )
                     for message in messages:
                         update = message.get("updateDataModel")

@@ -10,7 +10,14 @@ import asyncio
 import contextlib
 import time
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    Bot,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MaybeInaccessibleMessage,
+    Message,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -161,42 +168,51 @@ class TelegramChannel(Channel):
         # "" for one a turn in that same chat is waiting on.
         self._questions: dict[int, str] = {}
         # Inquiry id -> the message showing it, so a resolution can take it back.
-        self._shown: dict[str, object] = {}
+        self._shown: dict[str, Message] = {}
 
     async def start(self, router: ChannelRouter) -> None:
         self._router = router
         # concurrent_updates lets a button-tap (callback) be handled WHILE a
         # message handler is blocked awaiting that very answer — otherwise PTB
         # processes updates one-at-a-time and HITL deadlocks.
-        self._app = Application.builder().token(self._token).concurrent_updates(True).build()
-        self._app.add_handler(CallbackQueryHandler(self._on_callback))
+        app = Application.builder().token(self._token).concurrent_updates(True).build()
+        self._app = app
+        app.add_handler(CallbackQueryHandler(self._on_callback))
         # Commands are NOT excluded: the router owns the command surface (ADR 0022),
         # so `/profile` has to reach it rather than being dropped here.
-        self._app.add_handler(MessageHandler(filters.TEXT | filters.ATTACHMENT, self._on_message))
+        app.add_handler(MessageHandler(filters.TEXT | filters.ATTACHMENT, self._on_message))
 
-        await self._app.initialize()
-        me = await self._app.bot.get_me()
+        await app.initialize()
+        me = await app.bot.get_me()
         self._bot_username = me.username
         self._bot_id = me.id
         await self._publish_commands()
-        await self._app.start()
-        await self._app.updater.start_polling()
+        await app.start()
+        if app.updater is None:  # only when the builder is given updater=None
+            raise RuntimeError("Telegram application has no updater to poll with")
+        await app.updater.start_polling()
+
+    def _require_bot(self) -> Bot:
+        """The bot of the started application; a handler only runs once it is set."""
+        if self._app is None:
+            raise RuntimeError("Telegram channel is not started")
+        return self._app.bot
 
     async def _publish_commands(self) -> None:
         """Put the router's commands in Telegram's own command menu, so they are
         discoverable without typing. Best-effort: the bot works without the menu."""
         try:
-            await self._app.bot.set_my_commands([(c.name, c.description) for c in COMMANDS])
+            await self._require_bot().set_my_commands([(c.name, c.description) for c in COMMANDS])
         except Exception as exc:
             log_suppressed("telegram command menu registration", exc)
 
     def _asker_for(self, chat_id: str) -> Asker:
-        return TelegramAsker(self._app.bot, chat_id, self._pending, self._questions)
+        return TelegramAsker(self._require_bot(), chat_id, self._pending, self._questions)
 
     async def _answer_unpaired(self, inbound: InboundMessage) -> None:
         """Run an unpaired account's message for its one possible effect — pairing.
         Anything else comes back as silence, which is sent as nothing at all."""
-        spoken = spoken_text(await self._router.handle(inbound))
+        spoken = spoken_text(await self._require_router().handle(inbound))
         if spoken:
             await self._send(inbound.chat_id, spoken)
 
@@ -204,27 +220,36 @@ class TelegramChannel(Channel):
         query = update.callback_query
         if query is None or not query.data:
             return
+        # A tap without its message (one the bot may not read back) names no chat, and
+        # the chat is how both a pending ask and a picker are addressed.
+        message = query.message
+        if message is None:
+            return
         # A tap is as much of a disclosure as a message: an unpaired account must not
         # answer a question, spend a picker, or see the button acknowledged.
-        if not self._router.paired(self._from_callback(query)):
+        if not self._require_router().paired(self._from_callback(query)):
             return
         await query.answer()
-        chat_id = str(query.message.chat.id)
+        chat_id = str(message.chat.id)
         if query.data.startswith(_CB_PREFIX):
             answer = query.data[len(_CB_PREFIX) :]
             self._pending.resolve(chat_id, answer)
             # The prompt is a transient modal — remove it once answered so it
             # doesn't linger below the reply.
-            with contextlib.suppress(Exception):
-                await query.message.delete()
+            await self._delete(message)
         elif query.data.startswith(_CHOICE_PREFIX):
             token = query.data[len(_CHOICE_PREFIX) :]
-            outcome = await self._router.choose(self._from_callback(query), token)
-            with contextlib.suppress(Exception):
-                await query.message.delete()  # the picker is spent
+            outcome = await self._require_router().choose(self._from_callback(query), token)
+            await self._delete(message)  # the picker is spent
             spoken = spoken_text(outcome)
             if spoken:
                 await self._send(chat_id, spoken)
+
+    async def _delete(self, message: "MaybeInaccessibleMessage") -> None:
+        """Remove a message this bot put up, by chat and id, tolerating a refusal.
+        A callback's message can be one the bot cannot read back, which has no shortcuts."""
+        with contextlib.suppress(Exception):
+            await self._require_bot().delete_message(message.chat.id, message.message_id)
 
     def _from_callback(self, query) -> InboundMessage:
         """The Peer a button tap came from — enough for the router to place it, with
@@ -250,7 +275,7 @@ class TelegramChannel(Channel):
     async def _send(self, chat_id: str, text: str) -> None:
         """Send text to a chat as fresh message(s), rendered and within the size cap."""
         for chunk in split_for_limit(self.format_outbound(text), self._message_limit):
-            await self._app.bot.send_message(int(chat_id), chunk)
+            await self._require_bot().send_message(int(chat_id), chunk)
 
     async def notify(self, chat_id: str, text: str) -> None:
         """Push a task-run outcome into a Telegram chat — no placeholder to edit,
@@ -277,7 +302,7 @@ class TelegramChannel(Channel):
         message = None
         for index, chunk in enumerate(chunks):
             # Buttons belong under the whole question, so only the last chunk carries them.
-            message = await self._app.bot.send_message(
+            message = await self._require_bot().send_message(
                 int(chat_id), chunk, reply_markup=markup if index == len(chunks) - 1 else None
             )
         if message is not None:
@@ -354,7 +379,7 @@ class TelegramChannel(Channel):
             return
 
         chat_id = str(msg.chat.id)
-        if not self._router.paired(inbound):
+        if not self._require_router().paired(inbound):
             # Nothing an unpaired account sends may touch a running turn. Its message
             # goes to the router with no placeholder, in case it carries a code.
             await self._answer_unpaired(inbound)
@@ -365,29 +390,29 @@ class TelegramChannel(Channel):
         if msg.reply_to_message is not None and await self._answer_question(inbound, msg):
             return
 
-        if not self._router.accepts(inbound):
+        if not self._require_router().accepts(inbound):
             return
 
         # Immediate, always-visible feedback: a placeholder we edit into the reply. A
         # message fed into a running turn gets none — its answer lands in the
         # placeholder of the message that started that turn.
-        steering = self._router.steers(inbound)
-        placeholder = None if steering else await update.message.reply_text(WORKING_PLACEHOLDER)
+        steering = self._require_router().steers(inbound)
+        placeholder = None if steering else await msg.reply_text(WORKING_PLACEHOLDER)
 
         # The placeholder doubles as the turn's Tool trace while it runs; a steered
         # message has none, and the turn it feeds is already tracing into its own.
         tracer = TraceEditor(placeholder) if placeholder is not None else None
         attachments = await _download_attachments(msg, context.bot)
-        outcome = await self._router.handle(
+        outcome = await self._require_router().handle(
             inbound,
             asker=self._asker_for(chat_id),
             attachments=attachments,
             progress=tracer,
         )
-        if placeholder is None:
+        if tracer is None:  # exactly the steered case: no placeholder to land in
             await self._acknowledge(outcome, msg)
             return
-        await self._render(outcome, placeholder, update.message, traced=tracer.traced)
+        await self._render(outcome, placeholder, msg, traced=tracer.traced)
 
     async def _acknowledge(self, outcome: Outcome, message) -> None:
         """Render an outcome that has no placeholder to land in: a reaction for a
@@ -412,7 +437,7 @@ class TelegramChannel(Channel):
             self._questions.pop(message_id, None)
             self._pending.resolve(inbound.chat_id, text)
             return True
-        spoken = spoken_text(await self._router.answer(inbound, inquiry, text))
+        spoken = spoken_text(await self._require_router().answer(inbound, inquiry, text))
         if spoken:
             await self._send(inbound.chat_id, spoken)
         return True

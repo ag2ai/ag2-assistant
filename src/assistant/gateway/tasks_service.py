@@ -16,6 +16,7 @@ import contextlib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ag2 import Agent
 
@@ -35,6 +36,13 @@ from assistant.tasks.model import (
 )
 from assistant.tasks.scheduling import compute_next_run, parse_dt, schedule_text
 from assistant.tasks.summary import default_summarizer, suggest_task_meta, summarize_run
+
+if TYPE_CHECKING:
+    # The gateway constructs this service, so naming its types here would be a cycle
+    # at runtime; the scheduler and its lock stay lazy imports for start-up cost.
+    from assistant.gateway.core import Gateway
+    from assistant.scheduler_lock import SchedulerLock
+    from assistant.tasks import Scheduler
 
 # Chars of prior-run index a surface carries before the oldest entries are dropped.
 # ~125 summaries: six months of a weekday task.
@@ -183,13 +191,13 @@ class TaskService:
         self._summary_factory = summary_factory or default_summarizer
         self._store = store
         self._inquiries = inquiry_store
-        self._scheduler = None
-        self._scheduler_lock = None
+        self._scheduler: "Scheduler | None" = None
+        self._scheduler_lock: "SchedulerLock | None" = None
         self._scheduler_interval = scheduler_interval
         self._sem = asyncio.Semaphore(max_concurrent)
         self._jobs: dict[str, asyncio.Task] = {}  # run_id → executing job
         self._stopping: set[str] = set()  # run ids being user-stopped
-        self._gateway = None
+        self._gateway: "Gateway | None" = None
         self._notify = None  # async (platform, chat_id, text) -> None
         self._emit = None  # async (chat_id, event) -> None
         self._questions = None  # the question mirror: ask(...) / retract(...)
@@ -202,7 +210,7 @@ class TaskService:
 
     # ---- wiring ----
 
-    def set_gateway(self, gateway) -> None:
+    def set_gateway(self, gateway: "Gateway") -> None:
         self._gateway = gateway
 
     def set_notifier(self, notify) -> None:
@@ -491,7 +499,8 @@ class TaskService:
         run = await self._store.create_run(task_id, trigger=trigger)
         job = asyncio.create_task(self._execute(run.id))
         self._jobs[run.id] = job
-        job.add_done_callback(lambda _j, rid=run.id: self._jobs.pop(rid, None))
+        run_id = run.id  # bound here, not as a lambda default, so the closure is typed
+        job.add_done_callback(lambda _j: self._jobs.pop(run_id, None))
         return run
 
     async def _execute(self, run_id: str) -> None:
@@ -513,6 +522,11 @@ class TaskService:
         if task is None:
             await self._finish(run_id, RunStatus.FAILED, error="task deleted")
             return
+        # A run IS a chat turn: without the gateway that owns the chats it cannot run.
+        gateway = self._gateway
+        if gateway is None:
+            await self._finish(run_id, RunStatus.FAILED, error="task service has no gateway")
+            return
         asker = DurableAsker(
             NullAsker(),
             self._inquiries,
@@ -522,13 +536,10 @@ class TaskService:
         )
         prior = await self._store.recent_runs(task.id, n=task.recall_depth, before=run_id)
         folder_lines: list[str] = []
-        if self._gateway is not None:
-            with contextlib.suppress(Exception):
-                folder_lines = _task_folder_lines(
-                    self._gateway.folders, self._config.data_dir.name, task.id
-                )
+        with contextlib.suppress(Exception):
+            folder_lines = _task_folder_lines(gateway.folders, self._config.data_dir.name, task.id)
         try:
-            reply = await self._gateway.send_message(
+            reply = await gateway.send_message(
                 task.prompt,
                 chat_id=run.stream_id,
                 asker=asker,

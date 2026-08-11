@@ -263,6 +263,13 @@ class Gateway:
         """Today's token + estimated-cost totals (for the cost & activity HUD)."""
         return self._usage.today()
 
+    def require_agent(self) -> Agent:
+        """This profile's default agent, for a caller running outside a turn.
+        Set between ``start()`` and ``close()``, which is the whole of a live runtime."""
+        if self._agent is None:
+            raise RuntimeError("Gateway not started")
+        return self._agent
+
     def _make_agent(self, cfg=None):
         """Build a universal agent: capability + system tools (know/do everything) +
         compaction. Used by start()/reload() for the default agent, and by
@@ -500,20 +507,24 @@ class Gateway:
             return
         if self._writer is not None:
             try:
-                await self._writer.persist(chat_id, list(await stream.history.get_events()))
+                # chat_id is not a UUID — see `_get_stream` for why.
+                events = list(await stream.history.get_events())
+                await self._writer.persist(chat_id, events)  # type: ignore[arg-type]
             except Exception as exc:
                 log_suppressed("external stream event persist", exc, chat_id=chat_id)
                 # Persistence is best-effort; the live event still went out.
 
     async def _get_stream(self, chat_id: str):
         """Return the chat's live Stream, hydrating from disk on first use."""
+        # AG2 declares ``StreamId = uuid.UUID`` and only interpolates it into a log path;
+        # our ids are strings that name those files, so the ignores below have no fix here.
         stream = self._streams.get(chat_id)
         if stream is None:
-            stream = MemoryStream(id=chat_id)
+            stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]
             self._streams[chat_id] = stream
             if self._writer is not None and chat_id not in self._loaded:
                 try:
-                    events = await self._writer.load(chat_id)
+                    events = await self._writer.load(chat_id)  # type: ignore[arg-type]
                     if events:
                         await stream.history.replace(events)
                 except Exception as exc:

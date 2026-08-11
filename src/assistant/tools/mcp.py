@@ -180,8 +180,8 @@ def namespaced_tool_name(server_name: str, raw_name: str) -> str:
     return f"{tool_prefix(server_name)}_{raw}"
 
 
-def build_mcp_tools(servers: Iterable[dict]) -> list[Tool]:
-    tools: list[Tool] = []
+def build_mcp_tools(servers: Iterable[dict]) -> list["NamespacedMCPToolkit"]:
+    tools: list["NamespacedMCPToolkit"] = []
     for server in servers:
         if not server.get("enabled", True):
             continue

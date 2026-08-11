@@ -35,8 +35,67 @@ def test_text_file_is_inlined():
     assert "hello world" in inp.content
 
 
-def test_unknown_binary_falls_back_to_document():
-    assert _kind(build_input(b"\x00\x01", "data.bin")) == BinaryType.DOCUMENT
+def test_unknown_binary_arrives_as_a_note_naming_the_file():
+    """It used to be handed over as a document with `application/octet-stream` — a type
+    AG2 does not declare and no provider accepts, so the turn failed at the provider.
+    A note at least tells the agent a file arrived."""
+    inp = build_input(b"\x00\x01", "data.bin")
+    assert isinstance(inp, TextInput)
+    assert "data.bin" in inp.content
+
+
+def test_an_m4a_voice_note_is_not_sent_as_audio():
+    """`audio/mp4` is in none of the three providers' accepted sets (Anthropic has no
+    audio input at all, OpenAI takes WAV and MP3, Gemini's list omits it), and AG2 does
+    not declare it either. It reaches the agent as a note instead."""
+    inp = build_input(b"..", "voice.m4a")
+    assert isinstance(inp, TextInput)
+    assert "voice.m4a" in inp.content
+
+
+def test_a_platform_type_outside_the_valid_set_is_not_forwarded():
+    """Telegram's own MIME for a nameless recording is not one AG2 accepts for audio;
+    it must not travel to the constructor (and thence to the provider) unchecked."""
+    inp = build_input(b"..", "", media_type="audio/mp4")
+    assert isinstance(inp, TextInput)
+    assert "audio/mp4" in inp.content
+
+
+def test_our_table_supplies_the_media_type_even_when_the_platform_disagrees():
+    """ADR 0010 documents a platform's MIME as unreliable and the extension as strong
+    and stable; the value handed to AG2 follows the extension too, not just the kind."""
+    inp = build_input(b"\x89PNG", "pic.png", media_type="application/octet-stream")
+    assert _kind(inp) == BinaryType.IMAGE
+    assert inp.media_type == "image/png"
+
+
+def test_every_extension_we_route_carries_a_type_ag2_declares():
+    """Regression cover for ADR 0010's routing rules: adding validation must not change
+    which kind is built for known-good input, nor the type it carries."""
+    expected = {
+        "a.png": (BinaryType.IMAGE, "image/png"),
+        "a.jpg": (BinaryType.IMAGE, "image/jpeg"),
+        "a.jpeg": (BinaryType.IMAGE, "image/jpeg"),
+        "a.gif": (BinaryType.IMAGE, "image/gif"),
+        "a.webp": (BinaryType.IMAGE, "image/webp"),
+        "a.mp3": (BinaryType.AUDIO, "audio/mpeg"),
+        "a.wav": (BinaryType.AUDIO, "audio/wav"),
+        "a.ogg": (BinaryType.AUDIO, "audio/ogg"),
+        "a.oga": (BinaryType.AUDIO, "audio/ogg"),
+        "a.flac": (BinaryType.AUDIO, "audio/flac"),
+        "a.aac": (BinaryType.AUDIO, "audio/aac"),
+        "a.mp4": (BinaryType.VIDEO, "video/mp4"),
+        "a.webm": (BinaryType.VIDEO, "video/webm"),
+        "a.mov": (BinaryType.VIDEO, "video/quicktime"),
+        "a.mkv": (BinaryType.VIDEO, "video/x-matroska"),
+        "a.mpeg": (BinaryType.VIDEO, "video/mpeg"),
+        "a.pdf": (BinaryType.DOCUMENT, "application/pdf"),
+    }
+    got = {
+        name: (_kind(build_input(b"..", name)), build_input(b"..", name).media_type)
+        for name in expected
+    }
+    assert got == expected
 
 
 def test_mime_overrides_when_no_extension():

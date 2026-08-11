@@ -32,6 +32,7 @@ These are the same checks CI runs; a PR that fails them will not merge.
 ```bash
 ruff check .                       # lint
 ruff format .                      # auto-format (use --check to verify only)
+mypy                               # typecheck src/assistant (target is configured; pass no path)
 pytest -m "not integration" -q     # unit tests — no API key needed
 npm --prefix web run check         # typecheck the SPA (svelte-check, strict)
 npm --prefix web test              # SPA unit tests (node:test over web/src/**/*.test.ts)

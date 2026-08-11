@@ -199,12 +199,31 @@ class _RecordingRouter:
         return self.outcome
 
 
-def _fake_query(data, chat_type="private", chat_id=42):
+class _FakeBot:
+    """Hands back the message it sent, so the adapter can take it back later."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple] = []
+        self.messages: list[_FakeMessage] = []
+        # (chat_id, message_id) per message the adapter asked Telegram to remove.
+        self.removed: list[tuple] = []
+
+    async def send_message(self, chat_id, text, reply_markup=None):
+        message = _FakeMessage()
+        self.sent.append((chat_id, text, reply_markup))
+        self.messages.append(message)
+        return message
+
+    async def delete_message(self, chat_id, message_id):
+        self.removed.append((chat_id, message_id))
+
+
+def _fake_query(data, chat_type="private", chat_id=42, message_id=101):
     return SimpleNamespace(
         data=data,
         message=SimpleNamespace(
             chat=SimpleNamespace(type=chat_type, PRIVATE="private", id=chat_id),
-            delete=_FakeMessage().delete,
+            message_id=message_id,
         ),
         from_user=SimpleNamespace(id=7, full_name="Test User", username="tester"),
         answer=_noop,
@@ -215,32 +234,56 @@ async def _noop(*a, **kw):
     return None
 
 
-async def test_tapping_an_option_sends_its_token_to_the_router():
+def _tapping_channel(outcome, paired=True) -> tuple[TelegramChannel, _FakeBot]:
+    """A channel whose bot records the taps' effects (no network)."""
     ch = _telegram_channel()
-    ch._router = _RecordingRouter(Reply("Now talking to Home, in a new chat."))
-    sent: list[tuple] = []
-    ch._app = SimpleNamespace(
-        bot=SimpleNamespace(send_message=lambda cid, text: sent.append((cid, text)) or _noop())
-    )
+    ch._router = _RecordingRouter(outcome, paired=paired)
+    bot = _FakeBot()
+    ch._app = SimpleNamespace(bot=bot)
+    return ch, bot
+
+
+async def test_tapping_an_option_sends_its_token_to_the_router():
+    ch, bot = _tapping_channel(Reply("Now talking to Home, in a new chat."))
 
     await ch._on_callback(SimpleNamespace(callback_query=_fake_query("acc:home")), None)
 
     inbound, token = ch._router.chosen[0]
     assert token == "home"
     assert (inbound.platform, inbound.chat_id, inbound.is_direct) == ("telegram", "42", True)
-    assert sent == [(42, "Now talking to Home, in a new chat.")]
+    assert [sent[:2] for sent in bot.sent] == [(42, "Now talking to Home, in a new chat.")]
 
 
 async def test_tapping_an_option_that_says_nothing_sends_nothing():
-    ch = _telegram_channel()
-    ch._router = _RecordingRouter(Nothing())
-    sent: list[tuple] = []
-    ch._app = SimpleNamespace(
-        bot=SimpleNamespace(send_message=lambda cid, text: sent.append((cid, text)) or _noop())
-    )
+    ch, bot = _tapping_channel(Nothing())
 
     await ch._on_callback(SimpleNamespace(callback_query=_fake_query("acc:home")), None)
-    assert sent == []
+    assert bot.sent == []
+
+
+async def test_a_spent_picker_is_taken_down():
+    """The buttons are a one-shot: once a token is chosen the message they are on is
+    removed, so the same choice cannot be tapped twice."""
+    ch, bot = _tapping_channel(Nothing())
+
+    await ch._on_callback(
+        SimpleNamespace(callback_query=_fake_query("acc:home", message_id=77)), None
+    )
+
+    assert bot.removed == [(42, 77)]
+
+
+async def test_a_tap_without_its_message_is_ignored():
+    """Telegram omits the message when the bot may not read it back. There is then no
+    chat to place the tap in, so nothing is chosen and nothing is taken down."""
+    ch, bot = _tapping_channel(Reply("switched"))
+    query = _fake_query("acc:home")
+    query.message = None
+
+    await ch._on_callback(SimpleNamespace(callback_query=query), None)
+
+    assert ch._router.chosen == []
+    assert (bot.sent, bot.removed) == ([], [])
 
 
 async def test_an_unpaired_reply_cannot_answer_a_running_question():
@@ -262,36 +305,19 @@ async def test_an_unpaired_reply_cannot_answer_a_running_question():
 async def test_an_unpaired_tap_reaches_neither_the_router_nor_the_button():
     """A tap discloses as much as a message: nothing is chosen, the picker is not
     spent, and the button is never even acknowledged (ADR 0021)."""
-    ch = _telegram_channel()
-    ch._router = _RecordingRouter(Reply("switched"), paired=False)
+    ch, bot = _tapping_channel(Reply("switched"), paired=False)
     answered: list[bool] = []
     query = _fake_query("acc:home")
     query.answer = lambda: answered.append(True) or _noop()
-    deleted = _FakeMessage()
-    query.message.delete = deleted.delete
 
     await ch._on_callback(SimpleNamespace(callback_query=query), None)
 
     assert ch._router.chosen == []
     assert answered == []
-    assert deleted.deleted is False
+    assert bot.removed == []
 
 
 # --- questions, mirrored and answered ---
-
-
-class _FakeBot:
-    """Hands back the message it sent, so the adapter can take it back later."""
-
-    def __init__(self) -> None:
-        self.sent: list[tuple] = []
-        self.messages: list[_FakeMessage] = []
-
-    async def send_message(self, chat_id, text, reply_markup=None):
-        message = _FakeMessage()
-        self.sent.append((chat_id, text, reply_markup))
-        self.messages.append(message)
-        return message
 
 
 def _asking_channel(outcome=Nothing()) -> tuple[TelegramChannel, _FakeBot]:
