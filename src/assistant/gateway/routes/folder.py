@@ -26,11 +26,14 @@ from assistant.gateway.schemas import (
     FolderMutatedResponse,
     FolderRootsResponse,
     FolderSavedResponse,
+    ResponseSpecs,
 )
 
 # The two writes that can collide on a path answer 409 with the Folder already
 # holding it, so the client can point at that one instead of reporting a dead end.
-CONFLICT_RESPONSE = {409: {"model": FolderConflictResponse, "description": "Conflict"}}
+CONFLICT_RESPONSE: ResponseSpecs = {
+    409: {"model": FolderConflictResponse, "description": "Conflict"}
+}
 
 
 class FolderCreateRequest(BaseModel):
@@ -159,6 +162,8 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         if folders is None:
             return {"roots": []}
         task_id = await scope_task_id(runtime, chat_id)
-        return {"roots": folders.granted_roots(runtime.config.data_dir.name, chat_id, task_id)}
+        return {
+            "roots": folders.granted_roots(runtime.require_config().data_dir.name, chat_id, task_id)
+        }
 
     return r

@@ -63,14 +63,14 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     @r.get("/tasks", response_model=TaskListResponse)
     async def list_tasks(runtime: ProfileRuntime = Depends(get_runtime)):
         """Task rows for the drawer (needs-input first, then newest)."""
-        return {"tasks": await runtime.tasks.list_tasks()}
+        return {"tasks": await runtime.require_tasks().list_tasks()}
 
     @r.post("/tasks", response_model=NewTaskEnvelopeResponse)
     async def create_task(req: TaskCreate, runtime: ProfileRuntime = Depends(get_runtime)):
         """Create a task; empty ``name`` auto-generates one from the prompt
         (service-side). 422 with {error} on a bad schedule/model."""
         try:
-            task = await runtime.tasks.create_task(
+            task = await runtime.require_tasks().create_task(
                 name=req.name,
                 prompt=req.prompt,
                 model=req.model,
@@ -85,7 +85,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     @r.get("/tasks/{task_id}", response_model=TaskEnvelopeResponse)
     async def get_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         try:
-            task = await runtime.tasks.get_task(task_id)
+            task = await runtime.require_tasks().get_task(task_id)
         except TaskStoreCorruptionError as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
         if task is None:
@@ -103,7 +103,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         if not patch and req.model != "":
             return JSONResponse({"error": "empty patch"}, status_code=400)
         try:
-            task = await runtime.tasks.update_task(task_id, **patch)
+            task = await runtime.require_tasks().update_task(task_id, **patch)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
         if task is None:
@@ -113,22 +113,22 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     @r.delete("/tasks/{task_id}", response_model=Ok)
     async def delete_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """Delete the task, its runs, and their chat streams. Irreversible."""
-        if not await runtime.tasks.delete_task(task_id):
+        if not await runtime.require_tasks().delete_task(task_id):
             return Response(status_code=404)
         return {"ok": True}
 
     @r.post("/tasks/{task_id}/run", response_model=RunDetailEnvelopeResponse)
     async def run_task(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """Run now — start a run immediately; the schedule is unchanged."""
-        run = await runtime.tasks.start_run(task_id, trigger="manual")
+        run = await runtime.require_tasks().start_run(task_id, trigger="manual")
         if run is None:
             return Response(status_code=404)
-        return {"run": await runtime.tasks.get_run(run.id)}
+        return {"run": await runtime.require_tasks().get_run(run.id)}
 
     @r.get("/tasks/{task_id}/runs", response_model=RunListResponse)
     async def list_runs(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """The task's run history (newest first), as on the task page."""
-        task = await runtime.tasks.get_task(task_id)
+        task = await runtime.require_tasks().get_task(task_id)
         if task is None:
             return Response(status_code=404)
         return {"runs": task["runs"]}
@@ -136,7 +136,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     @r.get("/runs/{run_id}", response_model=RunDetailEnvelopeResponse)
     async def get_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """One run's durable header (status/summary/task name) for the run page."""
-        run = await runtime.tasks.get_run(run_id)
+        run = await runtime.require_tasks().get_run(run_id)
         if run is None:
             return Response(status_code=404)
         return {"run": run}
@@ -144,19 +144,19 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     @r.post("/runs/{run_id}/stop", response_model=Ok)
     async def stop_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """Stop a live run; whatever it already produced stays in its thread."""
-        return {"ok": await runtime.tasks.stop_run(run_id)}
+        return {"ok": await runtime.require_tasks().stop_run(run_id)}
 
     @r.post("/runs/{run_id}/seen", response_model=Ok)
     async def run_seen(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """Mark a finished run opened (clears its unread highlight)."""
-        return {"ok": await runtime.tasks.mark_run_seen(run_id)}
+        return {"ok": await runtime.require_tasks().mark_run_seen(run_id)}
 
     @r.get("/inquiries/pending", response_model=InquiryListResponse)
     async def inquiries_pending(
         task_id: str | None = None, runtime: ProfileRuntime = Depends(get_runtime)
     ):
         """Open HITL inquiries (clarifications / approvals) awaiting an answer."""
-        return {"pending": await runtime.tasks.pending_inquiries(task_id)}
+        return {"pending": await runtime.require_tasks().pending_inquiries(task_id)}
 
     @r.post("/inquiries/{inquiry_id}/answer", response_model=Ok)
     async def answer_inquiry(
@@ -164,7 +164,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         req: AnswerRequest,
         runtime: ProfileRuntime = Depends(get_runtime),
     ):
-        ok = await runtime.tasks.answer_inquiry(inquiry_id, req.answer)
+        ok = await runtime.require_tasks().answer_inquiry(inquiry_id, req.answer)
         if not ok:
             return Response(status_code=404)
         return {"ok": True}

@@ -731,8 +731,9 @@ async def ask(
     memory: bool = True,
     platform: str = "cli",
     asker=None,
-) -> str:
-    """Send a message to the agent and return the response (single-shot)."""
+) -> str | None:
+    """Send a message to the agent and return the response (single-shot), or None
+    when the turn produced no text body."""
     if config is None:
         config = load_config()
     agent = create_agent(config, memory=memory, platform=platform, asker=asker, single_shot=True)

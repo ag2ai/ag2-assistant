@@ -268,7 +268,7 @@ class PeerStore:
         that platform, so an existing install's conversations continue in place."""
         entries = self._load()
         for entry in entries:
-            connection = by_platform.get(entry.get("platform"))
+            connection = by_platform.get(entry.get("platform") or "")
             if connection and not entry.get("connection"):
                 entry["connection"] = connection
         if entries:

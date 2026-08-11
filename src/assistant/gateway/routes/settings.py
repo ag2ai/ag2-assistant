@@ -25,6 +25,7 @@ from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
     FocusesSavedResponse,
+    HealthChannelOut,
     LiveOverrideSavedResponse,
     LlmOverrideSavedResponse,
     McpHealthResponse,
@@ -80,7 +81,7 @@ class VoiceProviderRequest(BaseModel):
 
 def runtime_settings(runtime: ProfileRuntime):
     """This profile's Settings, resolved from the runtime's derived config."""
-    cfg = runtime.config
+    cfg = runtime.require_config()
     return profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
 
 
@@ -183,7 +184,7 @@ def build_profile_router(
             )
             detail = f"{entry['name']} · {entry['model']}"
         else:
-            provider = runtime.config.llm.provider
+            provider = runtime.require_config().llm.provider
             key_set = available_providers().get(provider, False)
             detail = f"{provider} · {'key set' if key_set else 'no key'}"
         checks.append(
@@ -217,18 +218,21 @@ def build_profile_router(
         # Connections DEFAULTING to this profile — the ones whose conversations land
         # here (start-time active/error). Connections themselves are install-level.
         defaults = d.registry.connection_defaults()
+        # Built as the response model rather than as bare dicts: the detail string
+        # below reads these fields back, and the model is what says `error` is a
+        # string or absent while `active` is a flag.
         items = [
-            {
-                "connection": c.id,
-                "name": c.name,
-                "platform": c.platform,
-                "active": c.id in d.manager.channels,
-                "error": d.manager.channel_errors.get(c.id),
-            }
+            HealthChannelOut(
+                connection=c.id,
+                name=c.name,
+                platform=c.platform,
+                active=c.id in d.manager.channels,
+                error=d.manager.channel_errors.get(c.id),
+            )
             for c in d.connection_store.list_connections()
             if defaults.get(c.id) == runtime.pid
         ]
-        ch_error = any(it["error"] for it in items)
+        ch_error = any(it.error for it in items)
         checks.append(
             {
                 "id": "channels",
@@ -238,9 +242,9 @@ def build_profile_router(
                 # generic "error" — the panel shows this, so it must say what to fix.
                 "detail": (
                     ", ".join(
-                        (it["error"] or f"{it['name']} active")
-                        if (it["error"] or it["active"])
-                        else f"{it['name']} idle"
+                        (it.error or f"{it.name} active")
+                        if (it.error or it.active)
+                        else f"{it.name} idle"
                         for it in items
                     )
                     or "none default here"
@@ -332,7 +336,7 @@ def build_profile_router(
             return Response(status_code=400)
         try:
             wav = await synthesize_preview(
-                runtime.config, settings, req.voice, provider=provider, api_key=api_key
+                runtime.require_config(), settings, req.voice, provider=provider, api_key=api_key
             )
         except Exception as exc:
             return Response(content=str(exc)[:200], status_code=502)
@@ -353,7 +357,7 @@ def build_profile_router(
         the wire — shipping the missing half as ``null`` is what the zod twin
         rejects.
         """
-        cfg = runtime.config
+        cfg = runtime.require_config()
         settings = runtime_settings(runtime)
         keys = d.secret_store.status(secret_env())
         # Per-profile model Active override (ADR 0015): report BOTH this profile's

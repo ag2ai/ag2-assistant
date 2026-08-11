@@ -264,9 +264,10 @@ class ConnectionStore:
         """Set (or clear, with ``None``) the profile this Connection's conversations land
         in by default. A profile withdrawn from every surface of the Connection is
         refused — the Connection cannot default to somewhere it cannot reach."""
-        meta = self._profiles.get_profile(pid) if pid is not None else None
-        if meta is not None and not meta.archived and not self.reachable(cid, pid):
-            raise ValueError(f"profile not reachable from this connection: {pid}")
+        if pid is not None:
+            meta = self._profiles.get_profile(pid)
+            if meta is not None and not meta.archived and not self.reachable(cid, pid):
+                raise ValueError(f"profile not reachable from this connection: {pid}")
         self._profiles.set_connection_default(cid, pid)
 
     # ---- migration from the platform-keyed era --------------------------------

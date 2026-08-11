@@ -90,9 +90,9 @@ def resolve_active_profile(
             "<name>' or run 'ag2-assistant run' and onboard in the browser"
         )
     if meta.archived:
-        raise ArchivedProfile(pid)
-    factory = config_factory(pid, paths, env)
-    return pid, factory(), factory
+        raise ArchivedProfile(meta.id)
+    factory = config_factory(meta.id, paths, env)
+    return meta.id, factory(), factory
 
 
 class ProfileRuntime:
@@ -158,6 +158,27 @@ class ProfileRuntime:
         if self.gateway is not None:
             return self.gateway.config
         return self._config
+
+    # The three accessors below return a started collaborator or raise, as
+    # ``ProfileManager.get`` does; ``close`` and the status routes read the attribute.
+    def require_gateway(self) -> Gateway:
+        """This runtime's started gateway."""
+        if self.gateway is None:
+            raise RuntimeError(f"profile '{self.pid}' has no running gateway")
+        return self.gateway
+
+    def require_tasks(self) -> TaskService:
+        """This runtime's started task service."""
+        if self.tasks is None:
+            raise RuntimeError(f"profile '{self.pid}' has no running task service")
+        return self.tasks
+
+    def require_config(self) -> Config:
+        """This runtime's live config (the gateway's once it is up)."""
+        config = self.config
+        if config is None:
+            raise RuntimeError(f"profile '{self.pid}' has no resolved config")
+        return config
 
     def refresh_meta(self) -> None:
         """Re-read this profile's registry entry (after a rename/accent edit)."""
@@ -474,7 +495,7 @@ class ProfileManager:
         its task service via the shared config factory)."""
         runtime = self.get(pid)
         runtime.refresh_meta()
-        await runtime.gateway.reload()
+        await runtime.require_gateway().reload()
 
     async def archive(self, pid: str, new_default: str | None = None) -> None:
         """Archive a profile with the §4.9 guardrails.

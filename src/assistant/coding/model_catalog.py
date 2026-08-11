@@ -137,13 +137,16 @@ class ModelCatalog:
             stderr=asyncio.subprocess.DEVNULL,
         )
         try:
+            if proc.stdin is None or proc.stdout is None:  # PIPE was asked for above
+                raise RuntimeError(f"{agent} adapter exposed no stdio pipes")
+            stdin, stdout = proc.stdin, proc.stdout
 
             async def rpc(rid: int, method: str, params: dict) -> dict:
                 req = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params}
-                proc.stdin.write((json.dumps(req) + "\n").encode())
-                await proc.stdin.drain()
+                stdin.write((json.dumps(req) + "\n").encode())
+                await stdin.drain()
                 while True:  # skip notifications the adapter may interleave
-                    line = await proc.stdout.readline()
+                    line = await stdout.readline()
                     if not line:
                         raise RuntimeError(f"{agent} adapter closed the pipe during the probe")
                     try:

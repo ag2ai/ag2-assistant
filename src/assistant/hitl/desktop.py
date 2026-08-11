@@ -11,6 +11,7 @@ import html
 import json
 import uuid
 import webbrowser
+from typing import Protocol
 
 import uvicorn
 from fastapi import FastAPI
@@ -147,12 +148,19 @@ def _already_handled_page(req_id: str) -> str:
     )
 
 
-def add_hitl_routes(app, registry: "HitlServer") -> None:
+class HitlRegistry(Protocol):
+    """What the styled `/hitl/{id}` pages need from a registry."""
+
+    def question_for(self, req_id: str) -> Question | None: ...
+
+    def answer(self, req_id: str, answer: str) -> bool: ...
+
+
+def add_hitl_routes(app, registry: HitlRegistry) -> None:
     """Mount the styled HITL page + answer routes on any FastAPI app.
 
     Used both by the standalone `HitlServer` (desktop popup) and by the gateway,
     so a running gateway serves the same `/hitl/{id}` pages a UI client can drive.
-    `registry` only needs `question_for(id)` and `answer(id, text)`.
     """
 
     @app.get("/hitl/{req_id}", response_class=HTMLResponse)
@@ -185,7 +193,7 @@ class HitlServer:
         self.port = port
         self._actual_port = port
         self._pending: dict[str, tuple[Question, asyncio.Future]] = {}
-        self._server = None
+        self._server: uvicorn.Server | None = None
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
@@ -238,13 +246,14 @@ class HitlServer:
             config = uvicorn.Config(
                 self._build_app(), host=self.host, port=self.port, log_level="warning"
             )
-            self._server = uvicorn.Server(config)
-            self._task = asyncio.create_task(self._server.serve())
-            while not self._server.started:
+            server = uvicorn.Server(config)
+            self._server = server
+            self._task = asyncio.create_task(server.serve())
+            while not server.started:
                 await asyncio.sleep(0.05)
             # When port=0, read the port the OS actually assigned.
             try:
-                self._actual_port = self._server.servers[0].sockets[0].getsockname()[1]
+                self._actual_port = server.servers[0].sockets[0].getsockname()[1]
             except Exception:
                 self._actual_port = self.port
 

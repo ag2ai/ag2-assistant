@@ -481,16 +481,16 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
 
     @r.get("/memory", response_model=MemoryDocResponse)
     async def get_memory(runtime: ProfileRuntime = Depends(get_runtime)):
-        return {"text": await read_profile(runtime.config.data_dir / "profile.db")}
+        return {"text": await read_profile(runtime.require_config().data_dir / "profile.db")}
 
     @r.post("/memory", response_model=Ok)
     async def set_memory(req: MemoryRequest, runtime: ProfileRuntime = Depends(get_runtime)):
-        await write_profile(req.text, runtime.config.data_dir / "profile.db")
+        await write_profile(req.text, runtime.require_config().data_dir / "profile.db")
         return {"ok": True}
 
     @r.get("/usage", response_model=UsageResponse)
     async def usage_today(runtime: ProfileRuntime = Depends(get_runtime)):
         """Today's token + estimated-cost totals (cost & activity HUD)."""
-        return runtime.gateway.usage_today()
+        return runtime.require_gateway().usage_today()
 
     return r

@@ -36,7 +36,7 @@ async def scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:
     """
     if chat_id.startswith("task:"):
         return chat_id.removeprefix("task:")
-    if chat_id.startswith("task-run:"):
+    if chat_id.startswith("task-run:") and runtime.tasks is not None:
         with contextlib.suppress(Exception):
             run = await runtime.tasks.get_run(chat_id.removeprefix("task-run:"))
             return (run or {}).get("task_id") or ""

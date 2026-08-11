@@ -35,8 +35,57 @@ def test_text_file_is_inlined():
     assert "hello world" in inp.content
 
 
-def test_unknown_binary_falls_back_to_document():
-    assert _kind(build_input(b"\x00\x01", "data.bin")) == BinaryType.DOCUMENT
+def test_unknown_binary_arrives_as_a_note_naming_the_file():
+    """A type AG2 does not declare is never handed to a constructor; the agent gets a
+    note naming the file instead."""
+    inp = build_input(b"\x00\x01", "data.bin")
+    assert isinstance(inp, TextInput)
+    assert "data.bin" in inp.content
+
+
+def test_an_m4a_voice_note_is_not_sent_as_audio():
+    """`audio/mp4` is outside AG2's audio set (and every provider's), so an `.m4a`
+    reaches the agent as a note."""
+    inp = build_input(b"..", "voice.m4a")
+    assert isinstance(inp, TextInput)
+    assert "voice.m4a" in inp.content
+
+
+def test_a_platform_type_outside_the_valid_set_is_not_forwarded():
+    """Telegram's own MIME for a nameless recording is not one AG2 accepts for audio;
+    it must not travel to the constructor (and thence to the provider) unchecked."""
+    inp = build_input(b"..", "", media_type="audio/mp4")
+    assert isinstance(inp, TextInput)
+    assert "audio/mp4" in inp.content
+
+
+def test_every_extension_we_route_carries_a_type_ag2_declares():
+    """Regression cover for ADR 0010's routing rules: adding validation must not change
+    which kind is built for known-good input, nor the type it carries."""
+    expected = {
+        "a.png": (BinaryType.IMAGE, "image/png"),
+        "a.jpg": (BinaryType.IMAGE, "image/jpeg"),
+        "a.jpeg": (BinaryType.IMAGE, "image/jpeg"),
+        "a.gif": (BinaryType.IMAGE, "image/gif"),
+        "a.webp": (BinaryType.IMAGE, "image/webp"),
+        "a.mp3": (BinaryType.AUDIO, "audio/mpeg"),
+        "a.wav": (BinaryType.AUDIO, "audio/wav"),
+        "a.ogg": (BinaryType.AUDIO, "audio/ogg"),
+        "a.oga": (BinaryType.AUDIO, "audio/ogg"),
+        "a.flac": (BinaryType.AUDIO, "audio/flac"),
+        "a.aac": (BinaryType.AUDIO, "audio/aac"),
+        "a.mp4": (BinaryType.VIDEO, "video/mp4"),
+        "a.webm": (BinaryType.VIDEO, "video/webm"),
+        "a.mov": (BinaryType.VIDEO, "video/quicktime"),
+        "a.mkv": (BinaryType.VIDEO, "video/x-matroska"),
+        "a.mpeg": (BinaryType.VIDEO, "video/mpeg"),
+        "a.pdf": (BinaryType.DOCUMENT, "application/pdf"),
+    }
+    got = {
+        name: (_kind(build_input(b"..", name)), build_input(b"..", name).media_type)
+        for name in expected
+    }
+    assert got == expected
 
 
 def test_mime_overrides_when_no_extension():
@@ -63,9 +112,11 @@ def test_pdf_by_mime_when_no_extension():
 
 
 def test_extension_wins_over_mime():
-    # A real filename extension stays the primary key even if MIME disagrees.
+    # A real filename extension is the primary key even if MIME disagrees, and our
+    # table supplies the media type handed to AG2 (ADR 0010).
     inp = build_input(b"\x89PNG", "pic.png", media_type="application/octet-stream")
     assert _kind(inp) == BinaryType.IMAGE
+    assert inp.media_type == "image/png"
 
 
 def test_empty_data_returns_none():

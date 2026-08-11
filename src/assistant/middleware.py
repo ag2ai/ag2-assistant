@@ -30,7 +30,8 @@ timeout window.
 
 import asyncio
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 from ag2.annotations import Context
 from ag2.events import BaseEvent, ModelResponse
@@ -100,6 +101,8 @@ def _is_transient(exc: BaseException) -> bool:
     status = getattr(exc, "code", None)
     if status is None:
         status = getattr(exc, "status_code", None)
+    if status is None:
+        return False
     try:
         return int(status) in _TRANSIENT_HTTP_STATUS
     except (TypeError, ValueError):
@@ -123,7 +126,7 @@ class LLMRetryMiddleware(MiddlewareFactory):
         base_delay: float = 1.0,
         max_delay: float = 30.0,
         predicate: Callable[[BaseException], bool] = _is_transient,
-        sleep: Callable[[float], "asyncio.Future"] = asyncio.sleep,
+        sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     ) -> None:
         self._retries = max(0, retries)
         self._base_delay = base_delay
@@ -153,7 +156,7 @@ class _LLMRetryMiddleware(BaseMiddleware):
         base_delay: float,
         max_delay: float,
         predicate: Callable[[BaseException], bool],
-        sleep: Callable[[float], "asyncio.Future"],
+        sleep: Callable[[float], Awaitable[Any]],
     ) -> None:
         super().__init__(event, context)
         self._retries = retries

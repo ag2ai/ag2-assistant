@@ -38,6 +38,9 @@ class SharedKeyOut(BaseModel):
     hint: str
 
 
+# The shape FastAPI's ``responses=`` takes: status code -> OpenAPI response object.
+ResponseSpecs = dict[int | str, dict[str, Any]]
+
 # Attached once to the app and once to the profile router; FastAPI propagates a
 # router-level ``responses`` to every route beneath it, so these six codes are
 # documented for all 130 JSON routes without per-route repetition.
@@ -48,7 +51,7 @@ class SharedKeyOut(BaseModel):
 # "Content Too Large" after RFC 9110. The artifact would then depend on whichever
 # Python generated it, and CI would read a perfectly current file as stale. The
 # phrases below follow RFC 9110 and belong to this repo, not to the stdlib.
-ERROR_RESPONSES: dict[int, dict[str, Any]] = {
+ERROR_RESPONSES: ResponseSpecs = {
     400: {"model": ErrorBody, "description": "Bad Request"},
     404: {"model": ErrorBody, "description": "Not Found"},
     409: {"model": ErrorBody, "description": "Conflict"},

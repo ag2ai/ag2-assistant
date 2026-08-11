@@ -170,7 +170,7 @@ async def run_onboarding(
         store = build_profile_store(user_store_path)
         existing = ""
         if await store.exists(PROFILE_PATH):
-            existing = (await store.read(PROFILE_PATH)).strip()
+            existing = (await store.read(PROFILE_PATH) or "").strip()
         # Don't clobber an existing universal doc; append seeded facts above it.
         merged = profile_md if not existing else profile_md + "\n" + existing
         await store.write(PROFILE_PATH, merged)

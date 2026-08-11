@@ -47,23 +47,24 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     @r.get("/chats", response_model=ChatListResponse)
     async def chats(runtime: ProfileRuntime = Depends(get_runtime)):
         """List persisted, resumable conversations (newest first)."""
-        return {"chats": await runtime.gateway.list_chats()}
+        return {"chats": await runtime.require_gateway().list_chats()}
 
     @r.get("/chats/{chat_id}", response_model=TranscriptResponse)
     async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """The display transcript for a chat, plus its Chat override and the model it
         would run on right now (so the composer's switcher needs no second call)."""
+        gw = runtime.require_gateway()
         return {
             "chat_id": chat_id,
-            "messages": await runtime.gateway.transcript(chat_id),
-            "model": await runtime.gateway.chat_model(chat_id),
-            "effective_model": await runtime.gateway.effective_model(chat_id),
+            "messages": await gw.transcript(chat_id),
+            "model": await gw.chat_model(chat_id),
+            "effective_model": await gw.effective_model(chat_id),
         }
 
     @r.delete("/chats/{chat_id}", response_model=Ok)
     async def delete_chat(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """Permanently delete a chat (transcript + full event log). Irreversible."""
-        removed = await runtime.gateway.delete_chat(chat_id)
+        removed = await runtime.require_gateway().delete_chat(chat_id)
         if not removed:
             return Response(status_code=404)
         return {"ok": True}
@@ -76,7 +77,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         unknown chat."""
         if patch.title is None and patch.starred is None and patch.model is None:
             return JSONResponse({"error": "empty patch"}, status_code=400)
-        ok = await runtime.gateway.update_chat(
+        ok = await runtime.require_gateway().update_chat(
             chat_id, title=patch.title, starred=patch.starred, model=patch.model
         )
         if not ok:
@@ -90,7 +91,9 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         # Durable, inline HITL bound to this chat (answerable from the
         # thread or the strip); the request blocks until answered (or times out).
         asker = chat_asker(runtime, req.chat_id)
-        reply = await runtime.gateway.send_message(req.text, chat_id=req.chat_id, asker=asker)
+        reply = await runtime.require_gateway().send_message(
+            req.text, chat_id=req.chat_id, asker=asker
+        )
         return MessageResponse(reply=reply, chat_id=req.chat_id)
 
     return r

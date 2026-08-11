@@ -181,7 +181,7 @@ _SECTION = "llm_configs"
 # The one provider tool that used to be wired unconditionally, before the switches
 # existed: build_agent_tools gave every Anthropic agent the native WebFetchTool and
 # everyone else our local function tool. See _clean_entry for how it is carried over.
-_LEGACY_BUILTINS = {"anthropic": {"web_fetch": {}}}
+_LEGACY_BUILTINS: dict[str, dict[str, dict]] = {"anthropic": {"web_fetch": {}}}
 
 
 def _clean_builtin_tools(raw: dict, ctype: str) -> dict:
@@ -486,7 +486,7 @@ class LlmConfigStore:
             return True
         if self._secrets.secret_value(entry.get("secret_id") or ""):
             return True
-        provider = PROVIDER_OF.get(ctype, "")
+        provider = PROVIDER_OF.get(ctype or "", "")
         return bool(self._secrets.status(env).get(provider, {}).get("set"))
 
     def key_source(
@@ -524,7 +524,7 @@ class LlmConfigStore:
             return "secret"
         if entry.get("type") == "ollama" or entry.get("base_url"):
             return "not_needed"
-        provider = PROVIDER_OF.get(entry.get("type"), "")
+        provider = PROVIDER_OF.get(entry.get("type") or "", "")
         if self._secrets.status(env).get(provider, {}).get("set"):
             return "shared"
         return "none"

@@ -9,6 +9,9 @@ straight back out through the subscription. History (replay) and live are one pa
 """
 
 import contextlib
+from uuid import UUID
+
+from ag2.stream import MemoryStream
 
 from assistant.gateway.wire import is_binary_event, to_wire
 
@@ -21,17 +24,18 @@ class StreamBridge:
         self._gw = gateway
         self._ws = websocket
         self._sid = chat_id
-        self._stream = None
-        self._sub = None
+        self._stream: MemoryStream | None = None
+        self._sub: UUID | None = None
 
     async def open(self) -> None:
         """Replay the persisted stream, then subscribe to forward live events."""
-        self._stream = await self._gw.stream_for(self._sid)
-        for event in await self._stream.history.get_events():
+        stream: MemoryStream = await self._gw.stream_for(self._sid)
+        self._stream = stream
+        for event in await stream.history.get_events():
             await self._forward(event)
         with contextlib.suppress(Exception):
             await self._ws.send_json({"type": "ready", "chat": self._sid})
-        self._sub = self._stream.subscribe(self._forward)  # event injected positionally
+        self._sub = stream.subscribe(self._forward)  # event injected positionally
 
     async def _forward(self, event) -> None:
         if is_binary_event(event):

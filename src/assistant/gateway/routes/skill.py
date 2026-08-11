@@ -150,8 +150,8 @@ def _profile_skill_rows(d: GatewayDeps, runtime) -> list[dict]:
     # The profile's OWN skills (under its skills_dir) shadow a shared skill of the
     # same name (catalog precedence Profile > Global > Bundled). A Profile skill has
     # no install-wide Disable — it lives in one profile, toggled per-profile only.
-    prof_skills_dir = runtime.config.skills_dir.resolve()
-    for s in build_skills_runtime(runtime.config).skills:
+    prof_skills_dir = runtime.require_config().skills_dir.resolve()
+    for s in build_skills_runtime(runtime.require_config()).skills:
         loc = Path(s.location).resolve() if s.location else None
         if loc is None or not (prof_skills_dir == loc or prof_skills_dir in loc.parents):
             continue  # bundled (extra_paths) — already covered by the shared pass
@@ -379,7 +379,7 @@ def build_profile_router(
         (Suppressible here) and the profile's own skills (Enable/Disable here)."""
         return {"skills": _profile_skill_rows(d, runtime)}
 
-    async def _suppress(name: str, runtime, suppressed: bool) -> dict:
+    async def _suppress(name: str, runtime, suppressed: bool) -> dict | JSONResponse:
         # Shared by the suppress/un-suppress routes: validate against the projection
         # (built once), flip the per-profile off-record, reload only this profile.
         if name not in {r["name"] for r in _profile_skill_rows(d, runtime)}:
@@ -435,7 +435,7 @@ def build_profile_router(
                 {"error": f"{name} isn't this profile's own skill — can't delete it here"},
                 status_code=409,
             )
-        prof_runtime = build_skills_runtime(runtime.config)
+        prof_runtime = build_skills_runtime(runtime.require_config())
         try:
             _remove_skill_dir(prof_runtime, name)
         except (SkillError, FileNotFoundError, ValueError) as exc:
@@ -451,7 +451,7 @@ def build_profile_router(
 
     # ---- Install into THIS profile (registry / git / upload — ADR 0017) ----
     # Same delegation as the Global /api/skills* install routes, but the target is the
-    # profile's own skills dir (build_skills_runtime over runtime.config) and only this
+    # profile's own skills dir (build_skills_runtime over runtime.require_config()) and only this
     # profile reloads. Registry search is target-agnostic → done via GLOBAL /api/skills/search.
 
     @r.post("/skills/install", response_model=ProfileSkillInstalledResponse)
@@ -463,7 +463,7 @@ def build_profile_router(
         body as the Global route (``_install_from_req``) — only the target + reload differ."""
         try:
             result = await _install_from_req(
-                build_skills_runtime(runtime.config), req, skills_client
+                build_skills_runtime(runtime.require_config()), req, skills_client
             )
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -497,7 +497,9 @@ def build_profile_router(
     ):
         """Install selected skills from an uploaded source into THIS profile."""
         try:
-            result = await _install_upload_into(build_skills_runtime(runtime.config), file, names)
+            result = await _install_upload_into(
+                build_skills_runtime(runtime.require_config()), file, names
+            )
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         await d.manager.reload(runtime.pid)

@@ -14,6 +14,7 @@ import re
 import aiohttp
 from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from slack_bolt.app.async_app import AsyncApp
+from slack_sdk.web.async_client import AsyncWebClient
 
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage
@@ -122,26 +123,34 @@ class SlackChannel(Channel):
                 "Slack needs both tokens; pass bot_token=/app_token= "
                 "(SLACK_BOT_TOKEN and SLACK_APP_TOKEN)."
             )
-        self._app = None
-        self._handler = None
+        self._app: AsyncApp | None = None
+        self._handler: AsyncSocketModeHandler | None = None
         self._router: ChannelRouter | None = None
         self._bot_user_id: str | None = None
         self._pending = PendingAsks()
 
+    def _require_client(self) -> AsyncWebClient:
+        """The web client of the started app; an event only arrives once it is set."""
+        if self._app is None:
+            raise RuntimeError("Slack channel is not started")
+        return self._app.client
+
     def _asker_for(self, channel_id: str) -> Asker:
-        return SlackAsker(self._app.client, channel_id, self._pending)
+        return SlackAsker(self._require_client(), channel_id, self._pending)
 
     async def start(self, router: ChannelRouter) -> None:
         self._router = router
-        self._app = AsyncApp(token=self._bot_token)
-        self._app.event("app_mention")(self._handle_app_mention)
-        self._app.event("message")(self._handle_message)
-        self._app.action(_ACTION_RE)(self._on_action)
-        self._handler = AsyncSocketModeHandler(self._app, self._app_token)
+        app = AsyncApp(token=self._bot_token)
+        self._app = app
+        app.event("app_mention")(self._handle_app_mention)
+        app.event("message")(self._handle_message)
+        app.action(_ACTION_RE)(self._on_action)
+        handler = AsyncSocketModeHandler(app, self._app_token)
+        self._handler = handler
 
-        auth = await self._app.client.auth_test()
+        auth = await app.client.auth_test()
         self._bot_user_id = auth["user_id"]
-        await self._handler.connect_async()
+        await handler.connect_async()
 
     async def stop(self) -> None:
         if self._handler is not None:
@@ -157,7 +166,7 @@ class SlackChannel(Channel):
         — but posts via `self._app.client` directly since there's no `say()`
         callback outside of an event handler."""
         for chunk in split_for_limit(self.format_outbound(text), self._message_limit):
-            await self._app.client.chat_postMessage(channel=chat_id, text=chunk)
+            await self._require_client().chat_postMessage(channel=chat_id, text=chunk)
 
     def _mention_inbound(self, event: dict) -> InboundMessage | None:
         text = re.sub(rf"<@{self._bot_user_id}>", "", event.get("text", "")).strip()
@@ -237,7 +246,7 @@ class SlackChannel(Channel):
         return False
 
     async def _respond(self, inbound: InboundMessage | None, say, client, event) -> None:
-        if inbound is None or not self._router.accepts(inbound):
+        if inbound is None or not self._require_router().accepts(inbound):
             return
 
         # 👀 on the user's message while we work; removed once we've replied.
@@ -252,7 +261,7 @@ class SlackChannel(Channel):
                 pass  # missing reactions:write or already reacted — non-fatal
 
         attachments = await _download_attachments(event, self._bot_token)
-        outcome = await self._router.handle(
+        outcome = await self._require_router().handle(
             inbound,
             asker=self._asker_for(channel) if channel else None,
             attachments=attachments,

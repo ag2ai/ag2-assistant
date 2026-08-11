@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import TextIO
 
 logger = logging.getLogger("ag2assistant.tasks")
 
@@ -24,7 +25,7 @@ class SchedulerLock:
 
     def __init__(self, path: Path) -> None:
         self._path = Path(path)
-        self._fh = None
+        self._fh: TextIO | None = None
 
     def acquire(self) -> bool:
         """True if we now hold the lock (or none is available); False if taken."""
