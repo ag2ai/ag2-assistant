@@ -14,11 +14,8 @@ from typing import Literal, TypeGuard, get_args
 from ag2 import DocumentInput, ImageInput
 from ag2.events import AudioInput, TextInput, VideoInput
 
-# Each AG2 input declares its media type as a closed set per kind, and performs no
-# runtime validation — a value outside the set travels to the model provider, which
-# rejects it, so the user sees a failed turn with no local reproduction. These four
-# aliases mirror those sets: our own tables are annotated with them, so a table entry
-# AG2 does not accept is a type error here rather than a provider error there.
+# The media types AG2 accepts per kind. The tables below are annotated with them, so a
+# table entry outside AG2's set is a type error here rather than a provider error later.
 _ImageType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 _AudioType = Literal[
     "audio/wav", "audio/mpeg", "audio/ogg", "audio/flac", "audio/aiff", "audio/aac"
@@ -33,8 +30,8 @@ _VideoType = Literal[
     "video/x-ms-wmv",
     "video/3gpp",
 ]
-# AG2's document set also covers the text-shaped types, but those are inlined as text
-# (step 2 below) rather than handed over as documents, so PDF is the only one we build.
+# PDF is the only document we build; AG2's other document types are text-shaped and are
+# inlined as text by step 2 of `build_input` instead.
 _DocumentType = Literal["application/pdf"]
 
 _IMAGE: dict[str, _ImageType] = {
@@ -44,9 +41,8 @@ _IMAGE: dict[str, _ImageType] = {
     ".gif": "image/gif",
     ".webp": "image/webp",
 }
-# No `.m4a`: its media type is an MP4-container audio type that AG2 does not declare
-# and none of the three providers accept, so an `.m4a` resolves no kind and lands on
-# the note in step 4 (ADR 0010's own fallback chain).
+# No `.m4a`: `audio/mp4` is outside AG2's audio set, so an `.m4a` resolves no kind here
+# and reaches the agent as step 4's note.
 _AUDIO: dict[str, _AudioType] = {
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
@@ -96,9 +92,8 @@ def _suffix(filename: str) -> str:
     return PurePosixPath(filename or "").suffix.lower()
 
 
-# The three guards a platform-supplied media type passes before it is forwarded to a
-# constructor. They answer "does AG2 accept this for that kind", which is the same
-# question as "will the provider accept it" — AG2's sets were read off the providers'.
+# Whether AG2 accepts a platform-supplied media type for that kind. Step 3 of
+# `build_input` forwards a value only if its kind's guard says yes.
 def _is_image_type(value: str) -> TypeGuard[_ImageType]:
     return value in _IMAGE_TYPES
 
@@ -124,16 +119,14 @@ def _unsupported_note(filename: str, media_type: str) -> str:
 def build_input(data: bytes, filename: str, media_type: str | None = None):
     """Return an AG2 `Input` for a downloaded attachment, or `None` if empty.
 
-    Resolution order (ADR 0010: the extension is a strong, stable signal, a platform's
-    MIME type is not):
+    Resolution order (ADR 0010):
 
     1. The extension resolves a kind → our table supplies the media type, and the
-       platform-supplied value is discarded rather than preferred.
+       platform-supplied value is discarded.
     2. A text extension, or a ``text/*`` type → the contents, inlined.
     3. No kind from the extension but a platform type present → it is forwarded only if
        AG2 accepts it for the kind its prefix implies.
-    4. Anything else → a short note naming the file, so the agent knows one arrived and
-       can ask about it or reach for a tool.
+    4. Anything else → a short note naming the file.
     """
     if not data:
         return None

@@ -36,18 +36,16 @@ def test_text_file_is_inlined():
 
 
 def test_unknown_binary_arrives_as_a_note_naming_the_file():
-    """It used to be handed over as a document with `application/octet-stream` — a type
-    AG2 does not declare and no provider accepts, so the turn failed at the provider.
-    A note at least tells the agent a file arrived."""
+    """A type AG2 does not declare is never handed to a constructor; the agent gets a
+    note naming the file instead."""
     inp = build_input(b"\x00\x01", "data.bin")
     assert isinstance(inp, TextInput)
     assert "data.bin" in inp.content
 
 
 def test_an_m4a_voice_note_is_not_sent_as_audio():
-    """`audio/mp4` is in none of the three providers' accepted sets (Anthropic has no
-    audio input at all, OpenAI takes WAV and MP3, Gemini's list omits it), and AG2 does
-    not declare it either. It reaches the agent as a note instead."""
+    """`audio/mp4` is outside AG2's audio set (and every provider's), so an `.m4a`
+    reaches the agent as a note."""
     inp = build_input(b"..", "voice.m4a")
     assert isinstance(inp, TextInput)
     assert "voice.m4a" in inp.content
@@ -59,14 +57,6 @@ def test_a_platform_type_outside_the_valid_set_is_not_forwarded():
     inp = build_input(b"..", "", media_type="audio/mp4")
     assert isinstance(inp, TextInput)
     assert "audio/mp4" in inp.content
-
-
-def test_our_table_supplies_the_media_type_even_when_the_platform_disagrees():
-    """ADR 0010 documents a platform's MIME as unreliable and the extension as strong
-    and stable; the value handed to AG2 follows the extension too, not just the kind."""
-    inp = build_input(b"\x89PNG", "pic.png", media_type="application/octet-stream")
-    assert _kind(inp) == BinaryType.IMAGE
-    assert inp.media_type == "image/png"
 
 
 def test_every_extension_we_route_carries_a_type_ag2_declares():
@@ -122,9 +112,11 @@ def test_pdf_by_mime_when_no_extension():
 
 
 def test_extension_wins_over_mime():
-    # A real filename extension stays the primary key even if MIME disagrees.
+    # A real filename extension is the primary key even if MIME disagrees, and our
+    # table supplies the media type handed to AG2 (ADR 0010).
     inp = build_input(b"\x89PNG", "pic.png", media_type="application/octet-stream")
     assert _kind(inp) == BinaryType.IMAGE
+    assert inp.media_type == "image/png"
 
 
 def test_empty_data_returns_none():

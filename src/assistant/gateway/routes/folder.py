@@ -11,7 +11,6 @@ web/src/schemas/folder.ts (their zod twins) — same file name in all three tree
 """
 
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -27,11 +26,12 @@ from assistant.gateway.schemas import (
     FolderMutatedResponse,
     FolderRootsResponse,
     FolderSavedResponse,
+    ResponseSpecs,
 )
 
 # The two writes that can collide on a path answer 409 with the Folder already
 # holding it, so the client can point at that one instead of reporting a dead end.
-CONFLICT_RESPONSE: dict[int | str, dict[str, Any]] = {
+CONFLICT_RESPONSE: ResponseSpecs = {
     409: {"model": FolderConflictResponse, "description": "Conflict"}
 }
 

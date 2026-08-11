@@ -91,8 +91,6 @@ def resolve_active_profile(
         )
     if meta.archived:
         raise ArchivedProfile(meta.id)
-    # `meta.id` is the id that resolved this profile — the same string as `pid`, but
-    # carried by the entry rather than by the optional argument.
     factory = config_factory(meta.id, paths, env)
     return meta.id, factory(), factory
 
@@ -161,12 +159,8 @@ class ProfileRuntime:
             return self.gateway.config
         return self._config
 
-    # ``ProfileManager.get`` refuses to hand out a registered, unarchived runtime that is
-    # not running — it calls that a server bug rather than lazy-booting. So a caller
-    # holding a runtime holds a started one, and these three name that guarantee in one
-    # place instead of at each of the forty sites that rely on it. They raise in the same
-    # shape ``get`` does if it is ever untrue; code that genuinely treats a stopped
-    # runtime as ordinary (``close``, the status routes) still reads the attribute.
+    # The three accessors below return a started collaborator or raise, as
+    # ``ProfileManager.get`` does; ``close`` and the status routes read the attribute.
     def require_gateway(self) -> Gateway:
         """This runtime's started gateway."""
         if self.gateway is None:

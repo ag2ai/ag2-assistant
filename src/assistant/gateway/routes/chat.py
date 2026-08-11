@@ -53,11 +53,12 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """The display transcript for a chat, plus its Chat override and the model it
         would run on right now (so the composer's switcher needs no second call)."""
+        gw = runtime.require_gateway()
         return {
             "chat_id": chat_id,
-            "messages": await runtime.require_gateway().transcript(chat_id),
-            "model": await runtime.require_gateway().chat_model(chat_id),
-            "effective_model": await runtime.require_gateway().effective_model(chat_id),
+            "messages": await gw.transcript(chat_id),
+            "model": await gw.chat_model(chat_id),
+            "effective_model": await gw.effective_model(chat_id),
         }
 
     @r.delete("/chats/{chat_id}", response_model=Ok)

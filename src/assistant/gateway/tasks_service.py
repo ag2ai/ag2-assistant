@@ -38,8 +38,7 @@ from assistant.tasks.scheduling import compute_next_run, parse_dt, schedule_text
 from assistant.tasks.summary import default_summarizer, suggest_task_meta, summarize_run
 
 if TYPE_CHECKING:
-    # The gateway constructs this service, so naming its types here would be a cycle
-    # at runtime; the scheduler and its lock stay lazy imports for start-up cost.
+    # Annotation-only imports: the runtime ones are lazy, inside the methods that use them.
     from assistant.gateway.core import Gateway
     from assistant.scheduler_lock import SchedulerLock
     from assistant.tasks import Scheduler
@@ -522,7 +521,6 @@ class TaskService:
         if task is None:
             await self._finish(run_id, RunStatus.FAILED, error="task deleted")
             return
-        # A run IS a chat turn: without the gateway that owns the chats it cannot run.
         gateway = self._gateway
         if gateway is None:
             await self._finish(run_id, RunStatus.FAILED, error="task service has no gateway")

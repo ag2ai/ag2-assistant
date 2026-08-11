@@ -20,7 +20,6 @@ enough to belong in ERROR_RESPONSES.
 
 import os
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -37,6 +36,7 @@ from assistant.gateway.schemas import (
     MentionsResponse,
     MkdirResultResponse,
     Ok,
+    ResponseSpecs,
     SearchResultsResponse,
     UploadResultResponse,
     WriteResultResponse,
@@ -58,13 +58,9 @@ from assistant.workspace import (
 # A `read`-only Folder refuses every mutation below with this body. The
 # ``description`` is spelled out for the reason ERROR_RESPONSES gives: the
 # interpreter's reason-phrase table is version-dependent, the artifact is not.
-DENIED_RESPONSE: dict[int | str, dict[str, Any]] = {
-    403: {"model": ErrorBody, "description": "Forbidden"}
-}
+DENIED_RESPONSE: ResponseSpecs = {403: {"model": ErrorBody, "description": "Forbidden"}}
 # ...and the in-place write additionally caps the body it will buffer.
-TOO_LARGE_RESPONSE: dict[int | str, dict[str, Any]] = {
-    413: {"model": ErrorBody, "description": "Content Too Large"}
-}
+TOO_LARGE_RESPONSE: ResponseSpecs = {413: {"model": ErrorBody, "description": "Content Too Large"}}
 
 
 class MkdirRequest(BaseModel):
@@ -226,10 +222,11 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
             # descended into (ticket 04, "affordances derived from the resolved mode").
             return {**listing, "mode": mode}
 
+        workspace_dir = runtime.require_config().workspace_dir
         return {
-            "root": str(Path(runtime.require_config().workspace_dir).expanduser()),
-            "files": list_files(runtime.require_config().workspace_dir),
-            "dirs": list_all_dirs(runtime.require_config().workspace_dir),
+            "root": str(Path(workspace_dir).expanduser()),
+            "files": list_files(workspace_dir),
+            "dirs": list_all_dirs(workspace_dir),
         }
 
     @r.get("/files/search", response_model=SearchResultsResponse)
@@ -243,16 +240,17 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         error. Honors the same ``mode_for`` resolution the agent's reads use, so a
         denied file is never surfaced (ADR 0006/0012)."""
         gw = runtime.gateway
+        cfg = runtime.require_config()
         # The Thread's scope carries its task in the chat_id slot (a run thread's
         # ``task-run:{run_id}``, a Task page's ``task:{id}``) — decode it so the picker
         # sees the task-scoped Folder grants too (the one shared decoder).
         task_id = await scope_task_id(runtime, chat_id)
         return {
             "results": search_corpus(
-                runtime.require_config().workspace_dir,
+                cfg.workspace_dir,
                 q,
                 folders=gw.folders if gw is not None else None,
-                profile=runtime.require_config().data_dir.name,
+                profile=cfg.data_dir.name,
                 chat_id=chat_id,
                 task_id=task_id,
             )

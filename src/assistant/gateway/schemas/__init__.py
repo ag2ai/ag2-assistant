@@ -83,7 +83,14 @@ from .permission import (
     PermissionSnapshotResponse,
     TaskRulesResponse,
 )
-from .primitives import ERROR_RESPONSES, ErrorBody, Ok, SecretRefOut, SharedKeyOut
+from .primitives import (
+    ERROR_RESPONSES,
+    ErrorBody,
+    Ok,
+    ResponseSpecs,
+    SecretRefOut,
+    SharedKeyOut,
+)
 from .profile import ProfileEnvelopeResponse, ProfileListResponse, ProfileOut
 from .secret import SecretListResponse, SecretOut, SecretSavedResponse
 from .settings import (
@@ -269,6 +276,7 @@ __all__ = [
     "ProviderCatalogResponse",
     "ProviderKeyOut",
     "ReplyTimeoutSavedResponse",
+    "ResponseSpecs",
     "RunDetailEnvelopeResponse",
     "RunDetailOut",
     "RunListResponse",

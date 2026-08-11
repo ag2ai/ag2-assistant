@@ -509,7 +509,10 @@ class Gateway:
             try:
                 # chat_id is not a UUID — see `_get_stream` for why.
                 events = list(await stream.history.get_events())
-                await self._writer.persist(chat_id, events)  # type: ignore[arg-type]
+                await self._writer.persist(
+                    chat_id,  # type: ignore[arg-type]
+                    events,
+                )
             except Exception as exc:
                 log_suppressed("external stream event persist", exc, chat_id=chat_id)
                 # Persistence is best-effort; the live event still went out.
