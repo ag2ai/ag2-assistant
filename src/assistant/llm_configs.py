@@ -181,7 +181,7 @@ _SECTION = "llm_configs"
 # The one provider tool that used to be wired unconditionally, before the switches
 # existed: build_agent_tools gave every Anthropic agent the native WebFetchTool and
 # everyone else our local function tool. See _clean_entry for how it is carried over.
-_LEGACY_BUILTINS = {"anthropic": {"web_fetch": {}}}
+_LEGACY_BUILTINS: dict[str, dict[str, dict]] = {"anthropic": {"web_fetch": {}}}
 
 
 def _clean_builtin_tools(raw: dict, ctype: str) -> dict:

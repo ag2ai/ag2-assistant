@@ -47,7 +47,7 @@ extension resolves nothing, route by `media_type` (`image/*` → `ImageInput`,
   on `DocumentInput(application/octet-stream)` — the same last resort as before,
   now reached deliberately rather than by accident.
 
-## Amendment (ADR 0029, the type gate)
+## Amendment (ADR 0030, the type gate)
 
 Two of the values this record's chain hands to an AG2 constructor are ones AG2 does
 not declare and no supported provider accepts. Both were found by running the type

@@ -28,6 +28,7 @@ configs keep today's behaviour).
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import TypedDict
 
 from ag2.tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 
@@ -62,11 +63,19 @@ def register(ctype: str, *tools: BuiltinTool) -> None:
     _REGISTRY[ctype] = tools
 
 
-_SEARCH = {"capability": "web", "suppresses": ("duckduckgo_search",)}
-_FETCH = {"capability": "web", "suppresses": ("web_fetch",)}
+class _KindFields(TypedDict, total=False):
+    """The spec fields one KIND of builtin carries wherever it is offered, so each
+    registration below states only its id, its factory and this."""
+
+    capability: str
+    suppresses: tuple[str, ...]
+
+
+_SEARCH: _KindFields = {"capability": "web", "suppresses": ("duckduckgo_search",)}
+_FETCH: _KindFields = {"capability": "web", "suppresses": ("web_fetch",)}
 # Code execution ADDS a runner rather than replacing one: ours reaches the user's
 # real files (approval-gated), the provider's runs on their servers and cannot.
-_CODE = {"capability": "code"}
+_CODE: _KindFields = {"capability": "code"}
 
 register(
     "anthropic",
