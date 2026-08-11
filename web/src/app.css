@@ -354,6 +354,12 @@
 .settings .llmhint { font-size: 11px; font-weight: 400; color: var(--muted); }
 .settings .llmkeyfield { display: flex; align-items: center; gap: 6px; }
 .settings .llmkeyfield input { flex: 1; }
+/* One provider tool: a checkbox that keeps its own baseline while the label,
+   description and on-note stack beside it. */
+.settings .llmtool { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.settings .llmtool input[type="checkbox"] { min-width: 0; width: auto; margin-top: 2px; flex: none; accent-color: var(--accent); }
+.settings .llmtoolbody { display: flex; flex-direction: column; gap: 2px; }
+.settings .llmtoolname { font-size: 13px; color: var(--ink); }
 .settings .advtoggle { align-self: flex-start; color: var(--accent); }
 .settings .advtoggle:hover { color: var(--accent); }
 .settings .llmadv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; min-height: 82px; resize: vertical; background: var(--bg); color: var(--ink); }

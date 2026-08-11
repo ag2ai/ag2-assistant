@@ -25,6 +25,10 @@ export type LlmConfigDraft = {
   secret_id?: string
   api_key?: string | null
   options?: Record<string, unknown>
+  // Provider-native tools switched on, as {tool id: options}. Always sent by the
+  // form, so an omitted field means only "an older client" — which the server
+  // reads as a config predating the feature.
+  builtin_tools?: Record<string, Record<string, unknown>>
   activate?: boolean
 }
 

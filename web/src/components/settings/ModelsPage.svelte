@@ -20,6 +20,7 @@
   import VoiceSection from './VoiceSection.svelte'
   import Icon from '../Icon.svelte'
   import { llmConfigs, loadLlmConfigs, type LlmConfigSeed } from '../../lib/llm.ts'
+  import { builtinToolText, builtinChip } from '../../lib/builtinTools.ts'
   import { TYPE_LABEL, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER } from '../../lib/providerLabels.ts'
   import { MODEL_TEMPLATES, type ModelTemplate } from '../../lib/modelTemplates.ts'
   import BrandMark from '../BrandMark.svelte'
@@ -174,6 +175,11 @@
         <!-- Images follow the ACTIVE config: capable types advertise the chip, and on
              the active row it reads as "image generation enabled" (✓). -->
         {#if c.images}<span class="llmkey">images{c.active ? ' ✓' : ''}</span>{/if}
+        <!-- Provider-native tools switched on, so the list says what a config can do
+             without opening it. Short chips: the full labels are the form's. -->
+        {#each Object.keys(c.builtin_tools || {}) as id (id)}
+          <span class="llmkey" title={builtinToolText(c.type, id).label}>{builtinChip(id)}</span>
+        {/each}
         {#if tests[c.id]}
           {#if tests[c.id].testing}
             <span class="llmtest">testing…</span>

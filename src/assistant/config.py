@@ -39,6 +39,11 @@ class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
     provider: str = "gemini"  # gemini | anthropic | openai | ollama
+    # The llm_configs type the active entry came from, when one governs (see
+    # LlmConfigStore.derive_onto). Empty on the flat/env path. Distinct from
+    # `provider` because that folds the three OpenAI types into one value, and
+    # only openai_responses offers provider-native tools.
+    config_type: str = ""
     model: str = "gemini-3.6-flash"
     api_key_env: str = "GEMINI_API_KEY"
     # How the OpenAI provider authenticates:
@@ -63,6 +68,11 @@ class LLMConfig(BaseModel):
     # A config.json value is the install-wide base; each profile's
     # Settings → Model & Keys → Advanced overlays its own entries on top.
     provider_options: dict[str, dict] = Field(default_factory=dict)
+    # Provider-native (server-side) tools switched on for the active configuration,
+    # as {tool id: options}. Availability is per config_type — see
+    # assistant.builtin_tools. Values are empty today: every option on the
+    # registered tools is optional, so nothing needs configuring yet.
+    builtin_tools: dict[str, dict] = Field(default_factory=dict)
     # Hard wall-clock ceiling on a single LLM call. Provider SDKs sometimes hang a
     # streaming request indefinitely (no error, no timeout) — a stuck turn then sits
     # "running" forever. The per-call timeout middleware wraps each call and raises

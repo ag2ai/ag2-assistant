@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from assistant import live_configs, llm_configs, provider_catalog, voice_providers
+from assistant.builtin_tools import builtin_ids_for
 from assistant.coding.model_catalog import CatalogModel, as_view
 from assistant.config import Config
 from assistant.gateway.routes.common import reload_all
@@ -65,6 +66,9 @@ class LlmConfigRequest(BaseModel):
     secret_id: str = ""
     api_key: str | None = None
     options: dict = Field(default_factory=dict)
+    # None means the client didn't send the field, which llm_configs reads as
+    # "predates the feature" — distinct from {}, meaning all switched off.
+    builtin_tools: dict | None = None
     activate: bool = False
 
 
@@ -123,6 +127,8 @@ def build_router(
             "base_url": entry.get("base_url", ""),
             "host": entry.get("host", ""),
             "options": entry.get("options", {}),
+            # {tool id: options} — the provider-native tools switched on here.
+            "builtin_tools": entry.get("builtin_tools", {}),
             "secret_id": entry.get("secret_id", ""),
             "secret": sec,
             "secret_missing": bool(entry.get("secret_id")) and sec is None,
@@ -196,6 +202,9 @@ def build_router(
             # Every type, not just the configured ones — the "Add model" template grid
             # reads this for types no config uses yet.
             "provider_deps": {t: llm_configs.deps_status(t) for t in llm_configs.TYPES},
+            # type -> the provider-native tool ids it offers. Ids only: the labels
+            # are the web's (lib/builtinTools.ts), like every other type label.
+            "builtin_tools_by_type": {t: list(builtin_ids_for(t)) for t in llm_configs.TYPES},
         }
 
     @r.get("/api/llm-configs/models", response_model=ProviderCatalogResponse)
@@ -257,6 +266,8 @@ def build_router(
             "secret_id": req.secret_id,
             "options": req.options,
         }
+        if req.builtin_tools is not None:
+            entry["builtin_tools"] = req.builtin_tools
         if cid is not None:
             if d.llm_store.get_config(cid) is None:
                 return JSONResponse(
