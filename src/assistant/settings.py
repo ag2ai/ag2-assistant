@@ -101,7 +101,8 @@ class Settings:
         if not isfinite(value) or value <= 0:
             raise ValueError("Reply timeout must be greater than zero.")
         data = self._read()
-        gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+        existing = data.get("gateway")
+        gateway = existing if isinstance(existing, dict) else {}
         gateway["reply_timeout_s"] = value
         data["gateway"] = gateway
         self._write(data)

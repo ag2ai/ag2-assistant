@@ -28,6 +28,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from contextlib import AsyncExitStack, ExitStack
+from uuid import UUID
 
 from ag2.annotations import Context
 from ag2.context import ConversationContext
@@ -43,8 +44,11 @@ from ag2.observers import BaseObserver, LoopDetector
 
 try:  # ObserverStarted/Completed bracket a turn; used to scope silence to in-turn.
     from ag2.events import ObserverCompleted, ObserverStarted  # local: version-guarded ag2 events
+
+    _HAS_LIFECYCLE_EVENTS = True
 except ImportError:  # pragma: no cover - older AG2 without the lifecycle events
     ObserverStarted = ObserverCompleted = ()  # type: ignore[assignment,misc]
+    _HAS_LIFECYCLE_EVENTS = False
 from ag2.watch import EventWatch
 
 # A turn that calls this many tools without answering is treated as stuck/flailing.
@@ -163,7 +167,7 @@ class SilenceWatchdog:
         self._poll = poll_interval_s
         self._clock = clock
         self._ctx: Context | None = None
-        self._sub_id = None
+        self._sub_id: UUID | None = None
         self._task: asyncio.Task | None = None
         self._last = 0.0
         self._alerted = False
@@ -195,7 +199,7 @@ class SilenceWatchdog:
         # keep the clock alive (which would block escalation to FATAL/halt).
         if isinstance(event, ObserverAlert) and event.source == self.name:
             return
-        if ObserverStarted and isinstance(event, (ObserverStarted, ObserverCompleted)):
+        if _HAS_LIFECYCLE_EVENTS and isinstance(event, (ObserverStarted, ObserverCompleted)):
             return
         self._last = self._clock()
         self._alerted = False

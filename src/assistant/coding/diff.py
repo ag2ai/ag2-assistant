@@ -84,7 +84,7 @@ def _candidate_files(directory: str) -> list[str]:
             return rels[:MAX_FILES]
         except (OSError, subprocess.CalledProcessError):
             pass  # fall through to the plain walk
-    rels: list[str] = []
+    rels = []
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for name in files:

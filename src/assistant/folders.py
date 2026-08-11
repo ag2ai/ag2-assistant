@@ -349,7 +349,9 @@ class FolderStore:
             return
         with self._mutate():
             before = len(self._grants)
-            affected = {g.get("folder_id") for g in self._grants if g.get("task_id", "") == task_id}
+            affected = {
+                g.get("folder_id", "") for g in self._grants if g.get("task_id", "") == task_id
+            }
             self._grants = [g for g in self._grants if g.get("task_id", "") != task_id]
             if len(self._grants) != before:
                 for fid in affected:
@@ -478,6 +480,6 @@ class FolderStore:
                 continue
             if eff == READ_WRITE:
                 return READ_WRITE
-            if rank.get(eff, 0) > rank.get(best, 0):
+            if rank.get(eff, 0) > rank.get(best or "", 0):
                 best = eff
         return best

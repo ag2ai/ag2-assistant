@@ -39,6 +39,8 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
     "ruff>=0.15.18,<0.16",  # pinned line; matches .pre-commit-config.yaml + the CI lint gate
+    "mypy>=2.3,<2.4",
+    "types-PyYAML>=6.0",
     "pre-commit>=4.0.0",
 ]
 # Provider client libraries not in the base install.
@@ -78,6 +80,25 @@ ignore = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.mypy]
+# `files` is configured rather than passed on the command line so a bare `mypy`
+# means the same thing in a terminal, in the pre-commit hook and in CI.
+python_version = "3.12"
+mypy_path = "src"
+files = ["src/assistant"]
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_equality = true
+check_untyped_defs = true
+
+# No stubs and no type marker. Named individually rather than with a global
+# ignore_missing_imports, which would also silence future unresolved imports.
+[[tool.mypy.overrides]]
+module = ["cron_descriptor.*", "googleapiclient.*", "google_auth_oauthlib.*"]
+ignore_missing_imports = true
 
 [tool.codespell]
 # The generated SPA bundle and lockfiles are machine-written — never spell-check them.

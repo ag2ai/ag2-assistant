@@ -125,7 +125,7 @@ def build_board(results: list[tuple[dict, list]], title: str = "") -> dict:
     if len(states) == 1:
         board["status"] = next(iter(states))
 
-    times = [m.get("regularMarketTime") for (m, _) in results if m.get("regularMarketTime")]
+    times = [t for (m, _) in results if (t := m.get("regularMarketTime"))]
     if times:
         board["asOf"] = datetime.fromtimestamp(max(times), tz=timezone.utc).isoformat()
     return board

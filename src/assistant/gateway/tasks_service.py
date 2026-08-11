@@ -17,6 +17,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from ag2 import Agent
+
 from assistant.config import Config, load_config
 from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
@@ -173,7 +175,7 @@ class TaskService:
         max_concurrent: int = 3,
         scheduler_interval: float = 30.0,
         config_factory: Callable[[], Config] | None = None,
-        summary_factory: Callable[[Config], object] | None = None,
+        summary_factory: Callable[[Config], Agent] | None = None,
     ) -> None:
         self._config = config or load_config()
         self._config_factory = config_factory or load_config

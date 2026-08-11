@@ -167,7 +167,12 @@ def mention_forms(workspace_dir, path: str) -> list[str]:
         forms.append(p)
         forms.append(str(root / p))
     seen: set[str] = set()
-    return [f for f in forms if f and not (f in seen or seen.add(f))]
+    unique: list[str] = []
+    for f in forms:
+        if f and f not in seen:
+            seen.add(f)
+            unique.append(f)
+    return unique
 
 
 def _hash(data: bytes) -> str:
