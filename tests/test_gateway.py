@@ -1063,7 +1063,7 @@ async def test_identity_document_endpoint_parity(paths):
     await onboarding.run_onboarding(
         _Asker(["Ada", "London", "9am–6pm", "Short & direct"]),
         user_store_path=cli_store,
-        env_path=paths.root / ".env",
+        paths=paths,
     )
     cli_doc = await build_profile_store(cli_store).read(PROFILE_PATH)
     assert endpoint_doc == cli_doc
@@ -1538,3 +1538,67 @@ async def test_close_closes_acp_sessions(fake_gateway):
     fake_gateway._agent = _FakeAgentWithConfig(cfg)
     await fake_gateway.close()
     assert cfg.closed == 1
+
+
+def test_llm_configs_expose_provider_builtin_tools(profile_app):
+    """The list ships the per-type availability (ids only — the labels are the
+    web's), and a config round-trips the switches the user chose."""
+    client, _pid = profile_app
+
+    r = client.get("/api/llm-configs").json()
+    # Every type, not just the configured ones — the form renders a type before
+    # any config uses it.
+    assert set(r["builtin_tools_by_type"]) == set(TYPES)
+    assert r["builtin_tools_by_type"]["gemini"] == ["web_search", "web_fetch", "code_execution"]
+    assert r["builtin_tools_by_type"]["openai_responses"] == ["web_search", "code_execution"]
+    # Chat Completions, Ollama and the CLI-login types map none.
+    for ctype in ("openai", "openai_subscription", "ollama", "claude_code", "codex"):
+        assert r["builtin_tools_by_type"][ctype] == []
+
+    body = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "G",
+            "type": "gemini",
+            "model": "gemini-3.6-flash",
+            "builtin_tools": {"web_search": {}},
+        },
+    ).json()
+    assert body["config"]["builtin_tools"] == {"web_search": {}}
+    assert client.get("/api/llm-configs").json()["configs"][0]["builtin_tools"] == {
+        "web_search": {}
+    }
+
+
+def test_saving_an_unsupported_builtin_strips_it_rather_than_failing(profile_app):
+    client, _pid = profile_app
+    r = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "R",
+            "type": "openai_responses",
+            "model": "gpt-5",
+            "builtin_tools": {"web_search": {}, "web_fetch": {}},
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["config"]["builtin_tools"] == {"web_search": {}}
+
+
+def test_an_anthropic_config_saved_without_the_field_keeps_the_native_fetcher(profile_app):
+    """A client that never sends builtin_tools (or a config written before the
+    feature) must not silently lose the fetcher it had — see llm_configs."""
+    pytest.importorskip("anthropic")  # the save dry-constructs the provider config
+    client, _pid = profile_app
+    r = client.post(
+        "/api/llm-configs", json={"name": "A", "type": "anthropic", "model": "claude-x"}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["config"]["builtin_tools"] == {"web_fetch": {}}
+    # An explicit empty object is the user's choice and is honoured.
+    off = client.post(
+        f"/api/llm-configs/{body['config']['id']}",
+        json={"name": "A", "type": "anthropic", "model": "claude-x", "builtin_tools": {}},
+    ).json()
+    assert off["config"]["builtin_tools"] == {}

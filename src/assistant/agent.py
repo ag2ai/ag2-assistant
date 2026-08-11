@@ -628,13 +628,14 @@ def create_agent(
         )
 
     tools = build_agent_tools(
-        config.llm.provider,
+        config.llm.config_type,
         sandbox=config.tools.sandbox,
         docker_image=config.tools.docker_image,
         docker_network=config.tools.docker_network,
         capabilities=capabilities,
         workspace_dir=config.workspace_dir,
         config=config,  # enables generate_image (needs provider/keys)
+        builtin=config.llm.builtin_tools,
     )
     plugins: list = []
     if skills and (capabilities is None or "skills" in capabilities):

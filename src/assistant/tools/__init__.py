@@ -9,15 +9,14 @@ portable across providers.
 | Web search    | `DuckDuckSearchTool` (native)     | all providers      |
 | Shell         | `SandboxShellTool` (native)       | all providers      |
 | Code exec     | `SandboxCodeTool` (native, local) | all providers      |
-| Web fetch     | `WebFetchTool` (native)           | Anthropic          |
-| Web fetch     | `web_fetch` (custom fallback)     | Gemini & others    |
+| Web fetch     | `web_fetch` (custom)              | all providers      |
 
-Note on web fetch: the native `WebFetchTool` is a *server-side* built-in. On
-Gemini it cannot be combined with local function-calling tools (search / shell /
-code) without erroring, so for Gemini — and any provider that treats it as a
-server-side tool — we use the custom function-tool fallback, which composes
-cleanly. Anthropic permits mixing server-side and function tools, so it gets the
-native one.
+Every tool here runs locally: the model asks us to call it and we return the
+result. A provider's own *server-side* tools (Anthropic web search, OpenAI code
+interpreter, Gemini search grounding) are a separate, opt-in surface configured
+per model — see `assistant.builtin_tools`. When one is enabled it can stand in
+for the local tool doing the same job, which is what `suppresses` expresses; the
+local one is dropped from the list below rather than offered alongside it.
 """
 
 import warnings
@@ -29,9 +28,9 @@ from ag2.tools import (
     LocalEnvironment,
     SandboxCodeTool,
     SandboxShellTool,
-    WebFetchTool,
 )
 
+from assistant.builtin_tools import active_builtins, build_builtin_tools, suppressed_by
 from assistant.config import Config
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.settings import profile_settings
@@ -45,9 +44,6 @@ from assistant.tools.image_gen import build_image_tool
 from assistant.tools.mcp import build_mcp_tools
 from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch, web_fetch_tool
-
-# Providers that allow the native server-side WebFetchTool alongside function tools.
-_NATIVE_WEB_FETCH_PROVIDERS = {"anthropic"}
 
 # Commands the shell tool must never run.
 _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
@@ -127,7 +123,7 @@ def docker_environment(**kwargs):
 
 
 def build_agent_tools(
-    provider: str = "gemini",
+    ctype: str = "",
     sandbox: str = "local",
     docker_image: str = "python:3.12-slim",
     docker_network: str = "bridge",
@@ -136,6 +132,7 @@ def build_agent_tools(
     config=None,
     google: "GoogleAuth | None" = None,
     environment_factory=None,
+    builtin: dict[str, dict] | None = None,
 ) -> list:
     """Build the agent's tools.
 
@@ -143,12 +140,14 @@ def build_agent_tools(
     (used by tasks so a research subtask can't reach your Drive or run code, etc.).
 
     Args:
-        provider: LLM provider (selects native vs custom web fetch).
+        ctype: the llm_configs type, which decides what `builtin` may name.
         sandbox: "local" (approval-gated) or "docker" (container-isolated).
         capabilities: subset of CAPABILITIES, or None for everything.
+        builtin: provider-native tools switched on for this model, `{id: options}`.
     """
     want = (lambda c: True) if capabilities is None else (lambda c: c in capabilities)
     tools: list = []
+    builtin = builtin or {}
 
     if capabilities is None:
         # Chat only: option-carrying user questions via the durable HITL channel
@@ -158,7 +157,7 @@ def build_agent_tools(
 
     if want("web"):
         tools.append(DuckDuckSearchTool(max_results=5))
-        tools.append(WebFetchTool() if provider in _NATIVE_WEB_FETCH_PROVIDERS else web_fetch_tool)
+        tools.append(web_fetch_tool)
         tools.append(get_weather)  # deterministic weather → WeatherPanel, not a search spray
         tools.append(get_quotes)  # deterministic global quotes → MarketBoard, not a search spray
 
@@ -288,6 +287,18 @@ def build_agent_tools(
         # so an agent only loads the MCP servers configured in its own profile.
         settings = profile_settings(config.data_dir)
         tools += build_mcp_tools(settings.list_mcp_servers(include_env=True))
+
+    # Provider-native tools, last: a builtin and the local tool it stands in for do
+    # the same job, and offering both only invites the model to pick badly — so drop
+    # ours by the names the registry declares, then append the builtins. Each carries
+    # its capability group, so a task scoped without "web" gets web search from
+    # neither surface.
+    active = active_builtins(ctype, builtin, capabilities)
+    if active:
+        drop = suppressed_by(active)
+        if drop:
+            tools = [t for t in tools if getattr(t, "name", "") not in drop]
+        tools += build_builtin_tools(active)
 
     return tools
 
