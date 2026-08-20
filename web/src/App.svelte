@@ -5,6 +5,7 @@
   import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, ag2Version, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.ts'
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.ts'
   import { uiLocale } from './lib/i18n.ts'
+  import { m } from './paraglide/messages.js'
   import { api } from './transport/api/index.ts'
   import { setActiveProfileId, storedProfileId } from './lib/profile.ts'
   import { setAccent } from './design/palette.ts'
@@ -203,7 +204,7 @@ import AppBar from './components/AppBar.svelte'
 
 {#key $uiLocale}
 {#if boot === 'loading'}
-  <div class="app"><div class="main"><div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Loading…</div></div></div></div>
+  <div class="app"><div class="main"><div class="thread"><div class="empty"><h1>AG2 Assistant</h1>{m.loading()}</div></div></div></div>
 {:else if boot === 'create'}
   <Onboarding fresh={true} onComplete={onFreshOnboarded} />
 {:else}
@@ -220,14 +221,14 @@ import AppBar from './components/AppBar.svelte'
       {:else if $route.name === 'task'}
         <TaskPage />
       {:else if $route.name === 'files'}
-        <AppBar title="Files" />
-        <div class="thread"><div class="empty"><h1>Files</h1>Browse and manage your files from the sidebar.</div></div>
+        <AppBar title={m.tab_files()} />
+        <div class="thread"><div class="empty"><h1>{m.tab_files()}</h1>{m.files_empty_hint()}</div></div>
       {:else if $route.name === 'tasks'}
-        <AppBar title="Tasks" />
-        <div class="thread"><div class="empty"><h1>Tasks</h1>Pick a task from the sidebar, or create one with New task.</div></div>
+        <AppBar title={m.tab_tasks()} />
+        <div class="thread"><div class="empty"><h1>{m.tab_tasks()}</h1>{m.tasks_empty_hint()}</div></div>
       {:else}
         <AppBar title="AG2 Assistant" />
-        <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Starting a conversation…</div></div>
+        <div class="thread"><div class="empty"><h1>AG2 Assistant</h1>{m.starting_conversation()}</div></div>
       {/if}
     </div>
     <!-- The right rail holds one occupant; the preview takes precedence over the

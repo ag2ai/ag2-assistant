@@ -7,6 +7,7 @@
   import { ag2View } from '../store.ts'
   import { toggleAsideInspector } from '../router.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
   import ThemeToggle from './ThemeToggle.svelte'
   import SystemHealth from './SystemHealth.svelte'
 
@@ -35,6 +36,6 @@
     <SystemHealth />
     <ThemeToggle />
     <button class="ag2toggle" class:on={$ag2View} class:ag2-glow={$ag2View} onclick={toggleAsideInspector}
-            title="AG2 view — reveal the live AG2 events powering the UI"><Icon name="code" size={14} /> AG2</button>
+            title={m.appbar_ag2_view_title()}><Icon name="code" size={14} /> AG2</button>
   </div>
 </div>

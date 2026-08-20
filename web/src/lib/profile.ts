@@ -10,6 +10,7 @@
 
 import { get } from 'svelte/store'
 import { profiles, notice } from '../store.ts'
+import { m } from '../paraglide/messages.js'
 
 const LS_KEY = 'ag2-profile-id'
 
@@ -71,10 +72,13 @@ export function onProfileGone(reason = ''): void {
   _recovering = true
   try {
     const reg = get(profiles) || { list: [] }
-    const gone = reg.list.find((p) => p.id === goneId)?.name || 'This profile'
+    const gone = reg.list.find((p) => p.id === goneId)?.name || ''
     // Name the destination if we can (any surviving profile); else say "default".
-    const dest = reg.list.find((p) => p.id !== goneId)?.name || 'the default'
-    notice.set({ text: `Profile ${gone} was archived — switching to ${dest}.` })
+    const dest = reg.list.find((p) => p.id !== goneId)?.name || ''
+    const text = gone
+      ? (dest ? m.notice_profile_archived({ name: gone, dest }) : m.notice_profile_archived_default({ name: gone }))
+      : (dest ? m.notice_profile_archived_unnamed({ dest }) : m.notice_profile_archived_unnamed_default())
+    notice.set({ text })
   } catch {}
   setTimeout(() => location.assign('/app/'), RECOVER_DELAY)
 }

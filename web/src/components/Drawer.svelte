@@ -16,6 +16,7 @@
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
   import { inkOn } from '../design/palette.ts'
+  import { m } from '../paraglide/messages.js'
   import type { ChatRow, Profile, RunStatus, StatusRow, Task, UsageRollup, UsageTotals } from '../schemas/index.ts'
 
   // Compact form of a cron description for the narrow schedule tag: abbreviate
@@ -132,7 +133,7 @@
   // "12.3k tok · ~$0.0456" for a usage-shaped {total, cost, priced}. Cost is an
   // estimate (~) and only shown when the contributing model(s) had known pricing.
   const fmtUsage = (u: UsageTotals) => {
-    const tok = `${fmtTok(u.total)} tok`
+    const tok = m.drawer_usage_tokens({ n: fmtTok(u.total) })
     return u.priced ? `${tok} · ~$${u.cost.toFixed(u.cost < 1 ? 3 : 2)}` : tok
   }
   // >1 profile → the install-wide roll-up is meaningful; a single profile's "all"
@@ -142,22 +143,22 @@
     if (!usage || !usage.total) return ''
     let label = fmtUsage(usage)
     // Append the install-wide total only when more than one profile exists.
-    if (multiProfile && usageAll?.total?.total) label += ` · all: ${fmtUsage(usageAll.total)}`
+    if (multiProfile && usageAll?.total?.total) label += ' · ' + m.drawer_usage_all({ usage: fmtUsage(usageAll.total) })
     return label
   })
   const usageTitle = $derived.by(() => {
     if (!usage) return ''
     const models = Object.keys(usage.by_model || {}).join(', ')
-    let title = `Today (${usage.date}): ${fmtTok(usage.prompt)} in / ${fmtTok(usage.completion)} out`
-      + (usage.priced ? ` · ~$${(usage.cost || 0).toFixed(4)} (estimate)` : ' · cost: no price set')
-      + (models ? `\nmodels: ${models}` : '')
+    let title = m.drawer_usage_today_title({ date: usage.date, tokens_in: fmtTok(usage.prompt), tokens_out: fmtTok(usage.completion) })
+      + ' · ' + (usage.priced ? m.drawer_usage_estimate({ cost: (usage.cost || 0).toFixed(4) }) : m.drawer_usage_no_price())
+      + (models ? '\n' + m.drawer_usage_models({ models }) : '')
     // Per-profile breakdown line ("Work: … · Personal: …") when more than one exists.
     if (multiProfile && usageAll) {
       const breakdown = usageAll.profiles
         .filter((p) => p.total)
         .map((p) => `${p.name}: ${fmtUsage(p)}`)
         .join(' · ')
-      if (breakdown) title += `\nall profiles — ${breakdown}`
+      if (breakdown) title += '\n' + m.drawer_usage_all_profiles({ breakdown })
     }
     return title
   })
@@ -364,11 +365,11 @@
   // Run statuses (RunStatus.ALL: running/needs_input/completed/failed/cancelled) —
   // a task row's `last_run.status` is looked up here for its status icon.
   const STATUS: Record<RunStatus, { icon: string; label: string }> = {
-    running: { icon: 'spinner', label: 'running' },
-    needs_input: { icon: 'help-circle', label: 'needs input' },
-    completed: { icon: 'check', label: 'completed' },
-    failed: { icon: 'x', label: 'failed' },
-    cancelled: { icon: 'slash', label: 'cancelled' },
+    running: { icon: 'spinner', label: m.status_running() },
+    needs_input: { icon: 'help-circle', label: m.status_needs_input() },
+    completed: { icon: 'check', label: m.status_completed() },
+    failed: { icon: 'x', label: m.status_failed() },
+    cancelled: { icon: 'slash', label: m.status_cancelled() },
   }
   const stat = (s: RunStatus | undefined) => (s && STATUS[s]) || { icon: 'clock', label: s || '' }
 
@@ -384,7 +385,7 @@
 
   {#if active}
     <div class="profchips">
-      <div class="chiprow" role="tablist" aria-label="Profiles">
+      <div class="chiprow" role="tablist" aria-label={m.drawer_profiles()}>
         {#each inlineChips as p (p.id)}
           {@const isActive = p.id === active.id}
           <button
@@ -398,7 +399,7 @@
             onclick={() => (isActive ? null : switchTo(p.id))}
           >
             <span class="mono">{initial(p)}</span>
-            {#if hasUnseen(p.id)}<span class="actdot" title="unread results"></span>{/if}
+            {#if hasUnseen(p.id)}<span class="actdot" title={m.drawer_unread_results()}></span>{/if}
           </button>
         {/each}
 
@@ -408,18 +409,18 @@
           <button
             class="chip more"
             class:active={overflowActive}
-            title="More profiles"
+            title={m.drawer_more_profiles()}
             aria-haspopup="menu"
             aria-expanded={pickerOpen}
             onclick={() => (pickerOpen = !pickerOpen)}
           >
             <span class="mono">+{overflow.length}</span>
-            {#if overflowUnseen}<span class="actdot" title="unread results"></span>{/if}
+            {#if overflowUnseen}<span class="actdot" title={m.drawer_unread_results()}></span>{/if}
           </button>
         {/if}
 
         <!-- "+" chip → create-profile modal (§5.4). -->
-        <button class="chip add" title="New profile" aria-label="New profile" onclick={() => (createOpen = true)}>
+        <button class="chip add" title={m.drawer_new_profile()} aria-label={m.drawer_new_profile()} onclick={() => (createOpen = true)}>
           <Icon name="plus" size={15} />
         </button>
       </div>
@@ -440,7 +441,7 @@
             >
               <span class="profdot" style="--dot:{p.accent}"></span>
               <span class="profname">{p.name}</span>
-              {#if hasUnseen(p.id)}<span class="actdot inmenu" title="unread results"></span>{/if}
+              {#if hasUnseen(p.id)}<span class="actdot inmenu" title={m.drawer_unread_results()}></span>{/if}
               {#if isActive}<Icon name="check" size={13} />{/if}
             </button>
           {/each}
@@ -454,12 +455,12 @@
          of the a11y tree rather than becoming a second focusable control. -->
     <div class="modal-backdrop" role="presentation" onclick={() => (createOpen = false)}></div>
     <div class="modal profcreate">
-      <h2>New profile</h2>
-      <p class="pc-lead">A colour-coded, isolated workspace — its own chats, tasks, memory, and files.</p>
+      <h2>{m.drawer_new_profile()}</h2>
+      <p class="pc-lead">{m.drawer_new_profile_lead()}</p>
       <ProfileForm
         claimed={claimedAccents}
-        submitLabel="Create profile"
-        busyLabel="Creating…"
+        submitLabel={m.drawer_create_profile()}
+        busyLabel={m.drawer_creating()}
         onSubmit={createProfile}
         onCancel={() => (createOpen = false)}
       />
@@ -470,10 +471,10 @@
     <ChatFolders chatId={foldersChat} onClose={() => (foldersChat = '')} />
   {/if}
 
-  <div class="segbar" role="tablist" aria-label="View">
-    <button class="seg" class:on={$route.tab === 'chats'} role="tab" aria-selected={$route.tab === 'chats'} onclick={() => go('/chats')}><Icon name="message" size={14} /> Chats</button>
-    <button class="seg" class:on={$route.tab === 'tasks'} role="tab" aria-selected={$route.tab === 'tasks'} onclick={() => go('/tasks')}><Icon name="list" size={14} /> Tasks</button>
-    <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => go('/files')}><Icon name="folder" size={14} /> Files</button>
+  <div class="segbar" role="tablist" aria-label={m.drawer_view()}>
+    <button class="seg" class:on={$route.tab === 'chats'} role="tab" aria-selected={$route.tab === 'chats'} onclick={() => go('/chats')}><Icon name="message" size={14} /> {m.tab_chats()}</button>
+    <button class="seg" class:on={$route.tab === 'tasks'} role="tab" aria-selected={$route.tab === 'tasks'} onclick={() => go('/tasks')}><Icon name="list" size={14} /> {m.tab_tasks()}</button>
+    <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => go('/files')}><Icon name="folder" size={14} /> {m.tab_files()}</button>
   </div>
 
   {#snippet chatRow(s: ChatRow)}
@@ -492,14 +493,14 @@
       {#if confirmChat === s.chat_id}
         <!-- Layout wrapper only: the click handler shields the row underneath. -->
         <span class="rowconfirm" role="presentation" onclick={(e) => e.stopPropagation()}>
-          <span class="confirm">Delete?</span>
+          <span class="confirm">{m.confirm_delete()}</span>
           <button class="linkbtn danger" disabled={busyChat === s.chat_id}
-            onclick={(e) => { e.stopPropagation(); delChat(s.chat_id) }}>{busyChat === s.chat_id ? '…' : 'yes'}</button>
-          <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>no</button>
+            onclick={(e) => { e.stopPropagation(); delChat(s.chat_id) }}>{busyChat === s.chat_id ? '…' : m.confirm_yes()}</button>
+          <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>{m.confirm_no()}</button>
         </span>
       {:else if renameChat !== s.chat_id}
         {#if s.updated}<span class="rowtime">{fmtAgoShort(s.updated)}</span>{/if}
-        <button class="rowkebab" title="Chat actions" aria-haspopup="menu" aria-expanded={menuChat === s.chat_id}
+        <button class="rowkebab" title={m.drawer_chat_actions()} aria-haspopup="menu" aria-expanded={menuChat === s.chat_id}
           onclick={(e) => toggleMenu(e, s)}><Icon name="ellipsis-vertical" size={14} /></button>
         {#if menuChat === s.chat_id}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -508,18 +509,18 @@
           <div class="chatmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
             onclick={(e) => e.stopPropagation()}>
             <button class="cmitem" role="menuitem" onclick={() => toggleStar(s)}>
-              <Icon name="star" size={14} /> {s.starred ? 'Unstar' : 'Star'}
+              <Icon name="star" size={14} /> {s.starred ? m.action_unstar() : m.action_star()}
             </button>
             <button class="cmitem" role="menuitem" onclick={() => startRename(s)}>
-              <Icon name="pencil" size={14} /> Rename
+              <Icon name="pencil" size={14} /> {m.action_rename()}
             </button>
             <button class="cmitem" role="menuitem" onclick={() => { const id = menuChat; menuChat = ''; foldersChat = id }}>
-              <Icon name="folder" size={13} /> Folder access
+              <Icon name="folder" size={13} /> {m.drawer_folder_access()}
             </button>
             <div class="cmdiv"></div>
             <button class="cmitem danger" role="menuitem"
               onclick={() => { menuChat = ''; confirmChat = s.chat_id }}>
-              <Icon name="trash" size={14} /> Delete
+              <Icon name="trash" size={14} /> {m.action_delete()}
             </button>
           </div>
         {/if}
@@ -533,10 +534,10 @@
          class:unseen={t.unread > 0} role="button" tabindex="0"
          onclick={() => openTask(t.id)} onkeydown={(e) => rowKey(e, () => openTask(t.id))}>
       <div class="tline1">
-        {#if t.paused}<span class="statusicon" title="Paused"><Icon name="pause" size={14} /></span>
-        {:else if t.needs_input}<span class="statusicon needs_input" title="Needs your input"><Icon name="help-circle" size={14} /></span>
-        {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={t.last_run.status}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
-        {:else}<span class="statusicon" title="No runs yet"><Icon name="clock" size={14} /></span>{/if}
+        {#if t.paused}<span class="statusicon" title={m.status_paused()}><Icon name="pause" size={14} /></span>
+        {:else if t.needs_input}<span class="statusicon needs_input" title={m.status_needs_your_input()}><Icon name="help-circle" size={14} /></span>
+        {:else if t.last_run}<span class="statusicon {t.last_run.status}" title={stat(t.last_run.status).label}><Icon name={stat(t.last_run.status).icon} size={14} /></span>
+        {:else}<span class="statusicon" title={m.status_no_runs_yet()}><Icon name="clock" size={14} /></span>{/if}
         {#if renameTask === t.id}
           <input class="renamein" value={renameTaskText} use:focusSelect
             oninput={(e) => (renameTaskText = e.currentTarget.value)}
@@ -549,21 +550,21 @@
                count when there are unseen runs, else the previous run's time. The
                status itself is the line's left icon; here we add the "when". -->
           {#if t.unread}
-            <span class="unreadcount" title="{t.unread} unread">{t.unread}</span>
+            <span class="unreadcount" title={m.drawer_unread_count({ count: t.unread })}>{t.unread}</span>
           {:else if t.last_run}
-            <span class="rowtime lastrun {t.last_run.status}" title="Last run: {stat(t.last_run.status).label}">{fmtAgoShort(t.last_run.ended_at || t.last_run.started_at)}</span>
+            <span class="rowtime lastrun {t.last_run.status}" title={m.drawer_last_run_title({ status: stat(t.last_run.status).label })}>{fmtAgoShort(t.last_run.ended_at || t.last_run.started_at)}</span>
           {/if}
         {/if}
         {#if confirmTask === t.id}
           <!-- Layout wrapper only: the click handler shields the row underneath. -->
         <span class="rowconfirm" role="presentation" onclick={(e) => e.stopPropagation()}>
-            <span class="confirm">Delete?</span>
+            <span class="confirm">{m.confirm_delete()}</span>
             <button class="linkbtn danger" disabled={busyTask === t.id}
-              onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : 'yes'}</button>
-            <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmTask = '' }}>no</button>
+              onclick={(e) => { e.stopPropagation(); delTask(t.id) }}>{busyTask === t.id ? '…' : m.confirm_yes()}</button>
+            <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmTask = '' }}>{m.confirm_no()}</button>
           </span>
         {:else if renameTask !== t.id}
-          <button class="rowkebab" title="Task actions" aria-haspopup="menu" aria-expanded={menuTask === t.id}
+          <button class="rowkebab" title={m.drawer_task_actions()} aria-haspopup="menu" aria-expanded={menuTask === t.id}
             onclick={(e) => toggleTaskMenu(e, t)}><Icon name="ellipsis-vertical" size={14} /></button>
           {#if menuTask === t.id}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -572,21 +573,21 @@
             <div class="chatmenu taskmenu" role="menu" tabindex="-1" style="left:{menuPos.x}px; top:{menuPos.y}px"
               onclick={(e) => e.stopPropagation()}>
               <button class="cmitem" role="menuitem" onclick={() => toggleTaskStar(t)}>
-                <Icon name="star" size={14} /> {t.starred ? 'Unstar' : 'Star'}
+                <Icon name="star" size={14} /> {t.starred ? m.action_unstar() : m.action_star()}
               </button>
               <button class="cmitem" role="menuitem" onclick={() => startTaskRename(t)}>
-                <Icon name="pencil" size={14} /> Rename
+                <Icon name="pencil" size={14} /> {m.action_rename()}
               </button>
               <button class="cmitem" role="menuitem" onclick={() => toggleTaskPause(t)}>
-                <Icon name={t.paused ? 'play' : 'pause'} size={14} /> {t.paused ? 'Enable' : 'Disable'}
+                <Icon name={t.paused ? 'play' : 'pause'} size={14} /> {t.paused ? m.action_enable() : m.action_disable()}
               </button>
               <button class="cmitem" role="menuitem" onclick={() => editTask(t)}>
-                <Icon name="pencil" size={14} /> Edit…
+                <Icon name="pencil" size={14} /> {m.action_edit()}
               </button>
               <div class="cmdiv"></div>
               <button class="cmitem danger" role="menuitem"
                 onclick={() => { menuTask = ''; confirmTask = t.id }}>
-                <Icon name="trash" size={14} /> Delete
+                <Icon name="trash" size={14} /> {m.action_delete()}
               </button>
             </div>
           {/if}
@@ -595,7 +596,7 @@
       {#if (t.schedule.kind !== 'manual' || nextIn) && renameTask !== t.id}
         <div class="tmeta">
           {#if t.schedule.kind !== 'manual'}<span class="tag sched" title={t.schedule_desc}>{shortSched(t.schedule_desc) || t.schedule_desc}</span>{/if}
-          {#if nextIn}<span class="nextin" title="Next run">{nextIn}</span>{/if}
+          {#if nextIn}<span class="nextin" title={m.drawer_next_run()}>{nextIn}</span>{/if}
         </div>
       {/if}
     </div>
@@ -606,10 +607,10 @@
   {:else}
   <div class="dlist" onscroll={() => { menuChat = ''; menuTask = '' }}>
     {#if $route.tab === 'chats'}
-      <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
-      {#if !$chats.length}<div class="none">{loaded ? 'No conversations yet.' : 'Loading…'}</div>{/if}
+      <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> {m.drawer_new_chat()}</button>
+      {#if !$chats.length}<div class="none">{loaded ? m.drawer_no_chats() : m.loading()}</div>{/if}
       {#if starredChats.length}
-        <div class="datesep">Starred</div>
+        <div class="datesep">{m.drawer_starred()}</div>
         {#each starredChats as s (s.chat_id)}{@render chatRow(s)}{/each}
       {/if}
       {#each chatRows as { item: s, sep } (s.chat_id)}
@@ -617,10 +618,10 @@
         {@render chatRow(s)}
       {/each}
     {:else}
-      <button class="newrow" onclick={() => openTask('new')}><Icon name="plus" size={15} /> New task</button>
-      {#if !$tasks.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
+      <button class="newrow" onclick={() => openTask('new')}><Icon name="plus" size={15} /> {m.drawer_new_task()}</button>
+      {#if !$tasks.length}<div class="none">{loaded ? m.drawer_no_tasks() : m.loading()}</div>{/if}
       {#if starredTasks.length}
-        <div class="datesep">Starred</div>
+        <div class="datesep">{m.drawer_starred()}</div>
         {#each starredTasks as t (t.id)}{@render taskRow(t)}{/each}
       {/if}
       {#each taskRows as { item: t, sep } (t.id)}
@@ -633,11 +634,11 @@
 
   {#if usageLabel}
     <div class="usagehud" title={usageTitle}>
-      <span class="uhicon"><Icon name="cpu" size={13} /></span><span class="uhlabel">Today · {usageLabel}</span>
+      <span class="uhicon"><Icon name="cpu" size={13} /></span><span class="uhlabel">{m.drawer_usage_today()} · {usageLabel}</span>
     </div>
   {/if}
   <div class="dfoot">
-    <button class="settingsbtn" onclick={() => openOverlay('settings', 'general')}><Icon name="settings" size={15} /> Settings</button>
+    <button class="settingsbtn" onclick={() => openOverlay('settings', 'general')}><Icon name="settings" size={15} /> {m.drawer_settings()}</button>
   </div>
 </div>
 
