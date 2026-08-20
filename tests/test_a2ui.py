@@ -69,6 +69,11 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert "Weather or forecast -> render a WeatherPanel" in prompt
     assert "market prices -> render a MarketBoard" in prompt
     assert "Gather the real data with your tools BEFORE you render" in prompt
+    # The worked examples are English-only shape illustrations; without this directive
+    # the model imitates their language and cards come out English-labelled even
+    # mid-conversation in another language.
+    assert "in the language of the conversation" in prompt
+    assert "only to illustrate the SHAPE" in prompt
     assert "Creating, scheduling, or planning a new task -> render a TaskPlan" in prompt
     assert "task status/history) -> render a TaskProgress" in prompt
     assert "DecisionMatrix" in prompt
