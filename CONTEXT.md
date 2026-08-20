@@ -76,6 +76,15 @@ color ramp the UI renders from it is a derived, frontend-only detail.
 _Avoid_: palette (the frontend's preset catalog + derived ramp, not the domain
 concept), color (too generic)
 
+**UI language**:
+The language the frontend chrome is displayed in — menus, settings, onboarding,
+labels. A per-device choice: detected from the browser, overridable by the user in
+settings. Distinct from the language the assistant *replies* in, which is not a
+setting at all — the assistant mirrors the language of the user's message. Server
+error messages are outside the UI language: they render in English regardless.
+_Avoid_: locale (that bundles date/number formats, which the UI language does not
+govern), assistant language (the reply language is not configured)
+
 **Global config**:
 The Root-level configuration covering everything install-wide: models,
 integrations, agent parameters, defaults for all profiles.

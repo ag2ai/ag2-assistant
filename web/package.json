@@ -7,11 +7,13 @@
     "dev": "vite",
     "build": "npm run check && vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "i18n:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --emit-ts-declarations --strategy globalVariable baseLocale",
+    "check": "npm run i18n:compile && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "pretest": "sh ../scripts/gen_openapi.sh",
     "test": "node --test 'src/**/*.test.ts'"
   },
   "devDependencies": {
+    "@inlang/paraglide-js": "^2.24.1",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^22.20.1",

@@ -1,10 +1,23 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { paraglideVitePlugin } from '@inlang/paraglide-js'
 
 // Builds the SPA into the gateway's static dir so FastAPI serves it (deploy stays
 // Python-only — Node is needed only to build). Served under /app/.
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [
+    svelte(),
+    // Compiles messages/*.json into src/paraglide/ (generated, not committed —
+    // `npm run check` compiles it too, so svelte-check works from a fresh clone).
+    // The locale is driven by lib/i18n.ts via overwriteGetLocale, not by these
+    // strategies; globalVariable just keeps the runtime free of cookie/url logic.
+    paraglideVitePlugin({
+      project: './project.inlang',
+      outdir: './src/paraglide',
+      emitTsDeclarations: true,
+      strategy: ['globalVariable', 'baseLocale'],
+    }),
+  ],
   base: '/app/',
   build: {
     outDir: '../src/assistant/gateway/static/app',

@@ -8,13 +8,14 @@
   // registry on boot (App.svelte) — one control, not two competing ones. This
   // component now owns only the global day/night preference.
   import { getTheme, setTheme, type ThemeMode } from '../design/palette.ts'
+  import { m } from '../paraglide/messages.js'
   import Icon from './Icon.svelte'
 
   let theme: ThemeMode = $state(getTheme())
   const THEMES: { id: ThemeMode; label: string; icon: string }[] = [
-    { id: 'light', label: 'Light', icon: 'sun' },
-    { id: 'dark', label: 'Dark', icon: 'moon' },
-    { id: 'auto', label: 'Auto', icon: 'contrast' },
+    { id: 'light', label: m.theme_light(), icon: 'sun' },
+    { id: 'dark', label: m.theme_dark(), icon: 'moon' },
+    { id: 'auto', label: m.theme_auto(), icon: 'contrast' },
   ]
   function pickTheme(id: ThemeMode) { theme = id; setTheme(id) }
   // Reflect changes made elsewhere (e.g. the header theme toggle).
@@ -26,7 +27,7 @@
 </script>
 
 <div class="appearance">
-  <div class="ap-label">Theme</div>
+  <div class="ap-label">{m.appearance_theme()}</div>
   <div class="ap-themes">
     {#each THEMES as t}
       <button class="ap-theme" class:on={theme === t.id} onclick={() => pickTheme(t.id)}>

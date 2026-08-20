@@ -4,6 +4,7 @@
   import { openThread, closeThread, switchProfile } from './controller.ts'
   import { googleOpen, codexOpen, voicePickerOpen, viewer, settingsOpen, poweredByOpen, onboardingOpen, profiles, animations, appVersion, ag2Version, railWidth, previewWidth, previewExpanded, resetPreviewView, drawerWidth } from './store.ts'
   import { clampRailWidth, clampDrawerWidth } from './lib/railWidth.ts'
+  import { uiLocale } from './lib/i18n.ts'
   import { api } from './transport/api/index.ts'
   import { setActiveProfileId, storedProfileId } from './lib/profile.ts'
   import { setAccent } from './design/palette.ts'
@@ -200,6 +201,7 @@ import AppBar from './components/AppBar.svelte'
   })
 </script>
 
+{#key $uiLocale}
 {#if boot === 'loading'}
   <div class="app"><div class="main"><div class="thread"><div class="empty"><h1>AG2 Assistant</h1>Loading…</div></div></div></div>
 {:else if boot === 'create'}
@@ -246,3 +248,7 @@ import AppBar from './components/AppBar.svelte'
 
 <!-- Transient recovery toast (§4.9); renders in any boot state. -->
 <Notice />
+<!-- Messages are plain function calls, so a UI-language switch re-renders by
+     re-keying the whole tree (the sanctioned Paraglide SPA pattern) — {/key}
+     closes the block opened before the boot gate. -->
+{/key}
