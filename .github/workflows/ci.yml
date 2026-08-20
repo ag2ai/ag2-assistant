@@ -9,19 +9,19 @@ jobs:
   lint:
     name: Lint & format
     runs-on: ubuntu-latest
+    # Must equal the rev in .pre-commit-config.yaml and the ruff floor in the dev extra;
+    # tests/test_ci_config.py asserts the three agree. Ruff is a Rust binary, so no Python.
+    env:
+      RUFF_VERSION: "0.15.18"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.13"
-          cache: pip
-      - name: Install ruff
-        # Pinned to match .pre-commit-config.yaml so local and CI formatting agree.
-        run: pip install ruff==0.15.18
+          version: "0.11.28" # matches the pin in Dockerfile
       - name: Ruff lint
-        run: ruff check .
+        run: uvx ruff@${{ env.RUFF_VERSION }} check .
       - name: Ruff format check
-        run: ruff format --check .
+        run: uvx ruff@${{ env.RUFF_VERSION }} format --check .
 
   lockfile:
     name: uv.lock is in sync
@@ -52,8 +52,22 @@ jobs:
         run: uv run mypy
 
   test:
-    name: Python tests
+    name: Python tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      # Every version `requires-python` promises, plus the one the Dockerfile ships.
+      # tests/test_ci_config.py fails if the floor drops out of this list.
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    permissions:
+      contents: read
+      pull-requests: write # for the coverage comment below
+    env:
+      # Pins the interpreter for `uv sync` and `uv run` on this leg.
+      UV_PYTHON: ${{ matrix.python-version }}
+      # The single leg that also collects coverage; must be the newest in the matrix.
+      COVERAGE_PYTHON: "3.14"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -65,7 +79,47 @@ jobs:
       - name: Install (pinned deps via uv.lock)
         run: uv sync --frozen --extra dev --extra google
       - name: Unit tests
+        if: matrix.python-version != env.COVERAGE_PYTHON
         run: uv run pytest -m "not integration" -q
+      # The same suite on the coverage leg. Branch coverage, and no --cov-fail-under
+      # anywhere: the figure is reported, never gated.
+      - name: Unit tests with branch coverage
+        if: matrix.python-version == env.COVERAGE_PYTHON
+        run: uv run pytest -m "not integration" -q --cov=assistant --cov-branch --cov-report=
+      # Writes the table to the run summary, which needs no token and works on forks.
+      # Reporting never reddens the leg, so a broken report is not a failed build.
+      - name: Render the coverage table
+        if: matrix.python-version == env.COVERAGE_PYTHON
+        continue-on-error: true
+        run: |
+          {
+            echo "## Branch coverage"
+            echo
+            uv run coverage report --format=markdown --skip-covered
+          } > coverage.md
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+      # A forked pull request gets a read-only token whatever `permissions` says, so this
+      # step cannot post there and must not fail the run when it cannot.
+      - name: Comment the coverage table on the pull request
+        if: ${{ github.event_name == 'pull_request' && matrix.python-version == env.COVERAGE_PYTHON }}
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- coverage-report -->';
+            const body = marker + '\n' + require('fs').readFileSync('coverage.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            // Rewrite our own previous comment rather than adding one per push.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const mine = comments.find((c) => (c.body || '').includes(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
 
   bundle-fresh:
     name: SPA bundle is up to date
@@ -119,3 +173,23 @@ jobs:
       - name: Unit tests
         working-directory: web
         run: npm test
+
+  # One check name that survives changes to the test matrix, for a branch rule to require.
+  # Nothing requires it today: the default branch has no ruleset.
+  ci-status:
+    name: CI status
+    if: always() # otherwise a failed upstream job skips this one and reads as green
+    needs: [lint, lockfile, typecheck, test, bundle-fresh, web-typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      # Prints each job by name, so a failure below says which one.
+      - name: Job results
+        run: echo '${{ toJSON(needs) }}'
+      - name: Fail unless every job succeeded
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped')
+        run: |
+          echo "::error::A CI job did not succeed - see the job results above."
+          exit 1

@@ -27,7 +27,10 @@ pre-commit install          # run the lint/format/safety hooks on every commit
 
 ## Checks (run these before you push)
 
-These are the same checks CI runs; a PR that fails them will not merge.
+These are the same checks CI runs. They are advisory: the repository has no rulesets, so
+a red pull request is reported by the `CI status` check rather than blocked by it. (Classic
+branch protection needs admin to read, so it has not been ruled out. To enforce this,
+require the single `CI status` check — it stays one name as the test matrix grows.)
 
 ```bash
 ruff check .                       # lint
@@ -37,6 +40,20 @@ pytest -m "not integration" -q     # unit tests — no API key needed
 npm --prefix web run check         # typecheck the SPA (svelte-check, strict)
 npm --prefix web test              # SPA unit tests (node:test over web/src/**/*.test.ts)
 npm --prefix web run build         # rebuild the SPA bundle if you touched web/
+```
+
+CI runs the unit tests on every Python version `pyproject.toml` promises — 3.12, 3.13 and
+3.14 — so a change that only works on the newest one fails there even though it passed for
+you. To reproduce a specific leg:
+
+```bash
+UV_PYTHON=3.12 uv run pytest -m "not integration" -q
+```
+
+Coverage is reported, never enforced. To see the number CI reports:
+
+```bash
+pytest -m "not integration" -q --cov=assistant --cov-branch --cov-report=term:skip-covered
 ```
 
 `npm --prefix web run build` runs `check` first, so a bundle can never be built —
