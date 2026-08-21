@@ -11,6 +11,7 @@
   import { api } from '../../transport/api/index.ts'
   import SkillInstaller from './SkillInstaller.svelte'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { ProfileSkill } from '../../schemas/index.ts'
 
   // Install targets THIS profile — the surface carries the target. Registry search is
@@ -85,7 +86,7 @@
         role="switch" aria-checked={on} aria-disabled={!canToggle}
         tabindex={canToggle ? 0 : -1}
         aria-labelledby="psk-{s.name}" aria-describedby="pskd-{s.name}"
-        title={canToggle ? (on ? 'Click to turn off for this profile' : 'Click to turn on for this profile') : ''}
+        title={canToggle ? (on ? m.skills_profile_turn_off_title() : m.skills_profile_turn_on_title()) : ''}
         onclick={() => { if (canToggle) toggleCard(s) }}
         onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle) { e.preventDefault(); toggleCard(s) } }}
       >
@@ -99,45 +100,45 @@
       <div class="sktop">
         {@render skillMain(s)}
         <div class="skctl">
-          <span class="skblocked" title="Disabled for the whole app in Application → Skills">off app-wide</span>
+          <span class="skblocked" title={m.skills_off_appwide_title()}>{m.skills_off_appwide()}</span>
         </div>
       </div>
     {/if}
     <div class="skmeta">
       {#if confirming === s.name}
-        <span class="skconfirm">Delete {s.name}?</span>
-        <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={() => del(s)}>Confirm</button>
-        <button class="linkbtn" disabled={rowBusy} onclick={() => (confirming = '')}>Cancel</button>
+        <span class="skconfirm">{m.skills_delete_confirm({ name: s.name })}</span>
+        <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={() => del(s)}>{m.action_confirm()}</button>
+        <button class="linkbtn" disabled={rowBusy} onclick={() => (confirming = '')}>{m.action_cancel()}</button>
       {:else}
         <!-- Where the skill comes from, and so whose it is to change. -->
         <span class="skdot" class:third={s.origin !== 'bundled'}></span>
-        {s.origin === 'bundled' ? 'First-party · ships with the app'
-          : s.origin === 'profile' ? 'This profile · installed here'
-          : 'Installed · global'}
+        {s.origin === 'bundled' ? m.skills_origin_bundled()
+          : s.origin === 'profile' ? m.skills_origin_profile()
+          : m.skills_origin_global()}
         {#if s.origin === 'profile'}
-          <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={() => (confirming = s.name)}>Delete</button>
+          <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={() => (confirming = s.name)}>{m.action_delete()}</button>
         {/if}
       {/if}
     </div>
   </div>
 {/snippet}
 
-<p class="muted skhint">Skills this profile can use. Turn an inherited skill off for just this profile, or disable one it owns — other profiles are unaffected.</p>
+<p class="muted skhint">{m.skills_profile_lead()}</p>
 
 {#if err}<p class="muted skerr">{err}</p>{/if}
 
 {#if loading}
-  <p class="muted skempty">Loading…</p>
+  <p class="muted skempty">{m.loading()}</p>
 {:else}
   <!-- Install lands in THIS profile, so Add skill belongs to this section's header
        line; .skzone/.skadd pin it there while collapsed (idiom in app.css). -->
   <div class="skzone">
-    <div class="setgroup">This profile</div>
-    <p class="setsub">Skills installed directly into this profile. Turn one off or delete it — only this profile is affected.</p>
+    <div class="setgroup">{m.skills_this_profile()}</div>
+    <p class="setsub">{m.skills_this_profile_lead()}</p>
     <div class="skadd"><SkillInstaller {installer} onInstalled={load} /></div>
     <div class="sklist">
       {#if own.length === 0}
-        <p class="muted skempty">No skills installed in this profile yet.</p>
+        <p class="muted skempty">{m.skills_profile_empty()}</p>
       {:else}
         {#each own as s (s.name)}{@render skillRow(s)}{/each}
       {/if}
@@ -145,8 +146,8 @@
   </div>
 
   {#if inherited.length > 0}
-    <div class="setgroup">Global &amp; bundled</div>
-    <p class="setsub">Shared skills inherited from the app. Turn one off to drop it from just this profile.</p>
+    <div class="setgroup">{m.skills_global_bundled()}</div>
+    <p class="setsub">{m.skills_global_bundled_lead()}</p>
     <div class="sklist">
       {#each inherited as s (s.name)}{@render skillRow(s)}{/each}
     </div>

@@ -14,6 +14,7 @@
   import { PROVIDER_LABEL } from '../../lib/providerLabels.ts'
   import BrandMark from '../BrandMark.svelte'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { LiveConfig, LiveProvider } from '../../schemas/index.ts'
 
   const ctx = getSettings()
@@ -75,16 +76,16 @@
   async function onSaved() { editing = null; await reload() }
 
   function keyChip(c: LiveConfig) {
-    if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
-    if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
-    return 'no key — pick a secret or set ' + (c.shared_key?.env || 'the provider key')
+    if (c.key_source === 'secret') return `${c.secret?.name || m.llm_chip_secret_fallback()} ${c.secret?.hint || ''}`.trim()
+    if (c.key_source === 'shared') return `${c.shared_key?.env || m.llm_chip_provider_key_fallback()} ${c.shared_key?.hint || ''}`.trim()
+    return m.llm_chip_no_key({ env: c.shared_key?.env || m.llm_chip_provider_key_fallback() })
   }
 </script>
 
 {#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if !configs.length && !editing}
-  <p class="muted" style="font-size:13px">No live models yet — add one below to talk to the assistant.</p>
+  <p class="muted" style="font-size:13px">{m.live_empty()}</p>
 {/if}
 
 {#each configs as c (c.id)}
@@ -95,8 +96,8 @@
     class="llmrow" class:active={c.active} class:clickable={!c.active && idle && !busy}
     role="button" aria-disabled={c.active || !idle}
     tabindex={!c.active && idle ? 0 : -1}
-    aria-label={!c.active ? `Use ${c.name}` : undefined}
-    title={!c.active && idle ? 'Click to use this live model' : ''}
+    aria-label={!c.active ? m.llm_use_aria({ name: c.name }) : undefined}
+    title={!c.active && idle ? m.live_click_to_use() : ''}
     onclick={() => { if (!c.active && !busy && idle) use(c) }}
     onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && idle) { e.preventDefault(); use(c) } }}
   >
@@ -104,15 +105,15 @@
     <div class="llmmeta">
       <div class="llmname">
         {c.name}
-        {#if c.active}<span class="llmbadge">active</span>{/if}
+        {#if c.active}<span class="llmbadge">{m.llm_badge_active()}</span>{/if}
       </div>
       <div class="llmsub">{PROVIDER_LABEL[c.provider]} · {c.model}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing}>{keyChip(c)}</span>
-        {#if c.voice}<span class="llmkey">voice: {c.voice}</span>{/if}
+        {#if c.voice}<span class="llmkey">{m.live_voice_chip({ voice: c.voice })}</span>{/if}
         {#if tests[c.id]}
           {#if tests[c.id].testing}
-            <span class="llmtest">testing…</span>
+            <span class="llmtest">{m.llm_testing()}</span>
           {:else if tests[c.id].ok}
             <span class="llmtest ok">{tests[c.id].reply} · {tests[c.id].latency_ms} ms</span>
           {:else}
@@ -122,24 +123,24 @@
       </div>
     </div>
     {#if confirming === c.id}
-      <span class="llmconfirm">Delete?</span>
+      <span class="llmconfirm">{m.confirm_delete()}</span>
       <button
         class="linkbtn danger" disabled={busy}
-        title={c.active ? 'Deleting the active live model falls back to the next one (or legacy)' : ''}
+        title={c.active ? m.live_delete_active_title() : ''}
         onclick={(e) => { e.stopPropagation(); remove(c) }}
-      >Confirm</button>
-      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
+      >{m.action_confirm()}</button>
+      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>{m.action_cancel()}</button>
     {:else}
-      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>Change voice</button>
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); ctx.openVoice(c.id) }}>{m.live_change_voice()}</button>
       <button
         class="open" disabled={busy || tests[c.id]?.testing || !!editing}
         onclick={(e) => { e.stopPropagation(); test(c) }}
-      >Test</button>
-      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
+      >{m.action_test()}</button>
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>{m.action_edit_short()}</button>
       <button
         class="linkbtn danger" disabled={busy || !!editing}
         onclick={(e) => { e.stopPropagation(); confirming = c.id }}
-      >Delete</button>
+      >{m.action_delete()}</button>
     {/if}
   </div>
 {/each}
@@ -149,20 +150,20 @@
 {:else}
   {#if !adding}
     <button class="addbtn" disabled={busy} onclick={() => (adding = true)}>
-      <Icon name="plus" size={14} /> Add live model
+      <Icon name="plus" size={14} /> {m.live_add()}
     </button>
   {:else}
-    <div class="setsec">Choose a provider</div>
+    <div class="setsec">{m.live_choose_provider()}</div>
     <div class="mcpcat">
       {#each providers as p}
         <button class="mcpcatcard" onclick={() => pickTemplate(p)}>
           <span class="mcpcathead"><BrandMark brand={p.name} size={16} /> {PROVIDER_LABEL[p.name]}</span>
-          <span class="mcpcatblurb">Realtime voice · {p.default_model}</span>
+          <span class="mcpcatblurb">{m.live_realtime_blurb({ model: p.default_model })}</span>
         </button>
       {/each}
     </div>
     <div class="keyrow" style="justify-content:flex-end">
-      <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
+      <button class="linkbtn" onclick={() => (adding = false)}>{m.action_cancel()}</button>
     </div>
   {/if}
 {/if}

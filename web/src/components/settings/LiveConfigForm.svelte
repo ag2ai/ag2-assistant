@@ -13,6 +13,7 @@
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { LiveConfigDraft } from '../../transport/api/llm.ts'
   import type { LiveProvider, PingResult } from '../../schemas/index.ts'
 
@@ -61,17 +62,17 @@
   // empty selection can still work (the provider default / env key fallback).
   const ENV_OF: Record<string, string | undefined> = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' }
   const keyUsage = $derived.by(() => {
-    const env = ENV_OF[provider]
+    const env = ENV_OF[provider] || ''
     const shared = ctx?.s?.keys?.[provider]
-    if (pastedKey.trim()) return 'A new Secret will be created from this key on save (rename it later in Settings → Secrets).'
+    if (pastedKey.trim()) return m.llm_keyuse_new_secret()
     if (secretId) {
       const s = $secretsStore.secrets.find((x) => x.id === secretId)
       return s
-        ? `Uses the "${s.name}" secret. It overrides ${env}.`
-        : 'The referenced secret was deleted — falls back to the provider default or env key.'
+        ? m.llm_keyuse_secret({ name: s.name, env })
+        : m.llm_keyuse_secret_deleted()
     }
-    if (shared?.set) return `No secret selected — uses your ${env} (${shared.hint || 'set'}).`
-    return `No key available — pick or paste one above, or set ${env}.`
+    if (shared?.set) return m.llm_keyuse_shared({ env, hint: shared.hint || m.llm_key_set() })
+    return m.llm_keyuse_none({ env })
   })
 
   // The request body Save and Test share — model blank is allowed (the server fills
@@ -122,51 +123,51 @@
 
 <div class="llmform">
   <div class="llmfield">
-    <label for="vf-name">Name</label>
-    <input id="vf-name" bind:value={name} placeholder="e.g. OpenAI Live" />
+    <label for="vf-name">{m.field_name()}</label>
+    <input id="vf-name" bind:value={name} placeholder={m.live_name_placeholder()} />
   </div>
   <div class="llmfield">
-    <label for="vf-provider">Provider</label>
+    <label for="vf-provider">{m.llm_field_provider()}</label>
     <select id="vf-provider" bind:value={provider}>
       {#each PROVIDERS as p}<option value={p}>{PROVIDER_LABEL[p]}</option>{/each}
     </select>
   </div>
   <div class="llmfield">
-    <label for="vf-model">Model <span class="llmhint">realtime model — leave blank for the provider default</span></label>
-    <input id="vf-model" bind:value={model} placeholder={defaultModel ? 'e.g. ' + defaultModel : 'realtime model'} spellcheck="false" />
+    <label for="vf-model">{m.llm_field_model()} <span class="llmhint">{m.live_model_hint()}</span></label>
+    <input id="vf-model" bind:value={model} placeholder={defaultModel ? m.live_model_placeholder_eg({ model: defaultModel }) : m.live_model_placeholder()} spellcheck="false" />
   </div>
 
   <div class="llmfield">
-    <label for="vf-secret">Secret <span class="llmhint">a reusable API key — manage in Settings → Secrets</span></label>
+    <label for="vf-secret">{m.llm_field_secret()} <span class="llmhint">{m.llm_secret_hint()}</span></label>
     <div class="llmkeyfield">
       <select id="vf-secret" bind:value={secretId} disabled={!!pastedKey.trim()}>
-        <option value="">No secret — provider default / env key</option>
+        <option value="">{m.llm_no_secret_option()}</option>
         {#each pickerSecrets as s (s.id)}
-          <option value={s.id}>{s.name} {s.hint}{s.default ? ' · default' : ''}</option>
+          <option value={s.id}>{s.name} {s.hint}{s.default ? ` · ${m.llm_badge_default()}` : ''}</option>
         {/each}
       </select>
     </div>
     <div class="llmkeyfield">
-      <input id="vf-key" type="password" bind:value={pastedKey} placeholder="…or paste a new key to create a secret" />
+      <input id="vf-key" type="password" bind:value={pastedKey} placeholder={m.llm_paste_key_placeholder()} />
     </div>
-    {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}
+    {#if config.secret_missing}<span class="llmhint">{m.llm_secret_missing()}</span>{/if}
     <span class="llmhint">{keyUsage}</span>
   </div>
 
   {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
   <div class="keyrow" style="justify-content:flex-end">
     {#if testing}
-      <span class="llmtest">testing…</span>
+      <span class="llmtest">{m.llm_testing()}</span>
     {:else if testResult}
       <span class="llmtest" class:ok={testResult.ok} class:bad={!testResult.ok}>
         {testResult.ok ? `${testResult.reply} · ${testResult.latency_ms} ms` : testResult.error}
       </span>
     {/if}
-    <button class="open" disabled={busy || testing} onclick={testDraft}>Test</button>
-    <button class="linkbtn" disabled={busy} onclick={onCancel}>Cancel</button>
-    <button class="open" disabled={busy || testing || !name.trim()} onclick={() => save()}>{busy ? 'Saving…' : 'Save'}</button>
+    <button class="open" disabled={busy || testing} onclick={testDraft}>{m.action_test()}</button>
+    <button class="linkbtn" disabled={busy} onclick={onCancel}>{m.action_cancel()}</button>
+    <button class="open" disabled={busy || testing || !name.trim()} onclick={() => save()}>{busy ? m.action_saving() : m.action_save()}</button>
     {#if !activate}
-      <button class="open" disabled={busy || testing || !name.trim()} onclick={() => save(true)}>Save &amp; Use</button>
+      <button class="open" disabled={busy || testing || !name.trim()} onclick={() => save(true)}>{m.llm_save_and_use()}</button>
     {/if}
   </div>
 </div>

@@ -4,6 +4,7 @@
   // doc's endpoints; `epoch` re-loads when it changes (persona re-points on profile
   // switch, identity passes a constant).
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = {
     load: () => Promise<string>
@@ -47,12 +48,12 @@
 <p class="muted docHint">{hint}</p>
 {#if err}<p class="muted docErr">{err}</p>{/if}
 {#if loading}
-  <p class="muted" style="font-size:13px;margin:0">Loading…</p>
+  <p class="muted" style="font-size:13px;margin:0">{m.loading()}</p>
 {:else}
   <textarea class="docArea" style="min-height:{minHeight}" bind:value={text} spellcheck="false" {placeholder}></textarea>
   <div class="docFoot">
-    {#if saved}<span class="okmsg">Saved ✓</span>{/if}
-    <button class="open" onclick={doSave} disabled={busy}>Save</button>
+    {#if saved}<span class="okmsg">{m.settings_saved()}</span>{/if}
+    <button class="open" onclick={doSave} disabled={busy}>{m.action_save()}</button>
   </div>
 {/if}
 

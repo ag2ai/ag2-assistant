@@ -12,6 +12,7 @@
   import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
   import { TYPE_LABEL } from '../../lib/providerLabels.ts'
   import { getSettings } from './context.svelte.ts'
+  import { m } from '../../paraglide/messages.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
   import type { LlmConfig } from '../../schemas/index.ts'
 
@@ -30,15 +31,15 @@
 
 <ModelSwitcherView
   {configs} {activeId} {envOverride} busy={ctx.busy} down {inherited}
-  title="Text model for this profile — takes effect next message"
+  title={m.profile_text_switcher_title()}
   brandFor={(c) => c.type}
   labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
   usable={isUsable}
-  defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active model' }}
-  emptyLabel="No models configured"
+  defaultEntry={{ label: m.profile_use_install_default(), sub: m.profile_follow_install_model() }}
+  emptyLabel={m.profile_no_models()}
   onEmpty={gotoModels}
   onChoose={choose}
   onDefault={useDefault}
   onManage={gotoModels}
-  manageLabel="Manage models…"
+  manageLabel={m.profile_manage_models()}
 />

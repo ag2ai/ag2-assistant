@@ -7,6 +7,7 @@
   import { api } from '../../transport/api/index.ts'
   import { byId } from '../../lib/integrations.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type {
     Connection, ConnectionPairing, PairedAccount, PairingCode,
   } from '../../schemas/index.ts'
@@ -79,57 +80,57 @@
 
   function expiry(code: PairingCode) {
     const mins = Math.max(0, Math.round((code.expires_at * 1000 - Date.now()) / 60000))
-    return mins ? `expires in ${mins} min` : 'expiring now'
+    return mins ? m.integrations_code_expires({ count: mins }) : m.integrations_code_expiring_now()
   }
 </script>
 
 <div class="setgroup cnsechead">
-  <span>Who it answers</span>
+  <span>{m.integrations_who_it_answers()}</span>
   <button class="open" disabled={busy} onclick={issueCode}>
-    {view?.code ? 'New pairing code' : 'Pairing code'}
+    {view?.code ? m.integrations_new_pairing_code() : m.integrations_pairing_code()}
   </button>
 </div>
 <p class="setsub">
-  Only these accounts reach {connection.name}. Pairing one here grants it nothing on any
-  other connection, including another bot of the same kind.
+  {m.integrations_pairing_lead({ name: connection.name })}
 </p>
 
 {#if err}<p class="cnerr">{err}</p>{/if}
 
 {#if view}
   {#if view.code}
+    <!-- One localizable sentence: the code rides as a parameter (word order differs
+         per language), so the old inline <b> styling of the code is traded for text. -->
     <p class="cnhint">
-      Send <b class="cncode">{view.code.code}</b> to this bot from the account you want to
-      pair — {expiry(view.code)}.
+      {m.integrations_code_send({ code: view.code.code, expiry: expiry(view.code) })}
     </p>
   {/if}
 
   {#if !view.accounts.length}
-    <p class="cnwarn">Nobody is paired — this connection answers nobody.</p>
+    <p class="cnwarn">{m.integrations_nobody_paired()}</p>
   {:else}
     <ul class="cnlist">
       {#each view.accounts as a (a.key)}
         <li class="cnitem">
           <span class="cnid">{label(a)}</span>
           {#if a.pending}
-            <span class="cntag" title="Pins to the first account that presents it">pending</span>
+            <span class="cntag" title={m.integrations_pending_title()}>{m.integrations_pending()}</span>
           {/if}
           <!-- Revoking is not undoable from here — the account has to be paired again,
                and a pending invitation cannot be re-offered without a new code. So it
                confirms on its own row, worded for the case it is. -->
           {#if revoking === a.key}
             <span class="cnwarn cnpush">
-              {a.pending ? 'Cancel this invitation?' : 'Stop answering them?'}
+              {a.pending ? m.integrations_cancel_invitation_q() : m.integrations_stop_answering_q()}
             </span>
             <button class="open danger" disabled={busy} onclick={() => revoke(a.key)}>
-              {a.pending ? 'Cancel invitation' : 'Revoke'}
+              {a.pending ? m.integrations_cancel_invitation() : m.integrations_revoke()}
             </button>
-            <button class="open" disabled={busy} onclick={() => (revoking = null)}>Keep</button>
+            <button class="open" disabled={busy} onclick={() => (revoking = null)}>{m.integrations_keep()}</button>
           {:else}
             <button
               class="open cnpush" disabled={busy}
               onclick={() => { revoking = a.key; err = '' }}
-            >Revoke</button>
+            >{m.integrations_revoke()}</button>
           {/if}
         </li>
       {/each}
@@ -141,21 +142,21 @@
   {#if adding}
     <div class="keyrow">
       <input
-        placeholder={entry?.handles ? 'numeric account id, or @handle' : 'numeric account id'}
-        aria-label="Pair an account" disabled={busy} bind:value={draft}
+        placeholder={entry?.handles ? m.integrations_account_placeholder_handle() : m.integrations_account_placeholder()}
+        aria-label={m.integrations_pair_account()} disabled={busy} bind:value={draft}
         onkeydown={(e) => {
           if (e.key === 'Enter') pair()
           if (e.key === 'Escape') { adding = false; draft = '' }
         }}
       />
       <button class="open primary" disabled={busy || !draft.trim()} onclick={pair}>
-        {busy ? 'Pairing…' : 'Pair'}
+        {busy ? m.integrations_pairing_busy() : m.integrations_pair()}
       </button>
-      <button class="open" disabled={busy} onclick={() => { adding = false; draft = '' }}>Cancel</button>
+      <button class="open" disabled={busy} onclick={() => { adding = false; draft = '' }}>{m.action_cancel()}</button>
     </div>
   {:else}
     <button class="addbtn" disabled={busy} onclick={() => { adding = true; err = '' }}>
-      <Icon name="plus" size={13} /> Pair an account
+      <Icon name="plus" size={13} /> {m.integrations_pair_account()}
     </button>
   {/if}
 {/if}

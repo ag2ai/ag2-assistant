@@ -9,6 +9,7 @@
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import MemoryDocEditor from './MemoryDocEditor.svelte'
+  import { m } from '../../paraglide/messages.js'
 
   const ctx = getSettings()
   let replyTimeout = $state('')
@@ -20,45 +21,45 @@
   function saveReplyTimeout() {
     const seconds = Number(replyTimeout)
     if (!Number.isFinite(seconds) || seconds <= 0) {
-      ctx.err = 'Chat turn timeout must be greater than zero.'
+      ctx.err = m.advanced_timeout_invalid()
       return
     }
     ctx.run(() => api.setReplyTimeout(seconds))
   }
 </script>
 
-<div class="setgroup">Turn budget</div>
+<div class="setgroup">{m.advanced_turn_budget()}</div>
 <div class="setrowwrap">
   <div class="setrow">
-    <span class="sk"><Icon name="clock" size={15} /> Chat turn timeout</span>
-    <span class="sv">Total time for model calls, tools, and questions</span>
+    <span class="sk"><Icon name="clock" size={15} /> {m.advanced_turn_timeout()}</span>
+    <span class="sv">{m.advanced_turn_timeout_sub()}</span>
   </div>
   <label class="timeoutfield">
-    <input type="number" min="1" max="3600" step="1" bind:value={replyTimeout} aria-label="Chat turn timeout in seconds" />
-    <span>sec</span>
+    <input type="number" min="1" max="3600" step="1" bind:value={replyTimeout} aria-label={m.advanced_turn_timeout_aria()} />
+    <span>{m.advanced_sec()}</span>
   </label>
-  <button class="open" disabled={ctx.busy} onclick={saveReplyTimeout}>Save</button>
+  <button class="open" disabled={ctx.busy} onclick={saveReplyTimeout}>{m.action_save()}</button>
 </div>
 
-<div class="setgroup">Who you are</div>
+<div class="setgroup">{m.advanced_who_you_are()}</div>
 <MemoryDocEditor
   load={() => api.globalMemory().then((r) => r.text)}
   save={(t) => api.setGlobalMemory(t)}
-  hint="Identity facts — name, location, timezone, family, writing voice — that are true no matter which profile you're in. Shared across every profile."
-  placeholder="(nothing here yet)"
+  hint={m.advanced_identity_hint()}
+  placeholder={m.advanced_identity_placeholder()}
 />
 
 <div class="setgroup">AG2</div>
 <div class="setrowwrap">
   <div class="setrow">
-    <span class="sk"><Icon name="zap" size={15} /> Powered by AG2</span>
-    <span class="sv">the AG2 primitives behind this app</span>
+    <span class="sk"><Icon name="zap" size={15} /> {m.onboarding_feature_ag2_title()}</span>
+    <span class="sv">{m.advanced_ag2_sub()}</span>
   </div>
-  <button class="open" onclick={ctx.openPoweredBy}>View</button>
+  <button class="open" onclick={ctx.openPoweredBy}>{m.drawer_view()}</button>
 </div>
 <label class="setcheck">
   <input type="checkbox" checked={$ag2View} onchange={toggleAsideInspector} />
-  AG2 view — reveal live AG2 events + per-item provenance
+  {m.advanced_ag2_view()}
 </label>
 
 <style>

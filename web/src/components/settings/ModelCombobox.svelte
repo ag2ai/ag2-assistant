@@ -3,6 +3,7 @@
   // price and context, in a role="listbox" popup like the composer's `@` picker.
   // Which names, in what order, is lib/modelSuggest.ts — what is typed always wins.
   import { suggestModels } from '../../lib/modelSuggest.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { ModelSuggestion } from '../../lib/modelSuggest.ts'
 
   // `catalog` is the live Model catalog, null when none could be read; `loading`
@@ -73,10 +74,10 @@
   />
   {#if open && (results.length || loading)}
     <!-- mousedown+preventDefault keeps the input focused so the pick lands before blur. -->
-    <div class="llmcombolist" id={`${id}-list`} role="listbox" aria-label="Model suggestions">
+    <div class="llmcombolist" id={`${id}-list`} role="listbox" aria-label={m.llm_model_suggestions_aria()}>
       {#if loading}
         <!-- A quiet row, not a disabled field. -->
-        <div class="llmcomboload">Reading the provider's model list…</div>
+        <div class="llmcomboload">{m.llm_reading_provider_models()}</div>
       {/if}
       {#each results as r, i (r.id)}
         <button
@@ -88,7 +89,7 @@
           <span class="llmcomboname">{r.label}</span>
           {#if r.label !== r.id}<span class="llmcomboid">{r.id}</span>{/if}
           <span class="llmcombometa">
-            {#if r.unverified}<span class="llmcombotag">unverified</span>{/if}
+            {#if r.unverified}<span class="llmcombotag">{m.llm_unverified()}</span>{/if}
             {#if r.price}<span>{r.price}</span>{/if}
             {#if r.context}<span>{r.context}</span>{/if}
           </span>

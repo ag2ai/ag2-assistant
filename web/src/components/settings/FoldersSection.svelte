@@ -13,6 +13,7 @@
   import { getSettings } from './context.svelte.ts'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import { ApiError } from '../../transport/http.ts'
   import { FolderConflict, type Folder, type Mode } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
@@ -75,11 +76,11 @@
   const removeFolder = (f: Folder) => run(() => api.revokeGrant(f.id, pid))
 </script>
 
-<p class="muted permhint">Folders this profile may reach outside its default workspace </p>
+<p class="muted permhint">{m.folders_hint()} </p>
 {#if err}<p class="muted permerr">{err}</p>{/if}
 
 {#if !granted.length}
-  <p class="muted permempty">This profile has no folders yet — add one to give it access.</p>
+  <p class="muted permempty">{m.folders_empty()}</p>
 {/if}
 {#each granted as f (f.id)}
   {@const g = grantOf(f, pid)}
@@ -87,21 +88,21 @@
     <span class="permico"><Icon name="folder" size={14} /></span>
     <span class="foldmeta">
       <span class="foldname">{f.name}</span>
-      <span class="permval" title={f.path}>{f.path}{#if !f.exists} · <span class="missing">path not found</span>{/if}</span>
+      <span class="permval" title={f.path}>{f.path}{#if !f.exists} · <span class="missing">{m.folders_path_missing()}</span>{/if}</span>
     </span>
     <div class="accctl">
-      <WriteSwitch mode={g?.mode} disabled={busy} onchange={(m) => setMode(f, m)} />
-      <button class="iconbtn" title="Delete folder" aria-label="Delete folder" disabled={busy} onclick={() => removeFolder(f)}><Icon name="trash" size={14} /></button>
+      <WriteSwitch mode={g?.mode} disabled={busy} onchange={(mode) => setMode(f, mode)} />
+      <button class="iconbtn" title={m.folders_delete()} aria-label={m.folders_delete()} disabled={busy} onclick={() => removeFolder(f)}><Icon name="trash" size={14} /></button>
     </div>
   </div>
 {/each}
 
 {#if !adding}
-  <button class="open permadd" onclick={() => (adding = true)}>Add a folder…</button>
+  <button class="open permadd" onclick={() => (adding = true)}>{m.folders_add()}</button>
 {:else}
   <FolderPicker roots={ctx.s?.fs} start={ctx.s?.fs?.cwd || ''} {busy} onUse={addFolder} />
   <div class="keyrow" style="justify-content:flex-end">
-    <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
+    <button class="linkbtn" onclick={() => (adding = false)}>{m.action_cancel()}</button>
   </div>
 {/if}
 

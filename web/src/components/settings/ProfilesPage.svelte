@@ -9,6 +9,7 @@
   import type { Profile } from '../../schemas/profile.ts'
   import { switchProfile } from '../../controller.ts'
   import { getActiveProfileId } from '../../lib/profile.ts'
+  import { m } from '../../paraglide/messages.js'
   import Profiles from '../Profiles.svelte'
   import ProfileEditor from './ProfileEditor.svelte'
 
@@ -27,7 +28,7 @@
 {#if editing}
   <ProfileEditor onBack={() => (editing = false)} />
 {:else}
-  <div class="setgroup">Profiles</div>
-  <p class="setsub">Manage how the assistant behaves in different contexts.</p>
+  <div class="setgroup">{m.settings_page_profiles()}</div>
+  <p class="setsub">{m.profiles_lead()}</p>
   <Profiles onSelect={open} />
 {/if}

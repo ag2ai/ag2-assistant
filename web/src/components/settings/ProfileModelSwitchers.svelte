@@ -6,17 +6,18 @@
   // store.
   import ProfileTextSwitcher from './ProfileTextSwitcher.svelte'
   import ProfileLiveSwitcher from './ProfileLiveSwitcher.svelte'
+  import { m } from '../../paraglide/messages.js'
 </script>
 
 <div class="pmodels">
   <div class="pmodel">
-    <div class="pmodel-k">Text model</div>
-    <div class="pmodel-sub">Drives chat replies for this profile.</div>
+    <div class="pmodel-k">{m.profile_text_model()}</div>
+    <div class="pmodel-sub">{m.profile_text_model_sub()}</div>
     <ProfileTextSwitcher />
   </div>
   <div class="pmodel">
-    <div class="pmodel-k">Voice model</div>
-    <div class="pmodel-sub">Used when you talk to this profile out loud.</div>
+    <div class="pmodel-k">{m.profile_voice_model()}</div>
+    <div class="pmodel-sub">{m.profile_voice_model_sub()}</div>
     <ProfileLiveSwitcher />
   </div>
 </div>

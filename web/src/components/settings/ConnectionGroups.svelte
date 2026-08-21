@@ -4,6 +4,7 @@
   // answers — so this is the only place it moves.
   import { api } from '../../transport/api/index.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { Connection, ConnectionGroup, ConnectionGroups } from '../../schemas/index.ts'
 
   // connection: one entry from GET /api/connections. Nothing here changes the header's
@@ -41,9 +42,9 @@
 </script>
 
 {#if view?.groups.length}
-  <div class="setgroup">Groups</div>
+  <div class="setgroup">{m.integrations_groups()}</div>
   <p class="setsub">
-    A group's profile is set here, not from the group — anyone in it can read the answers.
+    {m.integrations_groups_lead()}
   </p>
 
   {#if err}<p class="cnerr">{err}</p>{/if}
@@ -54,14 +55,14 @@
       <li class="cnitem">
         <span class="cnid">{g.chat_id}</span>
         {#if !ok}
-          <span class="cnwarn">not reachable here — this group is silent until it is re-pointed</span>
+          <span class="cnwarn">{m.integrations_group_unreachable()}</span>
         {/if}
         <select
-          class="cngrouppick" aria-label="Profile for group {g.chat_id}"
+          class="cngrouppick" aria-label={m.integrations_group_profile_aria({ id: g.chat_id })}
           value={ok ? g.profile : ''} disabled={busy === g.chat_id}
           onchange={(e) => repoint(g.chat_id, e.currentTarget.value)}
         >
-          {#if !ok}<option value="">Pick a profile</option>{/if}
+          {#if !ok}<option value="">{m.integrations_pick_profile()}</option>{/if}
           {#each view.profiles as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
         </select>
       </li>

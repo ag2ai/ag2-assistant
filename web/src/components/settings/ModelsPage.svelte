@@ -21,10 +21,11 @@
   import Icon from '../Icon.svelte'
   import { llmConfigs, loadLlmConfigs, type LlmConfigSeed } from '../../lib/llm.ts'
   import { builtinToolText, builtinChip } from '../../lib/builtinTools.ts'
-  import { TYPE_LABEL, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER } from '../../lib/providerLabels.ts'
+  import { TYPE_LABEL, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER, SUBSCRIPTION_GROUP } from '../../lib/providerLabels.ts'
   import { MODEL_TEMPLATES, type ModelTemplate } from '../../lib/modelTemplates.ts'
   import BrandMark from '../BrandMark.svelte'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { LlmConfig } from '../../schemas/index.ts'
 
   // The template cards, bucketed under their headings in render order — picking
@@ -32,6 +33,15 @@
   const TEMPLATE_GROUPS = GROUP_ORDER
     .map((group) => ({ group, templates: MODEL_TEMPLATES.filter((t) => TYPE_GROUP[t.type] === group) }))
     .filter((g) => g.templates.length)
+
+  // Display mapping only: the GROUP_ORDER/TYPE_GROUP values stay the matching keys
+  // (they are compared by string equality against SUBSCRIPTION_GROUP and each other),
+  // so localization happens here at render time. Vendor names pass through untouched.
+  const groupLabel = (group: string) => (group === SUBSCRIPTION_GROUP ? m.llm_group_subscription() : group)
+  // TYPE_CHIP values 'OAuth'/'ACP' are protocol names (and matched by equality in
+  // tests); only the plain-English chips read localized.
+  const chipLabel = (chip: string) =>
+    chip === 'API key' ? m.llm_chip_api_key() : chip === 'no key' ? m.llm_chip_no_key_short() : chip
 
   const configs = $derived($llmConfigs.configs)
   const envOverride = $derived($llmConfigs.envOverride)
@@ -106,14 +116,14 @@
   // Hints already carry the "…" ellipsis (e.g. "…abcd").
   function keyChip(c: LlmConfig) {
     if (c.key_source === 'subscription')
-      return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
-    if (c.key_source === 'cli_login') return c.type === 'codex' ? 'Codex CLI login' : 'Claude Code CLI login'
-    if (c.type === 'claude_code') return 'Claude Code adapter not found — install claude-agent-acp'
-    if (c.type === 'codex') return 'Codex adapter not found — install @agentclientprotocol/codex-acp'
-    if (c.key_source === 'secret') return `${c.secret?.name || 'secret'} ${c.secret?.hint || ''}`.trim()
-    if (c.key_source === 'shared') return `${c.shared_key?.env || 'provider key'} ${c.shared_key?.hint || ''}`.trim()
-    if (c.key_source === 'not_needed') return 'no key needed'
-    return 'no key — pick a secret or set ' + (c.shared_key?.env || 'the provider key')
+      return c.signed_in ? m.llm_chip_sub_signed_in() : m.llm_chip_sub_not_signed_in()
+    if (c.key_source === 'cli_login') return c.type === 'codex' ? m.llm_chip_codex_cli() : m.llm_chip_claude_cli()
+    if (c.type === 'claude_code') return m.llm_chip_claude_adapter_missing()
+    if (c.type === 'codex') return m.llm_chip_codex_adapter_missing()
+    if (c.key_source === 'secret') return `${c.secret?.name || m.llm_chip_secret_fallback()} ${c.secret?.hint || ''}`.trim()
+    if (c.key_source === 'shared') return `${c.shared_key?.env || m.llm_chip_provider_key_fallback()} ${c.shared_key?.hint || ''}`.trim()
+    if (c.key_source === 'not_needed') return m.llm_chip_no_key_needed()
+    return m.llm_chip_no_key({ env: c.shared_key?.env || m.llm_chip_provider_key_fallback() })
   }
 </script>
 
@@ -127,19 +137,19 @@
   {/if}
 {/snippet}
 
-<div class="setgroup">Text</div>
+<div class="setgroup">{m.llm_group_text()}</div>
 
 {#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if envOverride}
   <div class="llmenv">
-    Pinned by environment{envOverride.provider ? ` · provider ${envOverride.provider}` : ''}{envOverride.model ? ` · model ${envOverride.model}` : ''}.
-    These override the active configuration below until unset.
+    {m.llm_env_pinned()}{envOverride.provider ? ` · ${m.llm_env_provider({ name: envOverride.provider })}` : ''}{envOverride.model ? ` · ${m.llm_env_model({ name: envOverride.model })}` : ''}.
+    {m.llm_env_note()}
   </div>
 {/if}
 
 {#if !configs.length && !editing}
-  <p class="muted" style="font-size:13px">No configurations yet — add one below to connect a model.</p>
+  <p class="muted" style="font-size:13px">{m.llm_empty()}</p>
 {/if}
 
 {#each configs as c (c.id)}
@@ -152,8 +162,8 @@
     class="llmrow" class:active={c.active} class:clickable={!c.active && idle && !busy}
     role="button" aria-disabled={c.active || !idle}
     tabindex={!c.active && idle ? 0 : -1}
-    aria-label={!c.active ? `Use ${c.name}` : undefined}
-    title={!c.active && idle ? 'Click to use this model' : ''}
+    aria-label={!c.active ? m.llm_use_aria({ name: c.name }) : undefined}
+    title={!c.active && idle ? m.llm_click_to_use() : ''}
     onclick={() => { if (!c.active && !busy && idle) use(c) }}
     onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !c.active && !busy && idle) { e.preventDefault(); use(c) } }}
   >
@@ -161,20 +171,20 @@
     <div class="llmmeta">
       <div class="llmname">
         {c.name}
-        {#if c.active}<span class="llmbadge">active</span>{/if}
+        {#if c.active}<span class="llmbadge">{m.llm_badge_active()}</span>{/if}
       </div>
       <!-- An empty model is legal for the CLI-login types (= the CLI's own default);
            name it instead of leaving a dangling separator. -->
-      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model || 'CLI default'}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
+      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model || m.llm_cli_default()}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
         <!-- Provider library missing: name the install command, not just a dead dot. -->
         {#if c.deps && !c.deps.ok}
-          <span class="llmkey warn" title={c.deps.install}>needs {c.deps.install}</span>
+          <span class="llmkey warn" title={c.deps.install}>{m.llm_needs_install({ install: c.deps.install })}</span>
         {/if}
         <!-- Images follow the ACTIVE config: capable types advertise the chip, and on
              the active row it reads as "image generation enabled" (✓). -->
-        {#if c.images}<span class="llmkey">images{c.active ? ' ✓' : ''}</span>{/if}
+        {#if c.images}<span class="llmkey">{m.llm_chip_images()}{c.active ? ' ✓' : ''}</span>{/if}
         <!-- Provider-native tools switched on, so the list says what a config can do
              without opening it. Short chips: the full labels are the form's. -->
         {#each Object.keys(c.builtin_tools || {}) as id (id)}
@@ -182,7 +192,7 @@
         {/each}
         {#if tests[c.id]}
           {#if tests[c.id].testing}
-            <span class="llmtest">testing…</span>
+            <span class="llmtest">{m.llm_testing()}</span>
           {:else if tests[c.id].ok}
             <span class="llmtest ok">{tests[c.id].reply} · {tests[c.id].latency_ms} ms</span>
           {:else}
@@ -195,25 +205,25 @@
          the list mid-edit invites confusion (the editor has its own Test button).
          Each button stops propagation so it never triggers the row's click-to-use. -->
     {#if confirming === c.id}
-      <span class="llmconfirm">Delete?</span>
+      <span class="llmconfirm">{m.confirm_delete()}</span>
       <button
         class="linkbtn danger" disabled={busy}
-        title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
+        title={c.active ? m.llm_delete_active_title() : ''}
         onclick={(e) => { e.stopPropagation(); remove(c) }}
-      >Confirm</button>
-      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
+      >{m.action_confirm()}</button>
+      <button class="linkbtn" disabled={busy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>{m.action_cancel()}</button>
     {:else}
       <button
         class="open" disabled={busy || tests[c.id]?.testing || !!editing}
-        title={editing ? 'Editing in progress — use the editor’s Test button to test your changes' : ''}
+        title={editing ? m.llm_editing_title() : ''}
         onclick={(e) => { e.stopPropagation(); test(c) }}
-      >Test</button>
-      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>Edit</button>
+      >{m.action_test()}</button>
+      <button class="linkbtn" disabled={busy || !!editing} onclick={(e) => { e.stopPropagation(); edit(c) }}>{m.action_edit_short()}</button>
       <button
         class="linkbtn danger" disabled={busy || !!editing}
-        title={c.active ? 'Deleting the active model falls back to the next one (or defaults)' : ''}
+        title={c.active ? m.llm_delete_active_title() : ''}
         onclick={(e) => { e.stopPropagation(); confirming = c.id }}
-      >Delete</button>
+      >{m.action_delete()}</button>
     {/if}
   </div>
   {#if editing?.id === c.id}{@render editorForm()}{/if}
@@ -226,34 +236,34 @@
 {:else if !editing}
   {#if !adding}
     <button class="addbtn" disabled={busy} onclick={() => (adding = true)}>
-      <Icon name="plus" size={14} /> Add model
+      <Icon name="plus" size={14} /> {m.llm_add_model()}
     </button>
   {:else}
     {#each TEMPLATE_GROUPS as { group, templates } (group)}
-      <div class="setsec">{group}</div>
+      <div class="setsec">{groupLabel(group)}</div>
       <div class="mcpcat">
         {#each templates as t}
           <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
             <span class="mcpcathead">
               <BrandMark brand={t.type} size={16} /> {t.card || t.name}
               <!-- What this card asks you to bring, worn by every card. -->
-              <span class="mcpcatchip">{TYPE_CHIP[t.type]}</span>
+              <span class="mcpcatchip">{chipLabel(TYPE_CHIP[t.type])}</span>
             </span>
             <span class="mcpcatblurb">{t.blurb}</span>
             {#if providerDeps[t.type] && !providerDeps[t.type].ok}
-              <span class="mcpcatblurb warn">Needs {providerDeps[t.type].install}</span>
+              <span class="mcpcatblurb warn">{m.llm_needs_install_cap({ install: providerDeps[t.type].install })}</span>
             {/if}
           </button>
         {/each}
       </div>
     {/each}
     <div class="keyrow" style="justify-content:flex-end">
-      <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
+      <button class="linkbtn" onclick={() => (adding = false)}>{m.action_cancel()}</button>
     </div>
   {/if}
 {/if}
 
-<div class="setgroup">Live</div>
+<div class="setgroup">{m.llm_group_live()}</div>
 <VoiceSection />
 
 <style>

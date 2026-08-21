@@ -5,6 +5,7 @@
   import { api } from '../../transport/api/index.ts'
   import { reachableAnywhere, surfaceLabel } from '../../lib/integrations.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { Connection, ConnectionExposure, Profile } from '../../schemas/index.ts'
 
   // connection: one entry from GET /api/connections. reload: re-fetch the list, called
@@ -61,11 +62,9 @@
   }
 </script>
 
-<div class="setgroup">Profiles</div>
+<div class="setgroup">{m.settings_page_profiles()}</div>
 <p class="setsub">
-  Every profile is reachable through this connection until you turn it off; a conversation
-  already sitting in a withdrawn one is told, not moved. The default is where a new
-  conversation lands when nothing else has been chosen.
+  {m.integrations_profiles_lead()}
 </p>
 
 {#if err}<p class="cnerr">{err}</p>{/if}
@@ -74,8 +73,8 @@
   <table class="cnexp">
     <thead>
       <tr>
-        <th>Profile</th>
-        <th class="cnexpdef">Default</th>
+        <th>{m.integrations_col_profile()}</th>
+        <th class="cnexpdef">{m.integrations_col_default()}</th>
         {#each view.surfaces as s (s.id)}
           <th class="cnexpcol">{surfaceLabel(connection.platform, s.kind)}</th>
         {/each}
@@ -98,12 +97,12 @@
             <button
               class="cnradio" class:on={isDefault} role="radio" aria-checked={isDefault}
               disabled={busy || !reach}
-              aria-label="{name} is the default profile for {connection.name}"
+              aria-label={m.integrations_default_aria({ name, connection: connection.name })}
               title={!reach
-                ? 'Withdrawn from every surface — it cannot be the default'
+                ? m.integrations_withdrawn_title()
                 : isDefault
-                  ? 'Leave this connection with no default'
-                  : 'Make this the default profile'}
+                  ? m.integrations_clear_default_title()
+                  : m.integrations_make_default_title()}
               onclick={() => setDefault(pid)}
             ></button>
           </td>
@@ -112,8 +111,8 @@
             <td class="cnexpcol">
               <button
                 class="setswitch" class:on role="switch" aria-checked={on} disabled={busy}
-                title={on ? 'Reachable here' : 'Withdrawn from this surface'}
-                aria-label="{name} reachable from {connection.name} {surfaceLabel(connection.platform, s.kind)}"
+                title={on ? m.integrations_reachable_title() : m.integrations_withdrawn_surface_title()}
+                aria-label={m.integrations_reachable_aria({ name, connection: connection.name, surface: surfaceLabel(connection.platform, s.kind) })}
                 onclick={() => toggle(pid, s.id)}
               ></button>
             </td>
@@ -125,10 +124,10 @@
 
   {#if anyWithdrawn}
     <p class="cnhint">
-      A greyed-out profile is withdrawn from every surface here, so it cannot be the default.
+      {m.integrations_withdrawn_hint()}
     </p>
   {/if}
   {#if view.default_profile == null}
-    <p class="cnwarn">No default — a conversation that has not been pointed anywhere is refused.</p>
+    <p class="cnwarn">{m.integrations_no_default_warn()}</p>
   {/if}
 {/if}

@@ -10,11 +10,13 @@
   import { loadLlmConfigs } from '../../lib/llm.ts'
   import { loadLiveConfigs } from '../../lib/live.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { Secret } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
 
   const PROVIDERS = ['', 'openai', 'anthropic', 'gemini']
-  const PROVIDER_LABEL: Record<string, string | undefined> = { '': 'no provider', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini' }
+  // Vendor names are product names; only the empty "no provider" entry localizes.
+  const PROVIDER_LABEL: Record<string, string | undefined> = { '': m.secrets_no_provider(), openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini' }
 
   const secrets = $derived($secretsStore.secrets)
 
@@ -59,9 +61,9 @@
 
   async function remove(s: Secret) {
     const used = s.used_by?.length
-      ? `\n\nUsed by ${s.used_by.length} model${s.used_by.length > 1 ? 's' : ''}: ${s.used_by.join(', ')}.\nThey will fall back to the provider default or env key.`
+      ? m.secrets_delete_used({ count: s.used_by.length, list: s.used_by.join(', ') })
       : ''
-    if (!confirm(`Delete secret "${s.name}"?${used}`)) return
+    if (!confirm(`${m.secrets_delete_confirm({ name: s.name })}${used}`)) return
     busy = true; err = ''
     try {
       await api.deleteSecret(s.id)
@@ -71,43 +73,41 @@
   }
 </script>
 
-<div class="setgroup">Secrets</div>
+<div class="setgroup">{m.secrets_title()}</div>
 <p class="setsub">
-  Named, reusable API keys. Attach one to any Text or Live model; mark a
-  provider-tagged secret as its provider's default fallback. Values are never
-  shown back — only the last 4 characters.
+  {m.secrets_lead()}
 </p>
 
 {#if err && editingId === null}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if !secrets.length && editingId === null}
-  <p class="muted" style="font-size:13px">No secrets yet — add one below, or paste a key in a model form.</p>
+  <p class="muted" style="font-size:13px">{m.secrets_empty()}</p>
 {/if}
 
 {#each secrets as s (s.id)}
   {#if editingId === s.id}
     <div class="llmform">
       <div class="llmfield">
-        <label for="sp-name">Name</label>
-        <input id="sp-name" bind:value={name} placeholder="e.g. Work OpenAI" />
+        <label for="sp-name">{m.field_name()}</label>
+        <input id="sp-name" bind:value={name} placeholder={m.secrets_name_placeholder()} />
       </div>
       <div class="llmfield">
-        <label for="sp-value">Value <span class="llmhint">leave blank to keep the current key</span></label>
+        <label for="sp-value">{m.secrets_field_value()} <span class="llmhint">{m.secrets_value_hint()}</span></label>
         <input id="sp-value" type="password" bind:value placeholder={'•••• ' + (s.hint || '')} />
       </div>
       <div class="llmfield">
-        <label for="sp-provider">Provider <span class="llmhint">optional — groups the picker; required to be a default</span></label>
+        <label for="sp-provider">{m.llm_field_provider()} <span class="llmhint">{m.secrets_provider_hint()}</span></label>
         <select id="sp-provider" bind:value={provider} onchange={() => { if (!provider) isDefault = false }}>
           {#each PROVIDERS as p}<option value={p}>{PROVIDER_LABEL[p]}</option>{/each}
         </select>
       </div>
       <div class="llmfield">
-        <label><input type="checkbox" bind:checked={isDefault} disabled={!provider} /> Default for {PROVIDER_LABEL[provider] || 'its provider'}</label>
+        <label><input type="checkbox" bind:checked={isDefault} disabled={!provider} /> {m.secrets_default_for({ name: PROVIDER_LABEL[provider] || m.secrets_its_provider() })}</label>
       </div>
       {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
       <div class="keyrow" style="justify-content:flex-end">
-        <button class="linkbtn" disabled={busy} onclick={cancel}>Cancel</button>
-        <button class="open" disabled={busy || !name.trim()} onclick={save}>{busy ? 'Saving…' : 'Save'}</button>
+        <button class="linkbtn" disabled={busy} onclick={cancel}>{m.action_cancel()}</button>
+        <button class="open" disabled={busy || !name.trim()} onclick={save}>{busy ? m.action_saving() : m.action_save()}</button>
       </div>
     </div>
   {:else}
@@ -115,14 +115,14 @@
       <div class="llmmeta">
         <div class="llmname">
           {s.name}
-          {#if s.default}<span class="llmbadge">default</span>{/if}
+          {#if s.default}<span class="llmbadge">{m.llm_badge_default()}</span>{/if}
         </div>
         <div class="llmsub">
-          <span class="llmkey">{s.provider ? PROVIDER_LABEL[s.provider] + ' · ' : ''}{s.hint}{s.used_by?.length ? ` · used by ${s.used_by.length} model${s.used_by.length > 1 ? 's' : ''}` : ''}</span>
+          <span class="llmkey">{s.provider ? PROVIDER_LABEL[s.provider] + ' · ' : ''}{s.hint}{s.used_by?.length ? ` · ${m.secrets_used_by({ count: s.used_by.length })}` : ''}</span>
         </div>
       </div>
-      <button class="linkbtn" disabled={busy || editingId !== null} onclick={() => startEdit(s)}>Edit</button>
-      <button class="linkbtn danger" disabled={busy || editingId !== null} onclick={() => remove(s)}>Delete</button>
+      <button class="linkbtn" disabled={busy || editingId !== null} onclick={() => startEdit(s)}>{m.action_edit_short()}</button>
+      <button class="linkbtn danger" disabled={busy || editingId !== null} onclick={() => remove(s)}>{m.action_delete()}</button>
     </div>
   {/if}
 {/each}
@@ -130,30 +130,30 @@
 {#if editingId === 'new'}
   <div class="llmform">
     <div class="llmfield">
-      <label for="sp-name">Name</label>
-      <input id="sp-name" bind:value={name} placeholder="e.g. Work OpenAI" />
+      <label for="sp-name">{m.field_name()}</label>
+      <input id="sp-name" bind:value={name} placeholder={m.secrets_name_placeholder()} />
     </div>
     <div class="llmfield">
-      <label for="sp-value">Value</label>
-      <input id="sp-value" type="password" bind:value placeholder="paste key" />
+      <label for="sp-value">{m.secrets_field_value()}</label>
+      <input id="sp-value" type="password" bind:value placeholder={m.secrets_paste_key()} />
     </div>
     <div class="llmfield">
-      <label for="sp-provider">Provider <span class="llmhint">optional — groups the picker; required to be a default</span></label>
+      <label for="sp-provider">{m.llm_field_provider()} <span class="llmhint">{m.secrets_provider_hint()}</span></label>
       <select id="sp-provider" bind:value={provider} onchange={() => { if (!provider) isDefault = false }}>
         {#each PROVIDERS as p}<option value={p}>{PROVIDER_LABEL[p]}</option>{/each}
       </select>
     </div>
     <div class="llmfield">
-      <label><input type="checkbox" bind:checked={isDefault} disabled={!provider} /> Default for {PROVIDER_LABEL[provider] || 'its provider'}</label>
+      <label><input type="checkbox" bind:checked={isDefault} disabled={!provider} /> {m.secrets_default_for({ name: PROVIDER_LABEL[provider] || m.secrets_its_provider() })}</label>
     </div>
     {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
     <div class="keyrow" style="justify-content:flex-end">
-      <button class="linkbtn" disabled={busy} onclick={cancel}>Cancel</button>
-      <button class="open" disabled={busy || !name.trim() || !value.trim()} onclick={save}>{busy ? 'Saving…' : 'Add'}</button>
+      <button class="linkbtn" disabled={busy} onclick={cancel}>{m.action_cancel()}</button>
+      <button class="open" disabled={busy || !name.trim() || !value.trim()} onclick={save}>{busy ? m.action_saving() : m.action_add()}</button>
     </div>
   </div>
 {:else if editingId === null}
   <button class="addbtn" disabled={busy} onclick={startAdd}>
-    <Icon name="plus" size={14} /> Add secret
+    <Icon name="plus" size={14} /> {m.secrets_add()}
   </button>
 {/if}

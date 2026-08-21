@@ -7,6 +7,7 @@
   // Channel exposure is not here: it is set per connection, in Settings → Integrations.
   import { profiles } from '../../store.ts'
   import { getActiveProfileId } from '../../lib/profile.ts'
+  import { m } from '../../paraglide/messages.js'
   import Icon from '../Icon.svelte'
   import ProfileGeneralSection from './ProfileGeneralSection.svelte'
   import FocusAreasSection from './FocusAreasSection.svelte'
@@ -23,26 +24,26 @@
   const active = $derived(list.find((p) => p.id === activeId) || null)
 
   const TABS = [
-    { id: 'general', label: 'General', comp: ProfileGeneralSection },
-    { id: 'focus', label: 'Focus areas', comp: FocusAreasSection },
-    { id: 'model', label: 'Model', comp: ProfileModelSwitchers },
-    { id: 'folders', label: 'Folders', comp: FoldersSection },
-    { id: 'skills', label: 'Skills', comp: ProfileSkillsSection },
-    { id: 'memory', label: 'Memory', comp: ProfileMemorySection },
+    { id: 'general', label: m.profile_tab_general(), comp: ProfileGeneralSection },
+    { id: 'focus', label: m.profile_tab_focus(), comp: FocusAreasSection },
+    { id: 'model', label: m.profile_tab_model(), comp: ProfileModelSwitchers },
+    { id: 'folders', label: m.profile_tab_folders(), comp: FoldersSection },
+    { id: 'skills', label: m.profile_tab_skills(), comp: ProfileSkillsSection },
+    { id: 'memory', label: m.profile_tab_memory(), comp: ProfileMemorySection },
   ]
   let tab = $state('general')
   const Panel = $derived((TABS.find((t) => t.id === tab) || TABS[0]).comp)
 </script>
 
 <div class="peditor">
-  <button class="pback" onclick={onBack}><Icon name="chevron-left" size={15} /> Profiles</button>
+  <button class="pback" onclick={onBack}><Icon name="chevron-left" size={15} /> {m.settings_page_profiles()}</button>
 
   <header class="phead" style="--dot:{active?.accent || 'var(--accent)'}">
     <span class="pheaddot"></span>
     <div class="pheadmeta">
       <div class="pheadname">
-        {active?.name || 'Profile'}
-        <span class="pbadge">active</span>
+        {active?.name || m.profile_fallback_name()}
+        <span class="pbadge">{m.profile_badge_active()}</span>
       </div>
       {#if active?.workspace}<div class="pheadsub" title={active.workspace}>{active.workspace}</div>{/if}
     </div>

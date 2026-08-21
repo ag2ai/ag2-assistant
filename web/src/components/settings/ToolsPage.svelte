@@ -3,12 +3,13 @@
   import McpServers from '../McpServers.svelte'
   import CodingAgents from '../CodingAgents.svelte'
   import PermissionsManager from '../PermissionsManager.svelte'
+  import { m } from '../../paraglide/messages.js'
 </script>
 
-<div class="setgroup">MCP servers</div>
+<div class="setgroup">{m.tools_mcp_servers()}</div>
 <McpServers />
 
 <CodingAgents />
 
-<div class="setgroup">Permissions <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
+<div class="setgroup">{m.tools_permissions()} <span class="setwide" title={m.settings_install_wide_title()}>{m.settings_install_wide()}</span></div>
 <PermissionsManager />

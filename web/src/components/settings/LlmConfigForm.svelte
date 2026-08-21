@@ -25,6 +25,7 @@
   import { catalogNote, catalogSource, permanentNoCatalog } from '../../lib/modelSuggest.ts'
   import ModelCombobox from './ModelCombobox.svelte'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { LlmConfigSeed } from '../../lib/llm.ts'
   import type { LlmConfigDraft } from '../../transport/api/llm.ts'
   import type { CodingCatalog, PingResult } from '../../schemas/index.ts'
@@ -122,24 +123,26 @@
   const pickerSecrets = $derived(sortForProvider($secretsStore.secrets, PROV_OF[type] || ''))
   const keyUsage = $derived.by(() => {
     if (type === 'openai_subscription')
-      return 'Requests use your ChatGPT/Codex subscription — no API key is involved.'
+      return m.llm_keyuse_subscription()
     if (type === 'claude_code')
-      return 'Runs on your Claude Code CLI login (claude-agent-acp) — no API key is involved.'
+      return m.llm_keyuse_claude()
     if (type === 'codex')
-      return 'Runs on your Codex CLI login (codex-acp) — no API key is involved.'
-    if (type === 'ollama') return 'Ollama is local — no API key is used.'
-    const env = ENV_OF[type]
+      return m.llm_keyuse_codex()
+    if (type === 'ollama') return m.llm_keyuse_ollama()
+    const env = ENV_OF[type] || ''
     const shared = ctx?.s?.keys?.[PROV_OF[type] || '']
-    if (pastedKey.trim()) return 'A new Secret will be created from this key on save (rename it later in Settings → Secrets).'
+    if (pastedKey.trim()) return m.llm_keyuse_new_secret()
     if (secretId) {
       const s = $secretsStore.secrets.find((x) => x.id === secretId)
       return s
-        ? `Uses the "${s.name}" secret${baseUrl.trim() ? ' (sent to the custom endpoint)' : ''}. It overrides ${env}.`
-        : 'The referenced secret was deleted — falls back to the provider default or env key.'
+        ? (baseUrl.trim()
+            ? m.llm_keyuse_secret_endpoint({ name: s.name, env })
+            : m.llm_keyuse_secret({ name: s.name, env }))
+        : m.llm_keyuse_secret_deleted()
     }
-    if (baseUrl.trim()) return `Custom endpoint with no secret — a placeholder is sent (your ${env} is never sent to non-${type.startsWith('openai') ? 'OpenAI' : 'Anthropic'} endpoints).`
-    if (shared?.set) return `No secret selected — uses your ${env} (${shared.hint || 'set'}).`
-    return `No key available — pick or paste one above, or set ${env}.`
+    if (baseUrl.trim()) return m.llm_keyuse_placeholder({ env, vendor: type.startsWith('openai') ? 'OpenAI' : 'Anthropic' })
+    if (shared?.set) return m.llm_keyuse_shared({ env, hint: shared.hint || m.llm_key_set() })
+    return m.llm_keyuse_none({ env })
   })
 
   // Empty model is valid for the CLI-login types only (= the CLI's own default)
@@ -276,16 +279,16 @@
   const acpCatalog = $derived(acpState?.models ?? [])
   // The adapter's own current selection labels the "CLI default" row, so leaving
   // the model empty is a legible choice rather than a blind one.
-  const defaultLabel = $derived(acpState?.current ? `CLI default (${acpState.current})` : 'CLI default')
+  const defaultLabel = $derived(acpState?.current ? m.llm_cli_default_with({ model: acpState.current }) : m.llm_cli_default())
   const ADAPTER_PKG: Record<string, string | undefined> = { claude: '@agentclientprotocol/claude-agent-acp', codex: '@agentclientprotocol/codex-acp' }
   const acpNote = $derived.by(() => {
     if (!acpAgent || acpLoading || acpCatalog.length) return ''
     if (acpState?.reason === 'adapter_missing')
-      return `No model list: the ACP adapter isn't installed (npm i -g ${ADAPTER_PKG[acpAgent]}). Leave the field empty to use the CLI's own model.`
+      return m.llm_acp_adapter_missing({ pkg: ADAPTER_PKG[acpAgent] || '' })
     if (acpState?.reason === 'bridge')
-      return "No model list in bridge mode — the CLI runs on the host, out of reach of this container. Leave the field empty to use the CLI's own model."
+      return m.llm_acp_bridge()
     if (acpState?.reason)
-      return "Couldn't read the CLI's model list. Leave the field empty to use the CLI's own model, or type a name it accepts."
+      return m.llm_acp_failed()
     return ''
   })
 
@@ -325,9 +328,9 @@
     let options: Record<string, unknown> = {}
     const text = advText.trim()
     if (advOpen && text) {
-      try { options = JSON.parse(text) } catch { err = 'Advanced: not valid JSON.'; return null }
+      try { options = JSON.parse(text) } catch { err = m.llm_adv_invalid_json(); return null }
       if (!options || typeof options !== 'object' || Array.isArray(options)) {
-        err = 'Advanced: must be a JSON object, e.g. {"temperature": 0.7}.'
+        err = m.llm_adv_not_object({ example: '{"temperature": 0.7}' })
         return null
       }
     }
@@ -390,14 +393,14 @@
 
 <div class="llmform">
   <div class="llmfield">
-    <label for="lf-name">Name</label>
-    <input id="lf-name" bind:value={name} placeholder="e.g. Gemini Flash" />
+    <label for="lf-name">{m.field_name()}</label>
+    <input id="lf-name" bind:value={name} placeholder={m.llm_name_placeholder()} />
   </div>
   {#if customEndpoint}
     <!-- Shown only for a model that names its own endpoint; a vendor-reaching one
          has one settled surface and shows nothing here. -->
     <div class="llmfield">
-      <label for="lf-interface">API interface <span class="llmhint">which API surface this endpoint speaks</span></label>
+      <label for="lf-interface">{m.llm_field_api_interface()} <span class="llmhint">{m.llm_api_interface_hint()}</span></label>
       <select id="lf-interface" value={type} onchange={(e) => changeType(e.currentTarget.value)}>
         {#each INTERFACES as t}<option value={t.id}>{t.label}</option>{/each}
       </select>
@@ -407,15 +410,15 @@
     <!-- Wait for the adapter's real catalog rather than offering a text box with
          invented example names: the CLI is the authority on what models exist. -->
     <div class="llmfield">
-      <label for="lf-model-loading">Model</label>
-      <select id="lf-model-loading" disabled><option>Reading the CLI's model list…</option></select>
+      <label for="lf-model-loading">{m.llm_field_model()}</label>
+      <select id="lf-model-loading" disabled><option>{m.llm_reading_cli_models()}</option></select>
     </div>
   {:else if type === 'codex' && codexGroups.length}
     <!-- The adapter's live catalog, shown the way Codex's own picker does: model
          and reasoning as separate selects. The joined family[effort] id is what
          gets stored — the free-text fallback below edits the same string. -->
     <div class="llmfield">
-      <label for="lf-model-family">Model</label>
+      <label for="lf-model-family">{m.llm_field_model()}</label>
       <select id="lf-model-family" value={codexPick.family} onchange={(e) => pickCodexFamily(e.currentTarget.value)}>
         <option value="">{defaultLabel}</option>
         {#each codexFamilies as g (g.family)}
@@ -425,9 +428,9 @@
     </div>
     {#if codexEfforts.length}
       <div class="llmfield">
-        <label for="lf-model-effort">Reasoning</label>
+        <label for="lf-model-effort">{m.onboarding_reasoning_label()}</label>
         <select id="lf-model-effort" value={codexPick.effort} onchange={(e) => (model = joinModelId(codexPick.family, e.currentTarget.value))}>
-          <option value="">Default</option>
+          <option value="">{m.llm_effort_default()}</option>
           {#each codexEfforts as e (e.value)}
             <option value={e.value}>{e.label}</option>
           {/each}
@@ -438,7 +441,7 @@
     <!-- Claude Code's catalog values ride ANTHROPIC_MODEL verbatim ("opus[1m]",
          "sonnet", …) — one flat select, no decomposition. -->
     <div class="llmfield">
-      <label for="lf-model-claude">Model</label>
+      <label for="lf-model-claude">{m.llm_field_model()}</label>
       <select id="lf-model-claude" bind:value={model}>
         <option value="">{defaultLabel}</option>
         {#each claudeOptions as m (m.id)}
@@ -448,18 +451,18 @@
     </div>
   {:else if acpAgent}
     <div class="llmfield">
-      <label for="lf-model">Model</label>
+      <label for="lf-model">{m.llm_field_model()}</label>
       <!-- A CLI type whose adapter answered nothing: the placeholder stays empty on
            purpose (an invented example is worse than none — acpNote says what happened). -->
       <input id="lf-model" bind:value={model} placeholder="" />
     </div>
   {:else}
     <div class="llmfield">
-      <label for="lf-model">Model</label>
+      <label for="lf-model">{m.llm_field_model()}</label>
       <!-- Offered but never imposed: whatever is typed here wins. The list is the
            provider's when one could be read, and Known models when it could not. -->
       <ModelCombobox
-        bind:value={model} {type} placeholder="e.g. gemini-3.6-flash"
+        bind:value={model} {type} placeholder={m.llm_model_placeholder()}
         catalog={providerCatalog} loading={probing} onFirstFocus={() => probeCatalog()}
       />
     </div>
@@ -473,7 +476,7 @@
       <div class="llmfield">
         <span class="llmhint">
           {#if catalogHint}{catalogHint} {/if}
-          <button class="linkbtn" onclick={() => probeCatalog(true)}>Re-read the model list</button>
+          <button class="linkbtn" onclick={() => probeCatalog(true)}>{m.llm_reread_models()}</button>
         </span>
       </div>
     {/if}
@@ -485,19 +488,19 @@
     <div class="llmfield">
       <span class="llmhint">
         {#if acpNote}{acpNote} {/if}
-        <button class="linkbtn" onclick={() => fetchCatalog(acpAgent, true)}>Re-read the model list</button>
+        <button class="linkbtn" onclick={() => fetchCatalog(acpAgent, true)}>{m.llm_reread_models()}</button>
       </span>
     </div>
   {/if}
 
   {#if usesBaseUrl(type)}
     <div class="llmfield">
-      <label for="lf-base">Base URL <span class="llmhint">optional — naming your own endpoint is also how you choose the API interface it speaks</span></label>
-      <input id="lf-base" bind:value={baseUrl} onblur={settleBaseUrl} placeholder="e.g. http://localhost:8080/v1" spellcheck="false" />
+      <label for="lf-base">{m.llm_field_base_url()} <span class="llmhint">{m.llm_base_url_hint()}</span></label>
+      <input id="lf-base" bind:value={baseUrl} onblur={settleBaseUrl} placeholder={m.llm_base_url_placeholder()} spellcheck="false" />
     </div>
   {:else if type === 'ollama'}
     <div class="llmfield">
-      <label for="lf-host">Host</label>
+      <label for="lf-host">{m.llm_field_host()}</label>
       <input id="lf-host" bind:value={host} onblur={settleEndpoint} placeholder="http://localhost:11434" spellcheck="false" />
     </div>
   {/if}
@@ -507,11 +510,11 @@
       <!-- A heading, NOT a <label>: a label bound to the button would forward hover
            and clicks to it (browsers propagate :hover/activation to the labeled
            control), which reads as the button lighting up from across the row. -->
-      <span class="llmlabel">Sign in</span>
-      <span class="llmhint">Signs requests with your ChatGPT/Codex subscription instead of an API key — unofficial, may break OpenAI's Terms of Service.</span>
+      <span class="llmlabel">{m.llm_field_sign_in()}</span>
+      <span class="llmhint">{m.llm_sub_hint()}</span>
       <div class="llmkeyfield">
-        <button class="open" onclick={() => ctx.openCodex()}>Sign in with ChatGPT</button>
-        <span class="llmtest" class:ok={codexSignedIn} class:bad={!codexSignedIn}>{codexSignedIn ? 'Signed in' : 'Not signed in'}</span>
+        <button class="open" onclick={() => ctx.openCodex()}>{m.onboarding_oauth_signin()}</button>
+        <span class="llmtest" class:ok={codexSignedIn} class:bad={!codexSignedIn}>{codexSignedIn ? m.llm_signed_in() : m.llm_not_signed_in()}</span>
       </div>
       <span class="llmhint">{keyUsage}</span>
     </div>
@@ -519,33 +522,34 @@
     <!-- No endpoint or key fields: auth is the CLI's own on-disk login, and the ACP
          adapter is found on PATH (or via the Docker host bridge). -->
     <div class="llmfield">
-      <span class="llmlabel">Authentication</span>
+      <span class="llmlabel">{m.llm_field_auth()}</span>
       <span class="llmhint">{keyUsage}</span>
       <!-- Requirements only; the model list comes from the adapter itself, so no
-           example model names are spelled out here (they rot with every release). -->
+           example model names are spelled out here (they rot with every release).
+           One localizable sentence with the adapter/command/CLI as parameters. -->
       {#if type === 'claude_code'}
-        <span class="llmhint">Requires the <code>claude-agent-acp</code> adapter on PATH (<code>npm i -g @agentclientprotocol/claude-agent-acp</code>) and a logged-in Claude Code CLI.</span>
+        <span class="llmhint">{m.llm_requires_adapter({ adapter: 'claude-agent-acp', cmd: 'npm i -g @agentclientprotocol/claude-agent-acp', cli: 'Claude Code' })}</span>
       {:else}
-        <span class="llmhint">Requires the <code>codex-acp</code> adapter on PATH (<code>npm i -g @agentclientprotocol/codex-acp</code>) and a logged-in Codex CLI.</span>
+        <span class="llmhint">{m.llm_requires_adapter({ adapter: 'codex-acp', cmd: 'npm i -g @agentclientprotocol/codex-acp', cli: 'Codex' })}</span>
       {/if}
     </div>
   {:else}
     <div class="llmfield">
-      <label for="lf-secret">Secret <span class="llmhint">a reusable API key — manage in Settings → Secrets</span></label>
+      <label for="lf-secret">{m.llm_field_secret()} <span class="llmhint">{m.llm_secret_hint()}</span></label>
       <div class="llmkeyfield">
         <select id="lf-secret" bind:value={secretId} disabled={!!pastedKey.trim()}>
-          <option value="">No secret — provider default / env key</option>
+          <option value="">{m.llm_no_secret_option()}</option>
           {#each pickerSecrets as s (s.id)}
-            <option value={s.id}>{s.name} {s.hint}{s.default ? ' · default' : ''}</option>
+            <option value={s.id}>{s.name} {s.hint}{s.default ? ` · ${m.llm_badge_default()}` : ''}</option>
           {/each}
         </select>
       </div>
       <div class="llmkeyfield">
         <!-- onblur settles the key the model list is read with, so moving from here
              to the Model field lists what THAT key reaches, before any save. -->
-        <input id="lf-key" type="password" bind:value={pastedKey} onblur={settleKey} placeholder="…or paste a new key to create a secret" />
+        <input id="lf-key" type="password" bind:value={pastedKey} onblur={settleKey} placeholder={m.llm_paste_key_placeholder()} />
       </div>
-      {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}
+      {#if config.secret_missing}<span class="llmhint">{m.llm_secret_missing()}</span>{/if}
       <span class="llmhint">{keyUsage}</span>
     </div>
   {/if}
@@ -556,7 +560,7 @@
          heading. Labels come from lib/builtinTools.ts — the same id reads as
          "Web fetch" on Anthropic and "URL context" on Gemini. -->
     <div class="llmfield">
-      <span class="llmlabel">Provider tools <span class="llmhint">what {TYPE_LABEL[type] || type} can do on its own servers</span></span>
+      <span class="llmlabel">{m.llm_field_provider_tools()} <span class="llmhint">{m.llm_provider_tools_hint({ name: TYPE_LABEL[type] || type })}</span></span>
       {#each builtinOffered as id (id)}
         {@const t = builtinToolText(type, id)}
         <label class="llmtool">
@@ -581,11 +585,11 @@
        "Unsupported parameter"), and the save path strips options for this type. -->
   {#if type !== 'openai_subscription'}
     <div class="llmfield">
-      <button class="linkbtn advtoggle" onclick={() => (advOpen = !advOpen)}>{advOpen ? '▾' : '▸'} Advanced (JSON)</button>
+      <button class="linkbtn advtoggle" onclick={() => (advOpen = !advOpen)}>{advOpen ? '▾' : '▸'} {m.llm_advanced_json()}</button>
       {#if advOpen}
         <textarea
           class="llmadv" bind:value={advText} spellcheck="false"
-          placeholder={'Extra AG2 provider-config settings as a JSON object, e.g.\n{\n  "temperature": 0.7\n}'}
+          placeholder={m.llm_adv_placeholder({ example: '{\n  "temperature": 0.7\n}' })}
         ></textarea>
       {/if}
     </div>
@@ -594,19 +598,19 @@
   {#if err}<p class="muted" style="color:var(--danger);font-size:13px;margin:0">{err}</p>{/if}
   <div class="keyrow" style="justify-content:flex-end">
     {#if testing}
-      <span class="llmtest">testing…</span>
+      <span class="llmtest">{m.llm_testing()}</span>
     {:else if testResult}
       <span class="llmtest" class:ok={testResult.ok} class:bad={!testResult.ok}>
         {testResult.ok ? `${testResult.reply} · ${testResult.latency_ms} ms` : testResult.error}
       </span>
     {/if}
-    <button class="open" disabled={busy || testing || (!model.trim() && !modelOptional)} onclick={testDraft}>Test</button>
-    <button class="linkbtn" disabled={busy} onclick={onCancel}>Cancel</button>
-    <button class="open" disabled={busy || testing || !name.trim() || (!model.trim() && !modelOptional)} onclick={() => save()}>{busy ? 'Saving…' : 'Save'}</button>
+    <button class="open" disabled={busy || testing || (!model.trim() && !modelOptional)} onclick={testDraft}>{m.action_test()}</button>
+    <button class="linkbtn" disabled={busy} onclick={onCancel}>{m.action_cancel()}</button>
+    <button class="open" disabled={busy || testing || !name.trim() || (!model.trim() && !modelOptional)} onclick={() => save()}>{busy ? m.action_saving() : m.action_save()}</button>
     <!-- One-click "save and make it the active model" — hidden when the save would
          activate anyway (first config, or re-saving the already-active one). -->
     {#if !activate}
-      <button class="open" disabled={busy || testing || !name.trim() || (!model.trim() && !modelOptional)} onclick={() => save(true)}>Save &amp; Use</button>
+      <button class="open" disabled={busy || testing || !name.trim() || (!model.trim() && !modelOptional)} onclick={() => save(true)}>{m.llm_save_and_use()}</button>
     {/if}
   </div>
 </div>

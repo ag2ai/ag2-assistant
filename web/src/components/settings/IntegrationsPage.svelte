@@ -26,6 +26,7 @@
   } from '../../lib/integrations.ts'
   import type { Integration } from '../../lib/integrations.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { Connection, Profile } from '../../schemas/index.ts'
 
   const ctx = getSettings()
@@ -101,69 +102,68 @@
 
 {#if connecting}
   <button class="cnback" onclick={() => { connecting = null; adding = true }}>
-    <Icon name="chevron-left" size={13} /> All integrations
+    <Icon name="chevron-left" size={13} /> {m.integrations_all()}
   </button>
   <ConnectForm
     entry={connecting} connections={list}
     onConnect={connect} onCancel={() => { connecting = null; adding = true }}
   />
 {:else if open}
-  <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
+  <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> {m.integrations_all()}</button>
   <ConnectionDetail
     connection={open}
     tag={count(open.platform) > 1 ? platformLabel(open.platform) : ''}
     reload={load} onDisconnected={back}
   />
 {:else if openKey === 'google'}
-  <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
+  <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> {m.integrations_all()}</button>
   <IntegrationHeader platform="google" label="Google" status={googleStatus(ctx.google)} />
-  <div class="setgroup">Account</div>
+  <div class="setgroup">{m.integrations_account()}</div>
   <p class="setsub">
-    {byId.google?.setup} Gmail, Calendar and Drive tools appear once you are signed in.
-    Managing it opens the Google flow — Settings closes behind it.
+    {byId.google?.setup} {m.integrations_google_note()}
   </p>
   <div class="keyrow">
-    <button class="open" onclick={ctx.openGoogle}>Manage</button>
+    <button class="open" onclick={ctx.openGoogle}>{m.integrations_manage()}</button>
   </div>
 {:else if openKey === 'github'}
-  <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> All integrations</button>
+  <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> {m.integrations_all()}</button>
   <IntegrationHeader platform="github" label="GitHub" status={githubStatus(ctx.s?.keys)} />
-  <div class="setgroup">Token</div>
+  <div class="setgroup">{m.integrations_token()}</div>
   <p class="setsub">{byId.github?.blurb} {byId.github?.setup}</p>
   {#if ctx.err}<p class="cnerr">{ctx.err}</p>{/if}
   <div class="keyrow">
-    <span class="kp">Token</span>
+    <span class="kp">{m.integrations_token()}</span>
     <input
-      type="password" aria-label="GitHub token"
-      placeholder={githubOn ? '•••• ' + (ctx.s?.keys.github?.hint || '') : 'paste token'}
+      type="password" aria-label={m.integrations_github_token_aria()}
+      placeholder={githubOn ? '•••• ' + (ctx.s?.keys.github?.hint || '') : m.integrations_paste_token()}
       bind:value={ctx.drafts.github}
     />
-    <button class="open primary" disabled={ctx.busy} onclick={saveGithub}>Save</button>
+    <button class="open primary" disabled={ctx.busy} onclick={saveGithub}>{m.action_save()}</button>
   </div>
   {#if githubOn}
     {#if clearingGithub}
       <div class="keyrow">
-        <span class="cnwarn">Disconnect GitHub? Skill downloads fall back to the anonymous rate limit.</span>
+        <span class="cnwarn">{m.integrations_github_disconnect_confirm()}</span>
       </div>
       <div class="keyrow">
-        <button class="open danger" disabled={ctx.busy} onclick={clearGithub}>Disconnect</button>
-        <button class="open" disabled={ctx.busy} onclick={() => (clearingGithub = false)}>Cancel</button>
+        <button class="open danger" disabled={ctx.busy} onclick={clearGithub}>{m.integrations_disconnect()}</button>
+        <button class="open" disabled={ctx.busy} onclick={() => (clearingGithub = false)}>{m.action_cancel()}</button>
       </div>
     {:else}
       <div class="keyrow">
-        <button class="open danger" disabled={ctx.busy} onclick={() => (clearingGithub = true)}>Disconnect</button>
+        <button class="open danger" disabled={ctx.busy} onclick={() => (clearingGithub = true)}>{m.integrations_disconnect()}</button>
       </div>
     {/if}
   {/if}
 {:else}
   <div class="setgroup">
-    Connected <span class="setwide" title="Shared across every profile in this install">install-wide</span>
+    {m.integrations_connected()} <span class="setwide" title={m.settings_install_wide_title()}>{m.settings_install_wide()}</span>
   </div>
 
   {#if err}<p class="cnerr">{err}</p>{/if}
 
   {#if loaded && !list.length && !googleOn && !githubOn}
-    <p class="setsub">Nothing connected yet — add one below.</p>
+    <p class="setsub">{m.integrations_empty()}</p>
   {/if}
 
   {#each list as c (c.id)}
@@ -205,17 +205,17 @@
 
   {#if !adding}
     <button class="addbtn" onclick={() => (adding = true)}>
-      <Icon name="plus" size={14} /> Add integration
+      <Icon name="plus" size={14} /> {m.integrations_add()}
     </button>
   {:else}
-    <div class="setsec">Pick an integration</div>
+    <div class="setsec">{m.integrations_pick()}</div>
     <div class="mcpcat">
       {#each addable as e (e.id)}
         <button class="mcpcatcard" onclick={() => pick(e)}>
           <span class="mcpcathead">
             <IntegrationMark platform={e.id} name={e.label} sm />
             {e.label}
-            {#if count(e.id)}<span class="cntag">{count(e.id)} connected</span>{/if}
+            {#if count(e.id)}<span class="cntag">{m.integrations_connected_count({ count: count(e.id) })}</span>{/if}
           </span>
           <span class="mcpcatblurb">{e.blurb}</span>
           {#if e.setup}<span class="cncatsetup">{e.setup}</span>{/if}
@@ -223,7 +223,7 @@
       {/each}
     </div>
     <div class="keyrow" style="justify-content:flex-end">
-      <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
+      <button class="linkbtn" onclick={() => (adding = false)}>{m.action_cancel()}</button>
     </div>
   {/if}
 {/if}

@@ -10,6 +10,7 @@
   // On any successful install it calls onInstalled() so the parent refreshes its list.
   import Icon from '../Icon.svelte'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { DiscoveredSkill, SkillDiscovered, SkillSearchHit } from '../../schemas/index.ts'
   import type { SkillInstallBody } from '../../transport/api/skills.ts'
 
@@ -99,42 +100,42 @@
 
 {#if !open}
   <button class="addbtn" onclick={() => (open = true)}>
-    <Icon name="plus" size={14} /> Add skill
+    <Icon name="plus" size={14} /> {m.skills_add()}
   </button>
 {:else}
 <div class="ski">
   <div class="skihead">
     <div class="skitabs">
-      <button class="skitab" class:on={mode === 'registry'} onclick={() => setMode('registry')}>Registry</button>
-      <button class="skitab" class:on={mode === 'git'} onclick={() => setMode('git')}>Git URL</button>
-      <button class="skitab" class:on={mode === 'upload'} onclick={() => setMode('upload')}>Upload</button>
+      <button class="skitab" class:on={mode === 'registry'} onclick={() => setMode('registry')}>{m.skills_tab_registry()}</button>
+      <button class="skitab" class:on={mode === 'git'} onclick={() => setMode('git')}>{m.skills_tab_git()}</button>
+      <button class="skitab" class:on={mode === 'upload'} onclick={() => setMode('upload')}>{m.skills_tab_upload()}</button>
     </div>
-    <button class="linkbtn" disabled={busy} onclick={close}>Cancel</button>
+    <button class="linkbtn" disabled={busy} onclick={close}>{m.action_cancel()}</button>
   </div>
 
   {#if err}<p class="skierr">{err}</p>{/if}
 
   {#if mode === 'registry'}
     <form class="skirow" onsubmit={(e) => { e.preventDefault(); search() }}>
-      <input class="skiinput" placeholder="Search skills.sh…" bind:value={query} disabled={busy} />
-      <button class="open" disabled={busy || !query.trim()} type="submit">Search</button>
+      <input class="skiinput" placeholder={m.skills_search_placeholder()} bind:value={query} disabled={busy} />
+      <button class="open" disabled={busy || !query.trim()} type="submit">{m.skills_search()}</button>
     </form>
     {#each results as r (r.install_id)}
       <div class="skifound">
         <span class="skifmeta">
           <span class="skifname">
             {r.name}
-            {#if r.installs}<span class="skiinstalls">{r.installs.toLocaleString()} installs</span>{/if}
+            {#if r.installs}<span class="skiinstalls">{m.skills_installs_count({ count: r.installs })}</span>{/if}
           </span>
           <span class="skifdesc">{r.description}</span>
         </span>
-        <button class="open" disabled={busy} onclick={() => installOne(r)}>Install</button>
+        <button class="open" disabled={busy} onclick={() => installOne(r)}>{m.skills_install()}</button>
       </div>
     {/each}
   {:else if mode === 'git'}
     <form class="skirow" onsubmit={(e) => { e.preventDefault(); discover() }}>
       <input class="skiinput" placeholder="https://github.com/owner/repo(.git)" bind:value={gitUrl} disabled={busy} />
-      <button class="open" disabled={busy || !gitUrl.trim()} type="submit">Install</button>
+      <button class="open" disabled={busy || !gitUrl.trim()} type="submit">{m.skills_install()}</button>
     </form>
   {:else}
     <div class="skirow">
@@ -144,10 +145,10 @@
            rows share one shape: a bordered field (filename + Browse chip) then the CTA. -->
       <label class="skifile" class:nofile={!file} class:disabled={busy}>
         <input type="file" accept=".zip,.md" onchange={onFile} disabled={busy} />
-        <span class="skifilename">{file ? file.name : 'Choose a .md file or zipped skill folder…'}</span>
-        <span class="skifilepick">Browse</span>
+        <span class="skifilename">{file ? file.name : m.skills_choose_file()}</span>
+        <span class="skifilepick">{m.skills_browse()}</span>
       </label>
-      <button class="open" disabled={busy || !file} onclick={discover}>Install</button>
+      <button class="open" disabled={busy || !file} onclick={discover}>{m.skills_install()}</button>
     </div>
   {/if}
 
@@ -161,7 +162,7 @@
         </label>
       {/each}
       <button class="open on" disabled={busy || picked.size === 0} onclick={installPicked}>
-        Install {picked.size} skill{picked.size === 1 ? '' : 's'}
+        {m.skills_install_count({ count: picked.size })}
       </button>
     </div>
   {/if}

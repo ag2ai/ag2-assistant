@@ -5,6 +5,7 @@
   import { profiles, profileEpoch, SETTINGS_PAGE, voicePickerOpen, codexOpen } from '../store.ts'
   import { route, replaceOverlay } from '../router.ts'
   import { getActiveProfileId } from '../lib/profile.ts'
+  import { m } from '../paraglide/messages.js'
   import { createSettingsContext } from './settings/context.svelte.ts'
   import GeneralPage from './settings/GeneralPage.svelte'
   import ProfilesPage from './settings/ProfilesPage.svelte'
@@ -16,14 +17,14 @@
   import AdvancedPage from './settings/AdvancedPage.svelte'
 
   const PAGES = [
-    { id: SETTINGS_PAGE.GENERAL, label: 'General', comp: GeneralPage },
-    { id: SETTINGS_PAGE.PROFILES, label: 'Profiles', comp: ProfilesPage },
-    { id: SETTINGS_PAGE.MODELS, label: 'Models', comp: ModelsPage },
-    { id: SETTINGS_PAGE.SECRETS, label: 'Secrets', comp: SecretsPage },
-    { id: SETTINGS_PAGE.SKILLS, label: 'Skills', comp: SkillsPage },
-    { id: SETTINGS_PAGE.TOOLS, label: 'Tools & Permissions', comp: ToolsPage },
-    { id: SETTINGS_PAGE.INTEGRATIONS, label: 'Integrations', comp: IntegrationsPage },
-    { id: SETTINGS_PAGE.ADVANCED, label: 'Advanced', comp: AdvancedPage },
+    { id: SETTINGS_PAGE.GENERAL, label: m.settings_page_general(), comp: GeneralPage },
+    { id: SETTINGS_PAGE.PROFILES, label: m.settings_page_profiles(), comp: ProfilesPage },
+    { id: SETTINGS_PAGE.MODELS, label: m.settings_page_models(), comp: ModelsPage },
+    { id: SETTINGS_PAGE.SECRETS, label: m.settings_page_secrets(), comp: SecretsPage },
+    { id: SETTINGS_PAGE.SKILLS, label: m.settings_page_skills(), comp: SkillsPage },
+    { id: SETTINGS_PAGE.TOOLS, label: m.settings_page_tools(), comp: ToolsPage },
+    { id: SETTINGS_PAGE.INTEGRATIONS, label: m.settings_page_integrations(), comp: IntegrationsPage },
+    { id: SETTINGS_PAGE.ADVANCED, label: m.settings_page_advanced(), comp: AdvancedPage },
   ]
 
   // Must run synchronously at init — setContext requires it (see context header).
@@ -63,12 +64,12 @@
      out of the a11y tree rather than becoming a second focusable control. -->
 <div class="modal-backdrop" role="presentation" onclick={ctx.close}></div>
 <div class="modal settings">
-  <button class="modal-x" aria-label="Close" onclick={ctx.close}>×</button>
-  <h2>Settings{activeName ? ' — ' + activeName : ''}</h2>
+  <button class="modal-x" aria-label={m.action_close()} onclick={ctx.close}>×</button>
+  <h2>{m.settings_title()}{activeName ? ' — ' + activeName : ''}</h2>
   {#if ctx.err}<p class="muted" style="color:var(--danger)">{ctx.err}</p>{/if}
 
   {#if !ctx.s}
-    <p class="muted">Loading…</p>
+    <p class="muted">{m.loading()}</p>
   {:else}
     <div class="setbody">
       <nav class="setnav">

@@ -11,6 +11,7 @@
   import { api } from '../../transport/api/index.ts'
   import SkillInstaller from './SkillInstaller.svelte'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { Skill } from '../../schemas/index.ts'
 
   // Install targets the Global (install-wide) layer — the surface carries the target.
@@ -75,8 +76,8 @@
 </script>
 
 <div class="skzone">
-  <div class="setgroup">Skills <span class="setwide" title="Shared across every profile in this install">install-wide</span></div>
-  <p class="setsub">Turn a skill off to drop it from the agent's toolkit everywhere, without deleting it. Bundled skills ship with the app and can't be removed.</p>
+  <div class="setgroup">{m.skills_title()} <span class="setwide" title={m.settings_install_wide_title()}>{m.settings_install_wide()}</span></div>
+  <p class="setsub">{m.skills_lead()}</p>
 
   {#if err}<p class="muted" style="color:var(--danger)">{err}</p>{/if}
 
@@ -87,7 +88,7 @@
   <!-- One .skcard per skill (idiom in app.css, shared with the per-profile tab). -->
   <div class="sklist">
     {#if skills.length === 0}
-      <p class="muted">No skills installed.</p>
+      <p class="muted">{m.skills_empty()}</p>
     {/if}
 
     <!-- .sktop IS the switch: name, description and the pill are one widget, so the whole
@@ -105,7 +106,7 @@
           role="switch" aria-checked={s.enabled} aria-disabled={!canToggle}
           tabindex={canToggle ? 0 : -1}
           aria-labelledby="sk-{s.name}" aria-describedby="skd-{s.name}"
-          title={canToggle ? (s.enabled ? 'Click to turn off' : 'Click to turn on') : ''}
+          title={canToggle ? (s.enabled ? m.skills_turn_off_title() : m.skills_turn_on_title()) : ''}
           onclick={() => { if (canToggle) toggle(s) }}
           onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle) { e.preventDefault(); toggle(s) } }}
         >
@@ -119,14 +120,14 @@
         </div>
         <div class="skmeta">
           {#if confirming === s.name}
-            <span class="skconfirm">Delete {s.name}?</span>
-            <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={() => del(s)}>Confirm</button>
-            <button class="linkbtn" disabled={rowBusy} onclick={() => (confirming = '')}>Cancel</button>
+            <span class="skconfirm">{m.skills_delete_confirm({ name: s.name })}</span>
+            <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={() => del(s)}>{m.action_confirm()}</button>
+            <button class="linkbtn" disabled={rowBusy} onclick={() => (confirming = '')}>{m.action_cancel()}</button>
           {:else}
             <span class="skdot" class:third={s.origin !== 'bundled'}></span>
-            {s.origin === 'bundled' ? 'First-party · ships with the app' : 'Installed · global'}
+            {s.origin === 'bundled' ? m.skills_origin_bundled() : m.skills_origin_global()}
             {#if s.origin !== 'bundled'}
-              <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={() => (confirming = s.name)}>Delete</button>
+              <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={() => (confirming = s.name)}>{m.action_delete()}</button>
             {/if}
           {/if}
         </div>

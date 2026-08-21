@@ -9,6 +9,7 @@
   import { profileEpoch } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
 
   let text = $state('')
   let draft = $state('')
@@ -54,31 +55,31 @@
   }
 </script>
 
-<p class="mhint">What this profile has learned about you.</p>
+<p class="mhint">{m.profile_memory_hint()}</p>
 {#if err}<p class="merr">{err}</p>{/if}
 
 {#if loading}
-  <p class="muted" style="font-size:13px;margin:0">Loading…</p>
+  <p class="muted" style="font-size:13px;margin:0">{m.loading()}</p>
 {:else if editing}
-  <textarea class="marea" bind:value={draft} spellcheck="false" placeholder="Preferences and context for this persona only…"></textarea>
+  <textarea class="marea" bind:value={draft} spellcheck="false" placeholder={m.profile_memory_placeholder()}></textarea>
   <div class="mfoot">
-    <button class="linkbtn" disabled={busy} onclick={cancelEdit}>Cancel</button>
-    <button class="open" disabled={busy} onclick={save}>{busy ? 'Saving…' : 'Save'}</button>
+    <button class="linkbtn" disabled={busy} onclick={cancelEdit}>{m.action_cancel()}</button>
+    <button class="open" disabled={busy} onclick={save}>{busy ? m.action_saving() : m.action_save()}</button>
   </div>
 {:else if !hasMemory}
   <div class="mempty">
-    <div class="memptytitle">No memories yet</div>
-    <p class="memptybody">The assistant will gradually learn preferences and context specific to this profile as you chat. You can also add notes yourself.</p>
-    <button class="linkbtn" onclick={startEdit}>Add a note</button>
+    <div class="memptytitle">{m.profile_memory_empty_title()}</div>
+    <p class="memptybody">{m.profile_memory_empty_body()}</p>
+    <button class="linkbtn" onclick={startEdit}>{m.profile_memory_add_note()}</button>
   </div>
 {:else}
   <div class="mcard">
     <pre class="mpreview">{text}</pre>
   </div>
   <div class="mfoot">
-    {#if saved}<span class="okmsg">Saved ✓</span>{/if}
-    <button class="linkbtn quiet" disabled={busy} onclick={clearAll}>Clear memory</button>
-    <button class="open" onclick={startEdit}>Edit</button>
+    {#if saved}<span class="okmsg">{m.settings_saved()}</span>{/if}
+    <button class="linkbtn quiet" disabled={busy} onclick={clearAll}>{m.profile_memory_clear()}</button>
+    <button class="open" onclick={startEdit}>{m.action_edit_short()}</button>
   </div>
 {/if}
 

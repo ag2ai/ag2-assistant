@@ -12,6 +12,7 @@
   import { isUsable, liveConfigs, loadLiveConfigs } from '../../lib/live.ts'
   import { PROVIDER_LABEL } from '../../lib/providerLabels.ts'
   import { getSettings } from './context.svelte.ts'
+  import { m } from '../../paraglide/messages.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
   import type { LiveConfig } from '../../schemas/index.ts'
 
@@ -29,16 +30,16 @@
 
 <ModelSwitcherView
   {configs} {activeId} busy={ctx.busy} down {inherited}
-  title="Voice model for this profile — takes effect next voice session"
-  placeholder="Choose a voice model"
+  title={m.profile_voice_switcher_title()}
+  placeholder={m.profile_choose_voice_model()}
   brandFor={(c) => c.provider}
   labelFor={(c) => `${PROVIDER_LABEL[c.provider]} · ${c.model}${c.voice ? ` · ${c.voice}` : ''}`}
   usable={isUsable}
-  defaultEntry={{ label: 'Use install default', sub: 'Follow the install-wide Active voice' }}
-  emptyLabel="Configure a voice model →"
+  defaultEntry={{ label: m.profile_use_install_default(), sub: m.profile_follow_install_voice() }}
+  emptyLabel={m.profile_configure_voice_model()}
   onEmpty={gotoModels}
   onChoose={choose}
   onDefault={useDefault}
   onManage={gotoModels}
-  manageLabel="Manage voice models…"
+  manageLabel={m.profile_manage_voice_models()}
 />

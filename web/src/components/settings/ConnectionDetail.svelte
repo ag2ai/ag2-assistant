@@ -7,6 +7,7 @@
   import { api } from '../../transport/api/index.ts'
   import { byId, platformLabel, connectionStatus } from '../../lib/integrations.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { Connection, Profile } from '../../schemas/index.ts'
   import IntegrationHeader from './IntegrationHeader.svelte'
   import ConnectionProfiles from './ConnectionProfiles.svelte'
@@ -66,7 +67,7 @@
       await reload()
       drafts = {}
       replacing = false
-      note = 'Token replaced — the connection restarted on it.'
+      note = m.integrations_token_replaced()
     } catch (e) {
       // A refused replacement is rolled back server-side: the previous token is
       // restored and the old bot stays live, so only the message changes here.
@@ -102,50 +103,47 @@
 <ConnectionPairing {connection} {reload} />
 <ConnectionGroups {connection} />
 
-<div class="setgroup">Connection</div>
-<p class="setsub">{platformLabel(connection.platform)} · {tokenHints || 'token set when this connection was made'}</p>
+<div class="setgroup">{m.integrations_connection()}</div>
+<p class="setsub">{platformLabel(connection.platform)} · {tokenHints || m.integrations_token_set_when()}</p>
 
 {#if err}<p class="cnerr">{err}</p>{/if}
 {#if note}<p class="cnnote">{note}</p>{/if}
 
 {#if replacing}
   <p class="cnhint">
-    Replacing keeps this connection's paired accounts, group pins and profile settings —
-    right for a rotated token, wrong for a different bot, which belongs in its own
-    integration.
+    {m.integrations_replace_hint()}
   </p>
   {#each fields as f (f.env)}
     <div class="keyrow">
       <span class="kp">{f.label}</span>
       <input
-        type="password" placeholder="paste to replace" disabled={busy}
-        aria-label="New {f.label.toLowerCase()}" bind:value={drafts[f.env]}
+        type="password" placeholder={m.integrations_paste_to_replace()} disabled={busy}
+        aria-label={m.integrations_new_token_aria({ name: f.label.toLowerCase() })} bind:value={drafts[f.env]}
         onkeydown={(e) => { if (e.key === 'Enter') replace() }}
       />
     </div>
   {/each}
   <div class="keyrow">
     <button class="open primary" disabled={!ready || busy} onclick={replace}>
-      {busy ? 'Replacing…' : 'Replace token'}
+      {busy ? m.integrations_replacing() : m.integrations_replace_token()}
     </button>
-    <button class="open" disabled={busy} onclick={() => { replacing = false; drafts = {} }}>Cancel</button>
+    <button class="open" disabled={busy} onclick={() => { replacing = false; drafts = {} }}>{m.action_cancel()}</button>
   </div>
 {:else if confirmOff}
   <div class="keyrow">
     <span class="cnwarn">
-      Disconnect {connection.name}? Its paired accounts, group pins and default profile go
-      with it. Every other connection is left running.
+      {m.integrations_disconnect_confirm({ name: connection.name })}
     </span>
   </div>
   <div class="keyrow">
     <button class="open danger" disabled={busy} onclick={disconnect}>
-      {busy ? 'Disconnecting…' : 'Disconnect'}
+      {busy ? m.integrations_disconnecting() : m.integrations_disconnect()}
     </button>
-    <button class="open" disabled={busy} onclick={() => (confirmOff = false)}>Cancel</button>
+    <button class="open" disabled={busy} onclick={() => (confirmOff = false)}>{m.action_cancel()}</button>
   </div>
 {:else}
   <div class="keyrow">
-    <button class="open" disabled={busy} onclick={() => { replacing = true; note = '' }}>Replace token</button>
-    <button class="open danger" disabled={busy} onclick={() => (confirmOff = true)}>Disconnect</button>
+    <button class="open" disabled={busy} onclick={() => { replacing = true; note = '' }}>{m.integrations_replace_token()}</button>
+    <button class="open danger" disabled={busy} onclick={() => (confirmOff = true)}>{m.integrations_disconnect()}</button>
   </div>
 {/if}

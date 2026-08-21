@@ -10,6 +10,7 @@
   import { getActiveProfileId } from '../../lib/profile.ts'
   import { PALETTES, setAccent, getAccent } from '../../design/palette.ts'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import Icon from '../Icon.svelte'
 
   const list = $derived($profiles.list || [])
@@ -101,7 +102,7 @@
       saved = true
       setTimeout(() => (saved = false), 1500)
     } catch (e) {
-      err = errText(e, 'Could not save profile')
+      err = errText(e, m.profile_save_failed())
     }
     busy = false
   }
@@ -112,18 +113,18 @@
   <div class="identity" style="--dot:{eAccent}">
     <span class="idmono">{(eName || '?').trim().charAt(0).toUpperCase()}</span>
     <div class="idmeta">
-      <div class="idname">{eName || 'Untitled profile'}</div>
+      <div class="idname">{eName || m.profile_untitled()}</div>
       <div class="idpath" title={active.workspace || ''}>{active.workspace || '—'}</div>
     </div>
   </div>
 
   <div class="pfield">
-    <label for="pg-name">Name</label>
-    <input id="pg-name" bind:value={eName} placeholder="Profile name" />
+    <label for="pg-name">{m.field_name()}</label>
+    <input id="pg-name" bind:value={eName} placeholder={m.profile_name_placeholder()} />
   </div>
 
   <div class="pfield">
-    <span class="plabel">Colour</span>
+    <span class="plabel">{m.profile_colour()}</span>
     <div class="pdots">
       {#each PALETTES.filter((x) => !claimedByOthers.includes(x.hex) || x.hex === origAccent) as sw (sw.id)}
         <button
@@ -132,22 +133,22 @@
           onclick={() => pickAccent(sw.hex)}
         >{#if eAccent === sw.hex}<Icon name="check" size={12} />{/if}</button>
       {/each}
-      <label class="pswatch pcustom rainbow" class:on={eCustom} title="Custom colour">
-        <input type="color" value={eAccent} oninput={pickCustom} aria-label="Custom colour" />
+      <label class="pswatch pcustom rainbow" class:on={eCustom} title={m.profile_custom_colour()}>
+        <input type="color" value={eAccent} oninput={pickCustom} aria-label={m.profile_custom_colour()} />
       </label>
     </div>
-    <div class="phex">{eAccent}{#if eCustom} · custom{/if}</div>
+    <div class="phex">{eAccent}{#if eCustom} · {m.profile_custom_suffix()}{/if}</div>
   </div>
 
   {#if err}<p class="perr">{err}</p>{/if}
 
   <div class="pgactions">
-    {#if saved}<span class="okmsg">Saved ✓</span>{/if}
-    {#if dirty}<button class="linkbtn" disabled={busy} onclick={reset}>Reset</button>{/if}
-    <button class="open" disabled={busy || !dirty} onclick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
+    {#if saved}<span class="okmsg">{m.settings_saved()}</span>{/if}
+    {#if dirty}<button class="linkbtn" disabled={busy} onclick={reset}>{m.profile_reset()}</button>{/if}
+    <button class="open" disabled={busy || !dirty} onclick={save}>{busy ? m.action_saving() : m.profile_save_changes()}</button>
   </div>
 {:else}
-  <p class="muted">No profile selected.</p>
+  <p class="muted">{m.profile_none_selected()}</p>
 {/if}
 
 <style>

@@ -4,6 +4,7 @@
   import { getSettings } from './context.svelte.ts'
   import { api } from '../../transport/api/index.ts'
   import { FOCUS } from '../../lib/focuses.ts'
+  import { m } from '../../paraglide/messages.js'
   import Icon from '../Icon.svelte'
 
   const ctx = getSettings()
@@ -22,4 +23,4 @@
     </button>
   {/each}
 </div>
-<p class="setsub" style="margin:4px 0 0">What this profile is for — shapes how the assistant helps.</p>
+<p class="setsub" style="margin:4px 0 0">{m.profile_focus_hint()}</p>

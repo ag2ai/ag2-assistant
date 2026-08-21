@@ -7,6 +7,7 @@
   import type { Integration } from '../../lib/integrations.ts'
   import IntegrationMark from './IntegrationMark.svelte'
   import { errText } from '../../lib/errors.ts'
+  import { m } from '../../paraglide/messages.js'
   import type { Connection } from '../../schemas/index.ts'
 
   // entry: a CATALOG entry. connections: the current list, for the default name and
@@ -49,7 +50,7 @@
 <div class="cnhead">
   <IntegrationMark platform={entry.id} name={entry.label} />
   <div class="cnheadmeta">
-    <div class="cnheadname">Connect {entry.label}</div>
+    <div class="cnheadname">{m.integrations_connect_name({ name: entry.label })}</div>
     <span class="cnhint">{entry.setup}</span>
   </div>
 </div>
@@ -57,16 +58,16 @@
 <div class="cnform">
   {#if entry.multiple}
     <div class="keyrow">
-      <span class="kp">Name</span>
+      <span class="kp">{m.field_name()}</span>
       <input
-        value={name} placeholder={entry.label} disabled={busy} aria-label="Connection name"
+        value={name} placeholder={entry.label} disabled={busy} aria-label={m.integrations_connection_name_aria()}
         oninput={(e) => (typed = e.currentTarget.value)}
         onkeydown={(e) => { if (e.key === 'Enter') connect() }}
       />
     </div>
     <p class="cnhint">
-      Yours, not the platform's — it is how this connection is listed. Rename it any time.
-      {#if existing}You already have {existing} {entry.label} {existing === 1 ? 'connection' : 'connections'}.{/if}
+      {m.integrations_name_hint()}
+      {#if existing}{m.integrations_existing_count({ count: existing, name: entry.label })}{/if}
     </p>
   {/if}
 
@@ -80,14 +81,14 @@
       />
     </div>
   {/each}
-  <p class="cnhint">Written to the secrets store and never shown to the browser again.</p>
+  <p class="cnhint">{m.integrations_secrets_note()}</p>
 
   {#if err}<p class="cnerr">{err}</p>{/if}
 
   <div class="keyrow">
     <button class="open primary" disabled={!ready || busy} onclick={connect}>
-      {busy ? 'Connecting…' : 'Connect'}
+      {busy ? m.integrations_connecting() : m.integrations_connect()}
     </button>
-    <button class="open" disabled={busy} onclick={onCancel}>Cancel</button>
+    <button class="open" disabled={busy} onclick={onCancel}>{m.action_cancel()}</button>
   </div>
 </div>
