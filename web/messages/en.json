@@ -1270,5 +1270,6 @@
   "folder_name_dot_hidden": "Names starting with a dot are hidden and won't show here",
   "folder_name_bad_chars": "Name contains invalid characters",
   "folder_name_too_long": "Name is too long",
-  "ag2_name_native_tools": "Native tools"
+  "ag2_name_native_tools": "Native tools",
+  "err_save_failed": "save failed ({status})"
 }

@@ -112,7 +112,7 @@ export const filesApi = {
         // A non-JSON error body leaves the generic message in place.
       }
       const message = (payload as { error?: string } | null)?.error
-      throw new ApiError(message || `save failed (${r.status})`, r.status, payload)
+      throw new ApiError(message || m.err_save_failed({ status: r.status }), r.status, payload)
     }
     const data = await r.json().catch(() => ({}))
     return (data as { etag?: string }).etag || parseEtag(r.headers.get('ETag'))

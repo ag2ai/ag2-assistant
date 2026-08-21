@@ -1271,5 +1271,6 @@
   "folder_name_dot_hidden": "Nomes que começam com ponto ficam ocultos e não aparecem aqui",
   "folder_name_bad_chars": "O nome contém caracteres inválidos",
   "folder_name_too_long": "O nome é muito longo",
-  "ag2_name_native_tools": "Ferramentas nativas"
+  "ag2_name_native_tools": "Ferramentas nativas",
+  "err_save_failed": "não foi possível salvar ({status})"
 }

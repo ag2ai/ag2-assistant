@@ -1270,5 +1270,6 @@
   "folder_name_dot_hidden": "बिंदु से शुरू होने वाले नाम छिपे रहते हैं और यहाँ नहीं दिखेंगे",
   "folder_name_bad_chars": "नाम में अमान्य वर्ण हैं",
   "folder_name_too_long": "नाम बहुत लंबा है",
-  "ag2_name_native_tools": "नेटिव टूल"
+  "ag2_name_native_tools": "नेटिव टूल",
+  "err_save_failed": "सेव विफल ({status})"
 }

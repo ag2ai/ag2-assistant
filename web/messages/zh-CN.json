@@ -1248,5 +1248,6 @@
   "folder_name_dot_hidden": "以点开头的名称会被隐藏，不会显示在这里",
   "folder_name_bad_chars": "名称包含无效字符",
   "folder_name_too_long": "名称过长",
-  "ag2_name_native_tools": "原生工具"
+  "ag2_name_native_tools": "原生工具",
+  "err_save_failed": "保存失败（{status}）"
 }

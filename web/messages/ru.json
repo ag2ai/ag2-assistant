@@ -1314,5 +1314,6 @@
   "folder_name_dot_hidden": "Имена, начинающиеся с точки, скрыты и здесь не отображаются",
   "folder_name_bad_chars": "Имя содержит недопустимые символы",
   "folder_name_too_long": "Имя слишком длинное",
-  "ag2_name_native_tools": "Встроенные инструменты"
+  "ag2_name_native_tools": "Встроенные инструменты",
+  "err_save_failed": "не удалось сохранить ({status})"
 }
