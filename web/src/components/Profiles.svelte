@@ -15,6 +15,7 @@
   import { errText } from '../lib/errors.ts'
   import type { Profile } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
   import ProfileForm, { type ProfileDraft } from './ProfileForm.svelte'
 
   type Props = { onSelect?: (p: Profile) => void }
@@ -91,7 +92,7 @@
       confirmArchive = null
       await refetch()
     } catch (e) {
-      err = errText(e, 'Could not archive profile')
+      err = errText(e, m.prof_archive_failed())
     } finally {
       busy = false
     }
@@ -104,7 +105,7 @@
       await api.restoreProfile(p.id)
       await refetch()
     } catch (e) {
-      err = errText(e, 'Could not restore profile')
+      err = errText(e, m.prof_restore_failed())
     }
     busy = false
   }
@@ -131,7 +132,7 @@
       deleteText = ''
       await refetch()
     } catch (e) {
-      err = errText(e, 'Could not delete profile')
+      err = errText(e, m.prof_delete_failed())
     }
     busy = false
   }
@@ -156,7 +157,7 @@
       class="prow" class:active={isActive} class:clickable={!isActive}
       role="button" aria-disabled={isActive}
       tabindex={isActive ? -1 : 0}
-      title={isActive ? undefined : `Switch to ${p.name}`}
+      title={isActive ? undefined : m.prof_switch_to({ name: p.name })}
       onclick={isActive ? undefined : () => switchTo(p)}
       onkeydown={isActive ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTo(p) } }}
     >
@@ -164,14 +165,14 @@
       <div class="pmeta">
         <div class="pname">
           {p.name}
-          {#if isActive}<span class="pbadge">active</span>{/if}
+          {#if isActive}<span class="pbadge">{m.profile_badge_active()}</span>{/if}
         </div>
         <div class="ppath" title={p.workspace || ''}>{p.workspace || '—'}</div>
       </div>
       <div class="pactions">
-        <button class="linkbtn" onclick={(e) => { e.stopPropagation(); activate(p) }}>Configure…</button>
+        <button class="linkbtn" onclick={(e) => { e.stopPropagation(); activate(p) }}>{m.prof_configure()}</button>
         {#if list.length > 1}
-          <button class="linkbtn quiet" onclick={(e) => { e.stopPropagation(); askArchive(p) }}>Archive…</button>
+          <button class="linkbtn quiet" onclick={(e) => { e.stopPropagation(); askArchive(p) }}>{m.prof_archive_open()}</button>
         {/if}
       </div>
     </div>
@@ -181,26 +182,26 @@
     <div class="peditor">
       <ProfileForm
         claimed={claimedAccents}
-        submitLabel="Create profile"
-        busyLabel="Creating…"
+        submitLabel={m.drawer_create_profile()}
+        busyLabel={m.drawer_creating()}
         onSubmit={doCreate}
       />
-      <button class="linkbtn profile-add-cancel" onclick={() => (creating = false)}>Cancel</button>
+      <button class="linkbtn profile-add-cancel" onclick={() => (creating = false)}>{m.action_cancel()}</button>
     </div>
   {:else}
     <button class="profile-add" onclick={() => { err = ''; creating = true }}>
-      <Icon name="plus" size={14} /> Add profile
+      <Icon name="plus" size={14} /> {m.onboarding_add_profile()}
     </button>
   {/if}
 
   {#if confirmArchive}
     {@const target = confirmArchive}
     <div class="pconfirm">
-      <div class="pconfirmhead"><Icon name="archive" size={15} /> Archive “{confirmArchive.name}”?</div>
-      <p class="phint">The profile stops running and is hidden. Its folder stays on disk.</p>
+      <div class="pconfirmhead"><Icon name="archive" size={15} /> {m.prof_archive_q({ name: confirmArchive.name })}</div>
+      <p class="phint">{m.prof_archive_hint()}</p>
       {#if confirmArchive.isActiveDefault}
         <div class="pfield">
-          <label for="pf-repl">Make this the new default</label>
+          <label for="pf-repl">{m.prof_new_default()}</label>
           <select id="pf-repl" bind:value={replacement}>
             {#each list.filter((x) => x.id !== target.pid) as o (o.id)}
               <option value={o.id}>{o.name}</option>
@@ -210,8 +211,8 @@
       {/if}
       {#if err}<p class="perr">{err}</p>{/if}
       <div class="peditactions">
-        <button class="linkbtn" disabled={busy} onclick={() => (confirmArchive = null)}>Cancel</button>
-        <button class="open danger" disabled={busy} onclick={doArchive}>{busy ? 'Archiving…' : 'Archive'}</button>
+        <button class="linkbtn" disabled={busy} onclick={() => (confirmArchive = null)}>{m.action_cancel()}</button>
+        <button class="open danger" disabled={busy} onclick={doArchive}>{busy ? m.prof_archiving() : m.prof_archive()}</button>
       </div>
     </div>
   {/if}
@@ -221,7 +222,7 @@
     <div class="parch">
       <button class="parchhead" onclick={() => (showArchived = !showArchived)} aria-expanded={showArchived}>
         <Icon name={showArchived ? 'chevron-down' : 'chevron-right'} size={14} />
-        Archived ({archived.length})
+        {m.prof_archived_count({ count: archived.length })}
       </button>
 
       {#if showArchived}
@@ -231,23 +232,23 @@
               <span class="pdot" style="--dot:{p.accent}"></span>
               <div class="pmeta"><div class="pname">{p.name}</div></div>
               <div class="pactions">
-                <button class="linkbtn" disabled={busy} onclick={() => doRestore(p)}>Restore</button>
-                <button class="linkbtn quiet" disabled={busy} onclick={() => askDelete(p)}>Delete…</button>
+                <button class="linkbtn" disabled={busy} onclick={() => doRestore(p)}>{m.prof_restore()}</button>
+                <button class="linkbtn quiet" disabled={busy} onclick={() => askDelete(p)}>{m.prof_delete_open()}</button>
               </div>
             </div>
 
             {#if confirmDelete && confirmDelete.pid === p.id}
               <div class="pconfirm">
-                <div class="pconfirmhead"><Icon name="trash" size={15} /> Delete “{confirmDelete.name}” permanently?</div>
-                <p class="phint">Erases this profile's folder — chats, tasks, memory, and files — from disk. This cannot be undone.</p>
+                <div class="pconfirmhead"><Icon name="trash" size={15} /> {m.prof_delete_q({ name: confirmDelete.name })}</div>
+                <p class="phint">{m.prof_delete_hint()}</p>
                 <div class="pfield">
-                  <label for="pf-del">Type <b>{confirmDelete.name}</b> to confirm</label>
+                  <label for="pf-del">{m.prof_type_pre()} <b>{confirmDelete.name}</b> {m.prof_type_post()}</label>
                   <input id="pf-del" bind:value={deleteText} placeholder={confirmDelete.name} autocomplete="off" autocapitalize="off" spellcheck="false" />
                 </div>
                 {#if err}<p class="perr">{err}</p>{/if}
                 <div class="peditactions">
-                  <button class="linkbtn" disabled={busy} onclick={() => { confirmDelete = null; deleteText = '' }}>Cancel</button>
-                  <button class="open danger" disabled={busy || deleteText !== confirmDelete.name} onclick={doDelete}>{busy ? 'Deleting…' : 'Delete permanently'}</button>
+                  <button class="linkbtn" disabled={busy} onclick={() => { confirmDelete = null; deleteText = '' }}>{m.action_cancel()}</button>
+                  <button class="open danger" disabled={busy || deleteText !== confirmDelete.name} onclick={doDelete}>{busy ? m.prof_deleting() : m.prof_delete_permanently()}</button>
                 </div>
               </div>
             {/if}

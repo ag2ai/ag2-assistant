@@ -7,11 +7,13 @@
   import { safeUrl } from '../../lib/url.ts'
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, AgendaEvent } from '../../lib/a2ui.ts'
+  import { getLocale } from '../../paraglide/runtime.js'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
 
-  const title = $derived(str(data.title) || 'Agenda')
+  const title = $derived(str(data.title) || m.a2ui_agenda())
   const events = $derived(rows<AgendaEvent>(data.events))
   const allDay = $derived(events.filter((e) => e.allDay))
   const timed = $derived(events.filter((e) => !e.allDay))
@@ -19,19 +21,19 @@
 
   const date = $derived(
     str(data.date) ||
-      new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
+      new Date().toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short' })
   )
 </script>
 
 <div class="bs">
   <header class="bs-masthead">
     <div class="mast-l">
-      <div class="bs-kicker">A2UI · Agenda</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_agenda()}</div>
       <h1>{title}</h1>
     </div>
     <div class="bs-edition">
       <div>{date}</div>
-      <div><b>{timed.length} {timed.length === 1 ? 'event' : 'events'}{allDay.length ? ` · ${allDay.length} all-day` : ''}</b></div>
+      <div><b>{m.a2ui_events_count({ count: timed.length })}{allDay.length ? ` · ${m.a2ui_all_day_count({ count: allDay.length })}` : ''}</b></div>
     </div>
   </header>
 
@@ -53,25 +55,25 @@
               {#if e.end}<div class="t2">{e.end}</div>{/if}
             </div>
             <div class="what">
-              {#if e.next}<span class="upnext">Up next</span>{/if}
+              {#if e.next}<span class="upnext">{m.a2ui_up_next()}</span>{/if}
               <div class="etitle">
                 {#if safeUrl(e.url)}<a href={safeUrl(e.url)} target="_blank" rel="noopener noreferrer">{e.title}</a>{:else}{e.title}{/if}
               </div>
               {#if e.location}<div class="eloc">{e.location}</div>{/if}
-              {#if safeUrl(e.joinUrl)}<a class="join" href={safeUrl(e.joinUrl)} target="_blank" rel="noopener noreferrer">Join meeting</a>{/if}
+              {#if safeUrl(e.joinUrl)}<a class="join" href={safeUrl(e.joinUrl)} target="_blank" rel="noopener noreferrer">{m.a2ui_join_meeting()}</a>{/if}
             </div>
           </div>
         {/each}
       </div>
     {:else}
-      <p class="clear">Nothing scheduled — the day is yours.</p>
+      <p class="clear">{m.a2ui_nothing_scheduled()}</p>
     {/if}
 
-    {#if note}<div class="note"><b>The shape of it</b>{note}</div>{/if}
+    {#if note}<div class="note"><b>{m.a2ui_shape_of_it()}</b>{note}</div>{/if}
 
     <div class="bs-foot">
-      <div class="bs-src">From your calendar — <span>events as returned, times local</span></div>
-      <div class="bs-upd"><span class="bs-dot"></span> as of just now</div>
+      <div class="bs-src">{m.a2ui_from_calendar()} — <span>{m.a2ui_events_as_returned()}</span></div>
+      <div class="bs-upd"><span class="bs-dot"></span> {m.a2ui_as_of_just_now()}</div>
     </div>
   </div>
 </div>

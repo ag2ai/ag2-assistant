@@ -19,6 +19,8 @@
    Persists to localStorage('ag2-accent' / 'ag2-theme') and fires
    'ag2-accent-change' / 'ag2-theme-change' CustomEvents on document.
    ============================================================ */
+import { m } from '../paraglide/messages.js'
+
 const ROOT = document.documentElement
 const KEY = 'ag2-accent'
 const THEME_KEY = 'ag2-theme'
@@ -49,6 +51,24 @@ export const PALETTES: Palette[] = [
 // hex → preset id, for the match-by-hex fast path.
 const PRESET_BY_HEX = new Map(PALETTES.map((p) => [p.hex.toLowerCase(), p.id]))
 export const DEFAULT_ACCENT = PALETTES[0].hex // forest green
+
+// The swatch labels the picker shows, read at call time so they follow the UI
+// language. `label` above stays the English name: it is what the console surface
+// (window.AG2Accent.PALETTES) reports, and the fallback for a preset added
+// without a message of its own.
+const PRESET_LABEL: Record<string, () => string> = {
+  'forest-green': m.palette_forest_green,
+  'navy-blue': m.palette_navy_blue,
+  'royal-blue': m.palette_royal_blue,
+  'dark-indigo': m.palette_dark_indigo,
+  'deep-purple': m.palette_deep_purple,
+  burgundy: m.palette_burgundy,
+}
+
+export function paletteLabel(id: string): string {
+  const label = PRESET_LABEL[id]
+  return label ? label() : PALETTES.find((p) => p.id === id)?.label || id
+}
 
 // The 10 ramp stops, and how each is mixed from the picked colour (the picked
 // hex IS the 500 stop). Light stops mix toward white, dark stops toward black;

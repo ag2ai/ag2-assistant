@@ -15,6 +15,7 @@
   import { a2uiAction } from '../../controller.ts'
   import { thread } from '../../store.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { item: Extract<ThreadItem, { kind: 'a2ui' }> }
   let { item }: Props = $props()
@@ -35,20 +36,21 @@
       : type === 'restaurantfinder' ? 'search'
       : 'sparkles'
   )
+  // The component type is the payload's own value; only the eyebrow localizes.
   const eyebrow = $derived(
-    isBasicLayout ? 'Overview'
-      : type === 'weatherpanel' ? 'Live forecast'
-      : type === 'taskplan' ? 'Task plan'
-      : type === 'newsdigest' ? 'News brief'
-      : type === 'marketboard' ? 'Markets'
-      : type === 'decisionmatrix' ? 'Decision'
-      : type === 'taskprogress' ? 'Task status'
-      : type === 'agendacard' ? 'Agenda'
-      : type === 'inboxbrief' ? 'Inbox'
-      : type === 'restaurantfinder' ? 'Places'
+    isBasicLayout ? m.a2ui_overview()
+      : type === 'weatherpanel' ? m.a2ui_live_forecast()
+      : type === 'taskplan' ? m.a2ui_task_plan()
+      : type === 'newsdigest' ? m.a2ui_news_brief()
+      : type === 'marketboard' ? m.a2ui_markets()
+      : type === 'decisionmatrix' ? m.a2ui_decision()
+      : type === 'taskprogress' ? m.a2ui_task_status()
+      : type === 'agendacard' ? m.a2ui_agenda()
+      : type === 'inboxbrief' ? m.a2ui_inbox()
+      : type === 'restaurantfinder' ? m.a2ui_places()
       : 'A2UI'
   )
-  const displayTitle = $derived(item.title === 'Briefing' ? 'Interactive view' : item.title || eyebrow)
+  const displayTitle = $derived(item.title === 'Briefing' ? m.a2ui_interactive_view() : item.title || eyebrow)
   const isComposingUpdate = $derived($thread.items.some(
     (entry) => entry.kind === 'agent' && entry.streaming && a2uiComposingSurfaceId(entry.text) === item.surfaceId
   ))
@@ -120,27 +122,27 @@
       <span class="a2ui-eyebrow">{eyebrow}</span>
       <span class="a2ui-title">{displayTitle}</span>
     </span>
-    <span class="a2ui-catalog" title={item.catalogId}>AG2 catalog</span>
+    <span class="a2ui-catalog" title={item.catalogId}>{m.a2ui_catalog()}</span>
   </div>
 
   {#if isBasicLayout}
     <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
   {:else if type === 'taskplan'}
     <div class="a2ui-task">
-      <div class="a2ui-main">{str(data.objective) || 'New task'}</div>
+      <div class="a2ui-main">{str(data.objective) || m.drawer_new_task()}</div>
       <div class="a2ui-meta">
-        <span><Icon name="clock" size={12} /> {str(data.cadence) || 'To be confirmed'}</span>
-        <span><Icon name="sparkles" size={12} /> Assistant plan</span>
+        <span><Icon name="clock" size={12} /> {str(data.cadence) || m.a2ui_tbc()}</span>
+        <span><Icon name="sparkles" size={12} /> {m.a2ui_assistant_plan()}</span>
       </div>
       <div class="a2ui-cols">
         <section>
-          <div class="a2ui-label">Deliverables</div>
+          <div class="a2ui-label">{m.a2ui_deliverables()}</div>
           {#each list<string>(data.deliverables) as row}
             <div class="a2ui-row"><Icon name="check" size={12} /> {row}</div>
           {/each}
         </section>
         <section>
-          <div class="a2ui-label">Next</div>
+          <div class="a2ui-label">{m.a2ui_next()}</div>
           {#each list<string>(data.nextSteps) as row}
             <div class="a2ui-row"><Icon name="chevron-right" size={12} /> {row}</div>
           {/each}
@@ -148,7 +150,7 @@
       </div>
     </div>
   {:else if type === 'newsdigest'}
-    <div class="a2ui-main">{str(data.topic) || 'Latest news'}</div>
+    <div class="a2ui-main">{str(data.topic) || m.a2ui_latest_news()}</div>
     <div class="a2ui-list">
       {#each list<NewsStory>(data.stories) as story}
         <div class="a2ui-story">
@@ -168,7 +170,7 @@
       {/each}
     </div>
   {:else if type === 'restaurantfinder'}
-    <div class="a2ui-main">{str(data.query) || 'Restaurants'}</div>
+    <div class="a2ui-main">{str(data.query) || m.a2ui_restaurants()}</div>
     <div class="a2ui-pills">
       {#each list<string>(data.filters) as filter}<span>{filter}</span>{/each}
     </div>
@@ -181,7 +183,7 @@
       {/each}
     </div>
   {:else if type === 'checklist'}
-    <div class="a2ui-main">{str(data.title) || item.title || 'Checklist'}</div>
+    <div class="a2ui-main">{str(data.title) || item.title || m.a2ui_checklist()}</div>
     <div class="a2ui-list">
       {#each list<string>(data.items) as row}
         <div class="a2ui-story">
@@ -191,7 +193,7 @@
       {/each}
     </div>
   {:else}
-    <div class="a2ui-main">{str(data.topic) || item.title || 'Structured response'}</div>
+    <div class="a2ui-main">{str(data.topic) || item.title || m.a2ui_structured_response()}</div>
     <div class="a2ui-pills">
       {#each list<string>(data.sections) as section}<span>{section}</span>{/each}
     </div>
@@ -200,5 +202,5 @@
 {/if}
 {/if}
 {#if actionPending}
-  <div class="a2ui-action-pending" role="status" aria-label="Submitting action"><Icon name="rotate-cw" size={14} /></div>
+  <div class="a2ui-action-pending" role="status" aria-label={m.a2ui_submitting()}><Icon name="rotate-cw" size={14} /></div>
 {/if}

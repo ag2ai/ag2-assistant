@@ -16,7 +16,8 @@
   import { openOverlay } from '../../router.ts'
   import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
   import { chooseModel, loadedChat, switcherSelection } from '../../lib/chatModel.ts'
-  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
+  import { typeLabel } from '../../lib/providerLabels.ts'
+  import { m } from '../../paraglide/messages.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
 
   let busy = $state(false)
@@ -79,12 +80,12 @@
 <ModelSwitcherView
   {configs} {envOverride} busy={busy || loading}
   activeId={selection.activeId} inherited={selection.inherited} closedBadges={false}
-  title="Model for your next message in this chat"
+  title={m.composer_model_title()}
   brandFor={(c) => c.type}
-  labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
+  labelFor={(c) => `${typeLabel(c.type)} · ${c.model}`}
   usable={isUsable}
-  defaultEntry={{ label: 'Use default', sub: 'Follow the Active model' }}
-  emptyLabel="No models configured — add one in Settings"
+  defaultEntry={{ label: m.composer_use_default(), sub: m.composer_follow_active() }}
+  emptyLabel={m.composer_no_models()}
   onEmpty={openSettings}
   onChoose={(c) => choose(c.id)}
   onDefault={() => choose('')}

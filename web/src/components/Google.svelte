@@ -3,6 +3,7 @@
   import { googleOpen } from '../store.ts'
   import { api } from '../transport/api/index.ts'
   import type { GoogleStatus } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
 
   let st: GoogleStatus | null = $state(null)
   let creds = $state('')
@@ -29,7 +30,7 @@
         if (s.signed_in) { if (poll) clearInterval(poll); poll = null; connecting = false; st = s }
       }, 2000)
     } else {
-      err = r.error || 'Could not start sign-in'
+      err = r.error || m.goog_start_failed()
     }
   }
   async function logout() { await api.googleLogout(); refresh() }
@@ -40,41 +41,41 @@
      a11y tree rather than becoming a second focusable control. -->
 <div class="modal-backdrop" role="presentation" onclick={close}></div>
 <div class="modal">
-  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
+  <button class="modal-x" aria-label={m.action_close()} onclick={close}>×</button>
   <h2>Google</h2>
   {#if st && st.libs_available === false}
     <!-- Pre-flight: shown in every state, so nobody completes the Google Cloud
          setup only to discover at the first tool call that the libs are absent. -->
     <div class="gwarn">
-      <p><b>Optional Google libraries aren't installed.</b> Gmail, Calendar and
-      Drive stay unavailable {st.signed_in ? '(even though you\'re signed in) ' : ''}until you add them.</p>
-      <p>Run this, then restart AG2 Assistant:</p>
+      <!-- Two whole sentences rather than one with a spliced-in parenthetical: the
+           aside sits in a different place in different languages. -->
+      <p><b>{m.goog_libs_missing()}</b> {st.signed_in ? m.goog_libs_body_signed_in() : m.goog_libs_body()}</p>
+      <p>{m.goog_libs_run()}</p>
       <pre class="ghint">{st.install_hint}</pre>
-      <button class="linkbtn" onclick={refresh}>Re-check</button>
+      <button class="linkbtn" onclick={refresh}>{m.onboarding_cli_recheck()}</button>
     </div>
   {/if}
   {#if !st}
-    <p class="muted">Loading…</p>
+    <p class="muted">{m.loading()}</p>
   {:else if st.signed_in}
-    <p>Signed in as <b>{st.email || 'your account'}</b>.{st.libs_available === false
-      ? ''
-      : ' AG2 Assistant can use Gmail, Calendar and Drive.'}</p>
-    <button class="open" onclick={logout}>Disconnect</button>
+    <p>{m.goog_signed_in_pre()} <b>{st.email || m.goog_your_account()}</b>{st.libs_available === false
+      ? m.goog_signed_in_tail()
+      : m.goog_signed_in_tail_ready()}</p>
+    <button class="open" onclick={logout}>{m.integrations_disconnect()}</button>
   {:else if !st.configured}
-    <p>Google integration is <b>bring-your-own</b>: you create a free OAuth client in
-    your own Google Cloud, and credentials stay on this machine.</p>
+    <p>{m.goog_byo_pre()} <b>{m.goog_byo_bold()}</b>{m.goog_byo_post()}</p>
     <ol class="gsteps">
-      <li>In <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer">Google Cloud Console</a>, create a project and <b>enable</b> the Gmail, Google Calendar and Google Drive APIs.</li>
-      <li>OAuth consent screen: pick <b>Internal</b> on a Workspace account (best — no warnings, no token expiry), or <b>External</b> + add yourself as a test user on a personal account (re-consent every 7 days).</li>
-      <li>Credentials → Create OAuth client ID → <b>Desktop app</b> → <b>Download JSON</b> on the confirmation dialog (it's only offered at creation).</li>
-      <li>Paste the JSON file's contents below.</li>
+      <li>{m.goog_step_console_pre()} <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer">{m.goog_console()}</a>{m.goog_step_console_post()}</li>
+      <li>{m.goog_step_consent()}</li>
+      <li>{m.goog_step_client()}</li>
+      <li>{m.goog_step_paste()}</li>
     </ol>
-    <p class="muted" style="font-size:12px">Full guide: docs/usage.md → “Google (Gmail / Calendar / Drive)”.</p>
+    <p class="muted" style="font-size:12px">{m.goog_guide()}</p>
     <textarea bind:value={creds} placeholder={'{ "installed": { "client_id": "…", "client_secret": "…", … } }'}></textarea>
-    <button class="open" onclick={saveCreds}>Save credentials</button>
+    <button class="open" onclick={saveCreds}>{m.goog_save_creds()}</button>
   {:else}
-    <p>{connecting ? 'Waiting for Google — complete consent in the opened tab…' : 'Connect your Google account.'}</p>
+    <p>{connecting ? m.goog_waiting() : m.goog_connect_prompt()}</p>
     {#if err}<p class="muted">{err}</p>{/if}
-    <button class="open" onclick={connect}>Connect Google</button>
+    <button class="open" onclick={connect}>{m.goog_connect()}</button>
   {/if}
 </div>

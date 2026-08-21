@@ -6,6 +6,8 @@
 // {name, command, args, env, cwd} shape POST /settings/mcp expects, so adding a
 // server is paste → preview → confirm instead of decomposing it into form fields.
 
+import { m } from '../paraglide/messages.js'
+
 // The POST /settings/mcp payload a paste or a catalog entry produces.
 export type McpServerDraft = {
   name: string
@@ -16,10 +18,12 @@ export type McpServerDraft = {
   allowed_tools?: string[]
 }
 
-// One value collected before a catalog entry can be added.
+// One value collected before a catalog entry can be added. `label` is a message
+// function, read at render time so it follows the UI language; `key` and `ph` (a
+// literal value shape) stay verbatim.
 export type CatalogInput = {
   key: string
-  label: string
+  label: () => string
   ph: string
   kind: 'env' | 'arg'
   required: boolean
@@ -27,8 +31,9 @@ export type CatalogInput = {
 
 export type CatalogEntry = {
   id: string
-  label: string
-  blurb: string
+  // Display text, so read at render time like CatalogInput.label above.
+  label: () => string
+  blurb: () => string
   command: string
   args: string[]
   allowed_tools?: string[]
@@ -149,12 +154,12 @@ export function parseMcpPaste(text: string | null | undefined): { servers: McpSe
         if (servers.length) return { servers, error: '' }
       } catch { /* try next candidate */ }
     }
-    return { servers: [], error: 'Could not read that as MCP JSON — expected {"mcpServers": {...}} or a single {"command": ...} config.' }
+    return { servers: [], error: m.mcp_paste_bad_json() }
   }
 
   const single = fromCommandLine(raw.split('\n')[0])
   if (single) return { servers: [single], error: '' }
-  return { servers: [], error: 'Could not read that — paste a JSON config or a command line.' }
+  return { servers: [], error: m.mcp_paste_bad() }
 }
 
 // Read-only tool subset for the filesystem server — mirrors _REPO_FILES_READ_TOOLS
@@ -175,18 +180,18 @@ export const FILES_READ_TOOLS: string[] = [
 export const MCP_CATALOG: CatalogEntry[] = [
   {
     id: 'repo-files',
-    label: 'Project files',
-    blurb: 'read-only access to a folder — browse and search, never write',
+    label: m.mcp_cat_repo_files,
+    blurb: m.mcp_cat_repo_files_blurb,
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-filesystem'],
     allowed_tools: FILES_READ_TOOLS,
-    inputs: [{ key: 'folder', label: 'Folder', ph: '/path/to/project', kind: 'arg', required: true }],
+    inputs: [{ key: 'folder', label: m.onboarding_folder_label, ph: '/path/to/project', kind: 'arg', required: true }],
     requires: 'Node.js',
   },
   {
     id: 'browser',
-    label: 'Browser',
-    blurb: 'drive a real web browser — navigate, click, type, screenshot',
+    label: m.mcp_cat_browser,
+    blurb: m.mcp_cat_browser_blurb,
     command: 'npx',
     // --sandbox re-enables Chromium's sandbox (Playwright defaults it OFF), wanted
     // here since an agent drives this browser to arbitrary pages. NOTE: the flag is
@@ -199,8 +204,8 @@ export const MCP_CATALOG: CatalogEntry[] = [
   },
   {
     id: 'fetch',
-    label: 'Fetch',
-    blurb: 'fetch a web page by URL and convert it to markdown',
+    label: m.mcp_cat_fetch,
+    blurb: m.mcp_cat_fetch_blurb,
     command: 'uvx',
     args: ['mcp-server-fetch'],
     inputs: [],
@@ -208,8 +213,8 @@ export const MCP_CATALOG: CatalogEntry[] = [
   },
   {
     id: 'time',
-    label: 'Time',
-    blurb: 'current time and timezone conversions',
+    label: m.mcp_cat_time,
+    blurb: m.mcp_cat_time_blurb,
     command: 'uvx',
     args: ['mcp-server-time'],
     inputs: [],
@@ -217,11 +222,11 @@ export const MCP_CATALOG: CatalogEntry[] = [
   },
   {
     id: 'github',
-    label: 'GitHub',
-    blurb: 'repos, issues and pull requests via the GitHub API',
+    label: () => 'GitHub',   // a product name, never translated
+    blurb: m.mcp_cat_github_blurb,
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-github'],
-    inputs: [{ key: 'GITHUB_PERSONAL_ACCESS_TOKEN', label: 'Access token', ph: 'ghp_…', kind: 'env', required: true }],
+    inputs: [{ key: 'GITHUB_PERSONAL_ACCESS_TOKEN', label: m.mcp_input_access_token, ph: 'ghp_…', kind: 'env', required: true }],
     requires: 'Node.js',
   },
 ]

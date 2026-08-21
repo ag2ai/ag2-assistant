@@ -9,6 +9,15 @@
   import Icon from './Icon.svelte'
   import AppBar from './AppBar.svelte'
   import { dayRows } from '../lib/time.ts'
+  import { m } from '../paraglide/messages.js'
+  import type { RunStatus } from '../schemas/index.ts'
+
+  // Localized word for a run status badge; an unknown status passes through verbatim.
+  const STATUS_WORD: Record<RunStatus, () => string> = {
+    running: m.status_running, needs_input: m.status_needs_input, completed: m.status_completed,
+    failed: m.status_failed, cancelled: m.status_cancelled,
+  }
+  const statusWord = (s: RunStatus) => (STATUS_WORD[s] ? STATUS_WORD[s]() : s)
 
   let scroller: HTMLDivElement | undefined
   const tail = $derived($thread.items[$thread.items.length - 1])
@@ -104,18 +113,18 @@
 </script>
 
 <AppBar
-  back={{ label: $thread.kind === 'run' ? 'Task' : 'Chat',
+  back={{ label: $thread.kind === 'run' ? m.thread_task() : m.thread_back_chat(),
           onClick: () => go($thread.kind === 'run' ? ($runInfo?.task_id ? '/t/' + $runInfo.task_id : '/tasks') : '/c/' + newChatId()) }}
-  title={$thread.kind === 'run' ? (($runInfo && $runInfo.task_name) || 'Task') : 'Conversation'}
+  title={$thread.kind === 'run' ? (($runInfo && $runInfo.task_name) || m.thread_task()) : m.thread_title_conversation()}
   {subtitle}>
-  {#if $thread.kind === 'run' && $runInfo}<span class="badge">{$runInfo.status}</span>{/if}
+  {#if $thread.kind === 'run' && $runInfo}<span class="badge">{statusWord($runInfo.status)}</span>{/if}
 </AppBar>
 
 <div class="thread" bind:this={scroller} onscroll={onScroll}>
   <div class="inner">
     {#if $thread.kind === 'run'}<RunBanner />{/if}
     {#if !$thread.items.length && $thread.kind === 'chat'}
-      <div class="empty"><h1>How can I help{$profile.name ? `, ${$profile.name}` : ''}?</h1>Ask me anything — I can search, run code, manage tasks, and more.</div>
+      <div class="empty"><h1>{$profile.name ? m.thread_empty_title_named({ name: $profile.name }) : m.thread_empty_title()}</h1>{m.thread_empty_hint()}</div>
     {/if}
     {#each rows as { item, sep } (item.id)}
       {#if sep}<div class="daysep"><span>{sep}</span></div>{/if}
@@ -126,7 +135,7 @@
 </div>
 
 {#if !pinned}
-  <button class="scrolldown" style="bottom: {scrolldownBottom}px" onclick={scrollToBottom} title="Scroll to latest" aria-label="Scroll to latest">
+  <button class="scrolldown" style="bottom: {scrolldownBottom}px" onclick={scrollToBottom} title={m.thread_scroll_latest()} aria-label={m.thread_scroll_latest()}>
     <Icon name="chevron-down" size={18} />
   </button>
 {/if}

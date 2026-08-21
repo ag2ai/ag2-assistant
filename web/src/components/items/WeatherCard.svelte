@@ -6,6 +6,8 @@
   import WeatherBanner from './WeatherBanner.svelte'
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, WeatherRow } from '../../lib/a2ui.ts'
+  import { getLocale } from '../../paraglide/runtime.js'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
@@ -18,25 +20,29 @@
       : 'cloudy'
   )
   const metrics = $derived(rows<WeatherRow>(data.rows))
-  const location = $derived(str(data.location) || 'Forecast')
+  const location = $derived(str(data.location) || m.a2ui_forecast())
   const summary = $derived(str(data.summary))
-  const conditionLabel = $derived(
-    condition.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-  )
+  // The condition slug is the tool's own value; only its label localizes.
+  const COND_LABEL: Record<string, (() => string) | undefined> = {
+    sunny: m.a2ui_cond_sunny, 'partly-cloudy': m.a2ui_cond_partly_cloudy,
+    cloudy: m.a2ui_cond_cloudy, foggy: m.a2ui_cond_foggy, rainy: m.a2ui_cond_rainy,
+    thunderstorm: m.a2ui_cond_thunderstorm, snow: m.a2ui_cond_snow, windy: m.a2ui_cond_windy,
+  }
+  const conditionLabel = $derived(COND_LABEL[condition]?.() ?? condition)
   const tempText = $derived.by(() => {
     const r = metrics.find((x) => /temp/i.test(x?.label || ''))
-    const m = String(r?.value || '').match(/-?\d+°?/)
-    return m ? m[0] : ''
+    const hit = String(r?.value || '').match(/-?\d+°?/)
+    return hit ? hit[0] : ''
   })
   const edition = $derived(
-    new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    new Date().toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
 </script>
 
 <div class="bs">
   <header class="bs-masthead">
     <div class="mast-l">
-      <div class="bs-kicker">A2UI · Weather</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_weather()}</div>
       <h1>{location}</h1>
     </div>
     <div class="bs-edition">
@@ -66,8 +72,8 @@
     {/if}
 
     <div class="bs-foot">
-      <div class="bs-src">Source: <span>wttr.in</span></div>
-      <div class="bs-upd"><span class="bs-dot"></span> Updated just now</div>
+      <div class="bs-src">{m.a2ui_source()} <span>wttr.in</span></div>
+      <div class="bs-upd"><span class="bs-dot"></span> {m.a2ui_updated_just_now()}</div>
     </div>
   </div>
 </div>

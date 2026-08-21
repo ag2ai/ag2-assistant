@@ -25,6 +25,7 @@
   import { onMount, tick, untrack } from 'svelte'
   import { openAsideFile, closeAside, route } from '../router.ts'
   import { reveal } from '../store.ts'
+  import { getLocale } from '../paraglide/runtime.js'
   import { threadScope } from '../lib/threadScope.ts'
   import { foldersStore } from '../lib/folders.ts'
   import { api } from '../transport/api/index.ts'
@@ -34,6 +35,7 @@
   import { errText } from '../lib/errors.ts'
   import type { FileRow, FolderListing, FolderRoot } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
 
   // One assembled tree node: the Directory's own children, built from the flat lists.
   type Node = { name: string; path: string; dirs: Map<string, Node>; files: FileRow[] }
@@ -104,7 +106,8 @@
   onMount(async () => { await load(); mounted = true })
 
   // ---- Tree assembly (directories-first, alphabetical, from the flat lists) ----
-  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  const byName = (a: { name: string }, b: { name: string }) =>
+    a.name.localeCompare(b.name, getLocale(), { numeric: true, sensitivity: 'base' })
   const tree = $derived.by(() => {
     const rootNode: Node = { name: '', path: '', dirs: new Map(), files: [] }
     const ensure = (path: string): Node => {
@@ -140,7 +143,11 @@
 
   // ---- Open (view/download) ----
   const fmtSize = (n: number) =>
-    n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`
+    n < 1024
+      ? m.files_size_b({ n })
+      : n < 1048576
+        ? m.files_size_kb({ n: (n / 1024).toFixed(1) })
+        : m.files_size_mb({ n: (n / 1048576).toFixed(1) })
   // The Active file's path (the row highlighted to match the preview rail). Read
   // off the URL's aside slot, not a local flag, so it tracks Back/Forward,
   // chat-opened deliverables, and refresh for free; null when the rail is closed
@@ -536,24 +543,24 @@
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 <div class="ftwrap">
   <div class="fttoolbar">
-    <span class="ftsel" title="Upload / New directory target">
+    <span class="ftsel" title={m.files_target_title()}>
     {#if selected}
         {selected}
     {:else}
-        Search
+        {m.files_search_label()}
     {/if}
     </span>
 
     <span class="ftspacer"></span>
 
-    <button class="fttool" title="Upload into {selected || 'root'}" aria-label="Upload" onclick={() => fileInput?.click()}><Icon name="plus" size={15} /></button>
-    <button class="fttool" title="New directory in {selected || 'root'}" aria-label="New directory" onclick={startCreate}><Icon name="folder-plus" size={15} /></button>
-    <button class="fttool" title="Refresh" aria-label="Refresh" onclick={load}><Icon name="rotate-cw" size={15} /></button>
+    <button class="fttool" title={m.files_upload_into({ dir: selected || m.files_root() })} aria-label={m.files_upload()} onclick={() => fileInput?.click()}><Icon name="plus" size={15} /></button>
+    <button class="fttool" title={m.files_new_dir_in({ dir: selected || m.files_root() })} aria-label={m.files_new_directory()} onclick={startCreate}><Icon name="folder-plus" size={15} /></button>
+    <button class="fttool" title={m.files_refresh()} aria-label={m.files_refresh()} onclick={load}><Icon name="rotate-cw" size={15} /></button>
 
     <input type="file" multiple bind:this={fileInput} onchange={onPick} hidden />
   </div>
 
-  {#if err}<p class="fterr">{err} <button class="ftlink" onclick={() => (err = '')}>dismiss</button></p>{/if}
+  {#if err}<p class="fterr">{err} <button class="ftlink" onclick={() => (err = '')}>{m.files_dismiss()}</button></p>{/if}
 
   <!-- The tree body doubles as the root drop zone / clear-target surface (a
        background click clears the upload target; a row click is guarded out). -->
@@ -568,7 +575,7 @@
     {#if creating}
       <div class="ftrow ftnew" style="padding-left:8px">
         <Icon name="folder" size={14} />
-        <input class="ftinput" placeholder="New directory name" bind:value={newName} use:focusSelect
+        <input class="ftinput" placeholder={m.files_new_dir_placeholder()} bind:value={newName} use:focusSelect
           onclick={(e) => e.stopPropagation()}
           onkeydown={(e) => { if (e.key === 'Enter') commitCreate(); else if (e.key === 'Escape') creating = false }}
           onblur={commitCreate} />
@@ -576,18 +583,18 @@
     {/if}
 
     {#if loading}
-      <p class="ftmuted">Loading…</p>
+      <p class="ftmuted">{m.loading()}</p>
     {:else if isEmpty}
-      <p class="ftmuted ftempty">No files yet — ask the agent to save something, run a task that produces a deliverable, or drag files here (or use&nbsp;+) to upload.</p>
+      <p class="ftmuted ftempty">{m.files_empty_tree()}</p>
     {:else}
       {@render level(tree, 0)}
     {/if}
 
     <!-- Granted Folders (Thread-scoped, ADR 0013): a distinct section beneath the
          Files-space tree, each root badged with its mode + missing state, lazy-expanded. -->
-    {#if folderErr}<p class="fterr">{folderErr} <button class="ftlink" onclick={() => (folderErr = '')}>dismiss</button></p>{/if}
+    {#if folderErr}<p class="fterr">{folderErr} <button class="ftlink" onclick={() => (folderErr = '')}>{m.files_dismiss()}</button></p>{/if}
     {#if folderRoots.length}
-      <div class="ftsection">Folders</div>
+      <div class="ftsection">{m.files_section_folders()}</div>
       {#each folderRoots as r (r.path)}
         {@render folderRoot(r)}
       {/each}
@@ -613,7 +620,7 @@
       ondrop={(e) => onDrop(e, d.path)}
       onclick={() => { selectDir(d.path); toggle(d.path) }}
     >
-      <button class="ftcaret" title={isOpen(d.path) ? 'Collapse' : 'Expand'}
+      <button class="ftcaret" title={isOpen(d.path) ? m.files_collapse() : m.files_expand()}
         onclick={(e) => { e.stopPropagation(); toggle(d.path) }}>
         <Icon name={isOpen(d.path) ? 'chevron-down' : 'chevron-right'} size={13} />
       </button>
@@ -673,14 +680,14 @@
     ondrop={aff.move && r.exists ? (e) => onDrop(e, r.path) : null}
     onclick={() => { if (r.exists) { if (aff.move) selectDir(r.path); toggleFolder(r.path) } }}
   >
-    <button class="ftcaret" title={folderExpanded.has(r.path) ? 'Collapse' : 'Expand'}
+    <button class="ftcaret" title={folderExpanded.has(r.path) ? m.files_collapse() : m.files_expand()}
       disabled={!r.exists} onclick={(e) => { e.stopPropagation(); if (r.exists) toggleFolder(r.path) }}>
       <Icon name={folderExpanded.has(r.path) ? 'chevron-down' : 'chevron-right'} size={13} />
     </button>
     <Icon name="folder" size={14} />
     <span class="ftname">{r.name}</span>
     {#if modeLabel(r.mode)}<span class="ftbadge" class:rw={r.mode === 'read_write'}>{modeLabel(r.mode)}</span>{/if}
-    {#if !r.exists}<span class="ftbadge warn" title="This folder's path no longer exists — repoint it in Settings → Folders">missing</span>{/if}
+    {#if !r.exists}<span class="ftbadge warn" title={m.files_missing_title()}>{m.files_missing()}</span>{/if}
   </div>
   {#if r.exists && folderExpanded.has(r.path)}
     {@render folderLevel(r.path, 1, r.mode)}
@@ -698,7 +705,7 @@
        its own affordances (ticket 04). -->
   {@const aff = folderAffordances(lvl?.mode ?? mode)}
   {#if !lvl && folderLoading.has(path)}
-    <p class="ftmuted" style="padding-left:{depth * 14 + 24}px">Loading…</p>
+    <p class="ftmuted" style="padding-left:{depth * 14 + 24}px">{m.loading()}</p>
   {:else if lvl}
     {#each lvl.dirs as d (d.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -709,7 +716,7 @@
         ondragover={aff.move ? (e) => onDirDragOver(e, d.path) : null}
         ondrop={aff.move ? (e) => onDrop(e, d.path) : null}
         onclick={() => { if (renaming !== d.path) { if (aff.move) selectDir(d.path); toggleFolder(d.path) } }}>
-        <button class="ftcaret" title={folderExpanded.has(d.path) ? 'Collapse' : 'Expand'}
+        <button class="ftcaret" title={folderExpanded.has(d.path) ? m.files_collapse() : m.files_expand()}
           onclick={(e) => { e.stopPropagation(); toggleFolder(d.path) }}>
           <Icon name={folderExpanded.has(d.path) ? 'chevron-down' : 'chevron-right'} size={13} />
         </button>
@@ -749,7 +756,7 @@
       </div>
     {/each}
     {#if !lvl.dirs.length && !lvl.files.length}
-      <p class="ftmuted" style="padding-left:{depth * 14 + 24}px">{lvl.err ? 'Not reachable' : 'Empty'}</p>
+      <p class="ftmuted" style="padding-left:{depth * 14 + 24}px">{lvl.err ? m.files_not_reachable() : m.files_level_empty()}</p>
     {/if}
   {/if}
 {/snippet}
@@ -758,30 +765,34 @@
   {#if confirming === path}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <span class="ftconfirm" onclick={(e) => e.stopPropagation()}>
-      <span class="confirm">Delete{#if isDir}{#if isFolderPath(path)} this folder{:else} {countUnder(path)} file{countUnder(path) === 1 ? '' : 's'}{/if}{/if}?</span>
-      <button class="ftlink danger" disabled={busy === path} onclick={(e) => { e.stopPropagation(); del(path) }}>{busy === path ? '…' : 'yes'}</button>
-      <button class="ftlink" onclick={(e) => { e.stopPropagation(); confirming = '' }}>no</button>
+      <span class="confirm">
+        {#if !isDir}{m.confirm_delete()}
+        {:else if isFolderPath(path)}{m.files_delete_folder_confirm()}
+        {:else}{m.files_delete_count_confirm({ count: countUnder(path) })}{/if}
+      </span>
+      <button class="ftlink danger" disabled={busy === path} onclick={(e) => { e.stopPropagation(); del(path) }}>{busy === path ? '…' : m.confirm_yes()}</button>
+      <button class="ftlink" onclick={(e) => { e.stopPropagation(); confirming = '' }}>{m.confirm_no()}</button>
     </span>
   {:else if renaming !== path}
-    <button class="ftkebab" title="Actions" aria-haspopup="menu" aria-expanded={menu === path}
+    <button class="ftkebab" title={m.files_actions()} aria-haspopup="menu" aria-expanded={menu === path}
       onclick={(e) => toggleMenu(e, path)}><Icon name="ellipsis-vertical" size={14} /></button>
     {#if menu === path}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="ftmenu" role="menu" tabindex="-1" use:positionMenu={menuAnchor} onclick={(e) => e.stopPropagation()}>
         {#if !isDir}
           <a class="ftmitem" role="menuitem" href={api.fileUrl(path, true, chatId)} onclick={() => (menu = '')}>
-            <Icon name="download" size={14} /> Download
+            <Icon name="download" size={14} /> {m.files_menu_download()}
           </a>
         {/if}
         <button class="ftmitem" role="menuitem" onclick={() => startRename(path, name)}>
-          <Icon name="pencil" size={14} /> Rename
+          <Icon name="pencil" size={14} /> {m.action_rename()}
         </button>
         <div class="ftmdiv"></div>
         <!-- Files and empty Files-space Directories delete immediately; a Directory with
              files in it (or any Folder Directory, whose count we haven't listed) confirms
              first (recursive delete). -->
         <button class="ftmitem danger" role="menuitem" onclick={() => { menu = ''; if (isDir && (isFolderPath(path) || countUnder(path))) confirming = path; else del(path) }}>
-          <Icon name="trash" size={14} /> Delete
+          <Icon name="trash" size={14} /> {m.action_delete()}
         </button>
       </div>
     {/if}

@@ -6,6 +6,7 @@
   import { requestContext } from '../../lib/feedback.ts'
   import Feedback from './Feedback.svelte'
   import type { ThreadItem } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { item: Extract<ThreadItem, { kind: 'deliverable' }> }
   let { item }: Props = $props()
@@ -26,7 +27,7 @@
 </script>
 
 <div class="deliv">
-  <div class="d"><Icon name="check" size={13} /> Deliverable produced — {item.description}{#if item.at}<span class="itemtime">{fmtStamp(item.at)}</span>{/if}</div>
+  <div class="d"><Icon name="check" size={13} /> {m.thread_deliverable_produced()} — {item.description}{#if item.at}<span class="itemtime">{fmtStamp(item.at)}</span>{/if}</div>
   {#if teaser}<div class="dprev">{teaser}…</div>{/if}
   {#if item.path}
     <div class="toolcard">
@@ -34,7 +35,7 @@
       <button class="tclink" onclick={openFile} title={item.path}>{fileName}</button>
     </div>
   {/if}
-  {#if item.taskId && !item.path}<button class="viewbtn" onclick={openFull}>View full</button>{/if}
+  {#if item.taskId && !item.path}<button class="viewbtn" onclick={openFull}>{m.thread_view_full()}</button>{/if}
   {#if item.deliverableId}
     <div class="itemfb"><Feedback targetKind="deliverable" targetId={item.deliverableId} content={(item.description || '') + '\n' + (item.preview || '')} {request} current={item.feedback} /></div>
   {/if}

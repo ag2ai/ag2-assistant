@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '../paraglide/messages.js'
   import { onMount, onDestroy } from 'svelte'
   import { voicePickerOpen, voicePickerConfig } from '../store.ts'
   import { api } from '../transport/api/index.ts'
@@ -62,9 +63,9 @@
      a11y tree rather than becoming a second focusable control. -->
 <div class="modal-backdrop" class:over={!!configId} role="presentation" onclick={close}></div>
 <div class="modal voicepick" class:over={!!configId}>
-  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
-  <h2>Voice{provider ? ' — ' + (PROVIDER_LABEL[provider] || provider) : ''}</h2>
-  <p class="muted">Pick a voice — it plays a sample and is saved for your chats (applies next voice session).</p>
+  <button class="modal-x" aria-label={m.action_close()} onclick={close}>×</button>
+  <h2>{m.voice_title()}{provider ? ' — ' + (PROVIDER_LABEL[provider] || provider) : ''}</h2>
+  <p class="muted">{m.voice_hint()}</p>
   <div class="vlist">
     {#each voices as v (v.name)}
       <button class="vrow" class:on={current === v.name} onclick={() => choose(v)}>

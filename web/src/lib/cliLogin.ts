@@ -13,6 +13,8 @@
 // locally and the adapter lives on the host (see coding/model_catalog.py), so the
 // bridge inventory is the only availability signal there.
 
+import { m } from '../paraglide/messages.js'
+
 // agent name (coding/detect.py's) -> the npm package that installs its ACP adapter.
 // What the coding-agents read says about one agent.
 export type Availability = { loaded: boolean; mode: string; connected: boolean; available: boolean }
@@ -78,17 +80,12 @@ export function cliNote(
   catalog: CatalogRead,
 ): string {
   if (!availability?.loaded) return ''
-  if (availability.mode === 'bridge' && !availability.connected)
-    return 'The host ACP bridge is unreachable — check AG2ASSISTANT_ACP_BRIDGE for this container.'
-  if (!availability.available)
-    return `Not installed: run npm i -g ${ADAPTER_PKG[agent]} and log in to the CLI, then re-check.`
-  if (availability.mode === 'bridge')
-    return "Reached through the host ACP bridge. The model list can't be read from inside the container, so this runs on the CLI's own model."
+  if (availability.mode === 'bridge' && !availability.connected) return m.cli_bridge_unreachable()
+  if (!availability.available) return m.cli_not_installed({ pkg: ADAPTER_PKG[agent] })
+  if (availability.mode === 'bridge') return m.cli_bridge_note()
   if (catalog === undefined || catalog === 'loading') return ''
-  if (catalog?.reason === 'adapter_missing')
-    return `Not installed: run npm i -g ${ADAPTER_PKG[agent]}, then re-check.`
-  if (catalog?.reason)
-    return "The adapter is installed but didn't answer — check the CLI is logged in, then re-check."
+  if (catalog?.reason === 'adapter_missing') return m.cli_adapter_missing({ pkg: ADAPTER_PKG[agent] })
+  if (catalog?.reason) return m.cli_adapter_silent()
   return ''
 }
 
@@ -99,5 +96,5 @@ export function cliNote(
  */
 export function cliDefaultLabel(catalog: CatalogRead): string {
   const current = typeof catalog === 'object' ? catalog?.current : ''
-  return current ? `CLI default (${current})` : 'CLI default'
+  return current ? m.cli_default_named({ model: current }) : m.llm_cli_default()
 }

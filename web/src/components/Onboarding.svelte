@@ -376,6 +376,8 @@
     if (currentTab.cli) {
       if (!cliReady) return null
       const type = CLI_TYPE[currentTab.cli]
+      // TYPE_LABEL, not typeLabel(): this becomes the SAVED config's name, so it
+      // must not carry whatever language happened to be selected at setup time.
       return { name: TYPE_LABEL[type], type, model: cliModel[currentTab.cli] || '' }
     }
     if (currentTab.oauth && !codex?.signed_in) return null
@@ -692,7 +694,7 @@
                 <div class="onb-pills">
                   {#each FOCUS as f}
                     <button class="onb-pill" class:on={focuses.includes(f.id)} onclick={() => toggleFocus(f.id)}>
-                      <Icon name={f.icon} size={14} /> {f.label}
+                      <Icon name={f.icon} size={14} /> {focusLabel(f.id)}
                     </button>
                   {/each}
                 </div>

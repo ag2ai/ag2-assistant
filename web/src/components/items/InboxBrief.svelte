@@ -7,29 +7,31 @@
   import { safeUrl } from '../../lib/url.ts'
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, InboxThread } from '../../lib/a2ui.ts'
+  import { getLocale } from '../../paraglide/runtime.js'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
 
-  const title = $derived(str(data.title) || 'Inbox')
+  const title = $derived(str(data.title) || m.a2ui_inbox())
   const threads = $derived(rows<InboxThread>(data.threads))
   const summary = $derived(str(data.summary))
   const unreadCount = $derived(threads.filter((t) => t.unread).length)
 
   const edition = $derived(
-    new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
+    new Date().toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short' })
   )
 </script>
 
 <div class="bs">
   <header class="bs-masthead">
     <div class="mast-l">
-      <div class="bs-kicker">A2UI · Inbox</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_inbox()}</div>
       <h1>{title}</h1>
     </div>
     <div class="bs-edition">
       <div>{edition}</div>
-      <div><b>{threads.length} {threads.length === 1 ? 'thread' : 'threads'}{unreadCount ? ` · ${unreadCount} unread` : ''}</b></div>
+      <div><b>{m.a2ui_threads_count({ count: threads.length })}{unreadCount ? ` · ${m.a2ui_unread_count({ count: unreadCount })}` : ''}</b></div>
     </div>
   </header>
 
@@ -44,7 +46,7 @@
           <div class="mmain">
             <div class="msub">
               {#if safeUrl(t.url)}<a href={safeUrl(t.url)} target="_blank" rel="noopener noreferrer">{t.subject}</a>{:else}{t.subject}{/if}
-              {#if t.needsReply}<span class="reply">Reply?</span>{/if}
+              {#if t.needsReply}<span class="reply">{m.a2ui_reply_flag()}</span>{/if}
             </div>
             {#if t.gist}<div class="mgist">{t.gist}</div>{/if}
           </div>
@@ -54,8 +56,8 @@
     </div>
 
     <div class="bs-foot">
-      <div class="bs-src">From your mailbox — <span>threads as returned</span></div>
-      <div class="bs-upd"><span class="bs-dot"></span> as of just now</div>
+      <div class="bs-src">{m.a2ui_from_mailbox()} — <span>{m.a2ui_threads_as_returned()}</span></div>
+      <div class="bs-upd"><span class="bs-dot"></span> {m.a2ui_as_of_just_now()}</div>
     </div>
   </div>
 </div>

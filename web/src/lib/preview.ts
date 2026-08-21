@@ -2,6 +2,7 @@
 // html / image / pdf use the browser's native rendering against /api/files/raw —
 // the server already sends the right Content-Type, so no libraries are needed.
 // md / code / text render in-app; anything unknown is download-only.
+import { m } from '../paraglide/messages.js'
 
 // Every render mode the Viewer knows; 'download' means no in-app preview.
 export type ViewerKind = 'html' | 'image' | 'pdf' | 'markdown' | 'text' | 'code' | 'download'
@@ -101,8 +102,7 @@ export function iconForFile(name: string | null | undefined): string {
 // always "Mentioned in N thread(s)" — the loose scan promises no more than that (not
 // "referenced"). Zero is a valid input (the caller hides the affordance entirely).
 export function mentionsLabel(count: number | null | undefined): string {
-  const n = count || 0
-  return `Mentioned in ${n} ${n === 1 ? 'thread' : 'threads'}`
+  return m.viewer_mentions({ count: count || 0 })
 }
 
 // The two MentionRow fields the popover reads.
@@ -114,7 +114,7 @@ type MentionRowRef = { kind: string; title?: string }
 // A blank title degrades to a kind-appropriate placeholder rather than an empty row.
 export function mentionRowTitle(row: MentionRowRef | null | undefined): string {
   if (!row) return ''
-  return (row.title || '').trim() || (row.kind === 'run' ? 'Task run' : 'Chat')
+  return (row.title || '').trim() || (row.kind === 'run' ? m.viewer_task_run() : m.thread_back_chat())
 }
 
 // The glyph name distinguishing a Chat row from a Task Run row in the popover.

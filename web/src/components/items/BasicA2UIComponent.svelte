@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '../../paraglide/messages.js'
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import { a2uiValue, bindingPath, rows } from '../../lib/a2ui.ts'
@@ -158,7 +159,7 @@
   </label>
 {:else if type === 'button'}
   <button class:primary={component.variant === 'primary'} class="a2ui-button" onclick={clickButton}>
-    {a2uiValue(child(component.child)?.text, data) || 'Continue'}
+    {a2uiValue(child(component.child)?.text, data) || m.a2ui_continue()}
   </button>
 {:else if type === 'image'}
   <!-- Default fit is `contain`, not `fill`: .a2ui-image clamps the box (width:100% +
@@ -170,7 +171,7 @@
   <span class="a2ui-icon" title={String(a2uiValue(component.name, data) || '')}><Icon name={iconName} size={22} /></span>
 {:else if type === 'video'}
   {#if youtubeEmbed}
-    <iframe class="a2ui-video" src={youtubeEmbed} title="Video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+    <iframe class="a2ui-video" src={youtubeEmbed} title={m.a2ui_video()} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
   {:else}
     <!-- A2UI carries no caption track, so the element declares an empty one
          rather than claiming captions it does not have. -->
@@ -215,8 +216,8 @@
   <div class="a2ui-basic-card">
     <div class="a2ui-weather-top">
       <div>
-        <div class="a2ui-main">{component.location || 'Requested location'}</div>
-        <div class="a2ui-sub">Forecast summary</div>
+        <div class="a2ui-main">{component.location || m.a2ui_requested_location()}</div>
+        <div class="a2ui-sub">{m.a2ui_forecast_summary()}</div>
       </div>
       <span class="a2ui-weather-glyph"><Icon name="sun" size={22} /></span>
     </div>
@@ -231,7 +232,7 @@
   </div>
 {:else if type === 'newsdigest'}
   <div class="a2ui-basic-card">
-    <div class="a2ui-main">{component.topic || 'Latest news'}</div>
+    <div class="a2ui-main">{component.topic || m.a2ui_latest_news()}</div>
     <div class="a2ui-list">
       {#each list<NewsStory>(component.stories) as story}
         <div class="a2ui-story">
@@ -253,6 +254,6 @@
   </div>
 {:else}
   <div class="a2ui-basic-card">
-    <div class="a2ui-main">{component.title || component.topic || component.component || 'Interactive view'}</div>
+    <div class="a2ui-main">{component.title || component.topic || component.component || m.a2ui_interactive_view()}</div>
   </div>
 {/if}

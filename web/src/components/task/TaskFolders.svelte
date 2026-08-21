@@ -18,6 +18,7 @@
   import AccessSwitch from '../AccessSwitch.svelte'
   import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { taskId: string }
   let { taskId }: Props = $props()
@@ -95,15 +96,15 @@
           folder = snap.folders.find((f) => f.id === clash.data.existing.id)
         } else throw e
       }
-      if (!folder) throw new Error('Could not resolve that folder')
+      if (!folder) throw new Error(m.composer_folder_resolve_failed())
       const pg = profileGrant(folder)
       const t = tGrant(folder)
       if (pg) {
         // The profile already reaches every run — a task 'none' override blocks it, drop that.
-        if (t && t.mode === 'none') { snap = await api.revokeGrant(folder.id, pid, '', taskId); note = `"${folder.name}" is available to this task again.` }
-        else note = `"${folder.name}" is already available from the profile.`
+        if (t && t.mode === 'none') { snap = await api.revokeGrant(folder.id, pid, '', taskId); note = m.task_folder_available_again({ name: folder.name }) }
+        else note = m.task_folder_from_profile({ name: folder.name })
       } else if (t) {
-        note = `"${folder.name}" is already in this task.`
+        note = m.task_folder_already_in_task({ name: folder.name })
       } else {
         snap = await api.setGrant(folder.id, pid, 'read', '', taskId)
       }
@@ -114,28 +115,28 @@
 </script>
 
 <div class="tf">
-  <p class="muted hint">Task folders are shared across every run of this task. Profile folders reach the whole profile — changing one here overrides it for this task only, leaving other tasks and chats untouched.</p>
+  <p class="muted hint">{m.task_tf_hint()}</p>
   {#if err}<p class="muted errline">{err}</p>{/if}
   {#if note}<p class="muted noteline">{note}</p>{/if}
 
   {#if taskFolders.length}
-    <div class="cfsec">Task folders</div>
+    <div class="cfsec">{m.task_folders_section()}</div>
     {#each taskFolders as f (f.id)}
       {@const tg = tGrant(f)}
       <div class="cfrow">
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
         <div class="cfctl">
-          <WriteSwitch mode={tg?.mode} disabled={busy} onchange={(m) => setTaskMode(f, m)} />
+          <WriteSwitch mode={tg?.mode} disabled={busy} onchange={(next) => setTaskMode(f, next)} />
           <span class="cfmenuwrap">
-            <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
+            <button class="cfkebab" aria-label={m.task_more_actions()} aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
               <!-- Scrim: closing on an outside click duplicates the kebab toggle,
                    so it stays out of the a11y tree. -->
               <div class="cfscrim" role="presentation" onclick={() => (menuFor = '')}></div>
               <div class="cfmenu">
-                <button onclick={() => { menuFor = ''; moveToProfile(f) }}><Icon name="users" size={14} /> Move to profile</button>
-                <button class="danger" onclick={() => { menuFor = ''; setTaskMode(f, null) }}><Icon name="trash" size={14} /> Delete</button>
+                <button onclick={() => { menuFor = ''; moveToProfile(f) }}><Icon name="users" size={14} /> {m.task_move_to_profile()}</button>
+                <button class="danger" onclick={() => { menuFor = ''; setTaskMode(f, null) }}><Icon name="trash" size={14} /> {m.action_delete()}</button>
               </div>
             {/if}
           </span>
@@ -145,19 +146,19 @@
   {/if}
 
   {#if profileFolders.length}
-    <div class="cfsec">Profile folders</div>
+    <div class="cfsec">{m.task_profile_folders_section()}</div>
     {#each profileFolders as f (f.id)}
       <div class="cfrow">
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
-        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(m) => setTaskOverride(f, m)} />
+        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(next) => setTaskOverride(f, next)} />
       </div>
     {/each}
   {/if}
 
   <div class="tfadd">
     <button class="open" onclick={() => { pickerOpen = !pickerOpen; note = '' }}>
-      <Icon name="folder" size={14} /> Add folder
+      <Icon name="folder" size={14} /> {m.task_add_folder()}
     </button>
   </div>
   {#if pickerOpen}

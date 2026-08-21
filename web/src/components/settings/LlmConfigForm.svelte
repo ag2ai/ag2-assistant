@@ -16,7 +16,7 @@
   import { getSettings } from './context.svelte.ts'
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
-  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
+  import { typeLabel } from '../../lib/providerLabels.ts'
   import { llmConfigs } from '../../lib/llm.ts'
   import { builtinToolText } from '../../lib/builtinTools.ts'
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
@@ -45,7 +45,7 @@
 
   // The wires a custom endpoint can be addressed over; the order and the membership
   // are the seam's, the labels providerLabels.ts's.
-  const INTERFACES = API_INTERFACES.map((id) => ({ id, label: TYPE_LABEL[id] }))
+  const INTERFACES = API_INTERFACES.map((id) => ({ id, label: typeLabel(id) }))
   // Which endpoint field shows: base_url comes from the seam, host is ollama's
   // alone, and subscription mode has neither (both come from codex_auth).
 
@@ -560,7 +560,7 @@
          heading. Labels come from lib/builtinTools.ts — the same id reads as
          "Web fetch" on Anthropic and "URL context" on Gemini. -->
     <div class="llmfield">
-      <span class="llmlabel">{m.llm_field_provider_tools()} <span class="llmhint">{m.llm_provider_tools_hint({ name: TYPE_LABEL[type] || type })}</span></span>
+      <span class="llmlabel">{m.llm_field_provider_tools()} <span class="llmhint">{m.llm_provider_tools_hint({ name: typeLabel(type) })}</span></span>
       {#each builtinOffered as id (id)}
         {@const t = builtinToolText(type, id)}
         <label class="llmtool">

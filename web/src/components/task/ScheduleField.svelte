@@ -3,20 +3,22 @@
   // cron; anything unrecognised round-trips through the Custom field untouched.
 
   import type { ScheduleValue } from '../../lib/taskEdit.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Preset = 'manual' | 'once' | 'hourly' | 'daily' | 'weekly' | 'weekdays' | 'custom'
   type Props = { schedule: ScheduleValue }
 
   let { schedule = $bindable() }: Props = $props()
 
-  const PRESETS: { id: Preset; label: string }[] = [
-    { id: 'manual',   label: 'Manual' },
-    { id: 'hourly',   label: 'Hourly' },
-    { id: 'daily',    label: 'Daily' },
-    { id: 'weekly',   label: 'Weekly' },
-    { id: 'weekdays', label: 'Weekdays' },
-    { id: 'custom',   label: 'Custom cron' },
-    { id: 'once',     label: 'Once at…' },
+  // The preset id is what serialises to cron; only its label localizes.
+  const PRESETS: { id: Preset; label: () => string }[] = [
+    { id: 'manual',   label: m.task_sched_manual },
+    { id: 'hourly',   label: m.task_sched_hourly },
+    { id: 'daily',    label: m.task_sched_daily },
+    { id: 'weekly',   label: m.task_sched_weekly },
+    { id: 'weekdays', label: m.task_sched_weekdays },
+    { id: 'custom',   label: m.task_sched_custom },
+    { id: 'once',     label: m.task_sched_once },
   ]
 
   function detect(s: ScheduleValue): Preset {
@@ -30,8 +32,8 @@
     return 'custom'
   }
   function timeOf(cron: string | null): string {
-    const m = (cron || '').match(/^(\d+) (\d+) /)
-    return m ? String(m[2]).padStart(2, '0') + ':' + String(m[1]).padStart(2, '0') : '09:00'
+    const hm = (cron || '').match(/^(\d+) (\d+) /)
+    return hm ? String(hm[2]).padStart(2, '0') + ':' + String(hm[1]).padStart(2, '0') : '09:00'
   }
 
   let preset = $state(detect(schedule))
@@ -40,20 +42,20 @@
   let at = $state(schedule.at ? schedule.at.slice(0, 16) : '')  // datetime-local
 
   function apply() {
-    const [h, m] = (time || '09:00').split(':').map(Number)
+    const [h, min] = (time || '09:00').split(':').map(Number)
     if (preset === 'manual') schedule = { kind: 'manual', at: null, cron: null }
     else if (preset === 'once') schedule = { kind: 'once', at: at ? new Date(at).toISOString() : null, cron: null }
     else if (preset === 'hourly') schedule = { kind: 'cron', at: null, cron: '0 * * * *' }
-    else if (preset === 'daily') schedule = { kind: 'cron', at: null, cron: `${m} ${h} * * *` }
-    else if (preset === 'weekly') schedule = { kind: 'cron', at: null, cron: `${m} ${h} * * 1` }
-    else if (preset === 'weekdays') schedule = { kind: 'cron', at: null, cron: `${m} ${h} * * 1-5` }
+    else if (preset === 'daily') schedule = { kind: 'cron', at: null, cron: `${min} ${h} * * *` }
+    else if (preset === 'weekly') schedule = { kind: 'cron', at: null, cron: `${min} ${h} * * 1` }
+    else if (preset === 'weekdays') schedule = { kind: 'cron', at: null, cron: `${min} ${h} * * 1-5` }
     else schedule = { kind: 'cron', at: null, cron: cron.trim() }
   }
 </script>
 
 <div class="schedfield">
   <select class="chpick" bind:value={preset} onchange={apply}>
-    {#each PRESETS as p}<option value={p.id}>{p.label}</option>{/each}
+    {#each PRESETS as p}<option value={p.id}>{p.label()}</option>{/each}
   </select>
   {#if ['daily', 'weekly', 'weekdays'].includes(preset)}
     <input type="time" bind:value={time} onchange={apply} />

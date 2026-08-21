@@ -7,6 +7,7 @@
   // inset border, so the knob geometry is untouched); the label carries the
   // semantic, the track just hints at it (off = Read, green; on = Read+write, warn).
   import type { GrantMode, Mode } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
 
   // `mode` takes a grant's mode as stored ('none' renders as Read); `onchange`
   // fires with the opposite of the two write positions.
@@ -20,8 +21,8 @@
 </script>
 
 <div class="wsctl">
-  <span class="wslabel">{rw ? 'Read + write' : 'Read'}</span>
-  <button class="ws" class:on={rw} role="switch" aria-checked={rw} aria-label="Allow writing" {disabled} onclick={() => onchange?.(rw ? 'read' : 'read_write')}></button>
+  <span class="wslabel">{rw ? m.task_mode_read_write() : m.task_mode_read()}</span>
+  <button class="ws" class:on={rw} role="switch" aria-checked={rw} aria-label={m.write_switch_aria()} {disabled} onclick={() => onchange?.(rw ? 'read' : 'read_write')}></button>
 </div>
 
 <style>

@@ -7,10 +7,13 @@
   import type { RunStatus } from '../../schemas/index.ts'
   import Icon from '../Icon.svelte'
   import { fmtStamp } from '../../lib/time.ts'
+  import { m } from '../../paraglide/messages.js'
 
   const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled']
-  const WORD: Record<RunStatus, string> = { completed: '✓ completed', failed: '✗ failed', cancelled: 'cancelled',
-                 running: 'running…', needs_input: 'needs your input' }
+  const WORD: Record<RunStatus, () => string> = {
+    completed: m.task_run_completed, failed: m.task_run_failed_word, cancelled: m.status_cancelled,
+    running: m.task_run_running, needs_input: m.task_run_needs_input,
+  }
 </script>
 
 {#if $runInfo}
@@ -21,11 +24,11 @@
        free; `.runbanner` only adds the row layout on top. -->
   <div class="runbanner panel">
     <button class="runlink" onclick={() => go('/t/' + $runInfo.task_id)}>
-      <Icon name="list" size={13} /> {$runInfo.task_name || 'Task'}
+      <Icon name="list" size={13} /> {$runInfo.task_name || m.thread_task()}
     </button>
-    <span class="runmeta">{fmtStamp($runInfo.started_at)} · {WORD[$runInfo.status] || $runInfo.status}</span>
+    <span class="runmeta">{fmtStamp($runInfo.started_at)} · {(WORD[$runInfo.status] ?? (() => $runInfo.status))()}</span>
     {#if !TERMINAL.includes($runInfo.status)}
-      <button class="open danger" onclick={() => api.stopRun($runInfo.id)}><Icon name="x" size={13} /> Stop run</button>
+      <button class="open danger" onclick={() => api.stopRun($runInfo.id)}><Icon name="x" size={13} /> {m.task_stop_run()}</button>
     {/if}
     {#if $runInfo.status === 'failed' && $runInfo.error}
       <span class="taskerror"><Icon name="x" size={13} /> {$runInfo.error}</span>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '../paraglide/messages.js'
   // The architecture map: which AG2 primitives power this assistant, and
   // (honestly) what's the app layer built on top.
   import { appVersion, ag2Version } from '../store.ts'
@@ -31,14 +32,14 @@
      a11y tree rather than becoming a second focusable control. -->
 <div class="modal-backdrop" role="presentation" onclick={close}></div>
 <div class="modal poweredby">
-  <button class="modal-x" aria-label="Close" onclick={close}>×</button>
+  <button class="modal-x" aria-label={m.action_close()} onclick={close}>×</button>
   <!-- Window chrome lives in the head: Back at the top-left, × at the top-right
        (absolutely positioned to the same corner band). The back button leads the
        title, the ProfileEditor .pback idiom. -->
   {#if backTo}
-    <button class="pbback" onclick={back}><Icon name="chevron-left" size={15} /> Settings</button>
+    <button class="pbback" onclick={back}><Icon name="chevron-left" size={15} /> {m.settings_title()}</button>
   {/if}
-  <h2>Powered by AG2</h2>
+  <h2>{m.pb_title()}</h2>
   <p class="muted">
     The runtime, event stream, memory, tools, human-in-the-loop, voice and observers
     are all AG2 primitives. Turn on <strong>AG2 view</strong> (the <code>&lt;/&gt; AG2</code>
@@ -53,7 +54,7 @@
         <div class="pbtext"><div class="pbname">{p.name}</div><div class="pbwhat">{p.what}</div></div>
       </div>
     {/each}
-    <div class="setsec">App layer (built on AG2)</div>
+    <div class="setsec">{m.pb_app_layer()}</div>
     {#each app as p}
       <div class="pbrow">
         <span class="insp-dot" style="background:var(--line)"></span>

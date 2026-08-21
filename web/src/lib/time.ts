@@ -1,11 +1,17 @@
 // Shared time formatting. Accepts AG2 event timestamps (Unix SECONDS, float —
 // every BaseEvent carries `created_at`) OR ISO strings (task-object fields like
 // created_at / started_at / ended_at). One place so the drawer, task panel, and
-// thread items read the same.
+// thread items read the same. Relative wording comes from the message catalog and
+// every Intl call formats in the UI language.
+import { m } from '../paraglide/messages.js'
+import { getLocale } from '../paraglide/runtime.js'
 
 // What every formatter here accepts: an AG2 `created_at` (Unix seconds), an ISO
 // string, or nothing at all (a live item before its stamp lands).
 export type TimeValue = number | string | null | undefined
+
+// Dates and times render in the UI language, not the host's locale.
+const loc = () => getLocale()
 
 // Normalize to a Date. Numbers are AG2 `created_at` (Unix seconds); strings are
 // ISO 8601. Returns null when missing/unparseable.
@@ -22,8 +28,8 @@ export function fmtClock(v: TimeValue): string {
   if (!d) return ''
   const sameDay = d.toDateString() === new Date().toDateString()
   return sameDay
-    ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-    : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    ? d.toLocaleTimeString(loc(), { hour: 'numeric', minute: '2-digit' })
+    : d.toLocaleString(loc(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
 // Compact relative past: "just now", "5m ago", "2h ago", "yesterday", "3d ago",
@@ -32,16 +38,16 @@ export function fmtAgo(v: TimeValue): string {
   const d = toDate(v)
   if (!d) return ''
   const ms = Date.now() - d.getTime()
-  if (ms < 0) return 'just now' // tiny clock skew on a fresh event
+  if (ms < 0) return m.time_just_now() // tiny clock skew on a fresh event
   const mins = Math.round(ms / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
+  if (mins < 1) return m.time_just_now()
+  if (mins < 60) return m.time_min_ago({ n: mins })
   const hours = Math.round(mins / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return m.time_hr_ago({ n: hours })
   const days = Math.round(hours / 24)
-  if (days === 1) return 'yesterday'
-  if (days < 7) return `${days}d ago`
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  if (days === 1) return m.time_yesterday_lc()
+  if (days < 7) return m.time_day_ago({ n: days })
+  return d.toLocaleDateString(loc(), { month: 'short', day: 'numeric' })
 }
 
 // Ultra-compact relative past for dense lists (the drawer's chat rows): "now",
@@ -52,13 +58,13 @@ export function fmtAgoShort(v: TimeValue): string {
   if (!d) return ''
   const ms = Date.now() - d.getTime()
   const mins = Math.round(ms / 60000)
-  if (mins < 1) return 'now'
-  if (mins < 60) return `${mins}m`
+  if (mins < 1) return m.time_now()
+  if (mins < 60) return m.time_min_short({ n: mins })
   const hours = Math.round(mins / 60)
-  if (hours < 24) return `${hours}h`
+  if (hours < 24) return m.time_hr_short({ n: hours })
   const days = Math.round(hours / 24)
-  if (days < 7) return `${days}d`
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  if (days < 7) return m.time_day_short({ n: days })
+  return d.toLocaleDateString(loc(), { month: 'short', day: 'numeric' })
 }
 
 // Neat, human absolute date-time for a specific moment (e.g. a scheduled run) —
@@ -69,14 +75,15 @@ export function fmtDateTime(v: TimeValue): string {
   const d = toDate(v)
   if (!d) return ''
   const now = new Date()
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const time = d.toLocaleTimeString(loc(), { hour: 'numeric', minute: '2-digit' })
   const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
   const dayDiff = Math.round((startOfDay(d).getTime() - startOfDay(now).getTime()) / 86400000)
-  if (dayDiff === 0) return `Today ${time}`
-  if (dayDiff === 1) return `Tomorrow ${time}`
-  if (dayDiff === -1) return `Yesterday ${time}`
-  if (dayDiff > 1 && dayDiff < 7) return `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`
-  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  if (dayDiff === 0) return m.time_today_time({ time })
+  if (dayDiff === 1) return m.time_tomorrow_time({ time })
+  if (dayDiff === -1) return m.time_yesterday_time({ time })
+  if (dayDiff > 1 && dayDiff < 7)
+    return m.time_day_at({ day: d.toLocaleDateString(loc(), { weekday: 'short' }), time })
+  return d.toLocaleString(loc(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
 // Stable per-calendar-day key for grouping thread items under date breakpoints.
@@ -99,18 +106,14 @@ export function fmtDay(v: TimeValue): string {
   const d = toDate(v)
   if (!d) return ''
   const now = new Date()
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const time = d.toLocaleTimeString(loc(), { hour: 'numeric', minute: '2-digit' })
   const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
   const dayDiff = Math.round((startOfDay(d).getTime() - startOfDay(now).getTime()) / 86400000)
-  let day
-  if (dayDiff === 0) day = 'Today'
-  else if (dayDiff === -1) day = 'Yesterday'
-  else {
-    const opts: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' }
-    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
-    day = d.toLocaleDateString([], opts)
-  }
-  return `${day} at ${time}`
+  if (dayDiff === 0) return m.time_today_at({ time })
+  if (dayDiff === -1) return m.time_yesterday_at({ time })
+  const opts: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' }
+  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
+  return m.time_day_at({ day: d.toLocaleDateString(loc(), opts), time })
 }
 
 // Date-only day label for a section header (the chats list), sibling to fmtDay
@@ -125,11 +128,11 @@ export function fmtDayShort(v: TimeValue): string {
   const now = new Date()
   const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate())
   const dayDiff = Math.round((startOfDay(d).getTime() - startOfDay(now).getTime()) / 86400000)
-  if (dayDiff === 0) return 'Recent'
-  if (dayDiff === -1) return 'Yesterday'
+  if (dayDiff === 0) return m.time_recent()
+  if (dayDiff === -1) return m.time_yesterday()
   const opts: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' }
   if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
-  return d.toLocaleDateString([], opts)
+  return d.toLocaleDateString(loc(), opts)
 }
 
 // Interleave day breakpoints through a list of items: each item is tagged with
@@ -164,7 +167,7 @@ export function fmtStamp(v: TimeValue): string {
 export function fmtWhen(v: TimeValue): string {
   const d = toDate(v)
   if (!d) return ''
-  return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+  return d.toLocaleString(loc(), { weekday: 'short', hour: 'numeric', minute: '2-digit' })
 }
 
 // A task's place in the drawer's recency list — the task analogue of a chat's
@@ -188,15 +191,15 @@ export function fmtNextIn(v: TimeValue): string {
   const d = toDate(v)
   if (!d) return ''
   const ms = d.getTime() - Date.now()
-  if (ms <= 0) return 'now'
+  if (ms <= 0) return m.time_now()
   const mins = Math.round(ms / 60000)
-  if (mins < 1) return 'in <1m'
-  if (mins < 60) return `in ${mins}m`
+  if (mins < 1) return m.time_in_lt_min()
+  if (mins < 60) return m.time_in_min({ n: mins })
   const hours = Math.round(mins / 60)
-  if (hours < 24) return `in ${hours}h`
+  if (hours < 24) return m.time_in_hr({ n: hours })
   const days = Math.round(hours / 24)
-  if (days < 7) return `in ${days}d`
+  if (days < 7) return m.time_in_day({ n: days })
   const weeks = Math.round(days / 7)
-  if (weeks < 5) return `in ${weeks}w`
-  return `in ${Math.round(days / 30)}mo`
+  if (weeks < 5) return m.time_in_week({ n: weeks })
+  return m.time_in_month({ n: Math.round(days / 30) })
 }

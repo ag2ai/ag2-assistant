@@ -1,5 +1,6 @@
 // Browser-global-free helpers for in-place file editing in the preview rail. The
 // fetch wrappers that use them live in transport/api/index.ts.
+import { m } from '../paraglide/messages.js'
 
 // What a failed save rejects with: ApiError (status + parsed body) from the
 // transport, or a bare Error when the request never reached the server.
@@ -29,11 +30,11 @@ export function saveErrorMessage(err: unknown): string {
   const fromBody = bodyError(f.body)
   if (fromBody) return fromBody
   const status = f.status
-  if (status === 404) return 'This file no longer exists on disk.'
-  if (status === 400) return 'Could not save — the file path is invalid.'
-  if (status === 413) return 'Could not save — the file is too large.'
+  if (status === 404) return m.viewer_err_gone()
+  if (status === 400) return m.viewer_err_invalid_path()
+  if (status === 413) return m.viewer_err_too_large()
   if (!status && f.message) return f.message
-  return 'Could not save the file.'
+  return m.viewer_err_save()
 }
 
 // The SaveFailure fields a thrown value carries, each only when it is the right type.

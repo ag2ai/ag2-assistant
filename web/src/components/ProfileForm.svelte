@@ -19,9 +19,10 @@
   // create-then-continue, etc.). `accent` is an opaque #rrggbb hex (ADR 0002): a
   // preset swatch or any colour from the custom picker.
   import { untrack } from 'svelte'
-  import { PALETTES } from '../design/palette.ts'
+  import { PALETTES, paletteLabel } from '../design/palette.ts'
   import { errText } from '../lib/errors.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
 
   type Props = {
     claimed?: string[]
@@ -48,15 +49,15 @@
     // Initial values (edit affordances reuse this form shape too).
     initialName = '',
     initialAccent = null,
-    submitLabel = 'Create profile',
-    busyLabel = 'Creating…',
+    submitLabel = m.drawer_create_profile(),
+    busyLabel = m.drawer_creating(),
     // onSubmit({name, accent}) -> Promise. Throw to show inline error.
     onSubmit,
     // Optional dismiss. When given, Cancel renders in the SAME action row as the
     // submit button — consumers that bolt their own Cancel underneath the form
     // end up with the two buttons stacked on separate lines.
     onCancel = null,
-    cancelLabel = 'Cancel',
+    cancelLabel = m.action_cancel(),
     autofocus = true,
   }: Props = $props()
 
@@ -99,7 +100,7 @@
       // On success the parent typically navigates/closes; leave busy true so the
       // button doesn't flash back to idle mid-transition.
     } catch (e) {
-      error = errText(e, 'Could not save profile')
+      error = errText(e, m.profile_save_failed())
       busy = false
     }
   }
@@ -107,24 +108,24 @@
 
 <div class="pf">
   <div class="pf-field">
-    <div class="pf-flabel"><span>Profile name</span></div>
+    <div class="pf-flabel"><span>{m.profile_name_placeholder()}</span></div>
     <div class="pf-input">
       <Icon name="message" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="e.g. Work" bind:value={name} onkeydown={(e) => e.key === 'Enter' && submit()} autofocus={autofocus} />
+      <input placeholder={m.pf_name_eg()} bind:value={name} onkeydown={(e) => e.key === 'Enter' && submit()} autofocus={autofocus} />
     </div>
   </div>
 
   <div class="pf-field">
-    <div class="pf-flabel"><span>Colour</span><span class="hint">its visual identity</span></div>
+    <div class="pf-flabel"><span>{m.profile_colour()}</span><span class="hint">{m.pf_colour_hint()}</span></div>
     <div class="pf-dots">
       {#each available as p (p.id)}
         <button
           class="pf-dot"
           class:on={accent === p.hex}
           style="--dot:{p.hex}"
-          title={p.label}
-          aria-label={p.label}
+          title={paletteLabel(p.id)}
+          aria-label={paletteLabel(p.id)}
           type="button"
           onclick={() => (accent = p.hex)}
         >
@@ -138,12 +139,12 @@
       <label
         class="pf-dot pf-custom rainbow"
         class:on={isCustom}
-        title="Custom colour"
+        title={m.profile_custom_colour()}
       >
-        <input type="color" value={accent} oninput={pickCustom} aria-label="Custom colour" />
+        <input type="color" value={accent} oninput={pickCustom} aria-label={m.profile_custom_colour()} />
       </label>
     </div>
-    <div class="pf-hex">{accent}{#if isCustom} · custom{/if}</div>
+    <div class="pf-hex">{accent}{#if isCustom} · {m.profile_custom_suffix()}{/if}</div>
   </div>
 
   {#if error}<div class="pf-error"><Icon name="x" size={13} /> {error}</div>{/if}

@@ -120,7 +120,7 @@
   <IntegrationHeader platform="google" label="Google" status={googleStatus(ctx.google)} />
   <div class="setgroup">{m.integrations_account()}</div>
   <p class="setsub">
-    {byId.google?.setup} {m.integrations_google_note()}
+    {byId.google?.setup()} {m.integrations_google_note()}
   </p>
   <div class="keyrow">
     <button class="open" onclick={ctx.openGoogle}>{m.integrations_manage()}</button>
@@ -129,7 +129,7 @@
   <button class="cnback" onclick={back}><Icon name="chevron-left" size={13} /> {m.integrations_all()}</button>
   <IntegrationHeader platform="github" label="GitHub" status={githubStatus(ctx.s?.keys)} />
   <div class="setgroup">{m.integrations_token()}</div>
-  <p class="setsub">{byId.github?.blurb} {byId.github?.setup}</p>
+  <p class="setsub">{byId.github?.blurb()} {byId.github?.setup()}</p>
   {#if ctx.err}<p class="cnerr">{ctx.err}</p>{/if}
   <div class="keyrow">
     <span class="kp">{m.integrations_token()}</span>
@@ -217,8 +217,8 @@
             {e.label}
             {#if count(e.id)}<span class="cntag">{m.integrations_connected_count({ count: count(e.id) })}</span>{/if}
           </span>
-          <span class="mcpcatblurb">{e.blurb}</span>
-          {#if e.setup}<span class="cncatsetup">{e.setup}</span>{/if}
+          <span class="mcpcatblurb">{e.blurb()}</span>
+          <span class="cncatsetup">{e.setup()}</span>
         </button>
       {/each}
     </div>

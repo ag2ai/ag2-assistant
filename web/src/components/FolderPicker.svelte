@@ -9,6 +9,7 @@
   import { invalidFolderName } from '../lib/folderName.ts'
   import { errText } from '../lib/errors.ts'
   import type { FsRoots } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
   import Icon from './Icon.svelte'
 
   // `roots` arrives from a settings load, so a host that has not loaded yet passes
@@ -34,7 +35,7 @@
     try {
       const r = await api.listDirs(path || '')
       if (r.ok) { current = r.path; dirs = r.dirs; parent = r.parent }
-      else { error = r.error || 'Could not open that folder' }
+      else { error = r.error || m.fp_open_failed() }
     } catch (e) { error = errText(e) }
     loading = false
   }
@@ -82,15 +83,15 @@
 
 <div class="fp">
   <div class="fp-bar">
-    <button class="fp-up" disabled={!parent} onclick={() => load(parent)} title="Up one folder" aria-label="Up one folder"><Icon name="chevron-left" size={15} /></button>
+    <button class="fp-up" disabled={!parent} onclick={() => load(parent)} title={m.fp_up()} aria-label={m.fp_up()}><Icon name="chevron-left" size={15} /></button>
     <span class="fp-path" title={current}>{current || '…'}</span>
-    <button class="fp-new" disabled={!current || loading || saving || creating} onclick={startCreate} title="New folder here" aria-label="New folder here"><Icon name="plus" size={15} /></button>
+    <button class="fp-new" disabled={!current || loading || saving || creating} onclick={startCreate} title={m.fp_new_folder()} aria-label={m.fp_new_folder()}><Icon name="plus" size={15} /></button>
   </div>
   {#if roots.cwd || roots.home || roots.workspace}
     <div class="fp-roots">
-      {#if roots.cwd}<button class="fp-root" onclick={() => load(roots.cwd)}>Launch folder</button>{/if}
-      {#if roots.home}<button class="fp-root" onclick={() => load(roots.home)}>Home</button>{/if}
-      {#if roots.workspace}<button class="fp-root" onclick={() => load(roots.workspace)}>Workspace</button>{/if}
+      {#if roots.cwd}<button class="fp-root" onclick={() => load(roots.cwd)}>{m.fp_root_launch()}</button>{/if}
+      {#if roots.home}<button class="fp-root" onclick={() => load(roots.home)}>{m.fp_root_home()}</button>{/if}
+      {#if roots.workspace}<button class="fp-root" onclick={() => load(roots.workspace)}>{m.fp_root_workspace()}</button>{/if}
     </div>
   {/if}
   <div class="fp-list">
@@ -100,7 +101,7 @@
         <!-- svelte-ignore a11y_autofocus -->
         <input
           class="fp-input"
-          placeholder="New folder name"
+          placeholder={m.fp_new_name()}
           bind:value={newName}
           use:focusRow
           onkeydown={(e) => {
@@ -112,10 +113,10 @@
         />
       </div>
     {/if}
-    {#if saving}<div class="fp-msg">Creating…</div>
-    {:else if loading}<div class="fp-msg">Loading…</div>
+    {#if saving}<div class="fp-msg">{m.fp_creating()}</div>
+    {:else if loading}<div class="fp-msg">{m.loading()}</div>
     {:else if error}<div class="fp-msg err">{error}</div>
-    {:else if !dirs.length && !creating}<div class="fp-msg">No sub-folders here.</div>
+    {:else if !dirs.length && !creating}<div class="fp-msg">{m.fp_no_subfolders()}</div>
     {:else}
       {#each dirs as d (d.path)}
         <button class="fp-dir" onclick={() => load(d.path)} title={d.path}>
@@ -127,11 +128,11 @@
   {#if createErr}<div class="fp-err">{createErr}</div>{/if}
   {#if onUse}
     <button class="fp-use on" disabled={!current || busy} onclick={() => onUse(current)}>
-      {#if busy}Saving…{:else}<Icon name="check" size={15} /> Use this folder{/if}
+      {#if busy}{m.action_saving()}{:else}<Icon name="check" size={15} /> {m.fp_use()}{/if}
     </button>
   {:else}
     <button class="fp-use" class:on={!!current && selected === current} disabled={!current} onclick={() => (selected = current)}>
-      {#if !!current && selected === current}<Icon name="check" size={15} /> Selected this folder{:else}Use this folder{/if}
+      {#if !!current && selected === current}<Icon name="check" size={15} /> {m.fp_selected()}{:else}{m.fp_use()}{/if}
     </button>
   {/if}
 </div>

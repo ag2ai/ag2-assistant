@@ -5,6 +5,8 @@
   // the rest form a ruled movers table. Vermilion = down, editorial green = up.
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, MarketQuote } from '../../lib/a2ui.ts'
+  import { getLocale } from '../../paraglide/runtime.js'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
@@ -12,19 +14,23 @@
   const quotes = $derived(rows<MarketQuote>(data.quotes))
   const lead = $derived(quotes[0] || null)
   const rest = $derived(quotes.slice(1))
-  const title = $derived(str(data.title) || 'Markets')
+  const title = $derived(str(data.title) || m.a2ui_markets())
 
   // Market status is shown ONLY when the tool could prove it (all exchanges agree).
-  const STATUS: Record<string, string | undefined> = { open: 'Market open', closed: 'Market closed', pre: 'Pre-market', after: 'After hours' }
-  const statusLabel = $derived(STATUS[str(data.status)] || '')
+  // The status key comes from the tool; only its label localizes.
+  const STATUS: Record<string, (() => string) | undefined> = {
+    open: m.a2ui_market_open, closed: m.a2ui_market_closed,
+    pre: m.a2ui_pre_market, after: m.a2ui_after_hours,
+  }
+  const statusLabel = $derived(STATUS[str(data.status)]?.() || '')
 
   const edition = $derived(
-    new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    new Date().toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
   const asOf = $derived.by(() => {
     if (!data.asOf) return ''
     const d = new Date(str(data.asOf))
-    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
+    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(getLocale(), { hour: 'numeric', minute: '2-digit' })
   })
 
   const up = (q: MarketQuote) => Number(q?.changePercent ?? q?.change ?? 0) >= 0
@@ -63,7 +69,7 @@
 <div class="bs bs--markets">
   <header class="bs-masthead">
     <div class="mast-l">
-      <div class="bs-kicker">A2UI · Markets</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_markets()}</div>
       <h1>{title}</h1>
     </div>
     <div class="bs-edition">
@@ -76,7 +82,7 @@
 
   {#if quotes.length}
     <div class="bs-ticker">
-      <div class="bs-tag"><span class="bs-dot"></span> The Tape</div>
+      <div class="bs-tag"><span class="bs-dot"></span> {m.a2ui_the_tape()}</div>
       <div class="bs-viewport">
         <div class="bs-track">
           {#each [...quotes, ...quotes] as q}
@@ -91,7 +97,7 @@
     {#if lead}
       <article class="lead" class:nochart={!leadSpark && !leadRange}>
         <div class="lead-text">
-          <span class="cat">{rest.length ? 'Lead' : 'Quote'}</span>
+          <span class="cat">{rest.length ? m.a2ui_lead() : m.a2ui_quote()}</span>
           <div class="sym">{lead.symbol}</div>
           <div class="name">{lead.name}{#if lead.exchange} · {lead.exchange}{/if}</div>
           <div class="price-row">
@@ -102,7 +108,7 @@
             </span>
             {#if lead.currency}<span class="cur">{lead.currency}</span>{/if}
           </div>
-          {#if lead.note}<div class="note"><b>What's moving it</b>{lead.note}</div>{/if}
+          {#if lead.note}<div class="note"><b>{m.a2ui_whats_moving()}</b>{lead.note}</div>{/if}
         </div>
 
         {#if leadSpark || leadRange}
@@ -120,7 +126,7 @@
                   <div class="range-fill" style="width:{leadRange.pos}%"></div>
                   <div class="range-mark {up(lead) ? 'up' : 'down'}" style="left:{leadRange.pos}%"></div>
                 </div>
-                <div class="range-ends"><span>L {fmt(lead.dayLow)}</span><span>Day range</span><span>H {fmt(lead.dayHigh)}</span></div>
+                <div class="range-ends"><span>L {fmt(lead.dayLow)}</span><span>{m.a2ui_day_range()}</span><span>H {fmt(lead.dayHigh)}</span></div>
               </div>
             {/if}
           </div>
@@ -129,7 +135,7 @@
     {/if}
 
     {#if rest.length}
-      <div class="more-label">Movers</div>
+      <div class="more-label">{m.a2ui_movers()}</div>
       <div class="list">
         {#each rest as q, i}
           {@const s = sparkLine(q.spark, 78, 30)}
@@ -150,9 +156,9 @@
     {/if}
 
     <div class="bs-foot">
-      <div class="bs-src">Source: <span>{data.source || 'market data'}</span></div>
+      <div class="bs-src">{m.a2ui_source()} <span>{data.source || m.a2ui_market_data()}</span></div>
       <div class="bs-upd">
-        <span class="bs-dot"></span>{#if statusLabel}{statusLabel}{/if}{#if statusLabel && asOf} · {/if}{#if asOf}as of {asOf}{/if}{#if !statusLabel && !asOf}updated just now{/if}
+        <span class="bs-dot"></span>{#if statusLabel}{statusLabel}{/if}{#if statusLabel && asOf} · {/if}{#if asOf}{m.a2ui_as_of({ time: asOf })}{/if}{#if !statusLabel && !asOf}{m.a2ui_updated_just_now_lower()}{/if}
       </div>
     </div>
   </div>

@@ -4,7 +4,7 @@
 
 import { contextLabel, knownModel, knownModelsFor, priceLabel } from './knownModels.ts'
 import type { KnownModel } from './knownModels.ts'
-import { TYPE_LABEL } from './providerLabels.ts'
+import { typeLabel } from './providerLabels.ts'
 
 // A name on offer: the table's row where the table knows it, else just the name a
 // live catalog returned.
@@ -211,7 +211,7 @@ export function probeStatusReason(status: number): string {
 // What the quiet hint line says when no catalog could be read — never the red error
 // line, which is Test's.
 export function catalogNote(reason: string | undefined, type: string): string {
-  const provider = TYPE_LABEL[type] || 'the provider'
+  const provider = typeLabel(type)
   if (reason === REASON.UNAUTHORIZED)
     return `${provider} rejected this credential, so its model list couldn't be read. Known names are offered below.`
   if (reason === REASON.UNREACHABLE)

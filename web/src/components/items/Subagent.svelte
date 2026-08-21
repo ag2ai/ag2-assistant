@@ -2,12 +2,22 @@
   import Item from '../Item.svelte'
   import { fmtStamp } from '../../lib/time.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { item: Extract<ThreadItem, { kind: 'subagent' }> }
   let { item }: Props = $props()
-  const label = $derived(`${(item.agent || 'subagent').replace(/[-_]/g, ' ')} (subagent)`)
+  const label = $derived(`${(item.agent || 'subagent').replace(/[-_]/g, ' ')} ${m.thread_subagent_suffix()}`)
   const kids = $derived(item.items || [])
   const running = $derived((item.status || 'running') === 'running')
+  // The status value drives the class name; only its label localizes.
+  const STATUS_LABEL: Record<string, () => string> = {
+    running: m.status_running, completed: m.status_completed,
+    failed: m.status_failed, cancelled: m.status_cancelled,
+  }
+  const statusLabel = $derived.by(() => {
+    const s = item.status || 'running'
+    return (STATUS_LABEL[s] ?? (() => s))()
+  })
 
   // Auto-open while the subagent works, auto-collapse to a summary when it's
   // done — unless the user has manually toggled, in which case respect that.
@@ -26,7 +36,7 @@
     <span class="sname">{label}</span>
     {#if kids.length}<span class="scount">{kids.length}</span>{/if}
     {#if item.at}<span class="itemtime">{fmtStamp(item.at)}</span>{/if}
-    <span class="sstatus">{item.status || 'running'}</span>
+    <span class="sstatus">{statusLabel}</span>
     <span class="scaret">{open ? '▾' : '▸'}</span>
   </div>
   {#if item.objective}<div class="sobj">{item.objective}</div>{/if}

@@ -8,25 +8,32 @@
   // shell with the other surfaces.
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, CodingFile, CodingPlanStep } from '../../lib/a2ui.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
 
-  const agent = $derived(str(data.agent) || 'Coding agent')
+  const agent = $derived(str(data.agent) || m.a2ui_coding_agent())
   const directory = $derived(str(data.directory))
-  const task = $derived(str(data.task) || 'Coding session')
+  const task = $derived(str(data.task) || m.a2ui_coding_session())
   const status = $derived((str(data.status) || 'running').toLowerCase())
   const summary = $derived(str(data.summary))
   const error = $derived(str(data.error))
   const plan = $derived(rows<CodingPlanStep>(data.plan))
   const files = $derived(rows<CodingFile>(data.files))
 
-  const STATUS: Record<string, { label: string; cls: string } | undefined> = {
-    running: { label: 'Working', cls: 'run' },
-    done: { label: 'Done', cls: 'ok' },
-    failed: { label: 'Failed', cls: 'bad' },
+  // The status value drives the chip class; only its label localizes.
+  const STATUS: Record<string, { label: () => string; cls: string } | undefined> = {
+    running: { label: m.a2ui_working, cls: 'run' },
+    done: { label: m.a2ui_done, cls: 'ok' },
+    failed: { label: m.a2ui_failed_cap, cls: 'bad' },
   }
-  const chip = $derived(STATUS[status] || { label: status, cls: 'idle' })
+  const chip = $derived(STATUS[status] || { label: () => status, cls: 'idle' })
+  // Likewise for the per-file change badge (added/modified/deleted).
+  const FILE_STATUS: Record<string, (() => string) | undefined> = {
+    added: m.a2ui_file_added, modified: m.a2ui_file_modified, deleted: m.a2ui_file_deleted,
+  }
+  const fileStatus = (v: string) => FILE_STATUS[v]?.() ?? v
 
   // Headline = first sentence/line of the task, hard-capped; the h1 is a
   // display face — a multi-paragraph prompt does not belong in it.
@@ -63,12 +70,12 @@
 <div class="bs">
   <header class="bs-masthead">
     <div class="head">
-      <div class="bs-kicker">A2UI · Coding</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_coding()}</div>
       <h1 class="title">{title}</h1>
     </div>
     <div class="bs-edition">
       <div><b>{agent}</b></div>
-      <div class="chip {chip.cls}">{chip.label}</div>
+      <div class="chip {chip.cls}">{chip.label()}</div>
     </div>
   </header>
 
@@ -76,7 +83,7 @@
     <div class="live">
       <span class="caret"></span>
       <span class="who">{agent}</span>
-      <span class="doing">is writing code{directory ? ' in' : '…'}</span>
+      <span class="doing">{directory ? m.a2ui_writing_code_in() : m.a2ui_writing_code()}</span>
       {#if directory}<code class="where">{directory}</code>{/if}
     </div>
     <div class="beam"></div>
@@ -87,7 +94,7 @@
 
     {#if hasBrief}
       <details class="brief">
-        <summary>Task brief</summary>
+        <summary>{m.a2ui_task_brief()}</summary>
         <pre>{task}</pre>
       </details>
     {/if}
@@ -103,7 +110,7 @@
     {/if}
 
     {#if error}
-      <div class="err"><b>Run failed</b>{error}</div>
+      <div class="err"><b>{m.a2ui_run_failed()}</b>{error}</div>
     {/if}
 
     {#if files.length}
@@ -111,34 +118,34 @@
            The stat line doubles as the toggle. Items are keyed by id in the
            thread, so the open state survives streaming updates. -->
       <details class="fwrap" open>
-        <summary class="fstat">{files.length} file{files.length === 1 ? '' : 's'} changed
+        <summary class="fstat">{m.a2ui_files_changed({ count: files.length })}
           · <span class="add">+{totals.add}</span> <span class="del">−{totals.rem}</span></summary>
         <div class="files">
           {#each files as f}
             <section class="file">
               <div class="fhead">
-                <span class="fst {f.status}">{f.status}</span>
+                <span class="fst {f.status}">{fileStatus(f.status)}</span>
                 <code class="fpath">{f.path}</code>
                 <span class="fnum"><span class="add">+{f.added || 0}</span> <span class="del">−{f.removed || 0}</span></span>
               </div>
               {#if f.hunks}
                 <pre class="diff">{#each lines(f.hunks) as ln}<span class="ln {ln.kind}">{ln.text}</span>{/each}</pre>
               {:else}
-                <div class="nopreview">no preview (binary or large file)</div>
+                <div class="nopreview">{m.a2ui_no_preview_binary()}</div>
               {/if}
             </section>
           {/each}
         </div>
       </details>
     {:else if status === 'done'}
-      <div class="empty">No file changes were made.</div>
+      <div class="empty">{m.a2ui_no_changes()}</div>
     {:else if status === 'running' && !plan.length}
-      <div class="warming">Warming up the workshop — the plan and edits will stream in here.</div>
+      <div class="warming">{m.a2ui_warming()}</div>
     {/if}
 
     {#if summary && status === 'done'}
       <div class="bs-foot">
-        <div class="bs-src">From the coding agent — <span>working-tree diff, not a plan</span></div>
+        <div class="bs-src">{m.a2ui_from_coding_agent()} — <span>{m.a2ui_diff_not_plan()}</span></div>
         <div class="bs-upd"><span class="bs-dot"></span> {agent}</div>
       </div>
     {/if}

@@ -14,6 +14,7 @@
   import { errText } from '../lib/errors.ts'
   import type { HealthState, ProfileHealth } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
 
   // One open shape rather than a union of the three probe states: the markup reads
   // mcp[name], and element access with a computed key never narrows a union.
@@ -44,10 +45,10 @@
     return s
   })
 
-  const TIP: Record<string, string | undefined> = {
-    ok: 'All systems healthy',
-    warn: 'Needs attention — click for details',
-    down: 'Problem — click for details',
+  const TIP: Record<string, (() => string) | undefined> = {
+    ok: m.sh_tip_ok,
+    warn: m.sh_tip_warn,
+    down: m.sh_tip_down,
   }
 
   async function refresh() {
@@ -108,8 +109,8 @@
   <button
     class="shdot state-{effective}"
     class:open
-    title={TIP[effective] || 'System health'}
-    aria-label="System health"
+    title={(TIP[effective] || m.sh_title)()}
+    aria-label={m.sh_title()}
     aria-expanded={open}
     onclick={toggle}
   >
@@ -118,9 +119,9 @@
 
   {#if open}
     <div class="shpanel" role="menu">
-      <div class="shhead">System health</div>
+      <div class="shhead">{m.sh_title()}</div>
       {#if !data}
-        <div class="shempty">Checking…</div>
+        <div class="shempty">{m.checking()}</div>
       {:else}
         {#each data.checks as c (c.id)}
           <div class="shrow">
@@ -138,14 +139,15 @@
                   <span class="rowdot state-{h?.ok ? 'ok' : h?.ok === false ? 'down' : 'off'}"></span>
                   <span class="srvname" title={s.name}>{s.name}</span>
                   <span class="srvstat" class:bad={h && h.ok === false}>
-                    {#if s.enabled === false}disabled
+                    {#if s.enabled === false}{m.mcp_disabled()}
                     {:else if !h}—
-                    {:else if h.checking}checking…
-                    {:else if h.ok}healthy · {(h.tools || []).length} tools
+                    {:else if h.checking}{m.mcp_checking()}
+                    {:else if h.ok}{m.mcp_healthy_tools({ count: (h.tools || []).length })}
+                    <!-- h.error is the probe's own words — passed through (ADR 0031). -->
                     {:else}{h.error}{/if}
                   </span>
                   {#if s.enabled !== false && !(h && h.checking)}
-                    <button class="recheck" onclick={() => probe(s.name)} title="Recheck this server">
+                    <button class="recheck" onclick={() => probe(s.name)} title={m.sh_recheck()}>
                       <Icon name="rotate-cw" size={12} />
                     </button>
                   {/if}

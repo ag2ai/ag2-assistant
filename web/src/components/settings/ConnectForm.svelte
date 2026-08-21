@@ -51,7 +51,7 @@
   <IntegrationMark platform={entry.id} name={entry.label} />
   <div class="cnheadmeta">
     <div class="cnheadname">{m.integrations_connect_name({ name: entry.label })}</div>
-    <span class="cnhint">{entry.setup}</span>
+    <span class="cnhint">{entry.setup()}</span>
   </div>
 </div>
 
@@ -73,10 +73,10 @@
 
   {#each entry.fields as f (f.env)}
     <div class="keyrow">
-      <span class="kp">{f.label}</span>
+      <span class="kp">{f.label()}</span>
       <input
         type="password" placeholder={f.placeholder} disabled={busy}
-        aria-label={f.label} bind:value={tokens[f.env]}
+        aria-label={f.label()} bind:value={tokens[f.env]}
         onkeydown={(e) => { if (e.key === 'Enter') connect() }}
       />
     </div>

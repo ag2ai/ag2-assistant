@@ -8,6 +8,8 @@
   import { describe, SUBSYSTEMS } from '../lib/ag2map.ts'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
+  import { getLocale } from '../paraglide/runtime.js'
 
   let open = $state(new Set<number>())
   const toggle = (id: number) => {
@@ -15,24 +17,24 @@
     n.has(id) ? n.delete(id) : n.add(id)
     open = n
   }
-  const fmt = (t: number) => new Date(t).toLocaleTimeString([], { hour12: false })
+  const fmt = (t: number) => new Date(t).toLocaleTimeString(getLocale(), { hour12: false })
   const rows = $derived([...$inspectorEvents].reverse()) // newest first
 </script>
 
 <aside class="inspector ag2-slide-left">
   <RailResizer />
   <div class="insp-head">
-    <span class="insp-title">AG2 events</span>
-    <button class="linklike" onclick={() => openOverlay('poweredby')}>Powered by AG2</button>
-    <button class="insp-x" title="Hide AG2 view" aria-label="Hide AG2 view" onclick={closeAside}><Icon name="x" size={16} /></button>
+    <span class="insp-title">{m.insp_title()}</span>
+    <button class="linklike" onclick={() => openOverlay('poweredby')}>{m.pb_title()}</button>
+    <button class="insp-x" title={m.insp_hide()} aria-label={m.insp_hide()} onclick={closeAside}><Icon name="x" size={16} /></button>
   </div>
   <div class="insp-sub">
-    Live events on this chat's AG2 <code>Stream</code> — the substrate this UI projects.
+    {m.insp_sub()} <code>Stream</code> {m.insp_sub_tail()}
   </div>
 
   <div class="insp-list">
     {#if !rows.length}
-      <div class="insp-empty">No events yet — say something to the assistant.</div>
+      <div class="insp-empty">{m.insp_empty()}</div>
     {/if}
     {#each rows as e (e._id)}
       {@const d = describe(e.type)}
@@ -42,7 +44,7 @@
         <span class="insp-dot" style="background:{c}"></span>
         <span class="insp-name">{d.label}</span>
         <span class="insp-sub2" style="color:{c}">{d.sub}</span>
-        {#if d.layer === 'app'}<span class="insp-layer" title="App event riding the AG2 stream">app</span>{/if}
+        {#if d.layer === 'app'}<span class="insp-layer" title={m.insp_app_layer()}>app</span>{/if}
         <span class="insp-time">{fmt(e._t)}</span>
       </div>
       {#if open.has(e._id)}

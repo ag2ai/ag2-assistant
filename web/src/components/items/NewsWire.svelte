@@ -5,17 +5,19 @@
   import { safeUrl } from '../../lib/url.ts'
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, NewsStory } from '../../lib/a2ui.ts'
+  import { getLocale } from '../../paraglide/runtime.js'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
 
-  const topic = $derived(str(data.topic) || 'Latest news')
+  const topic = $derived(str(data.topic) || m.a2ui_latest_news())
   const stories = $derived(rows<NewsStory>(data.stories))
   const lead = $derived(stories[0] || null)
   const rest = $derived(stories.slice(1))
   const sources = $derived([...new Set(stories.map((s) => s.source).filter(Boolean))])
   const edition = $derived(
-    new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    new Date().toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
 
   // back-compat: old surfaces stored "Source · 2h ago" in `meta`
@@ -37,18 +39,18 @@
 <div class="bs">
   <header class="bs-masthead">
     <div class="mast-l">
-      <div class="bs-kicker">A2UI · News Digest</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_news_digest()}</div>
       <h1>{topic}</h1>
     </div>
     <div class="bs-edition">
       <div>{edition}</div>
-      <div><b>{stories.length} {stories.length === 1 ? 'story' : 'stories'}</b></div>
+      <div><b>{m.a2ui_stories_count({ count: stories.length })}</b></div>
     </div>
   </header>
 
   {#if stories.length}
     <div class="bs-ticker">
-      <div class="bs-tag"><span class="bs-dot"></span> Live Wire</div>
+      <div class="bs-tag"><span class="bs-dot"></span> {m.a2ui_live_wire()}</div>
       <div class="bs-viewport">
         <div class="bs-track">
           {#each [...stories, ...stories] as s}
@@ -68,7 +70,7 @@
             {#if safeUrl(lead.url)}<a href={safeUrl(lead.url)} target="_blank" rel="noopener noreferrer">{lead.title}</a>{:else}{lead.title}{/if}
           </h2>
           {#if lead.summary}<p class="deck">{lead.summary}</p>{/if}
-          {#if lead.why}<div class="why"><b>Why it matters</b>{lead.why}</div>{/if}
+          {#if lead.why}<div class="why"><b>{m.a2ui_why_it_matters()}</b>{lead.why}</div>{/if}
           <div class="byline"><b>{srcOf(lead)}</b>{#if timeOf(lead)} · {timeOf(lead)}{/if}</div>
         </div>
         {#if lead.image}
@@ -81,7 +83,7 @@
     {/if}
 
     {#if rest.length}
-      <div class="more-label">More on this</div>
+      <div class="more-label">{m.a2ui_more_on_this()}</div>
       <div class="list">
         {#snippet row(s: NewsStory, i: number)}
           <div class="num">{String(i + 2).padStart(2, '0')}</div>
@@ -122,8 +124,8 @@
 
     {#if sources.length}
       <div class="bs-foot">
-        <div class="bs-src">Sources: {#each sources as s}<span>{s}</span> {/each}</div>
-        <div class="bs-upd"><span class="bs-dot"></span> Updated just now</div>
+        <div class="bs-src">{m.a2ui_sources()} {#each sources as s}<span>{s}</span> {/each}</div>
+        <div class="bs-upd"><span class="bs-dot"></span> {m.a2ui_updated_just_now()}</div>
       </div>
     {/if}
   </div>

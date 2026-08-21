@@ -19,6 +19,7 @@
   import Icon from './Icon.svelte'
   import AccessSwitch from './AccessSwitch.svelte'
   import WriteSwitch from './WriteSwitch.svelte'
+  import { m } from '../paraglide/messages.js'
 
   type Props = { chatId: string; taskId?: string; onClose: () => void }
   let { chatId, taskId = '', onClose }: Props = $props()
@@ -94,12 +95,12 @@
      a11y tree rather than becoming a second focusable control. -->
 <div class="modal-backdrop over" role="presentation" onclick={onClose}></div>
 <div class="modal over">
-  <button class="modal-x" aria-label="Close" onclick={onClose}>×</button>
-  <h2>Folder access — this chat</h2>
-  <p class="muted hint">Everything here affects this chat only. Profile folders are shared across the profile — changing one here overrides it for this conversation, leaving other chats untouched.{#if taskId}{' '}Task folders are shared across this task's runs — changing one here overrides it for this thread only.{/if}</p>
+  <button class="modal-x" aria-label={m.action_close()} onclick={onClose}>×</button>
+  <h2>{m.cf_title()}</h2>
+  <p class="muted hint">{m.cf_hint()}{#if taskId}{' '}{m.cf_hint_task()}{/if}</p>
   {#if err}<p class="muted errline">{err}</p>{/if}
   {#if !taskFolders.length && !profileFolders.length && !chatFolders.length}
-    <p class="muted">No folders in this chat yet. Use the folder button in the composer to add one.</p>
+    <p class="muted">{m.cf_empty()}</p>
   {/if}
 
   {#if chatFolders.length}
@@ -109,19 +110,19 @@
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
         <div class="cfctl">
-          <WriteSwitch mode={cg?.mode} disabled={busy} onchange={(m) => setChatMode(f, m)} />
+          <WriteSwitch mode={cg?.mode} disabled={busy} onchange={(next) => setChatMode(f, next)} />
           <span class="cfmenuwrap">
-            <button class="cfkebab" aria-label="More actions" aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
+            <button class="cfkebab" aria-label={m.task_more_actions()} aria-expanded={menuFor === f.id} disabled={busy} onclick={() => (menuFor = menuFor === f.id ? '' : f.id)}>⋯</button>
             {#if menuFor === f.id}
               <!-- Scrim: closing on an outside click duplicates the kebab toggle,
                    so it stays out of the a11y tree. -->
               <div class="cfscrim" role="presentation" onclick={() => (menuFor = '')}></div>
               <div class="cfmenu">
                 {#if taskId}
-                  <button onclick={() => { menuFor = ''; moveToTask(f) }}><Icon name="list" size={14} /> Move to task</button>
+                  <button onclick={() => { menuFor = ''; moveToTask(f) }}><Icon name="list" size={14} /> {m.cf_move_to_task()}</button>
                 {/if}
-                <button onclick={() => { menuFor = ''; moveToProfile(f) }}><Icon name="users" size={14} /> Move to profile</button>
-                <button class="danger" onclick={() => { menuFor = ''; setChatMode(f, null) }}><Icon name="trash" size={14} /> Delete</button>
+                <button onclick={() => { menuFor = ''; moveToProfile(f) }}><Icon name="users" size={14} /> {m.task_move_to_profile()}</button>
+                <button class="danger" onclick={() => { menuFor = ''; setChatMode(f, null) }}><Icon name="trash" size={14} /> {m.action_delete()}</button>
               </div>
             {/if}
           </span>
@@ -131,23 +132,23 @@
   {/if}
 
   {#if taskFolders.length}
-    <div class="cfsec">Task folders</div>
+    <div class="cfsec">{m.task_folders_section()}</div>
     {#each taskFolders as f (f.id)}
       <div class="cfrow">
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
-        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(m) => setChatOverride(f, m)} />
+        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(next) => setChatOverride(f, next)} />
       </div>
     {/each}
   {/if}
 
   {#if profileFolders.length}
-    <div class="cfsec">Profile folders</div>
+    <div class="cfsec">{m.task_profile_folders_section()}</div>
     {#each profileFolders as f (f.id)}
       <div class="cfrow">
         <span class="cfico"><Icon name="folder" size={14} /></span>
         <span class="cfname" title={f.path}>{f.name}</span>
-        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(m) => setChatOverride(f, m)} />
+        <AccessSwitch mode={effMode(f)} disabled={busy} onchange={(next) => setChatOverride(f, next)} />
       </div>
     {/each}
   {/if}

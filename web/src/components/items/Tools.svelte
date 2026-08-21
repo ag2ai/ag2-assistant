@@ -3,6 +3,7 @@
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
   import type { ThreadItem, ToolCard } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   // Only file cards carry a path — the handlers below run behind that branch.
   type FileCard = Extract<ToolCard, { kind: 'file' }>
@@ -72,26 +73,26 @@
           <span class="tcicon"><Icon name="file-text" size={15} /></span>
           {#if gone.has(c.id)}
             <span class="tcname">{c.name}</span>
-            <span class="tcgone">deleted</span>
+            <span class="tcgone">{m.thread_tool_deleted()}</span>
           {:else}
             <button class="tclink" onclick={() => openFile(c)} title={c.path}>{c.name}</button>
-            <button class="tcdl" onclick={() => downloadFile(c)} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></button>
+            <button class="tcdl" onclick={() => downloadFile(c)} title={m.viewer_download()} aria-label={m.viewer_download()}><Icon name="download" size={15} /></button>
           {/if}
         </div>
       {:else if c.kind === 'search'}
         <div class="toolcard">
           <span class="tcicon"><Icon name="search" size={15} /></span>
-          <span class="tcquery" title="Search query">{c.query}</span>
+          <span class="tcquery" title={m.thread_search_query()}>{c.query}</span>
         </div>
       {:else if c.kind === 'image'}
-        <div class="toolcard" title={c.edit ? 'Editing image' : 'Generating image'}>
+        <div class="toolcard" title={c.edit ? m.thread_editing_image() : m.thread_generating_image()}>
           <span class="tcicon"><Icon name="image" size={15} /></span>
-          <span class="tcquery">{c.edit ? 'Edit' : 'Image'} · {c.prompt}</span>
+          <span class="tcquery">{c.edit ? m.thread_card_edit() : m.thread_card_image()} · {c.prompt}</span>
         </div>
       {:else if c.kind === 'skill'}
-        <div class="toolcard" title={c.ran ? `Ran script ${c.script} from skill ${c.name}` : `Used skill ${c.name}`}>
+        <div class="toolcard" title={c.ran ? m.thread_skill_ran_title({ script: c.script ?? '', name: c.name }) : m.thread_skill_used_title({ name: c.name })}>
           <span class="tcicon"><Icon name="code" size={15} /></span>
-          <span class="tcskill">Skill · {c.name}{c.ran ? ` · ▶ ${c.script}` : ''}</span>
+          <span class="tcskill">{m.thread_card_skill()} · {c.name}{c.ran ? ` · ▶ ${c.script}` : ''}</span>
         </div>
       {/if}
     {/each}

@@ -13,6 +13,7 @@
   import { api } from '../transport/api/index.ts'
   import { errText } from '../lib/errors.ts'
   import type { CodexStatus } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
 
   let st = $state<CodexStatus | null>(null) // /api/codex/status
   let connecting = $state(false)
@@ -108,54 +109,45 @@
      the a11y tree rather than becoming a second focusable control. -->
 <div class="modal-backdrop over" role="presentation" onclick={close}></div>
 <div class="modal over codex">
-  <h2>Sign in with ChatGPT</h2>
+  <h2>{m.cdx_title()}</h2>
 
   <p class="muted intro">
-    Run the assistant on your <b>ChatGPT Plus/Pro (Codex) subscription</b> instead of a
-    pay-per-token OpenAI API key — the same mechanism the Codex CLI uses.
-    <b class="warn">Unofficial:</b> OpenAI does not officially support this and your account
-    could be rate-limited. Requests route through the ChatGPT backend with your sign-in token.
+    {m.cdx_intro_pre()} <b>{m.cdx_intro_plan()}</b> {m.cdx_intro_mid()}
+    <b class="warn">{m.cdx_unofficial()}</b> {m.cdx_intro_tail()}
   </p>
 
   {#if err}<p class="err">{err}</p>{/if}
 
   {#if !st}
-    <p class="muted">Loading…</p>
+    <p class="muted">{m.loading()}</p>
   {:else if st.signed_in}
-    <p class="ok">Signed in ✓ <span class="muted">(account: {st.account_id || 'unknown'})</span></p>
-    <p class="muted note">
-      Close this to return to your model settings — pick the model there and save to start
-      using the subscription.
-    </p>
+    <p class="ok">{m.llm_signed_in()} ✓ <span class="muted">{m.cdx_account({ id: st.account_id || m.cdx_unknown() })}</span></p>
+    <p class="muted note">{m.cdx_done_note()}</p>
 
     <div class="foot">
-      <button class="linkbtn" disabled={busy} onclick={disconnect}>Sign out</button>
-      <button class="open primary" onclick={close}>Done</button>
+      <button class="linkbtn" disabled={busy} onclick={disconnect}>{m.cdx_sign_out()}</button>
+      <button class="open primary" onclick={close}>{m.action_done()}</button>
     </div>
   {:else}
-    <p>
-      {connecting
-        ? 'Waiting for ChatGPT — complete sign-in in the opened tab…'
-        : 'Sign in with your ChatGPT account.'}
-    </p>
+    <p>{connecting ? m.cdx_waiting() : m.cdx_prompt()}</p>
     <button class="open primary" onclick={connect}>
-      {connecting ? 'Reopen sign-in tab' : 'Sign in with ChatGPT'}
+      {connecting ? m.cdx_reopen() : m.cdx_title()}
     </button>
 
     {#if connecting}
       <p class="muted note">
-        Running in Docker or on a remote host, or the tab shows
-        <b>"localhost refused to connect"</b>? That's expected — the redirect points at
-        <code>localhost:1455</code>, which isn't published.
+        {m.cdx_docker_pre()}
+        <b>{m.cdx_localhost_refused()}</b>{m.cdx_docker_mid()}
+        <code>localhost:1455</code>{m.cdx_docker_post()}
         {#if !showManual}
-          <button class="linkbtn" onclick={revealManual}>Paste the code manually</button>
+          <button class="linkbtn" onclick={revealManual}>{m.cdx_paste_manually()}</button>
         {/if}
       </p>
 
       {#if showManual}
         <p class="muted note">
-          Copy the <b>whole address</b> from the browser's URL bar (even on the error page) —
-          or just the <code>code</code> value from it — and paste it here:
+          {m.cdx_paste_pre()} <b>{m.cdx_whole_address()}</b> {m.cdx_paste_mid()}
+          <code>code</code> {m.cdx_paste_post()}
         </p>
         <div class="pasterow">
           <input
@@ -163,18 +155,18 @@
             bind:this={codeInput}
             bind:value={manualCode}
             onkeydown={(e) => e.key === 'Enter' && submitCode()}
-            placeholder="http://localhost:1455/auth/callback?code=… (or just the code)"
+            placeholder={m.cdx_code_placeholder()}
             spellcheck="false"
           />
           <button class="open primary" disabled={busy || !manualCode.trim()} onclick={submitCode}>
-            {busy ? 'Submitting…' : 'Submit'}
+            {busy ? m.cdx_submitting() : m.action_submit()}
           </button>
         </div>
       {/if}
     {/if}
 
     <div class="foot end">
-      <button class="modal-close" onclick={close}>Cancel</button>
+      <button class="modal-close" onclick={close}>{m.action_cancel()}</button>
     </div>
   {/if}
 </div>

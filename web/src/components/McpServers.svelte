@@ -16,6 +16,7 @@
   import type { McpServerRequest } from '../transport/api/settings.ts'
   import type { McpServer } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
 
   // One open shape rather than a union of the three probe states: the markup reads
   // health[name], and element access with a computed key never narrows a union.
@@ -132,7 +133,7 @@
 {#if err}<p class="muted" style="color:var(--danger);font-size:13px">{err}</p>{/if}
 
 {#if !servers.length}
-  <p class="muted" style="font-size:13px">No MCP servers configured — add one below to give the assistant new tools.</p>
+  <p class="muted" style="font-size:13px">{m.mcp_empty()}</p>
 {/if}
 {#each servers as server (server.name)}
   {@const h = health[server.name]}
@@ -140,19 +141,20 @@
     <div class="mcpmeta">
       <strong>{server.name}</strong>
       <span>{cmdline(server)}</span>
-      {#if server.env_keys.length}<span>env: {server.env_keys.join(', ')}</span>{/if}
+      {#if server.env_keys.length}<span>{m.mcp_env_keys({ keys: server.env_keys.join(', ') })}</span>{/if}
       {#if h}
         {#if h.checking}
-          <span>checking…</span>
+          <span>{m.mcp_checking()}</span>
         {:else}
           <span class:mcpbad={!h.ok}>
-            {h.ok ? `healthy · ${(h.tools || []).length} tools` : h.error}
+            <!-- h.error is the probe's own words — passed through (ADR 0031). -->
+            {h.ok ? m.mcp_healthy_tools({ count: (h.tools || []).length }) : h.error}
           </span>
         {/if}
       {/if}
     </div>
-    <button class="open" disabled={busy} onclick={() => check(server.name)}>Check</button>
-    <button class="linkbtn danger" disabled={busy} onclick={() => remove(server.name)}>Delete</button>
+    <button class="open" disabled={busy} onclick={() => check(server.name)}>{m.mcp_check()}</button>
+    <button class="linkbtn danger" disabled={busy} onclick={() => remove(server.name)}>{m.action_delete()}</button>
   </div>
 {/each}
 
@@ -164,13 +166,15 @@
       class="mcpcatcard" class:added class:openinputs={openEntry === entry.id}
       disabled={busy || added}
       onclick={() => clickEntry(entry)}
-      title={added ? 'Already added' : `Runs: ${[entry.command, ...entry.args].join(' ')} — needs ${entry.requires}`}
+      title={added
+        ? m.mcp_already_added()
+        : m.mcp_runs_title({ cmd: [entry.command, ...entry.args].join(' '), requires: entry.requires })}
     >
       <span class="mcpcathead">
         {#if added}<Icon name="check" size={13} />{:else}<Icon name="plus" size={13} />{/if}
-        {entry.label}
+        {entry.label()}
       </span>
-      <span class="mcpcatblurb">{entry.blurb}</span>
+      <span class="mcpcatblurb">{entry.blurb()}</span>
     </button>
   {/each}
 </div>
@@ -178,7 +182,7 @@
   <div class="mcpinputs">
     {#each entry.inputs as input (input.key)}
       <div class="keyrow">
-        <span class="kp">{input.label}</span>
+        <span class="kp">{input.label()}</span>
         <input
           type={input.kind === 'env' ? 'password' : 'text'}
           placeholder={input.ph}
@@ -187,8 +191,8 @@
       </div>
     {/each}
     <div class="keyrow" style="justify-content:flex-end">
-      <button class="linkbtn" onclick={() => (openEntry = '')}>Cancel</button>
-      <button class="open" disabled={busy || !entryReady(entry)} onclick={() => addEntry(entry)}>Add {entry.label}</button>
+      <button class="linkbtn" onclick={() => (openEntry = '')}>{m.action_cancel()}</button>
+      <button class="open" disabled={busy || !entryReady(entry)} onclick={() => addEntry(entry)}>{m.mcp_add_named({ name: entry.label() })}</button>
     </div>
   </div>
 {/each}
@@ -197,7 +201,7 @@
 <textarea
   bind:this={pasteEl}
   class="mcppaste"
-  placeholder={'Or paste an MCP config — the {"mcpServers": …} JSON from a server\'s README, or a command line like: npx -y @modelcontextprotocol/server-github'}
+  placeholder={m.mcp_paste_placeholder()}
   value={paste}
   oninput={(e) => onPaste(e.currentTarget)}
 ></textarea>
@@ -208,7 +212,7 @@
   {#each drafts as d, i (i)}
     <div class="mcpdraft">
       <div class="keyrow">
-        <span class="kp">Name</span>
+        <span class="kp">{m.field_name()}</span>
         <input type="text" bind:value={d.name} />
         <span class="mcpcmd" title={cmdline(d)}>{cmdline(d)}</span>
       </div>
@@ -222,26 +226,26 @@
   {/each}
   <div class="keyrow" style="justify-content:flex-end">
     <button class="open" disabled={busy || drafts.some((d) => !d.name)} onclick={addDrafts}>
-      Add {drafts.length === 1 ? drafts[0].name : `${drafts.length} servers`}
+      {drafts.length === 1 ? m.mcp_add_named({ name: drafts[0].name }) : m.mcp_add_servers({ count: drafts.length })}
     </button>
   </div>
 {/if}
 
 <!-- 3. manual form -->
 {#if !showManual}
-  <button class="open" style="justify-self:start" onclick={() => (showManual = true)}>Add manually</button>
+  <button class="open" style="justify-self:start" onclick={() => (showManual = true)}>{m.mcp_add_manually()}</button>
 {:else}
   <div class="mcpform">
-    <input placeholder="name, e.g. github" bind:value={manual.name} />
-    <input placeholder="command, e.g. npx" bind:value={manual.command} />
-    <input placeholder="args, e.g. -y @modelcontextprotocol/server-github" bind:value={manual.args} />
-    <input placeholder="cwd (optional)" bind:value={manual.cwd} />
-    <input placeholder="allowed tools, comma-separated (optional)" bind:value={manual.allowed_tools} />
-    <input placeholder="blocked tools, comma-separated (optional)" bind:value={manual.blocked_tools} />
-    <textarea placeholder="env, one KEY=VALUE per line (optional)" bind:value={manual.env}></textarea>
+    <input placeholder={m.mcp_ph_name()} bind:value={manual.name} />
+    <input placeholder={m.mcp_ph_command()} bind:value={manual.command} />
+    <input placeholder={m.mcp_ph_args()} bind:value={manual.args} />
+    <input placeholder={m.mcp_ph_cwd()} bind:value={manual.cwd} />
+    <input placeholder={m.mcp_ph_allowed()} bind:value={manual.allowed_tools} />
+    <input placeholder={m.mcp_ph_blocked()} bind:value={manual.blocked_tools} />
+    <textarea placeholder={m.mcp_ph_env()} bind:value={manual.env}></textarea>
     <div class="keyrow" style="grid-column:1/-1">
-      <button class="open" disabled={busy || !manual.name || !manual.command} onclick={addManual}>Add MCP server</button>
-      <button class="linkbtn" onclick={() => (showManual = false)}>Cancel</button>
+      <button class="open" disabled={busy || !manual.name || !manual.command} onclick={addManual}>{m.mcp_add_server()}</button>
+      <button class="linkbtn" onclick={() => (showManual = false)}>{m.action_cancel()}</button>
     </div>
   </div>
 {/if}

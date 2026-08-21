@@ -6,6 +6,7 @@
   import { feedback, clearFeedback } from '../../controller.ts'
   import Icon from '../Icon.svelte'
   import type { Feedback as FeedbackMark } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Sentiment = 'up' | 'down'
   // `targetId` is whatever keys the rated item — a created_at stamp for a message,
@@ -73,31 +74,31 @@
 <div class="fb">
   <div class="fb-row">
     <button class="fb-thumb" class:on={copied}
-            title={copied ? 'Copied' : 'Copy'} aria-label="Copy message" onclick={copy}>
+            title={copied ? m.action_copied() : m.action_copy()} aria-label={m.fb_copy_message()} onclick={copy}>
       <Icon name={copied ? 'check' : 'copy'} size={14} />
     </button>
     <button class="fb-thumb" class:on={fb?.sentiment === 'up'} class:active={pending === 'up'}
-            title={fb?.sentiment === 'up' ? `You liked this: ${fb.reason} — click to remove` : 'Good — tell me why'}
-            aria-label="Thumbs up" onclick={() => thumb('up')}>
+            title={fb?.sentiment === 'up' ? m.fb_liked_title({ reason: fb.reason ?? '' }) : m.fb_good()}
+            aria-label={m.fb_thumbs_up()} onclick={() => thumb('up')}>
       <Icon name="thumbs-up" size={14} />
     </button>
     <button class="fb-thumb" class:on={fb?.sentiment === 'down'} class:active={pending === 'down'}
-            title={fb?.sentiment === 'down' ? `You disliked this: ${fb.reason} — click to remove` : "Not right — tell me why"}
-            aria-label="Thumbs down" onclick={() => thumb('down')}>
+            title={fb?.sentiment === 'down' ? m.fb_disliked_title({ reason: fb.reason ?? '' }) : m.fb_bad()}
+            aria-label={m.fb_thumbs_down()} onclick={() => thumb('down')}>
       <Icon name="thumbs-down" size={14} />
     </button>
     {#if fb && !pending}
-      <span class="fb-recorded" title={fb.reason}>{fb.sentiment === 'up' ? 'Liked' : 'Disliked'} — {fb.reason}</span>
+      <span class="fb-recorded" title={fb.reason}>{fb.sentiment === 'up' ? m.fb_liked() : m.fb_disliked()} — {fb.reason}</span>
     {:else if noted}
-      <span class="fb-recorded">Rating removed — what I learned stays in Memory</span>
+      <span class="fb-recorded">{m.fb_rating_removed()}</span>
     {/if}
   </div>
   {#if pending}
     <div class="fb-reason">
       <input bind:this={inputEl} bind:value={reason} onkeydown={key}
-             placeholder={pending === 'up' ? 'What did you like? (required)' : "What didn't work? (required)"} />
-      <button class="fb-save" disabled={!reason.trim()} onclick={submit}>Save</button>
-      <button class="fb-x" onclick={cancel} aria-label="Cancel"><Icon name="x" size={13} /></button>
+             placeholder={pending === 'up' ? m.fb_reason_up() : m.fb_reason_down()} />
+      <button class="fb-save" disabled={!reason.trim()} onclick={submit}>{m.action_save()}</button>
+      <button class="fb-x" onclick={cancel} aria-label={m.action_cancel()}><Icon name="x" size={13} /></button>
     </div>
   {/if}
 </div>

@@ -7,11 +7,13 @@
   // a live feed.
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, DecisionCriterion, DecisionOption } from '../../lib/a2ui.ts'
+  import { getLocale } from '../../paraglide/runtime.js'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
 
-  const topic = $derived(str(data.topic) || 'Decision')
+  const topic = $derived(str(data.topic) || m.a2ui_decision())
   const options = $derived(rows<DecisionOption>(data.options))
   const criteria = $derived(rows<DecisionCriterion>(data.criteria))
   const verdict = $derived(str(data.verdict))
@@ -19,19 +21,19 @@
   const wins = $derived(options.map((o) => criteria.filter((c) => c.best === o.name).length))
 
   const edition = $derived(
-    new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    new Date().toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
 </script>
 
 <div class="bs">
   <header class="bs-masthead">
     <div class="mast-l">
-      <div class="bs-kicker">A2UI · Decision</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_decision()}</div>
       <h1>{topic}</h1>
     </div>
     <div class="bs-edition">
       <div>{edition}</div>
-      <div><b>{options.length} {options.length === 1 ? 'option' : 'options'}</b></div>
+      <div><b>{m.a2ui_options_count({ count: options.length })}</b></div>
     </div>
   </header>
 
@@ -41,7 +43,7 @@
       <div class="cell corner"></div>
       {#each options as o, i}
         <div class="cell head" class:rec={i === recIdx}>
-          {#if i === recIdx}<span class="pick">The pick</span>{/if}
+          {#if i === recIdx}<span class="pick">{m.a2ui_the_pick()}</span>{/if}
           <div class="oname">{o.name}</div>
           {#if o.tagline}<div class="otag">{o.tagline}</div>{/if}
           {#if o.price}<div class="oprice">{o.price}</div>{/if}
@@ -53,13 +55,13 @@
         {#each options as o, i}
           <div class="cell val" class:rec={i === recIdx} class:best={c.best === o.name}>
             {(c.values || [])[i] ?? '—'}
-            {#if c.best === o.name}<span class="star" title="Wins this criterion">●</span>{/if}
+            {#if c.best === o.name}<span class="star" title={m.a2ui_wins_criterion()}>●</span>{/if}
           </div>
         {/each}
       {/each}
 
       {#if criteria.some((c) => c.best)}
-        <div class="cell crit tally">Criteria won</div>
+        <div class="cell crit tally">{m.a2ui_criteria_won()}</div>
         {#each wins as won, i}
           <div class="cell val tally" class:rec={i === recIdx}>{won} / {criteria.length}</div>
         {/each}
@@ -67,12 +69,12 @@
     </div>
 
     {#if verdict}
-      <div class="verdict"><b>The verdict</b>{verdict}</div>
+      <div class="verdict"><b>{m.a2ui_the_verdict()}</b>{verdict}</div>
     {/if}
 
     <div class="bs-foot">
-      <div class="bs-src">Assistant analysis — <span>verify before you buy</span></div>
-      <div class="bs-upd">{criteria.length} criteria compared</div>
+      <div class="bs-src">{m.a2ui_assistant_analysis()} — <span>{m.a2ui_verify_before_buy()}</span></div>
+      <div class="bs-upd">{m.a2ui_criteria_compared({ count: criteria.length })}</div>
     </div>
   </div>
 </div>

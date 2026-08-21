@@ -3,7 +3,7 @@
   // toggling a pill persists immediately for the active profile via setFocuses.
   import { getSettings } from './context.svelte.ts'
   import { api } from '../../transport/api/index.ts'
-  import { FOCUS } from '../../lib/focuses.ts'
+  import { FOCUS, focusLabel } from '../../lib/focuses.ts'
   import { m } from '../../paraglide/messages.js'
   import Icon from '../Icon.svelte'
 
@@ -19,7 +19,7 @@
 <div class="focuspills">
   {#each FOCUS as f}
     <button class="focuspill" class:on={(ctx.s?.focuses || []).includes(f.id)} disabled={ctx.busy} onclick={() => toggleFocus(f.id)}>
-      <Icon name={f.icon} size={13} /> {f.label}
+      <Icon name={f.icon} size={13} /> {focusLabel(f.id)}
     </button>
   {/each}
 </div>

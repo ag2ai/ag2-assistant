@@ -15,6 +15,7 @@
   import { errText } from '../lib/errors.ts'
   import type { PermissionMutated, PermissionSnapshot } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
 
   // A command grant, split the way the backend's parse_command_rule splits it.
   type Rule = { tool: string; prefix: string | null }
@@ -33,8 +34,8 @@
   function splitRule(raw: string): Rule | null {
     const v = raw.trim()
     if (!v) return null
-    const m = v.match(RULE_RE)
-    if (m) return { tool: m[1], prefix: m[2] }
+    const parts = v.match(RULE_RE)
+    if (parts) return { tool: parts[1], prefix: parts[2] }
     if (/^[\w.-]+$/.test(v)) return { tool: v, prefix: null }
     return null
   }
@@ -72,25 +73,25 @@
 
 <!-- Command grants -->
 <div class="permgroup">
-  <div class="permhd">Command grants</div>
-  {#if !perms.commands.length}<p class="muted permempty">No command grants yet.</p>{/if}
+  <div class="permhd">{m.perm_command_grants()}</div>
+  {#if !perms.commands.length}<p class="muted permempty">{m.perm_empty()}</p>{/if}
   {#each perms.commands as rule (rule)}
     <div class="permrow">
       <span class="permico"><Icon name="code" size={14} /></span>
       <span class="permval" title={rule}>{rule}</span>
-      <button class="linkbtn danger" disabled={busy} onclick={() => revokeCommand(rule)}>Remove</button>
+      <button class="linkbtn danger" disabled={busy} onclick={() => revokeCommand(rule)}>{m.action_remove()}</button>
     </div>
   {/each}
   <div class="keyrow">
     <input
       type="text"
-      placeholder="gmail_send or run_shell_command(git *)"
+      placeholder={m.perm_rule_placeholder()}
       bind:value={cmd}
       onkeydown={(e) => e.key === 'Enter' && addCommand()}
     />
-    <button class="open" disabled={busy || !cmdReady} onclick={addCommand}>Add</button>
+    <button class="open" disabled={busy || !cmdReady} onclick={addCommand}>{m.action_add()}</button>
   </div>
-  <p class="muted permhint">A tool name allows every call to that tool (action tools like gmail_send). Shell takes a prefix rule — run_shell_command(git *) — and host code runs (run_code) are approved individually, never blanket-allowed.</p>
+  <p class="muted permhint">{m.perm_hint()}</p>
 </div>
 
 <style>

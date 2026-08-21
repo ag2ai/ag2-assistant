@@ -3,14 +3,15 @@
   // reply. The JSON itself is hidden (see splitA2UIText); this stands in for the
   // surface until the A2UISurface event arrives and renders the real thing.
   import Icon from '../Icon.svelte'
+  import { m } from '../../paraglide/messages.js'
 </script>
 
-<div class="a2ui a2ui-composing" role="status" aria-label="Composing a view">
+<div class="a2ui a2ui-composing" role="status" aria-label={m.a2ui_composing_aria()}>
   <div class="a2ui-head">
     <span class="a2ui-mark"><Icon name="sparkles" size={15} /></span>
     <span class="a2ui-headtext">
       <span class="a2ui-eyebrow">A2UI</span>
-      <span class="a2ui-title">Composing a view…</span>
+      <span class="a2ui-title">{m.a2ui_composing()}</span>
     </span>
   </div>
   <div class="a2ui-skeleton">

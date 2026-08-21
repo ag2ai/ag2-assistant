@@ -21,7 +21,7 @@
   import Icon from '../Icon.svelte'
   import { llmConfigs, loadLlmConfigs, type LlmConfigSeed } from '../../lib/llm.ts'
   import { builtinToolText, builtinChip } from '../../lib/builtinTools.ts'
-  import { TYPE_LABEL, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER, SUBSCRIPTION_GROUP } from '../../lib/providerLabels.ts'
+  import { typeLabel, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER, SUBSCRIPTION_GROUP } from '../../lib/providerLabels.ts'
   import { MODEL_TEMPLATES, type ModelTemplate } from '../../lib/modelTemplates.ts'
   import BrandMark from '../BrandMark.svelte'
   import { errText } from '../../lib/errors.ts'
@@ -175,7 +175,7 @@
       </div>
       <!-- An empty model is legal for the CLI-login types (= the CLI's own default);
            name it instead of leaving a dangling separator. -->
-      <div class="llmsub">{TYPE_LABEL[c.type]} · {c.model || m.llm_cli_default()}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
+      <div class="llmsub">{typeLabel(c.type)} · {c.model || m.llm_cli_default()}{#if endpoint(c)} · {endpoint(c)}{/if}</div>
       <div class="llmsub">
         <span class="llmkey" class:warn={c.key_source === 'none' || c.secret_missing || (c.key_source === 'subscription' && !c.signed_in)}>{keyChip(c)}</span>
         <!-- Provider library missing: name the install command, not just a dead dot. -->

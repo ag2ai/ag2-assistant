@@ -7,6 +7,7 @@
   import { api } from '../transport/api/index.ts'
   import { errText } from '../lib/errors.ts'
   import type { CodingAgents } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
 
   let data: CodingAgents | null = $state(null)
   let err = $state('')
@@ -20,30 +21,31 @@
 </script>
 
 <div class="setsec">
-  Coding agents
-  <span class="setwide" title="CLI coding agents driven over ACP (Claude Code / Codex / OpenCode)">host CLIs</span>
+  {m.ca_title()}
+  <span class="setwide" title={m.ca_host_clis_title()}>{m.ca_host_clis()}</span>
 </div>
 
 {#if err}
-  <div class="ca-note ca-bad">Couldn't load coding-agent status: {err}</div>
+  <div class="ca-note ca-bad">{m.ca_load_error({ err })}</div>
 {:else if !data}
-  <div class="ca-note">Checking…</div>
+  <div class="ca-note">{m.ca_checking()}</div>
 {:else}
   <div class="ca-status">
     {#if data.mode === 'bridge'}
       <span class="ca-dot" class:on={data.connected} class:off={!data.connected}></span>
-      Host bridge <code>{data.bridge}</code> —
-      {data.connected ? 'connected' : 'not reachable'}
+      {m.ca_host_bridge()} <code>{data.bridge}</code> —
+      {data.connected ? m.ca_connected() : m.ca_not_reachable()}
     {:else}
       <span class="ca-dot on"></span>
-      Running on the host — agents detected locally
+      {m.ca_local()}
     {/if}
   </div>
 
   {#if data.mode === 'bridge' && !data.connected}
     <div class="ca-note ca-bad">
-      {data.error || 'The bridge did not respond.'}
-      Start it on the host: <code>ag2-assistant acp-bridge --port 8801</code>
+      <!-- data.error is the gateway's own words — passed through, never translated (ADR 0031). -->
+      {data.error || m.ca_bridge_silent()}
+      {m.ca_bridge_start()} <code>ag2-assistant acp-bridge --port 8801</code>
     </div>
   {/if}
 
@@ -51,18 +53,18 @@
     {#each data.agents as a (a.name)}
       <li>
         <span class="ca-name">{a.label} <span class="ca-id">({a.name})</span></span>
-        <span class="ca-badge" class:ok={a.available}>{a.available ? 'available' : 'not installed'}</span>
+        <span class="ca-badge" class:ok={a.available}>{a.available ? m.ca_available() : m.ca_not_installed()}</span>
       </li>
     {:else}
-      <li class="ca-empty">No coding agents visible.</li>
+      <li class="ca-empty">{m.ca_empty()}</li>
     {/each}
   </ul>
 
   <div class="ca-note">
-    Coding runs are not sandboxed — the agent edits real files in the folder you approve.
+    {m.ca_not_sandboxed()}
     {#if data.mode === 'local'}
-      To use the host's agents from Docker, run <code>ag2-assistant acp-bridge</code> on the host and
-      set <code>AG2ASSISTANT_ACP_BRIDGE</code> (see docker-compose.yml).
+      {m.ca_docker_pre()} <code>ag2-assistant acp-bridge</code> {m.ca_docker_mid()}
+      <code>AG2ASSISTANT_ACP_BRIDGE</code> {m.ca_docker_post()}
     {/if}
   </div>
 {/if}

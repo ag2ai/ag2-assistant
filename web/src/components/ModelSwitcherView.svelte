@@ -7,6 +7,7 @@
   // are the global .modelsw-* classes in app.css.
   import Icon from './Icon.svelte'
   import BrandMark from './BrandMark.svelte'
+  import { m } from '../paraglide/messages.js'
   import type { LlmEnvOverride } from '../schemas/index.ts'
 
   // Generic over the config row so the same view drives the text (LlmConfig) and
@@ -43,7 +44,7 @@
     busy = false,
     disabled = false,
     title = '',
-    placeholder = 'Choose a model',
+    placeholder = m.llm_choose_model(),
     brandFor,
     labelFor,
     usable = () => true,
@@ -51,12 +52,12 @@
     inherited = false,
     closedBadges = true,
     defaultEntry = null,
-    emptyLabel = 'No models configured',
+    emptyLabel = m.profile_no_models(),
     onEmpty,
     onChoose,
     onDefault,
     onManage = null,
-    manageLabel = 'Manage models…',
+    manageLabel = m.profile_manage_models(),
   }: Props = $props()
 
   let open = $state(false)
@@ -82,8 +83,8 @@
 
 <div class="modelsw">
   {#if envOverride}
-    <div class="modelsw-pin" title="Model pinned by environment variables — unset them to switch">
-      Pinned by environment{envOverride.provider ? ` · ${envOverride.provider}` : ''}{envOverride.model ? ` · ${envOverride.model}` : ''}
+    <div class="modelsw-pin" title={m.llm_pinned_title()}>
+      {m.llm_env_pinned()}{envOverride.provider ? ` · ${envOverride.provider}` : ''}{envOverride.model ? ` · ${envOverride.model}` : ''}
     </div>
   {:else if !configs.length}
     <button class="modelsw-empty" onclick={onEmpty}>{emptyLabel}</button>
@@ -94,7 +95,7 @@
           <BrandMark brand={brandFor(activeConfig)} size={MARK_SIZE} />
           <span class="modelsw-name">{activeConfig.name}</span>
           {#if closedBadges}
-            {#if inherited}<span class="modelsw-tag">inherited</span>{/if}
+            {#if inherited}<span class="modelsw-tag">{m.llm_inherited_tag()}</span>{/if}
             <span class="modelsw-dot" class:warn={!usable(activeConfig)}></span>
           {/if}
         {:else}
@@ -104,7 +105,7 @@
       </button>
 
       {#if open}
-        <button class="modelsw-scrim" aria-label="Close model menu" onclick={() => (open = false)}></button>
+        <button class="modelsw-scrim" aria-label={m.llm_close_model_menu()} onclick={() => (open = false)}></button>
         <div class="modelsw-menu" class:down role="menu">
           {#if defaultEntry}
             <button class="modelsw-item" class:active={inherited} role="menuitem" onclick={pickDefault}>
@@ -119,7 +120,7 @@
               class="modelsw-item" class:active={!inherited && c.id === activeId}
               role="menuitem"
               disabled={!usable(c)}
-              title={usable(c) ? '' : 'Not ready — add a key or sign in via Settings'}
+              title={usable(c) ? '' : m.llm_not_ready()}
               onclick={() => choose(c)}
             >
               <BrandMark brand={brandFor(c)} size={MARK_SIZE} />

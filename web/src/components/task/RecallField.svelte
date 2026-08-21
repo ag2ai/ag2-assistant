@@ -3,16 +3,18 @@
   // else a count). The count input shows only for "Last N runs".
 
   import { recallCount } from '../../lib/taskEdit.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Choice = 'none' | 'last' | 'all'
   type Props = { depth: number }
 
   let { depth = $bindable() }: Props = $props()
 
-  const CHOICES: { id: Choice; label: string }[] = [
-    { id: 'none', label: "No recall" },
-    { id: 'last', label: 'Last N runs' },
-    { id: 'all', label: 'All previous runs' },
+  // The choice id maps to the stored depth; only its label localizes.
+  const CHOICES: { id: Choice; label: () => string }[] = [
+    { id: 'none', label: m.task_recall_none },
+    { id: 'last', label: m.task_recall_last },
+    { id: 'all', label: m.task_recall_all },
   ]
 
   // Anything that isn't a positive count is no recall, so a missing depth opens the
@@ -30,18 +32,18 @@
 </script>
 
 <div class="recallfield">
-  <select class="chpick" bind:value={choice} onchange={apply} aria-label="Earlier runs this task sees">
-    {#each CHOICES as c}<option value={c.id}>{c.label}</option>{/each}
+  <select class="chpick" bind:value={choice} onchange={apply} aria-label={m.task_recall_aria()}>
+    {#each CHOICES as c}<option value={c.id}>{c.label()}</option>{/each}
   </select>
   {#if choice === 'last'}
-    <input type="number" min="1" step="1" bind:value={n} onchange={apply} aria-label="How many runs" />
+    <input type="number" min="1" step="1" bind:value={n} onchange={apply} aria-label={m.task_recall_count_aria()} />
   {/if}
 </div>
 <p class="recallhint">
   {#if choice === 'none'}
-    Each run starts fresh, with no knowledge of earlier runs.
+    {m.task_recall_hint_none()}
   {:else}
-    Each run is given a one-line summary of earlier runs, and can open any of them in full.
+    {m.task_recall_hint_some()}
   {/if}
 </p>
 

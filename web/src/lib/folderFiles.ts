@@ -1,5 +1,6 @@
 // Pure logic addressing a file across the two spaces: a Files-space file by a
 // workspace-relative path, a Folder file by an absolute path (the sole discriminator).
+import { m } from '../paraglide/messages.js'
 
 // What a resolved Grant mode unlocks on a Folder file.
 export type FolderAffordances = { edit: boolean; rename: boolean; delete: boolean; move: boolean }
@@ -18,10 +19,11 @@ export function folderAffordances(mode: string | null | undefined): FolderAfford
 }
 
 // The short badge label for a resolved mode: `read_write`→"read+write", `read`→"read",
-// anything else→"" (no badge).
+// anything else→"" (no badge). The mode itself is the persisted value; only the
+// badge text localizes.
 export function modeLabel(mode: string | null | undefined): string {
-  if (mode === 'read_write') return 'read+write'
-  if (mode === 'read') return 'read'
+  if (mode === 'read_write') return m.files_mode_read_write()
+  if (mode === 'read') return m.files_mode_read()
   return ''
 }
 

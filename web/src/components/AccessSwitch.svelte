@@ -4,6 +4,7 @@
   // to the next stop; dots mark the other two. Muted like the user message
   // bubble (soft tinted fill + hairline border); the label carries the semantic.
   import type { GrantMode, Mode } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
 
   // `mode` accepts 'none'/null/undefined as the off position; `onchange` reports
   // the next stop, with null standing for off (the caller revokes the grant).
@@ -14,15 +15,16 @@
   }
   let { mode, disabled = false, onchange }: Props = $props()
 
-  const modeLabel = (m: Props['mode']) => (m === 'read_write' ? 'Read + write' : m === 'read' ? 'Read' : 'Off')
-  const posOf = (m: Props['mode']) => (m === 'read_write' ? 1 : m === 'read' ? 0 : 2)      // Read · Read+write · Off
-  const nextMode = (m: Props['mode']): Mode | null => (m === 'read' ? 'read_write' : m === 'read_write' ? null : 'read') // cycle
+  const modeLabel = (v: Props['mode']) =>
+    v === 'read_write' ? m.task_mode_read_write() : v === 'read' ? m.task_mode_read() : m.access_off()
+  const posOf = (v: Props['mode']) => (v === 'read_write' ? 1 : v === 'read' ? 0 : 2)      // Read · Read+write · Off
+  const nextMode = (v: Props['mode']): Mode | null => (v === 'read' ? 'read_write' : v === 'read_write' ? null : 'read') // cycle
   const pos = $derived(posOf(mode))
 </script>
 
 <div class="sw3ctl">
   <span class="sw3label" class:muted={pos === 2}>{modeLabel(mode)}</span>
-  <button class="sw3" class:off={pos === 2} class:rw={pos === 1} data-pos={pos} aria-label={`Access: ${modeLabel(mode)} — click to change`} {disabled} onclick={() => onchange?.(nextMode(mode))}>
+  <button class="sw3" class:off={pos === 2} class:rw={pos === 1} data-pos={pos} aria-label={m.access_aria({ mode: modeLabel(mode) })} {disabled} onclick={() => onchange?.(nextMode(mode))}>
     <span class="sw3dot" style="left:11px"></span>
     <span class="sw3dot" style="left:33px"></span>
     <span class="sw3dot" style="left:55px"></span>

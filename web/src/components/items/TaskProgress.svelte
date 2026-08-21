@@ -7,25 +7,29 @@
   import { go } from '../../router.ts'
   import { rows, str } from '../../lib/a2ui.ts'
   import type { A2UIData, TaskRow } from '../../lib/a2ui.ts'
+  import { getLocale } from '../../paraglide/runtime.js'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { data?: A2UIData }
   let { data = {} }: Props = $props()
 
-  const title = $derived(str(data.title) || 'Your tasks')
+  const title = $derived(str(data.title) || m.a2ui_your_tasks())
   const tasks = $derived(rows<TaskRow>(data.tasks))
 
   const edition = $derived(
-    new Date().toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    new Date().toLocaleDateString(getLocale(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   )
 
-  const STATUS: Record<string, { label: string; cls: string } | undefined> = {
-    active: { label: 'Active', cls: 'ok' },
-    scheduled: { label: 'Scheduled', cls: 'idle' },
-    completed: { label: 'Completed', cls: 'done' },
-    stopped: { label: 'Stopped', cls: 'idle' },
-    failed: { label: 'Failing', cls: 'bad' },
+  // The status key is the agent's own value; only the chip label localizes.
+  const STATUS: Record<string, { label: () => string; cls: string } | undefined> = {
+    active: { label: m.task_badge_active, cls: 'ok' },
+    scheduled: { label: m.a2ui_status_scheduled, cls: 'idle' },
+    completed: { label: m.a2ui_status_completed, cls: 'done' },
+    stopped: { label: m.a2ui_status_stopped, cls: 'idle' },
+    failed: { label: m.a2ui_status_failing, cls: 'bad' },
   }
-  const chip = (t: TaskRow) => STATUS[String(t.status || '').toLowerCase()] || { label: t.status || '—', cls: 'idle' }
+  const chip = (t: TaskRow) =>
+    STATUS[String(t.status || '').toLowerCase()] || { label: () => t.status || '—', cls: 'idle' }
   const MARK: Record<string, string | undefined> = { done: '✓', pending: '○', failed: '✕' }
   const activeCount = $derived(tasks.filter((t) => ['active', 'scheduled'].includes(String(t.status).toLowerCase())).length)
 </script>
@@ -33,12 +37,12 @@
 <div class="bs">
   <header class="bs-masthead">
     <div class="mast-l">
-      <div class="bs-kicker">A2UI · Tasks</div>
+      <div class="bs-kicker">A2UI · {m.a2ui_tasks()}</div>
       <h1>{title}</h1>
     </div>
     <div class="bs-edition">
       <div>{edition}</div>
-      <div><b>{activeCount} running · {tasks.length} total</b></div>
+      <div><b>{m.a2ui_n_running({ count: activeCount })} · {m.a2ui_n_total({ count: tasks.length })}</b></div>
     </div>
   </header>
 
@@ -47,15 +51,15 @@
       {#each tasks as t}
         <section class="task">
           <div class="thead">
-            <span class="chip {chip(t).cls}">{chip(t).label}</span>
+            <span class="chip {chip(t).cls}">{chip(t).label()}</span>
             <h3>
               {#if t.id}
-                <button class="tlink" onclick={() => go('/t/' + t.id)} title="Open this task">{t.title}</button>
+                <button class="tlink" onclick={() => go('/t/' + t.id)} title={m.a2ui_open_task_title()}>{t.title}</button>
               {:else}{t.title}{/if}
             </h3>
             <div class="when">
               {#if t.schedule}<span>{t.schedule}</span>{/if}
-              {#if t.nextRun}<span class="next">next {t.nextRun}</span>{/if}
+              {#if t.nextRun}<span class="next">{m.a2ui_next_run({ when: t.nextRun })}</span>{/if}
             </div>
           </div>
           {#if t.objective}<p class="obj">{t.objective}</p>{/if}
@@ -69,7 +73,7 @@
             </ul>
           {/if}
           {#if t.error}
-            <div class="err"><b>Needs attention</b>{t.error}</div>
+            <div class="err"><b>{m.a2ui_needs_attention()}</b>{t.error}</div>
           {:else if t.progress}
             <div class="prog">{t.progress}</div>
           {/if}
@@ -78,8 +82,8 @@
     </div>
 
     <div class="bs-foot">
-      <div class="bs-src">From the task ledger — <span>live state, not a plan</span></div>
-      <div class="bs-upd"><span class="bs-dot"></span> as of just now</div>
+      <div class="bs-src">{m.a2ui_from_task_ledger()} — <span>{m.a2ui_live_state_not_plan()}</span></div>
+      <div class="bs-upd"><span class="bs-dot"></span> {m.a2ui_as_of_just_now()}</div>
     </div>
   </div>
 </div>

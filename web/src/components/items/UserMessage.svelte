@@ -4,6 +4,7 @@
   import { openAsideFile } from '../../router.ts'
   import { revealFolder } from '../../store.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { item: Extract<ThreadItem, { kind: 'user' }> }
   let { item }: Props = $props()
@@ -17,9 +18,9 @@
   // in the preview rail but browse a directory in the Files tree — a folder has no
   // preview (ADR 0012). Same-named refs share a label; the first drives the click.
   const refsFor = $derived.by(() => {
-    const m = new Map<string, ParsedRef[]>()
-    for (const r of parsed.refs) m.set(r.label, [...(m.get(r.label) || []), r])
-    return m
+    const byLabel = new Map<string, ParsedRef[]>()
+    for (const r of parsed.refs) byLabel.set(r.label, [...(byLabel.get(r.label) || []), r])
+    return byLabel
   })
   function openRef(ref: ParsedRef | undefined) {
     if (!ref) return
@@ -34,7 +35,7 @@
     <!-- Fed into the running turn. AG2 hands it to the agent when the turn drains its
          inbox — its next step, which can be a whole tool round away — so say so instead
          of letting it look unsent. Resolves to a normal bubble on the drain. -->
-    <div class="hint">Queued · the agent will see this at its next step</div>
+    <div class="hint">{m.thread_queued_hint()}</div>
   {/if}
 </div>
 

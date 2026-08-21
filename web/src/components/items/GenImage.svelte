@@ -8,6 +8,7 @@
   import Feedback from './Feedback.svelte'
   import Icon from '../Icon.svelte'
   import type { ThreadItem } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { item: Extract<ThreadItem, { kind: 'genimage' }> }
   let { item }: Props = $props()
@@ -26,8 +27,8 @@
   {:else}
     <!-- The thumbnail opens the file, so the click target is a button; the img is
          decoration inside it and keeps no listener of its own. -->
-    <button class="thumbbtn" onclick={open} title={item.prompt || ''} aria-label="Open generated image">
-      <img class="thumb" src={api.fileUrl(item.path)} alt={item.prompt || 'generated image'}
+    <button class="thumbbtn" onclick={open} title={item.prompt || ''} aria-label={m.thread_open_gen_image()}>
+      <img class="thumb" src={api.fileUrl(item.path)} alt={item.prompt || m.thread_generated_image()}
            onerror={() => (broken = true)} />
     </button>
   {/if}

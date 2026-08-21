@@ -89,7 +89,7 @@
   // "TELEGRAM_BOT_TOKEN …9f2c" — what is actually set, never the value.
   const tokenHints = $derived(
     fields
-      .map((f) => `${f.label.toLowerCase()} ${connection.tokens?.[f.env]?.hint || ''}`.trim())
+      .map((f) => `${f.label()} ${connection.tokens?.[f.env]?.hint || ''}`.trim())
       .join(' · '),
   )
 </script>
@@ -115,10 +115,10 @@
   </p>
   {#each fields as f (f.env)}
     <div class="keyrow">
-      <span class="kp">{f.label}</span>
+      <span class="kp">{f.label()}</span>
       <input
         type="password" placeholder={m.integrations_paste_to_replace()} disabled={busy}
-        aria-label={m.integrations_new_token_aria({ name: f.label.toLowerCase() })} bind:value={drafts[f.env]}
+        aria-label={m.integrations_new_token_aria({ name: f.label() })} bind:value={drafts[f.env]}
         onkeydown={(e) => { if (e.key === 'Enter') replace() }}
       />
     </div>

@@ -17,6 +17,7 @@
   import type { FolderChip } from '../lib/chatFolders.ts'
   import type { FileRef } from '../lib/fileRefs.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
   import ModelSwitcher from './composer/ModelSwitcher.svelte'
   import FolderPicker from './FolderPicker.svelte'
   import ChatFolders from './ChatFolders.svelte'
@@ -87,12 +88,12 @@
         folder = snap.folders.find((f) => f.id === clash.data.existing.id)
       } else throw e
     }
-    if (!folder) throw new Error('Could not resolve that folder')
+    if (!folder) throw new Error(m.composer_folder_resolve_failed())
     const plan = addPlan(folder, pid, chatId, taskId)
     if (plan.status === 'grant') snap = await api.setGrant(folder.id, pid, 'read', chatId)
-    else if (plan.status === 'unblock') { snap = await api.revokeGrant(folder.id, pid, chatId); folderNote = `"${plan.name}" is available here again.` }
-    else if (plan.status === 'covered') folderNote = `"${plan.name}" is already available here.`
-    else if (plan.status === 'exists') folderNote = `"${folder.name}" is already in this chat.`
+    else if (plan.status === 'unblock') { snap = await api.revokeGrant(folder.id, pid, chatId); folderNote = m.composer_folder_available_again({ name: plan.name }) }
+    else if (plan.status === 'covered') folderNote = m.composer_folder_already_available({ name: plan.name })
+    else if (plan.status === 'exists') folderNote = m.composer_folder_already_in_chat({ name: folder.name })
     applyFolders(snap)
     picking = false
   })
@@ -218,8 +219,8 @@
   // While the agent is working, Enter still sends — the message is fed to the running
   // turn (it picks it up at its next step), so say so rather than leaving it a mystery.
   function placeholder() {
-    if ($thread.busy) return 'Add something while it works…'
-    return $thread.kind === 'task' ? 'Tell the agent to change this task…' : 'Message AG2 Assistant…'
+    if ($thread.busy) return m.composer_placeholder_busy()
+    return $thread.kind === 'task' ? m.composer_placeholder_task() : m.composer_placeholder()
   }
   function grow() { if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px' } }
   // A running session always toggles off. Otherwise: no active Live model → route to
@@ -313,17 +314,17 @@
     {#if showFolders && (extraCount || chips.length)}
       <div class="cfolders">
         {#if extraCount}
-          <button class="cfmore" title="Folder access inherited here" onclick={() => (foldersModal = true)}>+{extraCount} inherited folder{extraCount === 1 ? '' : 's'}</button>
+          <button class="cfmore" title={m.composer_inherited_title()} onclick={() => (foldersModal = true)}>{m.composer_inherited_folders({ count: extraCount })}</button>
         {/if}
         {#each chips as f (f.id)}
           <span class="chip folder" class:missing={!f.exists}>
-            <button class="chipbody" title={`${f.path} · ${f.mode === 'read_write' ? 'read + write' : 'read'}`} onclick={() => (foldersModal = true)}>
+            <button class="chipbody" title={`${f.path} · ${f.mode === 'read_write' ? m.composer_mode_read_write() : m.composer_mode_read()}`} onclick={() => (foldersModal = true)}>
               <Icon name="folder" size={13} /> {f.name}
             </button>
             {#if f.mode === 'read_write'}
-              <span class="cfrw" title="read + write">R+W</span>
+              <span class="cfrw" title={m.composer_mode_read_write()}>{m.composer_rw_badge()}</span>
             {/if}
-            <button class="x" title="Remove from this chat" aria-label="Remove folder from this chat" disabled={folderBusy} onclick={() => removeChip(f)}>×</button>
+            <button class="x" title={m.composer_remove_from_chat()} aria-label={m.composer_remove_folder_aria()} disabled={folderBusy} onclick={() => removeChip(f)}>×</button>
           </span>
         {/each}
       </div>
@@ -342,7 +343,7 @@
     {#if atOpen}
       <!-- `@` File-reference picker (ADR 0012): type-to-filter over reachable files.
            mousedown+preventDefault keeps textarea focus so the pick lands before blur. -->
-      <div class="atpicker" role="listbox" aria-label="Reference a file" bind:this={atList}>
+      <div class="atpicker" role="listbox" aria-label={m.composer_reference_file_aria()} bind:this={atList}>
         {#if atResults.length}
           {#each atResults as r, i (r.path)}
             <button type="button" class="atrow" class:sel={i === atIndex} role="option" aria-selected={i === atIndex}
@@ -355,7 +356,7 @@
             </button>
           {/each}
         {:else}
-          <div class="atempty">{atQuery ? 'No matching files' : 'Type to search files…'}</div>
+          <div class="atempty">{atQuery ? m.composer_no_matching_files() : m.composer_type_to_search()}</div>
         {/if}
       </div>
     {/if}
@@ -380,11 +381,11 @@
       ></textarea>
     </div>
     <div class="cbar">
-      <button class="cbtn" onclick={() => fileInput?.click()} title="Attach files" aria-label="Attach files"><Icon name="plus" size={18} /></button>
+      <button class="cbtn" onclick={() => fileInput?.click()} title={m.composer_attach_files()} aria-label={m.composer_attach_files()}><Icon name="plus" size={18} /></button>
       {#if showFolders}
         <!-- Add a Folder to this chat: a persistent read Grant, not a transient
              message attachment like the + above. -->
-        <button class="cbtn" onclick={openPicker} title="Add a folder to this chat" aria-label="Add a folder to this chat"><Icon name="folder-plus" size={18} /></button>
+        <button class="cbtn" onclick={openPicker} title={m.composer_add_folder_chat()} aria-label={m.composer_add_folder_chat()}><Icon name="folder-plus" size={18} /></button>
       {/if}
       <div class="cbar-right">
         <ModelSwitcher />
@@ -395,31 +396,31 @@
         <span class="ctip">
           <button class="cbtn live" class:on={$voice.active} class:needcfg={noLiveModel && !$voice.active}
                   onclick={liveClick}
-                  title={noLiveModel ? undefined : 'Live voice'}
-                  aria-label={noLiveModel ? 'Configure a Live model' : 'Live voice'}><Icon name="waveform" size={18} /></button>
+                  title={noLiveModel ? undefined : m.composer_live_voice()}
+                  aria-label={noLiveModel ? m.composer_configure_live() : m.composer_live_voice()}><Icon name="waveform" size={18} /></button>
           {#if noLiveModel && !$voice.active}
-            <span class="ctip-bubble" role="tooltip">No Live model yet — click to configure one in Settings and enable Live support.</span>
+            <span class="ctip-bubble" role="tooltip">{m.composer_no_live_model()}</span>
           {/if}
         </span>
         <!-- Primary action. While a turn runs it's Stop; Enter still sends (feeds the
              running turn), so "add while it works" survives via the keyboard. Idle it's
              Send, disabled until there's text or an attachment. -->
         {#if $thread.busy}
-          <button class="csend stop" onclick={stop} title="Stop the agent" aria-label="Stop the agent"><Icon name="square" size={15} /></button>
+          <button class="csend stop" onclick={stop} title={m.composer_stop_agent()} aria-label={m.composer_stop_agent()}><Icon name="square" size={15} /></button>
         {:else}
           <span class="ctip">
             <button class="csend" onclick={submit}
                     disabled={noTextModel || (!text.trim() && !pending.length)}
-                    title={noTextModel ? undefined : 'Send'} aria-label="Send"><Icon name="arrow-up" size={18} /></button>
+                    title={noTextModel ? undefined : m.composer_send()} aria-label={m.composer_send()}><Icon name="arrow-up" size={18} /></button>
             {#if noTextModel}
-              <span class="ctip-bubble" role="tooltip">No model configured — add one in Settings → Models to send messages.</span>
+              <span class="ctip-bubble" role="tooltip">{m.composer_no_text_model()}</span>
             {/if}
           </span>
         {/if}
       </div>
     </div>
   </div>
-  <div class="cnote">AG2 Assistant is AI and can make mistakes. Check important info.</div>
+  <div class="cnote">{m.composer_ai_note()}</div>
 </div>
 
 {#if picking}
@@ -427,11 +428,11 @@
        the a11y tree rather than becoming a second focusable control. -->
   <div class="modal-backdrop over" role="presentation" onclick={() => (picking = false)}></div>
   <div class="modal over">
-    <h2>Add a folder to this chat</h2>
-    <p class="muted cfhint">Gives this conversation <b>read</b> access to a folder outside the workspace. Change the mode or remove it anytime from the chip.</p>
+    <h2>{m.composer_add_folder_chat()}</h2>
+    <p class="muted cfhint">{m.composer_folder_hint_1()}<b>{m.composer_folder_hint_read()}</b>{m.composer_folder_hint_2()}</p>
     {#if folderErr}<p class="cfmsg err">{folderErr}</p>{/if}
     <FolderPicker roots={fsRoots} start={fsRoots.cwd || fsRoots.home || ''} busy={folderBusy} onUse={addFolder} />
-    <button class="modal-close" onclick={() => (picking = false)}>Cancel</button>
+    <button class="modal-close" onclick={() => (picking = false)}>{m.action_cancel()}</button>
   </div>
 {/if}
 {#if foldersModal}

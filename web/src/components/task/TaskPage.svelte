@@ -12,7 +12,7 @@
   import { getActiveProfileId } from '../../lib/profile.ts'
   import { foldersStore, loadFolders, applyFolders } from '../../lib/folders.ts'
   import { llmConfigs, loadLlmConfigs, isUsable } from '../../lib/llm.ts'
-  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
+  import { typeLabel } from '../../lib/providerLabels.ts'
   import { folderGrantDiff, scheduleValue, taskEditPatch } from '../../lib/taskEdit.ts'
   import type { FolderGrantIntent, FolderGrantState, GrantOp, ScheduleValue, TaskFolderMode } from '../../lib/taskEdit.ts'
   import { errText } from '../../lib/errors.ts'
@@ -28,6 +28,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
   import ScheduleField from './ScheduleField.svelte'
   import RecallField from './RecallField.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.ts'
+  import { m } from '../../paraglide/messages.js'
 
   const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled']
 
@@ -86,7 +87,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
   // The Model row's read-only label: the task's chosen config, else "Profile default".
   const modelRowLabel = $derived.by(() => {
     const id = task?.model
-    if (!id) return 'Profile default'
+    if (!id) return m.task_profile_default()
     return $llmConfigs.configs.find((c) => c.id === id)?.name || id
   })
   // Edit-mode picker: the buffered override config (null `emodel` = Profile default).
@@ -117,7 +118,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
   const taskFolders = $derived(!task ? [] : _folders.filter((f) => { const t = tGrant(f); return t && t.mode !== 'none' && !profileGrant(f) }))
   const profileFolders = $derived(!task ? [] : _folders.filter((f) => profileGrant(f) && effMode(f) !== 'none'))
   const hasFolders = $derived(taskFolders.length > 0 || profileFolders.length > 0)
-  const modeLabel = (m: GrantMode | undefined) => (m === 'read_write' ? 'Read + write' : 'Read')
+  const modeLabel = (mode: GrantMode | undefined) => (mode === 'read_write' ? m.task_mode_read_write() : m.task_mode_read())
 
   // The task's CURRENT grant reality for this profile — every folder carrying a
   // profile- or task-scope grant, with both modes. This is the `current` side of
@@ -160,7 +161,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
       // and this page agree — the sync effect below then never reverts to a staler
       // list value after navigation.
       patchTaskInStore(t)
-    } catch { if (seq === _loadSeq) { error = 'Task not found.'; task = null; perms = [] } }
+    } catch { if (seq === _loadSeq) { error = m.task_not_found(); task = null; perms = [] } }
   }
   // reload when the route's id changes
   let _lastId: string | null = ''
@@ -311,7 +312,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
         await applyFolderOps(folderGrantDiff(currentFolderState(), $state.snapshot(efolders)), cur.id)
         editing = false
       }
-    } catch (e) { error = errText(e, 'save failed') }
+    } catch (e) { error = errText(e, m.task_save_failed()) }
     finally { saving = false }
   }
 
@@ -319,7 +320,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
     if (running || !task) return
     running = true
     try { const run = await api.runTask(task.id); go('/r/' + run.id) }
-    catch (e) { error = errText(e, 'run failed') } finally { running = false }
+    catch (e) { error = errText(e, m.task_run_failed()) } finally { running = false }
   }
 
   // Patch the shared task-list store so the drawer's paused glyph (and any other
@@ -333,7 +334,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
     if (!cur || pausing) return
     pausing = true
     try { task = await api.updateTask(cur.id, { paused: !cur.paused }); patchTaskInStore(task) }
-    catch (e) { error = errText(e, 'pause failed') } finally { pausing = false }
+    catch (e) { error = errText(e, m.task_pause_failed()) } finally { pausing = false }
   }
 
   async function del() {
@@ -350,13 +351,13 @@ import WriteSwitch from '../WriteSwitch.svelte'
     const cur = task
     if (!cur) return
     try { await api.deleteTaskPermission(cur.id, rule); perms = await api.taskPermissions(cur.id) }
-    catch (e) { error = errText(e, 'revoke failed') }
+    catch (e) { error = errText(e, m.task_revoke_failed()) }
   }
 
   // Read-only prose for recall_depth, mirroring how Repeats reads schedule_desc.
   // Anything that isn't a positive count reads as no recall — including the undefined
   // a server predating the field sends.
-  const recallLabel = (d: number) => (!d ? '—' : d < 0 ? 'All previous runs' : `Last ${d} runs`)
+  const recallLabel = (d: number) => (!d ? '—' : d < 0 ? m.task_recall_all() : m.task_recall_last_n({ count: d }))
 
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
   const STAT_ICON: Record<RunStatus, string> = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
@@ -365,8 +366,8 @@ import WriteSwitch from '../WriteSwitch.svelte'
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') modelOpen = false }} />
 
 <AppBar
-  back={{ label: 'Tasks', onClick: () => goTab('tasks') }}
-  title={inEdit ? (ename || (isNew ? 'New task' : task?.name) || 'Task') : (task?.name || 'Task')}
+  back={{ label: m.tab_tasks(), onClick: () => goTab('tasks') }}
+  title={inEdit ? (ename || (isNew ? m.drawer_new_task() : task?.name) || m.thread_task()) : (task?.name || m.thread_task())}
   {subtitle} />
 
 <div class="thread taskpage">
@@ -377,8 +378,8 @@ import WriteSwitch from '../WriteSwitch.svelte'
       <div class="tphead">
         <div class="tpheadmain">
           {#if inEdit}
-            <input class="tpnameinput" bind:value={ename} placeholder="Name — generated from the prompt if blank" />
-            <input class="tpdescinput" bind:value={edesc} placeholder="Description (optional)" />
+            <input class="tpnameinput" bind:value={ename} placeholder={m.task_name_placeholder()} />
+            <input class="tpdescinput" bind:value={edesc} placeholder={m.task_desc_placeholder()} />
           {:else if task}
             <h1>{task.name}</h1>
             {#if task.description}<div class="tpdesc">{task.description}</div>{/if}
@@ -387,33 +388,33 @@ import WriteSwitch from '../WriteSwitch.svelte'
                 <input type="checkbox" checked={!task.paused} disabled={pausing} onchange={togglePause} />
                 <span class="tpknob"></span>
               </label>
-              <span class="badge" class:paused={task.paused}>{task.paused ? 'Paused' : 'Active'}</span>
-              {#if task.next_run_at && !task.paused}<span class="muted">Next run: {fmtNextIn(task.next_run_at)}</span>{/if}
+              <span class="badge" class:paused={task.paused}>{task.paused ? m.status_paused() : m.task_badge_active()}</span>
+              {#if task.next_run_at && !task.paused}<span class="muted">{m.task_next_run({ when: fmtNextIn(task.next_run_at) })}</span>{/if}
             </div>
           {/if}
         </div>
         <div class="tpactions">
           {#if inEdit}
             {#if !isNew}
-              <button class="open" disabled={saving} onclick={cancel}>Cancel</button>
+              <button class="open" disabled={saving} onclick={cancel}>{m.action_cancel()}</button>
             {/if}
             <button class="open primary" disabled={!eprompt.trim() || saving} onclick={save}>
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? m.action_saving() : m.action_save()}
             </button>
           {:else}
-            <button class="iconbtn" title="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
+            <button class="iconbtn" title={m.action_edit_short()} onclick={startEdit}><Icon name="pencil" size={15} /></button>
             <span class="delwrap">
-              <button class="iconbtn" title="Delete" onclick={() => (confirmDel = !confirmDel)}><Icon name="trash" size={15} /></button>
+              <button class="iconbtn" title={m.action_delete()} onclick={() => (confirmDel = !confirmDel)}><Icon name="trash" size={15} /></button>
               {#if confirmDel}
                 <span class="delconfirm">
-                  <span class="confirm">Delete permanently?</span>
-                  <button class="open danger" onclick={del}>Yes, delete</button>
-                  <button class="open" onclick={() => (confirmDel = false)}>Cancel</button>
+                  <span class="confirm">{m.task_delete_confirm()}</span>
+                  <button class="open danger" onclick={del}>{m.task_delete_yes()}</button>
+                  <button class="open" onclick={() => (confirmDel = false)}>{m.action_cancel()}</button>
                 </span>
               {/if}
             </span>
             <button class="open primary" disabled={running} onclick={runNow}>
-              <Icon name="play" size={14} /> {running ? 'Starting…' : 'Run now'}
+              <Icon name="play" size={14} /> {running ? m.task_starting() : m.task_run_now()}
             </button>
           {/if}
         </div>
@@ -422,8 +423,8 @@ import WriteSwitch from '../WriteSwitch.svelte'
       <div class="tpcols" class:single={isNew}>
         {#if !isNew && task}
           <section>
-            <h2>History</h2>
-            {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
+            <h2>{m.task_history()}</h2>
+            {#if !task.runs.length}<div class="none">{m.task_no_runs()}</div>{/if}
             <div class="runslist">
               {#each task.runs as r (r.id)}
                 <button class="runrow" class:unseen={TERMINAL.includes(r.status) && !r.seen} onclick={() => go('/r/' + r.id)}>
@@ -436,15 +437,15 @@ import WriteSwitch from '../WriteSwitch.svelte'
           </section>
         {/if}
         <section>
-          <h2>Instructions</h2>
+          <h2>{m.task_instructions()}</h2>
           {#if inEdit}
             <textarea class="tpinput tpprompt-input" rows="6" bind:value={eprompt}
-              placeholder="What should the agent do on every run? Be specific — it runs unattended."></textarea>
+              placeholder={m.task_prompt_placeholder()}></textarea>
           {:else if task}
             <p class="tpprompt">{task.prompt}</p>
           {/if}
 
-          <h2>Model</h2>
+          <h2>{m.llm_field_model()}</h2>
           {#if inEdit}
             <!-- Same popover vocabulary as the composer's ModelSwitcher (.modelsw-*,
                  app.css) so the two model pickers read as one control. The menu drops
@@ -453,26 +454,26 @@ import WriteSwitch from '../WriteSwitch.svelte'
             <div class="modelsw tpmodel">
               <div class="modelsw-wrap">
                 <button class="modelsw-btn" onclick={() => (modelOpen = !modelOpen)}
-                        aria-haspopup="menu" aria-expanded={modelOpen} title="Model for this task">
+                        aria-haspopup="menu" aria-expanded={modelOpen} title={m.task_model_title()}>
                   {#if emodelConfig}
                     <BrandMark brand={emodelConfig.type} size={MARK_SIZE} />
                     <span class="modelsw-name">{emodelConfig.name}</span>
                     <span class="modelsw-dot" class:warn={!isUsable(emodelConfig)}></span>
                   {:else}
-                    <span class="modelsw-name">{emodel ? emodel : 'Profile default'}</span>
+                    <span class="modelsw-name">{emodel ? emodel : m.task_profile_default()}</span>
                   {/if}
                   <Icon name="chevron-down" size={13} />
                 </button>
 
                 {#if modelOpen}
-                  <button class="modelsw-scrim" aria-label="Close model menu" onclick={() => (modelOpen = false)}></button>
+                  <button class="modelsw-scrim" aria-label={m.llm_close_model_menu()} onclick={() => (modelOpen = false)}></button>
                   <div class="modelsw-menu" role="menu">
                     <button class="modelsw-item" class:active={emodel == null} role="menuitem" onclick={() => chooseModel(null)}>
                       <span class="modelsw-itemmeta">
                         <span class="modelsw-name">
-                          Profile default{#if emodel == null}<Icon name="check" size={12} />{/if}
+                          {m.task_profile_default()}{#if emodel == null}<Icon name="check" size={12} />{/if}
                         </span>
-                        <span class="modelsw-sub">Use the profile's active model</span>
+                        <span class="modelsw-sub">{m.task_profile_default_sub()}</span>
                       </span>
                     </button>
                     {#each $llmConfigs.configs as c (c.id)}
@@ -480,7 +481,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
                         class="modelsw-item" class:active={c.id === emodel}
                         role="menuitem"
                         disabled={!isUsable(c)}
-                        title={isUsable(c) ? '' : 'Not ready — add a key or sign in via Settings'}
+                        title={isUsable(c) ? '' : m.llm_not_ready()}
                         onclick={() => chooseModel(c.id)}
                       >
                         <BrandMark brand={c.type} size={MARK_SIZE} />
@@ -488,12 +489,12 @@ import WriteSwitch from '../WriteSwitch.svelte'
                           <span class="modelsw-name">
                             {c.name}{#if c.id === emodel}<Icon name="check" size={12} />{/if}
                           </span>
-                          <span class="modelsw-sub">{TYPE_LABEL[c.type]} · {c.model}</span>
+                          <span class="modelsw-sub">{typeLabel(c.type)} · {c.model}</span>
                         </span>
                         <span class="modelsw-dot" class:warn={!isUsable(c)}></span>
                       </button>
                     {/each}
-                    <button class="modelsw-manage" role="menuitem" onclick={openModelSettings}>Manage models…</button>
+                    <button class="modelsw-manage" role="menuitem" onclick={openModelSettings}>{m.profile_manage_models()}</button>
                   </div>
                 {/if}
               </div>
@@ -513,10 +514,10 @@ import WriteSwitch from '../WriteSwitch.svelte'
             </div>
           {/if}
 
-          <h2>Folders</h2>
+          <h2>{m.profile_tab_folders()}</h2>
           {#if inEdit}
             {#if eTaskFolders.length}
-              <div class="fsec">Task folders</div>
+              <div class="fsec">{m.task_folders_section()}</div>
               {#each eTaskFolders as f (f.path)}
                 <div class="frow">
                   <span class="fico"><Icon name="folder" size={14} /></span>
@@ -526,13 +527,13 @@ import WriteSwitch from '../WriteSwitch.svelte'
                        3-position switch profile folders use. Mirrors TaskFolders. -->
                   <div class="fctl">
                     <WriteSwitch mode={f.mode} onchange={(m) => setFolderMode(f, m)} />
-                    <button class="iconbtn" title="Remove folder" aria-label="Remove folder" onclick={() => setFolderMode(f, null)}><Icon name="trash" size={14} /></button>
+                    <button class="iconbtn" title={m.task_remove_folder()} aria-label={m.task_remove_folder()} onclick={() => setFolderMode(f, null)}><Icon name="trash" size={14} /></button>
                   </div>
                 </div>
               {/each}
             {/if}
             {#if eProfileFolders.length}
-              <div class="fsec">Profile folders</div>
+              <div class="fsec">{m.task_profile_folders_section()}</div>
               {#each eProfileFolders as f (f.path)}
                 <div class="frow">
                   <span class="fico"><Icon name="folder" size={14} /></span>
@@ -542,7 +543,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
               {/each}
             {/if}
             <button class="open addfolder" onclick={() => (pickerOpen = !pickerOpen)}>
-              <Icon name="folder" size={14} /> Add working folder
+              <Icon name="folder" size={14} /> {m.task_add_working_folder()}
             </button>
             {#if pickerOpen}
               <div class="tppicker">
@@ -551,21 +552,21 @@ import WriteSwitch from '../WriteSwitch.svelte'
             {/if}
           {:else if hasFolders}
             {#if taskFolders.length}
-              <div class="fsec">Task folders</div>
+              <div class="fsec">{m.task_folders_section()}</div>
               {#each taskFolders as f (f.id)}
                 <div class="frow">
                   <span class="fico"><Icon name="folder" size={14} /></span>
-                  <span class="fname" title={f.path}>{f.name}{f.exists === false ? ' — path is missing' : ''}</span>
+                  <span class="fname" title={f.path}>{f.name}{f.exists === false ? ` — ${m.task_path_missing()}` : ''}</span>
                   <span class="fmode">{modeLabel(effMode(f))}</span>
                 </div>
               {/each}
             {/if}
             {#if profileFolders.length}
-              <div class="fsec">Profile folders</div>
+              <div class="fsec">{m.task_profile_folders_section()}</div>
               {#each profileFolders as f (f.id)}
                 <div class="frow">
                   <span class="fico"><Icon name="folder" size={14} /></span>
-                  <span class="fname" title={f.path}>{f.name}{f.exists === false ? ' — path is missing' : ''}</span>
+                  <span class="fname" title={f.path}>{f.name}{f.exists === false ? ` — ${m.task_path_missing()}` : ''}</span>
                   <span class="fmode">{modeLabel(effMode(f))}</span>
                 </div>
               {/each}
@@ -574,14 +575,14 @@ import WriteSwitch from '../WriteSwitch.svelte'
             <p class="tpmeta">—</p>
           {/if}
 
-          <h2>Repeats</h2>
+          <h2>{m.task_repeats()}</h2>
           {#if inEdit}
             <ScheduleField bind:schedule={eschedule} />
           {:else if task}
             <p class="tpmeta">{task.schedule_desc}</p>
           {/if}
 
-          <h2>Recall earlier runs</h2>
+          <h2>{m.task_recall()}</h2>
           {#if inEdit}
             <RecallField bind:depth={erecall} />
           {:else if task}
@@ -589,22 +590,22 @@ import WriteSwitch from '../WriteSwitch.svelte'
           {/if}
 
           {#if !isNew}
-            <h2>Always allowed</h2>
+            <h2>{m.task_always_allowed()}</h2>
             {#if perms.length}
               {#each perms as rule (rule)}
                 <div class="permrow">
                   <code>{rule}</code>
-                  <button class="iconbtn" title="Revoke" onclick={() => revoke(rule)}><Icon name="x" size={13} /></button>
+                  <button class="iconbtn" title={m.integrations_revoke()} onclick={() => revoke(rule)}><Icon name="x" size={13} /></button>
                 </div>
               {/each}
             {:else}
-              <p class="muted">Approvals you grant during a run appear here.</p>
+              <p class="muted">{m.task_approvals_hint()}</p>
             {/if}
           {/if}
         </section>
       </div>
     {:else if !isNew}
-      <div class="none">Loading…</div>
+      <div class="none">{m.loading()}</div>
     {/if}
   </div>
 </div>

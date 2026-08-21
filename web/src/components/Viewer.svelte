@@ -16,6 +16,7 @@
   import { isFolderPath, folderAffordances } from '../lib/folderFiles.ts'
   import { errText } from '../lib/errors.ts'
   import type { MentionRow } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
 
   // A URL-addressed file wins; a path-less transient body is the fallback when no
   // file is addressed. The rail shows exactly one of them.
@@ -24,7 +25,7 @@
 
   const path = $derived(file?.path || null)
   const name = $derived(path ? path.split('/').pop() : null)
-  const title = $derived(file ? (name || 'Preview') : (transient?.title || 'Preview'))
+  const title = $derived(file ? (name || m.viewer_preview()) : (transient?.title || m.viewer_preview()))
   const kind = $derived(path ? viewerKind(name) : 'markdown')
   // The open Thread's scope token (lib/threadScope.js) scopes a Folder (absolute) file's
   // Grant resolution (ADR 0013); a Files-space (relative) path ignores it, per rawQuery.
@@ -296,26 +297,26 @@
   <RailResizer width={previewWidth} onGrab={() => previewExpanded.set(false)} />
   <div class="vhead">
     {#if editable}
-      <div class="vseg" role="group" aria-label="View mode">
+      <div class="vseg" role="group" aria-label={m.viewer_view_mode_aria()}>
         <button class="vsegbtn" class:on={mode === 'preview'} aria-pressed={mode === 'preview'}
-                title="Preview" aria-label="Preview" onclick={() => (mode = 'preview')}>
+                title={m.viewer_preview()} aria-label={m.viewer_preview()} onclick={() => (mode = 'preview')}>
           <Icon name="eye" size={14} />
         </button>
         <button class="vsegbtn" class:on={mode === 'edit'} aria-pressed={mode === 'edit'}
-                title="Edit" aria-label="Edit" onclick={() => (mode = 'edit')}>
+                title={m.action_edit_short()} aria-label={m.action_edit_short()} onclick={() => (mode = 'edit')}>
           <Icon name="pencil" size={14} />
         </button>
       </div>
     {:else if kind === 'download'}
       <!-- Unknown type: let the user peek at the bytes as text instead of only
            offering a download (many "unknown" files are really text). -->
-      <div class="vseg" role="group" aria-label="View mode">
+      <div class="vseg" role="group" aria-label={m.viewer_view_mode_aria()}>
         <button class="vsegbtn" class:on={dlView === 'preview'} aria-pressed={dlView === 'preview'}
-                title="Preview" aria-label="Preview" onclick={() => (dlView = 'preview')}>
+                title={m.viewer_preview()} aria-label={m.viewer_preview()} onclick={() => (dlView = 'preview')}>
           <Icon name="eye" size={14} />
         </button>
         <button class="vsegbtn" class:on={dlView === 'raw'} aria-pressed={dlView === 'raw'}
-                title="View as raw text" aria-label="View as raw text" onclick={showRaw}>
+                title={m.viewer_raw()} aria-label={m.viewer_raw()} onclick={showRaw}>
           <Icon name="file-text" size={14} />
         </button>
       </div>
@@ -323,7 +324,7 @@
     {#if path}
       <!-- A path-backed preview: the filename Reveals the file in the Files tree
            (switch Tab, expand its Directories, scroll it into view). -->
-      <button class="vtitle" title={`Reveal ${name} in Files`} onclick={() => revealFile(path)}>{title}</button>
+      <button class="vtitle" title={m.viewer_reveal_title({ name: name ?? '' })} onclick={() => revealFile(path)}>{title}</button>
     {:else}
       <!-- Path-less transient body: no tree row to reveal, so a plain heading. -->
       <h2 title={title}>{title}</h2>
@@ -344,7 +345,7 @@
               <button class="vmentions-row" role="menuitem" onclick={() => openMention(row)}>
                 <Icon name={mentionRowIcon(row)} size={14} />
                 <span class="vmentions-row-title">{mentionRowTitle(row)}</span>
-                {#if row.kind === 'run'}<span class="vmentions-row-kind">Run</span>{/if}
+                {#if row.kind === 'run'}<span class="vmentions-row-kind">{m.viewer_run_badge()}</span>{/if}
               </button>
             {/each}
           </div>
@@ -353,45 +354,44 @@
     {/if}
     {#if editable}
       {#if dirty}
-        <span class="vdirty" title="Unsaved changes" aria-label="Unsaved changes">●</span>
+        <span class="vdirty" title={m.viewer_unsaved()} aria-label={m.viewer_unsaved()}>●</span>
       {/if}
       <!-- Save belongs to Edit; Preview shows only the dirty marker, never a dead button. -->
       {#if mode === 'edit'}
         <button class="vsave" disabled={!dirty || saving || conflict} onclick={save}
-                title="Save (⌘/Ctrl-S)" aria-label="Save">
-          {saving ? 'Saving…' : 'Save'}
+                title={m.viewer_save_title()} aria-label={m.action_save()}>
+          {saving ? m.action_saving() : m.action_save()}
         </button>
       {/if}
     {/if}
     {#if copyable}
       <button class="cp" class:copied
-              title={copied ? 'Copied' : 'Copy'} aria-label="Copy" onclick={copy}>
+              title={copied ? m.action_copied() : m.action_copy()} aria-label={m.action_copy()} onclick={copy}>
         <Icon name={copied ? 'check' : 'copy'} size={15} />
       </button>
     {/if}
     <button class="exp" aria-pressed={$previewExpanded}
-            title={$previewExpanded ? 'Collapse preview' : 'Expand preview'}
-            aria-label={$previewExpanded ? 'Collapse preview' : 'Expand preview'}
+            title={$previewExpanded ? m.viewer_collapse() : m.viewer_expand()}
+            aria-label={$previewExpanded ? m.viewer_collapse() : m.viewer_expand()}
             onclick={() => previewExpanded.update((v) => !v)}>
       <Icon name={$previewExpanded ? 'minimize-2' : 'maximize-2'} size={15} />
     </button>
-    {#if path}<a class="dl" href={downloadUrl} title="Download file" aria-label="Download file"><Icon name="download" size={15} /></a>{/if}
-    <button class="rail-x" aria-label="Close" onclick={close}>×</button>
+    {#if path}<a class="dl" href={downloadUrl} title={m.viewer_download()} aria-label={m.viewer_download()}><Icon name="download" size={15} /></a>{/if}
+    <button class="rail-x" aria-label={m.action_close()} onclick={close}>×</button>
   </div>
   <div class="vbody" class:native class:editing={editable && mode === 'edit'}>
     {#if saveErr}<p class="vsaveerr" role="alert">{saveErr}</p>{/if}
     {#if conflict}
       <div class="vconflict" role="alert">
-        <p class="vconflict-msg">This file changed on disk since you opened it — the agent
-          or another window may have rewritten it. Choose whose version to keep:</p>
+        <p class="vconflict-msg">{m.viewer_conflict_msg()}</p>
         <div class="vconflict-actions">
           <button class="vconflict-btn" disabled={saving} onclick={reloadFromDisk}>
-            <span class="vconflict-verb">Reload</span>
-            <span class="vconflict-note">discard my edits, load the disk version</span>
+            <span class="vconflict-verb">{m.viewer_reload()}</span>
+            <span class="vconflict-note">{m.viewer_reload_note()}</span>
           </button>
           <button class="vconflict-btn" disabled={saving} onclick={overwrite}>
-            <span class="vconflict-verb">Overwrite</span>
-            <span class="vconflict-note">replace the disk version with mine</span>
+            <span class="vconflict-verb">{m.viewer_overwrite()}</span>
+            <span class="vconflict-note">{m.viewer_overwrite_note()}</span>
           </button>
         </div>
       </div>
@@ -400,7 +400,7 @@
       <!-- A path-backed load failed (missing/unreadable) → the shared missing panel;
            a path-less transient body can't go missing, so just show the raw error. -->
       {#if path}
-        {@render missing('file-x', 'Couldn’t load this file — it may have moved or been deleted.', err)}
+        {@render missing('file-x', m.viewer_load_failed(), err)}
       {:else}
         <p class="muted" style="color:var(--danger)">{err}</p>
       {/if}
@@ -411,7 +411,7 @@
       <iframe class="vframe" title={title} src={url}></iframe>
     {:else if kind === 'image'}
       {#if imgErr}
-        {@render missing('image-off', 'Couldn’t load this image — the file may have moved or been deleted.')}
+        {@render missing('image-off', m.viewer_image_failed())}
       {:else}
         <img class="vimg" src={url} alt={title} onerror={() => (imgErr = true)} />
       {/if}
@@ -422,19 +422,19 @@
     {:else if kind === 'download'}
       {#if dlView === 'raw'}
         {#if rawErr}
-          {@render missing('file-x', 'Couldn’t load this file as text — it may have moved or been deleted.', rawErr)}
+          {@render missing('file-x', m.viewer_raw_failed(), rawErr)}
         {:else}
           <pre class="vtext">{rawText}</pre>
         {/if}
       {:else}
         <p class="muted">
-          No preview for this file type — <button type="button" class="vlink" onclick={showRaw}>view it as raw text</button>
-          or <a class="dl" href={downloadUrl}>download it</a>.
+          {m.viewer_no_preview_1()}<button type="button" class="vlink" onclick={showRaw}>{m.viewer_no_preview_raw()}</button
+          >{m.viewer_no_preview_or()}<a class="dl" href={downloadUrl}>{m.viewer_no_preview_download()}</a>{m.viewer_no_preview_2()}
         </p>
       {/if}
     {:else if editable && mode === 'edit'}
       <textarea class="vedit" bind:value={draft} spellcheck="false"
-                aria-label={`Edit ${name}`}></textarea>
+                aria-label={m.viewer_edit_aria({ name: name ?? '' })}></textarea>
     {:else}
       <Markdown text={draft} />
     {/if}

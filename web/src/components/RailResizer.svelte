@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '../paraglide/messages.js'
   // A vertical drag handle for a resizable pane. Defaults resize the right rail
   // (handle on its left edge, width = viewport-right − pointer-x); pass side="left"
   // with the drawer's store/clamp to resize the left drawer (width = pointer-x).
@@ -46,7 +47,7 @@
   class:left={side === 'left'}
   role="separator"
   aria-orientation="vertical"
-  aria-label="Resize panel"
+  aria-label={m.rail_resize_aria()}
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={stop}

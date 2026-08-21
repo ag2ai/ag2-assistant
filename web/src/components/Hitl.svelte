@@ -7,6 +7,7 @@
   import { go, route } from '../router.ts'
   import { chime } from '../lib/chime.ts'
   import type { HitlQuestion, Inquiry } from '../schemas/index.ts'
+  import { m } from '../paraglide/messages.js'
 
   let drafts = $state<Record<string, string>>({})
   let seen = new Set<string>()   // inquiry keys already surfaced — chime only on genuinely new ones
@@ -70,11 +71,11 @@
 
 {#if visible.length}
   <div class="hitl">
-    <div class="hitlhead">Needs your input ({visible.length})</div>
+    <div class="hitlhead">{m.hitl_needs_input({ count: visible.length })}</div>
     {#each visible as q (q._key)}
       <div class="qcard">
         <div class="qk">
-          {q.kind === 'permission' ? 'Permission' : 'Question'}
+          {q.kind === 'permission' ? m.hitl_permission() : m.hitl_question()}
           <!-- The owning task is an inquiry-only trait: a HitlServer prompt belongs to
                the turn in front of you, not to a durable task. -->
           {#if q._src === 'inquiry' && q.task_title}· <button class="tasklink" onclick={() => q.root_id && go('/t/' + q.root_id)}>{q.task_title}</button>{/if}
@@ -84,7 +85,7 @@
         {#if q.options && q.options.length}
           <div class="qopts">{#each q.options as o}<button onclick={() => answer(q, o)}>{o}</button>{/each}</div>
         {:else}
-          <input placeholder="Your answer…" bind:value={drafts[q._key]}
+          <input placeholder={m.hitl_answer_placeholder()} bind:value={drafts[q._key]}
                  onkeydown={(e) => e.key === 'Enter' && answer(q, drafts[q._key])} />
         {/if}
       </div>

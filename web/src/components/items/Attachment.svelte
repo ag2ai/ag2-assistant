@@ -7,6 +7,7 @@
   import { viewerKind } from '../../lib/preview.ts'
   import Icon from '../Icon.svelte'
   import type { ThreadItem } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   type Props = { item: Extract<ThreadItem, { kind: 'attachment' }> }
   let { item }: Props = $props()
@@ -18,11 +19,11 @@
 </script>
 
 <div class="attach">
-  <div class="who">You shared</div>
+  <div class="who">{m.thread_you_shared()}</div>
   {#if isImage && !broken}
     <!-- The thumbnail opens the file, so the click target is a button; the img is
          decoration inside it and keeps no listener of its own. -->
-    <button class="thumbbtn" onclick={open} title={item.name} aria-label="Open {item.name || item.path}">
+    <button class="thumbbtn" onclick={open} title={item.name} aria-label={m.thread_open_attachment({ name: item.name || item.path })}>
       <img class="thumb" src={api.fileUrl(item.path)} alt={item.name} onerror={() => (broken = true)} />
     </button>
   {:else}

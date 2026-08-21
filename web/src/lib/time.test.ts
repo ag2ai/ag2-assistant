@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { getLocale } from '../paraglide/runtime.js'
 import { foldEvent } from '../project.ts'
 import type { ThreadItem, WireEvent } from '../schemas/events.ts'
 import { dayKey, fmtDay, fmtDayShort, dayRows, taskRecencyAt } from './time.ts'
@@ -20,7 +21,8 @@ const dayAt = (offset: number) => {
 // The label fmtDay is expected to produce for a given Unix-seconds moment:
 // "Today at 5:24 PM" / "Yesterday at …" / "Fri, Jun 26 at …" (localized), always
 // with the time, year only when not the current one.
-const clock = (sec: number) => new Date(sec * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+const clock = (sec: number) =>
+  new Date(sec * 1000).toLocaleTimeString(getLocale(), { hour: 'numeric', minute: '2-digit' })
 const label = (sec: number) => {
   const d = new Date(sec * 1000)
   const now = new Date()
@@ -32,7 +34,7 @@ const label = (sec: number) => {
   else {
     const opts: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' }
     if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric'
-    day = d.toLocaleDateString([], opts)
+    day = d.toLocaleDateString(getLocale(), opts)
   }
   return `${day} at ${clock(sec)}`
 }

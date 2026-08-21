@@ -10,7 +10,7 @@
   import { SETTINGS_PAGE } from '../../store.ts'
   import { replaceOverlay } from '../../router.ts'
   import { isUsable, llmConfigs, loadLlmConfigs } from '../../lib/llm.ts'
-  import { TYPE_LABEL } from '../../lib/providerLabels.ts'
+  import { typeLabel } from '../../lib/providerLabels.ts'
   import { getSettings } from './context.svelte.ts'
   import { m } from '../../paraglide/messages.js'
   import ModelSwitcherView from '../ModelSwitcherView.svelte'
@@ -33,7 +33,7 @@
   {configs} {activeId} {envOverride} busy={ctx.busy} down {inherited}
   title={m.profile_text_switcher_title()}
   brandFor={(c) => c.type}
-  labelFor={(c) => `${TYPE_LABEL[c.type]} · ${c.model}`}
+  labelFor={(c) => `${typeLabel(c.type)} · ${c.model}`}
   usable={isUsable}
   defaultEntry={{ label: m.profile_use_install_default(), sub: m.profile_follow_install_model() }}
   emptyLabel={m.profile_no_models()}

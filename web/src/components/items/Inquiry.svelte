@@ -9,6 +9,7 @@
   import { answer } from '../../controller.ts'
   import { runInfo } from '../../store.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
+  import { m } from '../../paraglide/messages.js'
 
   const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
 
@@ -33,16 +34,17 @@
   )
   // An unrecognised backend resolution has no label — the header then renders empty,
   // exactly as before typing.
-  const LABEL: Record<string, string | undefined> = {
-    answered: 'You answered',
-    expired: 'Expired · not answered in time',
-    cancelled: 'Cancelled · task ended',
-    unanswered: 'Not answered',
+  // The resolution value comes from the backend; only its header localizes.
+  const LABEL: Record<string, (() => string) | undefined> = {
+    answered: m.hitl_answered,
+    expired: m.hitl_expired,
+    cancelled: m.hitl_cancelled,
+    unanswered: m.hitl_unanswered,
   }
   let header = $derived(
-    resolution ? LABEL[resolution]
-      : item.qkind === 'permission' ? 'Permission · needs your call'
-      : 'Needs your answer'
+    resolution ? LABEL[resolution]?.()
+      : item.qkind === 'permission' ? m.hitl_permission_call()
+      : m.hitl_needs_answer()
   )
   let answered = $derived(resolution === 'answered' && !!item.answer)
 </script>
@@ -56,11 +58,11 @@
   {#if item.detail}
     {#if retired}
       <button class="detail-toggle" onclick={() => (showDetail = !showDetail)}>
-        {showDetail ? 'Hide details' : 'Show details'}
+        {showDetail ? m.hitl_hide_details() : m.hitl_show_details()}
       </button>
-      {#if showDetail}<pre class="cdetail" title="Details">{item.detail}</pre>{/if}
+      {#if showDetail}<pre class="cdetail" title={m.hitl_details()}>{item.detail}</pre>{/if}
     {:else}
-      <pre class="cdetail" title="Details">{item.detail}</pre>
+      <pre class="cdetail" title={m.hitl_details()}>{item.detail}</pre>
     {/if}
   {/if}
   {#if item.options && item.options.length}
@@ -80,7 +82,7 @@
   {:else if answered}
     <div class="cans">→ {item.answer}</div>
   {:else if !retired}
-    <input bind:value={text} placeholder="Your answer…" onkeydown={(e) => e.key === 'Enter' && submit()} />
+    <input bind:value={text} placeholder={m.hitl_answer_placeholder()} onkeydown={(e) => e.key === 'Enter' && submit()} />
   {/if}
 </div>
 

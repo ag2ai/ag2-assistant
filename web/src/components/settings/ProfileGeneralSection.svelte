@@ -8,7 +8,7 @@
   import { profiles } from '../../store.ts'
   import { api } from '../../transport/api/index.ts'
   import { getActiveProfileId } from '../../lib/profile.ts'
-  import { PALETTES, setAccent, getAccent } from '../../design/palette.ts'
+  import { PALETTES, paletteLabel, setAccent, getAccent } from '../../design/palette.ts'
   import { errText } from '../../lib/errors.ts'
   import { m } from '../../paraglide/messages.js'
   import Icon from '../Icon.svelte'
@@ -129,7 +129,7 @@
       {#each PALETTES.filter((x) => !claimedByOthers.includes(x.hex) || x.hex === origAccent) as sw (sw.id)}
         <button
           class="pswatch" class:on={eAccent === sw.hex}
-          style="--dot:{sw.hex}" title={sw.label} aria-label={sw.label}
+          style="--dot:{sw.hex}" title={paletteLabel(sw.id)} aria-label={paletteLabel(sw.id)}
           onclick={() => pickAccent(sw.hex)}
         >{#if eAccent === sw.hex}<Icon name="check" size={12} />{/if}</button>
       {/each}
