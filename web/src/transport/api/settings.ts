@@ -2,6 +2,7 @@
 // 2415-2775, 2910-2922, 3241-3252).
 import { api as P, pidApi as PID } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
+import { m } from '../../paraglide/messages.js'
 import {
   FocusesSaved,
   LiveOverrideSaved,
@@ -84,7 +85,7 @@ export const settingsApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ voice, config_id: configId || null }),
     })
-    if (!r.ok) throw new Error('preview failed (' + r.status + ')')
+    if (!r.ok) throw new Error(m.err_preview_failed({ status: r.status }))
     return r.blob()
   },
 

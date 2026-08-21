@@ -4,7 +4,7 @@
   // (honestly) what's the app layer built on top.
   import { appVersion, ag2Version } from '../store.ts'
   import { route, closeOverlay, replaceOverlay } from '../router.ts'
-  import { PRIMITIVES, SUBSYSTEMS, AG2_DOCS } from '../lib/ag2map.ts'
+  import { PRIMITIVES, SUBSYSTEMS, AG2_DOCS, primitiveName } from '../lib/ag2map.ts'
   import Icon from './Icon.svelte'
 
   // The map is URL-addressed (`#poweredby`), so × / Esc / browser Back all funnel
@@ -41,24 +41,22 @@
   {/if}
   <h2>{m.pb_title()}</h2>
   <p class="muted">
-    The runtime, event stream, memory, tools, human-in-the-loop, voice and observers
-    are all AG2 primitives. Turn on <strong>AG2 view</strong> (the <code>&lt;/&gt; AG2</code>
-    button) to watch the live events behind the UI. The “app layer” rows are what this
-    project adds on top.
+    {m.pb_lead_pre()} <strong>{m.onboarding_tip_ag2_view()}</strong> {m.pb_lead_mid()}
+    <code>&lt;/&gt; AG2</code> {m.pb_lead_post()}
   </p>
   <div class="pbscroll">
-    <div class="setsec">AG2 primitives</div>
+    <div class="setsec">{m.pb_primitives()}</div>
     {#each ag2 as p}
       <div class="pbrow">
         <span class="insp-dot" style="background:{dot(p.sub)}"></span>
-        <div class="pbtext"><div class="pbname">{p.name}</div><div class="pbwhat">{p.what}</div></div>
+        <div class="pbtext"><div class="pbname">{primitiveName(p)}</div><div class="pbwhat">{p.what()}</div></div>
       </div>
     {/each}
     <div class="setsec">{m.pb_app_layer()}</div>
     {#each app as p}
       <div class="pbrow">
         <span class="insp-dot" style="background:var(--line)"></span>
-        <div class="pbtext"><div class="pbname">{p.name}</div><div class="pbwhat">{p.what}</div></div>
+        <div class="pbtext"><div class="pbname">{primitiveName(p)}</div><div class="pbwhat">{p.what()}</div></div>
       </div>
     {/each}
   </div>
@@ -66,6 +64,6 @@
     {#if $appVersion}
       <span class="pbver">AG2 Assistant v{$appVersion}{#if $ag2Version} · AG2 v{$ag2Version}{/if}</span>
     {/if}
-    <a class="open" href={AG2_DOCS} target="_blank" rel="noopener noreferrer">AG2 docs ↗</a>
+    <a class="open" href={AG2_DOCS} target="_blank" rel="noopener noreferrer">{m.pb_docs()} ↗</a>
   </div>
 </div>

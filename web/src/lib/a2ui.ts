@@ -1,4 +1,5 @@
 import { nextItemId } from './ids.ts'
+import { m } from '../paraglide/messages.js'
 import type { ThreadItem } from '../schemas/events.ts'
 
 // An A2UI payload is an untyped dictionary — the catalog, not this module, gives
@@ -198,7 +199,7 @@ function matchingJsonEnd(text: string, start: number): number {
 
 function isA2UIPayload(value: unknown): boolean {
   const messages = Array.isArray(value) ? value : [value]
-  return messages.some((m) => isRecord(m) && A2UI_KEYS.some((k) => k in m))
+  return messages.some((msg) => isRecord(msg) && A2UI_KEYS.some((k) => k in msg))
 }
 
 // An unterminated JSON fragment: is this the beginning of an A2UI payload (hide it
@@ -282,17 +283,19 @@ const titleOr = (v: unknown, fallback: string): string => (typeof v === 'string'
 
 function itemTitle(kind: unknown, data: A2UIData = {}): string {
   const k = String(kind || '').toLowerCase()
-  if (k === 'weatherpanel') return 'Weather view'
-  if (k === 'decisionmatrix') return titleOr(data.topic, 'Decision')
-  if (k === 'taskprogress') return titleOr(data.title, 'Task status')
-  if (k === 'agendacard') return titleOr(data.title, 'Agenda')
-  if (k === 'inboxbrief') return titleOr(data.title, 'Inbox brief')
-  if (k === 'newsdigest') return 'News digest'
-  if (k === 'restaurantfinder') return 'Open places'
-  if (k === 'taskplan') return 'Task setup'
-  if (k === 'checklist') return titleOr(data.title, 'Checklist')
-  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return 'Interactive view'
-  return 'Structured answer'
+  // The agent's own title wins where it sends one (it already writes in the
+  // conversation's language); these fallbacks are ours, so they read localized.
+  if (k === 'weatherpanel') return m.a2ui_title_weather_view()
+  if (k === 'decisionmatrix') return titleOr(data.topic, m.a2ui_decision())
+  if (k === 'taskprogress') return titleOr(data.title, m.a2ui_task_status())
+  if (k === 'agendacard') return titleOr(data.title, m.a2ui_agenda())
+  if (k === 'inboxbrief') return titleOr(data.title, m.a2ui_title_inbox_brief())
+  if (k === 'newsdigest') return m.a2ui_title_news_digest()
+  if (k === 'restaurantfinder') return m.a2ui_title_open_places()
+  if (k === 'taskplan') return m.a2ui_title_task_setup()
+  if (k === 'checklist') return titleOr(data.title, m.a2ui_checklist())
+  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return m.a2ui_interactive_view()
+  return m.a2ui_title_structured_answer()
 }
 
 function dataFromComponent(component: A2UIData = {}, existing: A2UIData = {}): A2UIData {
@@ -319,7 +322,7 @@ function ensureSurface(
       version: version || 'v1.0',
       catalogId: catalogId || BETA_CATALOG_ID,
       surfaceId,
-      title: 'Interactive view',
+      title: m.a2ui_interactive_view(),
       intent: '',
       component: {},
       data: {},

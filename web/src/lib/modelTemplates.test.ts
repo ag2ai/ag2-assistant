@@ -3,12 +3,12 @@
 // Run: npm test
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MODEL_TEMPLATES, type ModelTemplate } from './modelTemplates.ts'
+import { MODEL_TEMPLATES, templateCard, type ModelTemplate } from './modelTemplates.ts'
 import { TYPE_GROUP, TYPE_CHIP, GROUP_ORDER, SUBSCRIPTION_GROUP, TYPE_LABEL } from './providerLabels.ts'
 import { brandMark } from './brandMarks.ts'
 
 const CHIPS = ['API key', 'OAuth', 'ACP', 'no key']
-const label = (t: ModelTemplate) => t.card || t.name
+const label = (t: ModelTemplate) => templateCard(t)
 
 test('every template lands under a heading the page actually renders', () => {
   for (const t of MODEL_TEMPLATES) {
@@ -53,8 +53,8 @@ test('the subscription group comes first', () => {
 
 test('every blurb says something the card label does not', () => {
   for (const t of MODEL_TEMPLATES) {
-    assert.ok(t.blurb?.trim(), `${label(t)} has no blurb`)
-    const blurb = t.blurb.trim().toLowerCase()
+    assert.ok(t.blurb().trim(), `${label(t)} has no blurb`)
+    const blurb = t.blurb().trim().toLowerCase()
     // A blurb the title already contains — `Claude` under `Claude Code` — adds nothing.
     assert.ok(!label(t).trim().toLowerCase().includes(blurb), `${label(t)}’s blurb repeats its title`)
   }

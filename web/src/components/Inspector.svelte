@@ -42,7 +42,7 @@
       <div class="insp-row" role="button" tabindex="0" onclick={() => toggle(e._id)}
         onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(e._id) } }}>
         <span class="insp-dot" style="background:{c}"></span>
-        <span class="insp-name">{d.label}</span>
+        <span class="insp-name">{d.label()}</span>
         <span class="insp-sub2" style="color:{c}">{d.sub}</span>
         {#if d.layer === 'app'}<span class="insp-layer" title={m.insp_app_layer()}>app</span>{/if}
         <span class="insp-time">{fmt(e._t)}</span>
@@ -55,7 +55,7 @@
 
   <div class="insp-legend">
     {#each Object.entries(SUBSYSTEMS) as [k, v]}
-      <span class="insp-leg" title={v.blurb}><span class="insp-dot" style="background:{v.color}"></span>{k}</span>
+      <span class="insp-leg" title={v.blurb()}><span class="insp-dot" style="background:{v.color}"></span>{k}</span>
     {/each}
   </div>
 </aside>

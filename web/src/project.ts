@@ -7,6 +7,7 @@ import type { ToolCard } from './lib/toolcards.ts'
 import { fmtDateTime } from './lib/time.ts'
 import { applyA2UIMessage, asComponent, asComponents } from './lib/a2ui.ts'
 import { nextItemId as nid } from './lib/ids.ts'
+import { m } from './paraglide/messages.js'
 import { EventData, EventMeta, HANDLED_EVENTS, WireEvent } from './schemas/events.ts'
 import type { HandledEvent, ThreadItem, WireEvent as Wire } from './schemas/events.ts'
 import type { z } from 'zod'
@@ -77,11 +78,11 @@ export function isBusy(items: ThreadItem[]): boolean {
 // by Note.svelte — replaces the old ▶/✓/⚠/⏹ emoji glyphs.
 type LifecycleEvent = 'TaskStarted' | 'TaskCompleted' | 'TaskFailed' | 'TaskCancelled'
 
-const NOTE: Record<LifecycleEvent, { icon: string; text: string }> = {
-  TaskStarted: { icon: 'zap', text: 'Task started' },
-  TaskCompleted: { icon: 'check', text: 'Task completed' },
-  TaskFailed: { icon: 'x', text: 'Task failed' },
-  TaskCancelled: { icon: 'x', text: 'Task cancelled' },
+const NOTE: Record<LifecycleEvent, { icon: string; text: () => string }> = {
+  TaskStarted: { icon: 'zap', text: m.thread_task_started },
+  TaskCompleted: { icon: 'check', text: m.thread_task_completed },
+  TaskFailed: { icon: 'x', text: m.thread_task_failed },
+  TaskCancelled: { icon: 'x', text: m.thread_task_cancelled },
 }
 
 const ROOT_AGENT_NAMES = new Set(['ag2-assistant'])
@@ -245,7 +246,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
           streaming.streaming = false
           streaming.empty = true
         } else {
-          items.push({ id: nid(), kind: 'agent', text: '_(no reply)_', empty: true })
+          items.push({ id: nid(), kind: 'agent', text: `_${m.thread_no_reply()}_`, empty: true })
         }
       }
       break
@@ -264,8 +265,9 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     }
     case 'TaskScheduled': {
       const d = EventData.TaskScheduled.parse(data)
-      const repeats = d.recurrence ? ' · ' + (d.recurrence_desc || 'repeats ' + d.recurrence) : ''
-      items.push({ id: nid(), kind: 'note', icon: 'clock', text: `Scheduled for ${fmtDateTime(d.scheduled_for)}${repeats}` })
+      // recurrence_desc is the gateway's own phrasing — passed through (ADR 0031).
+      const repeats = d.recurrence ? ' · ' + (d.recurrence_desc || m.thread_repeats({ rule: d.recurrence })) : ''
+      items.push({ id: nid(), kind: 'note', icon: 'clock', text: m.thread_scheduled_for({ when: fmtDateTime(d.scheduled_for) }) + repeats })
       break
     }
     case 'TaskStarted':
@@ -273,7 +275,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     case 'TaskFailed':
     case 'TaskCancelled': {
       const d = EventData.TaskLifecycle.parse(data)
-      if (isRootTaskEvent(d)) items.push({ id: nid(), kind: 'note', icon: NOTE[type].icon, text: NOTE[type].text })
+      if (isRootTaskEvent(d)) items.push({ id: nid(), kind: 'note', icon: NOTE[type].icon, text: NOTE[type].text() })
       else upsertSubagent(items, type, d)
       break
     }
@@ -378,7 +380,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       const d = EventData.TurnCancelled.parse(data)
       const prev = items[items.length - 1]
       if (prev && prev.kind === 'agent' && prev.streaming) prev.streaming = false
-      items.push({ id: nid(), kind: 'note', icon: 'x', text: d.reason || 'Stopped', ends: true })
+      items.push({ id: nid(), kind: 'note', icon: 'x', text: d.reason || m.thread_turn_stopped(), ends: true })
       break
     }
     case 'TurnFailed': {
@@ -392,7 +394,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         id: nid(),
         kind: 'note',
         icon: 'x',
-        text: d.error || 'The turn failed unexpectedly.',
+        text: d.error || m.thread_turn_failed(),
         alert: true,
         ends: true,
       })

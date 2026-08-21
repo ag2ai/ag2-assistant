@@ -2,6 +2,7 @@
 // holds, and whether the app puts it forward. Store-free and transport-free.
 // Not an inventory: a live Model catalog decides which names exist, this only says
 // what one means.
+import { m } from '../paraglide/messages.js'
 
 // USD per million tokens, in and out.
 export type ModelPrice = { in: number; out: number }
@@ -58,18 +59,18 @@ export function familyOf(type: string): string {
 // The table's entry for an exact model id, or undefined.
 export function knownModel(id: string | null | undefined): KnownModel | undefined {
   if (!id) return undefined
-  return KNOWN_MODELS.find((m) => m.id === id)
+  return KNOWN_MODELS.find((e) => e.id === id)
 }
 
 // Everything the table knows for a config type, in table order.
 export function knownModelsFor(type: string): KnownModel[] {
   const family = familyOf(type)
-  return family ? KNOWN_MODELS.filter((m) => m.provider === family) : []
+  return family ? KNOWN_MODELS.filter((e) => e.provider === family) : []
 }
 
 // The subset the app puts forward — what onboarding offers and what the combobox ranks first.
 export function featuredModelsFor(type: string): KnownModel[] {
-  return knownModelsFor(type).filter((m) => m.featured)
+  return knownModelsFor(type).filter((e) => e.featured)
 }
 
 const money = (n: number) => (n >= 1 ? `$${n}` : `$${n.toFixed(2)}`)
@@ -78,8 +79,8 @@ const money = (n: number) => (n >= 1 ? `$${n}` : `$${n.toFixed(2)}`)
 export function priceLabel(entry: ModelEntry | null | undefined): string {
   const price = entry?.price
   if (!price || typeof price.in !== 'number' || typeof price.out !== 'number') return ''
-  if (!price.in && !price.out) return 'Free'
-  return `${money(price.in)} / ${money(price.out)} per M`
+  if (!price.in && !price.out) return m.km_free()
+  return m.km_price_per_m({ input: money(price.in), output: money(price.out) })
 }
 
 // How much a model holds; '' when the table has no window for it.
@@ -87,5 +88,5 @@ export function contextLabel(entry: ModelEntry | null | undefined): string {
   const context = entry?.context
   if (typeof context !== 'number' || !context) return ''
   const size = context >= 1_000_000 ? `${+(context / 1_000_000).toFixed(1)}M` : `${Math.round(context / 1000)}K`
-  return `${size} context`
+  return m.km_context({ size })
 }

@@ -46,7 +46,7 @@
     {/if}
     {#if prov}
       <div class="ag2tag" class:right={item.kind === 'user'} class:applayer={prov.layer === 'app'}>
-        AG2 · {prov.label}
+        AG2 · {prov.label()}
       </div>
     {/if}
   </div>

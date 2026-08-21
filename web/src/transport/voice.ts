@@ -5,6 +5,7 @@
 
 import { api as P } from '../lib/profile.ts'
 import { VoiceFrame, type WireEvent } from '../schemas/events.ts'
+import { m } from '../paraglide/messages.js'
 
 const WORKLET = `
 class PCM16 extends AudioWorkletProcessor {
@@ -58,20 +59,20 @@ export class VoiceController {
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       })
     } catch {
-      this.h.onState && this.h.onState('error', 'Mic permission denied')
+      this.h.onState && this.h.onState('error', m.voice_mic_denied())
       return false
     }
-    this.h.onState && this.h.onState('connecting', 'Connecting…')
+    this.h.onState && this.h.onState('connecting', m.voice_connecting())
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     this.ws = new WebSocket(`${proto}://${location.host}${P('/voice' + this.query)}`)
     this.ws.binaryType = 'arraybuffer'
     this.ws.onmessage = (ev: MessageEvent) => this._onMessage(ev)
     this.ws.onclose = () => this.stop(false)
-    this.ws.onerror = () => this.h.onState && this.h.onState('error', 'Voice connection error')
+    this.ws.onerror = () => this.h.onState && this.h.onState('error', m.voice_conn_error())
 
     const AudioCtx = window.AudioContext || (window as AudioContextWindow).webkitAudioContext
     if (!AudioCtx) {
-      this.h.onState && this.h.onState('error', 'Audio is unavailable in this browser')
+      this.h.onState && this.h.onState('error', m.voice_no_audio())
       return false
     }
 
@@ -99,15 +100,15 @@ export class VoiceController {
       try { value = JSON.parse(ev.data) } catch { return }
       const parsed = VoiceFrame.safeParse(value)
       if (!parsed.success) return
-      const m = parsed.data
+      const frame = parsed.data
       // Structured AG2 events ride the same {event:{type,data}} shape as the text
       // stream, folded by the one shared reducer (tool chips/cards, task cards, …).
-      if ('event' in m) { this.h.onEvent && this.h.onEvent(m.event); return }
-      switch (m.type) {
-        case 'ready': this.h.onState && this.h.onState('listening', 'Listening…'); break
-        case 'transcript': this.h.onTranscript && this.h.onTranscript(m.role, m.text, !!m.final); break
-        case 'turn_end': this.h.onTurnEnd && this.h.onTurnEnd(m.role); break
-        case 'error': this.h.onState && this.h.onState('error', 'Voice error: ' + (m.message || '')); break
+      if ('event' in frame) { this.h.onEvent && this.h.onEvent(frame.event); return }
+      switch (frame.type) {
+        case 'ready': this.h.onState && this.h.onState('listening', m.voice_listening()); break
+        case 'transcript': this.h.onTranscript && this.h.onTranscript(frame.role, frame.text, !!frame.final); break
+        case 'turn_end': this.h.onTurnEnd && this.h.onTurnEnd(frame.role); break
+        case 'error': this.h.onState && this.h.onState('error', m.voice_error({ message: frame.message || '' })); break
       }
       return
     }

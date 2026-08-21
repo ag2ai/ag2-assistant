@@ -22,7 +22,7 @@
   import { llmConfigs, loadLlmConfigs, type LlmConfigSeed } from '../../lib/llm.ts'
   import { builtinToolText, builtinChip } from '../../lib/builtinTools.ts'
   import { typeLabel, TYPE_GROUP, TYPE_CHIP, GROUP_ORDER, SUBSCRIPTION_GROUP } from '../../lib/providerLabels.ts'
-  import { MODEL_TEMPLATES, type ModelTemplate } from '../../lib/modelTemplates.ts'
+  import { MODEL_TEMPLATES, templateCard, type ModelTemplate } from '../../lib/modelTemplates.ts'
   import BrandMark from '../BrandMark.svelte'
   import { errText } from '../../lib/errors.ts'
   import { m } from '../../paraglide/messages.js'
@@ -245,11 +245,11 @@
         {#each templates as t}
           <button class="mcpcatcard" onclick={() => pickTemplate(t)}>
             <span class="mcpcathead">
-              <BrandMark brand={t.type} size={16} /> {t.card || t.name}
+              <BrandMark brand={t.type} size={16} /> {templateCard(t)}
               <!-- What this card asks you to bring, worn by every card. -->
               <span class="mcpcatchip">{chipLabel(TYPE_CHIP[t.type])}</span>
             </span>
-            <span class="mcpcatblurb">{t.blurb}</span>
+            <span class="mcpcatblurb">{t.blurb()}</span>
             {#if providerDeps[t.type] && !providerDeps[t.type].ok}
               <span class="mcpcatblurb warn">{m.llm_needs_install_cap({ install: providerDeps[t.type].install })}</span>
             {/if}

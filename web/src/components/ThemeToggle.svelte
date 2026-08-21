@@ -3,10 +3,13 @@
   // switcher (persists to localStorage + applies [data-theme] on <html>).
   import { getTheme, setTheme, type ThemeMode } from '../design/palette.ts'
   import Icon from './Icon.svelte'
+  import { m } from '../paraglide/messages.js'
 
   let mode: ThemeMode = $state(getTheme())
   const ICONS: Record<ThemeMode, string> = { light: 'sun', dark: 'moon', auto: 'contrast' }
   const ORDER: ThemeMode[] = ['light', 'dark', 'auto']
+  // The same three words the Appearance section uses, so the chip and the setting agree.
+  const LABEL: Record<ThemeMode, () => string> = { light: m.theme_light, dark: m.theme_dark, auto: m.theme_auto }
   function cycle() {
     mode = ORDER[(ORDER.indexOf(mode) + 1) % ORDER.length]
     setTheme(mode)
@@ -19,8 +22,8 @@
   })
 </script>
 
-<button class="themetoggle" onclick={cycle} title={'Theme: ' + mode + ' — click to change'}>
-  <Icon name={ICONS[mode]} size={15} /><span>{mode}</span>
+<button class="themetoggle" onclick={cycle} title={m.theme_toggle_title({ mode: LABEL[mode]() })}>
+  <Icon name={ICONS[mode]} size={15} /><span>{LABEL[mode]()}</span>
 </button>
 
 <style>

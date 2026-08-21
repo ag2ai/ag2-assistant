@@ -7,6 +7,7 @@ import { parseEtag } from '../../lib/fileEdit.ts'
 import { rawQuery } from '../../lib/folderFiles.ts'
 import { ApiError, del, get, post } from '../http.ts'
 import { parse } from '../validate.ts'
+import { m } from '../../paraglide/messages.js'
 import {
   FilesListing,
   FolderListing,
@@ -74,7 +75,7 @@ export const filesApi = {
 
   fileText: async (path: string, chatId = ''): Promise<string> => {
     const r = await fetch(P('/files/raw?' + rawQuery(path, { chatId })))
-    if (!r.ok) throw new Error('file not found')
+    if (!r.ok) throw new Error(m.err_file_not_found())
     return r.text()
   },
 
@@ -82,7 +83,7 @@ export const filesApi = {
   // bare etag saveFile hands back, plus the X-File-Mode the edit affordance gates on.
   fileTextWithEtag: async (path: string, chatId = ''): Promise<FileWithEtag> => {
     const r = await fetch(P('/files/raw?' + rawQuery(path, { chatId })))
-    if (!r.ok) throw new Error('file not found')
+    if (!r.ok) throw new Error(m.err_file_not_found())
     const text = await r.text()
     return { text, etag: parseEtag(r.headers.get('ETag')), mode: r.headers.get('X-File-Mode') || '' }
   },
@@ -130,7 +131,7 @@ export const filesApi = {
     if (chatId) fd.append('chat_id', chatId)
     const r = await fetch(P('/files/upload'), { method: 'POST', body: fd })
     if (!r.ok) {
-      let message = 'upload failed (' + r.status + ')'
+      let message = m.err_upload_failed({ status: r.status })
       try {
         const b = await r.json()
         if (b && b.error) message = b.error

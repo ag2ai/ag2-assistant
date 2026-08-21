@@ -5,6 +5,7 @@
 import { contextLabel, knownModel, knownModelsFor, priceLabel } from './knownModels.ts'
 import type { KnownModel } from './knownModels.ts'
 import { typeLabel } from './providerLabels.ts'
+import { m } from '../paraglide/messages.js'
 
 // A name on offer: the table's row where the table knows it, else just the name a
 // live catalog returned.
@@ -116,7 +117,7 @@ function fromCatalog(type: string, catalog: readonly unknown[]): Offered[] {
   }
   const family = knownModelsFor(type)
   const rank = (entry: Offered) =>
-    family.some((m) => m === entry) ? (entry.featured ? 0 : 1) : 2
+    family.some((known) => known === entry) ? (entry.featured ? 0 : 1) : 2
   return rows.map((entry, i) => ({ entry, rank: rank(entry), i }))
     .sort((a, b) => a.rank - b.rank || a.i - b.i)
     .map((r) => r.entry)
@@ -134,9 +135,9 @@ export function suggestModels({ type, query = '', catalog = null }: {
     ? fromCatalog(type, catalog)
     : (() => {
         const known = knownModelsFor(type)
-        return [...known.filter((m) => m.featured), ...known.filter((m) => !m.featured)]
+        return [...known.filter((e) => e.featured), ...known.filter((e) => !e.featured)]
       })()
-  return entries.filter((m) => matches(query, m)).map((m) => row(m, unverified))
+  return entries.filter((e) => matches(query, e)).map((e) => row(e, unverified))
 }
 
 // ---- The browser's own probe, as pure pieces -----------------------------------
@@ -212,13 +213,9 @@ export function probeStatusReason(status: number): string {
 // line, which is Test's.
 export function catalogNote(reason: string | undefined, type: string): string {
   const provider = typeLabel(type)
-  if (reason === REASON.UNAUTHORIZED)
-    return `${provider} rejected this credential, so its model list couldn't be read. Known names are offered below.`
-  if (reason === REASON.UNREACHABLE)
-    return `Couldn't reach ${provider} for its model list. Known names are offered below.`
-  if (reason === REASON.NO_LIST_ENDPOINT)
-    return 'This endpoint answered but publishes no model list. Type the name it expects — known names are offered below.'
-  if (reason === REASON.NOT_PROBEABLE)
-    return `${provider} has no model list to read. Known names are offered below.`
+  if (reason === REASON.UNAUTHORIZED) return m.ms_note_unauthorized({ provider })
+  if (reason === REASON.UNREACHABLE) return m.ms_note_unreachable({ provider })
+  if (reason === REASON.NO_LIST_ENDPOINT) return m.ms_note_no_list()
+  if (reason === REASON.NOT_PROBEABLE) return m.ms_note_not_probeable({ provider })
   return ''
 }
