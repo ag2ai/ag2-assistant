@@ -19,6 +19,7 @@
   //     state (App.svelte boot === 'create'); the Profiles step must create ≥1
   //     profile before Continue, and on finish we navigate into the first one.
   import { onMount, onDestroy } from 'svelte'
+  import { m } from '../paraglide/messages.js'
   import { onboardingOpen, profile, profiles } from '../store.ts'
   import { api } from '../transport/api/index.ts'
   import { setActiveProfileId } from '../lib/profile.ts'
@@ -68,14 +69,21 @@
     cli?: string
   }
 
-  const STEPS = ['Welcome', 'About you', 'Connect', 'Profiles', 'Set up', 'Ready']
+  const STEPS = [
+    m.onboarding_step_welcome(),
+    m.onboarding_step_about(),
+    m.onboarding_step_connect(),
+    m.onboarding_step_profiles(),
+    m.onboarding_step_setup(),
+    m.onboarding_step_ready(),
+  ]
   const CONNECT_STEP = 2
   const PROFILES_STEP = 3
   const SETUP_STEP = 4
   const FEATURES = [
-    { icon: 'zap', title: 'Powered by AG2', desc: 'A universal agent runtime — the open-source framework behind every reply.' },
-    { icon: 'globe', title: 'Acts, not just answers', desc: 'Searches the web, runs code, generates images, and manages scheduled tasks.' },
-    { icon: 'brain', title: 'Remembers what matters', desc: 'Builds a private memory of your preferences so it gets more helpful over time.' },
+    { icon: 'zap', title: m.onboarding_feature_ag2_title(), desc: m.onboarding_feature_ag2_desc() },
+    { icon: 'globe', title: m.onboarding_feature_acts_title(), desc: m.onboarding_feature_acts_desc() },
+    { icon: 'brain', title: m.onboarding_feature_memory_title(), desc: m.onboarding_feature_memory_desc() },
   ]
   // Selectable models come from lib/knownModels.ts — the featured entries per provider,
   // in table order. A pill names its vendor too, because three tabs' models share
@@ -93,15 +101,15 @@
   // which config gets created and activated on finish (see `chosenConfig`); within a
   // tab the user picks among its models.
   const TABS: ConnectTab[] = [
-    { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: 'recommended', models: modelsFor('gemini') },
-    { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: 'optional', models: modelsFor('openai') },
-    { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
+    { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: m.onboarding_hint_recommended(), models: modelsFor('gemini') },
+    { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: m.onboarding_hint_optional(), models: modelsFor('openai') },
+    { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: m.onboarding_hint_optional(), models: modelsFor('anthropic') },
     // Labelled by what the user recognises (their ChatGPT login), not the mechanism —
     // and short enough that six tabs still fit the column on one line.
-    { id: 'oauth', label: 'ChatGPT', oauth: true, hint: 'no API key · unofficial' },
+    { id: 'oauth', label: 'ChatGPT', oauth: true, hint: m.onboarding_hint_no_key_unofficial() },
     // `cli` is the coding agent's name in coding/detect.py — what /api/coding/* keys on.
-    { id: 'claude_code', label: 'Claude Code', cli: 'claude', hint: 'no API key · CLI login' },
-    { id: 'codex', label: 'Codex', cli: 'codex', hint: 'no API key · CLI login' },
+    { id: 'claude_code', label: 'Claude Code', cli: 'claude', hint: m.onboarding_hint_no_key_cli() },
+    { id: 'codex', label: 'Codex', cli: 'codex', hint: m.onboarding_hint_no_key_cli() },
   ]
 
   let step = $state(0)
@@ -429,8 +437,8 @@
       <span class="onb-brandname">Assistant</span>
     </div>
     <div class="onb-herobody">
-      <h1>Welcome.<br />Let's get you set up.</h1>
-      <p>A friendly AI assistant that actually does the work — and shows you exactly how, in the open.</p>
+      <h1>{m.onboarding_hero_title_1()}<br />{m.onboarding_hero_title_2()}</h1>
+      <p>{m.onboarding_hero_lead()}</p>
     </div>
     <div class="onb-features">
       {#each FEATURES as f, i}
@@ -463,50 +471,50 @@
       {#key step}
         <div class="ag2-rise onb-step">
           {#if step === 0}
-            <h2 class="big">Hello — ready when you are.</h2>
-            <p class="lead">Setup takes about a minute. You'll connect a model, create a profile or two, and you're off. Nothing leaves your machine — keys and settings stay local.</p>
+            <h2 class="big">{m.onboarding_welcome_title()}</h2>
+            <p class="lead">{m.onboarding_welcome_lead()}</p>
             <div class="onb-field">
-              <div class="onb-flabel"><span>First, what should I call you?</span><span class="hint">so I can greet you properly</span></div>
+              <div class="onb-flabel"><span>{m.onboarding_name_label()}</span><span class="hint">{m.onboarding_name_hint()}</span></div>
               <div class="onb-input">
                 <Icon name="message" size={15} />
-                <input placeholder="Your name" bind:value={name} onkeydown={(e) => e.key === 'Enter' && startFromWelcome()} />
+                <input placeholder={m.onboarding_name_placeholder()} bind:value={name} onkeydown={(e) => e.key === 'Enter' && startFromWelcome()} />
               </div>
             </div>
             <div class="onb-welcomeactions">
-              <button class="onb-btn primary lg" onclick={startFromWelcome}>Get started <Icon name="chevron-right" size={17} /></button>
+              <button class="onb-btn primary lg" onclick={startFromWelcome}>{m.onboarding_get_started()} <Icon name="chevron-right" size={17} /></button>
             </div>
 
           {:else if step === 1}
-            <h2>About you</h2>
-            <p class="lead">A few optional details so every profile knows you. Shared across all profiles — helps every profile know you. All optional.</p>
+            <h2>{m.onboarding_step_about()}</h2>
+            <p class="lead">{m.onboarding_about_lead()}</p>
             <div class="onb-field">
-              <div class="onb-flabel"><span>Where are you based?</span><span class="hint">city &amp; country</span></div>
+              <div class="onb-flabel"><span>{m.onboarding_location_label()}</span><span class="hint">{m.onboarding_location_hint()}</span></div>
               <div class="onb-input">
                 <Icon name="globe" size={15} />
-                <input placeholder="e.g. Sydney, Australia" bind:value={identity.location} />
+                <input placeholder={m.onboarding_location_placeholder()} bind:value={identity.location} />
               </div>
             </div>
             <div class="onb-field">
-              <div class="onb-flabel"><span>Usual working hours?</span><span class="hint">e.g. 9-5 weekdays</span></div>
+              <div class="onb-flabel"><span>{m.onboarding_hours_label()}</span><span class="hint">{m.onboarding_hours_hint()}</span></div>
               <div class="onb-input">
                 <Icon name="clock" size={15} />
-                <input placeholder="e.g. 9am–6pm, Mon–Fri" bind:value={identity.hours} />
+                <input placeholder={m.onboarding_hours_placeholder()} bind:value={identity.hours} />
               </div>
             </div>
             <div class="onb-field">
-              <div class="onb-flabel"><span>How do you like your answers?</span><span class="hint">e.g. short and direct</span></div>
+              <div class="onb-flabel"><span>{m.onboarding_style_label()}</span><span class="hint">{m.onboarding_style_example()}</span></div>
               <div class="onb-input">
                 <Icon name="message" size={15} />
-                <input placeholder="e.g. short and direct" bind:value={identity.style} />
+                <input placeholder={m.onboarding_style_example()} bind:value={identity.style} />
               </div>
             </div>
 
           {:else if step === CONNECT_STEP}
             <div class="onb-optionalhead">
-              <h2>Connect a model</h2>
-              <span class="onb-optional">optional</span>
+              <h2>{m.onboarding_connect_title()}</h2>
+              <span class="onb-optional">{m.onboarding_hint_optional()}</span>
             </div>
-            <p class="lead">Add a provider key — or skip keys entirely and run on a subscription you already have: your ChatGPT login, or the Claude Code / Codex CLI. Whatever you choose is stored locally and shared across all your profiles. You can skip this step and connect later in Settings → Models.</p>
+            <p class="lead">{m.onboarding_connect_lead()}</p>
 
             <!-- Provider tabs: one panel per provider. The active tab drives which model
                  gets activated on finish; the OAuth tab hosts the ChatGPT sign-in flow. -->
@@ -526,35 +534,35 @@
               {#if currentTab.oauth}
                 <!-- ChatGPT/Codex subscription instead of an API key (unofficial). -->
                 <div class="onb-field">
-                  <div class="onb-flabel"><span>Sign in with your ChatGPT subscription</span><span class="hint">no API key · unofficial</span></div>
+                  <div class="onb-flabel"><span>{m.onboarding_oauth_label()}</span><span class="hint">{m.onboarding_hint_no_key_unofficial()}</span></div>
                   {#if codex?.signed_in}
                     <div class="onb-input" style="cursor:default">
                       <Icon name="check" size={15} />
-                      <span style="flex:1;font-size:var(--text-sm)">Signed in with ChatGPT{codex.account_id ? ' · ' + codex.account_id : ''}</span>
+                      <span style="flex:1;font-size:var(--text-sm)">{m.onboarding_oauth_signed_in()}{codex.account_id ? ' · ' + codex.account_id : ''}</span>
                     </div>
                   {:else}
                     <button class="onb-pill" onclick={connectCodex}>
-                      <Icon name="sparkles" size={14} /> {codexConnecting ? 'Waiting for ChatGPT…' : 'Sign in with ChatGPT'}
+                      <Icon name="sparkles" size={14} /> {codexConnecting ? m.onboarding_oauth_waiting() : m.onboarding_oauth_signin()}
                     </button>
                     {#if codexConnecting}
                       <p class="hint" style="margin-top:2px">
-                        Complete sign-in in the opened tab.
-                        Headless? <button class="onb-btn ghost" style="padding:0 4px" onclick={() => (codexShowManual = !codexShowManual)}>paste the code</button>
+                        {m.onboarding_oauth_complete()}
+                        {m.onboarding_oauth_headless()} <button class="onb-btn ghost" style="padding:0 4px" onclick={() => (codexShowManual = !codexShowManual)}>{m.onboarding_oauth_paste_code()}</button>
                       </p>
                       {#if codexShowManual}
                         <div class="onb-input">
                           <Icon name="settings" size={15} />
-                          <input placeholder="paste the code from the redirect URL" bind:value={codexCode} />
+                          <input placeholder={m.onboarding_oauth_code_placeholder()} bind:value={codexCode} />
                         </div>
-                        <button class="onb-pill" onclick={submitCodexCode}>Submit code</button>
+                        <button class="onb-pill" onclick={submitCodexCode}>{m.onboarding_oauth_submit_code()}</button>
                       {/if}
                     {/if}
-                    <p class="hint" style="margin-top:2px">Runs on your ChatGPT Plus/Pro quota. OpenAI doesn't officially support this — your account could be rate-limited.</p>
+                    <p class="hint" style="margin-top:2px">{m.onboarding_oauth_quota_note()}</p>
                   {/if}
                 </div>
                 {#if codex?.signed_in}
                   <div class="onb-field">
-                    <div class="onb-flabel"><span>Assistant model</span></div>
+                    <div class="onb-flabel"><span>{m.onboarding_model_label()}</span></div>
                     <div class="onb-pills"><span class="onb-pill on">{SUB_MODEL.label}</span></div>
                   </div>
                 {/if}
@@ -565,32 +573,32 @@
                      adapter answers; the model list comes from the adapter itself. -->
                 <div class="onb-field">
                   <div class="onb-flabel">
-                    <span>Run on your {currentTab.label} CLI</span>
+                    <span>{m.onboarding_cli_run_label({ name: currentTab.label })}</span>
                     <span class="hint">{currentTab.hint}</span>
                   </div>
                   {#if cliLoading}
-                    <p class="hint">Checking the {currentTab.label} adapter…</p>
+                    <p class="hint">{m.onboarding_cli_checking({ name: currentTab.label })}</p>
                   {:else if cliReady}
                     <div class="onb-input" style="cursor:default">
                       <Icon name="check" size={15} />
                       <span style="flex:1;font-size:var(--text-sm)">
                         {cliAvail?.mode === 'bridge'
-                          ? 'Reachable through the host ACP bridge'
-                          : 'Adapter answered — running on your CLI login'}
+                          ? m.onboarding_cli_bridge()
+                          : m.onboarding_cli_ready()}
                       </span>
                     </div>
                   {/if}
                   {#if cliHint}<p class="hint" class:warn={!cliReady}>{cliHint}</p>{/if}
                   {#if !cliLoading}
                     <button class="onb-btn ghost" style="align-self:flex-start;padding:0" onclick={() => recheckCli(cliName)}>
-                      Re-check
+                      {m.onboarding_cli_recheck()}
                     </button>
                   {/if}
                 </div>
 
                 {#if cliReady && currentTab.cli === 'claude'}
                   <div class="onb-field">
-                    <div class="onb-flabel"><span>Assistant model</span></div>
+                    <div class="onb-flabel"><span>{m.onboarding_model_label()}</span></div>
                     <div class="onb-pills">
                       <button class="onb-pill" class:on={!cliModel.claude} onclick={() => (cliModel.claude = '')}>{cliDefaultLabel(cliCatalog)}</button>
                       {#each cliModels as m}
@@ -600,7 +608,7 @@
                   </div>
                 {:else if cliReady && currentTab.cli === 'codex'}
                   <div class="onb-field">
-                    <div class="onb-flabel"><span>Assistant model</span></div>
+                    <div class="onb-flabel"><span>{m.onboarding_model_label()}</span></div>
                     <div class="onb-pills">
                       <button class="onb-pill" class:on={!cliModel.codex} onclick={() => (cliModel.codex = '')}>{cliDefaultLabel(cliCatalog)}</button>
                       {#each codexGroups as g}
@@ -610,7 +618,7 @@
                   </div>
                   {#if codexEfforts.length}
                     <div class="onb-field">
-                      <div class="onb-flabel"><span>Reasoning</span><span class="hint">how hard it thinks</span></div>
+                      <div class="onb-flabel"><span>{m.onboarding_reasoning_label()}</span><span class="hint">{m.onboarding_reasoning_hint()}</span></div>
                       <div class="onb-pills">
                         <button class="onb-pill" class:on={!codexPick.effort} onclick={() => (cliModel.codex = joinModelId(codexPick.family, ''))}>{effortLabel('')}</button>
                         {#each codexEfforts as e}
@@ -623,14 +631,14 @@
               {:else if currentTab.keyId}
                 {@const keyId = currentTab.keyId}
                 <div class="onb-field">
-                  <div class="onb-flabel"><span>{currentTab.label} API key</span><span class="hint">{currentTab.hint}</span></div>
+                  <div class="onb-flabel"><span>{m.onboarding_api_key_label({ name: currentTab.label })}</span><span class="hint">{currentTab.hint}</span></div>
                   <div class="onb-input">
                     <Icon name="settings" size={15} />
-                    <input type="password" placeholder="paste key…" bind:value={keys[keyId]} />
+                    <input type="password" placeholder={m.onboarding_key_placeholder()} bind:value={keys[keyId]} />
                   </div>
                 </div>
                 <div class="onb-field">
-                  <div class="onb-flabel"><span>Assistant model</span></div>
+                  <div class="onb-flabel"><span>{m.onboarding_model_label()}</span></div>
                   <div class="onb-pills">
                     {#each currentTab.models ?? [] as m}
                       <button class="onb-pill" class:on={modelLabel === m.label} onclick={() => (modelLabel = m.label)}>{m.label}</button>
@@ -641,8 +649,8 @@
             </div>
 
           {:else if step === PROFILES_STEP}
-            <h2>Create your profiles</h2>
-            <p class="lead">A profile is a colour-coded, isolated workspace — its own chats, tasks, memory, and files. Create one now (e.g. <b>Work</b>), and add more like <b>Personal</b> for day-one separation.</p>
+            <h2>{m.onboarding_profiles_title()}</h2>
+            <p class="lead">{m.onboarding_profiles_lead_1()}<b>{m.onboarding_profile_example_work()}</b>{m.onboarding_profiles_lead_2()}<b>{m.onboarding_profile_example_personal()}</b>{m.onboarding_profiles_lead_3()}</p>
 
             {#if created.length}
               <div class="onb-chips">
@@ -655,13 +663,13 @@
             {#if showForm}
               <ProfileForm
                 claimed={claimedAccents}
-                submitLabel={created.length ? 'Add profile' : 'Create profile'}
-                busyLabel="Creating…"
+                submitLabel={created.length ? m.onboarding_add_profile() : m.drawer_create_profile()}
+                busyLabel={m.drawer_creating()}
                 onSubmit={createProfile}
               />
             {:else}
               <div class="onb-loopactions">
-                <button class="onb-btn ghost" onclick={addAnother}><Icon name="plus" size={15} /> Add another profile</button>
+                <button class="onb-btn ghost" onclick={addAnother}><Icon name="plus" size={15} /> {m.onboarding_add_another()}</button>
               </div>
             {/if}
 
@@ -669,18 +677,18 @@
             {#if setupProfile}
               <div class="onb-setuphead">
                 <span class="onb-setupdot" style="--dot:{setupProfile.accent}"></span>
-                <h2>Set up {setupProfile.name}</h2>
-                {#if created.length > 1}<span class="onb-setupprog">{setupIdx + 1} of {created.length}</span>{/if}
+                <h2>{m.onboarding_setup_title({ name: setupProfile.name })}</h2>
+                {#if created.length > 1}<span class="onb-setupprog">{m.onboarding_setup_progress({ current: setupIdx + 1, total: created.length })}</span>{/if}
               </div>
-              <p class="lead">Give this profile a folder to work in and tell it what you'll use it for. Both are optional — you can change them anytime in Settings.</p>
+              <p class="lead">{m.onboarding_setup_lead()}</p>
 
               <div class="onb-field">
-                <div class="onb-flabel"><span>Folder</span><span class="hint">the assistant gets read access — manage access later in Settings → Folders</span></div>
+                <div class="onb-flabel"><span>{m.onboarding_folder_label()}</span><span class="hint">{m.onboarding_folder_hint()}</span></div>
                 <FolderPicker roots={fsRoots} start={folder || fsRoots.cwd} bind:selected={folder} />
               </div>
 
               <div class="onb-field">
-                <div class="onb-flabel"><span>What can I help with?</span><span class="hint">pick any that fit</span></div>
+                <div class="onb-flabel"><span>{m.onboarding_focus_label()}</span><span class="hint">{m.onboarding_focus_hint()}</span></div>
                 <div class="onb-pills">
                   {#each FOCUS as f}
                     <button class="onb-pill" class:on={focuses.includes(f.id)} onclick={() => toggleFocus(f.id)}>
@@ -690,20 +698,20 @@
                 </div>
               </div>
             {:else}
-              <h2>Set up your profiles</h2>
-              <p class="lead">No profiles to set up. Go back and create one first.</p>
+              <h2>{m.onboarding_setup_empty_title()}</h2>
+              <p class="lead">{m.onboarding_setup_empty_lead()}</p>
             {/if}
 
           {:else}
             <div class="onb-readyhead">
               <span class="onb-readytick ag2-glow"><Icon name="check" size={26} /></span>
               <div>
-                <h2>{name.trim() ? `You're all set, ${name.trim()}.` : "You're all set."}</h2>
-                <p class="lead">Your preferences are saved to Settings. Let's get to work.</p>
+                <h2>{name.trim() ? m.onboarding_ready_title_named({ name: name.trim() }) : m.onboarding_ready_title()}</h2>
+                <p class="lead">{m.onboarding_ready_lead()}</p>
               </div>
             </div>
             <div class="onb-summary">
-              <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">Model</span><span class="onb-sumval">{chosenLabel || 'Not connected — add one in Settings → Models'}</span></div>
+              <div class="onb-sumrow"><span class="onb-sumicon"><Icon name="cpu" size={16} /></span><span class="onb-sumkey">{m.onboarding_summary_model()}</span><span class="onb-sumval">{chosenLabel || m.onboarding_not_connected()}</span></div>
             </div>
             <!-- Per-profile summary: name, accent dot, folder-or-—, focuses-or-—. -->
             <div class="onb-summary">
@@ -721,11 +729,11 @@
             </div>
             <!-- Theme is GLOBAL (shared by every profile), so it lives here, not per-profile. -->
             <div class="onb-field">
-              <div class="onb-flabel"><span>Appearance</span><span class="hint">shared across all profiles</span></div>
+              <div class="onb-flabel"><span>{m.settings_appearance()}</span><span class="hint">{m.onboarding_appearance_hint()}</span></div>
               <Appearance />
             </div>
             <div class="onb-tip">
-              <Icon name="zap" size={14} /><span>Every action runs on the AG2 Stream — toggle <b>AG2 view</b> anytime to watch it live.</span>
+              <Icon name="zap" size={14} /><span>{m.onboarding_tip_1()}<b>{m.onboarding_tip_ag2_view()}</b>{m.onboarding_tip_2()}</span>
             </div>
           {/if}
         </div>
@@ -734,22 +742,22 @@
 
     {#if step > 0}
       <div class="onb-nav">
-        <button class="onb-btn ghost" onclick={back}><Icon name="chevron-left" size={16} /> Back</button>
+        <button class="onb-btn ghost" onclick={back}><Icon name="chevron-left" size={16} /> {m.onboarding_back()}</button>
         <div class="onb-navright">
-          {#if step === CONNECT_STEP && !canConnect}<span class="hint">You can connect a model later in Settings → Models</span>{/if}
-          {#if step === PROFILES_STEP && !created.length}<span class="hint">Create a profile to continue</span>{/if}
+          {#if step === CONNECT_STEP && !canConnect}<span class="hint">{m.onboarding_connect_later()}</span>{/if}
+          {#if step === PROFILES_STEP && !created.length}<span class="hint">{m.onboarding_create_to_continue()}</span>{/if}
           {#if step === SETUP_STEP}
             <!-- Per-profile setup: Skip (no save) or advance (save + next profile / Ready). -->
-            <button class="onb-btn ghost" disabled={busy} onclick={() => commitSetup(true)}>Skip</button>
+            <button class="onb-btn ghost" disabled={busy} onclick={() => commitSetup(true)}>{m.onboarding_skip()}</button>
             <button class="onb-btn primary" disabled={busy || !setupProfile} onclick={() => commitSetup(false)}>
-              {setupIdx < created.length - 1 ? 'Next profile' : 'Continue'} <Icon name="chevron-right" size={16} />
+              {setupIdx < created.length - 1 ? m.onboarding_next_profile() : m.onboarding_continue()} <Icon name="chevron-right" size={16} />
             </button>
           {:else if step < STEPS.length - 1}
             <button class="onb-btn primary" disabled={!canNext} onclick={next}>
-              {step === CONNECT_STEP && !canConnect ? 'Skip for now' : 'Continue'} <Icon name="chevron-right" size={16} />
+              {step === CONNECT_STEP && !canConnect ? m.onboarding_skip_for_now() : m.onboarding_continue()} <Icon name="chevron-right" size={16} />
             </button>
           {:else}
-            <button class="onb-btn primary" disabled={busy} onclick={finish}>Start using AG2 Assistant <Icon name="send" size={15} /></button>
+            <button class="onb-btn primary" disabled={busy} onclick={finish}>{m.onboarding_start()} <Icon name="send" size={15} /></button>
           {/if}
         </div>
       </div>
