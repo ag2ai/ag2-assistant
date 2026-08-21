@@ -1262,5 +1262,13 @@
   "voice_error": "आवाज़ की त्रुटि: {message}",
   "err_file_not_found": "फ़ाइल नहीं मिली",
   "err_upload_failed": "अपलोड विफल ({status})",
-  "err_preview_failed": "पूर्वावलोकन विफल ({status})"
+  "err_preview_failed": "पूर्वावलोकन विफल ({status})",
+  "folder_name_required": "फ़ोल्डर का नाम डालें",
+  "folder_name_edge_space": "नाम स्पेस से शुरू या ख़त्म नहीं हो सकता",
+  "folder_name_slashes": "नाम में स्लैश नहीं हो सकते",
+  "folder_name_invalid": "यह मान्य फ़ोल्डर नाम नहीं है",
+  "folder_name_dot_hidden": "बिंदु से शुरू होने वाले नाम छिपे रहते हैं और यहाँ नहीं दिखेंगे",
+  "folder_name_bad_chars": "नाम में अमान्य वर्ण हैं",
+  "folder_name_too_long": "नाम बहुत लंबा है",
+  "ag2_name_native_tools": "नेटिव टूल"
 }

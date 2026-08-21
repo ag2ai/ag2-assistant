@@ -1263,5 +1263,13 @@
   "voice_error": "Error de voz: {message}",
   "err_file_not_found": "archivo no encontrado",
   "err_upload_failed": "la subida falló ({status})",
-  "err_preview_failed": "la vista previa falló ({status})"
+  "err_preview_failed": "la vista previa falló ({status})",
+  "folder_name_required": "Escribe un nombre de carpeta",
+  "folder_name_edge_space": "El nombre no puede empezar ni terminar con un espacio",
+  "folder_name_slashes": "El nombre no puede contener barras",
+  "folder_name_invalid": "No es un nombre de carpeta válido",
+  "folder_name_dot_hidden": "Los nombres que empiezan por punto están ocultos y no aparecerán aquí",
+  "folder_name_bad_chars": "El nombre contiene caracteres no válidos",
+  "folder_name_too_long": "El nombre es demasiado largo",
+  "ag2_name_native_tools": "Herramientas nativas"
 }

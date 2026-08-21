@@ -1306,5 +1306,13 @@
   "voice_error": "Ошибка голоса: {message}",
   "err_file_not_found": "файл не найден",
   "err_upload_failed": "загрузка не удалась ({status})",
-  "err_preview_failed": "не удалось получить образец ({status})"
+  "err_preview_failed": "не удалось получить образец ({status})",
+  "folder_name_required": "Введите имя папки",
+  "folder_name_edge_space": "Имя не может начинаться или заканчиваться пробелом",
+  "folder_name_slashes": "Имя не может содержать косые черты",
+  "folder_name_invalid": "Недопустимое имя папки",
+  "folder_name_dot_hidden": "Имена, начинающиеся с точки, скрыты и здесь не отображаются",
+  "folder_name_bad_chars": "Имя содержит недопустимые символы",
+  "folder_name_too_long": "Имя слишком длинное",
+  "ag2_name_native_tools": "Встроенные инструменты"
 }

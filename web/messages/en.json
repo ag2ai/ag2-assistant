@@ -1262,5 +1262,13 @@
   "voice_error": "Voice error: {message}",
   "err_file_not_found": "file not found",
   "err_upload_failed": "upload failed ({status})",
-  "err_preview_failed": "preview failed ({status})"
+  "err_preview_failed": "preview failed ({status})",
+  "folder_name_required": "Enter a folder name",
+  "folder_name_edge_space": "Name can't start or end with a space",
+  "folder_name_slashes": "Name can't contain slashes",
+  "folder_name_invalid": "Not a valid folder name",
+  "folder_name_dot_hidden": "Names starting with a dot are hidden and won't show here",
+  "folder_name_bad_chars": "Name contains invalid characters",
+  "folder_name_too_long": "Name is too long",
+  "ag2_name_native_tools": "Native tools"
 }

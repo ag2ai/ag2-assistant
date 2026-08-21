@@ -1240,5 +1240,13 @@
   "voice_error": "语音错误：{message}",
   "err_file_not_found": "找不到文件",
   "err_upload_failed": "上传失败（{status}）",
-  "err_preview_failed": "试听失败（{status}）"
+  "err_preview_failed": "试听失败（{status}）",
+  "folder_name_required": "请输入文件夹名称",
+  "folder_name_edge_space": "名称不能以空格开头或结尾",
+  "folder_name_slashes": "名称不能包含斜杠",
+  "folder_name_invalid": "不是有效的文件夹名称",
+  "folder_name_dot_hidden": "以点开头的名称会被隐藏，不会显示在这里",
+  "folder_name_bad_chars": "名称包含无效字符",
+  "folder_name_too_long": "名称过长",
+  "ag2_name_native_tools": "原生工具"
 }

@@ -87,17 +87,18 @@ export const itemAg2 = (kind: string): Ag2Tag | null => ITEM_AG2[kind] || null
 
 // Curated architecture map for the "Powered by AG2" page. layer: 'ag2' (the
 // framework gives you this) vs 'app' (built on top of AG2).
-// One row of the "Powered by AG2" map; `sub` is absent for app-layer rows. `name` is
-// an AG2 symbol (a class, a module path) for the framework rows, so it is a plain
-// string; the two app-layer rows name a subsystem of this app in prose, so those —
-// and every `what` — are message functions read at render time.
+// One row of the "Powered by AG2" map; `sub` is absent for app-layer rows. `name` is a
+// plain string wherever it is an AG2 symbol (a class, a module path) — those don't
+// translate. The rows that name something in PROSE instead (the two app-layer rows and
+// AG2's native tools) carry a message function, as does every `what`, read at render
+// time. So: identifier → string, prose → message.
 export type Primitive = { sub?: string; name: string | (() => string); what: () => string; layer: 'ag2' | 'app' }
 
 export const PRIMITIVES: Primitive[] = [
   { sub: 'Model', name: 'ag2.Agent', what: m.ag2_what_agent, layer: 'ag2' },
   { sub: 'Stream', name: 'Stream + EventLogWriter', what: m.ag2_what_stream, layer: 'ag2' },
   { sub: 'Memory', name: 'KnowledgeConfig + WorkingMemoryAggregate', what: m.ag2_what_memory, layer: 'ag2' },
-  { sub: 'Tool', name: 'Native tools', what: m.ag2_what_tools, layer: 'ag2' },
+  { sub: 'Tool', name: m.ag2_name_native_tools, what: m.ag2_what_tools, layer: 'ag2' },
   { sub: 'Subagent', name: 'subagents.run_task', what: m.ag2_what_subagents, layer: 'ag2' },
   { sub: 'HITL', name: 'context.input / hitl_hook', what: m.ag2_what_hitl, layer: 'ag2' },
   { sub: 'Voice', name: 'LiveAgent', what: m.ag2_what_voice, layer: 'ag2' },

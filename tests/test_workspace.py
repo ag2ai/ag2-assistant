@@ -259,9 +259,12 @@ def test_make_dir_rejects_overlong_name_instead_of_raising(tmp_path):
     assert make_dir(tmp_path, "x" * 300) == ("invalid", None)
 
 
-# --- invalid_dir_name (single NEW folder name; see web/src/lib/folderName.js) --------
-# The JS mirror is asserted against this same table in web/src/lib/folderName.test.mjs,
-# so a rule changed on one side alone fails on the other.
+# --- invalid_dir_name (single NEW folder name; see web/src/lib/folderName.ts) --------
+# The client mirror is asserted against this same RULE table in
+# web/src/lib/folderName.test.ts, so a rule changed on one side alone fails on the
+# other. Only the rules are shared: the client's wording comes from the UI message
+# catalog (it is the only text the user sees when a name is rejected before any round
+# trip), while a server rejection passes through in English (ADR 0031).
 
 
 @pytest.mark.parametrize(

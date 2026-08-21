@@ -1263,5 +1263,13 @@
   "voice_error": "Erro de voz: {message}",
   "err_file_not_found": "arquivo não encontrado",
   "err_upload_failed": "o envio falhou ({status})",
-  "err_preview_failed": "a prévia falhou ({status})"
+  "err_preview_failed": "a prévia falhou ({status})",
+  "folder_name_required": "Digite um nome de pasta",
+  "folder_name_edge_space": "O nome não pode começar nem terminar com espaço",
+  "folder_name_slashes": "O nome não pode conter barras",
+  "folder_name_invalid": "Não é um nome de pasta válido",
+  "folder_name_dot_hidden": "Nomes que começam com ponto ficam ocultos e não aparecem aqui",
+  "folder_name_bad_chars": "O nome contém caracteres inválidos",
+  "folder_name_too_long": "O nome é muito longo",
+  "ag2_name_native_tools": "Ferramentas nativas"
 }

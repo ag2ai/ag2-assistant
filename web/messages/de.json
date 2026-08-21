@@ -1262,5 +1262,13 @@
   "voice_error": "Sprachfehler: {message}",
   "err_file_not_found": "Datei nicht gefunden",
   "err_upload_failed": "Upload fehlgeschlagen ({status})",
-  "err_preview_failed": "Vorschau fehlgeschlagen ({status})"
+  "err_preview_failed": "Vorschau fehlgeschlagen ({status})",
+  "folder_name_required": "Ordnernamen eingeben",
+  "folder_name_edge_space": "Der Name darf nicht mit einem Leerzeichen beginnen oder enden",
+  "folder_name_slashes": "Der Name darf keine Schrägstriche enthalten",
+  "folder_name_invalid": "Kein gültiger Ordnername",
+  "folder_name_dot_hidden": "Namen, die mit einem Punkt beginnen, sind versteckt und erscheinen hier nicht",
+  "folder_name_bad_chars": "Der Name enthält ungültige Zeichen",
+  "folder_name_too_long": "Der Name ist zu lang",
+  "ag2_name_native_tools": "Native Tools"
 }
