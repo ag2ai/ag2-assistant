@@ -88,10 +88,8 @@ export const itemAg2 = (kind: string): Ag2Tag | null => ITEM_AG2[kind] || null
 // Curated architecture map for the "Powered by AG2" page. layer: 'ag2' (the
 // framework gives you this) vs 'app' (built on top of AG2).
 // One row of the "Powered by AG2" map; `sub` is absent for app-layer rows. `name` is a
-// plain string wherever it is an AG2 symbol (a class, a module path) — those don't
-// translate. The rows that name something in PROSE instead (the two app-layer rows and
-// AG2's native tools) carry a message function, as does every `what`, read at render
-// time. So: identifier → string, prose → message.
+// plain string where it is an AG2 symbol and a message function where it is prose;
+// `what` is always prose. So: identifier → string, prose → message.
 export type Primitive = { sub?: string; name: string | (() => string); what: () => string; layer: 'ag2' | 'app' }
 
 export const PRIMITIVES: Primitive[] = [

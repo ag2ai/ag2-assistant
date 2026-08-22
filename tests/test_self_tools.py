@@ -187,14 +187,23 @@ def test_skill_settings_table_matches_the_real_nav():
     """Anti-drift: the skill hand-writes a where-to-go map, so it can outlive the UI
     it describes. Settings.svelte's PAGES list is the source of truth for the nav —
     if a page is renamed, added, or removed, fail here rather than let the assistant
-    confidently misdirect the user."""
+    confidently misdirect the user. Since the UI was localized (ADR 0031) the labels
+    are message KEYS, so the English catalog is the other half of the lookup: a key
+    deleted from it fails here too, rather than resolving to nothing."""
+    import json
     import re
     from pathlib import Path
 
-    nav = Path(__file__).resolve().parents[1] / "web" / "src" / "components" / "Settings.svelte"
-    if not nav.is_file():
+    root = Path(__file__).resolve().parents[1]
+    nav = root / "web" / "src" / "components" / "Settings.svelte"
+    catalog_path = root / "web" / "messages" / "en.json"
+    if not nav.is_file() or not catalog_path.is_file():
         pytest.skip("web sources not present")
-    real = set(re.findall(r"label: '([^']+)'", nav.read_text()))
+    keys = re.findall(r"label: m\.(\w+)\(\)", nav.read_text())
+    catalog = json.loads(catalog_path.read_text())
+    unknown = [k for k in keys if k not in catalog]
+    assert not unknown, f"Settings.svelte names labels missing from en.json: {unknown}"
+    real = {catalog[k] for k in keys}
 
     text = (bundled_skills_dir() / "self-knowledge" / "SKILL.md").read_text()
     table = text.split("**Settings** has exactly these pages:")[1].split("**Memory is not")[0]

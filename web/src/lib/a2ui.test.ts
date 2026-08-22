@@ -2,7 +2,15 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiValue, splitA2UIText, withA2UIValue } from './a2ui.ts'
+import {
+  a2uiComposingSurfaceId,
+  a2uiValue,
+  isGenericSurfaceTitle,
+  splitA2UIText,
+  withA2UIValue,
+} from './a2ui.ts'
+import { m } from '../paraglide/messages.js'
+import { locales } from '../paraglide/runtime.js'
 
 const PROSE = "Here's the current tech picture on OzBargain."
 const BATCH =
@@ -79,4 +87,23 @@ test('prose written after a finished payload still renders', () => {
   const { text, composing } = splitA2UIText(`${BATCH}\nThat's the picture.`)
   assert.equal(text, "That's the picture.")
   assert.equal(composing, false)
+})
+
+// A surface whose title is only our own "structured answer" fallback carries nothing
+// worth drawing, and A2UISurface suppresses the empty card by asking this. The title is
+// resolved when the surface is folded, so the guard has to recognise the fallback in
+// EVERY language — matching English alone renders an empty card to everyone else.
+test('the generic-title guard recognises our fallback in every language', () => {
+  for (const locale of locales) {
+    const title = m.a2ui_title_structured_answer({}, { locale })
+    assert.equal(isGenericSurfaceTitle(title), true, `not matched in ${locale}: ${title}`)
+  }
+})
+
+test('a missing title is generic; a real one is not', () => {
+  assert.equal(isGenericSurfaceTitle(''), true)
+  assert.equal(isGenericSurfaceTitle(null), true)
+  assert.equal(isGenericSurfaceTitle('  Structured Answer  '), true)
+  assert.equal(isGenericSurfaceTitle('Q3 revenue decision'), false)
+  assert.equal(isGenericSurfaceTitle(m.a2ui_title_news_digest()), false)
 })

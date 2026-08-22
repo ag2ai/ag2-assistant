@@ -10,7 +10,7 @@
   import InboxBrief from './InboxBrief.svelte'
   import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
-  import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
+  import { a2uiComposingSurfaceId, isGenericSurfaceTitle, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIData, NewsStory, PlaceResult } from '../../lib/a2ui.ts'
   import { a2uiAction } from '../../controller.ts'
   import { thread } from '../../store.ts'
@@ -82,6 +82,8 @@
     return story.summary || story.detail || story.text || ''
   }
 
+  // Agent-supplied text, so the sentinels stay English: the payload is server data and
+  // is never translated (ADR 0031). Our own surface title uses isGenericSurfaceTitle.
   function genericText(value: unknown) {
     return ['structured answer', 'structured response', 'a2ui', ''].includes(String(value || '').toLowerCase())
   }
@@ -91,7 +93,7 @@
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
-    genericText(item.title)
+    isGenericSurfaceTitle(item.title)
   )
 </script>
 

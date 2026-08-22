@@ -1,5 +1,6 @@
 import { nextItemId } from './ids.ts'
 import { m } from '../paraglide/messages.js'
+import { locales } from '../paraglide/runtime.js'
 import type { ThreadItem } from '../schemas/events.ts'
 
 // An A2UI payload is an untyped dictionary — the catalog, not this module, gives
@@ -296,6 +297,18 @@ function itemTitle(kind: unknown, data: A2UIData = {}): string {
   if (k === 'checklist') return titleOr(data.title, m.a2ui_checklist())
   if (['column', 'row', 'list', 'card', 'text'].includes(k)) return m.a2ui_interactive_view()
   return m.a2ui_title_structured_answer()
+}
+
+// Our fallback title in all seven languages, not just the active one: a title resolved
+// before a language switch still has to be recognised as the fallback.
+const GENERIC_TITLES = new Set(
+  locales.map((locale) => m.a2ui_title_structured_answer({}, { locale }).toLowerCase()),
+)
+
+// Whether a surface's title is only our fallback, i.e. the surface named nothing itself.
+export const isGenericSurfaceTitle = (title: unknown): boolean => {
+  const t = String(title || '').trim().toLowerCase()
+  return !t || GENERIC_TITLES.has(t)
 }
 
 function dataFromComponent(component: A2UIData = {}, existing: A2UIData = {}): A2UIData {

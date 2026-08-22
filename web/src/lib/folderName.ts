@@ -1,10 +1,7 @@
 // Client-side mirror of `invalid_dir_name` in src/assistant/workspace.py, so the folder
-// picker can reject a bad name as it's typed instead of after a round trip. The server
-// stays authoritative — this only buys instant feedback, and the two RULE sets are kept
-// in step by folderName.test.ts and its Python counterpart in tests/test_workspace.py.
-// The WORDING is not shared: the picker rejects a bad name before any round trip, so in
-// the common path this is the only text the user ever sees and it belongs in the UI
-// language. Server-rejected names still read in English (ADR 0031).
+// picker can reject a bad name as it's typed instead of after a round trip. The RULES
+// are shared (folderName.test.ts and tests/test_workspace.py pin the same table); the
+// wording is not — it is UI chrome, so it reads in the UI language (ADR 0031).
 import { m } from '../paraglide/messages.js'
 
 // Longest single filename component on the filesystems we target (POSIX NAME_MAX).
@@ -15,8 +12,7 @@ const NAME_MAX = 255
 const byteLength = (s: string) => new TextEncoder().encode(s).length
 
 // Why `name` is unusable as a NEW single folder name, or null if it's fine. Each reason
-// is resolved at call time, so it lands in whatever language is active when the field is
-// validated rather than the one that was active at import.
+// resolves at call time, so it lands in the language active when the field is validated.
 export function invalidFolderName(name: string | null | undefined): string | null {
   if (!name || !name.trim()) return m.folder_name_required()
   if (name !== name.trim()) return m.folder_name_edge_space()
