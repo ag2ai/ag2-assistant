@@ -10,11 +10,12 @@ from secrets import token_hex
 from assistant.pairing import PairingStore
 from assistant.paths import Paths
 from assistant.peers import PeerStore
-from assistant.profiles import CHANNEL_PLATFORMS, CHANNEL_TOKEN_ENVS, ProfileRegistry
+from assistant.profiles import ACP_PLATFORM, CHANNEL_PLATFORMS, CHANNEL_TOKEN_ENVS, ProfileRegistry
 from assistant.secrets import SecretStore
 
-# What a Connection of each platform is called when the user does not name it.
-PLATFORM_TITLES = {"telegram": "Telegram", "discord": "Discord", "slack": "Slack"}
+# What a Connection of each platform is called when the user does not name it ("acp"
+# is display-only here; it stays out of CHANNEL_PLATFORMS/CHANNEL_TOKEN_ENVS).
+PLATFORM_TITLES = {"telegram": "Telegram", "discord": "Discord", "slack": "Slack", "acp": "ACP"}
 
 # Platforms whose direct messages and groups are exposed independently.
 SPLIT_PLATFORMS = ("telegram",)
@@ -62,6 +63,34 @@ def surfaces(connection: Connection) -> dict[str, str]:
     return {"all": connection.id}
 
 
+@dataclass(frozen=True)
+class AcpConnection:
+    """One configured ``acp``/``acp-serve`` listener: a Connection (``platform="acp"``)
+    plus the Profile it is fixed to at creation and its port (unset for stdio).
+
+    The binding is never exposure-gated or client-chosen (ADR 0022 does not apply —
+    ADR 0031): a listener serves exactly one Profile,
+    so there is no reachability question to ask.
+    """
+
+    connection: Connection
+    profile: str
+    port: int | None
+
+
+def _acp_entry(entry: dict) -> AcpConnection:
+    return AcpConnection(
+        connection=Connection(
+            id=entry["id"],
+            platform=ACP_PLATFORM,
+            name=entry.get("name") or entry["id"],
+            created_at=entry.get("created_at", ""),
+        ),
+        profile=entry["profile"],
+        port=entry["port"] if isinstance(entry.get("port"), int) else None,
+    )
+
+
 class ConnectionStore:
     """One install's Connections (``connections.json``) and everything hung off them.
 
@@ -80,6 +109,10 @@ class ConnectionStore:
         self._secrets = SecretStore(paths)
         self._pairing = PairingStore(paths)
         self._peers = PeerStore(paths)
+        # ACP listeners get their own files: connections.json is what the channel-boot
+        # loop iterates (start_channel -> CHANNEL_TOKEN_ENVS[platform] raises on "acp").
+        self._acp_path = paths.root / "acp_connections.json"
+        self._acp_secrets_path = paths.root / "acp_secrets.json"
 
     # ---- storage --------------------------------------------------------------
 
@@ -319,3 +352,124 @@ class ConnectionStore:
         self._adopt(entries)
         self._write(entries)
         return entries
+
+    # ---- ACP listeners (own files — see __init__; platform="acp", ADR 0022 unused) --
+
+    def _load_acp(self) -> list[dict]:
+        if not self._acp_path.exists():
+            return []
+        try:
+            data = json.loads(self._acp_path.read_text())
+        except Exception:
+            return []
+        entries = data.get("listeners") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            return []
+        return [e for e in entries if isinstance(e, dict) and e.get("id") and e.get("profile")]
+
+    def _write_acp(self, entries: list[dict]) -> None:
+        self._acp_path.parent.mkdir(parents=True, exist_ok=True)
+        self._acp_path.write_text(json.dumps({"listeners": entries}, indent=2))
+
+    def _default_acp_name(self, entries: list[dict]) -> str:
+        """``ACP``, then ``ACP 2`` — mirrors ``default_name`` over the ACP listener
+        list rather than ``connections.json``."""
+        title = PLATFORM_TITLES[ACP_PLATFORM]
+        taken = {(e.get("name") or "").strip() for e in entries}
+        if title not in taken:
+            return title
+        n = 2
+        while f"{title} {n}" in taken:
+            n += 1
+        return f"{title} {n}"
+
+    def list_acp_connections(self) -> list[AcpConnection]:
+        """Every configured ACP listener, in creation order."""
+        return [_acp_entry(e) for e in self._load_acp()]
+
+    def get_acp_connection(self, cid: str) -> AcpConnection | None:
+        """The ACP listener with this id, or None when there is none."""
+        return next((c for c in self.list_acp_connections() if c.connection.id == cid), None)
+
+    def acp_profile_for(self, cid: str) -> str | None:
+        """The Profile this ACP listener is bound to, or None when the listener is
+        unknown. Fixed at creation — never resolved through ``exposure``/
+        ``reachable``/``set_default_profile``, which this platform does not use."""
+        listener = self.get_acp_connection(cid)
+        return listener.profile if listener is not None else None
+
+    def create_acp_connection(
+        self, profile: str, *, name: str = "", port: int | None = None, token: str = ""
+    ) -> AcpConnection:
+        """Register a listener fixed to ``profile`` and return it. Unknown or archived
+        profile → ValueError."""
+        meta = self._profiles.get_profile(profile)
+        if meta is None:
+            raise ValueError(f"unknown profile: {profile}")
+        if meta.archived:
+            raise ValueError(f"profile is archived: {profile}")
+        entries = self._load_acp()
+        cid = "acp_" + token_hex(4)
+        entry = {
+            "id": cid,
+            "name": (name or "").strip() or self._default_acp_name(entries),
+            "created_at": _now(),
+            "profile": profile,
+            "port": port,
+        }
+        entries.append(entry)
+        self._write_acp(entries)
+        if token:
+            self.set_acp_token(cid, token)
+        return _acp_entry(entry)
+
+    def delete_acp_connection(self, cid: str) -> None:
+        """Forget an ACP listener and its token. Unknown id → ValueError."""
+        entries = self._load_acp()
+        kept = [e for e in entries if e.get("id") != cid]
+        if len(kept) == len(entries):
+            raise ValueError(f"unknown acp connection: {cid}")
+        self._write_acp(kept)
+        self.clear_acp_token(cid)
+
+    # ---- ACP listener tokens (own file: SecretStore's connection-token store only
+    # admits the CHANNEL_TOKEN_ENV_NAMES bot-token env vars) --------------------
+
+    def _read_acp_tokens(self) -> dict[str, str]:
+        if not self._acp_secrets_path.exists():
+            return {}
+        try:
+            data = json.loads(self._acp_secrets_path.read_text())
+        except Exception:
+            return {}
+        return (
+            {k: v for k, v in data.items() if isinstance(v, str)} if isinstance(data, dict) else {}
+        )
+
+    def _write_acp_tokens(self, tokens: dict[str, str]) -> None:
+        self._acp_secrets_path.parent.mkdir(parents=True, exist_ok=True)
+        self._acp_secrets_path.write_text(json.dumps(tokens, indent=2))
+        try:
+            self._acp_secrets_path.chmod(0o600)
+        except Exception:
+            pass
+
+    def set_acp_token(self, cid: str, token: str) -> None:
+        """Store (or clear, with an empty value) one ACP listener's shared secret."""
+        tokens = self._read_acp_tokens()
+        token = (token or "").strip()
+        if token:
+            tokens[cid] = token
+        else:
+            tokens.pop(cid, None)
+        self._write_acp_tokens(tokens)
+
+    def acp_token_for(self, cid: str) -> str:
+        """One ACP listener's raw token — for the ``acp-serve`` bind path only, never
+        for an API response."""
+        return self._read_acp_tokens().get(cid, "")
+
+    def clear_acp_token(self, cid: str) -> None:
+        tokens = self._read_acp_tokens()
+        if tokens.pop(cid, None) is not None:
+            self._write_acp_tokens(tokens)

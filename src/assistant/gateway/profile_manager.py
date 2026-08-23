@@ -16,18 +16,27 @@ so every profile-owned path lands under the profile dir.
 """
 
 import asyncio
+import contextlib
 import shutil
+import socket
 from collections.abc import Callable, Iterable, Iterator, Mapping
 
 from assistant import channels, profiles
+from assistant.acp.approvals import install_owner_side_approvals
+from assistant.acp.auth import choose_auth
+from assistant.acp.chats import ChatBackedStorage
 from assistant.config import Config, load_config, resolve_config
 from assistant.connections import ConnectionStore
 from assistant.gateway.core import Gateway, build_gateway
 from assistant.gateway.tasks_service import TaskService
-from assistant.hitl import HitlServer
+from assistant.hitl import DesktopAsker, HitlServer
 from assistant.observability import log_suppressed, profile_logger, setup_logging
 from assistant.paths import Paths
 from assistant.profiles import ProfileMeta, ProfileRegistry
+
+# Host manager-supervised ACP listeners bind. Loopback-only: unlike standalone
+# ``acp-serve``, nothing here lets an operator choose a non-loopback interface.
+_ACP_LISTENER_HOST = "127.0.0.1"
 
 
 def _scrub_tokens(msg: str, values: Iterable[str]) -> str:
@@ -288,6 +297,18 @@ class ProfileManager:
         # pid → why that profile's runtime failed to boot at start(). A broken profile
         # must not take the whole server down; the rest boot and this records the reason.
         self.boot_errors: dict[str, str] = {}
+        # ACP listener id → its live server task. One per Connection with a
+        # port, mirroring ``self.channels`` for messaging adapters.
+        self.acp_listeners: dict[str, asyncio.Task] = {}
+        # ACP listener id → last start-failure message (port collision, archived/
+        # unknown profile). Cleared on that listener's successful start or stop.
+        self.acp_listener_errors: dict[str, str] = {}
+        # port → the listener id currently bound to it, so a collision names its
+        # holder without an OS-level probe having to carry that information.
+        self._acp_ports: dict[int, str] = {}
+        # One owner-side asker per profile, shared across that profile's listeners
+        # and their restarts; closed with the manager.
+        self._acp_askers: dict[str, DesktopAsker] = {}
         # The one router every adapter is handed. It resolves the profile per inbound
         # message through the directory methods below, so changing a Channel's default
         # profile — or a Peer's own selection — needs no restart.
@@ -343,6 +364,9 @@ class ProfileManager:
                 profile_logger(meta.id).error("profile failed to boot: %s", exc)
         for connection in self._connections.list_connections():
             await self.start_channel(connection.id)
+        for listener in self._connections.list_acp_connections():
+            if listener.port is not None:
+                await self.start_acp_listener(listener.connection.id)
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
         runtime = ProfileRuntime(
@@ -447,14 +471,148 @@ class ProfileManager:
         await self.stop_channel(cid)
         return await self.start_channel(cid)
 
+    async def start_acp_listener(self, cid: str) -> tuple[bool, str | None]:
+        """Start ACP listener ``cid`` on its bound profile's already-running gateway
+        agent. Returns ``(active, reason)`` like ``start_channel``; a failure records
+        it and the listener stays down without touching any other listener."""
+        if cid in self.acp_listeners:
+            return True, None
+        listener = self._connections.get_acp_connection(cid)
+        if listener is None:
+            raise ValueError(f"unknown acp connection: {cid}")
+        log = profile_logger("default")
+        if listener.port is None:
+            msg = "no port configured (stdio listeners are run by their own client)"
+            self.acp_listener_errors[cid] = msg
+            return False, msg
+
+        holder = self._acp_ports.get(listener.port)
+        if holder is not None and holder != cid:
+            held_by = self._connections.get_acp_connection(holder)
+            name = held_by.connection.name if held_by is not None else holder
+            msg = f"port {listener.port} is already in use by ACP listener '{name}' ({holder})"
+            self.acp_listener_errors[cid] = msg
+            return False, msg
+
+        meta = self._registry.get_profile(listener.profile)
+        if meta is None:
+            msg = f"listener's profile is unknown: {listener.profile}"
+            self.acp_listener_errors[cid] = msg
+            return False, msg
+        if meta.archived:
+            msg = f"listener's profile is archived: {listener.profile}"
+            self.acp_listener_errors[cid] = msg
+            return False, msg
+        runtime = self._runtimes.get(listener.profile)
+        if runtime is None:
+            msg = f"listener's profile is not running: {listener.profile}"
+            self.acp_listener_errors[cid] = msg
+            return False, msg
+
+        # Bind probe: fail fast on a collision with anything else on this port (not
+        # just another one of our own listeners) rather than let uvicorn discover it
+        # asynchronously, after start() has already moved on.
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((_ACP_LISTENER_HOST, listener.port))
+            probe.close()
+        except OSError as exc:
+            msg = f"port {listener.port} is already in use: {exc}"
+            log.error("acp listener '%s': %s", cid, msg)
+            self.acp_listener_errors[cid] = msg
+            return False, msg
+
+        gateway = runtime.require_gateway()
+        agent = gateway.require_agent()
+        # Sessions persist as Chats, attributed to this stored listener.
+        chat_storage = ChatBackedStorage(
+            paths=self.paths,
+            data_dir=gateway.config.data_dir,
+            profile=listener.profile,
+            mirror=gateway.emit_event,
+        )
+        # Owner-side approvals on the shared runtime agent — idempotent,
+        # and inert for Gateway turns, which bring their own per-turn manager.
+        install_owner_side_approvals(agent, gateway, self._acp_asker(listener.profile))
+        token = self._connections.acp_token_for(cid)
+        listener_auth = choose_auth(gateway.config, dict(self._env or {}))
+        task = asyncio.create_task(
+            self._run_acp_listener(cid, agent, listener.port, token, chat_storage, listener_auth),
+            name=f"acp-listener-{cid}",
+        )
+        self._acp_ports[listener.port] = cid
+        self.acp_listeners[cid] = task
+        self.acp_listener_errors.pop(cid, None)
+        log.info("acp listener '%s' started on port %s", cid, listener.port)
+        return True, None
+
+    def _acp_asker(self, pid: str) -> DesktopAsker:
+        asker = self._acp_askers.get(pid)
+        if asker is None:
+            asker = self._acp_askers[pid] = DesktopAsker()
+        return asker
+
+    async def _run_acp_listener(
+        self, cid: str, agent, port: int, token: str, chat_storage, auth=None
+    ) -> None:
+        """Run one listener's server until cancelled, recording an async failure
+        (e.g. a bind race lost after the probe above) the same way a startup one is."""
+        from assistant.acp.listeners import serve_listener
+
+        try:
+            await serve_listener(
+                agent,
+                host=_ACP_LISTENER_HOST,
+                port=port,
+                token=token,
+                chat_storage=chat_storage,
+                connection_id=cid,
+                auth=auth,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            msg = f"acp listener failed: {exc}"
+            profile_logger("default").error("acp listener '%s': %s", cid, msg)
+            self.acp_listener_errors[cid] = msg
+
+    async def stop_acp_listener(self, cid: str) -> bool:
+        """Stop ACP listener ``cid`` if it is live. Returns True if one was stopped."""
+        task = self.acp_listeners.pop(cid, None)
+        if task is None:
+            return False
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        for port, holder in list(self._acp_ports.items()):
+            if holder == cid:
+                del self._acp_ports[port]
+        self.acp_listener_errors.pop(cid, None)
+        profile_logger("default").info("acp listener '%s' stopped", cid)
+        return True
+
+    async def restart_acp_listener(self, cid: str) -> tuple[bool, str | None]:
+        """Stop then start ACP listener ``cid`` again. Unknown id → ``ValueError``."""
+        if self._connections.get_acp_connection(cid) is None:
+            raise ValueError(f"unknown acp connection: {cid}")
+        await self.stop_acp_listener(cid)
+        return await self.start_acp_listener(cid)
+
     async def close(self) -> None:
-        """Stop every Channel, then close all running runtimes."""
+        """Stop every Channel and ACP listener, then close all running runtimes."""
         for cid in list(self.channels):
             await self.stop_channel(cid)
+        for cid in list(self.acp_listeners):
+            await self.stop_acp_listener(cid)
+        for asker in self._acp_askers.values():
+            await asker.aclose()
+        self._acp_askers.clear()
         for runtime in list(self._runtimes.values()):
             await runtime.close()
         self._runtimes.clear()
         self.channel_errors.clear()
+        self.acp_listener_errors.clear()
 
     def get(self, pid: str) -> ProfileRuntime:
         """Registry-first lookup (§4.1): unknown → UnknownProfile; archived →

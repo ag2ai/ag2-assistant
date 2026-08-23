@@ -14,7 +14,10 @@ dependencies = [
     # Dev installs, CI and the Docker image all resolve this through uv.lock, so they
     # run the same AG2 the published wheel asks for. ddgs powers the native
     # DuckDuckSearchTool, openai the OpenAI voice provider.
-    "ag2[gemini,ddgs,openai,acp]>=1.0.1",
+    "ag2[gemini,ddgs,openai,acp]>=1.0.2",
+    # ag2 1.0.2's dispatch.py needs a symbol acp 0.12.1 removed, but its pin admits 0.12.1.
+    # DELETE this line when the ag2 floor above moves past 1.0.2 (the pins conflict beyond it).
+    "agent-client-protocol>=0.12.0,<0.12.1",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
@@ -45,8 +48,8 @@ dev = [
 ]
 # Provider client libraries not in the base install.
 # Opt-in: `pip install "ag2-assistant[ollama]"`.
-anthropic = ["ag2[anthropic]>=1.0.1"]
-ollama = ["ag2[ollama]>=1.0.1"]
+anthropic = ["ag2[anthropic]>=1.0.2"]
+ollama = ["ag2[ollama]>=1.0.2"]
 # Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",
@@ -105,9 +108,9 @@ ignore_missing_imports = true
 skip = "*.lock,*package-lock.json,src/assistant/gateway/static/app/*,.venv,node_modules"
 # Not typos: `ans` (answer var), `hsi` (Hang Seng Index ticker), `protext` (a
 # camelCase identifier), `padd` (Profiles.svelte's `p`-prefixed CSS class naming,
-# i.e. "p-add"), plus valid hyphenations/spellings. Extend this list when
+# i.e. "p-add"), `sigit` (an ACP Registry agent name), plus valid hyphenations/spellings. Extend this list when
 # codespell flags a real term.
-ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd"
+ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd,sigit"
 
 [tool.setuptools.packages.find]
 where = ["src"]
