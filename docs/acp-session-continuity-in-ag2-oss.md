@@ -182,6 +182,27 @@ An application-facing hook to influence or observe session id minting would help
 reconcile ACP sessions with their own conversation records, but it is a convenience, not part of
 the core request.
 
+## How to tell Tier 1 is working
+
+Whether a client's "starting a fresh conversation" notice disappears is not a sufficient test. A
+`session/load` that is accepted but replays nothing would silence that notice and still lose the
+conversation — a worse outcome than an honest `load_session=False`, because the client now trusts
+a capability that does not deliver.
+
+A client that persists its own session records gives a stronger signal. `agent-connect` (the ACP
+client in AG2 Space) stores one record per room and carries a `turns` counter forward only when a
+resume succeeds; on `SessionResumeRefused` it mints a new session and resets the counter to zero.
+A room that has seen many messages therefore reads `turns: 1` today:
+
+```json
+{"room": "!…:ag2space.local", "session_id": "657bb328…", "turns": 1}
+```
+
+After Tier 1, that counter must climb. If it stays pinned at 1 while the notice is gone, the
+resume is being accepted without taking effect.
+
+Observed 2026-08-24, agent-connect driving AG2 Assistant over ACP stdio.
+
 ## What is explicitly not being asked
 
 - No change to the ACP **Client** side (`ACPConfig`, `ClaudeCodeConfig`, the remote client work in
