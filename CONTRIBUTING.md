@@ -17,7 +17,8 @@ pre-commit install
 
 ## Before you open a pull request
 
-Run the same checks CI runs — a PR that fails them won't merge:
+Run the same checks CI runs. They are advisory — the default branch has no ruleset,
+so a red pull request is reported, not blocked:
 
 ```bash
 ruff check .
