@@ -19,6 +19,7 @@ from ag2.acp.guard import serve as guard_serve
 from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
+from assistant.acp.sdk_watch import watch_send_loop
 from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
@@ -92,7 +93,7 @@ async def _run_stdio_guarded(acp_agent: ACPAgent) -> None:
     its ``print()`` land on stderr instead.
     """
     reader, writer = await stdio_streams(limit=DEFAULT_STDIO_BUFFER_LIMIT_BYTES)
-    with contextlib.redirect_stdout(sys.stderr):
+    with contextlib.redirect_stdout(sys.stderr), watch_send_loop():
         await guard_serve(acp_agent.bind, reader, writer)
 
 

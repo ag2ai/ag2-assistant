@@ -22,6 +22,7 @@ from ag2.acp import ACPAgent, SessionConfig
 from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
+from assistant.acp.sdk_watch import watch_send_loop
 from assistant.acp.serve import cold_start_agent
 from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import (
@@ -143,7 +144,8 @@ async def serve_acp_agent(acp_agent: ACPAgent, *, host: str, port: int, token: s
     app = build_ws_app(acp_agent, token)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
     try:
-        await server.serve()
+        with watch_send_loop():
+            await server.serve()
     except asyncio.CancelledError:
         # uvicorn only runs its own shutdown (closing the listening socket) after
         # main_loop() returns normally; cancellation skips straight past it.
