@@ -463,6 +463,20 @@ class TaskService:
             await self._store.save_run(r)
         return True
 
+    async def mark_task_runs_seen(self, task_id: str) -> int:
+        """Stamp every finished-and-unread run of one task; returns how many changed.
+
+        Same rule as ``mark_run_seen``, applied in bulk: a run still in flight is left
+        alone so its unread indicator fires when it finishes.
+        """
+        stamped = 0
+        for r in await self._store.list_runs(task_id):
+            if r.status in RunStatus.TERMINAL and r.seen_at is None:
+                r.seen_at = datetime.now().astimezone().isoformat()
+                await self._store.save_run(r)
+                stamped += 1
+        return stamped
+
     # ---- execution ----
 
     async def _fire(self, task_id: str) -> None:

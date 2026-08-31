@@ -70,3 +70,45 @@ async def test_mark_run_seen_only_after_finished_idempotent(paths, tmp_path):
         assert await svc.mark_run_seen("nope") is False
     finally:
         await svc.close()
+
+
+async def test_mark_task_runs_seen_stamps_only_this_task_s_finished_runs(paths, tmp_path):
+    """The bulk path carries the same invariant as the single one: a run that has not
+    finished stays unread, so its indicator still fires when it does."""
+    svc = TaskService(
+        config=Config.for_paths(paths),
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+    )
+    svc.set_gateway(_HangingGateway())
+    try:
+        task = await svc.create_task(name="digest", prompt="p")
+        other = await svc.create_task(name="weather", prompt="p")
+
+        finished = [await svc.start_run(task["id"]) for _ in range(2)]
+        for run in finished:
+            assert await svc.stop_run(run.id) is True
+        elsewhere = await svc.start_run(other["id"])
+        assert await svc.stop_run(elsewhere.id) is True
+        await asyncio.wait_for(svc._jobs_done(), 5)
+
+        still_running = await svc.start_run(task["id"])
+        await asyncio.sleep(0.05)
+
+        assert await svc.mark_task_runs_seen(task["id"]) == 2
+        for run in finished:
+            assert (await svc.store.get_run(run.id)).seen_at is not None
+        # the live run of this task, and the other task's run, are untouched
+        assert (await svc.store.get_run(still_running.id)).seen_at is None
+        assert (await svc.store.get_run(elsewhere.id)).seen_at is None
+
+        # idempotent: nothing left to stamp
+        assert await svc.mark_task_runs_seen(task["id"]) == 0
+
+        # unknown task → nothing stamped, no error
+        assert await svc.mark_task_runs_seen("nope") == 0
+
+        assert await svc.stop_run(still_running.id) is True
+        await asyncio.wait_for(svc._jobs_done(), 5)
+    finally:
+        await svc.close()

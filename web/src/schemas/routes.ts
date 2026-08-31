@@ -113,6 +113,7 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'DELETE /api/p/{pid}/tasks/{task_id}': Ok,
   'POST /api/p/{pid}/tasks/{task_id}/run': RunDetailEnvelope,
   'GET /api/p/{pid}/tasks/{task_id}/runs': RunList,
+  'POST /api/p/{pid}/tasks/{task_id}/seen': Ok,
   'GET /api/p/{pid}/tasks/{task_id}/permissions': TaskRules,
   'DELETE /api/p/{pid}/tasks/{task_id}/permissions': Ok,
   'GET /api/p/{pid}/runs/{run_id}': RunDetailEnvelope,

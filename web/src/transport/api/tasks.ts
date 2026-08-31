@@ -64,6 +64,9 @@ export const tasksApi = {
 
   runSeen: (id: string) => post(P('/runs/' + encodeURIComponent(id) + '/seen'), undefined, Ok),
 
+  taskRunsSeen: (id: string) =>
+    post(P('/tasks/' + encodeURIComponent(id) + '/seen'), undefined, Ok),
+
   inquiries: () => get(P('/inquiries/pending'), InquiryList).then((d) => d.pending),
 
   answerInquiry: (id: string, answer: string) =>
