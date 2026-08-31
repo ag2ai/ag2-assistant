@@ -257,16 +257,49 @@ def acp(
     profile: str | None = typer.Option(
         None, "--profile", "-p", help="Profile id to serve (default: the active default)."
     ),
+    connection: str | None = typer.Option(
+        None,
+        "--connection",
+        help="Serve a stored ACP Connection (id or name) instead of a bare profile. "
+        "Mutually exclusive with --profile.",
+    ),
     memory: bool = typer.Option(True, help="Use the persistent user-profile memory."),
 ) -> None:
     """Serve one profile's Agent over ACP stdio (for editors and the ACP Registry).
 
     stdout is the JSON-RPC wire: this command writes nothing to it and never runs
-    onboarding, which would open a browser popup and hang a stdio client forever."""
+    onboarding, which would open a browser popup and hang a stdio client forever.
+
+    ``--connection`` serves a listener already configured in Settings, so this door
+    and ``acp-serve`` read the same records; without it the active default profile
+    is served and sessions are attributed to ``acp:stdio``."""
+    from assistant.acp.listeners import UnknownAcpConnection, stdio_connection_target
     from assistant.acp.serve import serve_stdio
 
+    connection_id = "acp:stdio"
+    if connection is not None:
+        if profile is not None:
+            # stdout is the protocol wire — every diagnostic goes to stderr.
+            typer.echo("error: --connection cannot be combined with --profile", err=True)
+            raise typer.Exit(1)
+        try:
+            profile, connection_id = stdio_connection_target(
+                ConnectionStore(default_paths()), connection
+            )
+        except UnknownAcpConnection as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+
     try:
-        asyncio.run(serve_stdio(profile, default_paths(), memory=memory, env=os.environ))
+        asyncio.run(
+            serve_stdio(
+                profile,
+                default_paths(),
+                memory=memory,
+                env=os.environ,
+                connection_id=connection_id,
+            )
+        )
     except KeyboardInterrupt:
         pass
 

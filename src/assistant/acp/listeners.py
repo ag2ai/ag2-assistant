@@ -71,3 +71,19 @@ def ensure_acp_connection(
         if listener.profile == profile and listener.port == port:
             return listener
     return store.create_acp_connection(profile, name=name, port=port, token=token)
+
+
+class UnknownAcpConnection(Exception):
+    """Raised when ``--connection`` names no stored ACP listener."""
+
+
+def stdio_connection_target(store: ConnectionStore, id_or_name: str) -> tuple[str, str]:
+    """The ``(profile, connection_id)`` a stdio listener serves for a stored record.
+
+    Port is ignored: stdio has no port, and a portless record is precisely a stdio
+    listener — the case ``acp-serve`` rejects.
+    """
+    listener = find_acp_connection(store, id_or_name)
+    if listener is None:
+        raise UnknownAcpConnection(f"unknown ACP connection: {id_or_name!r}")
+    return listener.profile, listener.connection.id

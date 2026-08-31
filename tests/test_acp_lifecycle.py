@@ -10,11 +10,16 @@ import asyncio
 import contextlib
 import socket
 
+import pytest
 from ag2 import Agent as Ag2Agent
 from ag2.acp import ACPRemoteConfig
 from ag2.testing import TestConfig
 
-from assistant.acp.listeners import ensure_acp_connection
+from assistant.acp.listeners import (
+    UnknownAcpConnection,
+    ensure_acp_connection,
+    stdio_connection_target,
+)
 from assistant.connections import ConnectionStore
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import make_manager
@@ -288,3 +293,37 @@ async def test_manager_listener_sessions_persist_as_chats(paths, monkeypatch):
     assert peers, "no Peer attributed to the stored listener's Connection id"
     assert peers[0].profile == pid
     assert peers[0].chat, "Peer has no Chat attached"
+
+
+# --- the acp (stdio) CLI's --connection resolver (tested directly, not the typer command) ---
+
+
+def test_stdio_connection_target_resolves_a_listener_by_id(paths):
+    pid = ProfileRegistry(paths).create_profile("Work", "#336699").id
+    store = ConnectionStore(paths)
+    listener = store.create_acp_connection(pid, name="Desktop", port=8802)
+
+    assert stdio_connection_target(store, listener.connection.id) == (pid, listener.connection.id)
+
+
+def test_stdio_connection_target_resolves_a_listener_by_display_name(paths):
+    pid = ProfileRegistry(paths).create_profile("Work", "#336699").id
+    store = ConnectionStore(paths)
+    listener = store.create_acp_connection(pid, name="Desktop", port=8802)
+
+    assert stdio_connection_target(store, "Desktop") == (pid, listener.connection.id)
+
+
+def test_stdio_connection_target_accepts_a_portless_record(paths):
+    """A stdio listener is exactly a record with no port, which ``acp-serve`` refuses."""
+    pid = ProfileRegistry(paths).create_profile("Work", "#336699").id
+    store = ConnectionStore(paths)
+    listener = store.create_acp_connection(pid, name="Editor")
+
+    assert listener.port is None
+    assert stdio_connection_target(store, "Editor") == (pid, listener.connection.id)
+
+
+def test_stdio_connection_target_rejects_an_unknown_connection(paths):
+    with pytest.raises(UnknownAcpConnection, match="no-such-listener"):
+        stdio_connection_target(ConnectionStore(paths), "no-such-listener")
