@@ -355,6 +355,7 @@ what `/api/stream?chat=task-run:{run_id}` opens.
 | DELETE | `/api/tasks/{id}` | delete the task, its runs, and their chat streams — irreversible |
 | POST   | `/api/tasks/{id}/run` | run now — start a run immediately, schedule unchanged |
 | GET    | `/api/tasks/{id}/runs` | the task's run history (newest first) |
+| POST   | `/api/tasks/{id}/seen` | clear the unread highlight on every finished run of the task |
 | GET    | `/api/runs/{id}` | one run's status/summary/task name |
 | POST   | `/api/runs/{id}/stop` | stop a live run (keeps what it already produced) |
 | POST   | `/api/runs/{id}/seen` | clear a finished run's unread highlight |
