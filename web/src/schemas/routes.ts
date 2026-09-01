@@ -5,6 +5,7 @@
 // Every JSON route belongs to exactly ONE bucket; routes.test.ts fails otherwise,
 // so a new route cannot be added without a decision about its schema.
 import type { z } from 'zod'
+import { AcpListener, AcpListenerCreated, AcpListenerList, AcpListenerTokenRotated } from './acp.ts'
 import { ChatList, MessageReply, Transcript } from './chat.ts'
 import {
   Connection,
@@ -105,6 +106,9 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'GET /api/p/{pid}/chats/{chat_id}': Transcript,
   'PATCH /api/p/{pid}/chats/{chat_id}': Ok,
   'DELETE /api/p/{pid}/chats/{chat_id}': Ok,
+  // Owner's kill switch on a live ACP chat: drops the client, keeps
+  // the Chat. 404/409 (not an ACP chat / not live) never reach the zod gate.
+  'POST /api/p/{pid}/chats/{chat_id}/acp/close': Ok,
   'POST /api/p/{pid}/message': MessageReply,
   'GET /api/p/{pid}/tasks': TaskList,
   'POST /api/p/{pid}/tasks': NewTaskEnvelope,
@@ -171,6 +175,14 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/connections/{cid}/pairing/code': PairingCodeIssued,
   'GET /api/connections/{cid}/groups': ConnectionGroups,
   'POST /api/connections/{cid}/groups/{chat_id}/profile': ConnectionGroups,
+  // ACP listeners (ADR 0031): install-level, never exposure-gated, so unlike
+  // Connections above there is no exposure/pairing/groups table here.
+  'GET /api/acp/listeners': AcpListenerList,
+  'POST /api/acp/listeners': AcpListenerCreated,
+  'DELETE /api/acp/listeners/{cid}': Ok,
+  'POST /api/acp/listeners/{cid}/stop': AcpListener,
+  'POST /api/acp/listeners/{cid}/start': AcpListener,
+  'POST /api/acp/listeners/{cid}/rotate-token': AcpListenerTokenRotated,
   'GET /api/folders': FolderList,
   // Create and update echo the changed Folder next to the snapshot; delete and the
   // grant routes echo the snapshot alone, because the row they touched may be gone

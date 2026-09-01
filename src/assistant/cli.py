@@ -252,6 +252,138 @@ def chat(
     typer.echo("\nbye")
 
 
+@app.command()
+def acp(
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile id to serve (default: the active default)."
+    ),
+    connection: str | None = typer.Option(
+        None,
+        "--connection",
+        help="Serve a stored ACP Connection (id or name) instead of a bare profile. "
+        "Mutually exclusive with --profile.",
+    ),
+    memory: bool = typer.Option(True, help="Use the persistent user-profile memory."),
+) -> None:
+    """Serve one profile's Agent over ACP stdio (for editors and the ACP Registry).
+
+    stdout is the JSON-RPC wire: this command writes nothing to it and never runs
+    onboarding, which would open a browser popup and hang a stdio client forever.
+
+    ``--connection`` serves a listener already configured in Settings, so this door
+    and ``acp-serve`` read the same records; without it the active default profile
+    is served and sessions are attributed to ``acp:stdio``."""
+    from assistant.acp.listeners import UnknownAcpConnection, stdio_connection_target
+    from assistant.acp.serve import serve_stdio
+
+    connection_id = "acp:stdio"
+    if connection is not None:
+        if profile is not None:
+            # stdout is the protocol wire — every diagnostic goes to stderr.
+            typer.echo("error: --connection cannot be combined with --profile", err=True)
+            raise typer.Exit(1)
+        try:
+            profile, connection_id = stdio_connection_target(
+                ConnectionStore(default_paths()), connection
+            )
+        except UnknownAcpConnection as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+
+    try:
+        asyncio.run(
+            serve_stdio(
+                profile,
+                default_paths(),
+                memory=memory,
+                env=os.environ,
+                connection_id=connection_id,
+            )
+        )
+    except KeyboardInterrupt:
+        pass
+
+
+@app.command("acp-serve")
+def acp_serve(
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile id to serve (default: the active default)."
+    ),
+    host: str = typer.Option("127.0.0.1", help="Interface to bind."),
+    port: int | None = typer.Option(None, help="TCP port to listen on (default 8802)."),
+    token: str | None = typer.Option(
+        None,
+        help="Shared secret a client must present as 'Authorization: Bearer <token>'. "
+        "Empty = no token (bind to loopback only).",
+    ),
+    memory: bool = typer.Option(True, help="Use the persistent user-profile memory."),
+    connection: str | None = typer.Option(
+        None,
+        "--connection",
+        help="Serve a stored ACP Connection (id or name) instead of ad-hoc flags. "
+        "Mutually exclusive with --profile/--port/--token.",
+    ),
+) -> None:
+    """[EXPERIMENTAL] Serve one profile's Agent over ACP WebSocket for a remote client.
+
+    One listener, one profile, one port — unlike ``gateway``, this does not serve
+    every profile. Binds loopback by default; a non-loopback bind with no --token is
+    refused at startup, since the socket would otherwise drive this profile's agent
+    for anyone reaching it. TLS is expected to terminate at a reverse proxy.
+
+    ``--connection`` runs a listener already configured in Settings/``run`` (its
+    profile/port/token come from the stored record). Without it, this auto-registers
+    a Connection for (profile, port) if an identical one does not already exist, so
+    every listener is visible in Settings even started ad hoc."""
+    from assistant.acp.listeners import ensure_acp_connection, find_acp_connection
+    from assistant.acp.serve_ws import (
+        NonLoopbackTokenRequired,
+        require_token_for_non_loopback,
+        serve_ws,
+    )
+
+    if connection is not None:
+        if profile is not None or port is not None or token is not None:
+            typer.echo("error: --connection cannot be combined with --profile/--port/--token")
+            raise typer.Exit(1)
+        store = ConnectionStore(default_paths())
+        listener = find_acp_connection(store, connection)
+        if listener is None:
+            typer.echo(f"error: unknown ACP connection: {connection!r}")
+            raise typer.Exit(1)
+        if listener.port is None:
+            typer.echo(f"error: connection {connection!r} has no port configured (stdio only)")
+            raise typer.Exit(1)
+        profile = listener.profile
+        port = listener.port
+        token = store.acp_token_for(listener.connection.id)
+    else:
+        port = 8802 if port is None else port
+        token = token or ""
+        try:
+            pid, _, _ = resolve_active_profile(profile, paths=default_paths(), env=os.environ)
+        except (UnknownProfile, ArchivedProfile):
+            pid = None
+        if pid is not None:
+            ensure_acp_connection(ConnectionStore(default_paths()), pid, port, token=token)
+            profile = pid
+
+    try:
+        require_token_for_non_loopback(host, token)
+    except NonLoopbackTokenRequired as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1)
+
+    typer.echo(f"AG2 Assistant acp-serve (experimental) listening on ws://{host}:{port}")
+    typer.echo("  (token required)" if token else "  (NO token — bind to loopback only!)")
+    try:
+        asyncio.run(
+            serve_ws(profile, default_paths(), host=host, port=port, token=token, memory=memory)
+        )
+    except KeyboardInterrupt:
+        pass
+
+
 profile_app = typer.Typer(help="Inspect or manage the learned user profile.")
 app.add_typer(profile_app, name="profile")
 

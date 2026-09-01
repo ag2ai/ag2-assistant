@@ -480,6 +480,14 @@
     <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id}
          role="button" tabindex="0"
          onclick={() => openChat(s.chat_id)} onkeydown={(e) => rowKey(e, () => openChat(s.chat_id))}>
+      {#if s.origin_platform === 'acp'}
+        <!-- The listener Connection's name is the truth; a live dot
+             marks a remote client driving it right now. -->
+        <span class="tag originbadge" class:live={s.origin_live}
+          title={s.origin_live ? `Live — driven by the “${s.origin_name}” ACP listener` : `Started by the “${s.origin_name}” ACP listener`}>
+          ACP
+        </span>
+      {/if}
       {#if renameChat === s.chat_id}
         <input class="renamein" value={renameText} use:focusSelect
           oninput={(e) => (renameText = e.currentTarget.value)}
@@ -744,6 +752,12 @@
   .datesep:first-child { margin-top: 2px; }
   .chatrow { display: flex; align-items: center; gap: 8px; }
   .clabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* ACP origin badge: the listener Connection's name, never the
+     client's own self-reported clientInfo. The live dot marks a remote client
+     driving the chat right now. */
+  .originbadge { flex: none; display: inline-flex; align-items: center; white-space: nowrap; color: var(--text-muted); }
+  .originbadge.live { color: color-mix(in srgb, var(--success) 78%, var(--text)); border-color: color-mix(in srgb, var(--success) 40%, var(--line)); }
+  .originbadge.live::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--success); margin-right: 4px; }
   /* Last-activity stamp, right-aligned; the hover swaps it for the delete
      affordance so the row's right slot never doubles up. */
   .rowtime { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }

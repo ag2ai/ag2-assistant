@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -97,19 +98,41 @@ def test_coverage_leg_is_declared_and_is_the_newest_in_the_matrix():
     assert coverage_leg == newest, f"coverage runs on {coverage_leg}, newest leg is {newest}"
 
 
-def _discovered_manifests():
-    """Every dependency manifest in the tree, as (ecosystem, dependabot directory)."""
-    ecosystems = {"uv.lock": "uv", "package-lock.json": "npm"}
-    skip = {".venv", "node_modules", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+_ECOSYSTEMS = {"uv.lock": "uv", "package-lock.json": "npm"}
 
+
+def _tracked_paths():
+    """Every file git tracks, relative to the repository root."""
+    listing = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=_ROOT, capture_output=True, text=True, check=True
+    ).stdout
+    return [Path(entry) for entry in listing.split("\0") if entry]
+
+
+def _discovered_manifests():
+    """Every tracked dependency manifest, as (ecosystem, dependabot directory).
+
+    Follows git rather than the filesystem: Dependabot only ever sees committed
+    files, so an ignored local checkout carrying its own lockfiles is not ours.
+    """
     found = set()
-    for filename, ecosystem in ecosystems.items():
-        for path in _ROOT.rglob(filename):
-            if skip & set(path.relative_to(_ROOT).parts):
-                continue
-            directory = path.parent.relative_to(_ROOT).as_posix()
-            found.add((ecosystem, "/" if directory == "." else f"/{directory}"))
+    for path in _tracked_paths():
+        ecosystem = _ECOSYSTEMS.get(path.name)
+        if ecosystem is None:
+            continue
+        directory = path.parent.as_posix()
+        found.add((ecosystem, "/" if directory == "." else f"/{directory}"))
     return found
+
+
+def test_manifest_discovery_never_leaves_the_repository():
+    """A lockfile git ignores — a local checkout, a scratch clone — is not ours to watch."""
+    tracked = {path.as_posix() for path in _tracked_paths()}
+
+    for ecosystem, directory in _discovered_manifests():
+        filename = next(name for name, eco in _ECOSYSTEMS.items() if eco == ecosystem)
+        prefix = "" if directory == "/" else f"{directory.lstrip('/')}/"
+        assert prefix + filename in tracked
 
 
 def test_every_dependency_manifest_has_a_dependabot_ecosystem():

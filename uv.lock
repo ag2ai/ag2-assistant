@@ -13,7 +13,7 @@ resolution-markers = [
 
 [[package]]
 name = "ag2"
-version = "1.0.1"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -26,9 +26,9 @@ dependencies = [
     { name = "termcolor" },
     { name = "tiktoken" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/2b/6d1360ff273f871557e736f840d603c935df13872c6860211bcc5c4a1d19/ag2-1.0.1.tar.gz", hash = "sha256:bc758ebd6b62d18422261e18b6df709d1503ad055e5906d3b94dfeff79f80e33", size = 623158, upload-time = "2026-07-29T05:10:30.172Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/84/41f134baa2a0ba437d85134224e2c0ecfe121237973aaf0ecbdf2d84f3c4/ag2-1.0.2.tar.gz", hash = "sha256:fd58ae079e63d3a1657fd9f8847deb24956852dfddefdfe89c72222953339e41", size = 703925, upload-time = "2026-08-15T05:29:08.581Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/f1/33a048450f551424cb76e2c546603db98e9868e83f33028e6a33b878edd2/ag2-1.0.1-py3-none-any.whl", hash = "sha256:f343cf9d1f290fd253e2ae80f96eb07f1a3b19ec7c8548dd8e2a57722779577a", size = 873684, upload-time = "2026-07-29T05:10:28.463Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/b7/43a404d9d1f574ca85d3b5275a9448cadb64681fd63e83133577ac6233a5/ag2-1.0.2-py3-none-any.whl", hash = "sha256:6b9ce2b7f9b5d95e2b19a84c8499719f063aae6291b05dc6293e86a0eade4581", size = 969868, upload-time = "2026-08-15T05:29:07.153Z" },
 ]
 
 [package.optional-dependencies]
@@ -66,6 +66,7 @@ version = "0.5.3"
 source = { editable = "." }
 dependencies = [
     { name = "ag2", extra = ["acp", "ddgs", "gemini", "openai"] },
+    { name = "agent-client-protocol" },
     { name = "beautifulsoup4" },
     { name = "cron-descriptor" },
     { name = "cronsim" },
@@ -107,9 +108,10 @@ ollama = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.0.1" },
-    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp"], specifier = ">=1.0.1" },
-    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.0.1" },
+    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.0.2" },
+    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp"], specifier = ">=1.0.2" },
+    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.0.2" },
+    { name = "agent-client-protocol", specifier = ">=0.12.0,<0.12.1" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
     { name = "cronsim", specifier = ">=2.7" },
@@ -140,14 +142,14 @@ provides-extras = ["dev", "anthropic", "ollama", "google"]
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.11.0"
+version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/93/396d02c91b387b2678f23081869ca47bd495fc6c78789022c683180cf5f1/agent_client_protocol-0.11.0.tar.gz", hash = "sha256:8920a3b27bdcc852fd7c73066f47ab53257dbfbe57b505e20a40c69f80a5391c", size = 87402, upload-time = "2026-07-05T17:07:56.803Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/50/65bfb4e3e13f350a52c368cbfc4bc36a1b3b3f34a6b3f5a2e3551e1bd63b/agent_client_protocol-0.12.0.tar.gz", hash = "sha256:4d42ac680388556b038cb6dd58dbbbd1561f9e545a334c1a352cc055f98b1c79", size = 135037, upload-time = "2026-08-01T15:58:22.35Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/48/a1367dded7765f5489f9840389949d5aeac53a73aeb1b4e6c0ab61e1617a/agent_client_protocol-0.11.0-py3-none-any.whl", hash = "sha256:2d8570cd4911f8af9fbab4808f7b05f09204a756f346c7409ecdcae3f37cdb2f", size = 68089, upload-time = "2026-07-05T17:07:55.518Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/c7/b84b8698879464bd8f869551bac31454bed14a3a22910f65d9693f3701bd/agent_client_protocol-0.12.0-py3-none-any.whl", hash = "sha256:233626748034896214de118f5cf5a319484ad2186705fd595219afee92237ccc", size = 92992, upload-time = "2026-08-01T15:58:21.216Z" },
 ]
 
 [[package]]
