@@ -173,6 +173,19 @@ def test_run_stop_and_seen_http_wiring(paths):
         assert seen.status_code == 200 and seen.json()["ok"] is True
 
 
+def test_mark_task_runs_seen_http_wiring(paths):
+    client, pid = _client(paths)
+    with client:
+        created = client.post(api(pid, "/tasks"), json={"name": "R", "prompt": "go"}).json()["task"]
+
+        seen = client.post(api(pid, f"/tasks/{created['id']}/seen"))
+        assert seen.status_code == 200 and seen.json()["ok"] is True
+
+        # An unknown task answers a bare Ok rather than 404, as /runs/{id}/seen does.
+        missing = client.post(api(pid, "/tasks/task-nope/seen"))
+        assert missing.status_code == 200 and missing.json()["ok"] is True
+
+
 # ---- description field + per-task permission routes ----
 
 

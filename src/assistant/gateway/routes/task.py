@@ -133,6 +133,12 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
             return Response(status_code=404)
         return {"runs": task["runs"]}
 
+    @r.post("/tasks/{task_id}/seen", response_model=Ok)
+    async def task_runs_seen(task_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+        """Mark every finished run of one task opened (clears the whole list at once)."""
+        await runtime.require_tasks().mark_task_runs_seen(task_id)
+        return {"ok": True}
+
     @r.get("/runs/{run_id}", response_model=RunDetailEnvelopeResponse)
     async def get_run(run_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
         """One run's durable header (status/summary/task name) for the run page."""

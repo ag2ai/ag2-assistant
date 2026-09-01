@@ -137,6 +137,20 @@ import WriteSwitch from '../WriteSwitch.svelte'
   const eTaskFolders = $derived(efolders.filter((f) => f.profileMode == null))
   const eProfileFolders = $derived(efolders.filter((f) => f.profileMode != null))
 
+  let markingRead = $state(false)
+  async function markAllRead() {
+    if (!task || markingRead) return
+    markingRead = true
+    // Reload rather than patch locally: the response is a bare Ok, so the task's own
+    // unread count and run rows are the authoritative redraw.
+    try {
+      await api.taskRunsSeen(task.id)
+      await load(task.id)
+    } finally {
+      markingRead = false
+    }
+  }
+
   // Monotonic token: fast task-A → task-B navigation can let A's load() await
   // resolve after B's has started. Each call claims the next token and checks
   // it's still current before committing ANY state.
@@ -422,7 +436,14 @@ import WriteSwitch from '../WriteSwitch.svelte'
       <div class="tpcols" class:single={isNew}>
         {#if !isNew && task}
           <section>
-            <h2>History</h2>
+            <div class="histhead">
+              <h2>History</h2>
+              {#if task.unread > 0}
+                <button class="markread" onclick={markAllRead} disabled={markingRead}>
+                  Mark all read
+                </button>
+              {/if}
+            </div>
             {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
             <div class="runslist">
               {#each task.runs as r (r.id)}
@@ -669,6 +690,10 @@ import WriteSwitch from '../WriteSwitch.svelte'
      a single centered column keeps the focus on the fields being filled (spec story 15). */
   .tpcols.single { grid-template-columns: minmax(0, 1fr); max-width: 640px; }
   @media (max-width: 760px) { .tpcols { grid-template-columns: 1fr; } }
+  .histhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .markread { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .markread:hover:not(:disabled) { color: var(--ink); }
+  .markread:disabled { opacity: .5; cursor: default; }
   .tpcols h2 { margin: 20px 0 8px; font-size: 12px; font-weight: var(--fw-semibold); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .tpcols section > h2:first-child { margin-top: 0; }
   .tpprompt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0; }
