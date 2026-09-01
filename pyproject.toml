@@ -17,7 +17,7 @@ dependencies = [
     "ag2[gemini,ddgs,openai,acp]>=1.0.2",
     # ag2 1.0.2's dispatch.py needs a symbol acp 0.12.1 removed, but its pin admits 0.12.1.
     # DELETE this line when the ag2 floor above moves past 1.0.2 (the pins conflict beyond it).
-    "agent-client-protocol>=0.12.0,<0.12.1",
+    "agent-client-protocol>=0.12.0,<0.12.2",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
