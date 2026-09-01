@@ -137,6 +137,7 @@ from assistant.gateway.profile_manager import (
     UnknownProfile,
 )
 from assistant.gateway.routes import (
+    acp,
     chat,
     connection,
     file,
@@ -459,6 +460,12 @@ def create_app(
     # install-level, and live in gateway/routes/profile.py and connection.py.
     app.include_router(profile.build_router(deps))
     app.include_router(connection.build_router(deps))
+
+    # ACP listeners: install-level, one-Profile-per-listener, never
+    # exposure-gated (ADR 0031) — its own router beside Connections rather than
+    # folded into connection.py, which every consumer of CHANNEL_PLATFORMS assumes
+    # is a token-bearing messaging adapter.
+    app.include_router(acp.build_router(deps))
 
     # ------------------------------------------------------------------ #
     #  Profile-scoped router (/api/p/{pid})                              #
