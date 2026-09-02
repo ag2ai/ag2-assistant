@@ -25,6 +25,9 @@
   let adding = $state(false)
   let draftProfile = $state('')
   let draftName = $state('')
+  // 'ws' binds a port here; 'stdio' only registers the record, and its client
+  // launches `ag2-assistant acp --connection <name>` itself.
+  let draftTransport = $state<'ws' | 'stdio'>('ws')
   let draftPort = $state('')
   let draftToken = $state('')
   let createBusy = $state(false)
@@ -55,6 +58,9 @@
   // connectionStatus() uses for a bad bot token.
   function statusFor(l: AcpListener): Status {
     if (l.error) return { kind: 'err', text: l.error }
+    // A stdio record never runs here; its client runs it, so "not running" would
+    // read as a fault.
+    if (l.port === null) return { kind: 'ok', text: 'Ready' }
     return l.running ? { kind: 'ok', text: 'Running' } : { kind: 'wait', text: 'Not running' }
   }
 
@@ -66,6 +72,7 @@
   function cancelAdd() {
     adding = false
     draftProfile = ''; draftName = ''; draftPort = ''; draftToken = ''
+    draftTransport = 'ws'
     createErr = ''
   }
 
@@ -73,9 +80,10 @@
     if (!draftProfile || createBusy) return
     createErr = ''; createBusy = true
     try {
-      const port = Number(draftPort.trim()) || 8802
+      const stdio = draftTransport === 'stdio'
+      const port = stdio ? null : Number(draftPort.trim()) || 8802
       const created = await api.createAcpListener(
-        draftProfile, port, draftName.trim(), draftToken.trim(),
+        draftProfile, port, draftName.trim(), stdio ? '' : draftToken.trim(),
       )
       await load()
       cancelAdd()
@@ -143,11 +151,11 @@
 
 <div class="setgroup">
   ACP listeners
-  <span class="setwide" title="Lets an external ACP client (AG2 Space, an editor) drive a profile directly">Experimental</span>
+  <span class="setwide" title="Lets an external ACP client (an editor, a remote seat) drive a profile directly">Experimental</span>
 </div>
 <p class="setsub">
-  Serve one profile to an Agent Client Protocol client over its own port. One listener drives
-  exactly one profile — add another listener for another.
+  Serve one profile to an Agent Client Protocol client — over its own port, or over stdio where
+  the client launches it. One listener drives exactly one profile — add another for another.
 </p>
 
 {#if err}<p class="cnerr">{err}</p>{/if}
@@ -162,7 +170,9 @@
       <li class="cnitem acplistitem">
         <div class="cnitem">
           <span class="cnid">{l.name}</span>
-          <span class="cnhint">{profileName(l.profile)} · port {l.port ?? '—'}</span>
+          <span class="cnhint">
+            {profileName(l.profile)} · {l.port === null ? 'stdio' : `port ${l.port}`}
+          </span>
           <IntegrationStatus status={statusFor(l)} />
           <button
             class="iconbtn sm" aria-label={expandedId === l.id ? `Collapse ${l.name}` : `Expand ${l.name}`}
@@ -187,6 +197,34 @@
             </div>
             <div class="keyrow" style="justify-content:flex-end">
               <button class="open primary" onclick={dismissReveal}>Done</button>
+            </div>
+          </div>
+        {:else if expandedId === l.id && l.port === null}
+          <div class="cnform">
+            <p class="cnnote">
+              A stdio listener binds nothing — its client launches it. Point that client at:
+            </p>
+            <div class="keyrow">
+              <input
+                readonly value={`ag2-assistant acp --connection "${l.name}"`}
+                aria-label="Command for this listener"
+                onclick={(e) => e.currentTarget.select()}
+              />
+            </div>
+            <div class="keyrow">
+              {#if confirmDeleteId === l.id}
+                <span class="cnwarn">Delete "{l.name}"?</span>
+                <button class="open danger" disabled={busyId === l.id} onclick={() => remove(l.id)}>
+                  Delete
+                </button>
+                <button class="open" disabled={busyId === l.id} onclick={() => (confirmDeleteId = null)}>
+                  Cancel
+                </button>
+              {:else}
+                <button class="open danger" disabled={busyId === l.id} onclick={() => (confirmDeleteId = l.id)}>
+                  Delete
+                </button>
+              {/if}
             </div>
           </div>
         {:else if expandedId === l.id}
@@ -244,23 +282,40 @@
       />
     </div>
     <div class="keyrow">
-      <span class="kp">Port</span>
-      <input
-        type="number" placeholder="8802" aria-label="Port" disabled={createBusy}
-        bind:value={draftPort}
-      />
+      <span class="kp">Transport</span>
+      <select bind:value={draftTransport} aria-label="Transport" disabled={createBusy}>
+        <option value="ws">WebSocket — this app listens on a port</option>
+        <option value="stdio">stdio — the client launches it</option>
+      </select>
     </div>
-    <p class="cnhint">
-      A token is generated for you and shown once the listener is created — paste your own
-      below instead if you already have one.
-    </p>
-    <div class="keyrow">
-      <span class="kp">Token</span>
-      <input
-        type="password" placeholder="generate one for me" aria-label="Listener token"
-        disabled={createBusy} bind:value={draftToken}
-      />
-    </div>
+
+    {#if draftTransport === 'stdio'}
+      <p class="cnhint">
+        Nothing is bound and no token is needed: the client runs
+        <code>ag2-assistant acp --connection "{draftName.trim() || 'name'}"</code> itself. The
+        record exists so its chats are filed under this listener instead of every stdio client
+        sharing one identity.
+      </p>
+    {:else}
+      <div class="keyrow">
+        <span class="kp">Port</span>
+        <input
+          type="number" placeholder="8802" aria-label="Port" disabled={createBusy}
+          bind:value={draftPort}
+        />
+      </div>
+      <p class="cnhint">
+        A token is generated for you and shown once the listener is created — paste your own
+        below instead if you already have one.
+      </p>
+      <div class="keyrow">
+        <span class="kp">Token</span>
+        <input
+          type="password" placeholder="generate one for me" aria-label="Listener token"
+          disabled={createBusy} bind:value={draftToken}
+        />
+      </div>
+    {/if}
 
     {#if createErr}<p class="cnerr">{createErr}</p>{/if}
 

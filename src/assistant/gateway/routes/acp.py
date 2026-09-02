@@ -25,7 +25,10 @@ from assistant.gateway.schemas.primitives import Ok
 
 class AcpListenerCreateRequest(BaseModel):
     profile: str
-    port: int
+    # Omitted (or null) registers a stdio listener: no socket, no token, nothing
+    # started here — its client launches `ag2-assistant acp --connection <name>`
+    # itself. A port registers the WebSocket door and starts it at once.
+    port: int | None = None
     name: str = ""  # blank takes the next free "ACP"/"ACP 2"/... default name
     token: str = ""  # blank generates one, returned once in the response
 
@@ -60,18 +63,27 @@ def build_router(d: GatewayDeps) -> APIRouter:
 
     @r.post("/api/acp/listeners", response_model=AcpListenerCreatedResponse)
     async def create_acp_listener(req: AcpListenerCreateRequest):
-        """Register a listener fixed to ``profile`` on ``port`` and start it at
-        once; one that will not start (bad profile, taken port) still records why
-        and comes back 200 — the same honesty pattern as a channel Connection.
-        Unknown/archived profile → 400."""
-        token = (req.token or "").strip() or _generate_token()
+        """Register a listener fixed to ``profile`` and start it at once; one that
+        will not start (bad profile, taken port) still records why and comes back
+        200 — the same honesty pattern as a channel Connection. Unknown/archived
+        profile → 400.
+
+        A request with no ``port`` registers a stdio listener instead: there is no
+        socket to bind and no upgrade request to carry a token, so nothing is
+        started and no secret is minted. The record exists so
+        ``ag2-assistant acp --connection <name>`` can name it, which is what files
+        that client's sessions under their own id rather than the shared
+        ``acp:stdio``."""
+        stdio = req.port is None
+        token = "" if stdio else ((req.token or "").strip() or _generate_token())
         try:
             listener = d.connection_store.create_acp_connection(
                 req.profile, name=req.name, port=req.port, token=token
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        await d.manager.start_acp_listener(listener.connection.id)
+        if not stdio:
+            await d.manager.start_acp_listener(listener.connection.id)
         return {"listener": _entry(listener), "token": token}
 
     @r.delete("/api/acp/listeners/{cid}", response_model=Ok)

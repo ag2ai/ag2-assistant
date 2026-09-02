@@ -174,3 +174,43 @@ def test_unknown_listener_ids_404_on_every_action_route(bare):
     assert bare.post("/api/acp/listeners/nope/stop").status_code == 404
     assert bare.post("/api/acp/listeners/nope/start").status_code == 404
     assert bare.post("/api/acp/listeners/nope/rotate-token").status_code == 404
+
+
+def test_a_listener_with_no_port_is_registered_but_never_started(profiled):
+    """The stdio door: `ag2-assistant acp --connection <name>` needs a record to
+    name, and there is nothing here to bind or start."""
+    client, pid = profiled
+    r = client.post("/api/acp/listeners", json={"profile": pid, "name": "Space · dev"})
+
+    assert r.status_code == 200, r.text
+    listener = r.json()["listener"]
+    assert listener["port"] is None
+    assert listener["running"] is False
+    # Not started, so no "no port configured" complaint is recorded against it —
+    # a stdio record is configured correctly, not broken.
+    assert listener["error"] is None
+
+
+def test_a_listener_with_no_port_gets_no_token(profiled):
+    """Nothing carries one: a stdio client is a subprocess, not an upgrade request."""
+    client, pid = profiled
+    body = client.post("/api/acp/listeners", json={"profile": pid, "port": None}).json()
+
+    assert body["token"] == ""
+    assert body["listener"]["has_token"] is False
+
+
+def test_a_stdio_listener_is_the_one_the_cli_resolves_by_name(profiled, paths):
+    """--connection takes an id or an exact name, and ignores port precisely so a
+    portless record resolves (assistant/acp/listeners.py::stdio_connection_target)."""
+    from assistant.acp.listeners import stdio_connection_target
+    from assistant.connections import ConnectionStore
+
+    client, pid = profiled
+    created = client.post(
+        "/api/acp/listeners", json={"profile": pid, "name": "Space · prod"}
+    ).json()["listener"]
+
+    profile, connection_id = stdio_connection_target(ConnectionStore(paths), "Space · prod")
+    assert profile == pid
+    assert connection_id == created["id"]
