@@ -1,12 +1,28 @@
 """Peer registry persisted to ``<root>/peers.json``: one conversation, keyed by the
-Connection it arrived on plus the chat id, holding the Profile it talks to."""
+Connection it arrived on plus the chat id, holding the Profile it talks to.
+
+The file is install-level, so several processes write it at once — the gateway, a
+stdio ``ag2-assistant acp`` child, one per ACP client. Every mutation therefore runs
+inside :meth:`PeerStore._transaction` (an exclusive ``flock`` on a sidecar lock file,
+held across the whole read-modify-write) and lands through :meth:`PeerStore._write`
+(temp file + ``os.replace``). Readers take no lock: the rename is atomic, so a reader
+sees either the previous file or the next one, never a half-written one.
+"""
 
 import json
+import os
 import secrets
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 
 from assistant.paths import Paths
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - POSIX-only; the atomic write still holds
+    fcntl = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
@@ -57,6 +73,25 @@ class PeerStore:
 
     def __init__(self, paths: Paths) -> None:
         self._path = paths.root / "peers.json"
+        # Sidecar, never renamed: a lock taken on peers.json itself would be held on
+        # an inode the next _write replaces, so the following writer would lock a
+        # different file and both would proceed.
+        self._lock_path = paths.root / "peers.json.lock"
+
+    @contextmanager
+    def _transaction(self) -> Iterator[list[dict]]:
+        """Hold the registry exclusively for one read-modify-write, yielding the
+        entries read under the lock.
+
+        Every mutating method runs its whole load-mutate-write inside this, so a
+        second process cannot read the same entries and write back over the first
+        one's append.
+        """
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._lock_path, "w") as lock:
+            if fcntl is not None:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            yield self._load()
 
     def _load(self) -> list[dict]:
         """Every stored peer entry (empty if the file is absent or malformed)."""
@@ -68,11 +103,24 @@ class PeerStore:
         return entries if isinstance(entries, list) else []
 
     def _write(self, entries: list[dict]) -> None:
+        """Replace the registry atomically — a reader never observes a partial file."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps({"peers": entries}, indent=2))
+        payload = json.dumps({"peers": entries}, indent=2)
+        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".peers-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self._path)
+        except BaseException:
+            os.unlink(tmp)
+            raise
 
     def _save(self, entries: list[dict], index: int | None, peer: Peer) -> Peer:
-        """Write ``peer`` at ``index``, appending when it is new."""
+        """Write ``peer`` at ``index``, appending when it is new. Called from inside
+        a ``_transaction``, which is what makes the append safe against a second
+        process."""
         if index is None:
             entries.append(asdict(peer))
         else:
@@ -116,25 +164,25 @@ class PeerStore:
     ) -> Peer:
         """Point this conversation at profile ``pid`` and return the resulting Peer.
         Replacing a different profile detaches it; the Chat is started lazily."""
-        entries = self._load()
-        index = _index(entries, connection, chat_id)
-        current = _peer(entries[index]) if index is not None else Peer(connection, chat_id)
-        switched = current.profile is not None and current.profile != pid
-        return self._save(
-            entries,
-            index,
-            replace(
-                current,
-                surface=surface,
-                sender=sender or current.sender,
-                profile=pid,
-                platform=platform or current.platform,
-                chat=None if switched else current.chat,
-                # A model held for a Chat that was never started belongs to the Profile
-                # it was chosen in; leaving that Profile leaves it behind too.
-                pending_model=None if switched else current.pending_model,
-            ),
-        )
+        with self._transaction() as entries:
+            index = _index(entries, connection, chat_id)
+            current = _peer(entries[index]) if index is not None else Peer(connection, chat_id)
+            switched = current.profile is not None and current.profile != pid
+            return self._save(
+                entries,
+                index,
+                replace(
+                    current,
+                    surface=surface,
+                    sender=sender or current.sender,
+                    profile=pid,
+                    platform=platform or current.platform,
+                    chat=None if switched else current.chat,
+                    # A model held for a Chat that was never started belongs to the
+                    # Profile it was chosen in; leaving that Profile leaves it behind too.
+                    pending_model=None if switched else current.pending_model,
+                ),
+            )
 
     def attach(
         self,
@@ -151,26 +199,26 @@ class PeerStore:
 
         Attaching drops any Pending override: a caller handing it to the Chat it is
         attaching must take it first."""
-        entries = self._load()
-        index = _index(entries, connection, chat_id)
-        current = (
-            _peer(entries[index])
-            if index is not None
-            else Peer(connection, chat_id, surface=surface)
-        )
-        chats = current.chats if chat in current.chats else [*current.chats, chat]
-        return self._save(
-            entries,
-            index,
-            replace(
-                current,
-                chat=chat,
-                chats=chats,
-                sender=sender or current.sender,
-                platform=platform or current.platform,
-                pending_model=None,
-            ),
-        )
+        with self._transaction() as entries:
+            index = _index(entries, connection, chat_id)
+            current = (
+                _peer(entries[index])
+                if index is not None
+                else Peer(connection, chat_id, surface=surface)
+            )
+            chats = current.chats if chat in current.chats else [*current.chats, chat]
+            return self._save(
+                entries,
+                index,
+                replace(
+                    current,
+                    chat=chat,
+                    chats=chats,
+                    sender=sender or current.sender,
+                    platform=platform or current.platform,
+                    pending_model=None,
+                ),
+            )
 
     def start_chat(
         self,
@@ -192,84 +240,84 @@ class PeerStore:
     def set_pending_model(self, connection: str, chat_id: str, model: str) -> Peer:
         """Hold ``model`` for the Chat this conversation's next message starts, the empty
         string dropping what it held. Recording it makes the conversation known."""
-        entries = self._load()
-        index = _index(entries, connection, chat_id)
-        current = _peer(entries[index]) if index is not None else Peer(connection, chat_id)
-        return self._save(entries, index, replace(current, pending_model=model.strip() or None))
+        with self._transaction() as entries:
+            index = _index(entries, connection, chat_id)
+            current = _peer(entries[index]) if index is not None else Peer(connection, chat_id)
+            return self._save(entries, index, replace(current, pending_model=model.strip() or None))
 
     def take_pending_model(self, connection: str, chat_id: str) -> str:
         """The model this conversation was holding, cleared as it is handed over — the
         Chat it starts owns it from here, so no later Chat inherits it. "" for none."""
-        entries = self._load()
-        index = _index(entries, connection, chat_id)
-        if index is None:
-            return ""
-        current = _peer(entries[index])
-        if current.pending_model is None:
-            return ""
-        self._save(entries, index, replace(current, pending_model=None))
-        return current.pending_model
+        with self._transaction() as entries:
+            index = _index(entries, connection, chat_id)
+            if index is None:
+                return ""
+            current = _peer(entries[index])
+            if current.pending_model is None:
+                return ""
+            self._save(entries, index, replace(current, pending_model=None))
+            return current.pending_model
 
     def detach(self, connection: str, chat_id: str) -> None:
         """Leave the attached Chat as it is; the next message starts a fresh one. Starting
         over is a clean start, so a model held for that next Chat goes with it."""
-        entries = self._load()
-        index = _index(entries, connection, chat_id)
-        if index is None:
-            return
-        current = _peer(entries[index])
-        if current.chat is not None or current.pending_model is not None:
-            self._save(entries, index, replace(current, chat=None, pending_model=None))
+        with self._transaction() as entries:
+            index = _index(entries, connection, chat_id)
+            if index is None:
+                return
+            current = _peer(entries[index])
+            if current.chat is not None or current.pending_model is not None:
+                self._save(entries, index, replace(current, chat=None, pending_model=None))
 
     def forget_chat(self, chat: str) -> None:
         """Drop a deleted Chat from the Peer that started it."""
-        entries = self._load()
-        for i, entry in enumerate(entries):
-            current = _peer(entry)
-            if chat not in current.chats:
-                continue
-            self._save(
-                entries,
-                i,
-                replace(
-                    current,
-                    chat=None if current.chat == chat else current.chat,
-                    chats=[c for c in current.chats if c != chat],
-                ),
-            )
-            return
+        with self._transaction() as entries:
+            for i, entry in enumerate(entries):
+                current = _peer(entry)
+                if chat not in current.chats:
+                    continue
+                self._save(
+                    entries,
+                    i,
+                    replace(
+                        current,
+                        chat=None if current.chat == chat else current.chat,
+                        chats=[c for c in current.chats if c != chat],
+                    ),
+                )
+                return
 
     def forget_connection(self, connection: str) -> None:
         """Drop every Peer recorded against one Connection — its conversations end with it."""
-        entries = self._load()
-        kept = [e for e in entries if e.get("connection") != connection]
-        if len(kept) != len(entries):
-            self._write(kept)
+        with self._transaction() as entries:
+            kept = [e for e in entries if e.get("connection") != connection]
+            if len(kept) != len(entries):
+                self._write(kept)
 
     def adopt_senders(self, is_paired: Callable[[str, str], bool]) -> int:
         """Stamp each sender-less direct Peer with the account its chat id names — the chat
         id is offered to ``is_paired(connection, account)`` — and return how many moved."""
-        entries = self._load()
-        moved = [
-            e
-            for e in entries
-            if not e.get("sender")
-            and e.get("surface") == "dm"
-            and is_paired(e.get("connection") or "", e["chat_id"])
-        ]
-        for entry in moved:
-            entry["sender"] = entry["chat_id"]
-        if moved:
-            self._write(entries)
-        return len(moved)
+        with self._transaction() as entries:
+            moved = [
+                e
+                for e in entries
+                if not e.get("sender")
+                and e.get("surface") == "dm"
+                and is_paired(e.get("connection") or "", e["chat_id"])
+            ]
+            for entry in moved:
+                entry["sender"] = entry["chat_id"]
+            if moved:
+                self._write(entries)
+            return len(moved)
 
     def adopt_connections(self, by_platform: dict[str, str]) -> None:
         """Stamp the Connection migrated for each platform onto every Peer recorded against
         that platform, so an existing install's conversations continue in place."""
-        entries = self._load()
-        for entry in entries:
-            connection = by_platform.get(entry.get("platform") or "")
-            if connection and not entry.get("connection"):
-                entry["connection"] = connection
-        if entries:
-            self._write(entries)
+        with self._transaction() as entries:
+            for entry in entries:
+                connection = by_platform.get(entry.get("platform") or "")
+                if connection and not entry.get("connection"):
+                    entry["connection"] = connection
+            if entries:
+                self._write(entries)
