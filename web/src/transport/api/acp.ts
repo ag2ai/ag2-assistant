@@ -13,8 +13,10 @@ export const acpApi = {
 
   // Create and start one; a blank token generates one, returned here exactly
   // once. A listener that will not start (bad profile, taken port) still comes
-  // back 200 with its reason on the embedded row.
-  createAcpListener: (profile: string, port: number, name = '', token = '') =>
+  // back 200 with its reason on the embedded row. A null port registers a stdio
+  // listener instead: nothing is bound, nothing started, and the token comes
+  // back empty.
+  createAcpListener: (profile: string, port: number | null, name = '', token = '') =>
     post(G('/acp/listeners'), { profile, port, name, token }, AcpListenerCreated),
 
   // Stops it if live and forgets the record with its token.

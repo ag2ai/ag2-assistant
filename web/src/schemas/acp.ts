@@ -20,7 +20,7 @@ export const AcpListenerList = z.object({ listeners: z.array(AcpListener) })
 export type AcpListenerList = z.infer<typeof AcpListenerList>
 
 // POST /api/acp/listeners: the token is shown here once — Settings must copy it
-// now or lose it forever.
+// now or lose it forever. Empty for a stdio listener, which has none.
 export const AcpListenerCreated = z.object({ listener: AcpListener, token: z.string() })
 export type AcpListenerCreated = z.infer<typeof AcpListenerCreated>
 
