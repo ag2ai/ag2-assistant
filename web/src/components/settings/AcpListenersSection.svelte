@@ -151,7 +151,7 @@
 
 <div class="setgroup">
   ACP listeners
-  <span class="setwide" title="Lets an external ACP client (AG2 Space, an editor) drive a profile directly">Experimental</span>
+  <span class="setwide" title="Lets an external ACP client (an editor, a remote seat) drive a profile directly">Experimental</span>
 </div>
 <p class="setsub">
   Serve one profile to an Agent Client Protocol client — over its own port, or over stdio where

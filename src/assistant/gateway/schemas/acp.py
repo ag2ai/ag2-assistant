@@ -36,7 +36,7 @@ class AcpListenerListResponse(BaseModel):
 class AcpListenerCreatedResponse(BaseModel):
     """POST /api/acp/listeners. ``token`` is the raw shared secret — generated
     here when the request omits one — shown exactly this once so the owner can
-    hand it to the client (AG2 Space); it is never echoed again. Empty for a
+    hand it to the client; it is never echoed again. Empty for a
     stdio listener (no ``port``), which has no upgrade request to carry one."""
 
     listener: AcpListenerOut
