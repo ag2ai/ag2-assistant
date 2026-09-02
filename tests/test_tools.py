@@ -211,9 +211,9 @@ async def test_mcp_namespaced_toolkit_discovers_filters_and_invokes():
 
     session = FakeMcpSession(
         [
-            McpTool(name="read_file", description="Read a file", inputSchema={"type": "object"}),
-            McpTool(name="write_file", inputSchema={}),
-            McpTool(name="search", inputSchema={}),
+            McpTool(name="read_file", description="Read a file", input_schema={"type": "object"}),
+            McpTool(name="write_file", input_schema={}),
+            McpTool(name="search", input_schema={}),
         ]
     )
 
@@ -248,7 +248,7 @@ async def test_mcp_session_persists_across_calls_and_idle_closes():
     leaks when an agent reload drops the toolkit reference."""
 
     opened, closed = [], []
-    session = FakeMcpSession([McpTool(name="navigate", inputSchema={})])
+    session = FakeMcpSession([McpTool(name="navigate", input_schema={})])
 
     toolkit = NamespacedMCPToolkit(
         MCPStdioServerConfig(command="mcp", server_label="browser"),
@@ -323,7 +323,7 @@ async def test_mcp_server_recovers_once_the_retry_window_lapses():
     """A server fixed after a failure is picked up again without a restart."""
 
     healthy = False
-    session = FakeMcpSession([McpTool(name="now", inputSchema={})])
+    session = FakeMcpSession([McpTool(name="now", input_schema={})])
 
     @asynccontextmanager
     async def flaky_session(config):

@@ -15,14 +15,11 @@ dependencies = [
     # run the same AG2 the published wheel asks for. ddgs powers the native
     # DuckDuckSearchTool, openai the OpenAI voice provider.
     "ag2[gemini,ddgs,openai,acp]>=1.0.2",
-    # ag2 1.0.2's dispatch.py needs a symbol acp 0.12.1 removed, but its pin admits 0.12.1.
-    # DELETE this line when the ag2 floor above moves past 1.0.2 (the pins conflict beyond it).
-    "agent-client-protocol>=0.12.0,<0.12.1",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
-    "mcp>=1.9.0,<2",
+    "mcp>=2.0.0,<3",
     # httpx + beautifulsoup4 power the custom web_fetch fallback (non-Anthropic providers)
     "httpx>=0.28.0",
     "beautifulsoup4>=4.12.0",
@@ -62,6 +59,10 @@ google = [
 
 [project.scripts]
 ag2-assistant = "assistant.cli:app"
+
+[tool.uv.sources]
+# Track ag2's main branch instead of a released version.
+ag2 = { git = "https://github.com/ag2ai/ag2.git", branch = "main" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
