@@ -57,7 +57,13 @@ _TRANSCRIPT_PREFIX = "/transcript/"
 # upstream resolves a session id straight to its stream id, and never the reverse.
 _HISTORY_PREFIX = "/acp-history/"
 
-__all__ = ("LIVE_SESSIONS", "ChatBackedStorage", "ChatTrackingACPAgent", "LiveSessionRegistry")
+__all__ = (
+    "LIVE_SESSIONS",
+    "ChatBackedStorage",
+    "ChatTrackingACPAgent",
+    "LiveSessionRegistry",
+    "purge_history_for_chat",
+)
 
 
 def _transcript_path(chat_id: str) -> str:
@@ -82,6 +88,38 @@ def _load_event(record: dict[str, Any]) -> BaseEvent:
         with contextlib.suppress(Exception):
             return cls.from_dict(data)
     return UnknownEvent(type_name=type_name, data=data)
+
+
+def _history_chat_id(raw: str) -> str | None:
+    """The Chat a stored history belongs to — the last ``{"chat": ...}`` line, same
+    rule ``_rehydrate`` applies."""
+    chat_id: str | None = None
+    for line in raw.splitlines():
+        if not line.startswith('{"chat"'):
+            continue
+        try:
+            chat_id = json.loads(line)["chat"]
+        except (ValueError, KeyError):
+            continue
+    return chat_id
+
+
+async def purge_history_for_chat(store: Any, chat_id: str) -> bool:
+    """Delete the ACP replay history belonging to ``chat_id``. True if any was removed.
+
+    Called by ``Gateway.delete_chat``, which is keyed by Chat while this history is
+    keyed by stream — so the owner is found by reading each header. Skipping it would
+    let a deleted Chat come back: the next ``session/load`` rehydrates its id and
+    writes a fresh transcript at that path.
+    """
+    removed = False
+    for entry in await store.list(_HISTORY_PREFIX):
+        path = f"{_HISTORY_PREFIX}{entry}"
+        raw = await store.read(path)
+        if raw and _history_chat_id(raw) == chat_id:
+            await store.delete(path)
+            removed = True
+    return removed
 
 
 def _request_text(event: ModelRequest) -> str:

@@ -8,7 +8,10 @@ the web UI's chat list and transcript endpoints read from, proving these are
 real Chats and not a parallel record.
 """
 
+import uuid
+
 import acp
+import pytest
 from ag2 import Agent
 from ag2.acp import SessionConfig
 from ag2.acp.testing import connect
@@ -227,3 +230,34 @@ def _request_texts(events) -> list[str]:
         for e in events
         if isinstance(e, ModelRequest)
     ]
+
+
+async def test_deleting_a_chat_takes_its_replay_history_with_it(paths):
+    """A deleted Chat must not come back.
+
+    The replay history carries the Chat id, so a session resumed after the delete
+    would rehydrate it and write the transcript straight back — which is what
+    ``Gateway.delete_chat`` purging the ACP history prevents.
+    """
+    pid = _new_profile(paths)
+    served, _storage, config = _served(paths, pid)
+
+    async with connect(served) as (client, _recorder):
+        session = await client.new_session(cwd=".")
+        session_id = session.session_id
+        await client.prompt(session_id=session_id, prompt=[acp.text_block("remember me")])
+
+    gw = await _reader_gateway(config)
+    chat_id = (await gw.list_chats())[0]["chat_id"]
+    assert await gw.delete_chat(chat_id) is True
+    assert await gw.list_chats() == []
+
+    # A fresh storage — the next process — must no longer resurrect that Chat.
+    second, second_storage, _ = _served(paths, pid)
+    async with connect(second) as (client, _recorder):
+        with pytest.raises(acp.RequestError):
+            await client.load_session(session_id=session_id, cwd=".")
+
+    assert list(await second_storage.get_history(uuid.UUID(session_id))) == []
+    reader = await _reader_gateway(config)
+    assert await reader.list_chats() == []
