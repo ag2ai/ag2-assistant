@@ -12,6 +12,7 @@ import acp
 from ag2 import Agent
 from ag2.acp import SessionConfig
 from ag2.acp.testing import connect
+from ag2.events import ModelRequest
 from ag2.testing import TestConfig
 
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
@@ -36,7 +37,7 @@ def _served(paths, pid: str, *, connection_id: str = "acp:test"):
         agent,
         name="AG2 Assistant",
         version="0.0.0-test",
-        sessions=SessionConfig(storage=storage),
+        sessions=SessionConfig(storage=storage, retain_history=True),
         chat_storage=storage,
         connection_id=connection_id,
     )
@@ -178,3 +179,51 @@ async def test_turns_mirror_onto_the_gateway_stream(paths):
     req, resp = mirrored[0][1], mirrored[1][1]
     assert isinstance(req, ModelRequest) and isinstance(resp, ModelResponse)
     assert resp.content == "42"
+
+
+async def test_session_loads_into_a_storage_that_never_served_it(paths):
+    """The stdio shape: every turn runs in a fresh process, so the storage that
+    answers ``session/load`` is never the one that wrote the history.
+
+    A second ``ChatBackedStorage`` over the same profile data dir stands in for
+    that new process. Upstream refuses any id whose ``get_history`` reads back
+    empty, so a memory-only slice would fail the load outright.
+    """
+    pid = _new_profile(paths)
+    first, _first_storage, config = _served(paths, pid)
+
+    async with connect(first) as (client, _recorder):
+        session = await client.new_session(cwd=".")
+        session_id = session.session_id
+        await client.prompt(session_id=session_id, prompt=[acp.text_block("remember me")])
+
+    # A brand-new agent + storage pair: nothing of the first is carried over.
+    second, second_storage, _ = _served(paths, pid)
+    async with connect(second) as (client, _recorder):
+        await client.load_session(session_id=session_id, cwd=".")
+        await client.prompt(session_id=session_id, prompt=[acp.text_block("still there?")])
+        agent_session = await second.sessions.get(session_id)
+
+    replayed = list(await second_storage.get_history(agent_session.stream_id))
+    assert [type(e).__name__ for e in replayed] == [
+        "ModelRequest",
+        "ModelResponse",
+        "ModelRequest",
+        "ModelResponse",
+    ]
+    assert _request_texts(replayed) == ["remember me", "still there?"]
+
+    # Both turns land in the one Chat the first connection created.
+    gw = await _reader_gateway(config)
+    chats = await gw.list_chats()
+    assert len(chats) == 1
+    messages = await gw.transcript(chats[0]["chat_id"])
+    assert [m["role"] for m in messages] == ["user", "agent", "user", "agent"]
+
+
+def _request_texts(events) -> list[str]:
+    return [
+        "\n".join(p.content for p in e.parts if getattr(p, "content", None))
+        for e in events
+        if isinstance(e, ModelRequest)
+    ]

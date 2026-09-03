@@ -4,9 +4,14 @@ Implements ``ag2.history.Storage`` on top of the assistant's own transcript
 convention (``gateway/core.py``'s ``/transcript/{chat_id}.json`` docs in the
 profile's ``chats.db``), so an ACP conversation shows up in the bound profile's
 chat list like any other. A Chat is born lazily, on the first prompt of a
-session — never on a bare ``session/new`` — and ``drop_history`` (called by
-upstream at session close, idle-TTL expiry, and eviction) only detaches the
-live in-memory stream; the Chat and its transcript are never deleted.
+session — never on a bare ``session/new`` — and ``drop_history`` (reached only
+for an explicit close, since every listener sets ``retain_history=True``) forgets
+the replay history; the Chat and its transcript are never deleted.
+
+The same events are also written to ``/acp-history/{stream_id}.jsonl`` in that
+``chats.db``, which is what ``session/load`` reads: upstream refuses any session
+id whose history comes back empty, and stdio runs every turn in a fresh process,
+so a memory-only slice would lose the conversation on each message.
 
 ``ag2.acp.history.Storage.save_event`` only ever sees a stream id
 (``context.stream.id``); the ACP session id it should become a Peer's
@@ -31,7 +36,8 @@ from uuid import UUID
 from ag2.acp.agent import ACPAgent
 from ag2.acp.sessions import UnknownSessionError
 from ag2.context import ConversationContext
-from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput
+from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput, UnknownEvent
+from ag2.events._serialization import import_event_class, qualified_name
 from ag2.knowledge import SqliteKnowledgeStore
 
 from assistant.paths import Paths
@@ -47,11 +53,35 @@ if TYPE_CHECKING:
 # convention the web UI's chat list and transcript reader already use.
 _TRANSCRIPT_PREFIX = "/transcript/"
 
+# Replay history for `session/load`, keyed by stream id rather than chat id:
+# upstream resolves a session id straight to its stream id, and never the reverse.
+_HISTORY_PREFIX = "/acp-history/"
+
 __all__ = ("LIVE_SESSIONS", "ChatBackedStorage", "ChatTrackingACPAgent", "LiveSessionRegistry")
 
 
 def _transcript_path(chat_id: str) -> str:
     return f"{_TRANSCRIPT_PREFIX}{quote(chat_id, safe='')}.json"
+
+
+def _history_path(stream_id: UUID) -> str:
+    return f"{_HISTORY_PREFIX}{stream_id.hex}.jsonl"
+
+
+def _event_record(event: BaseEvent) -> str:
+    """One history line, in the same tagged shape ``ag2.knowledge.log`` writes."""
+    return json.dumps({"type": qualified_name(event), "data": event.to_dict()}, default=str)
+
+
+def _load_event(record: dict[str, Any]) -> BaseEvent:
+    """The event a history line names, or an ``UnknownEvent`` carrying its payload
+    when the class is gone or its shape has moved on."""
+    type_name, data = record.get("type", ""), record.get("data", {})
+    cls = import_event_class(type_name)
+    if cls is not None:
+        with contextlib.suppress(Exception):
+            return cls.from_dict(data)
+    return UnknownEvent(type_name=type_name, data=data)
 
 
 def _request_text(event: ModelRequest) -> str:
@@ -70,14 +100,20 @@ def _is_final_response(event: ModelResponse) -> bool:
 
 class _StreamState:
     """One session's live slice: raw events (for get_history/set_history fidelity)
-    plus the Chat it has been born into and the user text awaiting a reply."""
+    plus the Chat it has been born into and the user text awaiting a reply.
 
-    __slots__ = ("events", "chat_id", "pending_user_text")
+    ``persisted``/``persisted_chat_id`` mark how much of that slice already reached
+    the durable history, so each flush appends only what is new.
+    """
+
+    __slots__ = ("events", "chat_id", "pending_user_text", "persisted", "persisted_chat_id")
 
     def __init__(self) -> None:
         self.events: list[BaseEvent] = []
         self.chat_id: str | None = None
         self.pending_user_text: list[str] = []
+        self.persisted: int = 0
+        self.persisted_chat_id: str | None = None
 
 
 class _SessionContext:
@@ -99,8 +135,8 @@ class LiveSessionRegistry:
     ``_ConnectionScope`` are ``__slots__`` classes with no ``__weakref__``, so a
     literal ``weakref.ref`` is not on the table. Safety instead comes from never
     outliving the session: every path a session can end — our own ``close`` below,
-    and ``ChatBackedStorage.drop_history`` (which upstream calls at session close,
-    idle-TTL expiry, and eviction alike) — deregisters its entry.
+    and ``ChatBackedStorage.detach`` (reached from ``drop_history`` on an explicit
+    close, and from the connection's own teardown) — deregisters its entry.
     """
 
     def __init__(self) -> None:
@@ -168,10 +204,15 @@ class ChatBackedStorage:
         """Record the (session id, connection id, live ``SessionStore``) a stream
         was created with.
 
-        Called by ``ChatTrackingACPAgent`` right after ``SessionStore.create``
-        mints both ids — the only point they are available together.
+        Called by ``ChatTrackingACPAgent`` right after ``SessionStore.create`` or
+        ``get_or_adopt`` mints both ids — the only point they are available together.
+        A stream rehydrated by ``session/load`` already knows its Chat and never
+        reaches ``_birth_chat``, so this is where that Chat rejoins the registry.
         """
         self._sessions[stream_id] = _SessionContext(session_id, connection_id, store)
+        state = self._streams.get(stream_id)
+        if state is not None and state.chat_id is not None:
+            LIVE_SESSIONS.register(state.chat_id, store, session_id)
 
     async def save_event(self, event: BaseEvent, context: ConversationContext) -> None:
         stream_id = context.stream.id
@@ -187,6 +228,7 @@ class ChatBackedStorage:
                     stream_id, "\n".join(state.pending_user_text)
                 )
             await self._mirror_event(state.chat_id, event)
+            await self._flush(stream_id, state)
             return
 
         if isinstance(event, ModelResponse):
@@ -196,25 +238,94 @@ class ChatBackedStorage:
             state.pending_user_text.clear()
             await self._append_reply(state.chat_id, user_text, event.content or "")
             await self._mirror_event(state.chat_id, event)
+            await self._flush(stream_id, state)
 
     async def get_history(self, stream_id: UUID) -> Iterable[BaseEvent]:
+        """This stream's events — from the live slice, or from storage when the
+        process that served it is gone.
+
+        The cold read is what makes ``session/load`` work at all over stdio, where
+        upstream refuses any id whose history reads back empty and every turn runs
+        in a fresh process.
+        """
         state = self._streams.get(stream_id)
+        if state is None:
+            state = await self._rehydrate(stream_id)
         return list(state.events) if state is not None else []
 
     async def set_history(self, stream_id: UUID, events: Iterable[BaseEvent]) -> None:
-        self._streams.setdefault(stream_id, _StreamState()).events = list(events)
+        state = self._streams.setdefault(stream_id, _StreamState())
+        state.events = list(events)
+        state.persisted = 0
+        state.persisted_chat_id = None
+        await self._store.delete(_history_path(stream_id))
+        await self._flush(stream_id, state)
 
-    async def drop_history(self, stream_id: UUID) -> None:
-        """Detach: drop the live stream state, leave the Chat and transcript alone.
+    async def detach(self, stream_id: UUID) -> None:
+        """Let go of a stream's live slice, leaving its stored history to be loaded.
 
-        Called by upstream at session close, idle-TTL expiry, and eviction alike —
-        the one point every "this session is over" path passes through, so it is
-        also where the live-session registry is cleared.
+        The disconnect path. ``retain_history=True`` stops upstream from calling
+        ``drop_history`` when a connection ends, so this is what now clears the
+        live-session registry — over stdio a disconnect is usually just the
+        process being recycled between turns, not the conversation ending.
         """
         state = self._streams.pop(stream_id, None)
         if state is not None and state.chat_id is not None:
             LIVE_SESSIONS.deregister(state.chat_id)
         self._sessions.pop(stream_id, None)
+
+    async def drop_history(self, stream_id: UUID) -> None:
+        """Detach and forget the replay history; leave the Chat and transcript alone.
+
+        With ``retain_history=True`` upstream reaches here only for an explicit
+        ``SessionStore.close`` — the deliberate "this conversation is over" act.
+        """
+        await self.detach(stream_id)
+        await self._store.delete(_history_path(stream_id))
+
+    async def _flush(self, stream_id: UUID, state: _StreamState) -> None:
+        """Append whatever of ``state`` has not reached storage yet.
+
+        The Chat id rides the same log as a ``{"chat": ...}`` line so a cold reader
+        recovers it without a second lookup; the last such line wins.
+        """
+        lines: list[str] = []
+        if state.chat_id is not None and state.chat_id != state.persisted_chat_id:
+            lines.append(json.dumps({"chat": state.chat_id}))
+        lines.extend(_event_record(event) for event in state.events[state.persisted :])
+        if not lines:
+            return
+        await self._store.append(_history_path(stream_id), "\n".join(lines) + "\n")
+        state.persisted = len(state.events)
+        state.persisted_chat_id = state.chat_id
+
+    async def _rehydrate(self, stream_id: UUID) -> "_StreamState | None":
+        """Rebuild a stream's slice from storage, or None when it has no history.
+
+        A line that will not parse is skipped rather than failing the load: a
+        truncated tail costs that turn, not the whole conversation.
+        """
+        raw = await self._store.read(_history_path(stream_id))
+        if not raw:
+            return None
+        state = _StreamState()
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if "chat" in record:
+                state.chat_id = record["chat"]
+                continue
+            state.events.append(_load_event(record))
+        if not state.events and state.chat_id is None:
+            return None
+        state.persisted = len(state.events)
+        state.persisted_chat_id = state.chat_id
+        self._streams[stream_id] = state
+        return state
 
     async def _mirror_event(self, chat_id: str | None, event: BaseEvent) -> None:
         if self._mirror is None or chat_id is None:
@@ -278,20 +389,47 @@ class ChatBackedStorage:
 class _CorrelatingSessionStore:
     """Forwards to a real ``SessionStore``, reporting each new session's stream id.
 
-    The only wrapping needed: every other method (``get``, ``stream``, ``admit``,
+    Both mint points are wrapped: ``create`` for ``session/new`` and
+    ``get_or_adopt`` for the ``session/load`` that revives a stream this process
+    never issued. Every other method (``get``, ``stream``, ``admit``,
     ``running_turn``, ``close``, ...) is used as-is via ``__getattr__``.
     """
 
-    __slots__ = ("_inner", "_on_created")
+    __slots__ = ("_inner", "_on_created", "_on_detached", "_seen")
 
-    def __init__(self, inner: "SessionStore", on_created: Any) -> None:
+    def __init__(self, inner: "SessionStore", on_created: Any, on_detached: Any) -> None:
         self._inner = inner
         self._on_created = on_created
+        self._on_detached = on_detached
+        self._seen: set[UUID] = set()
 
     async def create(self, **context: Any) -> Any:
         session = await self._inner.create(**context)
-        self._on_created(session.stream_id, session.session_id)
+        self._note(session)
         return session
+
+    async def get_or_adopt(self, stream_id: UUID, **context: Any) -> Any:
+        session, adopted = await self._inner.get_or_adopt(stream_id, **context)
+        self._note(session)
+        return session, adopted
+
+    async def aclose(self) -> None:
+        """Close the connection's sessions, then detach every stream it touched.
+
+        Upstream keeps their histories (``retain_history``), so nothing else drops
+        the live-session registry entries this connection registered.
+        """
+        streams = tuple(self._seen)
+        self._seen.clear()
+        try:
+            await self._inner.aclose()
+        finally:
+            for stream_id in streams:
+                await self._on_detached(stream_id)
+
+    def _note(self, session: Any) -> None:
+        self._seen.add(session.stream_id)
+        self._on_created(session.stream_id, session.session_id)
 
     def __len__(self) -> int:
         return len(self._inner)
@@ -327,5 +465,6 @@ class ChatTrackingACPAgent(ACPAgent):
                 connection_id=self._connection_id,
                 store=real_store,
             ),
+            self._chat_storage.detach,
         )
         return scope

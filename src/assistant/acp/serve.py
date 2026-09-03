@@ -141,7 +141,7 @@ async def serve_stdio(
             agent,
             name="AG2 Assistant",
             version=__version__,
-            sessions=SessionConfig(storage=chat_storage),
+            sessions=SessionConfig(storage=chat_storage, retain_history=True),
             chat_storage=chat_storage,
             connection_id=connection_id,
             auth=choose_auth(config, env or {}),
