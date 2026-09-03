@@ -18,6 +18,12 @@ FROM python:3.14-slim AS builder
 # defeats the point of installing from a committed lockfile.
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /bin/
 
+# uv.lock pins `ag2` to a git ref (see [tool.uv.sources]), and uv shells out to
+# the git executable to fetch it — the slim base ships without one.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
     UV_PYTHON_DOWNLOADS=0 \
