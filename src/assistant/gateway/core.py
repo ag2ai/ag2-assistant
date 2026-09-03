@@ -1167,15 +1167,20 @@ class Gateway:
         }
 
     async def delete_chat(self, chat_id: str) -> bool:
-        """Permanently delete a chat: its display transcript AND its full AG2 event
-        log (main + any dropped segments), then evict the in-memory stream so a stale
-        copy can't re-persist it. Irreversible by design — the GUI gates it behind a
-        confirm. Returns True if anything was removed.
+        """Permanently delete a chat: its display transcript, its full AG2 event log
+        (main + any dropped segments), and any ACP replay history behind it, then evict
+        the in-memory stream so a stale copy can't re-persist it. Irreversible by
+        design — the GUI gates it behind a confirm. Returns True if anything was removed.
+
+        The ACP history has to go with it: it carries this chat's id, so a session
+        resumed after the delete would rehydrate that id and write the Chat back.
         """
+        from assistant.acp.chats import purge_history_for_chat
+
         if self._event_store is None:
             return False
         async with self._chat_lock(chat_id):
-            removed = False
+            removed = await purge_history_for_chat(self._event_store, chat_id)
             paths = [self._transcript_path(chat_id), f"{LOG_PREFIX}{chat_id}.jsonl"]
             # dropped-turn segments are "<sid>.dropped-N.jsonl" under LOG_PREFIX
             for entry in await self._event_store.list(LOG_PREFIX):

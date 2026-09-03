@@ -42,7 +42,7 @@ async def serve_listener(
             agent,
             name=name,
             version=__version__,
-            sessions=SessionConfig(storage=chat_storage),
+            sessions=SessionConfig(storage=chat_storage, retain_history=True),
             chat_storage=chat_storage,
             connection_id=connection_id or "acp:listener",
             auth=auth,
