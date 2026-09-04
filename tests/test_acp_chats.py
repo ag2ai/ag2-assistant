@@ -8,6 +8,7 @@ the web UI's chat list and transcript endpoints read from, proving these are
 real Chats and not a parallel record.
 """
 
+import asyncio
 import uuid
 
 import acp
@@ -300,3 +301,39 @@ async def test_two_connections_hold_sessions_without_cross_talk(paths):
     assert len(chats) == 2
     said = {(await gw.transcript(c["chat_id"]))[0]["text"] for c in chats}
     assert said == {"from A", "from B"}
+
+
+async def test_one_connection_runs_concurrent_turns_on_separate_sessions(paths):
+    """How a Worker actually drives us: one connection, several rooms at once.
+
+    agent-connect serves rooms concurrently over a single connection, so its turns
+    land on one ``SessionStore`` and one shared ``Agent`` together rather than in
+    sequence. Each turn must keep to its own session's slice and its own Chat.
+    """
+    pid = _new_profile(paths)
+    served, storage, config = _served(paths, pid)
+    rooms = ["alpha", "bravo", "charlie", "delta"]
+
+    async with connect(served) as (client, _recorder):
+        sessions = [(await client.new_session(cwd=".")).session_id for _ in rooms]
+        assert len(set(sessions)) == len(rooms)
+
+        responses = await asyncio.gather(
+            *[
+                client.prompt(session_id=sid, prompt=[acp.text_block(f"from {room}")])
+                for sid, room in zip(sessions, rooms, strict=True)
+            ]
+        )
+        assert [r.stop_reason for r in responses] == ["end_turn"] * len(rooms)
+
+        # Every live slice holds exactly the one turn that belongs to it.
+        slices = []
+        for stream_id in list(storage._streams):  # noqa: SLF001 — the sharing seam is the claim
+            slices.append(_request_texts(list(await storage.get_history(stream_id))))
+        assert sorted(slices) == sorted([[f"from {room}"] for room in rooms])
+
+    gw = await _reader_gateway(config)
+    chats = await gw.list_chats()
+    assert len(chats) == len(rooms)
+    first_lines = {(await gw.transcript(c["chat_id"]))[0]["text"] for c in chats}
+    assert first_lines == {f"from {room}" for room in rooms}
