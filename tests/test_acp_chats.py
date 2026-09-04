@@ -261,3 +261,42 @@ async def test_deleting_a_chat_takes_its_replay_history_with_it(paths):
     assert list(await second_storage.get_history(uuid.UUID(session_id))) == []
     reader = await _reader_gateway(config)
     assert await reader.list_chats() == []
+
+
+async def test_two_connections_hold_sessions_without_cross_talk(paths):
+    """Two clients on one listener is a supported case, not an accident.
+
+    The WebSocket door refuses no second dialer, so an editor and AG2 Space can be
+    connected at once. Sessions are per-connection scope; the shared
+    ``ChatBackedStorage`` keys everything by stream id, so neither dialer sees the
+    other's session and each turn lands in its own Chat.
+    """
+    pid = _new_profile(paths)
+    served, storage, config = _served(paths, pid)
+
+    async with connect(served) as (client_a, _ra), connect(served) as (client_b, _rb):
+        session_a = await client_a.new_session(cwd=".")
+        session_b = await client_b.new_session(cwd=".")
+        assert session_a.session_id != session_b.session_id
+
+        await client_a.prompt(session_id=session_a.session_id, prompt=[acp.text_block("from A")])
+        await client_b.prompt(session_id=session_b.session_id, prompt=[acp.text_block("from B")])
+
+        # Neither connection can reach the other's session.
+        with pytest.raises(acp.RequestError):
+            await client_a.prompt(
+                session_id=session_b.session_id, prompt=[acp.text_block("A reaching for B")]
+            )
+
+        # Both live streams sit in the one storage the connections share, each
+        # holding only its own turn.
+        slices = []
+        for stream_id in list(storage._streams):  # noqa: SLF001 — the sharing seam is the claim
+            slices.append(_request_texts(list(await storage.get_history(stream_id))))
+        assert sorted(slices) == [["from A"], ["from B"]]
+
+    gw = await _reader_gateway(config)
+    chats = await gw.list_chats()
+    assert len(chats) == 2
+    said = {(await gw.transcript(c["chat_id"]))[0]["text"] for c in chats}
+    assert said == {"from A", "from B"}
