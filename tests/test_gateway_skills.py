@@ -59,7 +59,7 @@ def test_state_toggle_reflected_in_resolved_catalog(paths):
     client, _pid = _client(paths)
     with client:
         client.post("/api/skills/pdf-tools/state", json={"enabled": False})
-        store = SkillStateStore(paths.root / "skills.json")
+        store = SkillStateStore(paths.root)
         assert store.is_available("pdf-tools") is False
         assert store.is_available("web-research") is True
 

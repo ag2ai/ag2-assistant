@@ -6,14 +6,13 @@ resolution (is a skill available?), not the on-disk byte layout.
 
 import pytest
 
-from assistant.skills import (
+from assistant.skills import SkillStateStore, skill_origin
+from assistant.state_store import (
     DISABLE_OWN,
     ORIGIN_BUNDLED,
     ORIGIN_GLOBAL,
     ORIGIN_PROFILE,
     SUPPRESS_SHARED,
-    SkillStateStore,
-    skill_origin,
 )
 
 
@@ -27,7 +26,7 @@ def test_skill_origin_classifies_by_location(tmp_path):
 
 
 def _store(tmp_path):
-    return SkillStateStore(path=tmp_path / "skills.json")
+    return SkillStateStore(tmp_path)
 
 
 def test_default_on_everything_available(tmp_path):
@@ -92,14 +91,13 @@ def test_persistence_and_fresh_store_reload(tmp_path):
 
 
 def test_load_tolerates_non_object_json(tmp_path):
-    p = tmp_path / "skills.json"
-    p.write_text("[1, 2, 3]")
-    store = SkillStateStore(path=p)
+    (tmp_path / "skills.json").write_text("[1, 2, 3]")
+    store = SkillStateStore(tmp_path)
     assert store.disabled_names() == set()
 
 
 def test_ephemeral_store_persists_nothing(tmp_path):
-    store = SkillStateStore(path=None)
+    store = SkillStateStore(None)
     store.set_enabled("web-research", False)
     assert store.is_disabled("web-research") is True
     assert not (tmp_path / "skills.json").exists()
@@ -276,9 +274,9 @@ def test_set_suppressed_rejects_unknown_kind(tmp_path):
 def test_pre_kind_records_load_as_shared(tmp_path):
     """A suppressed record written before the kind tag (no 'kind' field) loads as a
     SHARED suppression — the original semantics — so a Global purge still clears it."""
-    p = tmp_path / "skills.json"
-    p.write_text('{"disabled": [], "suppressed": [{"profile": "work", "name": "foo"}]}')
-    store = SkillStateStore(path=p)
+    doc = tmp_path / "skills.json"
+    doc.write_text('{"disabled": [], "suppressed": [{"profile": "work", "name": "foo"}]}')
+    store = SkillStateStore(tmp_path)
     assert store.is_suppressed("foo", "work") is True
     store.purge("foo")
     assert store.is_suppressed("foo", "work") is False  # cleared as a shared record

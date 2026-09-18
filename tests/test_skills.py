@@ -14,7 +14,8 @@ from assistant.agent import (
     create_agent,
 )
 from assistant.config import Config
-from assistant.skills import DISABLE_OWN, SkillStateStore
+from assistant.skills import SkillStateStore
+from assistant.state_store import DISABLE_OWN
 
 
 def _write_skill(skills_dir, name, description):
@@ -67,7 +68,7 @@ def test_disabled_skill_absent_from_catalog_then_restored(paths, tmp_path):
     config.skills_dir = tmp_path / "skills"
     # Point the install-wide state store at a known file for this test.
     config.root_dir = tmp_path / "root"
-    store = SkillStateStore(config.root_dir / "skills.json")
+    store = SkillStateStore(config.root_dir)
 
     def catalog() -> str:
         runtime = build_skills_runtime(config)
@@ -89,7 +90,7 @@ def test_suppressed_skill_absent_from_one_profiles_catalog(paths, tmp_path):
     profile A leaves A's <available_skills> but stays in B's — build_skills_plugin
     keys resolution on config.data_dir.name (the profile id)."""
     root = tmp_path / "root"
-    store = SkillStateStore(root / "skills.json")
+    store = SkillStateStore(root)
 
     def catalog(pid: str) -> str:
         config = Config.for_paths(paths)
@@ -119,7 +120,7 @@ def test_profile_skill_shadow_uses_own_state_in_catalog(paths, tmp_path):
     config.skills_dir = config.data_dir / "skills"
     _write_skill(root / "skills", "shadowed", "global copy")
     _write_skill(config.skills_dir, "shadowed", "profile copy")
-    store = SkillStateStore(root / "skills.json")
+    store = SkillStateStore(root)
 
     def catalog() -> str:
         runtime = build_skills_runtime(config)

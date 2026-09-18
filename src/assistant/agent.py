@@ -236,7 +236,7 @@ def resolve_skills(config: Config, runtime):
     off) — the inverse of a Folders Grant; see `SkillStateStore` for why not to
     "fix" that. `.skills` on the result is what an agent build would see.
     """
-    store = SkillStateStore(config.root_dir / "skills.json")
+    store = SkillStateStore(config.root_dir)
     profile = config.data_dir.name
     profile_root = config.skills_dir if config.data_dir != config.root_dir else None
     return FilteredSkillRuntime(

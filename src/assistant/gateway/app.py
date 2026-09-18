@@ -175,21 +175,20 @@ from assistant.permissions import PermissionStore, command_rule, shell_prefix
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV, DuplicateValue, SecretStore
 from assistant.settings import profile_settings
-from assistant.skills import (
-    DISABLE_OWN,
-    ORIGIN_BUNDLED,
-    ORIGIN_GLOBAL,
-    ORIGIN_PROFILE,
-    SUPPRESS_SHARED,
-    SkillStateStore,
-    skill_origin,
-)
+from assistant.skills import SkillStateStore, skill_origin
 from assistant.skills_install import (
     SkillSourceError,
     discover_source,
     install_from_source,
     registry_install,
     registry_search,
+)
+from assistant.state_store import (
+    DISABLE_OWN,
+    ORIGIN_BUNDLED,
+    ORIGIN_GLOBAL,
+    ORIGIN_PROFILE,
+    SUPPRESS_SHARED,
 )
 from assistant.structured import aclose_config
 from assistant.tasks import TaskStoreCorruptionError
@@ -1691,7 +1690,7 @@ def create_app(
     def _skill_store() -> SkillStateStore:
         """A fresh SkillStateStore over the install-wide file. mtime self-refresh
         means a live turn's next build sees any change — same shape as _folder_store."""
-        return SkillStateStore(paths.root / "skills.json")
+        return SkillStateStore(paths.root)
 
     def _installwide_skills() -> list[dict]:
         """The install-wide projection: every Bundled + Global skill with its name,
