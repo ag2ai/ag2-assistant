@@ -6,6 +6,7 @@ from assistant.a2ui import (
     assistant_catalog,
     durable_surfaces_from_messages,
     runtime,
+    update_data_value,
     wrap_bare_a2ui,
 )
 
@@ -196,3 +197,54 @@ def test_wrap_bare_a2ui_ignores_non_a2ui_and_prose():
     assert wrap_bare_a2ui("just prose, no json here") is None
     assert wrap_bare_a2ui("a plain list [1, 2, 3] is not A2UI") is None
     assert wrap_bare_a2ui("") is None
+
+
+def test_data_model_update_writes_into_one_repeated_row():
+    """A control in a repeated row writes to its own item and leaves the list a list."""
+    data = {"runs": [{"day": "Mon", "done": False}, {"day": "Wed", "done": False}]}
+
+    updated = update_data_value(data, "/runs/1/done", True)
+
+    assert updated["runs"] == [{"day": "Mon", "done": False}, {"day": "Wed", "done": True}]
+    assert data["runs"][1]["done"] is False
+
+
+def test_durable_surface_keeps_a_layout_that_repeats_one_template():
+    surfaces = durable_surfaces_from_messages(
+        [
+            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+            {
+                "version": "v1.0",
+                "updateComponents": {
+                    "surfaceId": "s1",
+                    "components": [
+                        {
+                            "id": "root",
+                            "component": "List",
+                            "children": {"componentId": "run_row", "path": "/runs"},
+                        },
+                        {"id": "run_row", "component": "Text", "text": {"path": "./day"}},
+                    ],
+                },
+            },
+            {
+                "version": "v1.0",
+                "updateDataModel": {
+                    "surfaceId": "s1",
+                    "path": "/runs",
+                    "value": [{"day": "Mon"}, {"day": "Wed"}],
+                },
+            },
+        ]
+    )
+
+    assert len(surfaces) == 1
+    assert surfaces[0].component["children"] == {"componentId": "run_row", "path": "/runs"}
+    assert surfaces[0].data["runs"] == [{"day": "Mon"}, {"day": "Wed"}]
+
+
+def test_data_model_update_ignores_a_pointer_no_row_answers_to():
+    data = {"runs": [{"day": "Mon"}]}
+
+    assert update_data_value(data, "/runs/7/day", "Sun") == data
+    assert update_data_value(data, "/runs/day", "Sun") == data

@@ -110,18 +110,39 @@ def _component_data(component: dict, existing: dict | None = None) -> dict:
     return data
 
 
+def _copy_of(value: Any) -> dict | list:
+    """A copy of the container a pointer step walks into; a list stays a list."""
+    if isinstance(value, list):
+        return list(value)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _key_for(container: dict | list, part: str) -> str | int | None:
+    """The key ``part`` names in ``container``; None when it names nothing writable —
+    a list answers only to an index it already holds."""
+    if not isinstance(container, list):
+        return part
+    return int(part) if part.isdigit() and int(part) < len(container) else None
+
+
 def update_data_value(data: dict, path: str, value: Any) -> dict:
     """Return a copy of ``data`` with a JSON Pointer value updated."""
     if path in {"", "/"}:
         return value if isinstance(value, dict) else {"value": value}
     parts = [part.replace("~1", "/").replace("~0", "~") for part in path.lstrip("/").split("/")]
     result = dict(data)
-    current = result
+    current: dict | list = result
     for part in parts[:-1]:
-        next_value = current.get(part)
-        current[part] = dict(next_value) if isinstance(next_value, dict) else {}
-        current = current[part]
-    current[parts[-1]] = value
+        key = _key_for(current, part)
+        if key is None:
+            return result
+        branch = _copy_of(current[key] if isinstance(current, list) else current.get(key))
+        current[key] = branch
+        current = branch
+    last = _key_for(current, parts[-1])
+    if last is None:
+        return result
+    current[last] = value
     return result
 
 
@@ -656,6 +677,7 @@ When an answer matches one of these, EMIT that component — the surface is the 
 - Research summaries or briefs without competing options -> render an AnswerBrief.
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
+A Column, Row or List can repeat one written component instead of listing every child: `"children":{"componentId":"run_row","path":"/runs"}` draws `run_row` once per item of the array at `/runs`. Inside that component a path opening with `./` reads the item (`{"path":"./day"}`, or `{"path":"."}` for the whole item) and an absolute path still reads the whole data model, so one written row serves three items or thirty.
 An interactive canvas is an A2UI surface, not a `Canvas` component. Build it from Card, Column, Row, and List. When `generate_image` returns an A2UI image URL, place that exact value in an Image component's required `url`; do not substitute the workspace path or invent image properties.
 For basic controls, use these exact property shapes: TextField `{"component":"TextField","label":"Name","value":{"path":"/name"}}`; ChoicePicker `{"component":"ChoicePicker","options":[{"label":"One","value":"one"}],"value":{"path":"/choice"},"variant":"mutuallyExclusive"}`; CheckBox `{"component":"CheckBox","label":"Enable","value":{"path":"/enabled"}}`; Slider `{"component":"Slider","label":"Level","max":100,"value":{"path":"/level"}}`; DateTimeInput `{"component":"DateTimeInput","label":"When","value":{"path":"/when"},"enableDate":true,"enableTime":true}`. Do not add undocumented properties. A Button needs a Text child and an action event.
 Interactive inputs (CheckBox, ChoicePicker, TextField, Slider, DateTimeInput) only update the local surface data model. If the user expects the assistant to use, submit, reveal, save, search, or otherwise act on those values, include a separate Button in the same layout. Its action must be an `event` with a specific verb-like name and a context object containing every required input as JSON Pointer bindings. For example: `{"id":"submit","component":"Button","child":"submit_text","variant":"primary","action":{"event":{"name":"apply_preferences","context":{"colours":{"path":"/selectedColours"}}}}}` followed by `{"id":"submit_text","component":"Text","text":"Apply"}`. Do not imply that choosing an option alone sends it to the assistant.

@@ -28,7 +28,7 @@ export type A2UIComponent = {
   enableDate?: boolean
   enableTime?: boolean
   steps?: number
-  children?: unknown[]
+  children?: unknown
   child?: unknown
   options?: A2UIOption[]
   action?: { event?: { name?: string; context?: unknown } }
@@ -129,20 +129,54 @@ function pointerParts(path: unknown): string[] {
     .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
 }
 
+// A scope is the pointer to the item a repeated row is drawing — '' outside any
+// repetition. A path opening with `.` is relative to it; anything else is absolute.
+function scoped(path: string, scope: string): string {
+  if (!path.startsWith('.')) return path
+  const rest = path.replace(/^\.\/?/, '')
+  return rest ? `${scope}/${rest}` : scope
+}
+
 // Resolve the literal-or-JSON-Pointer values used by the Basic Catalog.
-export function a2uiValue(value: unknown, data: A2UIData = {}): unknown {
+export function a2uiValue(value: unknown, data: A2UIData = {}, scope = ''): unknown {
   const ref = value as { path?: unknown } | null
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof ref?.path !== 'string') {
     return value
   }
   // Indexed through a record view: a pointer may also walk arrays and strings.
-  return pointerParts(ref.path).reduce<unknown>(
+  return pointerParts(scoped(ref.path, scope)).reduce<unknown>(
     (current, part) => (current == null ? undefined : (current as A2UIData)[part]),
     data,
   )
 }
 
+// One child a layout draws: the component to render and the data scope it draws in.
+export type A2UIChildSlot = { id: string; scope: string }
+
+// The children of a Column, Row or List: an explicit array of ids draws each once,
+// a `{componentId, path}` template draws one id per item of the bound array.
+export function childSlots(children: unknown, data: A2UIData = {}, scope = ''): A2UIChildSlot[] {
+  if (Array.isArray(children)) {
+    return children.filter((id): id is string => typeof id === 'string').map((id) => ({ id, scope }))
+  }
+  if (!isRecord(children)) return []
+  const { componentId, path } = children as { componentId?: unknown; path?: unknown }
+  if (typeof componentId !== 'string' || typeof path !== 'string') return []
+  const items = a2uiValue({ path }, data, scope)
+  if (!Array.isArray(items)) return []
+  const base = scoped(path, scope)
+  return items.map((_, index) => ({ id: componentId, scope: `${base}/${index}` }))
+}
+
+// The key `part` names in `container`; null when it names nothing writable — an
+// array answers only to an index it already holds. Mirrors a2ui.py's `_key_for`.
+function writableKey(container: unknown, part: string): string | null {
+  if (!Array.isArray(container)) return part
+  return /^\d+$/.test(part) && Number(part) < container.length ? part : null
+}
+
 // Apply a client-side input update without mutating the durable surface payload.
+// A bound array is cloned as an array, so a repeated row writes to its own item.
 export function withA2UIValue(data: A2UIData = {}, path: unknown, value: unknown): A2UIData {
   const parts = pointerParts(path)
   if (!parts.length) return isRecord(value) || Array.isArray(value) ? { ...(value as A2UIData) } : { value }
@@ -150,13 +184,17 @@ export function withA2UIValue(data: A2UIData = {}, path: unknown, value: unknown
   let target: A2UIData = next
   let source: unknown = data
   for (const part of parts.slice(0, -1)) {
+    const key = writableKey(target, part)
+    if (key === null) return next
     const child = source == null ? undefined : (source as A2UIData)[part]
-    const branch: A2UIData = isRecord(child) ? { ...child } : {}
-    target[part] = branch
-    target = branch
+    const branch = Array.isArray(child) ? [...child] : isRecord(child) ? { ...child } : {}
+    target[key] = branch
+    target = branch as A2UIData
     source = child
   }
-  target[parts.at(-1) ?? ''] = value
+  const last = writableKey(target, parts.at(-1) ?? '')
+  if (last === null) return next
+  target[last] = value
   return next
 }
 
@@ -357,7 +395,7 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
     const item = ensureSurface(items, str(u.surfaceId) || nextSurfaceId(), undefined, version)
     const path = str(u.path)
     if (!path || path === '/') item.data = isRecord(u.value) ? u.value : { value: u.value }
-    else item.data[path.replace(/^\//, '')] = u.value
+    else item.data = withA2UIValue(item.data, path, u.value)
     record(item).push(message)
     return item
   }
@@ -383,9 +421,19 @@ export function rows<T>(value: unknown): T[] {
 export const asComponent = (value: unknown): A2UIComponent => (isRecord(value) ? (value as A2UIComponent) : {})
 export const asComponents = (value: unknown): A2UIComponent[] => rows<A2UIComponent>(value)
 
-// The data-model path a bindable field points at; '' when it holds a literal.
-export const bindingPath = (value: unknown): string =>
-  isRecord(value) && typeof value.path === 'string' ? value.path : ''
+// The context a Button submits: every binding resolved in the scope it was drawn
+// in, so a button in a repeated row carries its own item.
+export function actionContext(value: unknown, data: A2UIData = {}, scope = ''): unknown {
+  if (Array.isArray(value)) return value.map((item) => actionContext(item, data, scope))
+  if (!isRecord(value)) return value
+  if (typeof value.path === 'string' && Object.keys(value).length === 1) return a2uiValue(value, data, scope)
+  return Object.fromEntries(Object.entries(value).map(([k, item]) => [k, actionContext(item, data, scope)]))
+}
+
+// The data-model path a bindable field writes to, resolved against the scope it was
+// drawn in; '' when it holds a literal.
+export const bindingPath = (value: unknown, scope = ''): string =>
+  isRecord(value) && typeof value.path === 'string' ? scoped(value.path, scope) : ''
 
 // The surface's message log. A surface first created by an A2UISurface event has
 // none, and pushing into it used to throw.
