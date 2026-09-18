@@ -215,3 +215,42 @@ test('a nested data-model path writes nested, not under a slash-joined key', () 
   assert.deepEqual(surface.data.trip, { legs: [{ day: 'Mon' }] })
   assert.equal(surface.data['trip/legs'], undefined)
 })
+
+test('a card drawn as primitives is titled by the data model that arrives after it', () => {
+  // The server draws a Card into Card/Column/List primitives and sends its fields as
+  // data — the surface's title comes from that data, not from a Card type the
+  // renderer would have to know.
+  const items: ThreadItem[] = []
+  applyA2UIMessage(items, {
+    version: 'v1.0',
+    updateComponents: {
+      surfaceId: 's1',
+      components: [
+        { id: 'root', component: 'Card', child: 'root__body' },
+        { id: 'root__body', component: 'Column', children: ['root__heading'] },
+        { id: 'root__heading', component: 'Text', text: { path: '/title' } },
+      ],
+    },
+  })
+  const surface = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
+  assert.equal(surface.title, 'Interactive view')
+
+  applyA2UIMessage(items, {
+    version: 'v1.0',
+    updateDataModel: { surfaceId: 's1', path: '/title', value: 'Ship it' },
+  })
+  assert.equal(surface.title, 'Ship it')
+  assert.equal(a2uiValue({ path: '/title' }, surface.data), 'Ship it')
+})
+
+test('two instances of one card read their own rows, not each other\'s', () => {
+  // Nested instances are namespaced by their own id, so one card's template repeats
+  // over its own array.
+  const data = { _cards: { one: { items: ['a'] }, two: { items: ['b', 'c'] } } }
+
+  assert.deepEqual(childSlots({ componentId: 'one__step', path: '/_cards/one/items' }, data), [
+    { id: 'one__step', scope: '/_cards/one/items/0' },
+  ])
+  assert.equal(childSlots({ componentId: 'two__step', path: '/_cards/two/items' }, data).length, 2)
+  assert.equal(a2uiValue({ path: '.' }, data, '/_cards/two/items/1'), 'c')
+})

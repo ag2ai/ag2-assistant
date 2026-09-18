@@ -100,6 +100,11 @@
     } catch { return '' }
   }
 
+  // A layout's cross-axis alignment, in the vocabulary the Basic Catalog declares.
+  // Absent leaves the CSS default standing.
+  const ALIGN: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch' }
+  const align = $derived(ALIGN[String(component.align ?? '')] || undefined)
+
   function clickButton() {
     const event = component.action?.event
     if (!event?.name) return
@@ -117,15 +122,15 @@
 {#if depth >= MAX_DEPTH}
   <!-- cyclic or pathologically deep component graph — stop recursing -->
 {:else if type === 'column'}
-  <div class="a2ui-basic-col">
+  <div class="a2ui-basic-col" style:align-items={align}>
     {@render kids()}
   </div>
 {:else if type === 'row'}
-  <div class="a2ui-basic-row">
+  <div class="a2ui-basic-row" style:align-items={align}>
     {@render kids()}
   </div>
 {:else if type === 'list'}
-  <div class="a2ui-list">
+  <div class="a2ui-list" style:align-items={align}>
     {@render kids()}
   </div>
 {:else if type === 'card'}

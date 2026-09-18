@@ -523,7 +523,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .a2ui-cell { font-size: 12.5px; line-height: 1.35; }
 .a2ui-basic-col { display: flex; flex-direction: column; gap: 10px; }
-.a2ui-basic-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+.a2ui-basic-row { display: flex; flex-wrap: wrap; gap: 10px; }
 .a2ui-basic-card { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; }
 .a2ui-text { font-size: 12.5px; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
 .a2ui-divider { height: 1px; background: var(--line); margin: 2px 0; }
@@ -554,7 +554,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-details p { margin: 6px 0 2px; color: var(--ink); font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere; }
 @media (max-width: 720px) {
   .a2ui { max-width: 100%; }
-  .a2ui-cols, .a2ui-grid, .a2ui-basic-row { grid-template-columns: 1fr; }
+  .a2ui-cols, .a2ui-grid { grid-template-columns: 1fr; }
 }
 
 /* Subtle "when produced" stamp on task-thread items — projects the AG2 event's

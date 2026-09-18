@@ -328,8 +328,7 @@ function itemTitle(kind: unknown, data: A2UIData = {}): string {
   if (k === 'newsdigest') return 'News digest'
   if (k === 'restaurantfinder') return 'Open places'
   if (k === 'taskplan') return 'Task setup'
-  if (k === 'checklist') return titleOr(data.title, 'Checklist')
-  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return 'Interactive view'
+  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return titleOr(data.title, 'Interactive view')
   return 'Structured answer'
 }
 
@@ -396,6 +395,8 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
     const path = str(u.path)
     if (!path || path === '/') item.data = isRecord(u.value) ? u.value : { value: u.value }
     else item.data = withA2UIValue(item.data, path, u.value)
+    // A surface titled by its data model is retitled when that data arrives.
+    if (item.component.component) item.title = itemTitle(componentKind(item.component), item.data)
     record(item).push(message)
     return item
   }

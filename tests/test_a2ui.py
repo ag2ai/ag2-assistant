@@ -1,14 +1,22 @@
+import json
+
 from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
 from ag2.a2ui.parser import A2UIResponseParser
+from ag2.events import ModelMessage, ModelResponse
 
 from assistant.a2ui import (
     CATALOG_ID,
     assistant_catalog,
+    bundled_cards,
+    catalog_rules,
     durable_surfaces_from_messages,
+    expand_card_messages,
+    expanded_card_surface,
     runtime,
     update_data_value,
     wrap_bare_a2ui,
 )
+from assistant.events import A2UISurface
 
 
 def test_assistant_catalog_declares_custom_components():
@@ -248,3 +256,138 @@ def test_data_model_update_ignores_a_pointer_no_row_answers_to():
 
     assert update_data_value(data, "/runs/7/day", "Sun") == data
     assert update_data_value(data, "/runs/day", "Sun") == data
+
+
+# --- Checklist is a file (ADR 0027/0028): offered from it, drawn from it ---
+
+
+def _checklist_emit() -> list[dict]:
+    return [
+        {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+        {
+            "version": "v1.0",
+            "updateComponents": {
+                "surfaceId": "s1",
+                "components": [
+                    {
+                        "id": "root",
+                        "component": "Checklist",
+                        "title": "Ship it",
+                        "items": ["Tag the release", "Run the migration"],
+                    }
+                ],
+            },
+        },
+    ]
+
+
+def test_the_checklist_card_is_offered_to_the_agent_from_its_file():
+    card = bundled_cards()["Checklist"]
+    schema = assistant_catalog()["components"]["Checklist"]
+
+    assert schema["description"] == card.description
+    assert schema["required"] == ["id", "component", "title", "items"]
+    assert set(schema["properties"]) == {"id", "component", "title", "items"}
+
+    runtime.cache_clear()
+    prompt = runtime().system_prompt_section
+    assert card.description in prompt
+    assert '"component":"Checklist","title":"Ship the release"' in prompt
+
+
+def test_the_model_emits_only_the_cards_fields_and_the_file_supplies_the_layout():
+    messages = expand_card_messages(_checklist_emit(), bundled_cards())
+
+    drawn = messages[1]["updateComponents"]["components"]
+    assert [component["component"] for component in drawn] == [
+        "Card",
+        "Column",
+        "Text",
+        "List",
+        "Row",
+        "Icon",
+        "Text",
+    ]
+    assert [message["updateDataModel"]["path"] for message in messages[2:]] == ["/title", "/items"]
+
+
+def test_a_replayed_checklist_renders_what_was_drawn():
+    surfaces = durable_surfaces_from_messages(
+        expand_card_messages(_checklist_emit(), bundled_cards())
+    )
+
+    assert len(surfaces) == 1
+    surface = surfaces[0]
+    assert surface.component["component"] == "Card"
+    assert [c["id"] for c in surface.component["_components"]][:2] == ["root", "root__body"]
+    assert surface.data["title"] == "Ship it"
+    assert surface.data["items"] == ["Tag the release", "Run the migration"]
+    assert surface.title == "Ship it"
+
+
+def test_a_checklist_stored_before_it_was_a_file_is_redrawn_on_read():
+    stored = A2UISurface(
+        "s1",
+        component={"id": "root", "component": "Checklist", "title": "Old list", "items": ["x"]},
+        data={"title": "Old list", "items": ["x"]},
+        title="Old list",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+
+    assert redrawn.component["component"] == "Card"
+    assert redrawn.data == {"title": "Old list", "items": ["x"]}
+    assert redrawn.title == "Old list"
+    # A surface already drawn as primitives is left exactly as it is.
+    assert expanded_card_surface(redrawn, bundled_cards()) is redrawn
+
+
+def test_a_checklist_is_validated_against_the_schema_its_own_file_declares():
+    runtime.cache_clear()
+    parser = runtime().parser
+
+    assert parser.validate(_checklist_emit()).is_valid
+
+    missing = _checklist_emit()
+    del missing[1]["updateComponents"]["components"][0]["items"]
+    assert not parser.validate(missing).is_valid
+
+    wrong_type = _checklist_emit()
+    wrong_type[1]["updateComponents"]["components"][0]["items"] = "not a list"
+    assert not parser.validate(wrong_type).is_valid
+
+
+class _CollectingContext:
+    """A turn context that records what the middleware publishes to the client."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+
+    async def send(self, event) -> None:
+        self.sent.append(event)
+
+
+async def test_the_browser_is_asked_to_draw_primitives_not_a_card():
+    runtime.cache_clear()
+    reply = A2UI_JSON_OPEN_TAG + json.dumps(_checklist_emit()) + A2UI_JSON_CLOSE_TAG
+    context = _CollectingContext()
+
+    async def call_next(events, ctx):
+        return ModelResponse(ModelMessage("Here is the plan. " + reply))
+
+    middleware = runtime().middleware_factories()[0](None, context)
+    response = await middleware.on_llm_call(call_next, [], context)
+
+    published = [event.message for event in context.sent]
+    drawn = published[1]["updateComponents"]["components"]
+    assert all(component["component"] != "Checklist" for component in drawn)
+    assert {message["updateDataModel"]["path"] for message in published[2:]} == {"/title", "/items"}
+    assert response.content.strip() == "Here is the plan."
+
+
+def test_a_card_that_is_not_there_is_not_offered_and_not_drawable():
+    assert "Checklist" not in assistant_catalog({})["components"]
+    assert "Checklist" not in catalog_rules({})
+    unchanged = _checklist_emit()
+
+    assert expand_card_messages(unchanged, {}) == unchanged

@@ -6,7 +6,16 @@ from typing import Any
 
 from ag2.a2ui import a2ui_action
 from ag2.a2ui.actions import collect_action_declarations, collect_server_actions
+from ag2.a2ui.middleware import A2UIValidationMiddleware, _A2UIValidationMiddleware
+from ag2.a2ui.parser import A2UIResponseParser
 
+from assistant.cards import (
+    Card,
+    bundled_cards_dir,
+    expand_card_messages,
+    expand_components,
+    load_cards,
+)
 from assistant.events import A2UISurface
 
 # A2UI protocol message keys — a JSON array whose items carry any of these is an
@@ -39,6 +48,12 @@ SUPPORTED_BASIC_COMPONENTS = frozenset(
         "Video",
     }
 )
+
+
+@lru_cache(maxsize=1)
+def bundled_cards() -> dict[str, Card]:
+    """The Cards shipped with the app, read once from their files."""
+    return load_cards(bundled_cards_dir(), components=SUPPORTED_BASIC_COMPONENTS)
 
 
 class _AssistantSchemaManager:
@@ -156,10 +171,9 @@ def _surface_title(component: dict, data: dict) -> str:
         return "Open places"
     if kind == "taskplan":
         return "Task setup"
-    if kind == "checklist":
-        return data.get("title") or "Checklist"
     if kind in {"column", "row", "list", "card", "text"}:
-        return "Interactive view"
+        title = data.get("title")
+        return title if isinstance(title, str) and title else "Interactive view"
     return "Structured answer"
 
 
@@ -218,7 +232,6 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
                 states[surface_id]["component"] = {**root, "_components": components}
                 states[surface_id]["components"] = components
                 states[surface_id]["data"] = _component_data(root, states[surface_id].get("data"))
-                states[surface_id]["title"] = _surface_title(root, states[surface_id]["data"])
             states[surface_id]["version"] = version
         elif update := message.get("updateDataModel"):
             surface_id = update.get("surfaceId")
@@ -252,7 +265,11 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
             version=state.get("version") or "v1.0",
             component=state.get("component") or {},
             data=state.get("data") or {},
-            title=state.get("title") or "A2UI",
+            title=(
+                _surface_title(state["component"], state.get("data") or {})
+                if state.get("component")
+                else "A2UI"
+            ),
             intent="generated-ui",
         )
         for sid in order
@@ -282,8 +299,12 @@ def _component_schema(
     }
 
 
-def assistant_catalog() -> dict:
-    """Custom A2UI catalog rendered by the Svelte chat/task UI."""
+def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
+    """Custom A2UI catalog rendered by the Svelte chat/task UI.
+
+    Every Card in ``cards`` is advertised — and validated — under the schema its own
+    file declares; the rest are literals here.
+    """
 
     string_array = {"type": "array", "items": {"type": "string"}}
     row_array = {
@@ -574,15 +595,6 @@ def assistant_catalog() -> dict:
                 },
                 ["objective", "cadence", "deliverables", "nextSteps"],
             ),
-            "Checklist": _component_schema(
-                "Checklist",
-                "Compact action checklist for multi-step operational work.",
-                {
-                    "title": {"type": "string"},
-                    "items": string_array,
-                },
-                ["title", "items"],
-            ),
             "InboxBrief": _component_schema(
                 "InboxBrief",
                 "Email inbox digest, built from the user's real mail (most important thread first).",
@@ -652,6 +664,12 @@ def assistant_catalog() -> dict:
                 },
                 ["topic", "sections"],
             ),
+            **{
+                card.name: _component_schema(
+                    card.name, card.description, card.fields, list(card.required)
+                )
+                for card in (bundled_cards() if cards is None else cards).values()
+            },
         },
     }
 
@@ -672,7 +690,6 @@ When an answer matches one of these, EMIT that component — the surface is the 
 - Calendar, agenda, schedule, "what's on today/tomorrow" -> render an AgendaCard from the real events (mark the single next upcoming event with next:true).
 - Creating, scheduling, or planning a new task -> render a TaskPlan.
 - Reviewing existing tasks ("how are my tasks going?", task status/history) -> render a TaskProgress from the real task state.
-- Multi-step operational work -> render a Checklist.
 - Comparing concrete alternatives or recommending between options -> render a DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
 - Research summaries or briefs without competing options -> render an AnswerBrief.
 
@@ -728,6 +745,81 @@ and numeric `price`/`change`/`changePercent` exactly as returned):
 CATALOG_RULES = _CATALOG_RULES_TEMPLATE.replace("__CATALOG_ID__", CATALOG_ID)
 
 
+def catalog_rules(cards: dict[str, Card]) -> str:
+    """The rules, plus what each Card file says about when to reach for it."""
+    return CATALOG_RULES + "".join(_offered(card) for card in cards.values())
+
+
+def _offered(card: Card) -> str:
+    """One Card offered to the model: when to reach for it, and the shape it emits."""
+    emit = json.dumps({"id": "root", "component": card.name, **card.example}, separators=(",", ":"))
+    return (
+        f"\n{card.name} — {card.description} Render it like this:\n"
+        f'{{"version":"v1.0","createSurface":{{"surfaceId":"s1","catalogId":"{CATALOG_ID}"}}}}\n'
+        f'{{"version":"v1.0","updateComponents":{{"surfaceId":"s1","components":[{emit}]}}}}\n'
+    )
+
+
+class _CardValidationMiddleware(_A2UIValidationMiddleware):
+    """The per-turn instance: AG2's validation, then the Card instances drawn."""
+
+    def __init__(self, event, context, *, parser, max_retries, cards) -> None:
+        super().__init__(event, context, parser=parser, max_retries=max_retries)
+        self._cards = cards
+
+    def _validate(self, response_text: str):
+        parse_result, errors = super()._validate(response_text)
+        if errors is None:
+            parse_result.operations[:] = expand_card_messages(parse_result.operations, self._cards)
+        return parse_result, errors
+
+
+class CardValidationMiddleware(A2UIValidationMiddleware):
+    """Validate the model's fields against the Card's own schema — a bad emit is
+    retried, as any invalid surface is — then publish the primitives its layout
+    draws, so the browser is never told that Cards exist."""
+
+    def __init__(self, parser, cards: dict[str, Card], max_retries: int = 1) -> None:
+        super().__init__(parser, max_retries)
+        self._cards = cards
+
+    def __call__(self, event, context):
+        return _CardValidationMiddleware(
+            event,
+            context,
+            parser=self._parser,
+            max_retries=self._max_retries,
+            cards=self._cards,
+        )
+
+
+def expanded_card_surface(surface: A2UISurface, cards: dict[str, Card]) -> A2UISurface:
+    """A durable surface with any Card instance redrawn as primitives. A surface
+    already drawn as primitives comes back unchanged."""
+    nested = surface.component.get("_components")
+    components = (
+        list(nested)
+        if isinstance(nested, list)
+        else ([surface.component] if surface.component else [])
+    )
+    expanded, writes = expand_components(components, cards)
+    if not writes and expanded == components:
+        return surface
+    data = surface.data
+    for path, value in writes:
+        data = update_data_value(data, path, value)
+    root = next((c for c in expanded if c.get("id") == "root"), expanded[0] if expanded else {})
+    return A2UISurface(
+        surface.surface_id,
+        catalog_id=surface.catalog_id,
+        version=surface.version,
+        component={**root, "_components": expanded},
+        data=data,
+        title=surface.title,
+        intent=surface.intent,
+    )
+
+
 @a2ui_action(
     name="save_surface",
     description="Persist the current values in an interactive A2UI surface.",
@@ -745,14 +837,12 @@ A2UI_SERVER_ACTIONS = collect_server_actions(A2UI_ACTIONS)
 class _AssistantA2UIRuntime:
     """AG2 runtime using the assistant's filtered Basic Catalog."""
 
-    def __init__(self) -> None:
-        from ag2.a2ui.middleware import A2UIValidationMiddleware
-        from ag2.a2ui.parser import A2UIResponseParser
-
+    def __init__(self, cards: dict[str, Card] | None = None) -> None:
+        self.cards = bundled_cards() if cards is None else cards
         self.schema_manager = _AssistantSchemaManager(
             protocol_version="v1.0",
-            custom_catalog=assistant_catalog(),
-            custom_catalog_rules=CATALOG_RULES,
+            custom_catalog=assistant_catalog(self.cards),
+            custom_catalog_rules=catalog_rules(self.cards),
         )
         self.catalog_id = self.schema_manager.catalog_id
         self.parser = A2UIResponseParser(
@@ -775,7 +865,7 @@ class _AssistantA2UIRuntime:
             "Users do not need to mention A2UI for you to use it.\n\n"
             f"{prompt}"
         )
-        self._middleware = A2UIValidationMiddleware(self.parser, 1)
+        self._middleware = CardValidationMiddleware(self.parser, self.cards, 1)
 
     @property
     def version_string(self) -> str:
@@ -839,7 +929,7 @@ def wrap_bare_a2ui(text: str) -> str | None:
         i = end  # a JSON array, but not A2UI — skip past it and keep scanning
 
 
-def tolerant_a2ui_middleware(parser):
+def tolerant_a2ui_middleware(parser, cards: dict[str, Card]):
     """Middleware factory that recovers A2UI surfaces from an un-wrapped response.
 
     Complements the runtime's own extraction/validation middleware, which only
@@ -859,7 +949,9 @@ def tolerant_a2ui_middleware(parser):
             if text and A2UI_JSON_OPEN_TAG not in text:
                 wrapped = wrap_bare_a2ui(text)
                 if wrapped is not None:
-                    await _publish_a2ui(parser.parse(wrapped), response, context)
+                    recovered = parser.parse(wrapped)
+                    recovered.operations[:] = expand_card_messages(recovered.operations, cards)
+                    await _publish_a2ui(recovered, response, context)
             return response
 
     return lambda event, context: _TolerantMiddleware(event, context)

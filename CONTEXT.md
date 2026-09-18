@@ -131,6 +131,56 @@ _Avoid_: grant (Folders default-deny + opt-in; Suppression is default-allow +
 opt-out — the opposite), disable (reserve for the install-wide / own-skill flag;
 a profile *suppresses* a shared skill, it does not *disable* it for everyone)
 
+**Card**:
+A rich structured view the agent renders in a conversation instead of prose — a
+weather panel, a market board, an inbox digest. A Card is a *definition*: the
+fields it carries and how it looks. Cards are named, and the set available to the
+agent is offered to it as a catalog.
+_Avoid_: component (the A2UI protocol's word for a node in a rendered tree —
+including the primitive literally named `Card`), widget, template
+
+**Card instance**:
+One Card actually rendered, holding the data of one answer — what the user sees in
+the **Thread**. Many instances of one Card can exist; the instance carries the
+data, the Card carries only the shape.
+_Avoid_: surface (the protocol's word, and `surfaceId` in the code; in this
+glossary the rendered thing is a Card instance)
+
+**Card catalog**:
+The set of Cards the agent is offered — what it may render into. Resolved for one
+profile from the three card layers, minus whatever is **Disabled** or
+**Suppressed**. The agent meets it as an index of names and descriptions, and asks
+for a Card's detail once it has decided to draw one.
+_Avoid_: component catalog (the A2UI protocol's own name for the primitive
+vocabulary every Card is drawn from)
+
+**Bundled cards**:
+First-party Cards that ship with the app, available from first run. Read-only: they
+can be **Disabled** install-wide or **Suppressed** per profile, never **Deleted**.
+
+**Global cards**:
+Cards installed once at the Root, available to every profile. Managed install-wide
+(Enable/Disable/Delete affects every profile) and individually **Suppressed** by any
+profile.
+
+**Profile cards**:
+Cards belonging to one profile, kept in that profile's **Files** space — so the
+agent writes one with the ordinary file tools and the user finds it in the Files
+tree. On a name clash, the Profile card wins over the Global one.
+
+**Card state** (Enabled / Disabled):
+Whether a Card appears in the **Card catalog**. The same shape as **Skill state**,
+including the per-profile **Suppression** override, but recorded separately: a Skill
+and a Card may share a name and must not share a switch. A change reaches the agent
+on its next message, not its next build.
+
+**Card link**:
+A Card pointing at one of the app's own things — a **Task**, a **Chat**, a file —
+so a row in a rendered Card opens the page for it. Open to every Card, whatever its
+layer.
+_Avoid_: **File reference** (the `@`-pointer into a message), **Mentioned in** (the
+backlink from a file to the conversations touching it)
+
 **Permissions**:
 The security policy of allowed commands (command-prefix and whole-tool grants).
 Commands only — folder access is the separate Folder/Grant system. Edited only by

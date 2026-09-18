@@ -604,7 +604,7 @@ class Gateway:
                 # can't — the two are mutually exclusive per response).
                 middleware = (
                     *a2ui_runtime.middleware_factories(),
-                    tolerant_a2ui_middleware(a2ui_runtime.parser),
+                    tolerant_a2ui_middleware(a2ui_runtime.parser, a2ui_runtime.cards),
                 )
             else:
                 middleware = ()

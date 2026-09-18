@@ -25,7 +25,7 @@
   const componentIcon = $derived(
     isBasicLayout ? 'sparkles'
       : type === 'weatherpanel' ? 'sun'
-      : type === 'taskplan' || type === 'checklist' ? 'list'
+      : type === 'taskplan' ? 'list'
       : type === 'newsdigest' ? 'globe'
       : type === 'marketboard' ? 'trending-up'
       : type === 'decisionmatrix' ? 'check'
@@ -85,7 +85,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'checklist', 'codingsession'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -177,16 +177,6 @@
         <div class="a2ui-story">
           <span><Icon name="search" size={13} /></span>
           <div><strong>{result.name}</strong><small>{result.detail}</small></div>
-        </div>
-      {/each}
-    </div>
-  {:else if type === 'checklist'}
-    <div class="a2ui-main">{str(data.title) || item.title || 'Checklist'}</div>
-    <div class="a2ui-list">
-      {#each list<string>(data.items) as row}
-        <div class="a2ui-story">
-          <span><Icon name="check" size={13} /></span>
-          <div><strong>{row}</strong></div>
         </div>
       {/each}
     </div>
