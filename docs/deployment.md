@@ -262,7 +262,7 @@ Release flow: pushing the tag publishes the Docker image; publishing the GitHub 
 that tag publishes to PyPI. The workflow refuses to publish if the tag doesn't match
 `pyproject.toml`'s version.
 
-Every install path resolves the released `ag2` from PyPI (`>=1.0.0`): the published wheel via
+Every install path resolves the released `ag2` from PyPI (`>=1.0.6`): the published wheel via
 its metadata, and dev installs, CI and the Docker image via the pinned version in `uv.lock`.
 So a contributor's checkout, CI, and the shipped image all run the same AG2.
 

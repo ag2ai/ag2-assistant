@@ -3,6 +3,9 @@
 import tempfile
 
 import pytest
+from ag2.context import ConversationContext
+from ag2.exceptions import SkillNotFoundError
+from ag2.stream import MemoryStream
 from ag2.tools.skills import LocalRuntime
 
 from assistant.agent import (
@@ -12,17 +15,18 @@ from assistant.agent import (
     build_skills_runtime,
     bundled_skills_dir,
     create_agent,
+    resolve_skills,
 )
 from assistant.config import Config
 from assistant.skills import SkillStateStore
 from assistant.state_store import DISABLE_OWN
 
 
-def _write_skill(skills_dir, name, description):
+def _write_skill(skills_dir, name, description, body=""):
     skill_dir = skills_dir / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: {description}\n---\n# {name}\n"
+        f"---\nname: {name}\ndescription: {description}\n---\n{body or f'# {name}'}\n"
     )
 
 
@@ -224,3 +228,34 @@ async def test_agent_can_search_skills(paths, tmp_path):
     )
     assert isinstance(response, str)
     assert len(response) > 0
+
+
+async def test_loading_a_skill_through_the_filtered_view_returns_its_body(paths, tmp_path):
+    """A skill read through the view returns its own body."""
+    config = Config.for_paths(paths)
+    config.skills_dir = tmp_path / "skills"
+    config.root_dir = tmp_path / "root"
+    _write_skill(config.skills_dir, "gardening", "Tend the tomatoes", body="Water at dawn.")
+
+    view = resolve_skills(config, build_skills_runtime(config))
+    body = await view.read("gardening", ConversationContext(stream=MemoryStream()))
+
+    assert "Water at dawn." in body
+
+
+async def test_a_disabled_skill_cannot_be_loaded_through_the_filtered_view(paths, tmp_path):
+    """Defence in depth: a Disabled skill reads exactly like an absent one, even
+    when its name is handed straight to the view."""
+    config = Config.for_paths(paths)
+    config.skills_dir = tmp_path / "skills"
+    config.root_dir = tmp_path / "root"
+    context = ConversationContext(stream=MemoryStream())
+
+    assert await resolve_skills(config, build_skills_runtime(config)).read("web-research", context)
+
+    SkillStateStore(config.root_dir).set_enabled("web-research", False)
+    view = resolve_skills(config, build_skills_runtime(config))
+
+    assert "web-research" not in [skill.name for skill in view.skills]
+    with pytest.raises(SkillNotFoundError):
+        await view.read("web-research", context)

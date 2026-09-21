@@ -312,7 +312,7 @@ class _NamespacedMCPProxyTool(Tool):
                     f"MCP server '{server_name}' tool '{raw_tool.name}'. "
                     f"{raw_tool.description or ''}"
                 ).strip(),
-                parameters=dict(raw_tool.inputSchema or {}),
+                parameters=dict(raw_tool.input_schema or {}),
             )
         )
 
@@ -351,7 +351,7 @@ class _NamespacedMCPProxyTool(Tool):
         except Exception as exc:
             return ToolErrorEvent.from_call(event, error=exc)
 
-        if result.isError:
+        if result.is_error:
             return ToolErrorEvent.from_call(event, error=RuntimeError(str(result)))
 
         return ToolResultEvent.from_call(event, result=extract_content(result))

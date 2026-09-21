@@ -13,6 +13,7 @@ Resolution is DEFAULT-ON: a skill is available unless a record turns it off. See
 from collections.abc import Callable
 from pathlib import Path
 
+from ag2.context import ConversationContext
 from ag2.exceptions import SkillNotFoundError
 
 from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE, StateStore
@@ -67,15 +68,15 @@ class FilteredSkillRuntime:
     def skills(self):
         return [skill for skill in self._inner.skills if self._is_available(skill)]
 
-    def read(self, name: str) -> str:
+    async def read(self, name: str, context: ConversationContext) -> str:
         self._guard(name)
-        return self._inner.read(name)
+        return await self._inner.read(name, context)
 
-    async def read_resource(self, name: str, resource: str, context) -> str:
+    async def read_resource(self, name: str, resource: str, context: ConversationContext) -> str:
         self._guard(name)
         return await self._inner.read_resource(name, resource, context)
 
-    async def execute(self, name: str, script: str, context, args=None) -> str:
+    async def execute(self, name: str, script: str, context: ConversationContext, args=None) -> str:
         self._guard(name)
         return await self._inner.execute(name, script, context, args)
 
